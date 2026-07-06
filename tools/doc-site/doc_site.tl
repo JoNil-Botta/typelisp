@@ -2,17 +2,17 @@
 ;;
 ;; Usage through the current compiler runner:
 ;;   typelisp run tools/doc-site/doc_site.tl -- target/site
-(import "../../stdlib/io.tl")
-(import "doc_site_core.tl")
+(import stdlib.io)
+(import doc_site_core)
 
 (define (doc-site-usage) : i64
   (begin
-    (print-error "doc-site: expected zero args or output directory")
+    (io.print-error "doc-site: expected zero args or output directory")
     1))
 
 (define (main) : i64
-  (if (= (arg-count) 1)
-    (doc-site-build "target/site")
-    (if (= (arg-count) 2)
-      (doc-site-build (arg 1))
+  (if (= (io.arg-count) 1)
+    (doc_site_core.doc-site-build "target/site")
+    (if (= (io.arg-count) 2)
+      (doc_site_core.doc-site-build (io.arg 1))
       (doc-site-usage))))

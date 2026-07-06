@@ -10,8 +10,9 @@
 ;;   typelisp run selfhost/cli.tl -- doc --load input.tl output.md [--stdlib-root <dir>...]
 (import stdlib.io)
 (import stdlib.vector as svec)
-(import "doc_render.tl")
-(import "doc_html.tl")
+(import doc_extract)
+(import doc_render)
+(import doc_html)
 (import "doc_test.tl")
 (import "doc_expand.tl")
 (import "compiler_load.tl")
@@ -52,43 +53,47 @@
 (define (doc-generate-file [input-path : String] [output-path : String]) : i64
   (let
     [source : String (io.read-file input-path)]
-    [markdown : String (doc-render-markdown (doc-extract-source source))]
+    [markdown : String
+      (doc_render.doc-render-markdown (doc_extract.doc-extract-source source))]
     (begin
       (io.write-file output-path markdown)
       (doc-print-wrote output-path)
       0)))
 
-(define (doc-read-modules [idx : i64] [end : i64]) : DocModuleList
+(define (doc-read-modules [idx : i64] [end : i64]) : doc_render.DocModuleList
   (let
     [i : i64 idx]
-    [modules : DocModuleList (doc-module-list-with-capacity (- end idx))]
+    [modules : doc_render.DocModuleList
+      (doc_render.doc-module-list-with-capacity (- end idx))]
     (begin
       (while (< i end)
         (begin
-          (doc-module-list-push
+          (doc_render.doc-module-list-push
             (&mut modules)
-            (DocModule.Module (io.arg i) (doc-extract-file (io.arg i))))
+            (doc_render.DocModule.Module
+              (io.arg i)
+              (doc_extract.doc-extract-file (io.arg i))))
           (set! i (+ i 1))))
       modules)))
 
 (define (doc-modules-from-string-vec-from
   [paths : PackageSourceList]
   [index : i64]
-  [modules : (&mut modules DocModuleList)]) : unit
+  [modules : (&mut modules doc_render.DocModuleList)]) : unit
   (if (>= index (package-source-list-len paths))
     unit
     (let
       [path : String (package-source-list-get paths index "")]
       (begin
-        (doc-module-list-push
+        (doc_render.doc-module-list-push
           modules
-          (DocModule.Module path (doc-extract-file path)))
+          (doc_render.DocModule.Module path (doc_extract.doc-extract-file path)))
         (doc-modules-from-string-vec-from paths (+ index 1) modules)))))
 
-(define (doc-modules-from-string-vec [paths : PackageSourceList]) : DocModuleList
+(define (doc-modules-from-string-vec [paths : PackageSourceList]) : doc_render.DocModuleList
   (let
-    [modules : DocModuleList
-      (doc-module-list-with-capacity (package-source-list-len paths))]
+    [modules : doc_render.DocModuleList
+      (doc_render.doc-module-list-with-capacity (package-source-list-len paths))]
     (begin
       (doc-modules-from-string-vec-from paths 0 (&mut modules))
       modules)))
@@ -96,7 +101,7 @@
 (define (doc-modules-from-paths-into
   [paths : AstDeclPathList]
   [seen : sym_i64_env.SymI64Env]
-  [modules : (&mut modules DocModuleList)]) : unit
+  [modules : (&mut modules doc_render.DocModuleList)]) : unit
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil) unit]
     [(AstDeclPathListStep.Cons path rest)
@@ -105,9 +110,11 @@
         (if (sym_i64_env.sym-i64-contains seen path)
           (doc-modules-from-paths-into rest seen modules)
           (begin
-            (doc-module-list-push
+            (doc_render.doc-module-list-push
               modules
-              (DocModule.Module path (doc-extract-file path)))
+              (doc_render.DocModule.Module
+                path
+                (doc_extract.doc-extract-file path)))
             (doc-modules-from-paths-into
               rest
               (sym_i64_env.sym-i64-bind seen path 1)
@@ -115,9 +122,9 @@
 
 (define (doc-modules-from-paths
   [paths : AstDeclPathList]
-  [seen : sym_i64_env.SymI64Env]) : DocModuleList
+  [seen : sym_i64_env.SymI64Env]) : doc_render.DocModuleList
   (let
-    [modules : DocModuleList (doc-module-list-new)]
+    [modules : doc_render.DocModuleList (doc_render.doc-module-list-new)]
     (begin
       (doc-modules-from-paths-into paths seen (&mut modules))
       modules)))
@@ -128,7 +135,7 @@
   [stdlib-roots : svec.StringVec]) : ResultDocExpandedModules
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil)
-      (ResultDocExpandedModules.Ok (doc-module-list-new))]
+      (ResultDocExpandedModules.Ok (doc_render.doc-module-list-new))]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
@@ -137,7 +144,8 @@
           (let
             [next-seen : sym_i64_env.SymI64Env
               (sym_i64_env.sym-i64-bind seen path 1)]
-            [docs : DocExtraction (doc-extract-file path)]
+            [docs : doc_extract.DocExtraction
+              (doc_extract.doc-extract-file path)]
             (match (doc-expanded-generated-modules-from-source-docs
               path
               docs
@@ -149,7 +157,9 @@
                   stdlib-roots)
                   [(ResultDocExpandedModules.Ok tail-modules)
                     (ResultDocExpandedModules.Ok
-                      (doc-module-list-append head-modules tail-modules))]
+                      (doc_render.doc-module-list-append
+                        head-modules
+                        tail-modules))]
                   [(ResultDocExpandedModules.Err message)
                     (ResultDocExpandedModules.Err message)])]
               [(ResultDocExpandedModules.Err message)
@@ -158,17 +168,17 @@
 (define (doc-render-loaded-markdown
   [input-path : String]
   [paths : AstDeclPathList]
-  [generated-modules : DocModuleList]) : String
+  [generated-modules : doc_render.DocModuleList]) : String
   (let
-    [modules : DocModuleList
+    [modules : doc_render.DocModuleList
       (doc-modules-from-paths
         (ast-decl-path-cons input-path paths)
         (sym_i64_env.sym-i64-empty))]
-    [all-modules : DocModuleList
-      (doc-module-list-append modules generated-modules)]
-    (if (> (doc-module-list-count all-modules) 1)
-      (doc-render-module-graph-markdown all-modules)
-      (doc-render-markdown (doc-extract-file input-path)))))
+    [all-modules : doc_render.DocModuleList
+      (doc_render.doc-module-list-append modules generated-modules)]
+    (if (> (doc_render.doc-module-list-count all-modules) 1)
+      (doc_render.doc-render-module-graph-markdown all-modules)
+      (doc_render.doc-render-markdown (doc_extract.doc-extract-file input-path)))))
 
 (define (doc-generate-loaded-file
   [input-path : String]
@@ -189,20 +199,21 @@
             ;; above fail the command. Loaded graph expansion is best-effort:
             ;; synthetic graph docs can combine helper declarations from many
             ;; modules in ways normal source builds never do.
-            [generated-modules : DocModuleList
+            [generated-modules : doc_render.DocModuleList
               (match (doc-expanded-generated-modules-from-loaded-decls
                 decls
                 paths
                 stdlib-roots)
                 [(ResultDocExpandedModules.Ok modules) modules]
-                [(ResultDocExpandedModules.Err _) (doc-module-list-new)])]
+                [(ResultDocExpandedModules.Err _)
+                  (doc_render.doc-module-list-new)])]
             (begin
               (io.write-file
                 output-path
                 (doc-render-loaded-markdown
                   input-path
                   paths
-                  (doc-module-list-append
+                  (doc_render.doc-module-list-append
                     generated-modules
                     source-generated-modules)))
               (doc-print-wrote output-path)
@@ -229,7 +240,7 @@
       (begin
         (io.write-file
           output-path
-          (doc-render-module-graph-markdown
+          (doc_render.doc-render-module-graph-markdown
             (doc-modules-from-string-vec (struct-get source-set sources))))
         (doc-print-wrote output-path)
         0)]))
@@ -237,7 +248,7 @@
 (define (doc-generate-html-file [input-path : String] [output-path : String]) : i64
   (let
     [source : String (io.read-file input-path)]
-    [html : String (doc-html-render-source input-path source)]
+    [html : String (doc_html.doc-html-render-source input-path source)]
     (begin
       (io.write-file output-path html)
       (doc-print-wrote output-path)
@@ -245,9 +256,11 @@
 
 (define (doc-generate-html-module-graph [output-path : String]) : i64
   (let
-    [modules : DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
+    [modules : doc_render.DocModuleList (doc-read-modules 2 (- (arg-count) 1))]
     (begin
-      (io.write-file output-path (doc-html-render-module-graph modules))
+      (io.write-file
+        output-path
+        (doc_html.doc-html-render-module-graph modules))
       (doc-print-wrote output-path)
       0)))
 
@@ -284,32 +297,36 @@
 (define (doc-modules-from-input-paths-before-last
   [paths : svec.StringVec]
   [index : i64]
-  [last-index : i64]) : DocModuleList
+  [last-index : i64]) : doc_render.DocModuleList
   (let
     [i : i64 index]
-    [modules : DocModuleList
-      (doc-module-list-with-capacity (- last-index index))]
+    [modules : doc_render.DocModuleList
+      (doc_render.doc-module-list-with-capacity (- last-index index))]
     (begin
       (while (< i last-index)
         (let
           [path : String (svec.string-vec-get (& paths) i "")]
           (begin
-            (doc-module-list-push
+            (doc_render.doc-module-list-push
               (&mut modules)
-              (DocModule.Module path (doc-extract-file path)))
+              (doc_render.DocModule.Module
+                path
+                (doc_extract.doc-extract-file path)))
             (set! i (+ i 1)))))
       modules)))
 
 (define (doc-generate-module-graph-from-input-paths [paths : svec.StringVec]) : i64
   (let
     [output-path : String (svec.string-vec-last (& paths) "")]
-    [modules : DocModuleList
+    [modules : doc_render.DocModuleList
       (doc-modules-from-input-paths-before-last
         paths
         0
         (- (svec.string-vec-len (& paths)) 1))]
     (begin
-      (io.write-file output-path (doc-render-module-graph-markdown modules))
+      (io.write-file
+        output-path
+        (doc_render.doc-render-module-graph-markdown modules))
       (doc-print-wrote output-path)
       0)))
 

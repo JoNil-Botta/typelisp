@@ -3,19 +3,23 @@
 ;; The extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records, so this
 ;; renderer emits exactly the declarations present in the extracted model.
+(module doc_render)
+
 (import stdlib.io)
-(import "doc_extract.tl")
+(import doc_extract)
 (import stdlib.string)
 
 (defenum DocModule
-  (Module String DocExtraction))
+  (Module String doc_extract.DocExtraction))
 
 (defstruct DocModuleList
   (slots (Array DocModule))
   (len i64))
 
 (define (doc-module-fallback) : DocModule
-  (DocModule.Module "" (DocExtraction.Extraction "" (doc-item-list-new))))
+  (DocModule.Module
+    ""
+    (doc_extract.doc-extraction-new "" (doc_extract.doc-item-list-new))))
 
 (define (doc-module-list-slots [modules : (& modules DocModuleList)]) : (&
     modules
@@ -119,7 +123,7 @@
   (match module
     [(DocModule.Module path _) path]))
 
-(define (doc-module-docs [module : DocModule]) : DocExtraction
+(define (doc-module-docs [module : DocModule]) : doc_extract.DocExtraction
   (match module
     [(DocModule.Module _ docs) docs]))
 
@@ -198,10 +202,10 @@
     "_No item docs._\n"
     (string.append (doc-render-escape-markdown doc-text) "\n")))
 
-(define (doc-render-item-heading [item : DocItem]) : String
+(define (doc-render-item-heading [item : doc_extract.DocItem]) : String
   (let
-    [name : String (doc-item-name item)]
-    [anchor : String (doc-render-anchor (doc-item-name item))]
+    [name : String (doc_extract.doc-item-name item)]
+    [anchor : String (doc-render-anchor (doc_extract.doc-item-name item))]
     (string.append
       "<a id=\""
       (string.append
@@ -210,47 +214,49 @@
           "\"></a>\n\n### "
           (string.append (doc-render-escape-markdown name) "\n\n"))))))
 
-(define (doc-render-item [item : DocItem]) : String
+(define (doc-render-item [item : doc_extract.DocItem]) : String
   (string.append
     (doc-render-item-heading item)
     (string.append
       "Kind: "
       (string.append
-        (doc-kind-name (doc-item-kind item))
+        (doc_extract.doc-kind-name (doc_extract.doc-item-kind item))
         (string.append
           "\n\n"
           (string.append
-            (doc-render-code-block (doc-item-signature item))
+            (doc-render-code-block (doc_extract.doc-item-signature item))
             (string.append
               "\n"
-              (string.append (doc-render-item-doc (doc-item-doc item)) "\n"))))))))
+              (string.append
+                (doc-render-item-doc (doc_extract.doc-item-doc item))
+                "\n"))))))))
 
 (define (doc-render-item-list-from
-  [items : DocItemList]
+  [items : doc_extract.DocItemList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
     ""
     (string.append
-      (doc-render-item (doc-item-list-ref items index))
+      (doc-render-item (doc_extract.doc-item-list-ref items index))
       (doc-render-item-list-from items (+ index 1) count))))
 
-(define (doc-render-item-list [items : DocItemList]) : String
-  (doc-render-item-list-from items 0 (doc-item-list-count items)))
+(define (doc-render-item-list [items : doc_extract.DocItemList]) : String
+  (doc-render-item-list-from items 0 (doc_extract.doc-item-list-count items)))
 
-(define (doc-render-items [items : DocItemList]) : String
-  (if (= (doc-item-list-count items) 0)
+(define (doc-render-items [items : doc_extract.DocItemList]) : String
+  (if (= (doc_extract.doc-item-list-count items) 0)
     "_No documented declarations._\n"
     (doc-render-item-list items)))
 
-(define (doc-render-markdown [docs : DocExtraction]) : String
+(define (doc-render-markdown [docs : doc_extract.DocExtraction]) : String
   (string.append
     "# TypeLisp Documentation\n\n"
     (string.append
-      (doc-render-module-doc (doc-extraction-module-doc docs))
+      (doc-render-module-doc (doc_extract.doc-extraction-module-doc docs))
       (string.append
         "## Items\n\n"
-        (doc-render-items (doc-extraction-items docs))))))
+        (doc-render-items (doc_extract.doc-extraction-items docs))))))
 
 (define (doc-render-module-nav-item [module : DocModule]) : String
   (let
@@ -277,7 +283,7 @@
 (define (doc-render-module-section [module : DocModule]) : String
   (let
     [path : String (doc-module-path module)]
-    [docs : DocExtraction (doc-module-docs module)]
+    [docs : doc_extract.DocExtraction (doc-module-docs module)]
     (string.append
       "<a id=\""
       (string.append
@@ -293,8 +299,9 @@
                 (string.append
                   "`\n\n"
                   (string.append
-                    (doc-render-module-doc (doc-extraction-module-doc docs))
-                    (doc-render-items (doc-extraction-items docs))))))))))))
+                    (doc-render-module-doc
+                      (doc_extract.doc-extraction-module-doc docs))
+                    (doc-render-items (doc_extract.doc-extraction-items docs))))))))))))
 
 (define (doc-render-module-sections-from
   [modules : DocModuleList]
@@ -427,9 +434,11 @@ _No documented declarations._
 (define (doc-render-smoke) : i64
   (let
     [rendered : String
-      (doc-render-markdown (doc-extract-source (doc-render-smoke-source)))]
+      (doc-render-markdown
+        (doc_extract.doc-extract-source (doc-render-smoke-source)))]
     [empty-rendered : String
-      (doc-render-markdown (doc-extract-source "(define hidden : i64 1)\n"))]
+      (doc-render-markdown
+        (doc_extract.doc-extract-source "(define hidden : i64 1)\n"))]
     (if (string.eq rendered (doc-render-smoke-expected))
       (if (string.eq empty-rendered (doc-render-empty-expected))
         42

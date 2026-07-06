@@ -11,8 +11,10 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
+(module doc_extract)
+
 (import stdlib.io)
-(import "format_tokens.tl")
+(import format_tokens)
 (import stdlib.string)
 
 (defenum DocItemKind
@@ -66,6 +68,9 @@
   (match docs
     [(DocExtraction.Extraction _ items) items]))
 
+(define (doc-extraction-new [module-doc : String] [items : DocItemList]) : DocExtraction
+  (DocExtraction.Extraction module-doc items))
+
 (define (doc-item-kind [item : DocItem]) : DocItemKind
   (match item
     [(DocItem.Item kind _ _ _) kind]))
@@ -81,6 +86,13 @@
 (define (doc-item-signature [item : DocItem]) : String
   (match item
     [(DocItem.Item _ _ _ signature) signature]))
+
+(define (doc-item-new
+  [kind : DocItemKind]
+  [name : String]
+  [doc-text : String]
+  [signature : String]) : DocItem
+  (DocItem.Item kind name doc-text signature))
 
 (define (doc-item-fallback) : DocItem
   (DocItem.Item (DocItemKind.Define) "" "" ""))
@@ -378,26 +390,36 @@
           (set! keep false)))
       i)))
 
-(define (doc-next-code-token-index [stream : FormatTokenStream] [idx : i64]) : i64
+(define (doc-next-code-token-index
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : i64
   (let
     [i : i64 idx]
     [keep : bool true]
     (begin
       (while keep
         (let
-          [tag : i64 (format-token-tag (format-token-at stream i))]
-          (if (= tag (fmt-tag-comment))
+          [tag : i64
+            (format_tokens.format-token-tag
+              (format_tokens.format-token-at stream i))]
+          (if (= tag (format_tokens.fmt-tag-comment))
             (set! i (+ i 1))
             (set! keep false))))
       i)))
 
-(define (doc-token-symbol? [stream : FormatTokenStream] [idx : i64]) : bool
-  (= (format-token-tag (format-token-at stream idx)) (fmt-tag-symbol)))
+(define (doc-token-symbol?
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : bool
+  (=
+    (format_tokens.format-token-tag (format_tokens.format-token-at stream idx))
+    (format_tokens.fmt-tag-symbol)))
 
-(define (doc-symbol-text [stream : FormatTokenStream] [idx : i64]) : String
-  (format-token-text (format-token-at stream idx)))
+(define (doc-symbol-text [stream : format_tokens.FormatTokenStream] [idx : i64]) : String
+  (format_tokens.format-token-text (format_tokens.format-token-at stream idx)))
 
-(define (doc-skip-delimited [stream : FormatTokenStream] [idx : i64]) : i64
+(define (doc-skip-delimited
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : i64
   (let
     [i : i64 idx]
     [depth : i64 0]
@@ -405,27 +427,40 @@
     (begin
       (while (not done)
         (let
-          [tag : i64 (format-token-tag (format-token-at stream i))]
+          [tag : i64
+            (format_tokens.format-token-tag
+              (format_tokens.format-token-at stream i))]
           (begin
             (cond
-              [(or (= tag (fmt-tag-lparen)) (= tag (fmt-tag-lbracket)))
+              [(or
+                  (= tag (format_tokens.fmt-tag-lparen))
+                  (= tag (format_tokens.fmt-tag-lbracket)))
                 (set! depth (+ depth 1))]
-              [(or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket)))
+              [(or
+                  (= tag (format_tokens.fmt-tag-rparen))
+                  (= tag (format_tokens.fmt-tag-rbracket)))
                 (begin
                   (set! depth (- depth 1))
                   (if (= depth 0)
                     (set! done true)
                     unit))]
-              [(= tag (fmt-tag-end)) (set! done true)]
+              [(= tag (format_tokens.fmt-tag-end)) (set! done true)]
               [else unit])
             (set! i (+ i 1)))))
       i)))
 
-(define (doc-generated-metadata-form? [stream : FormatTokenStream] [idx : i64]) : bool
-  (if (= (format-token-tag (format-token-at stream idx)) (fmt-tag-lparen))
+(define (doc-generated-metadata-form?
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : bool
+  (if (=
+    (format_tokens.format-token-tag (format_tokens.format-token-at stream idx))
+    (format_tokens.fmt-tag-lparen))
     (let
       [first : i64 (doc-next-code-token-index stream (+ idx 1))]
-      (if (= (format-token-tag (format-token-at stream first)) (fmt-tag-colon))
+      (if (=
+        (format_tokens.format-token-tag
+          (format_tokens.format-token-at stream first))
+        (format_tokens.fmt-tag-colon))
         (let
           [name-idx : i64 (doc-next-code-token-index stream (+ first 1))]
           (and
@@ -438,7 +473,7 @@
 
 (define (doc-info-after-name
   [kind : DocItemKind]
-  [stream : FormatTokenStream]
+  [stream : format_tokens.FormatTokenStream]
   [idx : i64]) : DocMaybeDeclInfo
   (let
     [name-idx : i64 (doc-next-code-token-index stream idx)]
@@ -446,29 +481,49 @@
       (DocDeclInfo kind (doc-symbol-text stream name-idx))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-info-after-define [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-define
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
-    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
+    (if (=
+      (format_tokens.format-token-tag
+        (format_tokens.format-token-at stream next))
+      (format_tokens.fmt-tag-lparen))
       (doc-info-after-name (DocItemKind.Function) stream (+ next 1))
       (doc-info-after-name (DocItemKind.Define) stream next))))
 
-(define (doc-info-after-extern [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-extern
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
-    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
+    (if (=
+      (format_tokens.format-token-tag
+        (format_tokens.format-token-at stream next))
+      (format_tokens.fmt-tag-lparen))
       (doc-info-after-name (DocItemKind.Extern) stream (+ next 1))
       (doc-info-after-name (DocItemKind.Extern) stream next))))
 
-(define (doc-info-after-defmacro [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-defmacro
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : DocMaybeDeclInfo
   (let
     [next : i64 (doc-next-code-token-index stream idx)]
-    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
+    (if (=
+      (format_tokens.format-token-tag
+        (format_tokens.format-token-at stream next))
+      (format_tokens.fmt-tag-lparen))
       (doc-info-after-name (DocItemKind.DefMacro) stream (+ next 1))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-decl-info-at-list [stream : FormatTokenStream] [open-idx : i64]) : DocMaybeDeclInfo
-  (if (= (format-token-tag (format-token-at stream open-idx)) (fmt-tag-lparen))
+(define (doc-decl-info-at-list
+  [stream : format_tokens.FormatTokenStream]
+  [open-idx : i64]) : DocMaybeDeclInfo
+  (if (=
+    (format_tokens.format-token-tag
+      (format_tokens.format-token-at stream open-idx))
+    (format_tokens.fmt-tag-lparen))
     (let
       [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
       (if (doc-token-symbol? stream head-idx)
@@ -492,7 +547,9 @@
         (DocMaybeDeclInfo.No)))
     (DocMaybeDeclInfo.No)))
 
-(define (doc-info-after-comptime-decl [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-comptime-decl
+  [stream : format_tokens.FormatTokenStream]
+  [idx : i64]) : DocMaybeDeclInfo
   (let
     [first : i64 (doc-next-code-token-index stream idx)]
     [payload : i64
@@ -503,7 +560,8 @@
 
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
   (let
-    [stream : FormatTokenStream (format-lex signature)]
+    [stream : format_tokens.FormatTokenStream
+      (format_tokens.format-lex signature)]
     [open-idx : i64 (doc-next-code-token-index stream 0)]
     (doc-decl-info-at-list stream open-idx)))
 

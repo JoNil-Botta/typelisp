@@ -1,10 +1,13 @@
 ;; doc_html.tl - Deterministic HTML renderer for extracted docs.
 ;;
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
-;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
+;; model as the Markdown renderer. Anchors intentionally reuse `doc_render.doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
+(module doc_html)
+
 (import stdlib.io)
-(import "doc_render.tl")
+(import doc_extract)
+(import doc_render)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -535,10 +538,11 @@
 (define (doc-html-code-block [source : String]) : String
   (doc-html-code-block-with-info "typelisp" "" source))
 
-(define (doc-html-item-nav-entry [item : DocItem]) : String
+(define (doc-html-item-nav-entry [item : doc_extract.DocItem]) : String
   (let
-    [name : String (doc-item-name item)]
-    [anchor : String (doc-render-anchor (doc-item-name item))]
+    [name : String (doc_extract.doc-item-name item)]
+    [anchor : String
+      (doc_render.doc-render-anchor (doc_extract.doc-item-name item))]
     (str_cat.str-cat
       "<li><a href=\"#"
       anchor
@@ -547,31 +551,35 @@
       "</code></a></li>\n")))
 
 (define (doc-html-item-nav-entries-from
-  [items : DocItemList]
+  [items : doc_extract.DocItemList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
     ""
     (string.append
-      (doc-html-item-nav-entry (doc-item-list-ref items index))
+      (doc-html-item-nav-entry (doc_extract.doc-item-list-ref items index))
       (doc-html-item-nav-entries-from items (+ index 1) count))))
 
-(define (doc-html-item-nav-entries [items : DocItemList]) : String
-  (doc-html-item-nav-entries-from items 0 (doc-item-list-count items)))
+(define (doc-html-item-nav-entries [items : doc_extract.DocItemList]) : String
+  (doc-html-item-nav-entries-from
+    items
+    0
+    (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-item-nav [items : DocItemList]) : String
-  (if (= (doc-item-list-count items) 0)
+(define (doc-html-item-nav [items : doc_extract.DocItemList]) : String
+  (if (= (doc_extract.doc-item-list-count items) 0)
     ""
     (str_cat.str-cat
       "<nav class=\"tl-doc-item-nav\" aria-label=\"Declarations\">\n<h3>Declarations</h3>\n<ul>\n"
       (doc-html-item-nav-entries items)
       "</ul>\n</nav>\n")))
 
-(define (doc-html-item [item : DocItem]) : String
+(define (doc-html-item [item : doc_extract.DocItem]) : String
   (let
-    [name : String (doc-item-name item)]
-    [anchor : String (doc-render-anchor (doc-item-name item))]
-    [kind : String (doc-kind-name (doc-item-kind item))]
+    [name : String (doc_extract.doc-item-name item)]
+    [anchor : String
+      (doc_render.doc-render-anchor (doc_extract.doc-item-name item))]
+    [kind : String (doc_extract.doc-kind-name (doc_extract.doc-item-kind item))]
     (str_cat.str-cat
       "<a id=\""
       anchor
@@ -582,35 +590,36 @@
       "</a></h3>\n<dl class=\"tl-doc-meta\"><dt>Kind</dt><dd>"
       (doc-html-escape kind)
       "</dd></dl>\n"
-      (doc-html-code-block (doc-item-signature item))
+      (doc-html-code-block (doc_extract.doc-item-signature item))
       (doc-html-doc-block
         "tl-doc-item-text"
-        (doc-item-doc item)
+        (doc_extract.doc-item-doc item)
         "No item docs.")
       "</section>\n")))
 
 (define (doc-html-item-list-from
-  [items : DocItemList]
+  [items : doc_extract.DocItemList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
     ""
     (string.append
-      (doc-html-item (doc-item-list-ref items index))
+      (doc-html-item (doc_extract.doc-item-list-ref items index))
       (doc-html-item-list-from items (+ index 1) count))))
 
-(define (doc-html-item-list [items : DocItemList]) : String
-  (doc-html-item-list-from items 0 (doc-item-list-count items)))
+(define (doc-html-item-list [items : doc_extract.DocItemList]) : String
+  (doc-html-item-list-from items 0 (doc_extract.doc-item-list-count items)))
 
-(define (doc-html-items [items : DocItemList]) : String
-  (if (= (doc-item-list-count items) 0)
+(define (doc-html-items [items : doc_extract.DocItemList]) : String
+  (if (= (doc_extract.doc-item-list-count items) 0)
     "<p class=\"tl-doc-empty\">No documented declarations.</p>\n"
     (doc-html-item-list items)))
 
-(define (doc-html-module-nav-entry [module : DocModule]) : String
+(define (doc-html-module-nav-entry [module : doc_render.DocModule]) : String
   (let
-    [path : String (doc-module-path module)]
-    [anchor : String (doc-render-anchor (doc-module-path module))]
+    [path : String (doc_render.doc-module-path module)]
+    [anchor : String
+      (doc_render.doc-render-anchor (doc_render.doc-module-path module))]
     (str_cat.str-cat
       "<li><a href=\"#"
       anchor
@@ -619,31 +628,35 @@
       "</a></li>\n")))
 
 (define (doc-html-module-nav-entries-from
-  [modules : DocModuleList]
+  [modules : doc_render.DocModuleList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
     ""
     (string.append
-      (doc-html-module-nav-entry (doc-module-list-ref modules index))
+      (doc-html-module-nav-entry (doc_render.doc-module-list-ref modules index))
       (doc-html-module-nav-entries-from modules (+ index 1) count))))
 
-(define (doc-html-module-nav-entries [modules : DocModuleList]) : String
-  (doc-html-module-nav-entries-from modules 0 (doc-module-list-count modules)))
+(define (doc-html-module-nav-entries [modules : doc_render.DocModuleList]) : String
+  (doc-html-module-nav-entries-from
+    modules
+    0
+    (doc_render.doc-module-list-count modules)))
 
-(define (doc-html-module-nav [modules : DocModuleList]) : String
-  (if (= (doc-module-list-count modules) 0)
+(define (doc-html-module-nav [modules : doc_render.DocModuleList]) : String
+  (if (= (doc_render.doc-module-list-count modules) 0)
     "<p class=\"tl-doc-empty\">No modules.</p>\n"
     (str_cat.str-cat
       "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">\n<h2>Modules</h2>\n<ul>\n"
       (doc-html-module-nav-entries modules)
       "</ul>\n</nav>\n")))
 
-(define (doc-html-module-section [module : DocModule]) : String
+(define (doc-html-module-section [module : doc_render.DocModule]) : String
   (let
-    [path : String (doc-module-path module)]
-    [docs : DocExtraction (doc-module-docs module)]
-    [anchor : String (doc-render-anchor (doc-module-path module))]
+    [path : String (doc_render.doc-module-path module)]
+    [docs : doc_extract.DocExtraction (doc_render.doc-module-docs module)]
+    [anchor : String
+      (doc_render.doc-render-anchor (doc_render.doc-module-path module))]
     (str_cat.str-cat
       "<section class=\"tl-doc-module\" id=\""
       anchor
@@ -656,40 +669,45 @@
       "</code></p>\n"
       (doc-html-doc-block
         "tl-doc-module-text"
-        (doc-extraction-module-doc docs)
+        (doc_extract.doc-extraction-module-doc docs)
         "No module docs.")
-      (doc-html-item-nav (doc-extraction-items docs))
-      (doc-html-items (doc-extraction-items docs))
+      (doc-html-item-nav (doc_extract.doc-extraction-items docs))
+      (doc-html-items (doc_extract.doc-extraction-items docs))
       "</section>\n")))
 
 (define (doc-html-module-sections-from
-  [modules : DocModuleList]
+  [modules : doc_render.DocModuleList]
   [index : i64]
   [count : i64]) : String
   (if (>= index count)
     ""
     (string.append
-      (doc-html-module-section (doc-module-list-ref modules index))
+      (doc-html-module-section (doc_render.doc-module-list-ref modules index))
       (doc-html-module-sections-from modules (+ index 1) count))))
 
-(define (doc-html-module-sections [modules : DocModuleList]) : String
-  (doc-html-module-sections-from modules 0 (doc-module-list-count modules)))
+(define (doc-html-module-sections [modules : doc_render.DocModuleList]) : String
+  (doc-html-module-sections-from
+    modules
+    0
+    (doc_render.doc-module-list-count modules)))
 
-(define (doc-html-render-module-page [path : String] [docs : DocExtraction]) : String
+(define (doc-html-render-module-page
+  [path : String]
+  [docs : doc_extract.DocExtraction]) : String
   (let
     [title : String (str_cat.str-cat "TypeLisp API: " path "")]
     (str_cat.str-cat
       (doc-html-page-open title)
       (doc-html-header "TypeLisp API" path)
       "<main>\n"
-      (doc-html-module-section (DocModule.Module path docs))
+      (doc-html-module-section (doc_render.DocModule.Module path docs))
       "</main>\n"
       (doc-html-page-close))))
 
 (define (doc-html-render-source [path : String] [source : String]) : String
-  (doc-html-render-module-page path (doc-extract-source source)))
+  (doc-html-render-module-page path (doc_extract.doc-extract-source source)))
 
-(define (doc-html-render-module-graph [modules : DocModuleList]) : String
+(define (doc-html-render-module-graph [modules : doc_render.DocModuleList]) : String
   (str_cat.str-cat
     (doc-html-page-open "TypeLisp API")
     (doc-html-header "TypeLisp API" "module index")
@@ -703,6 +721,6 @@
   [rendered : String]
   [needle : String]
   [message : String]) : bool
-  (if (doc-string-contains? rendered needle)
+  (if (doc_extract.doc-string-contains? rendered needle)
     true
     (io.panic message)))

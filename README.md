@@ -541,7 +541,7 @@ TypeLisp by [`tools/doc-site/doc_site.tl`](tools/doc-site/doc_site.tl) and
 published to GitHub Pages at <https://jonil-botta.github.io/typelisp/> on
 every push to `main`; pull requests build and validate it without
 publishing. Build locally with
-`typelisp run tools/doc-site/doc_site.tl -- target/site`, or run
+`typelisp run tools/doc-site/doc_site.tl --stdlib-root stdlib --stdlib-root src -- target/site`, or run
 `scripts/verify-doc-site.sh` to build and validate links the way CI does.
 
 ## Architecture

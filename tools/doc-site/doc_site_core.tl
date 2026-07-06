@@ -3,23 +3,27 @@
 ;; The TypeLisp site composition layer combines language guides and reusable API
 ;; trees. API pages still use the source/module documentation extractor and HTML
 ;; renderer without hard-coding TypeLisp guide-page knowledge into that path.
-(import "../../stdlib/io.tl")
-(import "../../src/doc_html.tl")
-(import "doc_md.tl")
-(import "../../stdlib/fs.tl")
-(import "../../stdlib/string.tl")
-(import "../../stdlib/str_cat.tl")
-(import "../../stdlib/vector.tl")
+(module doc_site_core)
+
+(import stdlib.io)
+(import stdlib.fs)
+(import stdlib.string)
+(import stdlib.str_cat)
+(import stdlib.vector)
+(import doc_extract)
+(import doc_render)
+(import doc_html)
+(import doc_md)
 
 (defenum DocSiteModule
   (Module String String))
 
-(family DocSiteModule DocSiteModuleList doc-site-module-list)
+(vector.family DocSiteModule DocSiteModuleList doc-site-module-list)
 
 (defenum DocSiteGuidePage
   (GuidePage String String String String))
 
-(family DocSiteGuidePage DocSiteGuidePageList doc-site-guide-page-list)
+(vector.family DocSiteGuidePage DocSiteGuidePageList doc-site-guide-page-list)
 
 (defenum DocSiteApiTree
   (ApiTree String String DocSiteModuleList))
@@ -28,7 +32,7 @@
   (Guide String DocSiteGuidePageList)
   (ApiTree DocSiteApiTree))
 
-(family DocSiteSection DocSiteSectionList doc-site-section-list)
+(vector.family DocSiteSection DocSiteSectionList doc-site-section-list)
 
 (define doc-site-status-ok : i64
   0)
@@ -226,7 +230,7 @@
     (begin
       (while (and (< i n) (not found))
         (begin
-          (if (eq
+          (if (string.eq
             output
             (doc-site-module-output (doc-site-module-list-ref modules i)))
             (set! found true)
@@ -236,11 +240,11 @@
 
 (define (doc-site-output-reserved? [output : String]) : bool
   (or
-    (eq output "index.html")
-    (eq output "readme.html")
-    (eq output "spec.html")
-    (eq output "stdlib.html")
-    (eq output "typelisp-docs.css")))
+    (string.eq output "index.html")
+    (string.eq output "readme.html")
+    (string.eq output "spec.html")
+    (string.eq output "stdlib.html")
+    (string.eq output "typelisp-docs.css")))
 
 (define (doc-site-output-list-has-duplicate? [modules : DocSiteModuleList]) : bool
   (let
@@ -265,10 +269,7 @@
   (= (doc-site-module-list-count modules) doc-site-stdlib-manifest-size))
 
 (define (doc-site-panic-unit [message : String]) : unit
-  (panic message))
-
-(define (doc-site-empty-docs) : DocExtraction
-  (DocExtraction.Extraction "" (doc-item-list-new)))
+  (io.panic message))
 
 (define (doc-site-validate-stdlib-manifest [modules : DocSiteModuleList]) : unit
   (if (not (doc-site-expected-manifest-size? modules))
@@ -278,35 +279,35 @@
       unit)))
 
 (define (doc-site-string-prefix? [text : String] [prefix : String]) : bool
-  (doc-string-prefix-at? text prefix 0))
+  (doc_extract.doc-string-prefix-at? text prefix 0))
 
 (define (doc-site-find-prefix [text : String] [prefix : String] [from : i64]) : i64
   (let
     [i : i64 from]
-    [n : i64 (string-length text)]
-    [found : i64 (string-length text)]
+    [n : i64 (string.string-length text)]
+    [found : i64 (string.string-length text)]
     (begin
       (while (and (< i n) (= found n))
         (begin
-          (if (doc-string-prefix-at? text prefix i)
+          (if (doc_extract.doc-string-prefix-at? text prefix i)
             (set! found i)
             unit)
           (set! i (+ i 1))))
       found)))
 
 (define (doc-site-href-anchor? [target : String]) : bool
-  (and (> (string-length target) 0) (= (string-ref target 0) '#')))
+  (and (> (string.string-length target) 0) (= (string.string-ref target 0) '#')))
 
 (define (doc-site-href-external? [target : String]) : bool
   (or
-    (doc-string-contains? target "://")
+    (doc_extract.doc-string-contains? target "://")
     (doc-site-string-prefix? target "mailto:")))
 
 (define (doc-site-href-file-like? [target : String]) : bool
-  (doc-string-contains? target "."))
+  (doc_extract.doc-string-contains? target "."))
 
 (define (doc-site-repo-source-url [target : String]) : String
-  (str-cat
+  (str_cat.str-cat
     (if (doc-site-href-file-like? target)
       doc-site-repo-blob-root
       doc-site-repo-tree-root)
@@ -321,11 +322,11 @@
     [n : i64 (doc-site-guide-page-list-count guides)]
     [output : String ""]
     (begin
-      (while (and (< i n) (= (string-length output) 0))
+      (while (and (< i n) (= (string.string-length output) 0))
         (let
           [guide : DocSiteGuidePage (doc-site-guide-page-list-ref guides i)]
           (begin
-            (if (eq target (doc-site-guide-source guide))
+            (if (string.eq target (doc-site-guide-source guide))
               (set! output (doc-site-guide-output guide))
               unit)
             (set! i (+ i 1)))))
@@ -339,11 +340,11 @@
     [n : i64 (doc-site-module-list-count modules)]
     [output : String ""]
     (begin
-      (while (and (< i n) (= (string-length output) 0))
+      (while (and (< i n) (= (string.string-length output) 0))
         (let
           [module : DocSiteModule (doc-site-module-list-ref modules i)]
           (begin
-            (if (eq target (doc-site-module-source module))
+            (if (string.eq target (doc-site-module-source module))
               (set! output (doc-site-module-output module))
               unit)
             (set! i (+ i 1)))))
@@ -368,7 +369,7 @@
     [n : i64 (doc-site-section-list-count sections)]
     [output : String ""]
     (begin
-      (while (and (< i n) (= (string-length output) 0))
+      (while (and (< i n) (= (string.string-length output) 0))
         (begin
           (set!
             output
@@ -388,7 +389,7 @@
       (let
         [site-target : String
           (doc-site-sections-output-for-source target sections)]
-        (if (> (string-length site-target) 0)
+        (if (> (string.string-length site-target) 0)
           site-target
           (doc-site-repo-source-url target))))))
 
@@ -397,7 +398,7 @@
   [html : String]) : String
   (let
     [cursor : i64 0]
-    [n : i64 (string-length html)]
+    [n : i64 (string.string-length html)]
     [out : String ""]
     (begin
       (while (< cursor n)
@@ -406,17 +407,20 @@
           (if (< href-start n)
             (let
               [target-start : i64 (+ href-start 6)]
-              [target-end : i64 (md-find-char html target-start '"')]
+              [target-end : i64 (doc_md.md-find-char html target-start '"')]
               (if (< target-end n)
                 (let
                   [target : String
-                    (substring html target-start (- target-end target-start))]
+                    (string.substring
+                      html
+                      target-start
+                      (- target-end target-start))]
                   (begin
                     (set!
                       out
-                      (str-cat
+                      (str_cat.str-cat
                         out
-                        (substring html cursor (- href-start cursor))
+                        (string.substring html cursor (- href-start cursor))
                         "href=\""
                         (doc-site-rewrite-language-link-target sections target)
                         "\""))
@@ -424,10 +428,18 @@
                 (begin
                   (set!
                     out
-                    (str-cat out (substring html cursor (- n cursor)) ""))
+                    (str_cat.str-cat
+                      out
+                      (string.substring html cursor (- n cursor))
+                      ""))
                   (set! cursor n))))
             (begin
-              (set! out (str-cat out (substring html cursor (- n cursor)) ""))
+              (set!
+                out
+                (str_cat.str-cat
+                  out
+                  (string.substring html cursor (- n cursor))
+                  ""))
               (set! cursor n)))))
       out)))
 
@@ -654,11 +666,11 @@ pre {
 }")
 
 (define (doc-site-index-module-entry [module : DocSiteModule]) : String
-  (str-cat
+  (str_cat.str-cat
     "<li><a href=\""
-    (doc-html-escape (doc-site-module-output module))
+    (doc_html.doc-html-escape (doc-site-module-output module))
     "\"><code>"
-    (doc-html-escape (doc-site-module-source module))
+    (doc_html.doc-html-escape (doc-site-module-source module))
     "</code></a></li>\n"))
 
 (define (doc-site-index-module-entries [modules : DocSiteModuleList]) : String
@@ -671,7 +683,7 @@ pre {
         (begin
           (set!
             out
-            (str-cat
+            (str_cat.str-cat
               out
               (doc-site-index-module-entry (doc-site-module-list-ref modules i))
               ""))
@@ -679,11 +691,11 @@ pre {
       out)))
 
 (define (doc-site-index-guide-entry [guide : DocSiteGuidePage]) : String
-  (str-cat
+  (str_cat.str-cat
     "<li><a href=\""
-    (doc-html-escape (doc-site-guide-output guide))
+    (doc_html.doc-html-escape (doc-site-guide-output guide))
     "\">"
-    (doc-html-escape (doc-site-guide-label guide))
+    (doc_html.doc-html-escape (doc-site-guide-label guide))
     "</a></li>\n"))
 
 (define (doc-site-index-guide-entries [guides : DocSiteGuidePageList]) : String
@@ -696,7 +708,7 @@ pre {
         (begin
           (set!
             out
-            (str-cat
+            (str_cat.str-cat
               out
               (doc-site-index-guide-entry
                 (doc-site-guide-page-list-ref guides i))
@@ -707,11 +719,11 @@ pre {
 (define (doc-site-render-guide-index-section
   [title : String]
   [guides : DocSiteGuidePageList]) : String
-  (str-cat
+  (str_cat.str-cat
     "<nav class=\"tl-doc-site-nav\" aria-label=\""
-    (doc-html-escape title)
+    (doc_html.doc-html-escape title)
     "\">\n<h2>"
-    (doc-html-escape title)
+    (doc_html.doc-html-escape title)
     "</h2>\n<ul>\n"
     (doc-site-index-guide-entries guides)
     "</ul>\n</nav>\n"))
@@ -719,11 +731,11 @@ pre {
 (define (doc-site-render-api-index-section [tree : DocSiteApiTree]) : String
   (let
     [root : String (doc-site-api-tree-root tree)]
-    (str-cat
+    (str_cat.str-cat
       "<nav class=\"tl-doc-site-nav\" aria-label=\""
-      (doc-html-escape root)
+      (doc_html.doc-html-escape root)
       " API\">\n<h2>"
-      (doc-html-escape root)
+      (doc_html.doc-html-escape root)
       "</h2>\n<ul>\n"
       (doc-site-index-module-entries (doc-site-api-tree-modules tree))
       "</ul>\n</nav>\n")))
@@ -744,7 +756,7 @@ pre {
         (begin
           (set!
             out
-            (str-cat
+            (str_cat.str-cat
               out
               (doc-site-render-index-section
                 (doc-site-section-list-ref sections i))
@@ -756,59 +768,59 @@ pre {
   (let
     [source : String (doc-site-module-source module)]
     [i : i64 0]
-    [n : i64 (string-length source)]
+    [n : i64 (string.string-length source)]
     [start : i64 0]
-    [end : i64 (string-length source)]
+    [end : i64 (string.string-length source)]
     (begin
       (while (< i n)
         (begin
-          (if (path-separator? (string-ref source i))
+          (if (fs.path-separator? (string.string-ref source i))
             (begin
               (set! start (+ i 1))
               (set! end n))
             unit)
-          (if (= (string-ref source i) '.')
+          (if (= (string.string-ref source i) '.')
             (set! end i)
             unit)
           (set! i (+ i 1))))
-      (substring source start (- end start)))))
+      (string.substring source start (- end start)))))
 
 (define (doc-site-sidebar-link-open [href : String] [current : String]) : String
-  (if (eq href current)
-    (str-cat
+  (if (string.eq href current)
+    (str_cat.str-cat
       "<a class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\""
-      (doc-html-escape href)
+      (doc_html.doc-html-escape href)
       "\">")
-    (str-cat
+    (str_cat.str-cat
       "<a class=\"tl-doc-tree-link\" href=\""
-      (doc-html-escape href)
+      (doc_html.doc-html-escape href)
       "\">")))
 
 (define (doc-site-sidebar-root-link
   [href : String]
   [label : String]
   [current : String]) : String
-  (if (eq href current)
-    (str-cat
+  (if (string.eq href current)
+    (str_cat.str-cat
       "<a class=\"tl-doc-tree-root is-current\" aria-current=\"page\" href=\""
-      (doc-html-escape href)
+      (doc_html.doc-html-escape href)
       "\">"
-      (doc-html-escape label)
+      (doc_html.doc-html-escape label)
       "</a>\n")
-    (str-cat
+    (str_cat.str-cat
       "<a class=\"tl-doc-tree-root\" href=\""
-      (doc-html-escape href)
+      (doc_html.doc-html-escape href)
       "\">"
-      (doc-html-escape label)
+      (doc_html.doc-html-escape label)
       "</a>\n")))
 
 (define (doc-site-sidebar-guide-entry
   [guide : DocSiteGuidePage]
   [current : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<li>"
     (doc-site-sidebar-link-open (doc-site-guide-output guide) current)
-    (doc-html-escape (doc-site-guide-label guide))
+    (doc_html.doc-html-escape (doc-site-guide-label guide))
     "</a></li>\n"
     ""))
 
@@ -824,7 +836,7 @@ pre {
         (begin
           (set!
             out
-            (str-cat
+            (str_cat.str-cat
               out
               (doc-site-sidebar-guide-entry
                 (doc-site-guide-page-list-ref guides i)
@@ -836,11 +848,11 @@ pre {
 (define (doc-site-sidebar-module-entry
   [module : DocSiteModule]
   [current : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<li>"
     (doc-site-sidebar-link-open (doc-site-module-output module) current)
     "<code>"
-    (doc-html-escape (doc-site-module-label module))
+    (doc_html.doc-html-escape (doc-site-module-label module))
     "</code></a></li>\n"))
 
 (define (doc-site-sidebar-module-entries
@@ -855,7 +867,7 @@ pre {
         (begin
           (set!
             out
-            (str-cat
+            (str_cat.str-cat
               out
               (doc-site-sidebar-module-entry
                 (doc-site-module-list-ref modules i)
@@ -868,15 +880,15 @@ pre {
   [title : String]
   [guides : DocSiteGuidePageList]
   [current : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<li><span class=\"tl-doc-tree-root\">"
-    (doc-html-escape title)
+    (doc_html.doc-html-escape title)
     "</span>\n<ul>\n"
     (doc-site-sidebar-guide-entries guides current)
     "</ul>\n</li>\n"))
 
 (define (doc-site-sidebar-api-tree [tree : DocSiteApiTree] [current : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<li>"
     (doc-site-sidebar-root-link
       (doc-site-api-tree-output tree)
@@ -904,7 +916,7 @@ pre {
         (begin
           (set!
             out
-            (str-cat
+            (str_cat.str-cat
               out
               (doc-site-sidebar-section
                 (doc-site-section-list-ref sections i)
@@ -914,7 +926,7 @@ pre {
       out)))
 
 (define (doc-site-sidebar [sections : DocSiteSectionList] [current : String]) : String
-  (str-cat
+  (str_cat.str-cat
     "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Documentation tree\">\n<ul class=\"tl-doc-stdlib-tree\">\n"
     (doc-site-sidebar-sections sections current)
     "</ul>\n</nav>\n"
@@ -927,15 +939,15 @@ pre {
   [sections : DocSiteSectionList]
   [current : String]
   [body : String]) : String
-  (str-cat
-    (doc-html-page-open title)
-    (doc-html-header "TypeLisp Docs" subtitle)
+  (str_cat.str-cat
+    (doc_html.doc-html-page-open title)
+    (doc_html.doc-html-header "TypeLisp Docs" subtitle)
     "<div class=\"tl-doc-shell\">\n"
     (doc-site-sidebar sections current)
     "<main class=\"tl-doc-content\">\n"
     body
     "</main>\n</div>\n"
-    (doc-html-page-close)))
+    (doc_html.doc-html-page-close)))
 
 (define (doc-site-render-index
   [sections : DocSiteSectionList]
@@ -956,16 +968,18 @@ pre {
     (doc-site-guide-source guide)
     sections
     (doc-site-guide-output guide)
-    (str-cat
+    (str_cat.str-cat
       "<article class=\"tl-doc-language\">\n"
-      (doc-site-rewrite-language-links sections (md-render-html markdown))
+      (doc-site-rewrite-language-links
+        sections
+        (doc_md.md-render-html markdown))
       "</article>\n")))
 
 (define (doc-site-render-api-tree-index
   [sections : DocSiteSectionList]
   [tree : DocSiteApiTree]) : String
   (doc-site-render-page
-    (str-cat "TypeLisp API: " (doc-site-api-tree-root tree) "")
+    (str_cat.str-cat "TypeLisp API: " (doc-site-api-tree-root tree) "")
     (doc-site-api-tree-root tree)
     sections
     (doc-site-api-tree-output tree)
@@ -974,49 +988,50 @@ pre {
 (define (doc-site-render-module-page
   [sections : DocSiteSectionList]
   [module : DocSiteModule]
-  [docs : DocExtraction]) : String
+  [docs : doc_extract.DocExtraction]) : String
   (let
     [source : String (doc-site-module-source module)]
-    [title : String (str-cat "TypeLisp API: " source "")]
+    [title : String (str_cat.str-cat "TypeLisp API: " source "")]
     (doc-site-render-page
       title
       source
       sections
       (doc-site-module-output module)
-      (doc-html-module-section (DocModule.Module source docs)))))
+      (doc_html.doc-html-module-section
+        (doc_render.DocModule.Module source docs)))))
 
-(define (doc-site-read-module-docs [source : String]) : DocExtraction
+(define (doc-site-read-module-docs [source : String]) : doc_extract.DocExtraction
   (let
-    [status : i64 (read-file-status source)]
+    [status : i64 (io.read-file-status source)]
     (if (= status doc-site-status-ok)
-      (doc-extract-source (read-file source))
-      (panic (append "doc-site: missing input module: " source)))))
+      (doc_extract.doc-extract-source (io.read-file source))
+      (io.panic (string.append "doc-site: missing input module: " source)))))
 
 (define (doc-site-read-markdown [source : String]) : String
   (let
-    [status : i64 (read-file-status source)]
+    [status : i64 (io.read-file-status source)]
     (if (= status doc-site-status-ok)
-      (read-file source)
-      (panic (append "doc-site: missing language reference: " source)))))
+      (io.read-file source)
+      (io.panic (string.append "doc-site: missing language reference: " source)))))
 
 (define (doc-site-write-file [path : String] [contents : String]) : unit
   (let
-    [status : i64 (write-file-status path contents)]
+    [status : i64 (io.write-file-status path contents)]
     (if (= status doc-site-status-ok)
       unit
-      (doc-site-panic-unit (append "doc-site: could not write: " path)))))
+      (doc-site-panic-unit (string.append "doc-site: could not write: " path)))))
 
 (define (doc-site-ensure-dir [path : String]) : unit
-  (if (= (string-length path) 0)
+  (if (= (string.string-length path) 0)
     (doc-site-panic-unit "doc-site: empty output directory")
-    (match (try-mkdir-if-missing (& path))
-      [(OkIoUnit) unit]
-      [(ErrIoUnit _)
+    (match (fs.try-mkdir-if-missing (& path))
+      [(io.OkIoUnit) unit]
+      [(io.ErrIoUnit _)
         (doc-site-panic-unit
-          (append "doc-site: could not create output directory: " path))])))
+          (string.append "doc-site: could not create output directory: " path))])))
 
 (define (doc-site-path-join [left : String] [right : String]) : String
-  (path-join (& left) (& right)))
+  (fs.path-join (& left) (& right)))
 
 (define (doc-site-write-module-page
   [output-dir : String]
@@ -1026,7 +1041,7 @@ pre {
     [source : String (doc-site-module-source module)]
     [output : String
       (doc-site-path-join output-dir (doc-site-module-output module))]
-    [docs : DocExtraction (doc-site-read-module-docs source)]
+    [docs : doc_extract.DocExtraction (doc-site-read-module-docs source)]
     (doc-site-write-file
       output
       (doc-site-render-module-page sections module docs))))
@@ -1196,7 +1211,7 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
 (define (doc-site-require [ok : bool] [message : String]) : bool
   (if ok
     true
-    (panic message)))
+    (io.panic message)))
 
 (define (doc-site-smoke) : i64
   (let
@@ -1206,12 +1221,12 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
       (doc-site-render-module-page
         sections
         (DocSiteModule.Module "stdlib/smoke<&>.tl" "stdlib-smoke.html")
-        (doc-extract-source (doc-site-smoke-source)))]
+        (doc_extract.doc-extract-source (doc-site-smoke-source)))]
     [second-page : String
       (doc-site-render-module-page
         sections
         (DocSiteModule.Module "stdlib/second.tl" "stdlib-second.html")
-        (doc-extract-source (doc-site-second-smoke-source)))]
+        (doc_extract.doc-extract-source (doc-site-second-smoke-source)))]
     [language-page : String
       (doc-site-render-guide-page
         sections
@@ -1222,115 +1237,115 @@ See [the spec](SPEC.md), [the second module](stdlib/second.tl), and [the builder
           "Overview")
         (doc-site-language-smoke-source))]
     (begin
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "<nav class=\"tl-doc-site-nav\" aria-label=\"stdlib API\">"
         "doc-site: site nav missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "<nav class=\"tl-doc-site-nav\" aria-label=\"Language\">"
         "doc-site: language nav missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "href=\"readme.html\""
         "doc-site: readme link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "href=\"spec.html\""
         "doc-site: spec link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "<nav class=\"tl-doc-stdlib-sidebar\" aria-label=\"Documentation tree\">"
         "doc-site: sidebar missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "href=\"stdlib.html\">stdlib</a>"
         "doc-site: sidebar root missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "href=\"stdlib-smoke.html\""
         "doc-site: module link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "<code>second</code>"
         "doc-site: sidebar module label missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         index
         "stdlib/smoke&lt;&amp;&gt;.tl"
         "doc-site: index escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "<title>TypeLisp API: stdlib/smoke&lt;&amp;&gt;.tl</title>"
         "doc-site: module title missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"stdlib-smoke.html\""
         "doc-site: current sidebar link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "<code>smoke&lt;&amp;&gt;</code>"
         "doc-site: sidebar current label escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "id=\"tl-stdlib-47smoke-60-38-62-46tl\""
         "doc-site: module anchor missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "Smoke module docs mention &lt;api&gt;, &amp; value, and &quot;quote&quot;."
         "doc-site: module docs escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "href=\"#tl-doc-site-smoke-value\""
         "doc-site: item anchor link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         second-page
         "Second smoke module docs."
         "doc-site: second page missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         second-page
         "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"stdlib-second.html\""
         "doc-site: second current sidebar link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "<title>TypeLisp Overview</title>"
         "doc-site: language page title missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "class=\"tl-doc-tree-link is-current\" aria-current=\"page\" href=\"readme.html\""
         "doc-site: language current sidebar link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "<h1 id=\"tl-Language-32Reference\">Language Reference</h1>"
         "doc-site: language heading anchor missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "href=\"spec.html\""
         "doc-site: language spec link rewrite missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "href=\"stdlib-second.html\""
         "doc-site: language api link rewrite missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "href=\"https://github.com/JoNil-Botta/typelisp/blob/main/tools/doc-site/doc_site.tl\""
         "doc-site: language repo link rewrite missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         language-page
         "<pre><code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)"
         "doc-site: language code fence missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         (doc-site-css)
         ".tl-syn-keyword"
         "doc-site: syntax css marker missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         (doc-site-css)
         "color-scheme: dark;"
         "doc-site: dark color-scheme marker missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         (doc-site-css)
         "background: #0b1120;"
         "doc-site: dark page background missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         (doc-site-css)
         "background: #164e63;"
         "doc-site: dark current-nav background missing")

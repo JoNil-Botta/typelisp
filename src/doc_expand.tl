@@ -3,7 +3,9 @@
 (import stdlib.string)
 (import sym_i64_env)
 (import stdlib.vector as svec)
+(import "doc_extract.tl")
 (import "doc_render.tl")
+(import "doc_html.tl")
 (import "compiler_load.tl")
 (import "compiler_typecheck.tl")
 
@@ -1229,6 +1231,23 @@
     source-path
     docs
     (svec.string-vec-new)))
+
+(define (doc-expanded-generated-sections-from-file-default [source : String]) : String
+  (let
+    [docs : DocExtraction (doc-extract-file source)]
+    (match (doc-expanded-generated-modules-from-source-docs-default source docs)
+      [(ResultDocExpandedModules.Ok modules)
+        (if (= (doc-module-list-count modules) 0)
+          ""
+          (doc-html-module-sections modules))]
+      [(ResultDocExpandedModules.Err message)
+        (io.panic
+          (string.concat5
+            "doc-site-expand: generated docs expansion failed for "
+            source
+            ": "
+            message
+            ""))])))
 
 (define (doc-expand-smoke-source) : String
   "(module doc.generated.fixture)

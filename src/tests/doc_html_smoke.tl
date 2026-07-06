@@ -1,5 +1,7 @@
 ;; doc_html_smoke.tl - Runnable golden smoke for doc_html.tl.
-(import "../doc_html.tl")
+(import doc_extract)
+(import doc_render)
+(import doc_html)
 (import stdlib.str_cat_runtime as str_cat)
 
 (define (doc-html-smoke-source) : String
@@ -19,77 +21,80 @@
 (define hidden : i64 1)")
 
 (define (doc-html-smoke-modules
-  [docs : DocExtraction]
-  [second-docs : DocExtraction]) : DocModuleList
+  [docs : doc_extract.DocExtraction]
+  [second-docs : doc_extract.DocExtraction]) : doc_render.DocModuleList
   (let
-    [modules : DocModuleList (doc-module-list-with-capacity 2)]
+    [modules : doc_render.DocModuleList
+      (doc_render.doc-module-list-with-capacity 2)]
     (begin
-      (doc-module-list-push
+      (doc_render.doc-module-list-push
         (&mut modules)
-        (DocModule.Module "smoke<&>.tl" docs))
-      (doc-module-list-push
+        (doc_render.DocModule.Module "smoke<&>.tl" docs))
+      (doc_render.doc-module-list-push
         (&mut modules)
-        (DocModule.Module "second.tl" second-docs))
+        (doc_render.DocModule.Module "second.tl" second-docs))
       modules)))
 
 (define (doc-html-smoke) : i64
   (let
-    [docs : DocExtraction (doc-extract-source (doc-html-smoke-source))]
-    [second-docs : DocExtraction
-      (doc-extract-source (doc-html-second-smoke-source))]
-    [page : String (doc-html-render-module-page "smoke<&>.tl" docs)]
+    [docs : doc_extract.DocExtraction
+      (doc_extract.doc-extract-source (doc-html-smoke-source))]
+    [second-docs : doc_extract.DocExtraction
+      (doc_extract.doc-extract-source (doc-html-second-smoke-source))]
+    [page : String (doc_html.doc-html-render-module-page "smoke<&>.tl" docs)]
     [graph : String
-      (doc-html-render-module-graph (doc-html-smoke-modules docs second-docs))]
+      (doc_html.doc-html-render-module-graph
+        (doc-html-smoke-modules docs second-docs))]
     (if (and
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "<!doctype html>"
         "doc-html: doctype missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "<title>TypeLisp API: smoke&lt;&amp;&gt;.tl</title>"
         "doc-html: title escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "id=\"tl-smoke-60-38-62-46tl\""
         "doc-html: module anchor missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "Module docs with `code`, [links], &lt;tag&gt;, &amp; amp.<br>"
         "doc-html: module doc escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "Quote docs say &quot;hello&quot;."
         "doc-html: quote escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "id=\"tl-answer\""
         "doc-html: item anchor missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "<code class=\"language-typelisp\">(<span class=\"tl-syn-keyword\">define</span> <span class=\"tl-syn-definition\">answer</span> : <span class=\"tl-syn-type\">i64</span> <span class=\"tl-syn-number\">42</span>)</code>"
         "doc-html: signature code block missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "Global docs for answer mention &lt;answer&gt;, &amp; value, and &quot;quote&quot;."
         "doc-html: item doc escaping missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         page
         "href=\"#tl-add-one\""
         "doc-html: item nav link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         graph
         "<nav class=\"tl-doc-module-nav\" aria-label=\"Modules\">"
         "doc-html: module nav missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         graph
         "href=\"#tl-second-46tl\""
         "doc-html: second module nav link missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         graph
         "Second module docs."
         "doc-html: second module docs missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         graph
         "No documented declarations."
         "doc-html: empty item message missing"))
@@ -118,88 +123,93 @@
 
 (define (doc-html-syntax-smoke) : bool
   (let
-    [html : String (doc-html-code-block (doc-html-syntax-smoke-source))]
-    [tl-html : String (doc-html-code-block-with-info "tl" "" "(if true 1 0)\n")]
+    [html : String
+      (doc_html.doc-html-code-block (doc-html-syntax-smoke-source))]
+    [tl-html : String
+      (doc_html.doc-html-code-block-with-info "tl" "" "(if true 1 0)\n")]
     [plain-html : String
-      (doc-html-code-block-with-info "text" "m<>&" "(define x : i64 1)\n")]
+      (doc_html.doc-html-code-block-with-info
+        "text"
+        "m<>&"
+        "(define x : i64 1)\n")]
     (and
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-doc-comment\">;# docs &lt;tag&gt; &amp;</span>"
         "doc-html: documentation comment highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-comment\">; ordinary comment</span>"
         "doc-html: ordinary comment highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-keyword\">define</span> (<span class=\"tl-syn-definition\">add-one</span>"
         "doc-html: keyword or definition-name highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "[<span class=\"tl-syn-binding\">x</span> : <span class=\"tl-syn-type\">i64</span>]"
         "doc-html: binding or primitive type highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-boolean\">true</span>"
         "doc-html: boolean highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-string\">'\\n'</span>"
         "doc-html: escaped char literal highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-string\">'a'</span>"
         "doc-html: char literal highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-string\">&quot;a<span class=\"tl-syn-escape\">\\n</span>&lt;&gt;&amp;&quot;</span>"
         "doc-html: string or escape highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-number\">0x2a</span>"
         "doc-html: hex number highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-number\">0b1010</span>"
         "doc-html: binary number highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-number\">-1.25e+3</span>"
         "doc-html: float number highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "<span class=\"tl-syn-number\">-42</span>"
         "doc-html: integer number highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-builtin\">ptr-null</span>)"
         "doc-html: builtin highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-operator\">+</span> n <span class=\"tl-syn-number\">1</span>)"
         "doc-html: arithmetic operator highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-operator\">&amp;</span> ptr)"
         "doc-html: reference operator highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-type\">Ptr</span> <span class=\"tl-syn-type\">Point</span>)"
         "doc-html: constructor or user type highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-call\">custom-call</span> <span class=\"tl-syn-type\">Point</span> text)"
         "doc-html: function-call highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         html
         "(<span class=\"tl-syn-keyword\">defstruct</span> <span class=\"tl-syn-definition\">Point</span>"
         "doc-html: type definition highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         tl-html
         "<code class=\"language-tl\">(<span class=\"tl-syn-keyword\">if</span> <span class=\"tl-syn-boolean\">true</span>"
         "doc-html: tl language alias highlighting missing")
-      (doc-html-require-contains
+      (doc_html.doc-html-require-contains
         plain-html
         "<pre><code class=\"language-text\" data-meta=\"m&lt;&gt;&amp;\">(define x : i64 1)\n</code></pre>\n"
         "doc-html: non-TypeLisp code fence behavior changed"))))

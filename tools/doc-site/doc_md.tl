@@ -9,8 +9,11 @@
 ;; never dropped.
 ;;
 ;; Reuses `doc-html-escape` (entity escaping for & < > ") from doc_html.tl and
-;; `doc-render-anchor` from doc_render.tl via doc_html.tl.
-(import "../../src/doc_html.tl")
+;; `doc-render-anchor` from doc_render.tl.
+(module doc_md)
+
+(import doc_html)
+(import doc_render)
 (import stdlib.string)
 (import stdlib.vector)
 (import stdlib.str_cat_runtime as str_cat)
@@ -726,7 +729,7 @@
 
 ;: HTML-escape the single character at `idx` (reuses the doc_html entity escaper).
 (define (md-escape-char [text : String] [idx : i64]) : String
-  (doc-html-escape (string.substring (& text) idx 1)))
+  (doc_html.doc-html-escape (string.substring (& text) idx 1)))
 
 ;: Render a well-formed `[label](url)` link given the `[` at `lbracket`, the `]`
 ;: at `jclose`, and the `)` at `kclose`. Label and URL are HTML-escaped.
@@ -737,10 +740,10 @@
   [kclose : i64]) : String
   (let
     [label : String
-      (doc-html-escape
+      (doc_html.doc-html-escape
         (string.substring (& text) (+ lbracket 1) (- jclose (+ lbracket 1))))]
     [url : String
-      (doc-html-escape
+      (doc_html.doc-html-escape
         (string.substring (& text) (+ jclose 2) (- kclose (+ jclose 2))))]
     (str_cat.str-cat "<a href=\"" url "\">" label "</a>")))
 
@@ -766,7 +769,7 @@
                       (str_cat.str-cat
                         out
                         "<code>"
-                        (doc-html-escape
+                        (doc_html.doc-html-escape
                           (string.substring (& text) (+ i 1) (- j (+ i 1))))
                         "</code>"))
                     (set! i (+ j 1)))
@@ -783,7 +786,7 @@
                       (str_cat.str-cat
                         out
                         "<em>"
-                        (doc-html-escape
+                        (doc_html.doc-html-escape
                           (string.substring (& text) (+ i 1) (- j (+ i 1))))
                         "</em>"))
                     (set! i (+ j 1)))
@@ -833,12 +836,12 @@
 (define (md-render-heading [level : i64] [text : String]) : String
   (let
     [level-text : String (string.int->string level)]
-    [anchor : String (doc-render-anchor text)]
+    [anchor : String (doc_render.doc-render-anchor text)]
     (str_cat.str-cat
       "<h"
       level-text
       " id=\""
-      (doc-html-escape anchor)
+      (doc_html.doc-html-escape anchor)
       "\">"
       (md-render-inline text)
       "</h"
@@ -890,7 +893,7 @@
   (str_cat.str-cat "<ol>\n" (md-render-list-items items) "</ol>\n"))
 
 (define (md-render-code-fence [lang : String] [meta : String] [body : String]) : String
-  (doc-html-code-block-with-info lang meta body))
+  (doc_html.doc-html-code-block-with-info lang meta body))
 
 (define (md-render-table-header-cells-from [cells : svec.Vec] [index : i64]) : String
   (if (>= index (svec.len (& cells)))
@@ -1007,7 +1010,7 @@
           html
           (str_cat.str-cat
             "<h1 id=\""
-            (doc-render-anchor "Title `x`")
+            (doc_render.doc-render-anchor "Title `x`")
             "\">Title <code>x</code></h1>\n"
             ""
             ""))

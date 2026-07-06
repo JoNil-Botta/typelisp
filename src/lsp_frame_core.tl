@@ -5181,14 +5181,14 @@
                       (match (fs.try-read-dir-vec (& path))
                         [(fs.OkIoStringVector entries)
                           (let
-                            [n : i64 (fs.fs-string-vector-len (& entries))]
+                            [n : i64 (fs.string-vector-len (& entries))]
                             [i : i64 0]
                             [results : json.JsonList json.JsonListNil]
                             (begin
                               (while (< i n)
                                 (let
                                   [entry : String
-                                    (fs.fs-string-vector-get (& entries) i "")]
+                                    (fs.string-vector-get (& entries) i "")]
                                   (begin
                                     (if (lsp-tl-source-file-name? entry)
                                       (let

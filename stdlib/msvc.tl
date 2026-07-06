@@ -523,12 +523,12 @@
   [best-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeToolset
-  (if (>= index (fs.fs-string-vector-len (& entries)))
+  (if (>= index (fs.string-vector-len (& entries)))
     (if has-best
       (MsvcSomeToolset (MsvcToolset best-root best-version))
       (MsvcNoToolset))
     (let
-      [version : String (fs.fs-string-vector-get (& entries) index "")]
+      [version : String (fs.string-vector-get (& entries) index "")]
       [toolset-root : String (path-join parent version)]
       [tool-path : String (toolset-tool-path toolset-root tool)]
       [usable : bool (path-exists-owned? tool-path)]
@@ -677,12 +677,12 @@
   [sdk-root : String]
   [best-version : String]
   [has-best : bool]) : MsvcMaybeSdk
-  (if (>= index (fs.fs-string-vector-len (& entries)))
+  (if (>= index (fs.string-vector-len (& entries)))
     (if has-best
       (MsvcSomeSdk (MsvcSdk sdk-root best-version))
       (MsvcNoSdk))
     (let
-      [version : String (fs.fs-string-vector-get (& entries) index "")]
+      [version : String (fs.string-vector-get (& entries) index "")]
       [usable : bool (sdk-version-usable? sdk-root version)]
       (if (if usable
         (if has-best
@@ -1009,9 +1009,9 @@
       (match (fs.try-read-dir-vec (& toolset-parent))
         [(fs.OkIoStringVector entries)
           (begin
-            (test-assert (fs.fs-string-vector-contains? (& entries) "14.10.0"))
-            (test-assert (fs.fs-string-vector-contains? (& entries) "14.20.0"))
-            (test-assert (fs.fs-string-vector-contains? (& entries) "14.99.0")))]
+            (test-assert (fs.string-vector-contains? (& entries) "14.10.0"))
+            (test-assert (fs.string-vector-contains? (& entries) "14.20.0"))
+            (test-assert (fs.string-vector-contains? (& entries) "14.99.0")))]
         [(fs.ErrIoStringVector _) (test-fail)]))))
 
 ;: Inline test: scan already-read fake toolset entries.

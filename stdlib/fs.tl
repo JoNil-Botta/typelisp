@@ -35,11 +35,11 @@
   (items svec.Vec))
 
 ;: Create an empty filesystem string vector backed by a generated string vector.
-(define (fs-string-vector-new) : FsStringVector
+(define (string-vector-new) : FsStringVector
   (FsStringVector (svec.new)))
 
 ;: Append a string to a filesystem string vector in place.
-(define (fs-string-vector-push!
+(define (string-vector-push!
   [items : (&mut items FsStringVector)]
   [value : String]) : unit
   (svec.push (&mut (struct-get items items)) value))
@@ -50,18 +50,18 @@
   (ErrIoStringVector io.IoError))
 
 ;: Return the number of strings in a filesystem string vector.
-(define (fs-string-vector-len [items : (& items FsStringVector)]) : i64
+(define (string-vector-len [items : (& items FsStringVector)]) : i64
   (svec.len (& (struct-get items items))))
 
 ;: Return the string at `index`, or `fallback` when out of bounds.
-(define (fs-string-vector-get
+(define (string-vector-get
   [items : (& items FsStringVector)]
   [index : i64]
   [fallback : String]) : String
   (svec.get (& (struct-get items items)) index fallback))
 
 ;: Return true when a filesystem string vector contains `needle`.
-(define (fs-string-vector-contains?
+(define (string-vector-contains?
   [items : (& items FsStringVector)]
   [needle : String]) : bool
   (svec.contains? (& (struct-get items items)) needle))
@@ -2133,20 +2133,17 @@
     [third : String]
     [message : String]) : unit
     (begin
-      (fs-test-assert-i64-eq
-        (stdlib.fs.fs-string-vector-len (& items))
-        3
-        message)
+      (fs-test-assert-i64-eq (stdlib.fs.string-vector-len (& items)) 3 message)
       (fs-test-assert-owned-string-eq
-        (stdlib.fs.fs-string-vector-get (& items) 0 "missing")
+        (stdlib.fs.string-vector-get (& items) 0 "missing")
         first
         message)
       (fs-test-assert-owned-string-eq
-        (stdlib.fs.fs-string-vector-get (& items) 1 "missing")
+        (stdlib.fs.string-vector-get (& items) 1 "missing")
         second
         message)
       (fs-test-assert-owned-string-eq
-        (stdlib.fs.fs-string-vector-get (& items) 2 "missing")
+        (stdlib.fs.string-vector-get (& items) 2 "missing")
         third
         message))))
 
@@ -2335,36 +2332,36 @@
               "read dir vec: ")]
           (begin
             (fs-test-assert-true
-              (stdlib.fs.fs-string-vector-contains? (& entries) "alpha.txt")
+              (stdlib.fs.string-vector-contains? (& entries) "alpha.txt")
               "read-dir includes first file name")
             (fs-test-assert-true
-              (stdlib.fs.fs-string-vector-contains? (& entries) "beta data.txt")
+              (stdlib.fs.string-vector-contains? (& entries) "beta data.txt")
               "read-dir includes second file name")
             (fs-test-assert-true
-              (stdlib.fs.fs-string-vector-contains? (& entries) "child-dir")
+              (stdlib.fs.string-vector-contains? (& entries) "child-dir")
               "read-dir includes subdirectory name")
             (fs-test-assert-false
-              (stdlib.fs.fs-string-vector-contains? (& entries) ".")
+              (stdlib.fs.string-vector-contains? (& entries) ".")
               "read-dir filters dot")
             (fs-test-assert-false
-              (stdlib.fs.fs-string-vector-contains? (& entries) "..")
+              (stdlib.fs.string-vector-contains? (& entries) "..")
               "read-dir filters dotdot")
             (fs-test-assert-true
-              (stdlib.fs.fs-string-vector-contains? (& entries-vec) "alpha.txt")
+              (stdlib.fs.string-vector-contains? (& entries-vec) "alpha.txt")
               "read-dir vec includes first file name")
             (fs-test-assert-true
-              (stdlib.fs.fs-string-vector-contains?
+              (stdlib.fs.string-vector-contains?
                 (& entries-vec)
                 "beta data.txt")
               "read-dir vec includes second file name")
             (fs-test-assert-true
-              (stdlib.fs.fs-string-vector-contains? (& entries-vec) "child-dir")
+              (stdlib.fs.string-vector-contains? (& entries-vec) "child-dir")
               "read-dir vec includes subdirectory name")
             (fs-test-assert-false
-              (stdlib.fs.fs-string-vector-contains? (& entries-vec) ".")
+              (stdlib.fs.string-vector-contains? (& entries-vec) ".")
               "read-dir vec filters dot")
             (fs-test-assert-false
-              (stdlib.fs.fs-string-vector-contains? (& entries-vec) "..")
+              (stdlib.fs.string-vector-contains? (& entries-vec) "..")
               "read-dir vec filters dotdot")
             (fs-test-assert-not-found-string-vector
               (fs-api-test-try-read-dir missing)

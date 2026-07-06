@@ -6953,8 +6953,11 @@
                 (compiler-ir-switch-case-cons
                   0
                   "join"
-                  CompilerIrSwitchCaseList.Nil)
-                "other")
+                  (compiler-ir-switch-case-cons
+                    1
+                    "join"
+                    CompilerIrSwitchCaseList.Nil))
+                "join")
               CompilerIrInstrList.Nil))
           (compiler-ir-block-cons
             (compiler-ir-block
@@ -6971,25 +6974,30 @@
                   (CompilerIrInstr.Return
                     (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
                   CompilerIrInstrList.Nil)))
-            (compiler-ir-block-cons
-              (compiler-ir-block
-                "other"
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Return
-                    (CompilerIrMaybeValue.Some (CompilerIrValue.I64 0)))
-                  CompilerIrInstrList.Nil))
-              CompilerIrBlockList.Nil))))
+            CompilerIrBlockList.Nil)))
       CompilerIrFunctionList.Nil)
     CompilerIrExternList.Nil))
 
-(define (compiler-backend-switch-phi-diagnostic-ok?) : bool
+(define (compiler-backend-switch-phi-edge-copy-ok?) : bool
   (match (compiler-backend-emit-program-linux
     (compiler-backend-switch-phi-program))
-    [(ResultCompilerBackend.Err diag)
-      (string.eq
-        (compiler-diagnostic-message (box-get diag))
-        (compiler-backend-switch-phi-target-message))]
-    [(ResultCompilerBackend.Ok _) false]))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains?
+          asm
+          "    ja .Lf0_entry_switch_default\n")
+        (compiler-backend-string-contains? asm ".Lf0_entry_switch_table:\n")
+        (compiler-backend-string-contains?
+          asm
+          "    .quad .Lf0_entry_switch_case_0\n")
+        (compiler-backend-string-contains?
+          asm
+          "    .quad .Lf0_entry_switch_case_1\n")
+        (compiler-backend-string-contains? asm ".Lf0_entry_switch_case_0:\n")
+        (compiler-backend-string-contains? asm ".Lf0_entry_switch_case_1:\n")
+        (compiler-backend-string-contains? asm ".Lf0_entry_switch_default:\n")
+        (compiler-backend-string-contains? asm "    jmp .Lf0_join\n"))]
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-switch-object-image-ok?) : bool
   (match (compiler-backend-emit-program-object-image-linux
@@ -7119,7 +7127,7 @@
     (compiler-backend-switch-asm-ok?)
     (compiler-backend-switch-base-asm-ok?)
     (compiler-backend-switch-shape-diagnostic-ok?)
-    (compiler-backend-switch-phi-diagnostic-ok?)
+    (compiler-backend-switch-phi-edge-copy-ok?)
     (compiler-backend-switch-object-image-ok?)
     (compiler-backend-switch-base-object-image-ok?)
     (compiler-backend-switch-object-shape-diagnostic-ok?)

@@ -1800,85 +1800,142 @@
       found)))
 
 (define (compiler-object-coff-smoke-image) : CompilerObjectImage
-  (CompilerObjectImage
-    (compiler-object-section-cons
-      (CompilerObjectSection.Section
-        (CompilerObjectSectionKind.Text)
-        CompilerObjectDataRecordList.Nil
-        (compiler-object-instr-cons
-          (CompilerObjectX64Instr.Label "_tl_empty")
-          CompilerObjectX64InstrList.Nil))
-      (compiler-object-section-cons
+  (let
+    [empty-data : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish
+        (compiler-object-data-record-builder-with-capacity 1))]
+    [empty-instrs : CompilerObjectX64InstrList
+      (compiler-object-instr-builder-finish
+        (compiler-object-instr-builder-with-capacity 1))]
+    [text0 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-with-capacity 1)]
+    [text1 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        text0
+        (CompilerObjectX64Instr.Label "_tl_empty"))]
+    [data0 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-with-capacity 4)]
+    [data1 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data0
+        (CompilerObjectDataRecord.Label "_tl_answer"))]
+    [data2 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data1
+        (CompilerObjectDataRecord.I64 42))]
+    [data3 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data2
+        (CompilerObjectDataRecord.Label "_tl_ptr"))]
+    [data4 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data3
+        (CompilerObjectDataRecord.SymbolAddress "_tl_answer"))]
+    [rodata0 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-with-capacity 2)]
+    [rodata1 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        rodata0
+        (CompilerObjectDataRecord.Label "long_rodata_label_name"))]
+    [rodata2 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        rodata1
+        (CompilerObjectDataRecord.String "hello"))]
+    [bss0 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-with-capacity 2)]
+    [bss1 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        bss0
+        (CompilerObjectDataRecord.Label "_tl_heap"))]
+    [bss2 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        bss1
+        (CompilerObjectDataRecord.Zero 16))]
+    [sections0 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-with-capacity 4)]
+    [sections1 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections0
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Text)
+          empty-data
+          (compiler-object-instr-builder-finish text1)))]
+    [sections2 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections1
         (CompilerObjectSection.Section
           (CompilerObjectSectionKind.Data)
-          (compiler-object-data-cons
-            (CompilerObjectDataRecord.Label "_tl_answer")
-            (compiler-object-data-cons
-              (CompilerObjectDataRecord.I64 42)
-              (compiler-object-data-cons
-                (CompilerObjectDataRecord.Label "_tl_ptr")
-                (compiler-object-data-cons
-                  (CompilerObjectDataRecord.SymbolAddress "_tl_answer")
-                  CompilerObjectDataRecordList.Nil))))
-          CompilerObjectX64InstrList.Nil)
-        (compiler-object-section-cons
-          (CompilerObjectSection.Section
-            (CompilerObjectSectionKind.Rodata)
-            (compiler-object-data-cons
-              (CompilerObjectDataRecord.Label "long_rodata_label_name")
-              (compiler-object-data-cons
-                (CompilerObjectDataRecord.String "hello")
-                CompilerObjectDataRecordList.Nil))
-            CompilerObjectX64InstrList.Nil)
-          (compiler-object-section-cons
-            (CompilerObjectSection.Section
-              (CompilerObjectSectionKind.Bss)
-              (compiler-object-data-cons
-                (CompilerObjectDataRecord.Label "_tl_heap")
-                (compiler-object-data-cons
-                  (CompilerObjectDataRecord.Zero 16)
-                  CompilerObjectDataRecordList.Nil))
-              CompilerObjectX64InstrList.Nil)
-            CompilerObjectSectionList.Nil))))
-    (compiler-object-symbol-cons
-      (CompilerObjectSymbol.Symbol
-        "_tl_empty"
-        (CompilerObjectSymbolBinding.Export)
-        (CompilerObjectSymbolKind.Function)
-        (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
-      (compiler-object-symbol-cons
+          (compiler-object-data-record-builder-finish data4)
+          empty-instrs))]
+    [sections3 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections2
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Rodata)
+          (compiler-object-data-record-builder-finish rodata2)
+          empty-instrs))]
+    [sections4 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections3
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Bss)
+          (compiler-object-data-record-builder-finish bss2)
+          empty-instrs))]
+    [symbols0 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-with-capacity 5)]
+    [symbols1 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols0
+        (CompilerObjectSymbol.Symbol
+          "_tl_empty"
+          (CompilerObjectSymbolBinding.Export)
+          (CompilerObjectSymbolKind.Function)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
+    [symbols2 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols1
         (CompilerObjectSymbol.Symbol
           "_tl_answer"
           (CompilerObjectSymbolBinding.Export)
           (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data)))
-        (compiler-object-symbol-cons
-          (CompilerObjectSymbol.Symbol
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data))))]
+    [symbols3 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols2
+        (CompilerObjectSymbol.Symbol
+          "_tl_ptr"
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Data)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data))))]
+    [symbols4 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols3
+        (CompilerObjectSymbol.Symbol
+          "long_rodata_label_name"
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Data)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rodata))))]
+    [symbols5 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols4
+        (CompilerObjectSymbol.Symbol
+          "foreign_exact"
+          (CompilerObjectSymbolBinding.Extern)
+          (CompilerObjectSymbolKind.Function)
+          CompilerObjectMaybeSection.No))]
+    [relocs : CompilerObjectRelocationList
+      (compiler-object-relocation-builder-finish
+        (compiler-object-relocation-builder-push
+          (compiler-object-relocation-builder-with-capacity 1)
+          (CompilerObjectRelocation.Relocation
+            (CompilerObjectSectionKind.Data)
             "_tl_ptr"
-            (CompilerObjectSymbolBinding.Local)
-            (CompilerObjectSymbolKind.Data)
-            (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data)))
-          (compiler-object-symbol-cons
-            (CompilerObjectSymbol.Symbol
-              "long_rodata_label_name"
-              (CompilerObjectSymbolBinding.Local)
-              (CompilerObjectSymbolKind.Data)
-              (CompilerObjectMaybeSection.Some
-                (CompilerObjectSectionKind.Rodata)))
-            (compiler-object-symbol-cons
-              (CompilerObjectSymbol.Symbol
-                "foreign_exact"
-                (CompilerObjectSymbolBinding.Extern)
-                (CompilerObjectSymbolKind.Function)
-                (CompilerObjectMaybeSection.No))
-              CompilerObjectSymbolList.Nil)))))
-    (compiler-object-relocation-cons
-      (CompilerObjectRelocation.Relocation
-        (CompilerObjectSectionKind.Data)
-        "_tl_ptr"
-        (CompilerObjectRelocationKind.Abs64)
-        "_tl_answer")
-      CompilerObjectRelocationList.Nil)))
+            (CompilerObjectRelocationKind.Abs64)
+            "_tl_answer")))]
+    (CompilerObjectImage
+      (compiler-object-section-builder-finish sections4)
+      (compiler-object-symbol-builder-finish symbols5)
+      relocs)))
 
 (define (compiler-object-coff-smoke-ok?) : bool
   (match (compiler-object-coff-render (compiler-object-coff-smoke-image))
@@ -1900,160 +1957,247 @@
     [(ResultCompilerObjectCoff.Err _) false]))
 
 (define (compiler-object-coff-text-smoke-instrs) : CompilerObjectX64InstrList
-  (compiler-object-instr-cons
-    (CompilerObjectX64Instr.Label "_tl_text")
-    (compiler-object-instr-cons
-      (CompilerObjectX64Instr.LoadRip "_tl_answer")
-      (compiler-object-instr-cons
-        (CompilerObjectX64Instr.LoadRipAddress "_tl_slot")
-        (compiler-object-instr-cons
-          (CompilerObjectX64Instr.StoreRip "_tl_slot")
-          (compiler-object-instr-cons
-            (CompilerObjectX64Instr.Call "foreign_exact")
-            (compiler-object-instr-cons
-              (CompilerObjectX64Instr.TailCall "_tl_done")
-              (compiler-object-instr-cons
-                (CompilerObjectX64Instr.Jump "_tl_done")
-                (compiler-object-instr-cons
-                  (CompilerObjectX64Instr.Branch "_tl_true" "_tl_false")
-                  (compiler-object-instr-cons
-                    (CompilerObjectX64Instr.Label "_tl_true")
-                    (compiler-object-instr-cons
-                      (CompilerObjectX64Instr.Label "_tl_false")
-                      (compiler-object-instr-cons
-                        (CompilerObjectX64Instr.Label "_tl_done")
-                        CompilerObjectX64InstrList.Nil))))))))))))
+  (let
+    [instrs0 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-with-capacity 11)]
+    [instrs1 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs0
+        (CompilerObjectX64Instr.Label "_tl_text"))]
+    [instrs2 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs1
+        (CompilerObjectX64Instr.LoadRip "_tl_answer"))]
+    [instrs3 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs2
+        (CompilerObjectX64Instr.LoadRipAddress "_tl_slot"))]
+    [instrs4 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs3
+        (CompilerObjectX64Instr.StoreRip "_tl_slot"))]
+    [instrs5 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs4
+        (CompilerObjectX64Instr.Call "foreign_exact"))]
+    [instrs6 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs5
+        (CompilerObjectX64Instr.TailCall "_tl_done"))]
+    [instrs7 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs6
+        (CompilerObjectX64Instr.Jump "_tl_done"))]
+    [instrs8 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs7
+        (CompilerObjectX64Instr.Branch "_tl_true" "_tl_false"))]
+    [instrs9 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs8
+        (CompilerObjectX64Instr.Label "_tl_true"))]
+    [instrs10 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs9
+        (CompilerObjectX64Instr.Label "_tl_false"))]
+    [instrs11 : CompilerObjectX64InstrBuilder
+      (compiler-object-instr-builder-push
+        instrs10
+        (CompilerObjectX64Instr.Label "_tl_done"))]
+    (compiler-object-instr-builder-finish instrs11)))
 
 (define (compiler-object-coff-text-smoke-symbols) : CompilerObjectSymbolList
-  (compiler-object-symbol-cons
-    (CompilerObjectSymbol.Symbol
-      "_tl_text"
-      (CompilerObjectSymbolBinding.Export)
-      (CompilerObjectSymbolKind.Function)
-      (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
-    (compiler-object-symbol-cons
-      (CompilerObjectSymbol.Symbol
-        "_tl_true"
-        (CompilerObjectSymbolBinding.Local)
-        (CompilerObjectSymbolKind.Function)
-        (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
-      (compiler-object-symbol-cons
+  (let
+    [symbols0 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-with-capacity 7)]
+    [symbols1 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols0
+        (CompilerObjectSymbol.Symbol
+          "_tl_text"
+          (CompilerObjectSymbolBinding.Export)
+          (CompilerObjectSymbolKind.Function)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
+    [symbols2 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols1
+        (CompilerObjectSymbol.Symbol
+          "_tl_true"
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Function)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
+    [symbols3 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols2
         (CompilerObjectSymbol.Symbol
           "_tl_false"
           (CompilerObjectSymbolBinding.Local)
           (CompilerObjectSymbolKind.Function)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
-        (compiler-object-symbol-cons
-          (CompilerObjectSymbol.Symbol
-            "_tl_done"
-            (CompilerObjectSymbolBinding.Local)
-            (CompilerObjectSymbolKind.Function)
-            (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text)))
-          (compiler-object-symbol-cons
-            (CompilerObjectSymbol.Symbol
-              "_tl_answer"
-              (CompilerObjectSymbolBinding.Export)
-              (CompilerObjectSymbolKind.Data)
-              (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data)))
-            (compiler-object-symbol-cons
-              (CompilerObjectSymbol.Symbol
-                "_tl_slot"
-                (CompilerObjectSymbolBinding.Local)
-                (CompilerObjectSymbolKind.Data)
-                (CompilerObjectMaybeSection.Some
-                  (CompilerObjectSectionKind.Data)))
-              (compiler-object-symbol-cons
-                (CompilerObjectSymbol.Symbol
-                  "foreign_exact"
-                  (CompilerObjectSymbolBinding.Extern)
-                  (CompilerObjectSymbolKind.Function)
-                  (CompilerObjectMaybeSection.No))
-                CompilerObjectSymbolList.Nil))))))))
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
+    [symbols4 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols3
+        (CompilerObjectSymbol.Symbol
+          "_tl_done"
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Function)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
+    [symbols5 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols4
+        (CompilerObjectSymbol.Symbol
+          "_tl_answer"
+          (CompilerObjectSymbolBinding.Export)
+          (CompilerObjectSymbolKind.Data)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data))))]
+    [symbols6 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols5
+        (CompilerObjectSymbol.Symbol
+          "_tl_slot"
+          (CompilerObjectSymbolBinding.Local)
+          (CompilerObjectSymbolKind.Data)
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data))))]
+    [symbols7 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols6
+        (CompilerObjectSymbol.Symbol
+          "foreign_exact"
+          (CompilerObjectSymbolBinding.Extern)
+          (CompilerObjectSymbolKind.Function)
+          CompilerObjectMaybeSection.No))]
+    (compiler-object-symbol-builder-finish symbols7)))
 
 (define (compiler-object-coff-text-smoke-relocs) : CompilerObjectRelocationList
-  (compiler-object-relocation-cons
-    (CompilerObjectRelocation.Relocation
-      (CompilerObjectSectionKind.Text)
-      "_tl_text"
-      (CompilerObjectRelocationKind.RipValue)
-      "_tl_answer")
-    (compiler-object-relocation-cons
-      (CompilerObjectRelocation.Relocation
-        (CompilerObjectSectionKind.Text)
-        "_tl_text"
-        (CompilerObjectRelocationKind.RipAddress)
-        "_tl_slot")
-      (compiler-object-relocation-cons
+  (let
+    [relocs0 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-with-capacity 8)]
+    [relocs1 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs0
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.RipValue)
+          "_tl_answer"))]
+    [relocs2 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs1
         (CompilerObjectRelocation.Relocation
           (CompilerObjectSectionKind.Text)
           "_tl_text"
           (CompilerObjectRelocationKind.RipAddress)
-          "_tl_slot")
-        (compiler-object-relocation-cons
-          (CompilerObjectRelocation.Relocation
-            (CompilerObjectSectionKind.Text)
-            "_tl_text"
-            (CompilerObjectRelocationKind.Call)
-            "foreign_exact")
-          (compiler-object-relocation-cons
-            (CompilerObjectRelocation.Relocation
-              (CompilerObjectSectionKind.Text)
-              "_tl_text"
-              (CompilerObjectRelocationKind.TailCall)
-              "_tl_done")
-            (compiler-object-relocation-cons
-              (CompilerObjectRelocation.Relocation
-                (CompilerObjectSectionKind.Text)
-                "_tl_text"
-                (CompilerObjectRelocationKind.Branch)
-                "_tl_done")
-              (compiler-object-relocation-cons
-                (CompilerObjectRelocation.Relocation
-                  (CompilerObjectSectionKind.Text)
-                  "_tl_text"
-                  (CompilerObjectRelocationKind.Branch)
-                  "_tl_true")
-                (compiler-object-relocation-cons
-                  (CompilerObjectRelocation.Relocation
-                    (CompilerObjectSectionKind.Text)
-                    "_tl_text"
-                    (CompilerObjectRelocationKind.Branch)
-                    "_tl_false")
-                  CompilerObjectRelocationList.Nil)))))))))
+          "_tl_slot"))]
+    [relocs3 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs2
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.RipAddress)
+          "_tl_slot"))]
+    [relocs4 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs3
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.Call)
+          "foreign_exact"))]
+    [relocs5 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs4
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.TailCall)
+          "_tl_done"))]
+    [relocs6 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs5
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.Branch)
+          "_tl_done"))]
+    [relocs7 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs6
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.Branch)
+          "_tl_true"))]
+    [relocs8 : CompilerObjectRelocationBuilder
+      (compiler-object-relocation-builder-push
+        relocs7
+        (CompilerObjectRelocation.Relocation
+          (CompilerObjectSectionKind.Text)
+          "_tl_text"
+          (CompilerObjectRelocationKind.Branch)
+          "_tl_false"))]
+    (compiler-object-relocation-builder-finish relocs8)))
 
 (define (compiler-object-coff-text-smoke-image) : CompilerObjectImage
-  (CompilerObjectImage
-    (compiler-object-section-cons
-      (CompilerObjectSection.Section
-        (CompilerObjectSectionKind.Text)
-        CompilerObjectDataRecordList.Nil
-        (compiler-object-coff-text-smoke-instrs))
-      (compiler-object-section-cons
+  (let
+    [empty-data : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish
+        (compiler-object-data-record-builder-with-capacity 1))]
+    [empty-instrs : CompilerObjectX64InstrList
+      (compiler-object-instr-builder-finish
+        (compiler-object-instr-builder-with-capacity 1))]
+    [data0 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-with-capacity 4)]
+    [data1 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data0
+        (CompilerObjectDataRecord.Label "_tl_answer"))]
+    [data2 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data1
+        (CompilerObjectDataRecord.I64 42))]
+    [data3 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data2
+        (CompilerObjectDataRecord.Label "_tl_slot"))]
+    [data4 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        data3
+        (CompilerObjectDataRecord.I64 0))]
+    [sections0 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-with-capacity 4)]
+    [sections1 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections0
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Text)
+          empty-data
+          (compiler-object-coff-text-smoke-instrs)))]
+    [sections2 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections1
         (CompilerObjectSection.Section
           (CompilerObjectSectionKind.Data)
-          (compiler-object-data-cons
-            (CompilerObjectDataRecord.Label "_tl_answer")
-            (compiler-object-data-cons
-              (CompilerObjectDataRecord.I64 42)
-              (compiler-object-data-cons
-                (CompilerObjectDataRecord.Label "_tl_slot")
-                (compiler-object-data-cons
-                  (CompilerObjectDataRecord.I64 0)
-                  CompilerObjectDataRecordList.Nil))))
-          CompilerObjectX64InstrList.Nil)
-        (compiler-object-section-cons
-          (CompilerObjectSection.Section
-            (CompilerObjectSectionKind.Rodata)
-            CompilerObjectDataRecordList.Nil
-            CompilerObjectX64InstrList.Nil)
-          (compiler-object-section-cons
-            (CompilerObjectSection.Section
-              (CompilerObjectSectionKind.Bss)
-              CompilerObjectDataRecordList.Nil
-              CompilerObjectX64InstrList.Nil)
-            CompilerObjectSectionList.Nil))))
-    (compiler-object-coff-text-smoke-symbols)
-    (compiler-object-coff-text-smoke-relocs)))
+          (compiler-object-data-record-builder-finish data4)
+          empty-instrs))]
+    [sections3 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections2
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Rodata)
+          empty-data
+          empty-instrs))]
+    [sections4 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections3
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Bss)
+          empty-data
+          empty-instrs))]
+    (CompilerObjectImage
+      (compiler-object-section-builder-finish sections4)
+      (compiler-object-coff-text-smoke-symbols)
+      (compiler-object-coff-text-smoke-relocs))))
 
 (define (compiler-object-coff-reloc-entry-ok?
   [obj : String]

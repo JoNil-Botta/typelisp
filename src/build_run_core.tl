@@ -1342,40 +1342,51 @@
 
 (define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
   (let
-    [symbols : CompilerObjectSymbolList
-      (compiler-object-symbol-cons
+    [symbols0 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-with-capacity 2)]
+    [symbols1 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols0
         (CompilerObjectSymbol.Symbol
           "GetStdHandle"
           (CompilerObjectSymbolBinding.Extern)
           (CompilerObjectSymbolKind.Function)
-          CompilerObjectMaybeSection.No)
-        (compiler-object-symbol-cons
-          (CompilerObjectSymbol.Symbol
-            "GetCurrentProcessId"
-            (CompilerObjectSymbolBinding.Extern)
-            (CompilerObjectSymbolKind.Function)
-            CompilerObjectMaybeSection.No)
-          CompilerObjectSymbolList.Nil))]
+          CompilerObjectMaybeSection.No))]
+    [symbols2 : CompilerObjectSymbolBuilder
+      (compiler-object-symbol-builder-push
+        symbols1
+        (CompilerObjectSymbol.Symbol
+          "GetCurrentProcessId"
+          (CompilerObjectSymbolBinding.Extern)
+          (CompilerObjectSymbolKind.Function)
+          CompilerObjectMaybeSection.No))]
+    [symbols : CompilerObjectSymbolList
+      (compiler-object-symbol-builder-finish symbols2)]
+    [empty-relocs : CompilerObjectRelocationList
+      (compiler-object-relocation-builder-finish
+        (compiler-object-relocation-builder-with-capacity 1))]
     [allowed-relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-cons
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "main"
-          (CompilerObjectRelocationKind.Call)
-          "GetStdHandle")
-        CompilerObjectRelocationList.Nil)]
+      (compiler-object-relocation-builder-finish
+        (compiler-object-relocation-builder-push
+          (compiler-object-relocation-builder-with-capacity 1)
+          (CompilerObjectRelocation.Relocation
+            (CompilerObjectSectionKind.Text)
+            "main"
+            (CompilerObjectRelocationKind.Call)
+            "GetStdHandle")))]
     [blocked-relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-cons
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "main"
-          (CompilerObjectRelocationKind.Call)
-          "GetCurrentProcessId")
-        CompilerObjectRelocationList.Nil)]
+      (compiler-object-relocation-builder-finish
+        (compiler-object-relocation-builder-push
+          (compiler-object-relocation-builder-with-capacity 1)
+          (CompilerObjectRelocation.Relocation
+            (CompilerObjectSectionKind.Text)
+            "main"
+            (CompilerObjectRelocationKind.Call)
+            "GetCurrentProcessId")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?
         symbols
-        CompilerObjectRelocationList.Nil)
+        empty-relocs)
       (source-tool-windows-direct-object-relocations-linkable?
         symbols
         allowed-relocs)

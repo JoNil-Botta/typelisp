@@ -9583,13 +9583,16 @@
   (let
     [base : (Array String) (compiler-backend-c-abi-stage-exclude-with "%r11")]
     (if (compiler-backend-peephole-register-operand? operand)
-      (compiler-backend-scavenge-exclude-append base 5 operand)
+      (compiler-backend-scavenge-exclude-append
+        base
+        compiler-backend-c-abi-stage-exclude-count
+        operand)
       base)))
 
 (define (compiler-backend-group-stack-exclude-count [operand : String]) : i64
   (if (compiler-backend-peephole-register-operand? operand)
-    6
-    5))
+    (+ compiler-backend-c-abi-stage-exclude-count 1)
+    compiler-backend-c-abi-stage-exclude-count))
 
 (define (compiler-backend-outgoing-stack-arg-slot
   [target : CompilerBackendTarget]
@@ -9688,7 +9691,7 @@
         [scratch : String
           (compiler-backend-scavenge-reg-here
             (compiler-backend-c-abi-stage-exclude-with "%r11")
-            5
+            compiler-backend-c-abi-stage-exclude-count
             "%r10")]
         (match (compiler-backend-group-word-operand
           assignments
@@ -16315,22 +16318,29 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%rax")
-      (array-set! a 4 "%rax")
+      (array-set! a 3 "")
+      (array-set! a 4 "")
       (array-set! a 5 extra)
       a)))
+
+(define compiler-backend-c-abi-stage-exclude-count : i64
+  8)
 
 ;; c-abi-stage-exclude plus one already-chosen scratch (so a 2nd scavenge differs).
 (define (compiler-backend-c-abi-stage-exclude-with [extra : String]) : (Array
     String)
   (let
-    [a : (Array String) (make-array String 5)]
+    [a : (Array String)
+      (make-array String compiler-backend-c-abi-stage-exclude-count)]
     (begin
-      (array-set! a 0 "%rcx")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%r8")
-      (array-set! a 3 "%r9")
-      (array-set! a 4 extra)
+      (array-set! a 0 "%rax")
+      (array-set! a 1 "%rcx")
+      (array-set! a 2 "%rdx")
+      (array-set! a 3 "%r8")
+      (array-set! a 4 "%r9")
+      (array-set! a 5 "%rdi")
+      (array-set! a 6 "%rsi")
+      (array-set! a 7 extra)
       a)))
 
 (define (compiler-backend-copy-address [disp : i64] [reg : String]) : String
@@ -17053,7 +17063,7 @@
     [src-reg : String
       (compiler-backend-scavenge-reg-here
         (compiler-backend-c-abi-stage-exclude-with "%r11")
-        5
+        compiler-backend-c-abi-stage-exclude-count
         "%r10")]
     [no-exclude : (Array String) (array.make-array String 0)]
     [copy-xmm : String
@@ -20996,7 +21006,7 @@
         [scav : String
           (compiler-backend-scavenge-reg-here
             (compiler-backend-c-abi-stage-exclude-with "%r11")
-            5
+            compiler-backend-c-abi-stage-exclude-count
             "%r10")]
         [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
@@ -21024,7 +21034,7 @@
             [scav : String
               (compiler-backend-scavenge-reg-here
                 (compiler-backend-c-abi-stage-exclude-with "%r11")
-                5
+                compiler-backend-c-abi-stage-exclude-count
                 "%r10")]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
@@ -21251,9 +21261,9 @@
 ;; bit of every pending move's dest arg-register AND source-register. The Temp
 ;; must be neither -- writing a dest would clobber a pending target, and reusing
 ;; a source would clobber a value a not-yet-emitted move (including a non-cycle
-;; blocked `argreg <- %rN`) still needs to read. (rax/rsi/rdi contribute bit 0 =
-;; untracked, which is correct: they are not in the scavenge candidate pool, so
-;; they can never be picked as the Temp regardless.)
+;; blocked `argreg <- %rN`) still needs to read. ABI-special registers contribute
+;; ordinary scavenge bits, so placed/pending %rax/%rsi/%rdi moves are protected by
+;; the same mask as the legacy candidate registers.
 (define (compiler-backend-arg-move-list-exclude-mask
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]) : i64
@@ -21869,7 +21879,7 @@
         [scav : String
           (compiler-backend-scavenge-reg-here
             (compiler-backend-c-abi-stage-exclude-with "%r11")
-            5
+            compiler-backend-c-abi-stage-exclude-count
             "%r10")]
         [gp-part : String (compiler-backend-float-bits-gp-reg scav arg-ty)]
         (match (compiler-backend-emit-load-float-bits-to-gp
@@ -21898,7 +21908,7 @@
             [scav : String
               (compiler-backend-scavenge-reg-here
                 (compiler-backend-c-abi-stage-exclude-with "%r11")
-                5
+                compiler-backend-c-abi-stage-exclude-count
                 "%r10")]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
@@ -22629,9 +22639,9 @@
         (str_cat.str-cat "    movq " reg ", " operand "\n"))]
     [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)]))
 
-;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled or
-;; %rax/%rsi/%rdi dst contributes 0 (reg-bit is 0 -- outside the 11-reg scavenger candidate set), which is
-;; correct: those cannot collide with a candidate-pool scratch register.
+;; OR the pooled-register-home bit of every copy's dst into a mask. A spilled dst
+;; contributes 0; every register-homed dst, including ABI-special %rax/%rsi/%rdi,
+;; contributes its ordinary scavenge bit and cannot be picked as the temp.
 (define (compiler-backend-phi-copy-list-dst-home-mask
   [assignments : CompilerRegAssignmentList]
   [copies : CompilerBackendPhiCopyList]) : i64
@@ -25312,7 +25322,7 @@
     [base-reg : String
       (compiler-backend-scavenge-reg-here
         (compiler-backend-c-abi-stage-exclude-with "%r11")
-        5
+        compiler-backend-c-abi-stage-exclude-count
         "%r10")]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
@@ -29717,7 +29727,7 @@
   ;; pointer in a pooled caller-saved non-arg candidate instead.
   (compiler-backend-scavenge-reg-here
     (compiler-backend-c-abi-stage-exclude-with "%r11")
-    5
+    compiler-backend-c-abi-stage-exclude-count
     "%r10"))
 
 (define (compiler-backend-emit-indirect-call-with-arg-assignments
@@ -30022,7 +30032,7 @@
   ;; keep %r11 available for ABI/runtime clobber semantics instead of staging.
   (compiler-backend-scavenge-reg-here
     (compiler-backend-c-abi-stage-exclude-with "%r11")
-    5
+    compiler-backend-c-abi-stage-exclude-count
     "%r10"))
 
 (define (compiler-backend-emit-indirect-c-call
@@ -33668,9 +33678,9 @@
   (compiler-reg-assignment-index-var-uses-register? assignment-index v reg))
 
 ;; Character-dispatch register-name -> scavenge bit. The scavenger queries
-;; this per emitted operand; the string.eq ladder paid up to fifteen string
-;; compares per call. Length plus three character reads decide every case,
-;; with identical results (unknown names map to 0).
+;; this per emitted operand; the string.eq ladder paid up to eighteen string
+;; compares per call. Length plus three character reads decide every case.
+;; Unknown names map to 0.
 (define (compiler-backend-scavenge-reg-bit [reg : String]) : i64
   (let
     [n : i64 (string.string-length reg)]
@@ -33694,9 +33704,14 @@
                 (if (= c3 'x')
                   2
                   0)]
-              [(= c2 'd')
+              [(= c2 'd') (cond [(= c3 'x') 4] [(= c3 'i') 131072] [else 0])]
+              [(= c2 'a')
                 (if (= c3 'x')
-                  4
+                  32768
+                  0)]
+              [(= c2 's')
+                (if (= c3 'i')
+                  65536
                   0)]
               [(= c2 'b')
                 (if (= c3 'x')
@@ -33732,7 +33747,7 @@
     (not (= (compiler-backend-scavenge-reg-bit reg) 0))))
 
 (define compiler-backend-scavenge-reg-bit-count : i64
-  15)
+  18)
 
 (define (compiler-backend-scavenge-reg-bit-by-index [index : i64]) : i64
   (cond
@@ -33751,6 +33766,9 @@
     [(= index 12) 4096]
     [(= index 13) 8192]
     [(= index 14) 16384]
+    [(= index 15) 32768]
+    [(= index 16) 65536]
+    [(= index 17) 131072]
     [else 0]))
 
 (define (compiler-backend-scavenge-location-mask
@@ -34406,20 +34424,27 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%rax")
-      (array-set! a 4 "%rax")
+      (array-set! a 3 "")
+      (array-set! a 4 "")
       a)))
 
 ;; Op-specific scavenge exclude: only the registers THIS op actually clobbers
 ;; (beyond operand/dst homes, excluded separately). The over-broad superset
 ;; excluded rcx+rdx for every op, removing them as scratch candidates even for
 ;; add/sub/and/or/xor/cmp that don't touch them -> needless degradation to the
-;; fallback. Returns a size-5 array (padded with the no-op "%rax", which is not a
-;; scavenge candidate). div/mod -> rdx (high dividend); shift -> rcx (count dest);
-;; mul -> rdx; everything else -> nothing extra.
+;; fallback. Returns a size-5 array (padded with zero-bit empty-string sentinels).
+;; div/mod -> rax:rdx, mul -> rax/rdx, shift -> rcx, everything else -> nothing extra.
 (define (compiler-backend-binop-scavenge-exclude-for-op [op : CompilerIrBinOp]) : (Array
     String)
   (let
+    [rax-extra : String
+      (match op
+        [(CompilerIrBinOp.Div) "%rax"]
+        [(CompilerIrBinOp.Mod) "%rax"]
+        [(CompilerIrBinOp.SafeDiv) "%rax"]
+        [(CompilerIrBinOp.SafeMod) "%rax"]
+        [(CompilerIrBinOp.Mul) "%rax"]
+        [_ ""])]
     [extra : String
       (match op
         [(CompilerIrBinOp.Div) "%rdx"]
@@ -34429,14 +34454,14 @@
         [(CompilerIrBinOp.Shl) "%rcx"]
         [(CompilerIrBinOp.Shr) "%rcx"]
         [(CompilerIrBinOp.Mul) "%rdx"]
-        [_ "%rax"])]
+        [_ ""])]
     [a : (Array String) (make-array String 5)]
     (begin
-      (array-set! a 0 "%rax")
+      (array-set! a 0 rax-extra)
       (array-set! a 1 extra)
-      (array-set! a 2 "%rax")
-      (array-set! a 3 "%rax")
-      (array-set! a 4 "%rax")
+      (array-set! a 2 "")
+      (array-set! a 3 "")
+      (array-set! a 4 "")
       a)))
 
 ;; Constant/magic-division 3-scratch discipline. The magic multiply needs a
@@ -34453,8 +34478,8 @@
     (begin
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rax")
-      (array-set! a 3 "%rax")
+      (array-set! a 2 "")
+      (array-set! a 3 "")
       (array-set! a 4 magic)
       a)))
 
@@ -34466,8 +34491,8 @@
     (begin
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rax")
-      (array-set! a 3 "%rax")
+      (array-set! a 2 "")
+      (array-set! a 3 "")
       (array-set! a 4 magic)
       (array-set! a 5 dividend)
       a)))
@@ -34513,8 +34538,8 @@
 ;; Robustly prevents a scavenged scratch from clobbering an operand whose value is
 ;; needed by THIS instruction (e.g. a loop-invariant base/src whose register the
 ;; liveness query may not see occupied at the scavenge point). Non-register-homed
-;; operands map to "%rax" (already excluded), a harmless no-op. Pooled scratch
-;; registers such as r10/r11 stay available unless one is an operand home. n = 7.
+;; operands map to the zero-bit empty-string sentinel. Pooled scratch registers
+;; such as r10/r11 stay available unless one is an operand home. n = 7.
 (define (compiler-backend-scavenge-exclude-ops2
   [assignments : CompilerRegAssignmentList]
   [v1 : CompilerIrValue]
@@ -34527,26 +34552,26 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%rax")
-      (array-set! a 4 "%rax")
+      (array-set! a 3 "")
+      (array-set! a 4 "")
       (array-set!
         a
         5
         (if (string.eq h1 "")
-          "%rax"
+          ""
           h1))
       (array-set!
         a
         6
         (if (string.eq h2 "")
-          "%rax"
+          ""
           h2))
       a)))
 
 ;; Exclude set = HW-fixed regs PLUS two given register names (caller already knows
-;; them, e.g. the emission's dst-home + an operand's home reg). "" maps to "%rax"
-;; (already excluded). Pooled scratch registers such as r10/r11 stay available
-;; unless one is one of the explicit register names. n = 7.
+;; them, e.g. the emission's dst-home + an operand's home reg). "" stays a zero-bit
+;; sentinel. Pooled scratch registers such as r10/r11 stay available unless one is
+;; one of the explicit register names. n = 7.
 (define (compiler-backend-scavenge-exclude-regs2 [r1 : String] [r2 : String]) : (Array
     String)
   (let
@@ -34555,29 +34580,28 @@
       (array-set! a 0 "%rax")
       (array-set! a 1 "%rdx")
       (array-set! a 2 "%rcx")
-      (array-set! a 3 "%rax")
-      (array-set! a 4 "%rax")
+      (array-set! a 3 "")
+      (array-set! a 4 "")
       (array-set!
         a
         5
         (if (string.eq r1 "")
-          "%rax"
+          ""
           r1))
       (array-set!
         a
         6
         (if (string.eq r2 "")
-          "%rax"
+          ""
           r2))
       a)))
 
-;; Scavenge candidate pool. The entries must stay in sync with
-;; compiler-reg-greedy-integer-pool's caller-saved and callee-saved registers.
-;; Non-candidates such as %rax/%rsi/%rdi are ABI/result registers or are not
-;; tracked by the liveness query in this pool.
+;; Scavenge candidate pool. The first 11 entries are the legacy pool; ABI-special
+;; %rsi/%rdi/%rax come last so they are only used when the older pool is occupied
+;; and the point-local occupancy/exclude masks prove them free.
 (define (compiler-backend-scavenge-candidates) : (Array String)
   (let
-    [a : (Array String) (make-array String 11)]
+    [a : (Array String) (make-array String 14)]
     (begin
       (array-set! a 0 "%r9")
       (array-set! a 1 "%rcx")
@@ -34590,6 +34614,9 @@
       (array-set! a 8 "%r14")
       (array-set! a 9 "%r15")
       (array-set! a 10 "%rbx")
+      (array-set! a 11 "%rsi")
+      (array-set! a 12 "%rdi")
+      (array-set! a 13 "%rax")
       a)))
 
 (define compiler-backend-scavenge-candidate-pool : (Array String)
@@ -34619,7 +34646,11 @@
   (compiler-backend-scavenge-xmm-candidates))
 
 (define (compiler-backend-callee-saved-reg? [reg : String]) : bool
-  (>= (compiler-backend-scavenge-callee-idx reg) 0))
+  (or
+    (>= (compiler-backend-scavenge-callee-idx reg) 0)
+    (and
+      (compiler-backend-current-fn-win64?)
+      (or (string.eq reg "%rsi") (string.eq reg "%rdi")))))
 
 ;; A candidate is usable as scratch iff: free at `point`, not excluded, and
 ;; (caller-saved OR already saved by the prologue).
@@ -34647,8 +34678,9 @@
 (define compiler-backend-current-instr-reserved-mask : i64
   0)
 
-;; OR the pooled-register-home bit of every var in `set` into `acc`. reg-bit is
-;; 0 for spilled/ABI-only regs, so only allocatable homes get reserved.
+;; OR the pooled-register-home bit of every var in `set` into `acc`. Spilled
+;; values contribute 0; register homes, including ABI-special %rax/%rsi/%rdi,
+;; participate in the reserved mask.
 (define (compiler-backend-live-set-home-mask
   [assignments : CompilerRegAssignmentList]
   [set : CompilerLiveI64Set]

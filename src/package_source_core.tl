@@ -253,26 +253,26 @@
   [entries : fs.FsStringVector]
   [index : i64]
   [acc : svec.StringVec]) : svec.StringVec
-  (if (>= index (fs.fs-string-vector-len (& entries)))
+  (if (>= index (fs.string-vector-len (& entries)))
     acc
     (package-source-sort-entries-from
       entries
       (+ index 1)
       (package-source-vec-insert
         acc
-        (fs.fs-string-vector-get (& entries) index "")))))
+        (fs.string-vector-get (& entries) index "")))))
 
 (define (package-source-sort-entries [entries : fs.FsStringVector]) : svec.StringVec
   (package-source-sort-entries-from entries 0 (svec.string-vec-new)))
 
 (define (package-source-sort-entries-self-test?) : bool
   (let
-    [entries : fs.FsStringVector (fs.fs-string-vector-new)]
+    [entries : fs.FsStringVector (fs.string-vector-new)]
     [items : svec.StringVec
       (begin
-        (fs.fs-string-vector-push! (&mut entries) "zeta")
-        (fs.fs-string-vector-push! (&mut entries) "alpha")
-        (fs.fs-string-vector-push! (&mut entries) "middle")
+        (fs.string-vector-push! (&mut entries) "zeta")
+        (fs.string-vector-push! (&mut entries) "alpha")
+        (fs.string-vector-push! (&mut entries) "middle")
         (package-source-sort-entries entries))]
     (match items
       [_

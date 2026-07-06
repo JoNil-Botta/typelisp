@@ -2480,12 +2480,12 @@
   [inputs : SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
   [idx : i64]) : SourceToolLinkInputs
-  (if (>= idx (fs.fs-string-vector-len vec))
+  (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-libs
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Lib (fs.fs-string-vector-get vec idx "")))
+        (AstExternLinkInput.Lib (fs.string-vector-get vec idx "")))
       vec
       (+ idx 1))))
 
@@ -2494,7 +2494,7 @@
   [manifest-dir : String]
   [vec : (& vec fs.FsStringVector)]
   [idx : i64]) : SourceToolLinkInputs
-  (if (>= idx (fs.fs-string-vector-len vec))
+  (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-search-paths
       (source-tool-link-inputs-add-ast
@@ -2502,7 +2502,7 @@
         (AstExternLinkInput.Search
           (build-package-link-resolve-search-path
             manifest-dir
-            (fs.fs-string-vector-get vec idx ""))))
+            (fs.string-vector-get vec idx ""))))
       manifest-dir
       vec
       (+ idx 1))))
@@ -2511,12 +2511,12 @@
   [inputs : SourceToolLinkInputs]
   [vec : (& vec fs.FsStringVector)]
   [idx : i64]) : SourceToolLinkInputs
-  (if (>= idx (fs.fs-string-vector-len vec))
+  (if (>= idx (fs.string-vector-len vec))
     inputs
     (build-package-link-add-args
       (source-tool-link-inputs-add-ast
         inputs
-        (AstExternLinkInput.Arg (fs.fs-string-vector-get vec idx "")))
+        (AstExternLinkInput.Arg (fs.string-vector-get vec idx "")))
       vec
       (+ idx 1))))
 

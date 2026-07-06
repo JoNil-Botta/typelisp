@@ -445,9 +445,11 @@ tl_arena_destroy:
     movq 40(%rbx), %r12
     testq %r12, %r12
     jz .L_tl_arena_destroy_loop
-    testq $1, 48(%r12)
-    jz .L_tl_arena_destroy_retired_ready
     movq 56(%r12), %rbx
+    testq %rbx, %rbx
+    jnz .L_tl_arena_destroy_head_ready
+    movq %r12, %rbx
+.L_tl_arena_destroy_head_ready:
 .L_tl_arena_destroy_retired_ready:
     movq 32(%r12), %r12
 .L_tl_arena_destroy_loop:

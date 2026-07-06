@@ -9,6 +9,7 @@
 (import stdlib.array)
 (import stdlib.string)
 (import stdlib.hashmap)
+(import (hashmap String i64) as reg_string_i64_map)
 (import "compiler_liveness.tl")
 (import "compiler_parallel_move.tl")
 (cfg test (import stdlib.test))
@@ -2561,11 +2562,11 @@
 (define (compiler-reg-bits-build-rows!
   [blocks : CompilerLiveBlockList]
   [arr : (Array CompilerLiveBlock)]
-  [idmap : hashmap.StringI64Map]
+  [idmap : reg_string_i64_map.Map]
   [use-rows : (Array i64)]
   [def-rows : (Array i64)]
   [words : i64]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : reg_string_i64_map.Map
   (match blocks
     [(CompilerLiveBlockList.Nil) idmap]
     [(CompilerLiveBlockList.Cons block rest)
@@ -2575,10 +2576,11 @@
             (array-set! arr index block)
             (compiler-reg-set->row! uses use-rows (* index words))
             (compiler-reg-set->row! defs def-rows (* index words))
+            (reg_string_i64_map.insert (&mut idmap) label index)
             (compiler-reg-bits-build-rows!
               (box-get rest)
               arr
-              (hashmap.string-i64-map-put idmap label index)
+              idmap
               use-rows
               def-rows
               words
@@ -2586,11 +2588,11 @@
 
 (define (compiler-reg-bits-build-rows-from-array!
   [blocks : (Array CompilerLiveBlock)]
-  [idmap : hashmap.StringI64Map]
+  [idmap : reg_string_i64_map.Map]
   [use-rows : (Array i64)]
   [def-rows : (Array i64)]
   [words : i64]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : reg_string_i64_map.Map
   (if (>= index (array-length blocks))
     idmap
     (match (array-ref blocks index)
@@ -2598,9 +2600,10 @@
         (begin
           (compiler-reg-set->row! uses use-rows (* index words))
           (compiler-reg-set->row! defs def-rows (* index words))
+          (reg_string_i64_map.insert (&mut idmap) label index)
           (compiler-reg-bits-build-rows-from-array!
             blocks
-            (hashmap.string-i64-map-put idmap label index)
+            idmap
             use-rows
             def-rows
             words
@@ -2641,22 +2644,22 @@
   [live-out : (Array i64)]
   [live-in : (Array i64)]
   [succs : CompilerLiveLabelSet]
-  [idmap : hashmap.StringI64Map]
+  [idmap : reg_string_i64_map.Map]
   [b : i64]
   [words : i64]) : unit
   (match succs
     [(CompilerLiveLabelSet.Nil) unit]
     [(CompilerLiveLabelSet.Cons label rest)
       (begin
-        (match (hashmap.string-i64-map-get idmap label)
-          [(hashmap.StringI64MapFound idx)
+        (match (reg_string_i64_map.get (& idmap) label)
+          [(reg_string_i64_map.LookupFound idx)
             (compiler-reg-bits-or-row!
               live-out
               (* b words)
               live-in
               (* idx words)
               words)]
-          [(hashmap.StringI64MapMissing) unit])
+          [(reg_string_i64_map.LookupMissing) unit])
         (compiler-reg-bits-or-succs!
           live-out
           live-in
@@ -2696,7 +2699,7 @@
 
 (define (compiler-reg-bits-iterate!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : hashmap.StringI64Map]
+  [idmap : reg_string_i64_map.Map]
   [words : i64]
   [use-rows : (Array i64)]
   [live-in : (Array i64)]
@@ -2739,7 +2742,7 @@
 
 (define (compiler-reg-bits-fixpoint!
   [arr : (Array CompilerLiveBlock)]
-  [idmap : hashmap.StringI64Map]
+  [idmap : reg_string_i64_map.Map]
   [count : i64]
   [words : i64]
   [use-rows : (Array i64)]
@@ -2912,10 +2915,10 @@
           (compiler-reg-fill-i64-array starts -1)
           (compiler-reg-fill-i64-array ends -1)
           (let
-            [idmap : hashmap.StringI64Map
+            [idmap : reg_string_i64_map.Map
               (compiler-reg-bits-build-rows-from-array!
                 live-blocks
-                (hashmap.string-i64-map-with-capacity
+                (reg_string_i64_map.with-capacity
                   (compiler-reg-bits-map-capacity count))
                 use-rows
                 def-rows
@@ -7131,53 +7134,52 @@
 
 (define (compiler-reg-loop-depth-block-ids
   [blocks : CompilerIrBlockList]
-  [ids : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [ids : reg_string_i64_map.Map]
+  [index : i64]) : reg_string_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) ids]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block label _)
-          (compiler-reg-loop-depth-block-ids
-            (box-get rest)
-            (hashmap.string-i64-map-put ids label index)
-            (+ index 1))])]
+          (begin
+            (reg_string_i64_map.insert (&mut ids) label index)
+            (compiler-reg-loop-depth-block-ids (box-get rest) ids (+ index 1)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-block-ids-seq seq ids index)]))
 
 (define (compiler-reg-loop-depth-block-ids-seq
   [seq : CompilerIrBlockSeq]
-  [ids : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [ids : reg_string_i64_map.Map]
+  [index : i64]) : reg_string_i64_map.Map
   (let
     [count : i64 (compiler-ir-block-seq-count seq)]
     [i : i64 index]
-    [out : hashmap.StringI64Map ids]
+    [out : reg_string_i64_map.Map ids]
     (begin
       (while (< i count)
         (match (compiler-ir-block-seq-ref seq i)
           [(CompilerIrBlock.Block label _)
-            (set! out (hashmap.string-i64-map-put out label i))])
+            (reg_string_i64_map.insert (&mut out) label i)])
         (set! i (+ i 1)))
       out)))
 
 (define (compiler-reg-loop-depth-record-succ!
   [loop-ends : (Array i64)]
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [source-id : i64]
   [label : String]) : unit
-  (match (hashmap.string-i64-map-get ids label)
-    [(hashmap.StringI64MapFound target-id)
+  (match (reg_string_i64_map.get (& ids) label)
+    [(reg_string_i64_map.LookupFound target-id)
       (if (and (>= target-id 0) (<= target-id source-id))
         (if (> source-id (array-ref loop-ends target-id))
           (array-set! loop-ends target-id source-id)
           unit)
         unit)]
-    [(hashmap.StringI64MapMissing) unit]))
+    [(reg_string_i64_map.LookupMissing) unit]))
 
 (define (compiler-reg-loop-depth-record-succs!
   [loop-ends : (Array i64)]
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [source-id : i64]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
@@ -7193,7 +7195,7 @@
 
 (define (compiler-reg-loop-depth-record-blocks!
   [blocks : CompilerIrBlockList]
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [loop-ends : (Array i64)]
   [index : i64]) : unit
   (match blocks
@@ -7215,7 +7217,7 @@
 
 (define (compiler-reg-loop-depth-record-blocks-seq!
   [seq : CompilerIrBlockSeq]
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [loop-ends : (Array i64)]
   [index : i64]) : unit
   (let
@@ -7263,10 +7265,10 @@
     [count : i64 (compiler-ir-block-list-count blocks)]
     [depths : (Array i64) (array.make-array i64 count)]
     [loop-ends : (Array i64) (array.make-array i64 count)]
-    [ids : hashmap.StringI64Map
+    [ids : reg_string_i64_map.Map
       (compiler-reg-loop-depth-block-ids
         blocks
-        (hashmap.string-i64-map-with-capacity
+        (reg_string_i64_map.with-capacity
           (compiler-reg-bits-map-capacity count))
         0)]
     (begin
@@ -7943,26 +7945,26 @@
 
 (define (compiler-reg-region-label-map-from
   [labels : CompilerRegStringList]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : reg_string_i64_map.Map]) : reg_string_i64_map.Map
   (match labels
     [(CompilerRegStringList.Nil) out]
     [(CompilerRegStringList.Cons label rest)
-      (compiler-reg-region-label-map-from
-        (box-get rest)
-        (hashmap.string-i64-map-put out label 1))]))
+      (begin
+        (reg_string_i64_map.insert (&mut out) label 1)
+        (compiler-reg-region-label-map-from (box-get rest) out))]))
 
-(define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : hashmap.StringI64Map
+(define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : reg_string_i64_map.Map
   (compiler-reg-region-label-map-from
     labels
-    (hashmap.string-i64-map-with-capacity
+    (reg_string_i64_map.with-capacity
       (compiler-reg-bits-map-capacity (compiler-reg-string-list-count labels)))))
 
 (define (compiler-reg-region-label?
-  [region : hashmap.StringI64Map]
+  [region : reg_string_i64_map.Map]
   [label : String]) : bool
-  (match (hashmap.string-i64-map-get region label)
-    [(hashmap.StringI64MapFound _) true]
-    [(hashmap.StringI64MapMissing) false]))
+  (match (reg_string_i64_map.get (& region) label)
+    [(reg_string_i64_map.LookupFound _) true]
+    [(reg_string_i64_map.LookupMissing) false]))
 
 (define (compiler-reg-edge-copy-live-block-label [block : CompilerLiveBlock]) : String
   (match block
@@ -8076,7 +8078,7 @@
   [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : hashmap.StringI64Map]
+  [region : reg_string_i64_map.Map]
   [from-block : CompilerLiveBlock]
   [from-label : String]
   [from-inside : bool]
@@ -8151,7 +8153,7 @@
   [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : hashmap.StringI64Map]
+  [region : reg_string_i64_map.Map]
   [from-block : CompilerLiveBlock]
   [from-label : String]
   [from-inside : bool]
@@ -8203,7 +8205,7 @@
   [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
-  [region : hashmap.StringI64Map]
+  [region : reg_string_i64_map.Map]
   [stack-var : i64]
   [region-var : i64]
   [ty : AstType]
@@ -8944,7 +8946,7 @@
 
 (define (compiler-reg-loop-split-region-remap-blocks
   [blocks : CompilerIrBlockList]
-  [region : hashmap.StringI64Map]
+  [region : reg_string_i64_map.Map]
   [remap : (Array i64)]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) CompilerIrBlockList.Nil]
@@ -9116,10 +9118,10 @@
   [count : i64]) : (Array i64)
   (let
     [loop-ends : (Array i64) (array.make-array i64 count)]
-    [ids : hashmap.StringI64Map
+    [ids : reg_string_i64_map.Map
       (compiler-reg-loop-depth-block-ids
         blocks
-        (hashmap.string-i64-map-with-capacity
+        (reg_string_i64_map.with-capacity
           (compiler-reg-bits-map-capacity count))
         0)]
     (begin
@@ -9132,10 +9134,10 @@
   [count : i64]) : (Array i64)
   (let
     [loop-ends : (Array i64) (array.make-array i64 count)]
-    [ids : hashmap.StringI64Map
+    [ids : reg_string_i64_map.Map
       (compiler-reg-loop-depth-block-ids-seq
         seq
-        (hashmap.string-i64-map-with-capacity
+        (reg_string_i64_map.with-capacity
           (compiler-reg-bits-map-capacity count))
         0)]
     (begin
@@ -9178,15 +9180,15 @@
 (define (compiler-reg-preheader-pred-for-header
   [orig : (Array CompilerIrBlock)]
   [loop-ends : (Array i64)]
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [h : i64]
   [h-label : String]) : i64
   (if (or
     (<= h 0)
     (>= h (array-length loop-ends))
     (< (array-ref loop-ends h) h)
-    (hashmap.string-i64-map-contains?
-      ids
+    (reg_string_i64_map.contains?
+      (& ids)
       (str_cat.str-cat h-label ".preheader")))
     (- 0 1)
     (let
@@ -9213,18 +9215,18 @@
 ;; block doing the redirect (`pred-index`) is that header's single out-of-loop
 ;; predecessor, retarget to the header's preheader label; else unchanged.
 (define (compiler-reg-preheader-subst-label
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [header-pred : (Array i64)]
   [pred-index : i64]
   [s : String]) : String
-  (match (hashmap.string-i64-map-get ids s)
-    [(hashmap.StringI64MapFound h-idx)
+  (match (reg_string_i64_map.get (& ids) s)
+    [(reg_string_i64_map.LookupFound h-idx)
       (if (and
         (< h-idx (array-length header-pred))
         (= (array-ref header-pred h-idx) pred-index))
         (str_cat.str-cat s ".preheader")
         s)]
-    [(hashmap.StringI64MapMissing) s]))
+    [(reg_string_i64_map.LookupMissing) s]))
 
 (define (compiler-reg-preheader-list-replace-last
   [instrs : CompilerIrInstrList]
@@ -9244,7 +9246,7 @@
 ;; target that is a preheader-getting header whose single out-of-loop
 ;; predecessor is this block.
 (define (compiler-reg-preheader-redirect-block
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [header-pred : (Array i64)]
   [block : CompilerIrBlock]
   [index : i64]) : CompilerIrBlock
@@ -9332,7 +9334,7 @@
 ;; (with the header's phi inputs relabeled from the predecessor to it).
 (define (compiler-reg-preheader-rewrite
   [orig : (Array CompilerIrBlock)]
-  [ids : hashmap.StringI64Map]
+  [ids : reg_string_i64_map.Map]
   [header-pred : (Array i64)]
   [blocks : CompilerIrBlockList]
   [index : i64]) : CompilerIrBlockList
@@ -9396,10 +9398,10 @@
       blocks
       (let
         [orig : (Array CompilerIrBlock) (struct-get seq slots)]
-        [ids : hashmap.StringI64Map
+        [ids : reg_string_i64_map.Map
           (compiler-reg-loop-depth-block-ids-seq
             seq
-            (hashmap.string-i64-map-with-capacity
+            (reg_string_i64_map.with-capacity
               (compiler-reg-bits-map-capacity count))
             0)]
         [loop-ends : (Array i64)
@@ -9407,8 +9409,8 @@
         [header-pred : (Array i64) (array.make-array i64 count)]
         (begin
           (compiler-reg-fill-i64-array header-pred (- 0 1))
-          (match (hashmap.string-i64-map-get ids header-label)
-            [(hashmap.StringI64MapFound h)
+          (match (reg_string_i64_map.get (& ids) header-label)
+            [(reg_string_i64_map.LookupFound h)
               (let
                 [pred : i64
                   (compiler-reg-preheader-pred-for-header
@@ -9427,7 +9429,7 @@
                       blocks
                       0))
                   blocks))]
-            [(hashmap.StringI64MapMissing) blocks]))))))
+            [(reg_string_i64_map.LookupMissing) blocks]))))))
 
 (define (compiler-reg-loop-split-try-var
   [_abi : CompilerRegTargetAbi]
@@ -9849,7 +9851,7 @@
     ;; The region is the candidate's block-label list (one label for the
     ;; single-block paths -- byte-identical to the prior single-label map -- or the
     ;; whole natural loop for the multi-block phi-carried homing).
-    [region-map : hashmap.StringI64Map
+    [region-map : reg_string_i64_map.Map
       (compiler-reg-region-label-map region-labels)]
     ;; The new region-resident var (id `vars`) takes the register. When this
     ;; candidate evicted a lower-weight var to free that register, also override
@@ -12497,15 +12499,15 @@
 ;; these tiny callees are inlined so the standalone pattern rarely survives; at
 ;; -O1 it is pervasive.) Self-tests never set it, so the map stays empty and the
 ;; structural Pack/Word seeding below is unaffected.
-(define compiler-reg-group-counts : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 8))
-(define compiler-reg-group-class-masks : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 8))
+(define compiler-reg-group-counts : reg_string_i64_map.Map
+  (reg_string_i64_map.with-capacity 8))
+(define compiler-reg-group-class-masks : reg_string_i64_map.Map
+  (reg_string_i64_map.with-capacity 8))
 
-(define (compiler-reg-set-group-counts! [counts : hashmap.StringI64Map]) : unit
+(define (compiler-reg-set-group-counts! [counts : reg_string_i64_map.Map]) : unit
   (set! compiler-reg-group-counts counts))
 
-(define (compiler-reg-set-group-class-masks! [masks : hashmap.StringI64Map]) : unit
+(define (compiler-reg-set-group-class-masks! [masks : reg_string_i64_map.Map]) : unit
   (set! compiler-reg-group-class-masks masks))
 
 ;; The aggregate type name a value carries (mirror of
@@ -12526,18 +12528,18 @@
     [name : String (compiler-reg-aggregate-type-name ty)]
     (if (string.eq name "")
       false
-      (match (hashmap.string-i64-map-get compiler-reg-group-counts name)
-        [(hashmap.StringI64MapFound count) (> count 1)]
-        [(hashmap.StringI64MapMissing) false]))))
+      (match (reg_string_i64_map.get (& compiler-reg-group-counts) name)
+        [(reg_string_i64_map.LookupFound count) (> count 1)]
+        [(reg_string_i64_map.LookupMissing) false]))))
 
 (define (compiler-reg-type-register-group-has-sse? [ty : AstType]) : bool
   (let
     [name : String (compiler-reg-aggregate-type-name ty)]
     (if (string.eq name "")
       false
-      (match (hashmap.string-i64-map-get compiler-reg-group-class-masks name)
-        [(hashmap.StringI64MapFound mask) (> mask 0)]
-        [(hashmap.StringI64MapMissing) false]))))
+      (match (reg_string_i64_map.get (& compiler-reg-group-class-masks) name)
+        [(reg_string_i64_map.LookupFound mask) (> mask 0)]
+        [(reg_string_i64_map.LookupMissing) false]))))
 
 (define (compiler-reg-var-register-group-has-sse?
   [types : CompilerRegVarTypes]

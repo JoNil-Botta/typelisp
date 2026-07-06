@@ -1,6 +1,7 @@
 ;; compiler_backend_tests.tl - Selfhost backend test helpers split from production backend.
 (import stdlib.array)
 (import stdlib.hashmap)
+(import (hashmap String i64) as backend_test_string_i64_map)
 (import "compiler_backend.tl")
 (import "compiler_parallel_move.tl")
 (import compiler_builtin_ids as cbi)
@@ -4678,21 +4679,21 @@
               1
               blocks)
             CompilerIrFunctionList.Nil)))]
-    [counts : hashmap.StringI64Map
+    [counts : backend_test_string_i64_map.Map
       (compiler-backend-collect-group-counts-functions
-        (hashmap.string-i64-map-with-capacity 4)
+        (backend_test_string_i64_map.with-capacity 4)
         functions)]
-    [masks : hashmap.StringI64Map
+    [masks : backend_test_string_i64_map.Map
       (compiler-backend-collect-group-class-masks-functions
-        (hashmap.string-i64-map-with-capacity 4)
+        (backend_test_string_i64_map.with-capacity 4)
         functions)]
     (and
-      (match (hashmap.string-i64-map-get counts name)
-        [(hashmap.StringI64MapFound count) (= count 2)]
-        [(hashmap.StringI64MapMissing) false])
-      (match (hashmap.string-i64-map-get masks name)
-        [(hashmap.StringI64MapFound mask) (= mask 2)]
-        [(hashmap.StringI64MapMissing) false]))))
+      (match (backend_test_string_i64_map.get (& counts) name)
+        [(backend_test_string_i64_map.LookupFound count) (= count 2)]
+        [(backend_test_string_i64_map.LookupMissing) false])
+      (match (backend_test_string_i64_map.get (& masks) name)
+        [(backend_test_string_i64_map.LookupFound mask) (= mask 2)]
+        [(backend_test_string_i64_map.LookupMissing) false]))))
 
 (define (compiler-backend-ir-walker-object-refs-with-plan
   [plan : CompilerBackendRuntimePlan]) : bool

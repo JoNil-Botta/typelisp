@@ -376,6 +376,14 @@ values, call `extern` functions whose signatures contain raw pointers,
 construct typed null pointers, and test pointers for null. Safe code may not
 dereference, write through, offset, or cast raw pointers.
 
+`(ptr-addr-of place)` is the unsafe source operation for deriving a raw
+pointer from compiler-known storage. The v1 `place` grammar is deliberately
+narrow: whole local or parameter storage, struct-field paths rooted in that
+storage, and fixed-array element paths rooted in that storage. The result is a
+raw pointer value; it carries no checked borrow, lifetime pin, provenance,
+aliasing, or move restriction. The caller is responsible for keeping the owner
+storage live and valid for every later raw-pointer use.
+
 #### 3.4.1 Arena-owned `(Box T)` indirection
 
 `(Box T)` is an explicit, safe, arena-owned indirection type. A box value is a
@@ -4779,7 +4787,7 @@ The unsafe operation set:
 | `(ptr-write! p value)` | Unsafe | `(MutPtr T)` and `T` -> `unit` | Writes `sizeof(T)` bytes; writing through `(Ptr T)` is rejected. |
 | `(ptr-offset p n)` | Unsafe | raw pointer and integer -> same raw pointer type | Adds `n * sizeof(T)` bytes. Negative offsets are allowed but unsafe. |
 | `(ptr-cast p : (Ptr T))` / `(ptr-cast p : (MutPtr T))` | Unsafe | raw pointer -> requested raw pointer type | Includes const/mutable pointer casts; there is no implicit `MutPtr` to `Ptr` coercion. |
-| `(ptr-addr-of name)` | Unsafe | local/parameter `name : T` -> `(MutPtr T)` | Local or parameter scalar cells only. The pointer is valid only while that stack slot is live; escaping or storing it is the caller's responsibility. |
+| `(ptr-addr-of place)` | Unsafe | addressable storage place of type `T` -> `(MutPtr T)` for owned local/parameter roots | Produces a raw pointer to compiler-known storage without creating a checked borrow or lifetime pin. |
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
 | `(atomic-load p)`, `(atomic-store! p v)`, `(atomic-add! p d)`, `(atomic-fetch-add! p d)`, `(atomic-cas! p expected new)` | Unsafe | raw pointer atomics for `T` in `i32`, `i64`, `u32`, or `u64`; update forms require `(MutPtr T)` and matching values | Sequentially consistent x86-64 memory operations. Load returns `T`; store/add return `unit`; fetch-add and CAS return the previous value observed at `p`. |
@@ -4796,10 +4804,43 @@ implicit `String -> Ptr` or `bytes -> Ptr` coercions, and does not extend the
 input slice's lifetime. The `ffi-c-string-*` compatibility wrappers borrow their
 `String` input as `(& r bytes)` and delegate to the byte-slice implementation.
 
-Outside the raw-pointer surface: address-of globals, fields, array elements, or
-temporaries; slice views; volatile access; provenance tracking; pointer
-comparisons beyond `ptr-null?`; pointer-to-function casts; and any
-borrow-checked reference surface.
+`ptr-addr-of` addressable places are:
+
+- A whole local or parameter storage slot, including scalar and aggregate
+  locals/parameters.
+- A struct field path rooted in an addressable local or parameter, written as
+  `(struct-get place field)` or equivalent local dotted-field sugar.
+- A fixed-array element path rooted in addressable storage, written as
+  `(array-ref place index)`. The root must have fixed-array type
+  `(Array T N)` at that projection; compatibility dynamic `(Array T)` element
+  sugar is not addressable in v1. The element index is checked with the same
+  bounds policy as fixed-array element access before the pointer is returned.
+
+The operation's result type is `(MutPtr T)` for the selected owned storage of
+type `T`. V1 does not define reference-rooted address-of. A later design may
+allow reference roots, in which case immutable roots should produce `(Ptr T)`
+and mutable roots `(MutPtr T)`.
+
+The checker only verifies that the form appears in an unsafe context and that
+the operand is a storage-backed addressable place. Taking a raw address does
+not mark the place borrowed, does not keep it live, and does not prevent later
+owner moves, assignment, arena reset/destroy, or aliasing through other unsafe
+operations. Escaping, storing, or using the pointer after the owner becomes
+invalid is entirely the caller's responsibility.
+
+The lowerer must derive field and element addresses from the original storage
+root, not by first loading or copying the aggregate value. The expected shape
+is address-of the root storage slot followed by target-layout field offsets or
+element-size address derivation.
+
+Outside the raw-pointer surface: address-of globals, temporaries, enum payload
+projection, tuple projection, box projection, compatibility dynamic-array
+element sugar, slice views, volatile access, provenance tracking, pointer
+comparisons beyond `ptr-null?`, pointer-to-function casts, and any
+borrow-checked reference surface. Pointer-to-aggregate-field or
+pointer-to-array-element support does not imply by-value aggregate extern ABI
+support; C ABI aggregate argument and return classification remains a separate
+backend concern.
 
 ---
 
@@ -5872,7 +5913,7 @@ in documentation passes.
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Designed; not implemented. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
-| Address-of for aggregate fields and array elements; volatile access | Follow-up FFI work. |
+| Aggregate `ptr-addr-of` implementation; volatile access | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464; volatile access remains deferred. |
 | Cleanup-owning enums | Reserved. |
 | Complete source locations for all semantic errors | Partial. |
 | Dotted module imports everywhere | Migration in progress: legacy path imports remain accepted while the repository migrates. |
@@ -6469,6 +6510,7 @@ expr          ::= literal
                 | "(" "ptr-write!" expr expr ")"
                 | "(" "ptr-offset" expr expr ")"
                 | "(" "ptr-cast" expr ":" ptr-type ")"
+                | "(" "ptr-addr-of" addr-of-place ")"
                 | "(" "ptr->int" expr ")"
                 | "(" "int->ptr" expr ":" ptr-type ")"
                 | "(" "comptime" expr ")"
@@ -6501,6 +6543,16 @@ borrow-place  ::= ident
 
 ;; Dotted field sugar such as `p.x` is an `ident` in this grammar and becomes a
 ;; borrow-place only when its leading segment resolves to a local binding.
+
+addr-of-place ::= ident
+                | "(" "struct-get" addr-of-place ident ")"
+                | "(" "array-ref" addr-of-place expr ")"
+
+;; `ptr-addr-of` is unsafe and narrower than `borrow-place`: the root `ident`
+;; must resolve to local or parameter storage, `array-ref` projections must be
+;; fixed-array elements, and temporaries, globals, tuple/box/enum projections,
+;; and compatibility dynamic-array elements are rejected. Local dotted-field
+;; sugar follows the same leading-local rule as borrow places.
 
 binding       ::= "[" ident [":" type] expr "]"
 resource-binding ::= "[" ident expr expr "]"  ; name init cleanup-fn

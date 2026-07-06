@@ -136,6 +136,10 @@
   (carrier TcTypeEnvScopedCarrier)
   (mark TcTypeEnvScopedCarrierMark))
 
+(defenum TcTypeEnvScopedRuntimeSave
+  (Inactive)
+  (Active TcTypeEnvScopedCarrierSave))
+
 (defenum TcTypeEnvScopedLookup
   (Missing)
   (Found AstType bool bool TcTypeEnvScopedMarkerKind i64 i64))
@@ -3002,7 +3006,11 @@
     (if tc-topenv-alias-fanout-active
       (tc-topenv-membership-mark-bound! name-id)
       unit)
-    (TcTypeEnv.Bind name-id ty (box env))))
+    (let
+      [next-env : TcTypeEnv (TcTypeEnv.Bind name-id ty (box env))]
+      (begin
+        (tc-type-env-scoped-runtime-note-bind-id! next-env name-id ty env)
+        next-env))))
 
 (define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind-raw-id env (tc-name-id name) ty))
@@ -3538,6 +3546,57 @@
           (struct-get slot ty)
           (TcTypeEnvScopedMarkerCursor (struct-get cursor stack) (- index 1)))))))
 
+(define (tc-type-env-scoped-stack-find-id-index-from
+  [stack : TcTypeEnvScopedStack]
+  [name-id : i64]
+  [index : i64]) : i64
+  (if (< index 0)
+    -1
+    (let
+      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      (if (= (struct-get slot name-id) name-id)
+        index
+        (tc-type-env-scoped-stack-find-id-index-from stack name-id (- index 1))))))
+
+(define (tc-type-env-scoped-stack-find-id-index
+  [stack : TcTypeEnvScopedStack]
+  [name-id : i64]) : i64
+  (tc-type-env-scoped-stack-find-id-index-from
+    stack
+    name-id
+    (- (tc-type-env-scoped-stack-len stack) 1)))
+
+(define (tc-type-env-scoped-stack-find-lifetime-index-from
+  [stack : TcTypeEnvScopedStack]
+  [lifetime : String]
+  [lifetime-id : i64]
+  [index : i64]) : i64
+  (if (< index 0)
+    -1
+    (let
+      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      (if (tc-env-binding-matches-lifetime-id?
+        (struct-get slot name-id)
+        (struct-get slot ty)
+        lifetime
+        lifetime-id)
+        index
+        (tc-type-env-scoped-stack-find-lifetime-index-from
+          stack
+          lifetime
+          lifetime-id
+          (- index 1))))))
+
+(define (tc-type-env-scoped-stack-find-lifetime-index
+  [stack : TcTypeEnvScopedStack]
+  [lifetime : String]
+  [lifetime-id : i64]) : i64
+  (tc-type-env-scoped-stack-find-lifetime-index-from
+    stack
+    lifetime
+    lifetime-id
+    (- (tc-type-env-scoped-stack-len stack) 1)))
+
 (define (tc-type-env-scoped-visible-marker-kind [name-id : i64] [ty : AstType]) : TcTypeEnvScopedMarkerKind
   (cond
     [(= name-id (tc-unsafe-marker-id)) TcTypeEnvScopedMarkerKind.UnsafeContext]
@@ -3889,6 +3948,22 @@
         (struct-get carrier env)
         (tc-type-env-scoped-sidecar-mark sidecar stack-mark)))))
 
+(define (tc-type-env-scoped-carrier-snapshot [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
+  (let
+    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    [stack-mark : TcTypeEnvScopedMark
+      (TcTypeEnvScopedMark
+        (struct-get stack slot-count)
+        (struct-get stack mark-count)
+        (struct-get stack scope-depth)
+        (struct-get stack cache-generation))]
+    (TcTypeEnvScopedCarrierSave
+      (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar)
+      (TcTypeEnvScopedCarrierMark
+        (struct-get carrier env)
+        (tc-type-env-scoped-sidecar-mark sidecar stack-mark)))))
+
 (define (tc-type-env-scoped-carrier-restore
   [carrier : TcTypeEnvScopedCarrier]
   [mark : TcTypeEnvScopedCarrierMark]) : TcTypeEnvScopedCarrier
@@ -4145,40 +4220,113 @@
     name
     (tc-atomic-arena-owner-marker-id)))
 
-(define (tc-type-env-scoped-lifetime-visible-scan?
+(define tc-type-env-scoped-cache-visible-valid : bool
+  false)
+(define tc-type-env-scoped-cache-visible-len : i64
+  -1)
+(define tc-type-env-scoped-cache-visible-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-visible-lifetime-id : i64
+  -1)
+(define tc-type-env-scoped-cache-visible-result : bool
+  false)
+(define tc-type-env-scoped-cache-outlives-binding-valid : bool
+  false)
+(define tc-type-env-scoped-cache-outlives-binding-len : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-lifetime-id : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-target-id : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-binding-result : bool
+  false)
+(define tc-type-env-scoped-cache-outlives-lifetime-valid : bool
+  false)
+(define tc-type-env-scoped-cache-outlives-lifetime-len : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-generation : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-value-id : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-target-id : i64
+  -1)
+(define tc-type-env-scoped-cache-outlives-lifetime-result : bool
+  false)
+
+(define (tc-type-env-scoped-cache-clear!) : unit
+  (begin
+    (set! tc-type-env-scoped-cache-visible-valid false)
+    (set! tc-type-env-scoped-cache-outlives-binding-valid false)
+    (set! tc-type-env-scoped-cache-outlives-lifetime-valid false)))
+
+(define (tc-type-env-scoped-lifetime-visible-scan-id?
   [cursor : TcTypeEnvScopedMarkerCursor]
-  [lifetime : String]) : bool
+  [lifetime : String]
+  [lifetime-id : i64]) : bool
   (match (tc-type-env-scoped-marker-step cursor)
     [(TcTypeEnvScopedMarkerStep.Done) false]
     [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
-      (if (tc-env-binding-matches-lifetime? key ty lifetime)
+      (if (tc-env-binding-matches-lifetime-id? key ty lifetime lifetime-id)
         true
-        (tc-type-env-scoped-lifetime-visible-scan? rest-cursor lifetime))]))
+        (tc-type-env-scoped-lifetime-visible-scan-id?
+          rest-cursor
+          lifetime
+          lifetime-id))]))
 
 (define (tc-type-env-scoped-carrier-lifetime-visible?
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-type-env-scoped-lifetime-visible-scan?
-      (tc-type-env-scoped-carrier-marker-cursor carrier)
-      lifetime)))
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get (struct-get carrier sidecar) stack)]
+      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+      [lifetime-id : i64 (tc-name-id lifetime)]
+      (if (and
+        tc-type-env-scoped-cache-visible-valid
+        (= tc-type-env-scoped-cache-visible-len slot-count)
+        (= tc-type-env-scoped-cache-visible-generation generation)
+        (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
+        tc-type-env-scoped-cache-visible-result
+        (let
+          [result : bool
+            (>=
+              (tc-type-env-scoped-stack-find-lifetime-index
+                stack
+                lifetime
+                lifetime-id)
+              0)]
+          (begin
+            (set! tc-type-env-scoped-cache-visible-valid true)
+            (set! tc-type-env-scoped-cache-visible-len slot-count)
+            (set! tc-type-env-scoped-cache-visible-generation generation)
+            (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
+            (set! tc-type-env-scoped-cache-visible-result result)
+            result))))))
 
-(define (tc-type-env-scoped-lifetime-outlives-binding-scan
+(define (tc-type-env-scoped-lifetime-outlives-binding-scan-id
   [cursor : TcTypeEnvScopedMarkerCursor]
   [lifetime : String]
+  [lifetime-id : i64]
   [target : String]
+  [target-id : i64]
   [seen-target : bool]) : bool
   (match (tc-type-env-scoped-marker-step cursor)
     [(TcTypeEnvScopedMarkerStep.Done) false]
     [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
-      (if (tc-env-binding-matches-lifetime? key ty lifetime)
+      (if (tc-env-binding-matches-lifetime-id? key ty lifetime lifetime-id)
         seen-target
-        (tc-type-env-scoped-lifetime-outlives-binding-scan
+        (tc-type-env-scoped-lifetime-outlives-binding-scan-id
           rest-cursor
           lifetime
+          lifetime-id
           target
-          (or seen-target (= key (tc-name-id target)))))]))
+          target-id
+          (or seen-target (= key target-id))))]))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-binding?
   [carrier : TcTypeEnvScopedCarrier]
@@ -4186,31 +4334,77 @@
   [target : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-type-env-scoped-lifetime-outlives-binding-scan
-      (tc-type-env-scoped-carrier-marker-cursor carrier)
-      lifetime
-      target
-      false)))
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get (struct-get carrier sidecar) stack)]
+      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+      [lifetime-id : i64 (tc-name-id lifetime)]
+      [target-id : i64 (tc-name-id target)]
+      (if (and
+        tc-type-env-scoped-cache-outlives-binding-valid
+        (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
+        (= tc-type-env-scoped-cache-outlives-binding-generation generation)
+        (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
+        (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
+        tc-type-env-scoped-cache-outlives-binding-result
+        (let
+          [lifetime-index : i64
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              lifetime
+              lifetime-id)]
+          [target-index : i64
+            (tc-type-env-scoped-stack-find-id-index stack target-id)]
+          [result : bool
+            (and
+              (>= lifetime-index 0)
+              (>= target-index 0)
+              (< lifetime-index target-index))]
+          (begin
+            (set! tc-type-env-scoped-cache-outlives-binding-valid true)
+            (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
+            (set!
+              tc-type-env-scoped-cache-outlives-binding-generation
+              generation)
+            (set!
+              tc-type-env-scoped-cache-outlives-binding-lifetime-id
+              lifetime-id)
+            (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
+            (set! tc-type-env-scoped-cache-outlives-binding-result result)
+            result))))))
 
-(define (tc-type-env-scoped-lifetime-outlives-lifetime-scan
+(define (tc-type-env-scoped-lifetime-outlives-lifetime-scan-id
   [cursor : TcTypeEnvScopedMarkerCursor]
   [value-lifetime : String]
+  [value-lifetime-id : i64]
   [target-lifetime : String]
+  [target-lifetime-id : i64]
   [seen-target : bool]) : bool
   (if (string.eq value-lifetime target-lifetime)
     true
     (match (tc-type-env-scoped-marker-step cursor)
       [(TcTypeEnvScopedMarkerStep.Done) false]
       [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
-        (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
+        (if (tc-env-binding-matches-lifetime-id?
+          key
+          ty
+          value-lifetime
+          value-lifetime-id)
           seen-target
-          (tc-type-env-scoped-lifetime-outlives-lifetime-scan
+          (tc-type-env-scoped-lifetime-outlives-lifetime-scan-id
             rest-cursor
             value-lifetime
+            value-lifetime-id
             target-lifetime
+            target-lifetime-id
             (or
               seen-target
-              (tc-env-binding-matches-lifetime? key ty target-lifetime))))])))
+              (tc-env-binding-matches-lifetime-id?
+                key
+                ty
+                target-lifetime
+                target-lifetime-id))))])))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-lifetime?
   [carrier : TcTypeEnvScopedCarrier]
@@ -4218,11 +4412,130 @@
   [target-lifetime : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-type-env-scoped-lifetime-outlives-lifetime-scan
-      (tc-type-env-scoped-carrier-marker-cursor carrier)
-      value-lifetime
-      target-lifetime
-      false)))
+    (if (string.eq value-lifetime target-lifetime)
+      true
+      (let
+        [stack : TcTypeEnvScopedStack
+          (struct-get (struct-get carrier sidecar) stack)]
+        [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+        [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+        [value-id : i64 (tc-name-id value-lifetime)]
+        [target-id : i64 (tc-name-id target-lifetime)]
+        (if (and
+          tc-type-env-scoped-cache-outlives-lifetime-valid
+          (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
+          (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
+          (= tc-type-env-scoped-cache-outlives-lifetime-value-id value-id)
+          (= tc-type-env-scoped-cache-outlives-lifetime-target-id target-id))
+          tc-type-env-scoped-cache-outlives-lifetime-result
+          (let
+            [value-index : i64
+              (tc-type-env-scoped-stack-find-lifetime-index
+                stack
+                value-lifetime
+                value-id)]
+            [target-index : i64
+              (tc-type-env-scoped-stack-find-lifetime-index
+                stack
+                target-lifetime
+                target-id)]
+            [result : bool
+              (and
+                (>= value-index 0)
+                (>= target-index 0)
+                (< value-index target-index))]
+            (begin
+              (set! tc-type-env-scoped-cache-outlives-lifetime-valid true)
+              (set! tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
+              (set!
+                tc-type-env-scoped-cache-outlives-lifetime-generation
+                generation)
+              (set!
+                tc-type-env-scoped-cache-outlives-lifetime-value-id
+                value-id)
+              (set!
+                tc-type-env-scoped-cache-outlives-lifetime-target-id
+                target-id)
+              (set! tc-type-env-scoped-cache-outlives-lifetime-result result)
+              result)))))))
+
+(define tc-type-env-scoped-runtime-active : bool
+  false)
+(define tc-type-env-scoped-runtime-carrier : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-new))
+
+(define (tc-type-env-scoped-runtime-active?) : bool
+  tc-type-env-scoped-runtime-active)
+
+(define (tc-type-env-scoped-runtime-current) : TcTypeEnvScopedCarrier
+  tc-type-env-scoped-runtime-carrier)
+
+(define (tc-type-env-scoped-runtime-save) : TcTypeEnvScopedRuntimeSave
+  (if tc-type-env-scoped-runtime-active
+    (let
+      [saved : TcTypeEnvScopedCarrierSave
+        (tc-type-env-scoped-carrier-snapshot tc-type-env-scoped-runtime-carrier)]
+      (begin
+        (set! tc-type-env-scoped-runtime-carrier (struct-get saved carrier))
+        (TcTypeEnvScopedRuntimeSave.Active saved)))
+    (TcTypeEnvScopedRuntimeSave.Inactive)))
+
+(define (tc-type-env-scoped-runtime-restore!
+  [saved : TcTypeEnvScopedRuntimeSave]) : unit
+  (match saved
+    [(TcTypeEnvScopedRuntimeSave.Inactive)
+      (begin
+        (tc-type-env-scoped-cache-clear!)
+        (set! tc-type-env-scoped-runtime-active false))]
+    [(TcTypeEnvScopedRuntimeSave.Active carrier-save)
+      (begin
+        (set!
+          tc-type-env-scoped-runtime-carrier
+          (tc-type-env-scoped-carrier-restore
+            (struct-get carrier-save carrier)
+            (struct-get carrier-save mark)))
+        (set! tc-type-env-scoped-runtime-active true))]))
+
+(define (tc-type-env-scoped-runtime-enter! [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedRuntimeSave
+  (let
+    [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+    (begin
+      (tc-type-env-scoped-cache-clear!)
+      (set! tc-type-env-scoped-runtime-carrier carrier)
+      (set! tc-type-env-scoped-runtime-active true)
+      saved)))
+
+(define (tc-type-env-scoped-runtime-slot-flags
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : i64
+  (if (tc-type-env-scoped-marker-kind-same?
+    marker-kind
+    TcTypeEnvScopedMarkerKind.None)
+    0
+    tc-type-env-scoped-flag-marker))
+
+(define (tc-type-env-scoped-runtime-note-bind-id!
+  [next-env : TcTypeEnv]
+  [name-id : i64]
+  [ty : AstType]
+  [_rest-env : TcTypeEnv]) : unit
+  (if tc-type-env-scoped-runtime-active
+    (let
+      [carrier : TcTypeEnvScopedCarrier tc-type-env-scoped-runtime-carrier]
+      [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+      [marker-kind : TcTypeEnvScopedMarkerKind
+        (tc-type-env-scoped-visible-marker-kind name-id ty)]
+      (begin
+        (tc-type-env-scoped-stack-push-slot!
+          (&mut (struct-get sidecar stack))
+          name-id
+          ty
+          (tc-type-env-scoped-runtime-slot-flags marker-kind)
+          marker-kind)
+        (set! (struct-get sidecar persistent) next-env)
+        (set!
+          tc-type-env-scoped-runtime-carrier
+          (TcTypeEnvScopedCarrier next-env sidecar))))
+    unit))
 
 (define (tc-c-abi-fnptr-marker-near-id?
   [env : TcTypeEnv]
@@ -5361,11 +5674,16 @@
         (tc-in-unsafe-scan? (box-get rest)))]))
 
 (define (tc-in-unsafe? [env : TcTypeEnv]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match (tc-env-marker-type env (tc-unsafe-marker-id))
-      [(AstMaybeType.Some _) true]
-      [(AstMaybeType.No) false])))
+  (if (tc-type-env-scoped-runtime-active?)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-type-env-scoped-carrier-in-unsafe?
+        (tc-type-env-scoped-runtime-current)))
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (match (tc-env-marker-type env (tc-unsafe-marker-id))
+        [(AstMaybeType.Some _) true]
+        [(AstMaybeType.No) false]))))
 
 (define tc-unused-unsafe-tracking-enabled : bool
   false)
@@ -5592,13 +5910,18 @@
         (tc-current-return-type-scan (box-get rest)))]))
 
 (define (tc-current-return-type [env : TcTypeEnv]) : ResultTcType
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match (tc-env-marker-type env (tc-return-type-id))
-      [(AstMaybeType.Some ty) (ResultTcType.Ok ty)]
-      [(AstMaybeType.No)
-        (ResultTcType.Err
-          "typecheck: try requires enclosing Result-like function")])))
+  (if (tc-type-env-scoped-runtime-active?)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-type-env-scoped-carrier-current-return-type
+        (tc-type-env-scoped-runtime-current)))
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (match (tc-env-marker-type env (tc-return-type-id))
+        [(AstMaybeType.Some ty) (ResultTcType.Ok ty)]
+        [(AstMaybeType.No)
+          (ResultTcType.Err
+            "typecheck: try requires enclosing Result-like function")]))))
 
 (define (tc-enter-loop-target [env : TcTypeEnv]) : TcTypeEnv
   (tc-bind-id env (tc-loop-target-id) (AstType.Unit)))
@@ -7744,13 +8067,18 @@
         (tc-active-region-scan (box-get rest)))]))
 
 (define (tc-active-region [env : TcTypeEnv]) : TcMaybeString
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match (tc-env-marker-type env (tc-region-marker-id))
-      [(AstMaybeType.Some (AstType.Var region))
-        (TcMaybeString.Some (intern-str region))]
-      [(AstMaybeType.Some _) (tc-active-region-scan env)]
-      [(AstMaybeType.No) (TcMaybeString.No)])))
+  (if (tc-type-env-scoped-runtime-active?)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-type-env-scoped-carrier-active-region
+        (tc-type-env-scoped-runtime-current)))
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (match (tc-env-marker-type env (tc-region-marker-id))
+        [(AstMaybeType.Some (AstType.Var region))
+          (TcMaybeString.Some (intern-str region))]
+        [(AstMaybeType.Some _) (tc-active-region-scan env)]
+        [(AstMaybeType.No) (TcMaybeString.No)]))))
 
 (define (tc-push-region [env : TcTypeEnv] [region : String]) : TcTypeEnv
   (tc-bind env (tc-region-marker-name) (AstType.Var (intern region))))
@@ -8039,12 +8367,16 @@
   (tc-cleanup-owner-active-scan-id? env name (tc-name-id name)))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-cleanup-owner-active-scan? (box-get rest) name)]
-      [_ (tc-cleanup-owner-active-scan? env name)])))
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-cleanup-owner-active?
+      (tc-type-env-scoped-runtime-current)
+      name)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (match env
+        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+          (tc-cleanup-owner-active-scan? (box-get rest) name)]
+        [_ (tc-cleanup-owner-active-scan? env name)]))))
 
 (define (tc-arena-owner-active-scan?
   [env : TcTypeEnv]
@@ -8072,12 +8404,17 @@
   [env : TcTypeEnv]
   [name : String]
   [marker-id : i64]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-arena-owner-active-scan? (box-get rest) name marker-id)]
-      [_ (tc-arena-owner-active-scan? env name marker-id)])))
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-arena-owner-active?
+      (tc-type-env-scoped-runtime-current)
+      name
+      marker-id)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (match env
+        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+          (tc-arena-owner-active-scan? (box-get rest) name marker-id)]
+        [_ (tc-arena-owner-active-scan? env name marker-id)]))))
 
 (define (tc-ordinary-arena-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (tc-arena-owner-active? env name (tc-ordinary-arena-owner-marker-id)))
@@ -8280,12 +8617,13 @@
 ;; list and outlive nested stack bindings or scoped arenas. The default program
 ;; arena is inferred for untagged aggregate handles, so it has no lexical
 ;; binder in this environment walk.
-(define (tc-env-binding-matches-lifetime?
+(define (tc-env-binding-matches-lifetime-id?
   [key : i64]
   [ty : AstType]
-  [lifetime : String]) : bool
+  [lifetime : String]
+  [lifetime-id : i64]) : bool
   (cond
-    [(= key (tc-name-id lifetime)) true]
+    [(= key lifetime-id) true]
     [(= key (tc-region-marker-id))
       (match ty
         [(AstType.Var region) (string.eq (intern-str region) lifetime)]
@@ -8299,25 +8637,43 @@
         [_ false])]
     [else false]))
 
-(define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
+(define (tc-env-binding-matches-lifetime?
+  [key : i64]
+  [ty : AstType]
+  [lifetime : String]) : bool
+  (tc-env-binding-matches-lifetime-id? key ty lifetime (tc-name-id lifetime)))
+
+(define (tc-lifetime-visible-scan-id?
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [lifetime-id : i64]) : bool
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-lifetime-visible-scan? (box-get rest) lifetime)
+        (tc-lifetime-visible-scan-id? (box-get rest) lifetime lifetime-id)
         false)]
     [(TcTypeEnv.Bind key ty rest)
-      (if (tc-env-binding-matches-lifetime? key ty lifetime)
+      (if (tc-env-binding-matches-lifetime-id? key ty lifetime lifetime-id)
         true
-        (tc-lifetime-visible-scan? (box-get rest) lifetime))]))
+        (tc-lifetime-visible-scan-id? (box-get rest) lifetime lifetime-id))]))
+
+(define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
+  (tc-lifetime-visible-scan-id? env lifetime (tc-name-id lifetime)))
 
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-lifetime-visible-scan? (box-get rest) lifetime)]
-      [_ (tc-lifetime-visible-scan? env lifetime)])))
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-lifetime-visible?
+      (tc-type-env-scoped-runtime-current)
+      lifetime)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (let
+        [lifetime-id : i64 (tc-name-id lifetime)]
+        (match env
+          [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+            (tc-lifetime-visible-scan-id? (box-get rest) lifetime lifetime-id)]
+          [_ (tc-lifetime-visible-scan-id? env lifetime lifetime-id)])))))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
@@ -8329,52 +8685,92 @@
         (tc-lifetime-visible? env lifetime)
         (tc-reference-lifetimes-visible? env (box-get rest)))]))
 
-(define (tc-lifetime-outlives-binding-scan-inner
+(define (tc-lifetime-outlives-binding-scan-inner-id
   [env : TcTypeEnv]
   [lifetime : String]
+  [lifetime-id : i64]
   [target : String]
+  [target-id : i64]
   [seen-target : bool]) : bool
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
       (if scan-through
-        (tc-lifetime-outlives-binding-scan-inner
+        (tc-lifetime-outlives-binding-scan-inner-id
           (box-get rest)
           lifetime
+          lifetime-id
           target
+          target-id
           seen-target)
         false)]
     [(TcTypeEnv.Bind key ty rest)
-      (if (tc-env-binding-matches-lifetime? key ty lifetime)
+      (if (tc-env-binding-matches-lifetime-id? key ty lifetime lifetime-id)
         seen-target
-        (tc-lifetime-outlives-binding-scan-inner
+        (tc-lifetime-outlives-binding-scan-inner-id
           (box-get rest)
           lifetime
+          lifetime-id
           target
-          (or seen-target (= key (tc-name-id target)))))]))
+          target-id
+          (or seen-target (= key target-id))))]))
+
+(define (tc-lifetime-outlives-binding-scan-id
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [lifetime-id : i64]
+  [target : String]
+  [target-id : i64]
+  [seen-target : bool]) : bool
+  (match env
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+      (tc-lifetime-outlives-binding-scan-inner-id
+        (box-get rest)
+        lifetime
+        lifetime-id
+        target
+        target-id
+        seen-target)]
+    [_
+      (tc-lifetime-outlives-binding-scan-inner-id
+        env
+        lifetime
+        lifetime-id
+        target
+        target-id
+        seen-target)]))
 
 (define (tc-lifetime-outlives-binding-scan
   [env : TcTypeEnv]
   [lifetime : String]
   [target : String]
   [seen-target : bool]) : bool
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-lifetime-outlives-binding-scan-inner
-        (box-get rest)
-        lifetime
-        target
-        seen-target)]
-    [_
-      (tc-lifetime-outlives-binding-scan-inner env lifetime target seen-target)]))
+  (tc-lifetime-outlives-binding-scan-id
+    env
+    lifetime
+    (tc-name-id lifetime)
+    target
+    (tc-name-id target)
+    seen-target))
 
 (define (tc-lifetime-outlives-binding?
   [env : TcTypeEnv]
   [lifetime : String]
   [target : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-lifetime-outlives-binding-scan env lifetime target false)))
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-lifetime-outlives-binding?
+      (tc-type-env-scoped-runtime-current)
+      lifetime
+      target)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-lifetime-outlives-binding-scan-id
+        env
+        lifetime
+        (tc-name-id lifetime)
+        target
+        (tc-name-id target)
+        false))))
 
 (define (tc-reference-lifetimes-outlive-binding?
   [env : TcTypeEnv]
@@ -8387,10 +8783,12 @@
         (tc-lifetime-outlives-binding? env lifetime target)
         (tc-reference-lifetimes-outlive-binding? env (box-get rest) target))]))
 
-(define (tc-lifetime-outlives-lifetime-scan-inner
+(define (tc-lifetime-outlives-lifetime-scan-inner-id
   [env : TcTypeEnv]
   [value-lifetime : String]
+  [value-lifetime-id : i64]
   [target-lifetime : String]
+  [target-lifetime-id : i64]
   [seen-target : bool]) : bool
   (if (string.eq value-lifetime target-lifetime)
     true
@@ -8398,53 +8796,91 @@
       [(TcTypeEnv.Nil) false]
       [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
         (if scan-through
-          (tc-lifetime-outlives-lifetime-scan-inner
+          (tc-lifetime-outlives-lifetime-scan-inner-id
             (box-get rest)
             value-lifetime
+            value-lifetime-id
             target-lifetime
+            target-lifetime-id
             seen-target)
           false)]
       [(TcTypeEnv.Bind key ty rest)
-        (if (tc-env-binding-matches-lifetime? key ty value-lifetime)
+        (if (tc-env-binding-matches-lifetime-id?
+          key
+          ty
+          value-lifetime
+          value-lifetime-id)
           seen-target
-          (tc-lifetime-outlives-lifetime-scan-inner
+          (tc-lifetime-outlives-lifetime-scan-inner-id
             (box-get rest)
             value-lifetime
+            value-lifetime-id
             target-lifetime
+            target-lifetime-id
             (or
               seen-target
-              (tc-env-binding-matches-lifetime? key ty target-lifetime))))])))
+              (tc-env-binding-matches-lifetime-id?
+                key
+                ty
+                target-lifetime
+                target-lifetime-id))))])))
+
+(define (tc-lifetime-outlives-lifetime-scan-id
+  [env : TcTypeEnv]
+  [value-lifetime : String]
+  [value-lifetime-id : i64]
+  [target-lifetime : String]
+  [target-lifetime-id : i64]
+  [seen-target : bool]) : bool
+  (match env
+    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+      (tc-lifetime-outlives-lifetime-scan-inner-id
+        (box-get rest)
+        value-lifetime
+        value-lifetime-id
+        target-lifetime
+        target-lifetime-id
+        seen-target)]
+    [_
+      (tc-lifetime-outlives-lifetime-scan-inner-id
+        env
+        value-lifetime
+        value-lifetime-id
+        target-lifetime
+        target-lifetime-id
+        seen-target)]))
 
 (define (tc-lifetime-outlives-lifetime-scan
   [env : TcTypeEnv]
   [value-lifetime : String]
   [target-lifetime : String]
   [seen-target : bool]) : bool
-  (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-      (tc-lifetime-outlives-lifetime-scan-inner
-        (box-get rest)
-        value-lifetime
-        target-lifetime
-        seen-target)]
-    [_
-      (tc-lifetime-outlives-lifetime-scan-inner
-        env
-        value-lifetime
-        target-lifetime
-        seen-target)]))
+  (tc-lifetime-outlives-lifetime-scan-id
+    env
+    value-lifetime
+    (tc-name-id value-lifetime)
+    target-lifetime
+    (tc-name-id target-lifetime)
+    seen-target))
 
 (define (tc-lifetime-outlives-lifetime?
   [env : TcTypeEnv]
   [value-lifetime : String]
   [target-lifetime : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-lifetime-outlives-lifetime-scan
-      env
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-lifetime-outlives-lifetime?
+      (tc-type-env-scoped-runtime-current)
       value-lifetime
-      target-lifetime
-      false)))
+      target-lifetime)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-lifetime-outlives-lifetime-scan-id
+        env
+        value-lifetime
+        (tc-name-id value-lifetime)
+        target-lifetime
+        (tc-name-id target-lifetime)
+        false))))
 
 (define (tc-reference-lifetimes-outlive-lifetime?
   [env : TcTypeEnv]
@@ -15162,11 +15598,72 @@
                     (tc-type-env-scoped-carrier-env carrier)
                     fn-id))))))))))
 
+(define (tc-type-env-scoped-runtime-smoke?) : bool
+  (let
+    [was-active : bool (tc-type-env-scoped-runtime-active?)]
+    [fn-env : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind (tc-empty-env) "arg" (AstType.I64))
+        (AstType.I64))]
+    [carrier : TcTypeEnvScopedCarrier
+      (tc-type-env-scoped-carrier-from-marker-visible-env fn-env)]
+    [outer-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter! carrier)]
+    [runtime-env : TcTypeEnv
+      (tc-bind
+        (tc-bind
+          (tc-bind-cleanup-owner
+            (tc-bind
+              (tc-bind-atomic-arena-owner
+                (tc-push-region (tc-enter-unsafe fn-env) "arena")
+                "atomic")
+              "atomic"
+              (AstType.I64))
+            "resource")
+          "resource"
+          (AstType.String))
+        "local"
+        (ast-ty-ref "arena" (AstType.I64)))]
+    [scope-save : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+    [inner-env : TcTypeEnv (tc-push-region runtime-env "inner")]
+    [inner-ok : bool
+      (match (tc-active-region inner-env)
+        [(TcMaybeString.Some region) (string.eq region "inner")]
+        [_ false])]
+    (begin
+      (tc-type-env-scoped-runtime-restore! scope-save)
+      (let
+        [restored-ok : bool
+          (and
+            (match (tc-active-region runtime-env)
+              [(TcMaybeString.Some region) (string.eq region "arena")]
+              [_ false])
+            (match (tc-current-return-type runtime-env)
+              [(ResultTcType.Ok (AstType.I64)) true]
+              [_ false])
+            (tc-in-unsafe? runtime-env)
+            (tc-cleanup-owner-active? runtime-env "resource")
+            (tc-atomic-arena-owner-active? runtime-env "atomic")
+            (tc-lifetime-visible? runtime-env "resource")
+            (tc-lifetime-outlives-binding? runtime-env "arena" "resource")
+            (not (tc-lifetime-visible? runtime-env "inner")))]
+        (begin
+          (tc-type-env-scoped-runtime-restore! outer-save)
+          (and
+            (not was-active)
+            (not (tc-type-env-scoped-runtime-active?))
+            inner-ok
+            restored-ok
+            (match (tc-active-region fn-env)
+              [(TcMaybeString.No) true]
+              [_ false])))))))
+
 (define (tc-type-env-scoped-stack-smoke?) : bool
   (and
     (tc-type-env-scoped-stack-grow-smoke?)
     (tc-type-env-scoped-sidecar-smoke?)
-    (tc-type-env-scoped-carrier-smoke?)))
+    (tc-type-env-scoped-carrier-smoke?)
+    (tc-type-env-scoped-runtime-smoke?)))
 
 (test
   tc-type-env-scoped-stack
@@ -17812,7 +18309,7 @@
           (ResultTcType.Ok actual)))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
-(define (tc-expr-with-expected-or-actual-core
+(define (tc-expr-with-expected-or-actual-core-inner
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : AstExpr]
@@ -18018,6 +18515,32 @@
                   (ResultTcType.Ok expected)
                   (ResultTcType.Ok actual)))]
             [(ResultTcType.Err message) (ResultTcType.Err message)])))]))
+
+(define (tc-expr-with-expected-or-actual-core
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected : AstType]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (if (tc-type-env-scoped-runtime-active?)
+    (let
+      [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+      [result : ResultTcType
+        (tc-expr-with-expected-or-actual-core-inner
+          ctx
+          env
+          expr
+          expected
+          allow-mut-by-value-borrow)]
+      (begin
+        (tc-type-env-scoped-runtime-restore! saved)
+        result))
+    (tc-expr-with-expected-or-actual-core-inner
+      ctx
+      env
+      expr
+      expected
+      allow-mut-by-value-borrow)))
 
 (define (tc-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -22213,12 +22736,17 @@
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-lambda-captures-reference-scan-root
-      (tc-type-env-marker-start env)
-      (tc-param-bound-names params)
-      body)))
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-lambda-captures-reference?
+      (tc-type-env-scoped-runtime-current)
+      params
+      body)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-lambda-captures-reference-scan-root
+        (tc-type-env-marker-start env)
+        (tc-param-bound-names params)
+        body))))
 
 (define (tc-type-env-scoped-lambda-captures-reference-scan
   [cursor : TcTypeEnvScopedMarkerCursor]
@@ -27614,19 +28142,109 @@
               body
               allow-immutable-reference-captures)]))]))
 
-(define (tc-check-lambda-region-captures-scan
-  [env : TcTypeEnv]
+(define (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+  [carrier : TcTypeEnvScopedCarrier]
+  [cursor : TcTypeEnvScopedMarkerCursor]
+  [bound : TcStringList]
+  [body : AstExpr]
+  [allow-immutable-reference-captures : bool]) : ResultTcUnit
+  (match (tc-type-env-scoped-marker-step cursor)
+    [(TcTypeEnvScopedMarkerStep.Done) ResultTcUnit.Ok]
+    [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
+      (let
+        [name : String (intern-str key)]
+        (cond
+          [(or
+              (= key (tc-region-marker-id))
+              (= key (tc-default-boundary-id))
+              (tc-cleanup-owner-marker-entry? key ty)
+              (tc-ordinary-arena-owner-marker-entry? key ty)
+              (tc-atomic-arena-owner-marker-entry? key ty))
+            (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+              carrier
+              rest-cursor
+              bound
+              body
+              allow-immutable-reference-captures)]
+          [(not (tc-expr-uses-free-name? body name bound))
+            (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+              carrier
+              rest-cursor
+              bound
+              body
+              allow-immutable-reference-captures)]
+          [(tc-expr-sets-free-name? body name bound)
+            (ResultTcUnit.Err
+              "typecheck: lambda cannot assign captured binding")]
+          [(tc-type-env-scoped-carrier-cleanup-owner-active? carrier name)
+            (ResultTcUnit.Err
+              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
+          [(tc-type-contains-mut-reference? ty)
+            (ResultTcUnit.Err
+              "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")]
+          [(tc-type-contains-reference? ty)
+            (if allow-immutable-reference-captures
+              (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+                carrier
+                rest-cursor
+                bound
+                body
+                allow-immutable-reference-captures)
+              (ResultTcUnit.Err
+                "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
+          [(tc-type-contains-any-region ty)
+            (if (tc-type-regions-all-atomic-arena-owners?
+              (tc-type-env-scoped-carrier-env carrier)
+              ty)
+              (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+                carrier
+                rest-cursor
+                bound
+                body
+                allow-immutable-reference-captures)
+              (ResultTcUnit.Err
+                "typecheck: lambda cannot capture region-tagged value; region value would escape"))]
+          [else
+            (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+              carrier
+              rest-cursor
+              bound
+              body
+              allow-immutable-reference-captures)]))]))
+
+(define (tc-type-env-scoped-carrier-check-lambda-region-captures
+  [carrier : TcTypeEnvScopedCarrier]
   [bound : TcStringList]
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-check-lambda-region-captures-scan-root
-      env
-      (tc-type-env-marker-start env)
+    (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
+      carrier
+      (tc-type-env-scoped-carrier-marker-cursor carrier)
       bound
       body
       allow-immutable-reference-captures)))
+
+(define (tc-check-lambda-region-captures-scan
+  [env : TcTypeEnv]
+  [bound : TcStringList]
+  [body : AstExpr]
+  [allow-immutable-reference-captures : bool]) : ResultTcUnit
+  (if (tc-type-env-scoped-runtime-active?)
+    (tc-type-env-scoped-carrier-check-lambda-region-captures
+      (tc-type-env-scoped-runtime-current)
+      bound
+      body
+      allow-immutable-reference-captures)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-check-lambda-region-captures-scan-root
+        env
+        (tc-type-env-marker-start env)
+        bound
+        body
+        allow-immutable-reference-captures))))
 
 (define (tc-check-lambda-region-captures
   [env : TcTypeEnv]
@@ -33930,7 +34548,7 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcString.Err message) (ResultTcType.Err message)]))
 
-(define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
+(define (tc-expr-inner [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExpr.Spanned inner-box span)
       (let
@@ -34742,6 +35360,16 @@
         (tc-xgetbv-expr ctx env index))]
     [(AstExpr.Syscall args) (tc-syscall-expr ctx env args)]
     [_ (ResultTcType.Err "typecheck: unsupported expression")]))
+
+(define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
+  (if (tc-type-env-scoped-runtime-active?)
+    (let
+      [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+      [result : ResultTcType (tc-expr-inner ctx env expr)]
+      (begin
+        (tc-type-env-scoped-runtime-restore! saved)
+        result))
+    (tc-expr-inner ctx env expr)))
 
 (define (tc-extern-abi-enum-aggregate-type? [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
@@ -56406,61 +57034,68 @@
   [body-box : i64]) : ResultTcUnit
   (let
     [body : AstExpr (ast-node-get body-box)]
-    [carrier : TcTypeEnvScopedCarrier
-      (tc-type-env-scoped-carrier-bind-return-type
-        (tc-type-env-scoped-carrier-from-env
-          (tc-bind-params ctx global-env params))
+    [fn-env : TcTypeEnv
+      (tc-bind-return-type
+        (tc-bind-params ctx global-env params)
         (tc-resolve-type ctx ret))]
+    [carrier : TcTypeEnvScopedCarrier
+      (tc-type-env-scoped-carrier-from-marker-visible-env fn-env)]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
-    (begin
-      (tc-body-type-facts-start-recording!)
-      (match (tc-expr-with-expected-or-actual-id
-        ctx
-        env
-        body-box
-        (tc-resolve-type ctx ret))
-        [(ResultTcType.Ok got)
-          (begin
-            (tc-body-type-facts-start-consuming!)
-            (match (tc-expect
-              got
-              (tc-resolve-type ctx ret)
-              "typecheck: return type mismatch")
-              [(ResultTcUnit.Ok)
-                (match (tc-ensure-region-value-can-flow-into
-                  env
-                  (tc-resolve-type ctx ret)
-                  got
-                  "return value")
-                  [(ResultTcUnit.Ok)
-                    (match (tc-move-check-body-id ctx env params body-box)
-                      [(ResultTcUnit.Ok)
-                        (let
-                          [result : ResultTcUnit
-                            (tc-borrow-check-body-id ctx env params body-box)]
+    [scoped-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter! carrier)]
+    [result : ResultTcUnit
+      (begin
+        (tc-body-type-facts-start-recording!)
+        (match (tc-expr-with-expected-or-actual-id
+          ctx
+          env
+          body-box
+          (tc-resolve-type ctx ret))
+          [(ResultTcType.Ok got)
+            (begin
+              (tc-body-type-facts-start-consuming!)
+              (match (tc-expect
+                got
+                (tc-resolve-type ctx ret)
+                "typecheck: return type mismatch")
+                [(ResultTcUnit.Ok)
+                  (match (tc-ensure-region-value-can-flow-into
+                    env
+                    (tc-resolve-type ctx ret)
+                    got
+                    "return value")
+                    [(ResultTcUnit.Ok)
+                      (match (tc-move-check-body-id ctx env params body-box)
+                        [(ResultTcUnit.Ok)
+                          (let
+                            [result : ResultTcUnit
+                              (tc-borrow-check-body-id ctx env params body-box)]
+                            (begin
+                              (tc-body-type-facts-clear!)
+                              result))]
+                        [(ResultTcUnit.Err message)
                           (begin
                             (tc-body-type-facts-clear!)
-                            result))]
-                      [(ResultTcUnit.Err message)
-                        (begin
-                          (tc-body-type-facts-clear!)
-                          (ResultTcUnit.Err message))])]
-                  [(ResultTcUnit.Err message)
-                    (begin
-                      (tc-body-type-facts-clear!)
-                      (ResultTcUnit.Err
-                        (tc-rich-escape-at-expr
-                          body
-                          message
-                          "function return type rejects this escaping value")))])]
-              [(ResultTcUnit.Err message)
-                (begin
-                  (tc-body-type-facts-clear!)
-                  (ResultTcUnit.Err message))]))]
-        [(ResultTcType.Err message)
-          (begin
-            (tc-body-type-facts-clear!)
-            (ResultTcUnit.Err message))]))))
+                            (ResultTcUnit.Err message))])]
+                    [(ResultTcUnit.Err message)
+                      (begin
+                        (tc-body-type-facts-clear!)
+                        (ResultTcUnit.Err
+                          (tc-rich-escape-at-expr
+                            body
+                            message
+                            "function return type rejects this escaping value")))])]
+                [(ResultTcUnit.Err message)
+                  (begin
+                    (tc-body-type-facts-clear!)
+                    (ResultTcUnit.Err message))]))]
+          [(ResultTcType.Err message)
+            (begin
+              (tc-body-type-facts-clear!)
+              (ResultTcUnit.Err message))]))]
+    (begin
+      (tc-type-env-scoped-runtime-restore! scoped-save)
+      result)))
 
 ;; Reusable scratch arena for per-function-body typechecks. Mirrors
 ;; lower-scratch-arena: created lazily, shared by every check (the body walk

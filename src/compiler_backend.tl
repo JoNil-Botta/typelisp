@@ -7798,107 +7798,58 @@
     reg
     "\n"))
 
+(define (compiler-backend-reg-part-by-size
+  [reg64 : String]
+  [reg32 : String]
+  [reg16 : String]
+  [reg8 : String]
+  [size : i64]) : String
+  (cond
+    [(= size 8) reg64]
+    [(= size 4) reg32]
+    [(= size 2) reg16]
+    [(= size 1) reg8]
+    [else
+      (panic
+        (string.append
+          "backend: unsupported register part size "
+          (string.int->string size)))]))
+
 (define (compiler-backend-reg-part [reg : String] [size : i64]) : String
   (cond
-    [(= size 8) reg]
     [(string.eq reg "%rax")
-      (if (= size 4)
-        "%eax"
-        (if (= size 2)
-          "%ax"
-          "%al"))]
+      (compiler-backend-reg-part-by-size reg "%eax" "%ax" "%al" size)]
     [(string.eq reg "%rbx")
-      (if (= size 4)
-        "%ebx"
-        (if (= size 2)
-          "%bx"
-          "%bl"))]
+      (compiler-backend-reg-part-by-size reg "%ebx" "%bx" "%bl" size)]
     [(string.eq reg "%rcx")
-      (if (= size 4)
-        "%ecx"
-        (if (= size 2)
-          "%cx"
-          "%cl"))]
+      (compiler-backend-reg-part-by-size reg "%ecx" "%cx" "%cl" size)]
     [(string.eq reg "%rdx")
-      (if (= size 4)
-        "%edx"
-        (if (= size 2)
-          "%dx"
-          "%dl"))]
+      (compiler-backend-reg-part-by-size reg "%edx" "%dx" "%dl" size)]
     [(string.eq reg "%rdi")
-      (if (= size 4)
-        "%edi"
-        (if (= size 2)
-          "%di"
-          "%dil"))]
+      (compiler-backend-reg-part-by-size reg "%edi" "%di" "%dil" size)]
     [(string.eq reg "%rsi")
-      (if (= size 4)
-        "%esi"
-        (if (= size 2)
-          "%si"
-          "%sil"))]
+      (compiler-backend-reg-part-by-size reg "%esi" "%si" "%sil" size)]
     [(string.eq reg "%r12")
-      (if (= size 4)
-        "%r12d"
-        (if (= size 2)
-          "%r12w"
-          "%r12b"))]
+      (compiler-backend-reg-part-by-size reg "%r12d" "%r12w" "%r12b" size)]
     [(string.eq reg "%r13")
-      (if (= size 4)
-        "%r13d"
-        (if (= size 2)
-          "%r13w"
-          "%r13b"))]
+      (compiler-backend-reg-part-by-size reg "%r13d" "%r13w" "%r13b" size)]
     [(string.eq reg "%r14")
-      (if (= size 4)
-        "%r14d"
-        (if (= size 2)
-          "%r14w"
-          "%r14b"))]
+      (compiler-backend-reg-part-by-size reg "%r14d" "%r14w" "%r14b" size)]
     [(string.eq reg "%r15")
-      (if (= size 4)
-        "%r15d"
-        (if (= size 2)
-          "%r15w"
-          "%r15b"))]
+      (compiler-backend-reg-part-by-size reg "%r15d" "%r15w" "%r15b" size)]
     [(string.eq reg "%r8")
-      (if (= size 4)
-        "%r8d"
-        (if (= size 2)
-          "%r8w"
-          "%r8b"))]
+      (compiler-backend-reg-part-by-size reg "%r8d" "%r8w" "%r8b" size)]
     [(string.eq reg "%r9")
-      (if (= size 4)
-        "%r9d"
-        (if (= size 2)
-          "%r9w"
-          "%r9b"))]
+      (compiler-backend-reg-part-by-size reg "%r9d" "%r9w" "%r9b" size)]
     [(string.eq reg "%r10")
-      (if (= size 4)
-        "%r10d"
-        (if (= size 2)
-          "%r10w"
-          "%r10b"))]
+      (compiler-backend-reg-part-by-size reg "%r10d" "%r10w" "%r10b" size)]
     [(string.eq reg "%r11")
-      (if (= size 4)
-        "%r11d"
-        (if (= size 2)
-          "%r11w"
-          "%r11b"))]
+      (compiler-backend-reg-part-by-size reg "%r11d" "%r11w" "%r11b" size)]
     ;; M-G3 stage 2: %rbp is a pool register in FPO functions; without this arm
     ;; the else-fallback would silently substitute %r15 parts (miscompile).
     [(string.eq reg "%rbp")
-      (if (= size 4)
-        "%ebp"
-        (if (= size 2)
-          "%bp"
-          "%bpl"))]
-    [else
-      (if (= size 4)
-        "%r15d"
-        (if (= size 2)
-          "%r15w"
-          "%r15b"))]))
+      (compiler-backend-reg-part-by-size reg "%ebp" "%bp" "%bpl" size)]
+    [else (panic (string.append "backend: unsupported register part " reg))]))
 
 (define (compiler-backend-emit-load-memory-to-reg
   [addr : String]
@@ -33315,6 +33266,11 @@
             [else 0])
           0)])))
 
+(define (compiler-backend-scavenge-emergency-reg-supported? [reg : String]) : bool
+  (or
+    (string.eq reg "%rax")
+    (not (= (compiler-backend-scavenge-reg-bit reg) 0))))
+
 (define compiler-backend-scavenge-reg-bit-count : i64
   15)
 
@@ -34360,21 +34316,15 @@
       (if (< emidx 0)
         (begin
           ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
-          ;; restores it). String is move-only, so map the fallback -- always one
-          ;; of the reserved scratch regs %r8/%r10/%r11/%rax -- to a fresh literal
-          ;; for the global, and return the owned fallback. (emidx<0 = the
-          ;; fallback is FREE here, preferred; or the pathological all-excluded
-          ;; last resort.)
-          (compiler-backend-emergency-add!
-            (cond
-              [(string.eq fallback "%r10") "%r10"]
-              [(string.eq fallback "%r11") "%r11"]
-              [(string.eq fallback "%rax") "%rax"]
-              [(string.eq fallback "%xmm2") "%xmm2"]
-              [(string.eq fallback "%xmm3") "%xmm3"]
-              [(string.eq fallback "%xmm4") "%xmm4"]
-              [(string.eq fallback "%xmm5") "%xmm5"]
-              [else "%r8"]))
+          ;; restores it). Give the global save set a copy, then return the
+          ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
+          ;; the pathological all-excluded last resort.)
+          (if (compiler-backend-scavenge-emergency-reg-supported? fallback)
+            (compiler-backend-emergency-add! (string.copy fallback))
+            (panic
+              (string.append
+                "backend: unsupported scavenge emergency fallback register "
+                fallback)))
           fallback)
         (begin
           (compiler-backend-emergency-add! (array-ref cands emidx))

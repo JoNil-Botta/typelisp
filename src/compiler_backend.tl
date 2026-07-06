@@ -1,5 +1,5 @@
 ;; compiler_backend.tl - Selfhost CompilerIrProgram -> x86_64 .s emitter.
-(cfg compile-profile (import stdlib.io))
+(cfg (any compile-profile regalloc-census scavenge-census) (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_lower.tl")
 (import compiler_builtin_ids as cbi)
@@ -6350,6 +6350,116 @@
   0)
 (define compiler-backend-emergency-regs : (Array String)
   (make-array String 16))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-total : i64
+    0))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-fallback-free : i64
+    0))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-occupied-candidate : i64
+    0))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-fallback-last-resort : i64
+    0))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-wrapped-instructions : i64
+    0))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-wrapped-regs : i64
+    0))
+(cfg
+  scavenge-census
+  (define compiler-backend-scavenge-census-max-pending : i64
+    0))
+
+(cfg
+  scavenge-census
+  (define (compiler-backend-scavenge-census-reset!) : unit
+    (begin
+      (set! compiler-backend-scavenge-census-total 0)
+      (set! compiler-backend-scavenge-census-fallback-free 0)
+      (set! compiler-backend-scavenge-census-occupied-candidate 0)
+      (set! compiler-backend-scavenge-census-fallback-last-resort 0)
+      (set! compiler-backend-scavenge-census-wrapped-instructions 0)
+      (set! compiler-backend-scavenge-census-wrapped-regs 0)
+      (set! compiler-backend-scavenge-census-max-pending 0))))
+
+(cfg
+  scavenge-census
+  (define (compiler-backend-scavenge-census-record-fallback-free!) : unit
+    (begin
+      (set!
+        compiler-backend-scavenge-census-total
+        (+ compiler-backend-scavenge-census-total 1))
+      (set!
+        compiler-backend-scavenge-census-fallback-free
+        (+ compiler-backend-scavenge-census-fallback-free 1)))))
+
+(cfg
+  scavenge-census
+  (define (compiler-backend-scavenge-census-record-occupied-candidate!) : unit
+    (begin
+      (set!
+        compiler-backend-scavenge-census-total
+        (+ compiler-backend-scavenge-census-total 1))
+      (set!
+        compiler-backend-scavenge-census-occupied-candidate
+        (+ compiler-backend-scavenge-census-occupied-candidate 1)))))
+
+(cfg
+  scavenge-census
+  (define (compiler-backend-scavenge-census-record-fallback-last-resort!) : unit
+    (begin
+      (set!
+        compiler-backend-scavenge-census-total
+        (+ compiler-backend-scavenge-census-total 1))
+      (set!
+        compiler-backend-scavenge-census-fallback-last-resort
+        (+ compiler-backend-scavenge-census-fallback-last-resort 1)))))
+
+(cfg
+  scavenge-census
+  (define (compiler-backend-scavenge-census-record-wrap! [count : i64]) : unit
+    (begin
+      (set!
+        compiler-backend-scavenge-census-wrapped-instructions
+        (+ compiler-backend-scavenge-census-wrapped-instructions 1))
+      (set!
+        compiler-backend-scavenge-census-wrapped-regs
+        (+ compiler-backend-scavenge-census-wrapped-regs count))
+      (if (> count compiler-backend-scavenge-census-max-pending)
+        (set! compiler-backend-scavenge-census-max-pending count)
+        unit))))
+
+(cfg
+  scavenge-census
+  (define (compiler-backend-scavenge-census-print!) : unit
+    (io.print-error
+      (str_cat.str-cat
+        "emergency-scavenge-census|total="
+        (string.int->string compiler-backend-scavenge-census-total)
+        "|fallback-free="
+        (string.int->string compiler-backend-scavenge-census-fallback-free)
+        "|occupied-candidate="
+        (string.int->string compiler-backend-scavenge-census-occupied-candidate)
+        "|fallback-last-resort="
+        (string.int->string
+          compiler-backend-scavenge-census-fallback-last-resort)
+        "|wrapped-instructions="
+        (string.int->string
+          compiler-backend-scavenge-census-wrapped-instructions)
+        "|wrapped-regs="
+        (string.int->string compiler-backend-scavenge-census-wrapped-regs)
+        "|max-pending="
+        (string.int->string compiler-backend-scavenge-census-max-pending)
+        "\n"))))
 
 ;; Reserved cycle-break temp slots. These replace the old push/pop or
 ;; subq/addq stack temps used by arg and phi parallel-copy cycle breaks. The
@@ -6508,6 +6618,10 @@
           ""
           (compiler-backend-emergency-restore-asm (- count 1)))]
       (begin
+        (cfg
+          scavenge-census
+          (compiler-backend-scavenge-census-record-wrap! count)
+          unit)
         (set! compiler-backend-emergency-pending false)
         (set! compiler-backend-emergency-pending-count 0)
         (set! compiler-backend-emergency-restore-suppressed false)
@@ -34207,6 +34321,20 @@
 ;; wrap restores it). All-excluded is pathological/unreachable (exclude is
 ;; superset(5)+a few operand homes vs candidate count) -> fallback last resort.
 ;; Returns the first non-excluded candidate index, or -1 = "use the fallback".
+(define (compiler-backend-scavenge-emergency-fallback-free?
+  [exclude : (Array String)]
+  [exclude-n : i64]
+  [occupied-mask : i64]
+  [fallback : String]) : bool
+  (and
+    (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
+    (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
+    (=
+      (bit-and
+        compiler-backend-current-instr-reserved-mask
+        (compiler-backend-scavenge-reg-bit fallback))
+      0)))
+
 (define (compiler-backend-scavenge-emergency-cand-index
   [exclude : (Array String)]
   [exclude-n : i64]
@@ -34215,14 +34343,11 @@
   [fallback : String]
   [cands : (Array String)]
   [n : i64]) : i64
-  (if (and
-    (not (compiler-backend-scavenge-excluded? exclude exclude-n fallback))
-    (compiler-backend-scavenge-reg-free-in-mask? occupied-mask fallback)
-    (=
-      (bit-and
-        compiler-backend-current-instr-reserved-mask
-        (compiler-backend-scavenge-reg-bit fallback))
-      0))
+  (if (compiler-backend-scavenge-emergency-fallback-free?
+    exclude
+    exclude-n
+    occupied-mask
+    fallback)
     -1
     (let
       [i : i64 0]
@@ -34265,6 +34390,16 @@
           n)]
       (if (< emidx 0)
         (begin
+          (cfg
+            scavenge-census
+            (if (compiler-backend-scavenge-emergency-fallback-free?
+              exclude
+              exclude-n
+              occupied-mask
+              fallback)
+              (compiler-backend-scavenge-census-record-fallback-free!)
+              (compiler-backend-scavenge-census-record-fallback-last-resort!))
+            unit)
           ;; emergency-reg MUST equal the returned reg (emergency-wrap saves/
           ;; restores it). Give the global save set a copy, then return the
           ;; owned fallback. (emidx<0 = the fallback is FREE here, preferred; or
@@ -34277,6 +34412,10 @@
                 fallback)))
           fallback)
         (begin
+          (cfg
+            scavenge-census
+            (compiler-backend-scavenge-census-record-occupied-candidate!)
+            unit)
           (compiler-backend-emergency-add! (array-ref cands emidx))
           (array-ref cands emidx))))
     (if (compiler-backend-scavenge-candidate-ok?
@@ -43127,6 +43266,9 @@ tl_memchr:
                                       compiler-backend-fpo-push-count)
                                     "\n"
                                     "")))))
+                          (cfg
+                            scavenge-census
+                            (compiler-backend-scavenge-census-print!))
                           (ResultCompilerBackendBuffer.Ok buf))))]
                   [(ResultCompilerBackendBuffer.Err message)
                     (begin
@@ -43166,6 +43308,7 @@ tl_memchr:
       (begin
         (compiler-reg-call-span-census-reset!)
         (compiler-reg-move-census-reset!)))
+    (cfg scavenge-census (compiler-backend-scavenge-census-reset!))
     (cfg compile-profile (compiler-backend-profile-start))
     (match (compiler-backend-runtime-plan-with-index program)
       [(ResultBackendRuntimePlanWithIndex.Ok planned)

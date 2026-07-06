@@ -6744,13 +6744,11 @@
   [kind : i64]) : bool
   (match instr
     [(CompilerIrInstr.BinOp _ op _ rhs ty)
-      (if (= kind 1)
-        (compiler-reg-clobber-binop-div? op)
-        (if (= kind 2)
-          (compiler-reg-clobber-binop-shift? op rhs ty)
-          (if (= kind 4)
-            (compiler-reg-clobber-binop-rdx? op)
-            false)))]
+      (cond
+        [(= kind 1) (compiler-reg-clobber-binop-div? op)]
+        [(= kind 2) (compiler-reg-clobber-binop-shift? op rhs ty)]
+        [(= kind 4) (compiler-reg-clobber-binop-rdx? op)]
+        [else false])]
     ;; kind 3 = switch dispatch points (GAP3c pin gate only; never kind 0 --
     ;; a switch clobbers no register per se, but its DISPATCH emitter's
     ;; emergency scavenge wraps a save/restore around the indirect jmp whose

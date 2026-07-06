@@ -361,6 +361,7 @@ decision|src/compiler_object.tl|structured object-image data model (#2308): main
 decision|src/compiler_object_coff.tl|COFF object serialization helper (#2310): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
 decision|src/compiler_object_elf.tl|ELF64 object serialization helper (#2309): main-less, imported by src/build_run_core.tl and the backend test helper, exercised through the selfhost_main case and the compiler_backend_smoke native integration test
 decision|src/compiler_backend_tests.tl|backend smoke-test helper module (main-less): imported by src/tests/compiler_backend_smoke.tl and the backend fixture drivers; kept in src/ for the native compiler_backend_smoke staging and the verify-integration.sh fixture drivers; no direct CLI/main compile case
+decision|src/compiler_parallel_move.tl|target-neutral parallel move graph solver (#4365): main-less, imported by compiler_backend.tl for call/syscall argument moves and phi edge copies and by compiler_regalloc.tl for coalescing move-chain validation; exercised through compiler_backend_smoke and compiler_regalloc_smoke
 case|selfhost_compiler_check_core|src/compiler_check_core.tl|assembly|skip|direct
 contains|_tl_compiler_check_file:
 contains|_tl_compiler_check_file_with_roots:

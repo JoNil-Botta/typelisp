@@ -6,6 +6,7 @@
 (import "compiler_diagnostic.tl")
 (import "compiler_optimize.tl")
 (import "compiler_regalloc.tl")
+(import "compiler_parallel_move.tl")
 (import stdlib.text_buf)
 (import "compiler_object.tl")
 (import compiler_intern as ci)
@@ -19220,81 +19221,77 @@
               [(CompilerRegMaybeLocation.No) ""]))]
         [_ ""])]))
 
-(define (compiler-backend-arg-move-list-reg-is-source?
-  [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]
-  [reg : String]
-  [exclude-dest : String]) : bool
-  (match moves
-    [(BackendArgMoveNil) false]
-    [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove dest source)
-          (if (and
-            (not (string.eq dest exclude-dest))
-            (string.eq
-              (compiler-backend-arg-move-source-reg assignments source)
-              reg))
-            true
-            (compiler-backend-arg-move-list-reg-is-source?
-              assignments
-              (box-get rest)
-              reg
-              exclude-dest))])]))
+(define (compiler-backend-parallel-reg-resource [reg : String]) : i64
+  (if (string.eq reg "")
+    0
+    (+ (stdlib.hash.string-key (& reg)) 1)))
 
-(define (compiler-backend-arg-move-list-is-dest?
-  [moves : CompilerBackendArgMoveList]
-  [reg : String]
-  [exclude : String]) : bool
+(define (compiler-backend-parallel-spill-resource [offset : i64]) : i64
+  (if (< offset 0)
+    (+ 2000000 (- 0 offset))
+    (+ 3000000 offset)))
+
+(define (compiler-backend-parallel-move-missing [kind : String] [id : i64]) : ResultCompilerBackend
+  (ResultCompilerBackend.Err
+    (box
+      (compiler-diagnostic-at-start
+        ""
+        (str_cat.str-cat
+          "backend: "
+          kind
+          " parallel-move decision id missing: "
+          (string.int->string id))))))
+
+(define (compiler-backend-arg-move-parallel-edge
+  [assignments : CompilerRegAssignmentList]
+  [move : CompilerBackendArgMove]) : CompilerParallelMoveEdge
+  (match move
+    [(BackendArgMove dest source)
+      (ParallelMoveEdge
+        (compiler-backend-parallel-reg-resource dest)
+        (compiler-backend-parallel-reg-resource dest)
+        0
+        (compiler-backend-parallel-reg-resource
+          (compiler-backend-arg-move-source-reg assignments source))
+        0)]))
+
+(define (compiler-backend-arg-move-parallel-edges
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]) : CompilerParallelMoveEdgeList
   (match moves
-    [(BackendArgMoveNil) false]
+    [(BackendArgMoveNil) CompilerParallelMoveNil]
     [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove dest _)
-          (if (and (not (string.eq dest exclude)) (string.eq dest reg))
-            true
-            (compiler-backend-arg-move-list-is-dest? (box-get rest) reg exclude))])]))
+      (compiler-parallel-move-edge-cons
+        (compiler-backend-arg-move-parallel-edge assignments move)
+        (compiler-backend-arg-move-parallel-edges assignments (box-get rest)))]))
+
+(define (compiler-backend-arg-move-decision
+  [assignments : CompilerRegAssignmentList]
+  [moves : CompilerBackendArgMoveList]) : CompilerParallelMoveDecision
+  (let
+    [edges : CompilerParallelMoveEdgeList
+      (compiler-backend-arg-move-parallel-edges assignments moves)]
+    (compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-arg-moves-conflict?
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]
   [all : CompilerBackendArgMoveList]) : bool
-  (match moves
-    [(BackendArgMoveNil) false]
-    [(BackendArgMoveCons move rest)
-      (match move
-        [(BackendArgMove dest source)
-          (let
-            [srcreg : String
-              (compiler-backend-arg-move-source-reg assignments source)]
-            (if (and
-              (not (string.eq srcreg ""))
-              (compiler-backend-arg-move-list-is-dest? all srcreg dest))
-              true
-              (compiler-backend-arg-moves-conflict?
-                assignments
-                (box-get rest)
-                all)))])]))
+  (compiler-parallel-move-list-has-blocked?
+    (compiler-backend-arg-move-parallel-edges assignments moves)
+    (compiler-backend-arg-move-parallel-edges assignments all)))
 
-(define (compiler-backend-arg-move-find-unblocked
-  [assignments : CompilerRegAssignmentList]
-  [remaining : CompilerBackendArgMoveList]
-  [all : CompilerBackendArgMoveList]) : CompilerBackendMaybeArgMove
-  (match remaining
+(define (compiler-backend-arg-move-list-find
+  [moves : CompilerBackendArgMoveList]
+  [want : i64]) : CompilerBackendMaybeArgMove
+  (match moves
     [(BackendArgMoveNil) BackendNoArgMove]
     [(BackendArgMoveCons move rest)
       (match move
         [(BackendArgMove dest _)
-          (if (compiler-backend-arg-move-list-reg-is-source?
-            assignments
-            all
-            dest
-            dest)
-            (compiler-backend-arg-move-find-unblocked
-              assignments
-              (box-get rest)
-              all)
-            (BackendSomeArgMove move))])]))
+          (if (= (compiler-backend-parallel-reg-resource dest) want)
+            (BackendSomeArgMove move)
+            (compiler-backend-arg-move-list-find (box-get rest) want))])]))
 
 (define (compiler-backend-arg-move-list-remove
   [moves : CompilerBackendArgMoveList]
@@ -19471,10 +19468,10 @@
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]
   [all : CompilerBackendArgMoveList]) : ResultCompilerBackend
-  (match moves
-    [(BackendArgMoveNil) (ResultCompilerBackend.Ok "")]
-    [(BackendArgMoveCons first _)
-      (match (compiler-backend-arg-move-find-unblocked assignments moves moves)
+  (match (compiler-backend-arg-move-decision assignments moves)
+    [(CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
+    [(CompilerParallelMoveUnblocked move-id)
+      (match (compiler-backend-arg-move-list-find moves move-id)
         [(BackendSomeArgMove move)
           (match move
             [(BackendArgMove dest _)
@@ -19490,15 +19487,19 @@
                       (ResultCompilerBackend.Err m)])]
                 [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])])]
         [(BackendNoArgMove)
-          (match first
+          (compiler-backend-parallel-move-missing "arg" move-id)])]
+    [(CompilerParallelMoveCycle move-id)
+      (match (compiler-backend-arg-move-list-find moves move-id)
+        [(BackendSomeArgMove move)
+          (match move
             [(BackendArgMove dest source)
               (let
                 [srcreg : String
                   (compiler-backend-arg-move-source-reg assignments source)]
-                ;; BackendNoArgMove implies a cycle, so the break head's source is a
-                ;; register; this srcreg=="" branch is defensive (not expected here).
+                ;; Cycle decisions should name a register-sourced move; this
+                ;; branch is defensive if a malformed graph reaches the emitter.
                 (if (string.eq srcreg "")
-                  (match (compiler-backend-emit-arg-move assignments first)
+                  (match (compiler-backend-emit-arg-move assignments move)
                     [(ResultCompilerBackend.Ok head)
                       (match (compiler-backend-emit-arg-move-list-with-all
                         assignments
@@ -19565,7 +19566,9 @@
                                 "\n")
                               tail))]
                         [(ResultCompilerBackend.Err m)
-                          (ResultCompilerBackend.Err m)])))))])])]))
+                          (ResultCompilerBackend.Err m)])))))])]
+        [(BackendNoArgMove)
+          (compiler-backend-parallel-move-missing "arg" move-id)])]))
 
 (define (compiler-backend-arg-moves-build-from
   [target : CompilerBackendTarget]
@@ -20239,24 +20242,97 @@
           (box-get rest)
           dst))]))
 
-(define (compiler-backend-phi-copy-list-find-unblocked
+(define (compiler-backend-var-parallel-resource0
   [assignments : CompilerRegAssignmentList]
-  [remaining : CompilerBackendPhiCopyList]
-  [all : CompilerBackendPhiCopyList]) : CompilerBackendMaybePhiCopy
-  (match remaining
+  [var : i64]) : i64
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.Some location)
+      (match location
+        [(CompilerRegLocation.Register reg)
+          (compiler-backend-parallel-reg-resource reg)]
+        [(CompilerRegLocation.RegisterPair first _)
+          (compiler-backend-parallel-reg-resource first)]
+        [(CompilerRegLocation.Spill offset)
+          (compiler-backend-parallel-spill-resource offset)]
+        [(CompilerRegLocation.Remat _) 0])]
+    [(CompilerRegMaybeLocation.No) (+ 1000000 var)]))
+
+(define (compiler-backend-var-parallel-resource1
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : i64
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.Some location)
+      (match location
+        [(CompilerRegLocation.RegisterPair _ second)
+          (compiler-backend-parallel-reg-resource second)]
+        [_ 0])]
+    [(CompilerRegMaybeLocation.No) 0]))
+
+(define (compiler-backend-phi-source-parallel-resource0
+  [assignments : CompilerRegAssignmentList]
+  [source : CompilerBackendPhiSource]) : i64
+  (match source
+    [(CompilerBackendPhiSource.Value value)
+      (match value
+        [(CompilerIrValue.Var found)
+          (compiler-backend-var-parallel-resource0 assignments found)]
+        [_ 0])]
+    [(CompilerBackendPhiSource.Temp _) 0]))
+
+(define (compiler-backend-phi-source-parallel-resource1
+  [assignments : CompilerRegAssignmentList]
+  [source : CompilerBackendPhiSource]) : i64
+  (match source
+    [(CompilerBackendPhiSource.Value value)
+      (match value
+        [(CompilerIrValue.Var found)
+          (compiler-backend-var-parallel-resource1 assignments found)]
+        [_ 0])]
+    [(CompilerBackendPhiSource.Temp _) 0]))
+
+(define (compiler-backend-phi-copy-parallel-edge
+  [assignments : CompilerRegAssignmentList]
+  [copy : CompilerBackendPhiCopy]) : CompilerParallelMoveEdge
+  (match copy
+    [(CompilerBackendPhiCopy.Copy dst source _)
+      (ParallelMoveEdge
+        dst
+        (compiler-backend-var-parallel-resource0 assignments dst)
+        (compiler-backend-var-parallel-resource1 assignments dst)
+        (compiler-backend-phi-source-parallel-resource0 assignments source)
+        (compiler-backend-phi-source-parallel-resource1 assignments source))]))
+
+(define (compiler-backend-phi-copy-list-parallel-edges
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]) : CompilerParallelMoveEdgeList
+  (match copies
+    [(CompilerBackendPhiCopyList.Nil) CompilerParallelMoveNil]
+    [(CompilerBackendPhiCopyList.Cons copy rest)
+      (compiler-parallel-move-edge-cons
+        (compiler-backend-phi-copy-parallel-edge assignments copy)
+        (compiler-backend-phi-copy-list-parallel-edges
+          assignments
+          (box-get rest)))]))
+
+(define (compiler-backend-phi-copy-list-decision
+  [assignments : CompilerRegAssignmentList]
+  [copies : CompilerBackendPhiCopyList]) : CompilerParallelMoveDecision
+  (let
+    [edges : CompilerParallelMoveEdgeList
+      (compiler-backend-phi-copy-list-parallel-edges assignments copies)]
+    (compiler-parallel-move-decision edges edges)))
+
+(define (compiler-backend-phi-copy-list-find-id
+  [copies : CompilerBackendPhiCopyList]
+  [want : i64]) : CompilerBackendMaybePhiCopy
+  (match copies
     [(CompilerBackendPhiCopyList.Nil) CompilerBackendMaybePhiCopy.No]
     [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
         [(CompilerBackendPhiCopy.Copy dst _ _)
-          (if (compiler-backend-phi-copy-list-source-uses-home?
-            assignments
-            all
-            dst)
-            (compiler-backend-phi-copy-list-find-unblocked
-              assignments
-              (box-get rest)
-              all)
-            (CompilerBackendMaybePhiCopy.Some copy))])]))
+          (if (= dst want)
+            (CompilerBackendMaybePhiCopy.Some copy)
+            (compiler-backend-phi-copy-list-find-id (box-get rest) want))])]))
 
 (define (compiler-backend-phi-copy-list-remove-dst
   [copies : CompilerBackendPhiCopyList]
@@ -21209,13 +21285,10 @@
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) (ResultCompilerBackend.Ok "")]
-    [(CompilerBackendPhiCopyList.Cons first _)
-      (match (compiler-backend-phi-copy-list-find-unblocked
-        assignments
-        copies
-        copies)
+  (match (compiler-backend-phi-copy-list-decision assignments copies)
+    [(CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
+    [(CompilerParallelMoveUnblocked copy-id)
+      (match (compiler-backend-phi-copy-list-find-id copies copy-id)
         [(CompilerBackendMaybePhiCopy.Some copy)
           (match copy
             [(CompilerBackendPhiCopy.Copy dst _ _)
@@ -21239,7 +21312,11 @@
                 [(ResultCompilerBackend.Err message)
                   (ResultCompilerBackend.Err message)])])]
         [(CompilerBackendMaybePhiCopy.No)
-          (match first
+          (compiler-backend-parallel-move-missing "phi" copy-id)])]
+    [(CompilerParallelMoveCycle copy-id)
+      (match (compiler-backend-phi-copy-list-find-id copies copy-id)
+        [(CompilerBackendMaybePhiCopy.Some copy)
+          (match copy
             [(CompilerBackendPhiCopy.Copy dst source ty)
               ;; Only the OUTERMOST break may scavenge a register, and only when
               ;; every copy in the break list is register-swappable (so no cycle
@@ -21294,7 +21371,9 @@
                       [(ResultCompilerBackend.Err message)
                         (ResultCompilerBackend.Err message)])]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackend.Err message)]))])])]))
+                    (ResultCompilerBackend.Err message)]))])]
+        [(CompilerBackendMaybePhiCopy.No)
+          (compiler-backend-parallel-move-missing "phi" copy-id)])]))
 
 (define (compiler-backend-leading-phi-copies
   [assignments : CompilerRegAssignmentList]

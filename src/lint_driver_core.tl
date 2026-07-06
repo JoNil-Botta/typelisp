@@ -214,11 +214,11 @@
       (string.append
         ":"
         (string.append
-          (string.int->string (struct-get fspan start-line))
+          (string.int->string (ast-source-span-start-line fspan))
           (string.append
             ":"
             (string.append
-              (string.int->string (struct-get fspan start-col))
+              (string.int->string (ast-source-span-start-col fspan))
               (string.append ": " (struct-get finding message)))))))))
 
 ;; Print every finding (one per line) to stdout; returns the number printed.
@@ -302,8 +302,8 @@
   [source : String]
   [span : AstSourceSpan]) : i64
   (+
-    (selfhost-lint-line-start-index source (struct-get span start-line))
-    (- (struct-get span start-col) 1)))
+    (selfhost-lint-line-start-index source (ast-source-span-start-line span))
+    (- (ast-source-span-start-col span) 1)))
 
 (define (selfhost-lint-skip-line [source : String] [idx : i64] [n : i64]) : i64
   (let
@@ -501,7 +501,7 @@
 (define (selfhost-lint-suppressed? [source : String] [finding : LintFinding]) : bool
   (let
     [span : AstSourceSpan (struct-get finding span)]
-    [line : i64 (struct-get span start-line)]
+    [line : i64 (ast-source-span-start-line span)]
     [rule-id : String (struct-get finding rule-id)]
     (if (<= line 1)
       false
@@ -512,8 +512,8 @@
   [span : AstSourceSpan]
   [form-name : String]) : bool
   (let
-    [line : i64 (struct-get span start-line)]
-    [col : i64 (struct-get span start-col)]
+    [line : i64 (ast-source-span-start-line span)]
+    [col : i64 (ast-source-span-start-col span)]
     (if (or (<= line 0) (<= col 0))
       false
       (let
@@ -1379,7 +1379,7 @@
     (let
       [line : i64 (selfhost-lint-dead-index-line source idx)]
       [col : i64 (selfhost-lint-dead-index-col source idx)]
-      (AstSourceSpan line col line (+ col 1)))))
+      (ast-source-span line col line (+ col 1)))))
 
 (define (selfhost-lint-dead-decl-span
   [source : String]
@@ -2940,7 +2940,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (lint-findings-count findings) 1)
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq (struct-get finding rule-id) (lint-rule-unused-import-id))))]
     [(LintMaybeFinding.No) false]))
 
@@ -3242,7 +3242,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) depth)
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
             (lint-rule-nested-if-ladder-id))
@@ -3255,7 +3255,7 @@
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq (struct-get finding rule-id) (lint-rule-nested-let-id))))]
     [(LintMaybeFinding.No) false]))
 
@@ -3266,7 +3266,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 3)
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
             (lint-rule-return-path-chain-id))))]
@@ -3279,7 +3279,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 1)
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq (struct-get finding rule-id) (lint-rule-unit-if-guard-id))))]
     [(LintMaybeFinding.No) false]))
 
@@ -3292,7 +3292,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) 3)
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
             (lint-rule-cascading-and-or-id))

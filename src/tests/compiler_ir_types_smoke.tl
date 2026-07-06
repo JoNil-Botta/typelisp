@@ -200,7 +200,7 @@
         (CompilerIrValue.Var 20)
         args
         (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (AstType.I64)))]
-    [span : AstSourceSpan (AstSourceSpan 3 4 3 9)]
+    [span : AstSourceSpan (ast-source-span 3 4 3 9)]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
         (compiler-source-spans-empty)
@@ -222,8 +222,8 @@
       (match (compiler-source-spans-lookup-instr spans "func" instr)
         [(CompilerMaybeSourceSpan.Some found)
           (and
-            (= (struct-get found start-line) 3)
-            (= (struct-get found end-col) 9))]
+            (= (ast-source-span-start-line found) 3)
+            (= (ast-source-span-end-col found) 9))]
         [(CompilerMaybeSourceSpan.No) false]))))
 
 (define (main) : i64

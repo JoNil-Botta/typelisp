@@ -260,10 +260,10 @@
             (and
               (not (= left old-span))
               (not (= inner old-lit))
-              (= (struct-get span start-line) 1)
-              (= (struct-get span start-col) 2)
-              (= (struct-get span end-line) 3)
-              (= (struct-get span end-col) 4)
+              (= (ast-source-span-start-line span) 1)
+              (= (ast-source-span-start-col span) 2)
+              (= (ast-source-span-end-line span) 3)
+              (= (ast-source-span-end-col span) 4)
               (compiler-ast-context-expr-int-lit? pools inner 7))]
           [_ false])
         false)]
@@ -388,7 +388,7 @@
     [source-span : i64
       (ast-node-pool-context-expr-push
         source-pools
-        (AstExpr.Spanned source-lit (AstSourceSpan 1 2 3 4)))]
+        (AstExpr.Spanned source-lit (ast-source-span 1 2 3 4)))]
     [source-body : i64
       (ast-node-pool-context-expr-push
         source-pools
@@ -402,7 +402,7 @@
         (ast-decl-cons
           (ast-decl-def "value" (AstMaybeType.Some array-ty) source-body)
           (ast-decl-cons
-            (ast-decl-test "same" source-body (AstSourceSpan 5 6 7 8))
+            (ast-decl-test "same" source-body (ast-source-span 5 6 7 8))
             (ast-decl-cons
               (ast-decl-def "array" AstMaybeType.No source-make)
               (ast-decl-list-new)))))]

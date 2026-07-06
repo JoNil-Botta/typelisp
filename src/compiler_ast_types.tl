@@ -19,10 +19,33 @@
 (import stdlib.string)
 
 (defstruct AstSourceSpan
-  (start-line i64)
-  (start-col i64)
-  (end-line i64)
-  (end-col i64))
+  (start-line i32)
+  (start-col i32)
+  (end-line i32)
+  (end-col i32))
+
+(define (ast-source-span
+  [start-line : i64]
+  [start-col : i64]
+  [end-line : i64]
+  [end-col : i64]) : AstSourceSpan
+  (AstSourceSpan
+    (cast start-line : i32)
+    (cast start-col : i32)
+    (cast end-line : i32)
+    (cast end-col : i32)))
+
+(define (ast-source-span-start-line [span : AstSourceSpan]) : i64
+  (cast (struct-get span start-line) : i64))
+
+(define (ast-source-span-start-col [span : AstSourceSpan]) : i64
+  (cast (struct-get span start-col) : i64))
+
+(define (ast-source-span-end-line [span : AstSourceSpan]) : i64
+  (cast (struct-get span end-line) : i64))
+
+(define (ast-source-span-end-col [span : AstSourceSpan]) : i64
+  (cast (struct-get span end-col) : i64))
 
 (defenum AstLiteral
   (Int i64 String)
@@ -3871,7 +3894,7 @@
   (AstExprBindingClause name has-type ty init span))
 
 (define (ast-expr-binding-clause-fallback) : AstExprBindingClause
-  (AstExprBindingClause 0 false 0 0 (AstSourceSpan 0 0 0 0)))
+  (AstExprBindingClause 0 false 0 0 (ast-source-span 0 0 0 0)))
 
 (comptime-decl
   (:generated vector-family ast-expr-binding-clause-list-with-capacity "AstExprBindingClause")

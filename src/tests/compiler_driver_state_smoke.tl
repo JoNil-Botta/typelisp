@@ -1563,7 +1563,7 @@
           (ast-expr-spanned-with-pools
             pools-a
             idx-var-a
-            (AstSourceSpan 1 1 1 2))]
+            (ast-source-span 1 1 1 2))]
         [idx-span-b : i64
           (ast-node-pool-context-expr-push
             pools-b
@@ -1740,7 +1740,10 @@
             pools-b
             (AstExpr.Literal (ast-lit-int 70)))]
         [spanned-a : i64
-          (ast-expr-spanned-with-pools pools-a inner-a (AstSourceSpan 1 1 1 5))]
+          (ast-expr-spanned-with-pools
+            pools-a
+            inner-a
+            (ast-source-span 1 1 1 5))]
         [spanned-b : i64
           (ast-node-pool-context-expr-push
             pools-b

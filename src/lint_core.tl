@@ -790,7 +790,7 @@
 ;: synthesized or in-memory expression). Parsed ladders carry the span from
 ;: their `AstExpr.Spanned` wrapper instead.
 (define (lint-no-span) : AstSourceSpan
-  (AstSourceSpan 0 0 0 0))
+  (ast-source-span 0 0 0 0))
 
 ;: Build the nested-`if`-ladder finding for a ladder of `depth` arms whose head
 ;: is at `span`.
@@ -1443,7 +1443,7 @@
 (define (lint-deprecated-string-concat-token-span
   [tok : token.SpannedToken]
   [name : String]) : AstSourceSpan
-  (AstSourceSpan
+  (ast-source-span
     (token.spanned-token-line tok)
     (token.spanned-token-col tok)
     (token.spanned-token-line tok)
@@ -2481,11 +2481,11 @@
     [idx : i64
       (lint-source-span-start-index
         source
-        (AstSourceSpan
-          (struct-get span end-line)
-          (struct-get span end-col)
-          (struct-get span end-line)
-          (struct-get span end-col)))]
+        (ast-source-span
+          (ast-source-span-end-line span)
+          (ast-source-span-end-col span)
+          (ast-source-span-end-line span)
+          (ast-source-span-end-col span)))]
     (if (< idx 0)
       (string.string-length source)
       idx)))
@@ -5910,12 +5910,12 @@
     (let
       [line : i64 (lint-source-index-line source idx)]
       [col : i64 (lint-source-index-col source idx)]
-      (AstSourceSpan line col line (+ col width)))))
+      (ast-source-span line col line (+ col width)))))
 
 (define (lint-source-span-start-index [source : String] [span : AstSourceSpan]) : i64
   (let
-    [target-line : i64 (struct-get span start-line)]
-    [target-col : i64 (struct-get span start-col)]
+    [target-line : i64 (ast-source-span-start-line span)]
+    [target-col : i64 (ast-source-span-start-col span)]
     [source-len : i64 (string.string-length source)]
     [idx : i64 0]
     [line : i64 1]
@@ -9100,9 +9100,9 @@
             (ast-expr-cons
               (ast-expr-let inner-let-bindings vx)
               (ast-expr-cons vx (ast-expr-list-new))))))]
-    [spanned : i64 (ast-expr-spanned ladder3 (AstSourceSpan 7 3 9 4))]
+    [spanned : i64 (ast-expr-spanned ladder3 (ast-source-span 7 3 9 4))]
     [spanned-nested-let : i64
-      (ast-expr-spanned nested-let (AstSourceSpan 11 5 15 6))]
+      (ast-expr-spanned nested-let (ast-source-span 11 5 15 6))]
     [and-callee : i64 (lint-test-var "and")]
     [or-callee : i64 (lint-test-var "or")]
     [core-and-callee : i64 (lint-test-var "core/and")]
@@ -9122,11 +9122,11 @@
     [core-cond-dotted-call : i64
       (ast-expr-call core-cond-dotted-callee (ast-expr-list-new))]
     [spanned-core-cond-dotted-call : i64
-      (ast-expr-spanned core-cond-dotted-call (AstSourceSpan 22 7 22 18))]
+      (ast-expr-spanned core-cond-dotted-call (ast-source-span 22 7 22 18))]
     [double-and-cascade : i64
       (ast-expr-call and-callee (lint-test-expr-list2 and-xy and-yz))]
     [spanned-and-cascade : i64
-      (ast-expr-spanned and-cascade (AstSourceSpan 21 7 21 30))]
+      (ast-expr-spanned and-cascade (ast-source-span 21 7 21 30))]
     [discarded-add : i64 (ast-expr-binary (AstBinOp.Add) one vx)]
     [discarded-cast : i64 (ast-expr-cast one (AstType.I64))]
     [discarded-call : i64
@@ -9167,10 +9167,10 @@
       (ast-node-push
         (AstExpr.Begin
           (ast-expr-cons
-            (ast-expr-spanned vx (AstSourceSpan 31 9 31 10))
+            (ast-expr-spanned vx (ast-source-span 31 9 31 10))
             (ast-expr-cons one (ast-expr-list-new)))))]
     [spanned-unreachable-var : i64
-      (ast-expr-spanned vx (AstSourceSpan 41 9 41 10))]
+      (ast-expr-spanned vx (ast-source-span 41 9 41 10))]
     [unreachable-return-begin : i64
       (ast-node-push
         (AstExpr.Begin
@@ -9184,13 +9184,13 @@
         (lint-test-var "panic")
         (ast-expr-cons one (ast-expr-list-new)))]
     [spanned-panic-call : i64
-      (ast-expr-spanned panic-call (AstSourceSpan 43 9 43 24))]
+      (ast-expr-spanned panic-call (ast-source-span 43 9 43 24))]
     [qualified-panic-call : i64
       (ast-expr-call
         (lint-test-var "io.panic")
         (ast-expr-cons one (ast-expr-list-new)))]
     [spanned-qualified-panic-call : i64
-      (ast-expr-spanned qualified-panic-call (AstSourceSpan 44 9 44 27))]
+      (ast-expr-spanned qualified-panic-call (ast-source-span 44 9 44 27))]
     [redundant-padding-begin : i64
       (ast-node-push
         (AstExpr.Begin
@@ -9222,7 +9222,7 @@
     [single-begin : i64
       (ast-node-push (AstExpr.Begin (ast-expr-cons vx (ast-expr-list-new))))]
     [spanned-single-begin : i64
-      (ast-expr-spanned single-begin (AstSourceSpan 51 3 51 13))]
+      (ast-expr-spanned single-begin (ast-source-span 51 3 51 13))]
     [empty-begin : i64 (ast-node-push (AstExpr.Begin (ast-expr-list-new)))]
     (begin
       ;; ladder length math
@@ -9458,7 +9458,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 51)
+              (= (ast-source-span-start-line fspan) 51)
               (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-single-begin-id)))
@@ -9498,7 +9498,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 7)
+              (= (ast-source-span-start-line fspan) 7)
               (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-nested-if-ladder-id)))
@@ -9544,7 +9544,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 11)
+              (= (ast-source-span-start-line fspan) 11)
               (string.eq (struct-get finding rule-id) (lint-rule-nested-let-id)))
               unit
               (io.panic
@@ -9606,7 +9606,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 21)
+              (= (ast-source-span-start-line fspan) 21)
               (= (struct-get finding depth) 3)
               (string.eq
                 (struct-get finding rule-id)
@@ -9651,7 +9651,7 @@
                     (lint-default-ladder-threshold)
                     (lint-findings-empty)))
                 1)
-              (= (struct-get fspan start-line) 22)
+              (= (ast-source-span-start-line fspan) 22)
               (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-transitional-core-macro-qualifier-id))
@@ -9683,7 +9683,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 31)
+              (= (ast-source-span-start-line fspan) 31)
               (string.eq (struct-get finding rule-id) (lint-rule-no-effect-id)))
               unit
               (io.panic "lint: no-effect finding should carry rule id and span")))]
@@ -9773,7 +9773,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 41)
+              (= (ast-source-span-start-line fspan) 41)
               (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-unreachable-code-id)))
@@ -9820,7 +9820,7 @@
           (let
             [fspan : AstSourceSpan (struct-get finding span)]
             (if (and
-              (= (struct-get fspan start-line) 43)
+              (= (ast-source-span-start-line fspan) 43)
               (string.eq
                 (struct-get finding rule-id)
                 (lint-rule-redundant-divergence-padding-id)))

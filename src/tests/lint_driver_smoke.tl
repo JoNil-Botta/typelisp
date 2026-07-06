@@ -414,7 +414,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) depth)
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq
             (struct-get finding rule-id)
             (lint-rule-deprecated-string-concat-id))))]
@@ -429,7 +429,7 @@
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
-          (> (struct-get fspan start-line) 0)
+          (> (ast-source-span-start-line fspan) 0)
           (string.eq (struct-get finding rule-id) rule-id)))]
     [(LintMaybeFinding.No) false]))
 
@@ -443,7 +443,7 @@
       (let
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
-          (= (struct-get fspan start-line) line)
+          (= (ast-source-span-start-line fspan) line)
           (string.eq (struct-get finding rule-id) rule-id)))]
     [(LintMaybeFinding.No) false]))
 
@@ -459,7 +459,7 @@
         [fspan : AstSourceSpan (struct-get finding span)]
         (and
           (= (struct-get finding depth) depth)
-          (= (struct-get fspan start-line) line)
+          (= (ast-source-span-start-line fspan) line)
           (string.eq (struct-get finding rule-id) rule-id)))]
     [(LintMaybeFinding.No) false]))
 

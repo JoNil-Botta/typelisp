@@ -1258,8 +1258,8 @@
   (let
     [span : AstSourceSpan (struct-get finding span)]
     (lsp-lint-diagnostic
-      (struct-get span start-line)
-      (struct-get span start-col)
+      (ast-source-span-start-line span)
+      (ast-source-span-start-col span)
       (struct-get finding message)
       (struct-get finding rule-id))))
 

@@ -106,7 +106,7 @@
     [flat-str-cat : i64
       (ast-expr-call str-cat-callee (lint-test-expr-list3 vx vy vz))]
     [spanned-str-cat : i64
-      (ast-expr-spanned nested-str-cat (AstSourceSpan 23 4 23 36))]
+      (ast-expr-spanned nested-str-cat (ast-source-span 23 4 23 36))]
     (begin
       (if (=
         (lint-findings-count
@@ -133,7 +133,7 @@
               (string.eq
                 (struct-get finding message)
                 "nested str-cat: prefer one flat str-cat call")
-              (= (struct-get span start-line) 23))
+              (= (ast-source-span-start-line span) 23))
               unit
               (panic "lint: nested str-cat finding metadata mismatch")))]
         [(LintMaybeFinding.No)

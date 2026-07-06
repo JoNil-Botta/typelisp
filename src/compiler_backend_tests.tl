@@ -6794,7 +6794,7 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-test-span [line : i64] [col : i64]) : AstSourceSpan
-  (AstSourceSpan line col line col))
+  (ast-source-span line col line col))
 
 (define (compiler-backend-instr-diagnostic-case-ok?
   [instr : CompilerIrInstr]

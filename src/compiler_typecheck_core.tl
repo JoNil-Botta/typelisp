@@ -839,13 +839,13 @@
 
 (define (tc-rich-error-span-fields [span : AstSourceSpan]) : String
   (str_cat.str-cat
-    (string.int->string (struct-get span start-line))
+    (string.int->string (ast-source-span-start-line span))
     "|"
-    (string.int->string (struct-get span start-col))
+    (string.int->string (ast-source-span-start-col span))
     "|"
-    (string.int->string (struct-get span end-line))
+    (string.int->string (ast-source-span-end-line span))
     "|"
-    (string.int->string (struct-get span end-col))
+    (string.int->string (ast-source-span-end-col span))
     "|"))
 
 (define (tc-rich-error-one-secondary
@@ -924,7 +924,7 @@
     [diag : CompilerDiagnostic
       (compiler-diagnostic-from-ast-span
         ""
-        (AstSourceSpan
+        (ast-source-span
           (string.>int (tc-located-error-field message prefix-len line-end))
           (string.>int (tc-located-error-field message col-start col-end))
           (string.>int
@@ -983,13 +983,13 @@
 (define (tc-located-error [span : AstSourceSpan] [message : String]) : String
   (str_cat.str-cat
     (tc-located-error-prefix)
-    (string.int->string (struct-get span start-line))
+    (string.int->string (ast-source-span-start-line span))
     "|"
-    (string.int->string (struct-get span start-col))
+    (string.int->string (ast-source-span-start-col span))
     "|"
-    (string.int->string (struct-get span end-line))
+    (string.int->string (ast-source-span-end-line span))
     "|"
-    (string.int->string (struct-get span end-col))
+    (string.int->string (ast-source-span-end-col span))
     "|"
     message))
 
@@ -1012,7 +1012,7 @@
     (tc-canonical-diagnostic
       (compiler-diagnostic-from-ast-span
         ""
-        (AstSourceSpan
+        (ast-source-span
           (string.>int (tc-located-error-field message prefix-len line-end))
           (string.>int (tc-located-error-field message col-start col-end))
           (string.>int
@@ -5258,7 +5258,7 @@
   0)
 
 (define (tc-unused-unsafe-no-span) : AstSourceSpan
-  (AstSourceSpan 0 0 0 0))
+  (ast-source-span 0 0 0 0))
 
 (define (tc-unused-unsafe-tracking-reset! [path : String]) : unit
   (begin
@@ -5317,10 +5317,10 @@
 
 (define (tc-unused-unsafe-span-eq? [a : AstSourceSpan] [b : AstSourceSpan]) : bool
   (and
-    (= (struct-get a start-line) (struct-get b start-line))
-    (= (struct-get a start-col) (struct-get b start-col))
-    (= (struct-get a end-line) (struct-get b end-line))
-    (= (struct-get a end-col) (struct-get b end-col))))
+    (= (ast-source-span-start-line a) (ast-source-span-start-line b))
+    (= (ast-source-span-start-col a) (ast-source-span-start-col b))
+    (= (ast-source-span-end-line a) (ast-source-span-end-line b))
+    (= (ast-source-span-end-col a) (ast-source-span-end-col b))))
 
 (define (tc-unused-unsafe-find-existing
   [path : String]
@@ -15319,7 +15319,7 @@
                         (tc-context-pools ctx)
                         (AstExpr.Var
                           (intern (string.append (intern-str name) "$init"))))
-                      (AstSourceSpan 0 0 0 0))))]
+                      (ast-source-span 0 0 0 0))))]
               [else
                 (CompilerCtfeValue.Expr
                   (ast-node-pool-context-expr-push
@@ -22615,8 +22615,8 @@
       (match init
         [(AstExpr.Spanned _ span)
           (tc-inlay-hint-record!
-            (struct-get span start-line)
-            (struct-get span start-col)
+            (ast-source-span-start-line span)
+            (ast-source-span-start-col span)
             (tc-type-render init-ty))]
         [_ unit])]
     [(AstMaybeType.Some _) unit]))
@@ -43546,10 +43546,10 @@
 
 (define (macro-source-span-from-ast [span : AstSourceSpan]) : token.SourceSpan
   (token.SourceSpan
-    (struct-get span start-line)
-    (struct-get span start-col)
-    (struct-get span end-line)
-    (struct-get span end-col)))
+    (ast-source-span-start-line span)
+    (ast-source-span-start-col span)
+    (ast-source-span-end-line span)
+    (ast-source-span-end-col span)))
 
 (define (macro-output-syntax-diag [origin : AstExpr] [message : String]) : CompilerDiagnostic
   (ctfe-diagnostic-at-expr origin message))
@@ -49122,7 +49122,7 @@
 (define (macro-expr-span-or-zero [arg : AstExpr]) : AstSourceSpan
   (match arg
     [(AstExpr.Spanned _ span) span]
-    [_ (AstSourceSpan 0 0 0 0)]))
+    [_ (ast-source-span 0 0 0 0)]))
 
 (define (macro-expr-colon? [expr-id : i64]) : bool
   (match (ast-expr-unspan (ast-node-get expr-id))

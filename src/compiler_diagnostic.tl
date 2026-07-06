@@ -179,10 +179,10 @@
     CompilerDiagnosticNoString
     (CompilerDiagnosticSpan
       path
-      (struct-get span start-line)
-      (struct-get span start-col)
-      (struct-get span end-line)
-      (struct-get span end-col))
+      (ast-source-span-start-line span)
+      (ast-source-span-start-col span)
+      (ast-source-span-end-line span)
+      (ast-source-span-end-col span))
     CompilerDiagnosticNoString
     CompilerDiagnosticLabelNil
     CompilerDiagnosticNoteNil))

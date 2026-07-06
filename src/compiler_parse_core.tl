@@ -435,7 +435,7 @@
     [else (string.eq name "where")]))
 
 (define (ast-source-span-from-source-span [span : token.SourceSpan]) : AstSourceSpan
-  (AstSourceSpan
+  (ast-source-span
     (token.span-start-line span)
     (token.span-start-col span)
     (token.span-end-line span)
@@ -8383,12 +8383,6 @@
     (compiler-parse-error-ok?
       "(defdispatch dot (scalar))"
       "parse: malformed defdispatch variant")))
-
-(define (ast-source-span-start-line [span : AstSourceSpan]) : i64
-  (struct-get span start-line))
-
-(define (ast-source-span-start-col [span : AstSourceSpan]) : i64
-  (struct-get span start-col))
 
 (define (ast-expr-inner-tag [expr : AstExpr]) : i64
   (ast-expr-tag (ast-expr-unspan expr)))

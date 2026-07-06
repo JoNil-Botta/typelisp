@@ -515,7 +515,7 @@
     [_ false]))
 
 (define (tltest-source-line [span : AstSourceSpan]) : i64
-  (struct-get span start-line))
+  (ast-source-span-start-line span))
 
 (define (tltest-private-name [idx : i64]) : String
   (string.append "__tl_inline_test_" (string.int->string idx)))
@@ -2187,7 +2187,7 @@
 
 (define (tltest-import-alias-call-retained-self-test?) : bool
   (let
-    [span : AstSourceSpan (AstSourceSpan 1 1 1 1)]
+    [span : AstSourceSpan (ast-source-span 1 1 1 1)]
     [dep-path : String "stdlib/string.tl"]
     [source : String "stdlib/args.tl"]
     [dep-fn : AstDecl
@@ -2249,8 +2249,8 @@
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
-    [first-span : AstSourceSpan (AstSourceSpan 11 1 11 1)]
-    [second-span : AstSourceSpan (AstSourceSpan 22 1 22 1)]
+    [first-span : AstSourceSpan (ast-source-span 11 1 11 1)]
+    [second-span : AstSourceSpan (ast-source-span 22 1 22 1)]
     [decls : AstDeclList
       (ast-decl-cons
         helper-decl
@@ -2328,7 +2328,7 @@
         (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
-    [span : AstSourceSpan (AstSourceSpan 17 1 17 1)]
+    [span : AstSourceSpan (ast-source-span 17 1 17 1)]
     [decls : AstDeclList
       (ast-decl-cons
         substring-decl
@@ -2397,7 +2397,7 @@
         (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
-    [span : AstSourceSpan (AstSourceSpan 18 1 18 1)]
+    [span : AstSourceSpan (ast-source-span 18 1 18 1)]
     [decls : AstDeclList
       (ast-decl-cons
         substring-decl
@@ -2457,7 +2457,7 @@
         (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
-    [span : AstSourceSpan (AstSourceSpan 19 1 19 1)]
+    [span : AstSourceSpan (ast-source-span 19 1 19 1)]
     [decls : AstDeclList
       (ast-decl-cons
         substring-decl
@@ -2505,8 +2505,8 @@
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
-    [owned-span : AstSourceSpan (AstSourceSpan 5 1 5 1)]
-    [imported-span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
+    [owned-span : AstSourceSpan (ast-source-span 5 1 5 1)]
+    [imported-span : AstSourceSpan (ast-source-span 9 1 9 1)]
     [decls : AstDeclList
       (ast-decl-cons
         helper-decl
@@ -2572,8 +2572,8 @@
           "stdlib/core_macros.tl"
           (AstMaybeModuleName.Some "stdlib.core_macros")
           (AstMaybeImportAlias.Some "core")
-          (AstSourceSpan 0 0 0 0)))]
-    [span : AstSourceSpan (AstSourceSpan 9 1 9 1)]
+          (ast-source-span 0 0 0 0)))]
+    [span : AstSourceSpan (ast-source-span 9 1 9 1)]
     [decls : AstDeclList
       (ast-decl-cons
         import-decl
@@ -2632,7 +2632,7 @@
         (ast-param-list-new)
         (AstType.Unit)
         (tltest-call-expr eq-dep-name))]
-    [span : AstSourceSpan (AstSourceSpan 13 1 13 1)]
+    [span : AstSourceSpan (ast-source-span 13 1 13 1)]
     [decls : AstDeclList
       (ast-decl-cons
         dep-decl
@@ -2715,7 +2715,7 @@
           (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
-    [span : AstSourceSpan (AstSourceSpan 23 1 23 1)]
+    [span : AstSourceSpan (ast-source-span 23 1 23 1)]
     [decls : AstDeclList
       (ast-decl-cons
         dep-decl
@@ -2773,7 +2773,7 @@
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
-    [span : AstSourceSpan (AstSourceSpan 29 1 29 1)]
+    [span : AstSourceSpan (ast-source-span 29 1 29 1)]
     [decls : AstDeclList
       (ast-decl-cons
         dead-decl
@@ -2824,7 +2824,7 @@
         (ast-macro-param-list-new)
         (AstType.Expr)
         (ast-expr-quasiquote (tltest-call-expr helper-name)))]
-    [span : AstSourceSpan (AstSourceSpan 31 1 31 1)]
+    [span : AstSourceSpan (ast-source-span 31 1 31 1)]
     [decls : AstDeclList
       (ast-decl-cons
         helper-decl

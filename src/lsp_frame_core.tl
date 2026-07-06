@@ -5573,6 +5573,7 @@
     (string.eq method "tl/findPosition")
     (string.eq method "tl/findPath")
     (string.eq method "tl/replace")
+    (string.eq method "tl/replaceAt")
     (string.eq method "tl/deleteFunction")
     (string.eq method "tl/move")
     (string.eq method "tl/expandMacro")
@@ -5629,6 +5630,8 @@
     [(string.eq method "tl/findPath") (lsp-handle-tl-find-path id params docs)]
     [(string.eq method "tl/replace")
       (lsp-handle-tl-structural-replace-at id params docs)]
+    [(string.eq method "tl/replaceAt")
+      (lsp-handle-tl-structural-replace-at-position id params docs)]
     [(string.eq method "tl/deleteFunction")
       (lsp-handle-tl-delete-at id params docs)]
     [(string.eq method "tl/move")
@@ -6582,6 +6585,29 @@
           (lsp-replace-form-at-position text line col new-text))]
       [(json.JsonMissing)
         (LspEditResult.Err "Missing name or position parameter")])))
+
+;; tl/replaceAt - Explicit position-based top-level replacement
+(define (lsp-handle-tl-structural-replace-at-position
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : LspHandleResult
+  (match (lsp-get-document params docs)
+    [(LspDocumentLookup.Found path text _)
+      (match (lsp-json-string-field params "newText")
+        [(LspJsonText.Ok new-text)
+          (lsp-write-structural-edit-result
+            id
+            params
+            docs
+            (lsp-replace-form-at-position-from-params text params new-text))]
+        [(LspJsonText.Missing)
+          (begin
+            (lsp-write-error id -32600 "Missing newText parameter")
+            (LspHandleResult.Continue docs))])]
+    [(LspDocumentLookup.Missing)
+      (begin
+        (lsp-write-error id -32600 "Document not found")
+        (LspHandleResult.Continue docs))]))
 
 ;; tl/replace - Replace a top-level declaration by name, with position fallback
 (define (lsp-handle-tl-structural-replace-at
@@ -7670,6 +7696,12 @@
     [text-copy : String (string.copy (& text))]
     [decls : LspDeclList (lsp-scan-decls text-copy)]
     (cond
+      [(string.eq method "tl/replaceAt")
+        (match (lsp-json-string-field params "newText")
+          [(LspJsonText.Ok new-text)
+            (lsp-replace-form-at-position-from-params text params new-text)]
+          [(LspJsonText.Missing)
+            (LspEditResult.Err "Missing newText parameter")])]
       [(string.eq method "tl/replace")
         (match (lsp-json-string-field params "newText")
           [(LspJsonText.Ok new-text)

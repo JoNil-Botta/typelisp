@@ -7535,96 +7535,74 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(comptime-decl
-  (:generated vector-family ParseAstDeclVec "AstDecl")
-  (defstruct ParseAstDeclVec
-    (slots (Array AstDecl))
-    (len i64)))
+(defstruct ParseAstDeclVec
+  (slots (Array AstDecl))
+  (len i64))
 
 (define (parse-ast-decl-vec-fallback) : AstDecl
   (AstDecl.Module (intern "<parse-ast-decl-vec-fallback>")))
 
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-with-capacity "AstDecl")
-  (define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
-    (let
-      [cap : i64
-        (if (< capacity 1)
-          1
-          capacity)]
-      (ParseAstDeclVec (make-array AstDecl cap) 0))))
+(define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
+  (let
+    [cap : i64
+      (if (< capacity 1)
+        1
+        capacity)]
+    (ParseAstDeclVec (make-array AstDecl cap) 0)))
 
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-new "AstDecl")
-  (define (parse-ast-decl-vec-new) : ParseAstDeclVec
-    (parse-ast-decl-vec-with-capacity 16)))
+(define (parse-ast-decl-vec-new) : ParseAstDeclVec
+  (parse-ast-decl-vec-with-capacity 16))
 
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-len "AstDecl")
-  (define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
-    (struct-get v len)))
+(define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
+  (struct-get v len))
 
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-capacity "AstDecl")
-  (define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
-    (array-length (struct-get v slots))))
+(define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
+  (array-length (struct-get v slots)))
 
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-get "AstDecl")
-  (define (parse-ast-decl-vec-get
-    [v : (& v ParseAstDeclVec)]
-    [index : i64]
-    [fallback : AstDecl]) : AstDecl
-    (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-      (array-ref (struct-get v slots) index)
-      fallback)))
+(define (parse-ast-decl-vec-get
+  [v : (& v ParseAstDeclVec)]
+  [index : i64]
+  [fallback : AstDecl]) : AstDecl
+  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
+    (array-ref (struct-get v slots) index)
+    fallback))
 
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-copy-range "AstDecl")
-  (define (parse-ast-decl-vec-copy-range
-    [dst : (&mut dst (Array AstDecl))]
-    [src : (& src (Array AstDecl))]
-    [index : i64]
-    [count : i64]) : unit
-    (if (>= index count)
-      unit
-      (begin
-        (array-set! dst index (array-ref src index))
-        (parse-ast-decl-vec-copy-range dst src (+ index 1) count)))))
-
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-grow "AstDecl")
-  (define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
-    (let
-      [n : i64 (struct-get v len)]
-      [old-cap : i64 (array-length (struct-get v slots))]
-      [new-cap : i64
-        (if (< old-cap 1)
-          1
-          (* old-cap 2))]
-      [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
-      (begin
-        (parse-ast-decl-vec-copy-range
-          (&mut bigger)
-          (& (struct-get v slots))
-          0
-          n)
-        (set! (struct-get v slots) bigger)))))
-
-(comptime-decl
-  (:generated vector-family parse-ast-decl-vec-push "AstDecl")
-  (define (parse-ast-decl-vec-push
-    [v : (&mut v ParseAstDeclVec)]
-    [value : AstDecl]) : unit
+(define (parse-ast-decl-vec-copy-range
+  [dst : (&mut dst (Array AstDecl))]
+  [src : (& src (Array AstDecl))]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
     (begin
-      (if (< (struct-get v len) (array-length (struct-get v slots)))
-        unit
-        (parse-ast-decl-vec-grow v))
-      (let
-        [index : i64 (struct-get v len)]
-        (begin
-          (array-set! (struct-get v slots) index value)
-          (set! (struct-get v len) (+ index 1)))))))
+      (array-set! dst index (array-ref src index))
+      (parse-ast-decl-vec-copy-range dst src (+ index 1) count))))
+
+(define (parse-ast-decl-vec-grow [v : (&mut v ParseAstDeclVec)]) : unit
+  (let
+    [n : i64 (struct-get v len)]
+    [old-cap : i64 (array-length (struct-get v slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
+    (begin
+      (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
+      (set! (struct-get v slots) bigger))))
+
+(define (parse-ast-decl-vec-push
+  [v : (&mut v ParseAstDeclVec)]
+  [value : AstDecl]) : unit
+  (begin
+    (if (< (struct-get v len) (array-length (struct-get v slots)))
+      unit
+      (parse-ast-decl-vec-grow v))
+    (let
+      [index : i64 (struct-get v len)]
+      (begin
+        (array-set! (struct-get v slots) index value)
+        (set! (struct-get v len) (+ index 1))))))
 
 (define (parse-ast-decl-vec-push-list!
   [out : (&mut out ParseAstDeclVec)]

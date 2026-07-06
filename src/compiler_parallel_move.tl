@@ -1,12 +1,10 @@
 ;; compiler_parallel_move.tl - target-neutral parallel move graph decisions.
-(import stdlib.string)
-
 ;; A move edge writes one logical destination and reads one logical source. Each
 ;; side may occupy up to two resources so register-pair/group moves can block on
 ;; either half without teaching this helper about registers, stack slots, or IR
-;; values. The empty string means "no resource".
+;; values. Resource id 0 means "no resource".
 (defenum CompilerParallelMoveEdge
-  (ParallelMoveEdge String String String String String))
+  (ParallelMoveEdge i64 i64 i64 i64 i64))
 
 (defenum CompilerParallelMoveEdgeList
   (CompilerParallelMoveNil)
@@ -16,24 +14,24 @@
 
 (defenum CompilerParallelMoveDecision
   (CompilerParallelMoveDone)
-  (CompilerParallelMoveUnblocked String)
-  (CompilerParallelMoveCycle String))
+  (CompilerParallelMoveUnblocked i64)
+  (CompilerParallelMoveCycle i64))
 
 (define (compiler-parallel-move-edge-cons
   [edge : CompilerParallelMoveEdge]
   [rest : CompilerParallelMoveEdgeList]) : CompilerParallelMoveEdgeList
   (CompilerParallelMoveCons edge (box rest)))
 
-(define (compiler-parallel-move-edge-id [edge : CompilerParallelMoveEdge]) : String
+(define (compiler-parallel-move-edge-id [edge : CompilerParallelMoveEdge]) : i64
   (match edge
     [(ParallelMoveEdge id _ _ _ _) id]))
 
-(define (compiler-parallel-move-resource-eq? [left : String] [right : String]) : bool
-  (and (not (string.eq left "")) (string.eq left right)))
+(define (compiler-parallel-move-resource-eq? [left : i64] [right : i64]) : bool
+  (and (not (= left 0)) (= left right)))
 
 (define (compiler-parallel-move-edge-source-uses-resource?
   [edge : CompilerParallelMoveEdge]
-  [resource : String]) : bool
+  [resource : i64]) : bool
   (match edge
     [(ParallelMoveEdge _ _ _ source0 source1)
       (or
@@ -42,13 +40,13 @@
 
 (define (compiler-parallel-move-edge-list-source-uses-resource?
   [edges : CompilerParallelMoveEdgeList]
-  [resource : String]
-  [exclude-id : String]) : bool
+  [resource : i64]
+  [exclude-id : i64]) : bool
   (match edges
     [(CompilerParallelMoveNil) false]
     [(CompilerParallelMoveCons edge rest)
       (if (and
-        (not (string.eq (compiler-parallel-move-edge-id edge) exclude-id))
+        (not (= (compiler-parallel-move-edge-id edge) exclude-id))
         (compiler-parallel-move-edge-source-uses-resource? edge resource))
         true
         (compiler-parallel-move-edge-list-source-uses-resource?
@@ -104,43 +102,43 @@
           (CompilerParallelMoveCycle (compiler-parallel-move-edge-id first))])]))
 
 (define (compiler-parallel-move-test-edge
-  [id : String]
-  [dest : String]
-  [source : String]) : CompilerParallelMoveEdge
-  (ParallelMoveEdge id dest "" source ""))
+  [id : i64]
+  [dest : i64]
+  [source : i64]) : CompilerParallelMoveEdge
+  (ParallelMoveEdge id dest 0 source 0))
 
 (define (compiler-parallel-move-self-test?) : bool
   (let
     [empty : CompilerParallelMoveEdgeList CompilerParallelMoveNil]
     [chain : CompilerParallelMoveEdgeList
       (compiler-parallel-move-edge-cons
-        (compiler-parallel-move-test-edge "a" "r1" "r2")
+        (compiler-parallel-move-test-edge 1 10 20)
         (compiler-parallel-move-edge-cons
-          (compiler-parallel-move-test-edge "b" "r2" "")
+          (compiler-parallel-move-test-edge 2 20 0)
           CompilerParallelMoveNil))]
     [cycle : CompilerParallelMoveEdgeList
       (compiler-parallel-move-edge-cons
-        (compiler-parallel-move-test-edge "a" "r1" "r2")
+        (compiler-parallel-move-test-edge 1 10 20)
         (compiler-parallel-move-edge-cons
-          (compiler-parallel-move-test-edge "b" "r2" "r1")
+          (compiler-parallel-move-test-edge 2 20 10)
           CompilerParallelMoveNil))]
     [pair : CompilerParallelMoveEdgeList
       (compiler-parallel-move-edge-cons
-        (ParallelMoveEdge "pair" "r12" "r13" "r14" "r15")
+        (ParallelMoveEdge 3 12 13 14 15)
         (compiler-parallel-move-edge-cons
-          (compiler-parallel-move-test-edge "half" "r8" "r13")
+          (compiler-parallel-move-test-edge 4 8 13)
           CompilerParallelMoveNil))]
     (and
       (match (compiler-parallel-move-decision empty empty)
         [(CompilerParallelMoveDone) true]
         [_ false])
       (match (compiler-parallel-move-decision chain chain)
-        [(CompilerParallelMoveUnblocked id) (string.eq id "a")]
+        [(CompilerParallelMoveUnblocked id) (= id 1)]
         [_ false])
       (match (compiler-parallel-move-decision cycle cycle)
-        [(CompilerParallelMoveCycle id) (string.eq id "a")]
+        [(CompilerParallelMoveCycle id) (= id 1)]
         [_ false])
       (match (compiler-parallel-move-decision pair pair)
-        [(CompilerParallelMoveUnblocked id) (string.eq id "half")]
+        [(CompilerParallelMoveUnblocked id) (= id 4)]
         [_ false])
       (compiler-parallel-move-list-has-blocked? pair pair))))

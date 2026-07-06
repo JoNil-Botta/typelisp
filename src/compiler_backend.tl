@@ -19201,12 +19201,17 @@
               [(CompilerRegMaybeLocation.No) ""]))]
         [_ ""])]))
 
-(define (compiler-backend-parallel-reg-resource [reg : String]) : String
+(define (compiler-backend-parallel-reg-resource [reg : String]) : i64
   (if (string.eq reg "")
-    ""
-    (str_cat.str-cat "reg:" reg "")))
+    0
+    (+ (stdlib.hash.string-key (& reg)) 1)))
 
-(define (compiler-backend-parallel-move-missing [kind : String] [id : String]) : ResultCompilerBackend
+(define (compiler-backend-parallel-spill-resource [offset : i64]) : i64
+  (if (< offset 0)
+    (+ 2000000 (- 0 offset))
+    (+ 3000000 offset)))
+
+(define (compiler-backend-parallel-move-missing [kind : String] [id : i64]) : ResultCompilerBackend
   (ResultCompilerBackend.Err
     (box
       (compiler-diagnostic-at-start
@@ -19215,7 +19220,7 @@
           "backend: "
           kind
           " parallel-move decision id missing: "
-          id)))))
+          (string.int->string id))))))
 
 (define (compiler-backend-arg-move-parallel-edge
   [assignments : CompilerRegAssignmentList]
@@ -19223,12 +19228,12 @@
   (match move
     [(BackendArgMove dest source)
       (ParallelMoveEdge
-        dest
         (compiler-backend-parallel-reg-resource dest)
-        ""
+        (compiler-backend-parallel-reg-resource dest)
+        0
         (compiler-backend-parallel-reg-resource
           (compiler-backend-arg-move-source-reg assignments source))
-        "")]))
+        0)]))
 
 (define (compiler-backend-arg-move-parallel-edges
   [assignments : CompilerRegAssignmentList]
@@ -19258,13 +19263,13 @@
 
 (define (compiler-backend-arg-move-list-find
   [moves : CompilerBackendArgMoveList]
-  [want : String]) : CompilerBackendMaybeArgMove
+  [want : i64]) : CompilerBackendMaybeArgMove
   (match moves
     [(BackendArgMoveNil) BackendNoArgMove]
     [(BackendArgMoveCons move rest)
       (match move
         [(BackendArgMove dest _)
-          (if (string.eq dest want)
+          (if (= (compiler-backend-parallel-reg-resource dest) want)
             (BackendSomeArgMove move)
             (compiler-backend-arg-move-list-find (box-get rest) want))])]))
 
@@ -20208,7 +20213,7 @@
 
 (define (compiler-backend-var-parallel-resource0
   [assignments : CompilerRegAssignmentList]
-  [var : i64]) : String
+  [var : i64]) : i64
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
@@ -20217,43 +20222,42 @@
         [(CompilerRegLocation.RegisterPair first _)
           (compiler-backend-parallel-reg-resource first)]
         [(CompilerRegLocation.Spill offset)
-          (str_cat.str-cat "spill:" (string.int->string offset) "")]
-        [(CompilerRegLocation.Remat _) ""])]
-    [(CompilerRegMaybeLocation.No)
-      (str_cat.str-cat "slot:" (string.int->string var) "")]))
+          (compiler-backend-parallel-spill-resource offset)]
+        [(CompilerRegLocation.Remat _) 0])]
+    [(CompilerRegMaybeLocation.No) (+ 1000000 var)]))
 
 (define (compiler-backend-var-parallel-resource1
   [assignments : CompilerRegAssignmentList]
-  [var : i64]) : String
+  [var : i64]) : i64
   (match (compiler-reg-assignment-lookup assignments var)
     [(CompilerRegMaybeLocation.Some location)
       (match location
         [(CompilerRegLocation.RegisterPair _ second)
           (compiler-backend-parallel-reg-resource second)]
-        [_ ""])]
-    [(CompilerRegMaybeLocation.No) ""]))
+        [_ 0])]
+    [(CompilerRegMaybeLocation.No) 0]))
 
 (define (compiler-backend-phi-source-parallel-resource0
   [assignments : CompilerRegAssignmentList]
-  [source : CompilerBackendPhiSource]) : String
+  [source : CompilerBackendPhiSource]) : i64
   (match source
     [(CompilerBackendPhiSource.Value value)
       (match value
         [(CompilerIrValue.Var found)
           (compiler-backend-var-parallel-resource0 assignments found)]
-        [_ ""])]
-    [(CompilerBackendPhiSource.Temp _) ""]))
+        [_ 0])]
+    [(CompilerBackendPhiSource.Temp _) 0]))
 
 (define (compiler-backend-phi-source-parallel-resource1
   [assignments : CompilerRegAssignmentList]
-  [source : CompilerBackendPhiSource]) : String
+  [source : CompilerBackendPhiSource]) : i64
   (match source
     [(CompilerBackendPhiSource.Value value)
       (match value
         [(CompilerIrValue.Var found)
           (compiler-backend-var-parallel-resource1 assignments found)]
-        [_ ""])]
-    [(CompilerBackendPhiSource.Temp _) ""]))
+        [_ 0])]
+    [(CompilerBackendPhiSource.Temp _) 0]))
 
 (define (compiler-backend-phi-copy-parallel-edge
   [assignments : CompilerRegAssignmentList]
@@ -20261,7 +20265,7 @@
   (match copy
     [(CompilerBackendPhiCopy.Copy dst source _)
       (ParallelMoveEdge
-        (string.int->string dst)
+        dst
         (compiler-backend-var-parallel-resource0 assignments dst)
         (compiler-backend-var-parallel-resource1 assignments dst)
         (compiler-backend-phi-source-parallel-resource0 assignments source)
@@ -20289,13 +20293,13 @@
 
 (define (compiler-backend-phi-copy-list-find-id
   [copies : CompilerBackendPhiCopyList]
-  [want : String]) : CompilerBackendMaybePhiCopy
+  [want : i64]) : CompilerBackendMaybePhiCopy
   (match copies
     [(CompilerBackendPhiCopyList.Nil) CompilerBackendMaybePhiCopy.No]
     [(CompilerBackendPhiCopyList.Cons copy rest)
       (match copy
         [(CompilerBackendPhiCopy.Copy dst _ _)
-          (if (string.eq (string.int->string dst) want)
+          (if (= dst want)
             (CompilerBackendMaybePhiCopy.Some copy)
             (compiler-backend-phi-copy-list-find-id (box-get rest) want))])]))
 

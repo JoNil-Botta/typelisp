@@ -1013,13 +1013,11 @@
     [(CompilerRegMoveList.Nil) true]
     [_ false]))
 
-(define (compiler-reg-move-parallel-resource [var : i64]) : String
-  (string.append "v:" (string.int->string var)))
+(define (compiler-reg-move-parallel-resource [var : i64]) : i64
+  (+ var 1))
 
-(define (compiler-reg-move-parallel-id [src : i64] [dst : i64]) : String
-  (string.append
-    (string.append (string.int->string src) "->")
-    (string.int->string dst)))
+(define (compiler-reg-move-parallel-id [src : i64] [dst : i64]) : i64
+  (+ (* (+ src 1) 1000000) (+ dst 1)))
 
 (define (compiler-reg-move-parallel-edge [move : CompilerRegMove]) : CompilerParallelMoveEdge
   (match move
@@ -1027,9 +1025,9 @@
       (ParallelMoveEdge
         (compiler-reg-move-parallel-id src dst)
         (compiler-reg-move-parallel-resource dst)
-        ""
+        0
         (compiler-reg-move-parallel-resource src)
-        "")]))
+        0)]))
 
 (define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveList]) : CompilerParallelMoveEdgeList
   (match moves
@@ -1062,11 +1060,11 @@
     (and
       (match (compiler-reg-move-list-parallel-decision chain)
         [(CompilerParallelMoveUnblocked id)
-          (string.eq id (compiler-reg-move-parallel-id 1 2))]
+          (= id (compiler-reg-move-parallel-id 1 2))]
         [_ false])
       (match (compiler-reg-move-list-parallel-decision cycle)
         [(CompilerParallelMoveCycle id)
-          (string.eq id (compiler-reg-move-parallel-id 0 1))]
+          (= id (compiler-reg-move-parallel-id 0 1))]
         [_ false]))))
 
 (define (compiler-reg-move-list-mark-strict

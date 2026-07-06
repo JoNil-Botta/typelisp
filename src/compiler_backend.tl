@@ -43809,31 +43809,31 @@ tl_memchr:
             (box (compiler-diagnostic-at-start "" message))))])))
 
 (defstruct CompilerBackendObjectParts
-  (text CompilerObjectX64InstrList)
-  (data CompilerObjectDataRecordList)
-  (rodata CompilerObjectDataRecordList)
-  (bss CompilerObjectDataRecordList)
-  (pdata CompilerObjectDataRecordList)
-  (xdata CompilerObjectDataRecordList)
-  (symbols CompilerObjectSymbolList)
-  (relocations CompilerObjectRelocationList))
+  (text CompilerObjectX64InstrBuilder)
+  (data CompilerObjectDataRecordBuilder)
+  (rodata CompilerObjectDataRecordBuilder)
+  (bss CompilerObjectDataRecordBuilder)
+  (pdata CompilerObjectDataRecordBuilder)
+  (xdata CompilerObjectDataRecordBuilder)
+  (symbols CompilerObjectSymbolBuilder)
+  (relocations CompilerObjectRelocationBuilder))
 
 (define (compiler-backend-object-parts-empty) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
-    CompilerObjectX64InstrList.Nil
-    CompilerObjectDataRecordList.Nil
-    CompilerObjectDataRecordList.Nil
-    CompilerObjectDataRecordList.Nil
-    CompilerObjectDataRecordList.Nil
-    CompilerObjectDataRecordList.Nil
-    CompilerObjectSymbolList.Nil
-    CompilerObjectRelocationList.Nil))
+    (compiler-object-instr-builder-new)
+    (compiler-object-data-record-builder-new)
+    (compiler-object-data-record-builder-new)
+    (compiler-object-data-record-builder-new)
+    (compiler-object-data-record-builder-new)
+    (compiler-object-data-record-builder-new)
+    (compiler-object-symbol-builder-new)
+    (compiler-object-relocation-builder-new)))
 
 (define (compiler-backend-object-add-text
   [parts : CompilerBackendObjectParts]
   [instr : CompilerObjectX64Instr]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
-    (compiler-object-instr-cons instr (struct-get parts text))
+    (compiler-object-instr-builder-push (struct-get parts text) instr)
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
@@ -43847,7 +43847,7 @@ tl_memchr:
   [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
-    (compiler-object-data-cons record (struct-get parts data))
+    (compiler-object-data-record-builder-push (struct-get parts data) record)
     (struct-get parts rodata)
     (struct-get parts bss)
     (struct-get parts pdata)
@@ -43861,7 +43861,7 @@ tl_memchr:
   (CompilerBackendObjectParts
     (struct-get parts text)
     (struct-get parts data)
-    (compiler-object-data-cons record (struct-get parts rodata))
+    (compiler-object-data-record-builder-push (struct-get parts rodata) record)
     (struct-get parts bss)
     (struct-get parts pdata)
     (struct-get parts xdata)
@@ -43875,7 +43875,7 @@ tl_memchr:
     (struct-get parts text)
     (struct-get parts data)
     (struct-get parts rodata)
-    (compiler-object-data-cons record (struct-get parts bss))
+    (compiler-object-data-record-builder-push (struct-get parts bss) record)
     (struct-get parts pdata)
     (struct-get parts xdata)
     (struct-get parts symbols)
@@ -43889,7 +43889,7 @@ tl_memchr:
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
-    (compiler-object-data-cons record (struct-get parts pdata))
+    (compiler-object-data-record-builder-push (struct-get parts pdata) record)
     (struct-get parts xdata)
     (struct-get parts symbols)
     (struct-get parts relocations)))
@@ -43903,7 +43903,7 @@ tl_memchr:
     (struct-get parts rodata)
     (struct-get parts bss)
     (struct-get parts pdata)
-    (compiler-object-data-cons record (struct-get parts xdata))
+    (compiler-object-data-record-builder-push (struct-get parts xdata) record)
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
@@ -43920,9 +43920,9 @@ tl_memchr:
     (struct-get parts bss)
     (struct-get parts pdata)
     (struct-get parts xdata)
-    (compiler-object-symbol-cons
-      (CompilerObjectSymbol.Symbol name binding kind section)
-      (struct-get parts symbols))
+    (compiler-object-symbol-builder-push
+      (struct-get parts symbols)
+      (CompilerObjectSymbol.Symbol name binding kind section))
     (struct-get parts relocations)))
 
 (define (compiler-backend-object-add-relocation
@@ -43939,9 +43939,9 @@ tl_memchr:
     (struct-get parts pdata)
     (struct-get parts xdata)
     (struct-get parts symbols)
-    (compiler-object-relocation-cons
-      (CompilerObjectRelocation.Relocation section site kind target)
-      (struct-get parts relocations))))
+    (compiler-object-relocation-builder-push
+      (struct-get parts relocations)
+      (CompilerObjectRelocation.Relocation section site kind target))))
 
 (define (compiler-backend-object-symbol-local-section
   [parts : CompilerBackendObjectParts]
@@ -43982,7 +43982,7 @@ tl_memchr:
   [parts : CompilerBackendObjectParts]
   [name : String]
   [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
-  (if (compiler-object-symbol-list-contains?
+  (if (compiler-object-symbol-builder-contains?
     (struct-get parts symbols)
     name
     (CompilerObjectSymbolBinding.Extern)
@@ -45864,35 +45864,54 @@ tl_memchr:
   "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n    <windowsSettings>\r\n      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n    </windowsSettings>\r\n  </application>\r\n</assembly>\r\n")
 
 (define (compiler-backend-object-windows-manifest-resource-records) : CompilerObjectDataRecordList
-  (compiler-object-data-list-dense-reversed
-    (compiler-object-data-cons
-      (CompilerObjectDataRecord.Label ".L_tl_manifest_end")
-      (compiler-object-data-cons
+  (let
+    [records0 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-with-capacity 9)]
+    [records1 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records0
+        (CompilerObjectDataRecord.Label ".L_tl_rsrc_base"))]
+    [records2 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records1
         (CompilerObjectDataRecord.Bytes
-          compiler-backend-object-windows-utf8-manifest)
-        (compiler-object-data-cons
-          (CompilerObjectDataRecord.Label
-            compiler-backend-object-windows-manifest-label)
-          (compiler-object-data-cons
-            (CompilerObjectDataRecord.Align 4)
-            (compiler-object-data-cons
-              ;; Manifest size is 376 bytes (0x178), followed by codepage/reserved zeros.
-              (CompilerObjectDataRecord.Bytes
-                (compiler-backend-object-bytes-from-hex
-                  "780100000000000000000000"))
-              (compiler-object-data-cons
-                (CompilerObjectDataRecord.SymbolRva32
-                  compiler-backend-object-windows-manifest-label)
-                (compiler-object-data-cons
-                  (CompilerObjectDataRecord.Label
-                    compiler-backend-object-windows-rsrc-data-label)
-                  (compiler-object-data-cons
-                    (CompilerObjectDataRecord.Bytes
-                      (compiler-backend-object-bytes-from-hex
-                        "000000000000000000000000000001001800000018000080000000000000000000000000000001000100000030000080000000000000000000000000000001000904000048000000"))
-                    (compiler-object-data-cons
-                      (CompilerObjectDataRecord.Label ".L_tl_rsrc_base")
-                      CompilerObjectDataRecordList.Nil)))))))))))
+          (compiler-backend-object-bytes-from-hex
+            "000000000000000000000000000001001800000018000080000000000000000000000000000001000100000030000080000000000000000000000000000001000904000048000000")))]
+    [records3 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records2
+        (CompilerObjectDataRecord.Label
+          compiler-backend-object-windows-rsrc-data-label))]
+    [records4 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records3
+        (CompilerObjectDataRecord.SymbolRva32
+          compiler-backend-object-windows-manifest-label))]
+    [records5 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records4
+        ;; Manifest size is 376 bytes (0x178), followed by codepage/reserved zeros.
+        (CompilerObjectDataRecord.Bytes
+          (compiler-backend-object-bytes-from-hex "780100000000000000000000")))]
+    [records6 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records5
+        (CompilerObjectDataRecord.Align 4))]
+    [records7 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records6
+        (CompilerObjectDataRecord.Label
+          compiler-backend-object-windows-manifest-label))]
+    [records8 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records7
+        (CompilerObjectDataRecord.Bytes
+          compiler-backend-object-windows-utf8-manifest))]
+    [records9 : CompilerObjectDataRecordBuilder
+      (compiler-object-data-record-builder-push
+        records8
+        (CompilerObjectDataRecord.Label ".L_tl_manifest_end"))]
+    (compiler-object-data-record-builder-finish records9)))
 
 (define (compiler-backend-object-add-windows-entry-data
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -46274,102 +46293,109 @@ tl_memchr:
   [crt-entry : bool]) : CompilerObjectSectionList
   (let
     [empty-data : CompilerObjectDataRecordList
-      (compiler-object-data-list-reverse CompilerObjectDataRecordList.Nil)]
+      (compiler-object-data-record-builder-finish
+        (compiler-object-data-record-builder-with-capacity 1))]
     [empty-instrs : CompilerObjectX64InstrList
-      (compiler-object-instr-list-reverse CompilerObjectX64InstrList.Nil)]
-    [base : CompilerObjectSectionList
-      (compiler-object-section-cons
+      (compiler-object-instr-builder-finish
+        (compiler-object-instr-builder-with-capacity 1))]
+    [text-instrs : CompilerObjectX64InstrList
+      (compiler-object-instr-builder-finish (struct-get parts text))]
+    [data-records : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish (struct-get parts data))]
+    [rodata-records : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish (struct-get parts rodata))]
+    [bss-records : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish (struct-get parts bss))]
+    [pdata-records : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish (struct-get parts pdata))]
+    [xdata-records : CompilerObjectDataRecordList
+      (compiler-object-data-record-builder-finish (struct-get parts xdata))]
+    [sections0 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-with-capacity 7)]
+    [sections1 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections0
         (CompilerObjectSection.Section
           (CompilerObjectSectionKind.Text)
           empty-data
-          (compiler-object-instr-list-reverse (struct-get parts text)))
-        (compiler-object-section-cons
-          (CompilerObjectSection.Section
-            (CompilerObjectSectionKind.Data)
-            (compiler-object-data-list-reverse (struct-get parts data))
-            empty-instrs)
-          (compiler-object-section-cons
-            (CompilerObjectSection.Section
-              (CompilerObjectSectionKind.Rodata)
-              (compiler-object-data-list-reverse (struct-get parts rodata))
-              empty-instrs)
-            (compiler-object-section-cons
-              (CompilerObjectSection.Section
-                (CompilerObjectSectionKind.Bss)
-                (compiler-object-data-list-reverse (struct-get parts bss))
-                empty-instrs)
-              CompilerObjectSectionList.Nil))))]
+          text-instrs))]
+    [sections2 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections1
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Data)
+          data-records
+          empty-instrs))]
+    [sections3 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections2
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Rodata)
+          rodata-records
+          empty-instrs))]
+    [sections4 : CompilerObjectSectionBuilder
+      (compiler-object-section-builder-push
+        sections3
+        (CompilerObjectSection.Section
+          (CompilerObjectSectionKind.Bss)
+          bss-records
+          empty-instrs))]
     (match target
-      [(CompilerBackendTarget.Linux) (compiler-object-section-list-dense base)]
+      [(CompilerBackendTarget.Linux)
+        (compiler-object-section-builder-finish sections4)]
       [(CompilerBackendTarget.Windows)
-        (compiler-object-section-list-dense
-          (compiler-object-section-cons
-            (CompilerObjectSection.Section
-              (CompilerObjectSectionKind.Text)
-              empty-data
-              (compiler-object-instr-list-reverse (struct-get parts text)))
-            (compiler-object-section-cons
+        (let
+          [sections5 : CompilerObjectSectionBuilder
+            (compiler-object-section-builder-push
+              sections4
               (CompilerObjectSection.Section
-                (CompilerObjectSectionKind.Data)
-                (compiler-object-data-list-reverse (struct-get parts data))
-                empty-instrs)
-              (compiler-object-section-cons
-                (CompilerObjectSection.Section
-                  (CompilerObjectSectionKind.Rodata)
-                  (compiler-object-data-list-reverse (struct-get parts rodata))
-                  empty-instrs)
-                (compiler-object-section-cons
-                  (CompilerObjectSection.Section
-                    (CompilerObjectSectionKind.Bss)
-                    (compiler-object-data-list-reverse (struct-get parts bss))
-                    empty-instrs)
-                  (compiler-object-section-cons
-                    (CompilerObjectSection.Section
-                      (CompilerObjectSectionKind.Pdata)
-                      (compiler-object-data-list-reverse
-                        (struct-get parts pdata))
-                      empty-instrs)
-                    (compiler-object-section-cons
-                      (CompilerObjectSection.Section
-                        (CompilerObjectSectionKind.Xdata)
-                        (compiler-object-data-list-reverse
-                          (struct-get parts xdata))
-                        empty-instrs)
-                      (compiler-object-section-cons
-                        (CompilerObjectSection.Section
-                          (CompilerObjectSectionKind.Rsrc)
-                          (if (and emit-entry (not crt-entry))
-                            (compiler-backend-object-windows-manifest-resource-records)
-                            empty-data)
-                          empty-instrs)
-                        CompilerObjectSectionList.Nil))))))))])))
+                (CompilerObjectSectionKind.Pdata)
+                pdata-records
+                empty-instrs))]
+          [sections6 : CompilerObjectSectionBuilder
+            (compiler-object-section-builder-push
+              sections5
+              (CompilerObjectSection.Section
+                (CompilerObjectSectionKind.Xdata)
+                xdata-records
+                empty-instrs))]
+          [sections7 : CompilerObjectSectionBuilder
+            (compiler-object-section-builder-push
+              sections6
+              (CompilerObjectSection.Section
+                (CompilerObjectSectionKind.Rsrc)
+                (if (and emit-entry (not crt-entry))
+                  (compiler-backend-object-windows-manifest-resource-records)
+                  empty-data)
+                empty-instrs))]
+          (compiler-object-section-builder-finish sections7))])))
 
 (define (compiler-backend-object-image-symbols
   [parts : CompilerBackendObjectParts]
   [emit-manifest-resource : bool]) : CompilerObjectSymbolList
-  (compiler-object-symbol-list-reverse
+  (compiler-object-symbol-builder-finish
     (if emit-manifest-resource
-      (compiler-object-symbol-cons
+      (compiler-object-symbol-builder-push
+        (struct-get parts symbols)
         (CompilerObjectSymbol.Symbol
           compiler-backend-object-windows-manifest-label
           (CompilerObjectSymbolBinding.Local)
           (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rsrc)))
-        (struct-get parts symbols))
+          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rsrc))))
       (struct-get parts symbols))))
 
 (define (compiler-backend-object-image-relocations
   [parts : CompilerBackendObjectParts]
   [emit-manifest-resource : bool]) : CompilerObjectRelocationList
-  (compiler-object-relocation-list-reverse
+  (compiler-object-relocation-builder-finish
     (if emit-manifest-resource
-      (compiler-object-relocation-cons
+      (compiler-object-relocation-builder-push
+        (struct-get parts relocations)
         (CompilerObjectRelocation.Relocation
           (CompilerObjectSectionKind.Rsrc)
           compiler-backend-object-windows-rsrc-data-label
           (CompilerObjectRelocationKind.Addr32Nb)
-          compiler-backend-object-windows-manifest-label)
-        (struct-get parts relocations))
+          compiler-backend-object-windows-manifest-label))
       (struct-get parts relocations))))
 
 (define (compiler-backend-object-image-from-parts

@@ -4667,7 +4667,9 @@
         (CompilerIrInstr.Word 1 (CompilerIrValue.Function "word_target") 0 ty)
         plan
         index)]
-    [relocs : CompilerObjectRelocationList (struct-get worded relocations)]
+    [relocs : CompilerObjectRelocationList
+      (compiler-object-relocation-builder-finish
+        (struct-get worded relocations))]
     (and
       (compiler-object-relocation-list-contains?
         relocs

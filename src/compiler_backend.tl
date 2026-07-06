@@ -247,23 +247,6 @@
   (Ok)
   (Err String))
 
-(defstruct CompilerBackendSwitchCasePlan
-  (cases CompilerIrSwitchCaseList)
-  (edge-blocks String))
-
-(defenum ResultCompilerBackendSwitchCasePlan
-  (Ok CompilerBackendSwitchCasePlan)
-  (Err (Box CompilerDiagnostic)))
-
-(defstruct CompilerBackendSwitchEdgePlan
-  (cases CompilerIrSwitchCaseList)
-  (default-label String)
-  (edge-blocks String))
-
-(defenum ResultCompilerBackendSwitchEdgePlan
-  (Ok CompilerBackendSwitchEdgePlan)
-  (Err (Box CompilerDiagnostic)))
-
 (defstruct CompilerBackendPicOutput
   (asm String)
   (fixups String))
@@ -25133,13 +25116,6 @@
         default-label)
       (compiler-backend-switch-cases-target-phi? cases))))
 
-(define (compiler-backend-switch-label-needs-edge? [label : String]) : bool
-  (and
-    (> compiler-backend-current-phi-target-count 0)
-    (compiler-backend-string-list-contains?
-      compiler-backend-current-phi-targets
-      label)))
-
 (define (compiler-backend-switch-case-edge-label
   [current-label : String]
   [tag : i64]) : String
@@ -25163,119 +25139,61 @@
       (compiler-backend-jump-label function target-label)
       "")))
 
-(define (compiler-backend-switch-edge-plan-cases
+(define (compiler-backend-emit-switch-case-edge-blocks
   [function : String]
   [current-label : String]
   [cases : CompilerIrSwitchCaseList]
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackendSwitchCasePlan
+  [vars : i64]) : ResultCompilerBackend
   (match cases
-    [(CompilerIrSwitchCaseList.Nil)
-      (ResultCompilerBackendSwitchCasePlan.Ok
-        (CompilerBackendSwitchCasePlan CompilerIrSwitchCaseList.Nil ""))]
+    [(CompilerIrSwitchCaseList.Nil) (ResultCompilerBackend.Ok "")]
     [(CompilerIrSwitchCaseList.Cons case rest)
-      (match (compiler-backend-switch-edge-plan-cases
-        function
-        current-label
-        (box-get rest)
-        assignments
-        blocks
-        program-index
-        vars)
-        [(ResultCompilerBackendSwitchCasePlan.Ok rest-plan)
-          (match case
-            [(CompilerIrSwitchCase.Case tag label)
-              (if (compiler-backend-switch-label-needs-edge? label)
-                (match (compiler-backend-emit-phi-edge-copies
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (if (compiler-backend-string-list-contains?
+            compiler-backend-current-phi-targets
+            label)
+            (match (compiler-backend-emit-phi-edge-copies
+              assignments
+              blocks
+              label
+              current-label
+              program-index
+              vars)
+              [(ResultCompilerBackend.Ok copies)
+                (match (compiler-backend-emit-switch-case-edge-blocks
+                  function
+                  current-label
+                  (box-get rest)
                   assignments
                   blocks
-                  label
-                  current-label
                   program-index
                   vars)
-                  [(ResultCompilerBackend.Ok copies)
-                    (let
-                      [edge-label : String
-                        (compiler-backend-switch-case-edge-label
-                          current-label
-                          tag)]
-                      (ResultCompilerBackendSwitchCasePlan.Ok
-                        (CompilerBackendSwitchCasePlan
-                          (compiler-ir-switch-case-cons
-                            tag
-                            edge-label
-                            (struct-get rest-plan cases))
-                          (string.append
-                            (compiler-backend-emit-switch-edge-block
-                              function
-                              edge-label
-                              label
-                              copies)
-                            (struct-get rest-plan edge-blocks)))))]
+                  [(ResultCompilerBackend.Ok rest-blocks)
+                    (ResultCompilerBackend.Ok
+                      (string.append
+                        (compiler-backend-emit-switch-edge-block
+                          function
+                          (compiler-backend-switch-case-edge-label
+                            current-label
+                            tag)
+                          label
+                          copies)
+                        rest-blocks))]
                   [(ResultCompilerBackend.Err message)
-                    (ResultCompilerBackendSwitchCasePlan.Err message)])
-                (ResultCompilerBackendSwitchCasePlan.Ok
-                  (CompilerBackendSwitchCasePlan
-                    (compiler-ir-switch-case-cons
-                      tag
-                      label
-                      (struct-get rest-plan cases))
-                    (struct-get rest-plan edge-blocks))))])]
-        [(ResultCompilerBackendSwitchCasePlan.Err message)
-          (ResultCompilerBackendSwitchCasePlan.Err message)])]))
-
-(define (compiler-backend-switch-edge-plan
-  [function : String]
-  [current-label : String]
-  [cases : CompilerIrSwitchCaseList]
-  [default-label : String]
-  [assignments : CompilerRegAssignmentList]
-  [blocks : CompilerIrBlockList]
-  [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackendSwitchEdgePlan
-  (match (compiler-backend-switch-edge-plan-cases
-    function
-    current-label
-    cases
-    assignments
-    blocks
-    program-index
-    vars)
-    [(ResultCompilerBackendSwitchCasePlan.Ok case-plan)
-      (if (compiler-backend-switch-label-needs-edge? default-label)
-        (match (compiler-backend-emit-phi-edge-copies
-          assignments
-          blocks
-          default-label
-          current-label
-          program-index
-          vars)
-          [(ResultCompilerBackend.Ok copies)
-            (let
-              [edge-label : String
-                (compiler-backend-switch-default-edge-label current-label)]
-              (ResultCompilerBackendSwitchEdgePlan.Ok
-                (CompilerBackendSwitchEdgePlan
-                  (struct-get case-plan cases)
-                  edge-label
-                  (string.append
-                    (struct-get case-plan edge-blocks)
-                    (compiler-backend-emit-switch-edge-block
-                      function
-                      edge-label
-                      default-label
-                      copies)))))]
-          [(ResultCompilerBackend.Err message)
-            (ResultCompilerBackendSwitchEdgePlan.Err message)])
-        (ResultCompilerBackendSwitchEdgePlan.Ok
-          (CompilerBackendSwitchEdgePlan
-            (struct-get case-plan cases)
-            default-label
-            (struct-get case-plan edge-blocks))))]
-    [(ResultCompilerBackendSwitchCasePlan.Err message)
-      (ResultCompilerBackendSwitchEdgePlan.Err message)]))
+                    (ResultCompilerBackend.Err message)])]
+              [(ResultCompilerBackend.Err message)
+                (ResultCompilerBackend.Err message)])
+            (compiler-backend-emit-switch-case-edge-blocks
+              function
+              current-label
+              (box-get rest)
+              assignments
+              blocks
+              program-index
+              vars))])]))
 
 (define (compiler-backend-switch-table-label
   [function : String]
@@ -25286,29 +25204,44 @@
 
 (define (compiler-backend-emit-switch-table-cases-into
   [function : String]
+  [current-label : String]
+  [retarget-phi-edges : bool]
   [cases : CompilerIrSwitchCaseList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match cases
     [(CompilerIrSwitchCaseList.Nil) buf]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (match case
-        [(CompilerIrSwitchCase.Case _ label)
+        [(CompilerIrSwitchCase.Case tag label)
           (compiler-backend-emit-switch-table-cases-into
             function
+            current-label
+            retarget-phi-edges
             (box-get rest)
             (text_buf.append
               (text_buf.append
                 (text_buf.append buf "    .quad ")
-                (compiler-backend-asm-label function label))
+                (compiler-backend-asm-label
+                  function
+                  (if (and
+                    retarget-phi-edges
+                    (compiler-backend-string-list-contains?
+                      compiler-backend-current-phi-targets
+                      label))
+                    (compiler-backend-switch-case-edge-label current-label tag)
+                    label)))
               "\n"))])]))
 
 (define (compiler-backend-emit-switch-table
   [function : String]
   [current-label : String]
-  [cases : CompilerIrSwitchCaseList]) : String
+  [cases : CompilerIrSwitchCaseList]
+  [retarget-phi-edges : bool]) : String
   (text_buf.render
     (compiler-backend-emit-switch-table-cases-into
       function
+      current-label
+      retarget-phi-edges
       cases
       (text_buf.append
         (text_buf.append
@@ -25333,11 +25266,13 @@
       (+ index 1)
       (match (compiler-ir-instr-seq-ref instrs index)
         [(CompilerIrInstr.Switch _ _ cases default-label)
-          (if (compiler-backend-switch-target-phi? cases default-label)
+          (text_buf.append
             buf
-            (text_buf.append
-              buf
-              (compiler-backend-emit-switch-table function current-label cases)))]
+            (compiler-backend-emit-switch-table
+              function
+              current-label
+              cases
+              (compiler-backend-switch-target-phi? cases default-label)))]
         [_ buf]))))
 
 (define (compiler-backend-emit-switch-tables-seq-into
@@ -25578,14 +25513,6 @@
               ",8)\n")))]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
-(define (compiler-backend-emit-switch-local-table
-  [function : String]
-  [current-label : String]
-  [cases : CompilerIrSwitchCaseList]) : String
-  (string.append
-    (compiler-backend-emit-switch-table function current-label cases)
-    ".text\n"))
-
 (define (compiler-backend-emit-switch
   [function : String]
   [current-label : String]
@@ -25613,37 +25540,60 @@
               ""
               (compiler-backend-switch-shape-message))))]
       [(compiler-backend-switch-target-phi? cases default-label)
-        (match (compiler-backend-switch-edge-plan
+        (match (compiler-backend-emit-switch-case-edge-blocks
           function
           current-label
           cases
-          default-label
           assignments
           blocks
           program-index
           vars)
-          [(ResultCompilerBackendSwitchEdgePlan.Ok plan)
-            (match (compiler-backend-emit-switch-dispatch
-              function
-              current-label
-              index
-              base
-              case-count
-              (struct-get plan default-label)
-              assignments)
-              [(ResultCompilerBackend.Ok dispatch)
-                (ResultCompilerBackend.Ok
-                  (string.append
-                    dispatch
-                    (string.append
-                      (struct-get plan edge-blocks)
-                      (compiler-backend-emit-switch-local-table
+          [(ResultCompilerBackend.Ok case-blocks)
+            (let
+              [default-needs-edge : bool
+                (compiler-backend-string-list-contains?
+                  compiler-backend-current-phi-targets
+                  default-label)]
+              (match (if default-needs-edge
+                (match (compiler-backend-emit-phi-edge-copies
+                  assignments
+                  blocks
+                  default-label
+                  current-label
+                  program-index
+                  vars)
+                  [(ResultCompilerBackend.Ok copies)
+                    (ResultCompilerBackend.Ok
+                      (compiler-backend-emit-switch-edge-block
                         function
-                        current-label
-                        (struct-get plan cases)))))]
-              [(ResultCompilerBackend.Err message)
-                (ResultCompilerBackend.Err message)])]
-          [(ResultCompilerBackendSwitchEdgePlan.Err message)
+                        (compiler-backend-switch-default-edge-label
+                          current-label)
+                        default-label
+                        copies))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err message)])
+                (ResultCompilerBackend.Ok ""))
+                [(ResultCompilerBackend.Ok default-block)
+                  (match (compiler-backend-emit-switch-dispatch
+                    function
+                    current-label
+                    index
+                    base
+                    case-count
+                    (if default-needs-edge
+                      (compiler-backend-switch-default-edge-label current-label)
+                      default-label)
+                    assignments)
+                    [(ResultCompilerBackend.Ok dispatch)
+                      (ResultCompilerBackend.Ok
+                        (string.append
+                          dispatch
+                          (string.append case-blocks default-block)))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)]))]
+          [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
       [else
         (match (compiler-backend-emit-switch-dispatch

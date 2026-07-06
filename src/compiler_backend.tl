@@ -12,6 +12,7 @@
 (import compiler_intern as ci)
 (import sym_i64_env)
 (import stdlib.array)
+(import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.hashmap)
 (import stdlib.string)
@@ -38530,6 +38531,12 @@
     (set! compiler-backend-emergency-pending-count 0)
     (set! compiler-backend-emergency-reg "")))
 
+(define (compiler-backend-clear-scratch-escaped-emit-state!) : unit
+  (begin
+    (compiler-backend-clear-function-emit-state!)
+    (compiler-backend-const-hoist-disable!)
+    unit))
+
 (define (compiler-backend-emit-function-direct? [func : CompilerIrFunction]) : bool
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -48447,6 +48454,36 @@ tl_memchr:
     (text_buf.empty)
     (compiler-backend-peephole-asm (text_buf.render buf))))
 
+(define (compiler-backend-emit-program-target-with-mode-raw-asm-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackend
+  ;; Keep this helper arena-neutral: backend emission records global metadata
+  ;; that the peephole consumes, so raw emission state must stay alive until the
+  ;; peephole finishes. The caller scopes both raw output and peephole
+  ;; intermediates together.
+  (match (if crt-entry
+    (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+      program
+      target
+      mode
+      spans
+      emit-entry
+      crt-entry)
+    (compiler-backend-emit-program-target-with-mode-buffer
+      program
+      target
+      mode
+      spans
+      emit-entry))
+    [(ResultCompilerBackendBuffer.Ok buf)
+      (ResultCompilerBackend.Ok (text_buf.render buf))]
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
+
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
@@ -48454,18 +48491,50 @@ tl_memchr:
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackend
-  (match (compiler-backend-emit-program-target-with-mode-buffer-and-crt
-    program
-    target
-    mode
-    spans
-    emit-entry
-    crt-entry)
-    [(ResultCompilerBackendBuffer.Ok buf)
-      (ResultCompilerBackend.Ok
-        (compiler-backend-peephole-asm (text_buf.render buf)))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
+  ;; Emit the raw TextBuf in a temporary arena, render and peephole in the
+  ;; caller arena, then destroy the raw emission arena. The peephole consumes
+  ;; backend metadata recorded during emission, so the temporary arena must stay
+  ;; alive until peephole finishes. Avoid `with-scratch` here: cloning the final
+  ;; whole-program assembly would duplicate the largest string at peak memory.
+  (let
+    [home-arena : arena.Arena (arena.current)]
+    [raw-arena : arena.Arena (arena.make)]
+    (begin
+      (unsafe
+        (arena.set! raw-arena))
+      (let
+        [emitted : ResultCompilerBackendBuffer
+          (if crt-entry
+            (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+              program
+              target
+              mode
+              spans
+              emit-entry
+              crt-entry)
+            (compiler-backend-emit-program-target-with-mode-buffer
+              program
+              target
+              mode
+              spans
+              emit-entry))]
+        (begin
+          (unsafe
+            (arena.set! home-arena))
+          (match emitted
+            [(ResultCompilerBackendBuffer.Ok buf)
+              (let
+                [raw-asm : String (text_buf.render buf)]
+                [peepholed : String (compiler-backend-peephole-asm raw-asm)]
+                (begin
+                  (unsafe
+                    (arena.destroy raw-arena))
+                  (compiler-backend-clear-scratch-escaped-emit-state!)
+                  (ResultCompilerBackend.Ok peepholed)))]
+            [(ResultCompilerBackendBuffer.Err message)
+              (begin
+                (compiler-backend-clear-scratch-escaped-emit-state!)
+                (ResultCompilerBackend.Err message))]))))))
 
 (define (compiler-backend-emit-program-target-with-mode
   [program : CompilerIrProgram]
@@ -48473,17 +48542,13 @@ tl_memchr:
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]) : ResultCompilerBackend
-  (match (compiler-backend-emit-program-target-with-mode-buffer
+  (compiler-backend-emit-program-target-with-mode-and-crt
     program
     target
     mode
     spans
-    emit-entry)
-    [(ResultCompilerBackendBuffer.Ok buf)
-      (ResultCompilerBackend.Ok
-        (compiler-backend-peephole-asm (text_buf.render buf)))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
+    emit-entry
+    false))
 
 (define (compiler-backend-target-cfgs [target : CompilerBackendTarget]) : sym_i64_env.SymI64Env
   (match target

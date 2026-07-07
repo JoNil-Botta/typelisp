@@ -151,14 +151,6 @@
   -1)
 (define compiler-builtin-id-tl-tls-current-arena-store : i64
   -1)
-(define compiler-builtin-id-tl-volatile-i64-load-ptr : i64
-  -1)
-(define compiler-builtin-id-tl-volatile-i64-store-ptr : i64
-  -1)
-(define compiler-builtin-id-tl-volatile-i32-load-ptr : i64
-  -1)
-(define compiler-builtin-id-tl-volatile-i32-store-ptr : i64
-  -1)
 
 (defstruct CompilerBuiltinIdsState
   (generation (Array i64))
@@ -167,11 +159,11 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 77)]
+    [ids : (Array i64) (make-array i64 73)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 77)
+      (while (< i 73)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -278,11 +270,7 @@
     (state-set! state 69 compiler-builtin-id-tls-current-arena)
     (state-set! state 70 compiler-builtin-id-tls-current-arena-set-bang)
     (state-set! state 71 compiler-builtin-id-tl-tls-current-arena-load)
-    (state-set! state 72 compiler-builtin-id-tl-tls-current-arena-store)
-    (state-set! state 73 compiler-builtin-id-tl-volatile-i64-load-ptr)
-    (state-set! state 74 compiler-builtin-id-tl-volatile-i64-store-ptr)
-    (state-set! state 75 compiler-builtin-id-tl-volatile-i32-load-ptr)
-    (state-set! state 76 compiler-builtin-id-tl-volatile-i32-store-ptr)))
+    (state-set! state 72 compiler-builtin-id-tl-tls-current-arena-store)))
 
 (define (state-capture) : CompilerBuiltinIdsState
   (let
@@ -366,11 +354,7 @@
     (set! compiler-builtin-id-tls-current-arena (state-ref state 69))
     (set! compiler-builtin-id-tls-current-arena-set-bang (state-ref state 70))
     (set! compiler-builtin-id-tl-tls-current-arena-load (state-ref state 71))
-    (set! compiler-builtin-id-tl-tls-current-arena-store (state-ref state 72))
-    (set! compiler-builtin-id-tl-volatile-i64-load-ptr (state-ref state 73))
-    (set! compiler-builtin-id-tl-volatile-i64-store-ptr (state-ref state 74))
-    (set! compiler-builtin-id-tl-volatile-i32-load-ptr (state-ref state 75))
-    (set! compiler-builtin-id-tl-volatile-i32-store-ptr (state-ref state 76))))
+    (set! compiler-builtin-id-tl-tls-current-arena-store (state-ref state 72))))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))
@@ -426,18 +410,6 @@
       (set!
         compiler-builtin-id-tl-atomic-i32-cas-ptr
         (ci.intern "tl_atomic_i32_cas_ptr"))
-      (set!
-        compiler-builtin-id-tl-volatile-i64-load-ptr
-        (ci.intern "tl_volatile_i64_load_ptr"))
-      (set!
-        compiler-builtin-id-tl-volatile-i64-store-ptr
-        (ci.intern "tl_volatile_i64_store_ptr"))
-      (set!
-        compiler-builtin-id-tl-volatile-i32-load-ptr
-        (ci.intern "tl_volatile_i32_load_ptr"))
-      (set!
-        compiler-builtin-id-tl-volatile-i32-store-ptr
-        (ci.intern "tl_volatile_i32_store_ptr"))
       (set!
         compiler-builtin-id-tl-profile-alloc-total
         (ci.intern "tl_profile_alloc_total"))
@@ -589,16 +561,6 @@
         compiler-builtin-id-tl-atomic-i64-cas-ptr
         compiler-builtin-id-tl-atomic-i32-cas-ptr))))
 
-(define (compiler-builtin-backend-runtime-volatile-id? [name-id : i64]) : bool
-  (begin
-    (compiler-builtin-refresh!)
-    (compiler-builtin-id-any4?
-      name-id
-      compiler-builtin-id-tl-volatile-i64-load-ptr
-      compiler-builtin-id-tl-volatile-i64-store-ptr
-      compiler-builtin-id-tl-volatile-i32-load-ptr
-      compiler-builtin-id-tl-volatile-i32-store-ptr)))
-
 (define (compiler-builtin-backend-runtime-stdlib-ffi-id? [name-id : i64]) : bool
   (begin
     (compiler-builtin-refresh!)
@@ -614,7 +576,6 @@
     (compiler-builtin-refresh!)
     (or
       (compiler-builtin-backend-runtime-atomic-id? name-id)
-      (compiler-builtin-backend-runtime-volatile-id? name-id)
       (compiler-builtin-id-any4?
         name-id
         compiler-builtin-id-tl-substring
@@ -673,8 +634,7 @@
         compiler-builtin-id-tl-arena-set
         compiler-builtin-id-tl-thread-entry-ptr
         compiler-builtin-id-tl-thread-init)
-      (compiler-builtin-backend-runtime-atomic-id? name-id)
-      (compiler-builtin-backend-runtime-volatile-id? name-id))))
+      (compiler-builtin-backend-runtime-atomic-id? name-id))))
 
 (define (compiler-builtin-backend-runtime-always-provided-tail-id?
   [name-id : i64]) : bool

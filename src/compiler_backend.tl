@@ -25519,6 +25519,13 @@
     (compiler-backend-atomic-call-name? name)
     (compiler-backend-volatile-call-name? name)))
 
+(define (compiler-backend-inline-memory-call-target
+  [name : String]
+  [call-symbol : String]) : String
+  (if (compiler-backend-inline-memory-call-name? name)
+    name
+    call-symbol))
+
 (define (compiler-backend-inline-memory-call-asm
   [target : CompilerBackendTarget]
   [name : String]) : String
@@ -25635,6 +25642,8 @@
     [fast-alloc-size : i64 (compiler-backend-fast-alloc-size args)]
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
+    [inline-memory-name : String
+      (compiler-backend-inline-memory-call-target name call-symbol)]
     (cond
       [(and
           (> fast-alloc-size 0)
@@ -25681,13 +25690,13 @@
           program-index
           vars
           instr-diag)]
-      [(compiler-backend-inline-memory-call-name? call-symbol)
+      [(compiler-backend-inline-memory-call-name? inline-memory-name)
         (compiler-backend-emit-inline-memory-call-with-arg-assignments
           target
           assignments
           arg-assignments
           dst
-          call-symbol
+          inline-memory-name
           args
           ty
           types
@@ -30119,6 +30128,8 @@
   (let
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
+    [inline-memory-name : String
+      (compiler-backend-inline-memory-call-target name call-symbol)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
@@ -30178,14 +30189,16 @@
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
                     instr-diag)))])
-          (if (compiler-backend-inline-memory-call-name? call-symbol)
+          (if (compiler-backend-inline-memory-call-name? inline-memory-name)
             (ResultCompilerBackend.Ok
               (string.append
                 (compiler-backend-emit-call-space-sub call-space)
                 (string.append
                   args-asm
                   (string.append
-                    (compiler-backend-inline-memory-call-asm target call-symbol)
+                    (compiler-backend-inline-memory-call-asm
+                      target
+                      inline-memory-name)
                     (string.append
                       (compiler-backend-emit-call-space-add call-space)
                       (compiler-backend-return-tail

@@ -50519,18 +50519,16 @@
 
 (define (macro-generated-result-source-helper-at?
   [source : String]
-  [alias : String]
-  [idx : i64]) : bool
+  [alias-len : i64]
+  [idx : i64]
+  [n : i64]) : bool
   (let
-    [alias-len : i64 (string.string-length alias)]
     [member-start : i64 (+ (+ idx alias-len) 1)]
-    [n : i64 (string.string-length source)]
-    (and
-      (compiler-load-source-qualified-alias-token-at? source alias idx)
-      (< member-start n)
+    (if (< member-start n)
       (let
         [member-head : char (string.string-ref source member-start)]
-        (and (>= member-head 'a') (<= member-head 'z'))))))
+        (and (>= member-head 'a') (<= member-head 'z')))
+      false)))
 
 (define (macro-generated-result-source-enum-only-scan?
   [source : String]
@@ -50553,7 +50551,11 @@
               (compiler-load-source-qualified-alias-token-at? source alias idx))
               (begin
                 (set! found true)
-                (if (macro-generated-result-source-helper-at? source alias idx)
+                (if (macro-generated-result-source-helper-at?
+                  source
+                  alias-len
+                  idx
+                  n)
                   (set! helper true)
                   unit))
               unit)
@@ -52196,17 +52198,21 @@
 ;; body (never the surface-empty path, which emits nothing), so every later import
 ;; of the same identity — in any file, in any pass — resolves to this single
 ;; canonical module via macro-generated-module-memo-get and emits only a marker
-;; import.
+;; import. Enum-only result materializations skip this memo so a later helper
+;; import can replay missing declarations and record the full body.
 (define (macro-materialized-record-result
   [identity : String]
   [target-module : String]
   [summary : AstDeclList]
+  [memoize? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (begin
     (match result
       [(ResultMacroDeclExpansion.Ok _ _)
         (begin
-          (macro-generated-module-memo-put! identity target-module summary)
+          (if memoize?
+            (macro-generated-module-memo-put! identity target-module summary)
+            unit)
           (cfg
             compile-profile
             (compiler-tc-macro-profile-note-generated-module-materialization)))]
@@ -52224,6 +52230,7 @@
   [decl-path : String]
   [macro-name : String]
   [identity : String]
+  [memoize? : bool]
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -52249,6 +52256,7 @@
       identity
       target-module
       materialized
+      memoize?
       (match (macro-find-module-body-decls orig-decls target-module)
         [(MacroMaybeDeclList.Some existing-body)
           (if (macro-decls-contain-generated-key? existing-body identity)
@@ -52411,6 +52419,7 @@
   [definition-module : String]
   [macro-env : CtfeEnv]
   [rewrite-imports? : bool]
+  [memoize? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -52471,6 +52480,7 @@
                         decl-path
                         macro-name
                         identity
+                        memoize?
                         final-body
                         call-expr))]
                   [_
@@ -52516,6 +52526,7 @@
                     decl-path
                     macro-name
                     identity
+                    memoize?
                     final-body
                     call-expr))]
               [_
@@ -52767,6 +52778,10 @@
                             call-expr)
                             [(ResultGenKey.Ok identity _)
                               (let
+                                [result-macro? : bool
+                                  (macro-result-module-macro?
+                                    macro-name
+                                    definition-module)]
                                 [shortcut-target : CompilerMaybeString
                                   (if (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
@@ -52792,10 +52807,13 @@
                                             expanded
                                             decl-path))))]
                                   [(CompilerNoString)
-                                    (if (macro-result-module-macro?
-                                      macro-name
-                                      definition-module)
+                                    (if result-macro?
                                       (let
+                                        [result-enum-only? : bool
+                                          (macro-generated-result-source-enum-only?
+                                            decl-path
+                                            alias
+                                            span)]
                                         [fast-result : ResultMacroParsedDecls
                                           (begin
                                             (cfg
@@ -52806,7 +52824,7 @@
                                               orig-decls
                                               module
                                               expanded-args
-                                              false
+                                              result-enum-only?
                                               call-expr))]
                                         (begin
                                           (cfg
@@ -52831,6 +52849,7 @@
                                                 (ctfe-env-empty-with-pools
                                                   (tc-context-pools call-ctx))
                                                 false
+                                                (not result-enum-only?)
                                                 generated
                                                 call-expr)]
                                             [(ResultMacroParsedDecls.Err diag)
@@ -52874,6 +52893,7 @@
                                                   macro-env
                                                   (tc-macro-param-list-needs-call-context?
                                                     params)
+                                                  true
                                                   generated
                                                   call-expr)]
                                               [(ResultMacroParsedDecls.Err diag)

@@ -7,6 +7,7 @@
 (import stdlib.env)
 (import stdlib.fs)
 (import stdlib.hashmap)
+(import (hashmap String String) as load_string_string_map)
 (import stdlib.vector as svec)
 (import compiler_embedded_stdlib as ces)
 (import stdlib.string)
@@ -5660,18 +5661,28 @@
         (compiler-load-owned-path-from-root package-owner package-root path)))))
 
 (defenum CompilerLoadOwnedPathCacheResult
-  (CompilerLoadOwnedPathCacheResult hashmap.StringStringMap String))
+  (CompilerLoadOwnedPathCacheResult load_string_string_map.Map String))
+
+(define (compiler-load-path-map-put
+  [map : load_string_string_map.Map]
+  [key : String]
+  [value : String]) : load_string_string_map.Map
+  (let
+    [out : load_string_string_map.Map map]
+    (begin
+      (load_string_string_map.insert (&mut out) key value)
+      out)))
 
 (define (compiler-load-package-owned-path-cached
-  [cache : hashmap.StringStringMap]
+  [cache : load_string_string_map.Map]
   [package-owner : String]
   [package-root : String]
   [stdlib-roots : svec.StringVec]
   [path : String]) : CompilerLoadOwnedPathCacheResult
-  (match (hashmap.string-string-map-get cache path)
-    [(hashmap.StringStringMapFound owned)
+  (match (load_string_string_map.get (& cache) path)
+    [(load_string_string_map.LookupFound owned)
       (CompilerLoadOwnedPathCacheResult cache owned)]
-    [(hashmap.StringStringMapMissing)
+    [(load_string_string_map.LookupMissing)
       (let
         [owned : String
           (compiler-load-package-owned-path
@@ -5680,7 +5691,7 @@
             stdlib-roots
             path)]
         (CompilerLoadOwnedPathCacheResult
-          (hashmap.string-string-map-put cache path owned)
+          (compiler-load-path-map-put cache path owned)
           owned))]))
 
 (define (compiler-load-package-decl-logical-name
@@ -5852,8 +5863,8 @@
     [path-cursor : AstDeclPathList paths]
     [current-module : String module]
     [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
-    [owned-cache : hashmap.StringStringMap
-      (hashmap.string-string-map-with-capacity (+ (* count 2) 16))]
+    [owned-cache : load_string_string_map.Map
+      (load_string_string_map.with-capacity (+ (* count 2) 16))]
     [done : bool false]
     (begin
       (while (not done)
@@ -8569,7 +8580,7 @@
 ;: indexing aliases for duplicate detection and `pkg:<alias>/...` resolution.
 (defstruct CompilerPkgDeps
   (ordered CompilerPkgDepList)
-  (aliases hashmap.StringStringMap))
+  (aliases load_string_string_map.Map))
 
 ;: Package artifact kind: binary executable or static library.
 (defenum CompilerPkgKind
@@ -8641,9 +8652,7 @@
       (+ 1 (compiler-pkg-dep-list-count (box-get rest)))]))
 
 (define (compiler-pkg-deps-empty) : CompilerPkgDeps
-  (CompilerPkgDeps
-    CompilerPkgDepNil
-    (hashmap.string-string-map-with-capacity 8)))
+  (CompilerPkgDeps CompilerPkgDepNil (load_string_string_map.with-capacity 8)))
 
 (define (compiler-pkg-deps-list [deps : CompilerPkgDeps]) : CompilerPkgDepList
   (struct-get deps ordered))
@@ -8654,7 +8663,7 @@
 (define (compiler-pkg-deps-alias-seen?
   [deps : CompilerPkgDeps]
   [target-alias : String]) : bool
-  (hashmap.string-string-map-contains? (struct-get deps aliases) target-alias))
+  (load_string_string_map.contains? (& (struct-get deps aliases)) target-alias))
 
 (define (compiler-pkg-deps-cons
   [alias : String]
@@ -8664,7 +8673,7 @@
     (CompilerPkgDepCons
       (CompilerPkgDep alias path)
       (box (compiler-pkg-deps-list tail)))
-    (hashmap.string-string-map-put (struct-get tail aliases) alias path)))
+    (compiler-load-path-map-put (struct-get tail aliases) alias path)))
 
 (define (compiler-pkg-deps-from-list [deps : CompilerPkgDepList]) : CompilerPkgDeps
   (match deps
@@ -10196,9 +10205,9 @@
 (define (compiler-load-pkg-dep-lookup
   [deps : CompilerPkgDeps]
   [target-alias : String]) : CompilerLoadMaybePath
-  (match (hashmap.string-string-map-get (struct-get deps aliases) target-alias)
-    [(hashmap.StringStringMapFound path) (CompilerLoadSomePath path)]
-    [(hashmap.StringStringMapMissing) (CompilerLoadNoPath)]))
+  (match (load_string_string_map.get (& (struct-get deps aliases)) target-alias)
+    [(load_string_string_map.LookupFound path) (CompilerLoadSomePath path)]
+    [(load_string_string_map.LookupMissing) (CompilerLoadNoPath)]))
 
 ;: Resolve `pkg:<alias>/<rest>` against `deps`, relative to `manifest-dir`.
 (define (compiler-load-resolve-pkg-import

@@ -27,7 +27,8 @@
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.process)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector.vector String) as cli_svec)
 (import "compiler_typecheck.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
@@ -492,7 +493,7 @@
                 (source-tool-run-source-in-temp
                   source-path
                   (source-tool-default-target)
-                  (svec.string-vec-new)
+                  (cli_svec.new)
                   (source-tool-cfg-names-empty)
                   (process.args-empty)
                   (compiler-optimize-default-level)

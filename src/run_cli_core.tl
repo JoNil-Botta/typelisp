@@ -4,10 +4,12 @@
 ;; helpers. `--direct` remains accepted as a compatibility no-op.
 (import stdlib.io)
 (import stdlib.process)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector.vector String) as cli_svec)
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
+(import "cli_string_vec_bridge.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -16,7 +18,7 @@
     String
     CompilerBackendTarget
     CompilerBackendMode
-    svec.StringVec
+    cli_svec.Vec
     SourceToolCfgNames
     process.ProcessStringList
     i64
@@ -38,7 +40,7 @@
   [source : String]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
@@ -136,11 +138,9 @@
               target
               mode
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               cfgs
               runtime-args
@@ -231,7 +231,7 @@
           source
           (source-tool-default-target)
           (CompilerBackendMode.Scalar)
-          (svec.string-vec-new)
+          (cli_svec.new)
           (source-tool-cfg-names-empty)
           (process.args-empty)
           (compiler-optimize-default-level)
@@ -239,13 +239,16 @@
 
 (define (run-cli-typecheck-doctests
   [source : String]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& source))
     [(io.ErrIoString _) 0]
     [(io.OkIoString text)
       (let
         [report : DocTestRunReport
-          (doc-test-typecheck-source-with-roots source text stdlib-roots)]
+          (doc-test-typecheck-source-with-roots
+            source
+            text
+            (cli-string-vec-to-legacy (& stdlib-roots)))]
         (if (doc-test-run-report-ok? report)
           0
           (begin
@@ -255,7 +258,7 @@
 (define (run-cli-run-source-with-doctests
   [source : String]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : SourceToolCfgNames]
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
@@ -268,7 +271,7 @@
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             source
-            stdlib-roots
+            (cli-string-vec-to-legacy (& stdlib-roots))
             (compiler-driver-target-cfgs
               target
               (source-tool-cfg-names-to-env cfgs))

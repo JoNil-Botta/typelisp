@@ -19,11 +19,13 @@
 ;; compiler.
 (import stdlib.io)
 (import stdlib.arena)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector.vector String) as cli_svec)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
+(import "cli_string_vec_bridge.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
@@ -207,7 +209,7 @@
     bool
     bool
     CompilerBackendTarget
-    svec.StringVec
+    cli_svec.Vec
     CompileCliCfgNames
     CompilerBackendMode
     i64))
@@ -217,7 +219,7 @@
     String
     bool
     CompilerBackendTarget
-    svec.StringVec
+    cli_svec.Vec
     CompileCliCfgNames
     CompilerBackendMode
     i64
@@ -234,12 +236,12 @@
 (defenum CompileCliAction
   (Run CompileCliConfig)
   (Batch CompileCliBatchConfig)
-  (Check String svec.StringVec)
+  (Check String cli_svec.Vec)
   (Help)
   (Error String))
 
 (defenum ResultCompileCliCheckConfig
-  (Ok String svec.StringVec)
+  (Ok String cli_svec.Vec)
   (Err String))
 
 (defenum ResultCompileCliTarget
@@ -337,7 +339,7 @@
   [has-output : bool]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [emit-ir : bool]
   [pic : bool]
@@ -399,11 +401,9 @@
               has-target
               target
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               cfgs
               emit-ir
@@ -550,7 +550,7 @@
   [batch-path : String]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [has-opt-level : bool]
   [opt-level : i64]
@@ -590,11 +590,9 @@
               has-target
               target
               (let
-                [next-roots : svec.StringVec stdlib-roots]
+                [next-roots : cli_svec.Vec stdlib-roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               cfgs
               has-opt-level
@@ -721,7 +719,7 @@
           false
           false
           (CompilerBackendTarget.Linux)
-          (svec.string-vec-new)
+          (cli_svec.new)
           (compile-cli-cfg-names-empty)
           false
           false
@@ -746,7 +744,7 @@
           batch-path
           false
           (CompilerBackendTarget.Linux)
-          (svec.string-vec-new)
+          (cli_svec.new)
           (compile-cli-cfg-names-empty)
           false
           (compiler-optimize-default-level)
@@ -767,7 +765,7 @@
   [idx : i64]
   [count : i64]
   [input-path : String]
-  [stdlib-roots : svec.StringVec]) : ResultCompileCliCheckConfig
+  [stdlib-roots : cli_svec.Vec]) : ResultCompileCliCheckConfig
   (if (>= idx count)
     (ResultCompileCliCheckConfig.Ok input-path stdlib-roots)
     (let
@@ -781,11 +779,9 @@
             count
             input-path
             (let
-              [next-roots : svec.StringVec stdlib-roots]
+              [next-roots : cli_svec.Vec stdlib-roots]
               (begin
-                (set!
-                  next-roots
-                  (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                 next-roots))))
         (begin
           (io.print-error (string.append "Warning: unknown flag: " current))
@@ -805,7 +801,7 @@
       (+ input-idx 1)
       count
       (io.arg input-idx)
-      (svec.string-vec-new))))
+      (cli_svec.new))))
 
 (define (compile-cli-top-level-check-config [count : i64]) : ResultCompileCliCheckConfig
   (compile-cli-check-config-from
@@ -839,13 +835,16 @@
 
 (define (compile-cli-typecheck-doctests
   [input-path : String]
-  [stdlib-roots : svec.StringVec]) : i64
+  [stdlib-roots : cli_svec.Vec]) : i64
   (match (io.try-read-file (& input-path))
     [(io.ErrIoString _) 0]
     [(io.OkIoString source)
       (let
         [report : DocTestRunReport
-          (doc-test-typecheck-source-with-roots input-path source stdlib-roots)]
+          (doc-test-typecheck-source-with-roots
+            input-path
+            source
+            (cli-string-vec-to-legacy (& stdlib-roots)))]
         (if (doc-test-run-report-ok? report)
           0
           (begin
@@ -861,7 +860,7 @@
   ;; lint-allow: unused-variable
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
@@ -875,7 +874,7 @@
           (if inline-preflight
             (tltest-inline-typecheck-file-with-cfg
               input-path
-              stdlib-roots
+              (cli-string-vec-to-legacy (& stdlib-roots))
               (compiler-driver-target-cfgs
                 target
                 (compile-cli-cfg-names-to-env cfgs))
@@ -894,7 +893,7 @@
                       state
                       input-path
                       target
-                      stdlib-roots
+                      (cli-string-vec-to-legacy (& stdlib-roots))
                       opt-level
                       backend-mode
                       emit-cfgs)
@@ -906,7 +905,7 @@
                         input-path
                         target
                         true
-                        stdlib-roots
+                        (cli-string-vec-to-legacy (& stdlib-roots))
                         opt-level
                         backend-mode
                         emit-cfgs)
@@ -917,7 +916,7 @@
                         input-path
                         target
                         true
-                        stdlib-roots
+                        (cli-string-vec-to-legacy (& stdlib-roots))
                         opt-level
                         backend-mode
                         emit-cfgs)
@@ -932,7 +931,7 @@
   [entries : (& entries CompileCliBatchEntryList)]
   [index : i64]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]) : i64
   (if (>= index (compile-cli-batch-entry-list-len entries))
     0
@@ -943,7 +942,7 @@
       [status : i64
         (tltest-inline-typecheck-file-with-cfg
           input-path
-          stdlib-roots
+          (cli-string-vec-to-legacy (& stdlib-roots))
           (compiler-driver-target-cfgs
             target
             (compile-cli-cfg-names-to-env cfgs))
@@ -963,7 +962,7 @@
 (define (compile-cli-run-batch-inline-tests
   [entries : CompileCliBatchEntryList]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]) : i64
   (compile-cli-run-batch-inline-tests-from
     (& entries)
@@ -1119,7 +1118,7 @@
   [index : i64]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
@@ -1190,7 +1189,7 @@
   [entries : CompileCliBatchEntryList]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
@@ -1212,7 +1211,7 @@
   [line : i64]
   [has-target : bool]
   [target : CompilerBackendTarget]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
@@ -1307,13 +1306,15 @@
             true)])]
     [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
     [(CompileCliAction.Check input-path stdlib-roots)
-      (match (compiler-check-file-with-roots input-path stdlib-roots)
+      (match (compiler-check-file-with-roots
+        input-path
+        (cli-string-vec-to-legacy (& stdlib-roots)))
         [(ResultCompilerCheck.Ok _)
           (let
             [inline-test-status : i64
               (tltest-inline-typecheck-file-with-cfg
                 input-path
-                stdlib-roots
+                (cli-string-vec-to-legacy (& stdlib-roots))
                 (compiler-check-language-cfgs)
                 "typecheck-prefix-inline-compile-check")]
             (if (= inline-test-status 0)

@@ -4241,6 +4241,17 @@
             (set! i (+ i 1)))))
       best)))
 
+(define (lsp-decl-entry-form-range-json [entry : LspDeclEntry]) : json.Json
+  (lsp-json-object2
+    "start"
+    (lsp-position
+      (struct-get entry form-start-line)
+      (struct-get entry form-start-col))
+    "end"
+    (lsp-position
+      (struct-get entry form-end-line)
+      (struct-get entry form-end-col))))
+
 (define (lsp-position-context-json [text : String] [line : i64] [col : i64]) : json.Json
   (let
     [decls : LspDeclList (lsp-scan-decls text)]
@@ -4253,6 +4264,7 @@
     [nearest-col : i64 -1]
     [nearest-name : String ""]
     [nearest-kind : String ""]
+    [nearest-range : json.Json json.JsonNull]
     (begin
       (if (>= nearest-index 0)
         (let
@@ -4265,7 +4277,8 @@
             (set! nearest-line (- (struct-get entry form-start-line) 1))
             (set! nearest-col (- (struct-get entry form-start-col) 1))
             (set! nearest-name (struct-get entry name))
-            (set! nearest-kind (struct-get entry kind))))
+            (set! nearest-kind (struct-get entry kind))
+            (set! nearest-range (lsp-decl-entry-form-range-json entry))))
         unit)
       (lsp-json-object
         (lsp-json-member
@@ -4289,7 +4302,10 @@
                     (lsp-json-member
                       "nearestFormKind"
                       (json.JsonString nearest-kind)
-                      json.JsonMemberListNil)))))))))))
+                      (lsp-json-member
+                        "nearestFormRange"
+                        nearest-range
+                        json.JsonMemberListNil))))))))))))
 
 (define (lsp-position-error-message [base : String] [line : i64] [col : i64]) : String
   (lsp-str7

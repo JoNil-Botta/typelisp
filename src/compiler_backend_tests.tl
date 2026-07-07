@@ -4932,6 +4932,60 @@
     [got : String (compiler-backend-peephole-asm input)]
     (and (string.eq direct "    movq %r8, %r10") (string.eq got want))))
 
+(define (compiler-backend-r10-dead-scan-long-gap-ok?) : bool
+  (let
+    [asm : String
+      "    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rax, %rax
+    movq %rcx, %r10
+"]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data asm))]
+    (compiler-backend-peephole-r10-dead-after?
+      asm
+      data
+      0
+      (string.string-length asm))))
+
 (define (compiler-backend-rax-forward-chain-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.BinOp
@@ -5400,6 +5454,7 @@
     (compiler-backend-win64-bounds-index-scratch-ok?)
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
+    (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-call-arg-rax-forwarding-ok?)
     (compiler-backend-long-normal-block-ok?)

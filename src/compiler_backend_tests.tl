@@ -5113,9 +5113,71 @@
           (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
         CompilerIrInstrList.Nil))))
 
-(define (compiler-backend-emit-rax-forward-test-instrs
+(define (compiler-backend-call-arg-rax-group-consumer-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Call 0 "producer" (CompilerIrCallArgs.Nil) (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Call
+        1
+        "consume_group"
+        (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+        CompilerIrInstrList.Nil))))
+
+(define (compiler-backend-call-arg-rax-group-consumer-index) : CompilerBackendProgramIndex
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    (compiler-backend-program-index-build
+      (compiler-ir-function-cons
+        (CompilerIrFunction.Function
+          "group_seed"
+          CompilerIrParamList.Nil
+          (AstType.Unit)
+          3
+          (compiler-ir-block-cons
+            (compiler-ir-block
+              "entry"
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Pack
+                  2
+                  (compiler-ir-value-cons
+                    (CompilerIrValue.I64 1)
+                    (compiler-ir-value-cons
+                      (CompilerIrValue.I64 2)
+                      CompilerIrValueList.Nil))
+                  ty)
+                CompilerIrInstrList.Nil))
+            CompilerIrBlockList.Nil))
+        (compiler-ir-function-cons
+          (CompilerIrFunction.Function
+            "consume_group"
+            (compiler-ir-param-cons
+              (CompilerIrParam.Param "value" ty 0)
+              CompilerIrParamList.Nil)
+            (AstType.I64)
+            1
+            CompilerIrBlockList.Nil)
+          CompilerIrFunctionList.Nil))
+      CompilerIrExternList.Nil)))
+
+(define (compiler-backend-call-arg-rax-group-consumer-not-forwardable?) : bool
+  (match (compiler-backend-emit-rax-forward-test-instrs-with-index
+    (compiler-backend-call-arg-rax-group-consumer-instrs)
+    2
+    (compiler-backend-call-arg-rax-group-consumer-index))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm "    call _tl_consume_group\n")
+        (not (compiler-backend-string-contains? asm "    movq %rax, %rdi\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-emit-rax-forward-test-instrs-with-index
   [instrs : CompilerIrInstrList]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [blocks : CompilerIrBlockList
       (compiler-ir-block-cons
@@ -5139,13 +5201,21 @@
       (compiler-backend-runtime-helper-full-plan)
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil
-      (compiler-backend-program-index-build
-        CompilerIrFunctionList.Nil
-        CompilerIrExternList.Nil)
+      program-index
       (compiler-source-spans-empty)
       (compiler-diagnostic-at-start "" "")
       use-counts
       (text_buf.empty))))
+
+(define (compiler-backend-emit-rax-forward-test-instrs
+  [instrs : CompilerIrInstrList]
+  [vars : i64]) : ResultCompilerBackend
+  (compiler-backend-emit-rax-forward-test-instrs-with-index
+    instrs
+    vars
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil)))
 
 (define (compiler-backend-rax-forwarding-ok?) : bool
   (match (compiler-backend-emit-rax-forward-test-instrs
@@ -5215,6 +5285,7 @@
                 (compiler-backend-string-contains?
                   nonleading-asm
                   "    movq -8(%rbp), %rsi\n")
+                (compiler-backend-call-arg-rax-group-consumer-not-forwardable?)
                 (not
                   (compiler-backend-string-contains?
                     nonleading-asm

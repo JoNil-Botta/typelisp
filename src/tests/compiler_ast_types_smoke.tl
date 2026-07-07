@@ -454,6 +454,199 @@
             (ast-node-pool-context-install! active-before)
             (and shape-ok installed-ok)))])))
 
+(define (compiler-ast-compaction-string-def-ok?
+  [pools : AstNodePoolContext]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ maybe-ty value)
+      (and
+        (match maybe-ty
+          [(AstMaybeType.Some ty)
+            (match ty
+              [(AstType.Ref region inner)
+                (and
+                  (string.eq region "borrowed")
+                  (match (ast-node-pool-context-type-get pools inner)
+                    [(AstType.I64) true]
+                    [_ false]))]
+              [_ false])]
+          [_ false])
+        (match (ast-node-pool-context-expr-get pools value)
+          [(AstExpr.Literal (AstLiteral.String text)) (string.eq text "hello")]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-ast-compaction-binary-def-ok?
+  [pools : AstNodePoolContext]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ AstMaybeType.No value)
+      (match (ast-node-pool-context-expr-get pools value)
+        [(AstExpr.BinaryData text) (string.eq text "bytes")]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-ast-compaction-import-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.Path) path module-name alias _))
+      (and
+        (string.eq path "pkg/path")
+        (match module-name
+          [(AstMaybeModuleName.Some name) (string.eq name "pkg.module")]
+          [_ false])
+        (match alias
+          [(AstMaybeImportAlias.Some name) (string.eq name "pkg")]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-ast-compaction-extern-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Extern _ _ metadata _)
+      (match metadata
+        [(AstExternMetadata.Metadata (AstExternAbi.C) symbol links true)
+          (and
+            (string.eq symbol "native_symbol")
+            (match (ast-extern-link-input-list-get
+              (& links)
+              0
+              (ast-extern-link-input-fallback))
+              [(AstExternLinkInput.Lib name) (string.eq name "m")]
+              [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-ast-compaction-dispatch-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefDispatch _ variants)
+      (match (ast-dispatch-variant-list-get
+        (& variants)
+        0
+        (ast-dispatch-variant-fallback))
+        [(AstDispatchVariant.Variant (AstDispatchIsa.Avx2) name)
+          (string.eq name "fast")]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-ast-compaction-lifetimes-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefStructLifetimes _ lifetimes _ _ _)
+      (string.eq (ast-lifetime-list-get (& lifetimes) 0 "") "owner")]
+    [_ false]))
+
+(define (compiler-ast-compaction-include-ok? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.IncludeStr name path)
+      (and (string.eq name "inc") (string.eq path "data.txt"))]
+    [_ false]))
+
+(define (compiler-ast-program-compaction-string-payloads-smoke?) : bool
+  (let
+    [source-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [dest-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-create 8)
+        (ast-type-node-pool-state-create 8))]
+    [source-i64-ty : i64
+      (ast-node-pool-context-type-push source-pools (AstType.I64))]
+    [text-expr : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExpr.Literal (AstLiteral.String "hello")))]
+    [binary-expr : i64
+      (ast-node-pool-context-expr-push
+        source-pools
+        (AstExpr.BinaryData "bytes"))]
+    [links : AstExternLinkInputList
+      (let
+        [items : AstExternLinkInputList (ast-extern-link-input-list-new)]
+        (begin
+          (ast-extern-link-input-list-push
+            (&mut items)
+            (AstExternLinkInput.Lib "m"))
+          items))]
+    [variants : AstDispatchVariantList
+      (let
+        [items : AstDispatchVariantList (ast-dispatch-variant-list-new)]
+        (begin
+          (ast-dispatch-variant-list-push
+            (&mut items)
+            (AstDispatchVariant.Variant (AstDispatchIsa.Avx2) "fast"))
+          items))]
+    [lifetimes : AstLifetimeList
+      (let
+        [items : AstLifetimeList (ast-lifetime-list-new)]
+        (begin
+          (ast-lifetime-list-push (&mut items) "owner")
+          items))]
+    [program : AstProgram
+      (ast-program
+        (ast-decl-cons
+          (ast-decl-def
+            "text"
+            (AstMaybeType.Some (AstType.Ref "borrowed" source-i64-ty))
+            text-expr)
+          (ast-decl-cons
+            (ast-decl-def "bin" AstMaybeType.No binary-expr)
+            (ast-decl-cons
+              (AstDecl.Import
+                (AstImportSpec.Spec
+                  (AstImportKind.Path)
+                  "pkg/path"
+                  (AstMaybeModuleName.Some "pkg.module")
+                  (AstMaybeImportAlias.Some "pkg")
+                  (ast-source-span 1 1 1 1)))
+              (ast-decl-cons
+                (ast-decl-extern
+                  "native"
+                  (AstExternKind.Function)
+                  (AstExternMetadata.Metadata
+                    (AstExternAbi.C)
+                    "native_symbol"
+                    links
+                    true)
+                  (AstType.I64))
+                (ast-decl-cons
+                  (ast-decl-def-dispatch "dispatch" variants)
+                  (ast-decl-cons
+                    (AstDecl.DefStructLifetimes
+                      0
+                      lifetimes
+                      (AstStructRepr.Default)
+                      (AstStructCleanup.No)
+                      (ast-field-def-list-new))
+                    (ast-decl-cons
+                      (AstDecl.IncludeStr "inc" "data.txt")
+                      (ast-decl-list-new)))))))))]
+    [compacted : AstProgramCompaction
+      (ast-program-compact-with-pools source-pools dest-pools program)]
+    (match compacted
+      [(AstProgramCompaction out-program out-pools)
+        (match out-program
+          [(AstProgram.Program decls-box)
+            (let
+              [decls : AstDeclList (box-get decls-box)]
+              (and
+                (compiler-ast-compaction-string-def-ok?
+                  out-pools
+                  (ast-decl-list-get (& decls) 0 (ast-decl-fallback)))
+                (compiler-ast-compaction-binary-def-ok?
+                  out-pools
+                  (ast-decl-list-get (& decls) 1 (ast-decl-fallback)))
+                (compiler-ast-compaction-import-ok?
+                  (ast-decl-list-get (& decls) 2 (ast-decl-fallback)))
+                (compiler-ast-compaction-extern-ok?
+                  (ast-decl-list-get (& decls) 3 (ast-decl-fallback)))
+                (compiler-ast-compaction-dispatch-ok?
+                  (ast-decl-list-get (& decls) 4 (ast-decl-fallback)))
+                (compiler-ast-compaction-lifetimes-ok?
+                  (ast-decl-list-get (& decls) 5 (ast-decl-fallback)))
+                (compiler-ast-compaction-include-ok?
+                  (ast-decl-list-get (& decls) 6 (ast-decl-fallback)))))])])))
+
 (define (compiler-ast-decl-list-module-name?
   [decls : AstDeclList]
   [index : i64]
@@ -514,4 +707,5 @@
     (unless (compiler-ast-program-compaction-smoke?) (return 5))
     (unless (compiler-ast-decl-cons-growth-smoke?) (return 6))
     (unless (compiler-ast-decl-cons-pure-smoke?) (return 7))
+    (unless (compiler-ast-program-compaction-string-payloads-smoke?) (return 8))
     42))

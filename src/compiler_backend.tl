@@ -22389,6 +22389,17 @@
     (not (compiler-backend-float-type? ty))
     (not (compiler-backend-group-type? program-index ty))))
 
+(define (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+  [program-index : CompilerBackendProgramIndex]
+  [declared-types : AstTypeList]) : bool
+  (if (> (ast-type-list-len (& declared-types)) 0)
+    (not
+      (compiler-backend-group-type?
+        program-index
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get (& declared-types) 0 (ast-type-id-fallback)))))
+    true))
+
 (define (compiler-backend-rax-call-arg-assignments
   [assignments : CompilerRegAssignmentList]
   [program-index : CompilerBackendProgramIndex]
@@ -25653,6 +25664,12 @@
               global-types
               externs
               program-index)]
+          [effective-arg-assignments : CompilerRegAssignmentList
+            (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+              program-index
+              param-types)
+              arg-assignments
+              assignments)]
           [c-abi? : bool
             (compiler-backend-c-aggregate-extern-call? externs name)]
           [call-space : i64
@@ -25672,7 +25689,7 @@
           ;; overwhelming common case -- are unchanged). Mirrors the tail-call path.
           (match (compiler-backend-emit-call-args
             target
-            arg-assignments
+            effective-arg-assignments
             args
             param-types
             c-abi?
@@ -30239,6 +30256,12 @@
         functions
         externs
         program-index)]
+    [effective-arg-assignments : CompilerRegAssignmentList
+      (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
+        program-index
+        param-types)
+        arg-assignments
+        assignments)]
     [call-space : i64
       (compiler-backend-closure-call-arg-space
         target
@@ -30247,7 +30270,7 @@
         program-index)]
     (match (compiler-backend-emit-call-args
       target
-      arg-assignments
+      effective-arg-assignments
       args
       param-types
       false

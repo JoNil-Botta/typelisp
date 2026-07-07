@@ -56906,6 +56906,39 @@
     (svec.string-vec-new)
     (tc-prefix-default-cache-scope)))
 
+(define (compiler-typecheck-clear-macro-expanded-source-caches!) : unit
+  (begin
+    (tc-clone-able-cache-reset!)
+    (tc-macro-helper-env-cache-reset!)
+    (tc-spmd-inline-helper-stack-reset!)
+    (tc-agg-caches-reset!)
+    (tc-nominal-owner-cache-reset!)
+    (tc-stdlib-comptime-macro-surface-ok-reset!)
+    (tc-unqualified-import-ambiguity-reset!)
+    (macro-alias-cache-reset!)
+    (compiler-load-surface-summaries-reset!)
+    (ctfe-build-seen-reset!)
+    (set! macro-expand-active-module "")
+    (macro-expand-set-macro-names! (TcStringList.Nil))
+    (set! macro-expand-expr-type-macro-names (TcStringList.Nil))
+    (compiler-typecheck-ctfe-env-cache-clear!)
+    (macro-live-symbols-reset!)
+    (macro-live-prescan-reset!)
+    (set! tc-hygiene-active-top-env-ready false)
+    (set! tc-hygiene-active-top-env (tc-empty-type-env))
+    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+    (if (= tc-hygiene-module-env-cache-arena 0)
+      unit
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
+        (set! tc-hygiene-module-env-cache-arena 0)))
+    (set! tc-lazy-import-summary-macro-force-record-count 0)
+    (ctfe-module-macro-export-reset!)
+    (set! ctfe-needs-metadata true)
+    (macro-generated-module-memo-reset!)
+    (macro-generated-decls-memo-reset!)))
+
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
     (tc-fn-scratch-arena-release!)

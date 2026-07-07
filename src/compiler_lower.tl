@@ -459,6 +459,11 @@
 (define (compiler-lower-checked-dest-pools-current) : AstNodePoolContext
   lower-checked-dest-pools-context)
 
+(define (lower-checked-dest-pools-deactivate-after-commit!) : unit
+  (if lower-checked-dest-pools-committed
+    (set! lower-checked-dest-pools-active false)
+    unit))
+
 (define (lower-copy-string-into-pools
   [text : String]
   [pools : AstNodePoolContext]) : String
@@ -500,6 +505,19 @@
         (arena.tl_arena_set prev-arena))
       out)))
 
+(define (lower-clear-macro-expanded-source-caches-into-pools!
+  [pools : AstNodePoolContext]) : unit
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 (ast-node-pool-context-base-arena pools)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set base-arena))
+      (compiler-typecheck-clear-macro-expanded-source-caches!)
+      (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set prev-arena)))))
+
 (define (lower-name-env-copy-active [names : LowerNameEnv]) : LowerNameEnv
   (match names
     [(LowerNameEnv.Nil) LowerNameEnv.Nil]
@@ -532,6 +550,9 @@
       [old-arena : i64 lower-checked-source-release-arena]
       [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
       (begin
+        ;; Keep the driver-owned context cells; a fresh snapshot allocates wrapper
+        ;; cells in the current arena and can leave active readers pointing at
+        ;; freed cells when the source arena is released.
         (set! lower-checked-dest-pools-context pools)
         (set! lower-checked-dest-pools-committed true)
         (set! lower-checked-source-release-arena 0)
@@ -45376,14 +45397,64 @@
               (cfg
                 compile-profile
                 (compiler-lower-profile-pools "macro_expand" pools))
-              (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
-                entry-path
-                expanded
-                expanded-paths
-                mode
-                stdlib-roots
-                cache-scope
-                pools))]
+              (let
+                [detach-load-pools? : bool lower-checked-dest-pools-active]
+                [_detach-profile-start : unit
+                  (if detach-load-pools?
+                    (cfg compile-profile (compiler-lower-profile-start))
+                    unit)]
+                [detached-compaction : AstProgramCompaction
+                  (if detach-load-pools?
+                    (ast-program-compact-with-pools
+                      pools
+                      (compiler-lower-checked-dest-pools-current)
+                      expanded)
+                    (AstProgramCompaction expanded pools))]
+                [detached-program : AstProgram
+                  (match detached-compaction
+                    [(AstProgramCompaction out _) out])]
+                [detached-pools : AstNodePoolContext
+                  (match detached-compaction
+                    [(AstProgramCompaction _ out-pools) out-pools])]
+                [detached-entry-path : String
+                  (if detach-load-pools?
+                    (lower-copy-string-into-pools entry-path detached-pools)
+                    entry-path)]
+                [detached-cache-scope : String
+                  (if detach-load-pools?
+                    (lower-copy-string-into-pools cache-scope detached-pools)
+                    cache-scope)]
+                [detached-paths : AstDeclPathList
+                  (if detach-load-pools?
+                    (lower-copy-paths-into-pools expanded-paths detached-pools)
+                    expanded-paths)]
+                [_clear-source-derived-caches : unit
+                  (if detach-load-pools?
+                    (lower-clear-macro-expanded-source-caches-into-pools!
+                      detached-pools)
+                    unit)]
+                [_commit-detached-pools : unit
+                  (if detach-load-pools?
+                    (lower-checked-dest-pools-commit! detached-pools)
+                    unit)]
+                [_disable-late-detach : unit
+                  (if detach-load-pools?
+                    (lower-checked-dest-pools-deactivate-after-commit!)
+                    unit)]
+                [_detach-profile-finish : unit
+                  (if detach-load-pools?
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish "macro_detach"))
+                    unit)]
+                (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
+                  detached-entry-path
+                  detached-program
+                  detached-paths
+                  mode
+                  stdlib-roots
+                  detached-cache-scope
+                  detached-pools)))]
           [(ResultMacroExpand.Err diag)
             (begin
               (cfg

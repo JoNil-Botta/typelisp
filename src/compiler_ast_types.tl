@@ -5257,6 +5257,9 @@
 (define (ast-compaction-remap-dest-pools [remap : AstProgramCompactionRemap]) : AstNodePoolContext
   (struct-get remap dest-pools))
 
+(define (ast-compaction-copy-string [text : String]) : String
+  (string.copy (& text)))
+
 (define (ast-compaction-remap-lifetime-list-into
   [lifetimes : (& lifetimes AstLifetimeList)]
   [out : (&mut out AstLifetimeList)]
@@ -5266,7 +5269,8 @@
     (begin
       (ast-lifetime-list-push
         out
-        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback)))
+        (ast-compaction-copy-string
+          (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))))
       (ast-compaction-remap-lifetime-list-into lifetimes out (+ index 1)))))
 
 (define (ast-compaction-remap-lifetime-list [lifetimes : AstLifetimeList]) : AstLifetimeList
@@ -5338,11 +5342,17 @@
       (AstType.DynArray (ast-compaction-remap-type-id remap elem))]
     [(AstType.Box elem) (AstType.Box (ast-compaction-remap-type-id remap elem))]
     [(AstType.Region region inner)
-      (AstType.Region region (ast-compaction-remap-type-id remap inner))]
+      (AstType.Region
+        (ast-compaction-copy-string region)
+        (ast-compaction-remap-type-id remap inner))]
     [(AstType.Ref region inner)
-      (AstType.Ref region (ast-compaction-remap-type-id remap inner))]
+      (AstType.Ref
+        (ast-compaction-copy-string region)
+        (ast-compaction-remap-type-id remap inner))]
     [(AstType.MutRef region inner)
-      (AstType.MutRef region (ast-compaction-remap-type-id remap inner))]
+      (AstType.MutRef
+        (ast-compaction-copy-string region)
+        (ast-compaction-remap-type-id remap inner))]
     [(AstType.Enum name) (AstType.Enum name)]
     [(AstType.EnumArgs name lifetimes)
       (AstType.EnumArgs
@@ -5506,9 +5516,12 @@
 
 (define (ast-compaction-remap-extern-link-input [input : AstExternLinkInput]) : AstExternLinkInput
   (match input
-    [(AstExternLinkInput.Lib name) (AstExternLinkInput.Lib name)]
-    [(AstExternLinkInput.Search dir) (AstExternLinkInput.Search dir)]
-    [(AstExternLinkInput.Arg arg) (AstExternLinkInput.Arg arg)]))
+    [(AstExternLinkInput.Lib name)
+      (AstExternLinkInput.Lib (ast-compaction-copy-string name))]
+    [(AstExternLinkInput.Search dir)
+      (AstExternLinkInput.Search (ast-compaction-copy-string dir))]
+    [(AstExternLinkInput.Arg arg)
+      (AstExternLinkInput.Arg (ast-compaction-copy-string arg))]))
 
 (define (ast-compaction-remap-extern-link-input-list-into
   [inputs : (& inputs AstExternLinkInputList)]
@@ -5543,7 +5556,7 @@
     [(AstExternMetadata.Metadata abi symbol links no-mangle)
       (AstExternMetadata.Metadata
         (ast-compaction-remap-extern-abi remap abi)
-        symbol
+        (ast-compaction-copy-string symbol)
         (ast-compaction-remap-extern-link-input-list links)
         no-mangle)]))
 
@@ -5645,28 +5658,88 @@
     [(AstImportKind.Path) AstImportKind.Path]
     [(AstImportKind.Module) AstImportKind.Module]
     [(AstImportKind.Macro name module-name)
-      (AstImportKind.Macro name module-name)]
+      (AstImportKind.Macro
+        name
+        (ast-compaction-remap-maybe-module-name module-name))]
     [(AstImportKind.MacroDecls name module-name)
-      (AstImportKind.MacroDecls name module-name)]))
+      (AstImportKind.MacroDecls
+        name
+        (ast-compaction-remap-maybe-module-name module-name))]))
+
+(define (ast-compaction-remap-maybe-module-name
+  [module-name : AstMaybeModuleName]) : AstMaybeModuleName
+  (match module-name
+    [(AstMaybeModuleName.No) AstMaybeModuleName.No]
+    [(AstMaybeModuleName.Some name)
+      (AstMaybeModuleName.Some (ast-compaction-copy-string name))]))
+
+(define (ast-compaction-remap-maybe-import-alias [alias : AstMaybeImportAlias]) : AstMaybeImportAlias
+  (match alias
+    [(AstMaybeImportAlias.No) AstMaybeImportAlias.No]
+    [(AstMaybeImportAlias.Some name)
+      (AstMaybeImportAlias.Some (ast-compaction-copy-string name))]))
 
 (define (ast-compaction-remap-import-spec [spec : AstImportSpec]) : AstImportSpec
   (match spec
     [(AstImportSpec.Spec kind path module-name alias span)
       (AstImportSpec.Spec
         (ast-compaction-remap-import-kind kind)
-        path
-        module-name
-        alias
+        (ast-compaction-copy-string path)
+        (ast-compaction-remap-maybe-module-name module-name)
+        (ast-compaction-remap-maybe-import-alias alias)
         span)]))
 
 (define (ast-compaction-remap-dispatch-variant [variant : AstDispatchVariant]) : AstDispatchVariant
   (match variant
     [(AstDispatchVariant.Variant isa name)
-      (AstDispatchVariant.Variant isa name)]))
+      (AstDispatchVariant.Variant isa (ast-compaction-copy-string name))]))
+
+(define (ast-compaction-remap-dispatch-variant-list-into
+  [variants : (& variants AstDispatchVariantList)]
+  [index : i64]
+  [out : (&mut out AstDispatchVariantList)]) : unit
+  (if (>= index (ast-dispatch-variant-list-len variants))
+    unit
+    (begin
+      (ast-dispatch-variant-list-push
+        out
+        (ast-compaction-remap-dispatch-variant
+          (ast-dispatch-variant-list-get
+            variants
+            index
+            (ast-dispatch-variant-fallback))))
+      (ast-compaction-remap-dispatch-variant-list-into variants (+ index 1) out))))
 
 (define (ast-compaction-remap-dispatch-variant-list
   [variants : AstDispatchVariantList]) : AstDispatchVariantList
-  variants)
+  (let
+    [out : AstDispatchVariantList
+      (ast-dispatch-variant-list-with-capacity
+        (ast-dispatch-variant-list-len (& variants)))]
+    (begin
+      (ast-compaction-remap-dispatch-variant-list-into
+        (& variants)
+        0
+        (&mut out))
+      out)))
+
+(define (ast-compaction-remap-literal [lit : AstLiteral]) : AstLiteral
+  (match lit
+    [(AstLiteral.Int value text)
+      (AstLiteral.Int value (ast-compaction-copy-string text))]
+    [(AstLiteral.Float text)
+      (AstLiteral.Float (ast-compaction-copy-string text))]
+    [(AstLiteral.Bool value) (AstLiteral.Bool value)]
+    [(AstLiteral.Char value) (AstLiteral.Char value)]
+    [(AstLiteral.String text)
+      (AstLiteral.String (ast-compaction-copy-string text))]
+    [(AstLiteral.Unit) AstLiteral.Unit]))
+
+(define (ast-compaction-remap-borrow-lifetime [lifetime : AstBorrowLifetime]) : AstBorrowLifetime
+  (match lifetime
+    [(AstBorrowLifetime.Inferred) AstBorrowLifetime.Inferred]
+    [(AstBorrowLifetime.Named name)
+      (AstBorrowLifetime.Named (ast-compaction-copy-string name))]))
 
 (define (ast-compaction-remap-pattern
   [remap : AstProgramCompactionRemap]
@@ -5683,7 +5756,8 @@
       (AstPattern.Variant
         name
         (box (ast-compaction-remap-pattern-list remap (box-get items))))]
-    [(AstPattern.Literal lit) (AstPattern.Literal lit)]))
+    [(AstPattern.Literal lit)
+      (AstPattern.Literal (ast-compaction-remap-literal lit))]))
 
 (define (ast-compaction-remap-pattern-list-into
   [remap : AstProgramCompactionRemap]
@@ -5864,7 +5938,7 @@
   (match expr
     [(AstExpr.Spanned inner span)
       (AstExpr.Spanned (ast-compaction-remap-expr-id remap inner) span)]
-    [(AstExpr.Literal lit) (AstExpr.Literal lit)]
+    [(AstExpr.Literal lit) (AstExpr.Literal (ast-compaction-remap-literal lit))]
     [(AstExpr.Var name) (AstExpr.Var name)]
     [(AstExpr.Binary op left right)
       (AstExpr.Binary
@@ -5949,7 +6023,7 @@
     [(AstExpr.Borrow mutable lifetime inner)
       (AstExpr.Borrow
         mutable
-        lifetime
+        (ast-compaction-remap-borrow-lifetime lifetime)
         (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Match payload)
       (match (box-get payload)
@@ -6027,7 +6101,9 @@
         field
         (ast-compaction-remap-expr-id remap value))]
     [(AstExpr.WithRegion region body)
-      (AstExpr.WithRegion region (ast-compaction-remap-expr-list remap body))]
+      (AstExpr.WithRegion
+        (ast-compaction-copy-string region)
+        (ast-compaction-remap-expr-list remap body))]
     [(AstExpr.WithEscape escape body)
       (AstExpr.WithEscape
         (ast-compaction-remap-expr-id remap escape)
@@ -6112,7 +6188,8 @@
         (ast-compaction-remap-expr-id remap len))]
     [(AstExpr.ArrayData value)
       (AstExpr.ArrayData (ast-compaction-remap-expr-id remap value))]
-    [(AstExpr.BinaryData name) (AstExpr.BinaryData name)]
+    [(AstExpr.BinaryData name)
+      (AstExpr.BinaryData (ast-compaction-copy-string name))]
     [(AstExpr.ProgramArgc) AstExpr.ProgramArgc]
     [(AstExpr.ProgramArgv) AstExpr.ProgramArgv]
     [(AstExpr.ProgramEnvp) AstExpr.ProgramEnvp]
@@ -6164,10 +6241,10 @@
     [(AstGeneratedDeclMeta.No) AstGeneratedDeclMeta.No]
     [(AstGeneratedDeclMeta.Some generator item args key)
       (AstGeneratedDeclMeta.Some
-        generator
-        item
+        (ast-compaction-copy-string generator)
+        (ast-compaction-copy-string item)
         (ast-compaction-remap-expr-list remap args)
-        key)]))
+        (ast-compaction-copy-string key))]))
 
 (define (ast-compaction-remap-decl
   [remap : AstProgramCompactionRemap]
@@ -6228,8 +6305,14 @@
         (ast-compaction-remap-field-def-list remap fields))]
     [(AstDecl.Import spec)
       (AstDecl.Import (ast-compaction-remap-import-spec spec))]
-    [(AstDecl.IncludeStr name path) (AstDecl.IncludeStr name path)]
-    [(AstDecl.IncludeBin name path) (AstDecl.IncludeBin name path)]
+    [(AstDecl.IncludeStr name path)
+      (AstDecl.IncludeStr
+        (ast-compaction-copy-string name)
+        (ast-compaction-copy-string path))]
+    [(AstDecl.IncludeBin name path)
+      (AstDecl.IncludeBin
+        (ast-compaction-copy-string name)
+        (ast-compaction-copy-string path))]
     [(AstDecl.DefDispatch name variants)
       (AstDecl.DefDispatch
         name

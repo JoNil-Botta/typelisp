@@ -1447,7 +1447,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
-    [(AstExpr.PtrAddrOf _) names]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tltest-reach-mark-expr place names))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]

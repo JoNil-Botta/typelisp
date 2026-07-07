@@ -3619,6 +3619,37 @@
   "(define (main [text : String]) : (MutPtr String)
   (unsafe (ptr-addr-of text)))")
 
+(define (compiler-typecheck-raw-pointer-addr-of-field-source) : String
+  "(defstruct Wide (x i64) (y i64) (z i64))
+(define (main) : (MutPtr i64)
+  (let [item : Wide (Wide 1 2 3)]
+    (unsafe (ptr-addr-of (struct-get item y)))))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-register-field-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (main) : (MutPtr i64)
+  (let [item : Pair (Pair 1 2)]
+    (unsafe (ptr-addr-of (struct-get item y)))))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-fixed-array-element-source) : String
+  "(define (main [i : i64]) : (MutPtr i64)
+  (let [items : (Array i64 2) (array 1 2)]
+    (unsafe (ptr-addr-of (array-ref items i)))))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-nested-fixed-array-element-source) : String
+  "(defstruct Bag (slots (Array i64 2)))
+(define (main [i : i64]) : (MutPtr i64)
+  (let [bag : Bag (Bag (array 1 2))]
+    (unsafe (ptr-addr-of (array-ref (struct-get bag slots) i)))))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source) : String
+  "(define (main [items : (Array i64)] [i : i64]) : (MutPtr i64)
+  (unsafe (ptr-addr-of (array-ref items i))))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-temp-source) : String
+  "(define (main [x : i64]) : (MutPtr i64)
+  (unsafe (ptr-addr-of (+ x 1))))")
+
 (define (compiler-typecheck-atomic-pointer-ops-source) : String
   "(define (main
   [p64 : (MutPtr i64)]
@@ -3665,6 +3696,14 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-cast-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-aggregate-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-field-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-fixed-array-element-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-nested-fixed-array-element-source))
     (compiler-typecheck-ok? (compiler-typecheck-atomic-pointer-ops-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-safe-read-source)
@@ -3701,8 +3740,14 @@
       (compiler-typecheck-raw-pointer-addr-of-global-source)
       "typecheck: ptr-addr-of requires a local or parameter name")
     (compiler-typecheck-error-ok?
-      (compiler-typecheck-raw-pointer-addr-of-aggregate-source)
-      "typecheck: ptr-addr-of supports local scalar cells only")
+      (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source)
+      "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-addr-of-register-field-source)
+      "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-addr-of-temp-source)
+      "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-atomic-pointer-safe-source)
       "typecheck: atomic-load requires unsafe context")

@@ -5601,7 +5601,10 @@
       (let
         [value : AstExpr (tc-context-expr-get ctx value-box)]
         (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.PtrAddrOf _) roots]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (tc-context-expr-get ctx place-box)]
+        (lower-clone-roots-expr ctx env decls able roots place))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
@@ -6395,7 +6398,10 @@
       (let
         [value : AstExpr (ast-node-pool-context-expr-get pools value-box)]
         (lower-reach-expr pools all-functions names state value))]
-    [(AstExpr.PtrAddrOf _) state]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-pool-context-expr-get pools place-box)]
+        (lower-reach-expr pools all-functions names state place))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-pool-context-expr-get pools ptr-box)]
@@ -7900,7 +7906,8 @@
     [(AstExpr.PtrNull ty) (lower-used-types-add-type pools used module ty)]
     [(AstExpr.PtrNullCheck value-box)
       (lower-used-types-add-expr-id pools used module value-box)]
-    [(AstExpr.PtrAddrOf _) used]
+    [(AstExpr.PtrAddrOf place-box)
+      (lower-used-types-add-expr-id pools used module place-box)]
     [(AstExpr.PtrRead ptr-box)
       (lower-used-types-add-expr-id pools used module ptr-box)]
     [(AstExpr.PtrWrite ptr-box value-box)
@@ -19299,6 +19306,51 @@
             (ResultTcType.Err "lower: index result type is not fast-pathable"))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
+(define (lower-ptr-addr-of-local-address
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [name : i64]
+  [origin : AstExpr]) : ResultLowerExpr
+  (let
+    [local-id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? local-id)
+      (match (lower-lookup-type-id
+        ctx
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
+        [(ResultTcType.Ok place-ty)
+          (if (lower-borrow-place-value-reference? ctx place-ty)
+            (ResultLowerExpr.Ok
+              (LowerExpr.Expr
+                state
+                (CompilerIrValue.Var local-id)
+                (tc-type-without-regions (tc-resolve-type ctx place-ty))))
+            (match (lower-state-alloc-var state)
+              [(LowerAlloc.Alloc allocated var-id)
+                (ResultLowerExpr.Ok
+                  (LowerExpr.Expr
+                    (lower-state-emit-at-expr
+                      allocated
+                      (CompilerIrInstr.AddrOf var-id local-id)
+                      origin)
+                    (CompilerIrValue.Var var-id)
+                    (tc-type-without-regions (tc-resolve-type ctx place-ty))))]))]
+        [(ResultTcType.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))])
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic-at-expr
+            origin
+            "lower: ptr-addr-of requires local or parameter storage"))))))
+
 (define (lower-integer-expr-with-expected-or-actual
   [ctx : TcContext]
   [state : LowerState]
@@ -20326,29 +20378,37 @@
                     (CompilerIrValue.I64 0)
                     (AstType.Bool)))])]
           [(ResultLowerExpr.Err diag) (ResultLowerExpr.Err diag)]))]
-    [(AstExpr.PtrAddrOf name)
+    [(AstExpr.PtrAddrOf place-box)
       (let
-        [local-id : i64
-          (sym_i64_env.sym-i64-lookup-id-or
-            env
-            name
-            (compiler-symbols-missing-handle))]
-        (if (compiler-symbols-handle-found? local-id)
-          (match (lower-state-alloc-var state)
-            [(LowerAlloc.Alloc allocated var-id)
-              (ResultLowerExpr.Ok
-                (LowerExpr.Expr
-                  (lower-state-emit-at-expr
-                    allocated
-                    (CompilerIrInstr.AddrOf var-id local-id)
-                    origin)
-                  (CompilerIrValue.Var var-id)
-                  expr-ty))])
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                origin
-                "lower: ptr-addr-of requires local or parameter storage")))))]
+        [place : AstExpr (lower-context-expr-get ctx place-box)]
+        (match (tc-ptr-addr-of-place ctx type-env place)
+          [(ResultTcType.Ok _)
+            (match (match (ast-expr-unspan place)
+              [(AstExpr.Var name)
+                (lower-ptr-addr-of-local-address
+                  ctx
+                  state
+                  env
+                  type-env
+                  name
+                  origin)]
+              [_
+                (lower-mutable-place-address
+                  ctx
+                  state
+                  env
+                  type-env
+                  place
+                  origin)])
+              [(ResultLowerExpr.Ok lowered)
+                (match lowered
+                  [(LowerExpr.Expr addr-state addr-value _)
+                    (ResultLowerExpr.Ok
+                      (LowerExpr.Expr addr-state addr-value expr-ty))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+          [(ResultTcType.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))]))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (lower-context-expr-get ctx ptr-box)]
@@ -40906,7 +40966,8 @@
     [(AstExpr.TypeLiteral _) false]
     [(AstExpr.Init _) false]
     [(AstExpr.PtrNull _) false]
-    [(AstExpr.PtrAddrOf _) false]
+    [(AstExpr.PtrAddrOf place-box)
+      (lower-rvo-node-has-early-return? ctx place-box)]
     [(AstExpr.BinaryData _) false]
     [(AstExpr.ProgramArgc) false]
     [(AstExpr.ProgramArgv) false]

@@ -4637,20 +4637,24 @@
     [_ (ResultAstExpr.Err "parse: ptr-read expects exactly one expression")]))
 
 (define (parse-ast-ptr-addr-of
+  [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
   [rest : SpannedSexpr]) : ResultAstExpr
   (match rest
-    [(SpannedSexpr.Cons name end _)
+    [(SpannedSexpr.Cons place end _)
       (match (sp-node-get end)
         [(SpannedSexpr.Nil _)
-          (match (spanned-sexpr-form (sp-node-get name))
-            [(Sexpr.Sym local)
-              (ResultAstExpr.Ok (ast-expr-ptr-addr-of-with-pools pools local))]
-            [_ (ResultAstExpr.Err "parse: ptr-addr-of expects a local name")])]
+          (match (parse-ast-expr-with-pools dispatch pools (sp-node-get place))
+            [(ResultAstExpr.Ok parsed-place)
+              (ResultAstExpr.Ok
+                (ast-expr-ptr-addr-of-id-with-pools pools parsed-place))]
+            [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
         [_
           (ResultAstExpr.Err
-            "parse: ptr-addr-of expects exactly one local name")])]
-    [_ (ResultAstExpr.Err "parse: ptr-addr-of expects exactly one local name")]))
+            "parse: ptr-addr-of expects exactly one addressable place")])]
+    [_
+      (ResultAstExpr.Err
+        "parse: ptr-addr-of expects exactly one addressable place")]))
 
 (define (parse-ast-ptr-write
   [dispatch : sym_i64_env.SymI64Env]
@@ -5619,7 +5623,7 @@
           [tag : i64 (compiler-parse-dispatch-tag dispatch op)]
           (cond
             [(= tag (compiler-parse-tag-expr-ptr-addr-of))
-              (parse-ast-ptr-addr-of pools rest)]
+              (parse-ast-ptr-addr-of dispatch pools rest)]
             [(= tag (compiler-parse-tag-expr-ptr-read))
               (parse-ast-ptr-read dispatch pools rest)]
             [(= tag (compiler-parse-tag-expr-ptr-write))
@@ -10100,10 +10104,10 @@
       "parse: ptr-write! expects exactly two expressions")
     (compiler-parse-error-ok?
       "(define (main) : (MutPtr i64) (unsafe (ptr-addr-of)))"
-      "parse: ptr-addr-of expects exactly one local name")
+      "parse: ptr-addr-of expects exactly one addressable place")
     (compiler-parse-error-ok?
-      "(define (main [x : i64]) : (MutPtr i64) (unsafe (ptr-addr-of (+ x 1))))"
-      "parse: ptr-addr-of expects a local name")
+      "(define (main [x : i64] [y : i64]) : (MutPtr i64) (unsafe (ptr-addr-of x y)))"
+      "parse: ptr-addr-of expects exactly one addressable place")
     (compiler-parse-error-ok?
       "(define (main [p : (Ptr i64)]) : (Ptr u8) (ptr-cast p (Ptr u8)))"
       "parse: pointer cast expects (form expr : pointer-type)")))

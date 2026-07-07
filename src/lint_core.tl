@@ -8807,7 +8807,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (lint-walk-expr inner threshold acc))]
-    [(AstExpr.PtrAddrOf _) acc]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (lint-walk-expr place threshold acc))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]

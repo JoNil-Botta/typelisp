@@ -704,9 +704,13 @@
 ;; Once lowering has produced IR, optimizer/backend no longer consult the
 ;; typecheck/macro CTFE caches. Drop them before the backend's large assembly
 ;; buffers are allocated so self-compiles do not carry dead layout metadata and
-;; macro/typecheck scratch state through codegen.
+;; macro/typecheck scratch state through codegen. The lower scratch arena is also
+;; function-local: escaped IR lives outside it, so it can be released before
+;; optimize/backend instead of overlapping with backend assembly buffers.
 (define (compiler-driver-release-typecheck-caches-after-lower!) : unit
-  (compiler-typecheck-reset-file-state!))
+  (begin
+    (compiler-typecheck-reset-file-state!)
+    (lower-scratch-arena-release!)))
 
 ;; Package builds may run TLci, direct-object, and doctest passes after an
 ;; assembly emit while keeping the loaded AST alive. A full file-state reset

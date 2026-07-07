@@ -51056,6 +51056,34 @@
       (macro-core-bool-lit true)
       (macro-core-or-chain args (+ index 1)))))
 
+(define (macro-core-var-lit [name : String]) : i64
+  (ast-node-push (AstExpr.Var (intern name))))
+
+(define (macro-core-cond-else? [expr-id : i64]) : bool
+  (match (ast-expr-unspan (ast-node-get expr-id))
+    [(AstExpr.Var name) (= name (intern "else"))]
+    [_ false]))
+
+(define (macro-core-cond-chain
+  [clauses : (& clauses AstExprClauseList)]
+  [index : i64]) : i64
+  (let
+    [n : i64 (struct-get clauses len)]
+    (if (>= index n)
+      (macro-core-var-lit "core-cond-missing-else")
+      (match (ast-expr-clause-list-get clauses index (ast-expr-clause-fallback))
+        [(AstExprClause test result)
+          (if (macro-core-cond-else? test)
+            (if (= (+ index 1) n)
+              result
+              (macro-core-var-lit "core-cond-else-must-be-final"))
+            (if (= (+ index 1) n)
+              (macro-core-var-lit "core-cond-missing-else")
+              (ast-expr-if
+                test
+                result
+                (macro-core-cond-chain clauses (+ index 1)))))]))))
+
 (define (macro-core-boolean-macro?
   [macro-name : String]
   [definition-module : String]
@@ -51063,6 +51091,13 @@
   (and
     (string.eq definition-module "stdlib.core_macros")
     (tc-name-base-eq? macro-name base)))
+
+(define (macro-core-cond-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (string.eq definition-module "stdlib.core_macros")
+    (tc-name-base-eq? macro-name "cond")))
 
 (define (macro-core-boolean-signature?
   [ctx : TcContext]
@@ -51122,6 +51157,46 @@
         [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)])]
     [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)]))
 
+(define (macro-core-cond-fast-expand
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [definition-module : String]
+  [params : AstMacroParamList]
+  [_macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroExpr
+  (match (macro-bind-params
+    ctx
+    decls
+    definition-module
+    type-env
+    params
+    args
+    (ctfe-env-empty)
+    false
+    call-expr)
+    [(ResultMacroEnv.Ok _)
+      (match (macro-expr-clause-list-from-args args)
+        [(ResultMacroClauseList.Ok clauses)
+          (begin
+            (cfg compile-profile (compiler-tc-macro-profile-start))
+            (let
+              [expanded : i64 (macro-core-cond-chain (& clauses) 0)]
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish _macro-name args))
+                (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  (+ depth 1)
+                  (ast-node-get expanded)))))]
+        [(ResultMacroClauseList.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)]))
+
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
 (define (macro-expand-call
@@ -51177,6 +51252,17 @@
             depth
             call-expr
             true)]
+        [(macro-core-cond-macro? macro-name definition-module)
+          (macro-core-cond-fast-expand
+            ctx
+            type-env
+            decls
+            definition-module
+            params
+            macro-name
+            args
+            depth
+            call-expr)]
         [else
           (match (macro-eval-transformer
             ctx

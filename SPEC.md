@@ -2154,7 +2154,9 @@ through that load-once rule rather than being rejected. Cycles through macro
 tables are rejected; see §4.4.4.
 
 Earlier revisions imported modules by source-file path, as in
-`(import "lib/util.tl")`; that spelling is not part of the language.
+`(import "lib/util.tl")`. That spelling remains accepted only as a temporary
+compatibility surface for named migration fixtures and is scheduled for
+removal; new source uses dotted module identities.
 
 #### 4.4.1 Module identities
 
@@ -3715,7 +3717,7 @@ Masked varying control flow:
 
 Explicit SPMD atomic scatter:
 
-- `(import "stdlib/atomic.tl")` provides sequentially consistent atomic
+- `(import stdlib.atomic)` provides sequentially consistent atomic
   helpers for compatibility dynamic-array elements of type `i32` and `i64`:
   `atomic-i32-load`, `atomic-i32-store!`, `atomic-i32-add!`,
   `atomic-i32-fetch-add!`, and the corresponding `i64` helpers.
@@ -5916,7 +5918,7 @@ in documentation passes.
 | Aggregate `ptr-addr-of` implementation; volatile access | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464; volatile access remains deferred. |
 | Cleanup-owning enums | Reserved. |
 | Complete source locations for all semantic errors | Partial. |
-| Dotted module imports everywhere | Migration in progress: legacy path imports remain accepted while the repository migrates. |
+| Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures and remaining #4035 source/smoke migration work before #2454 removes the syntax. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |
 | Removal of legacy `comptime-decl` forms | Stdlib well-known declarations now use plain declarations; legacy syntax remains accepted as parser/typechecker compatibility pending final removal. |

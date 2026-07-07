@@ -59,8 +59,8 @@ Some transitional spellings survive in the tree while migrations finish. New
 code should use the end-state forms and not imitate the leftovers:
 
 - **Imports**: dotted module imports with aliases and dotted member access
-  (`(import stdlib.string)`, `(string.length text)`). The legacy
-  `(import "path/file.tl")` spelling is being removed.
+  (`(import stdlib.string)`, `(string.length text)`). Legacy string path
+  imports are compatibility-only while final migration fixtures are removed.
 - **Stdlib names**: qualified short names such as `str.append` are the end
   state; module-name-prefixed flat names (`string-append`, `read-dir`, ...)
   are transitional.
@@ -241,10 +241,9 @@ and `(import stdlib.core_macros as core)` binds `core`. Imported values,
 types, constructors, variants, patterns, and macros are referenced with
 dotted member access — `(string.length text)`, `[p : geometry.Point]`.
 Macro imports use the same module identities, with expansion happening
-before ordinary typechecking. Legacy path imports such as
-`(import "lib/util.tl")` keep transitional flat-namespace behavior while
-that spelling is removed; see SPEC.md section 4.4 for the migration
-contract.
+before ordinary typechecking. Legacy string path imports are retained only for
+named compatibility fixtures until final removal; new code should use dotted
+module identities.
 
 The compile driver prepends the stdlib runtime and the core macro module as
 an implicit prelude, so bare `when`, `unless`, `and`, `or`, and bracket-arm
@@ -448,11 +447,11 @@ commit — and a content-keyed package cache under
 never rewrites the lockfile; `--update-lock` intentionally refreshes remote
 pins. Dependency packages must be static libraries; transitive dependencies
 build once per invocation as a DAG (concurrently where the host supports
-it), and cycles fail with a diagnostic. Inside a package build,
-`(import "pkg:math/src/lib.tl")` resolves from the dependency root declared
-for alias `math`. The optional `(link ...)` section declares native link
-inputs per target; on Linux any non-empty link input switches the package to
-linking through `cc` instead of freestanding `ld`. Registry support,
+it), and cycles fail with a diagnostic. Inside a package build, an import
+whose leading segment is a dependency alias, such as `(import math.src.lib)`,
+resolves from that dependency root. The optional `(link ...)` section declares
+native link inputs per target; on Linux any non-empty link input switches the
+package to linking through `cc` instead of freestanding `ld`. Registry support,
 semantic-version solving, and workspaces are deferred by design: the model
 is deterministic zero-dependency builds through the host `git` CLI plus
 checked-in lockfile replay. See [SPEC.md §4.6](SPEC.md) for the full

@@ -6,9 +6,11 @@
 (import "compiler_float.tl")
 (import stdlib.string)
 (import stdlib.hashmap)
+(import (hashmap String i64) as spec_string_i64_map)
+(import (hashmap String String) as spec_string_string_map)
 
 (defstruct GenRegistry
-  (index hashmap.StringI64Map)
+  (index spec_string_i64_map.Map)
   (decls (Array AstDecl))
   (len i64))
 
@@ -28,14 +30,14 @@
   (Some SpecTemplate))
 
 (defstruct SpecTemplateEnv
-  (index hashmap.StringI64Map)
+  (index spec_string_i64_map.Map)
   (values (Array SpecMaybeTemplate))
   (shadowed SpecTemplateShadowList))
 
 ;; The specialization cache (key -> generated function name) is a
-;; generated hashmap.StringStringMap so lookups avoid a linear scan.
+;; generated String -> String hashmap so lookups avoid a linear scan.
 (defenum SpecState
-  (State AstDeclList hashmap.StringStringMap CtfeEnv AstNodePoolContext))
+  (State AstDeclList spec_string_string_map.Map CtfeEnv AstNodePoolContext))
 
 (defenum SpecValueList
   (Nil)
@@ -277,23 +279,27 @@
 
 (define (spec-template-index-build
   [templates : SpecTemplateList]
-  [index : hashmap.StringI64Map]
+  [index : spec_string_i64_map.Map]
   [values : (Array SpecMaybeTemplate)]
-  [slot : i64]) : hashmap.StringI64Map
+  [slot : i64]) : spec_string_i64_map.Map
   (match templates
     [(SpecTemplateList.Nil) index]
     [(SpecTemplateList.Cons template rest)
       (match template
         [(SpecTemplate.Item name _ _ _)
-          (if (hashmap.string-i64-map-contains? index name)
+          (if (spec_string_i64_map.contains-borrowed? (& index) (& name))
             (spec-template-index-build (box-get rest) index values slot)
             (begin
               (array-set! values slot (SpecMaybeTemplate.Some template))
-              (spec-template-index-build
-                (box-get rest)
-                (hashmap.string-i64-map-put index name slot)
-                values
-                (+ slot 1))))])]))
+              (let
+                [next-index : spec_string_i64_map.Map index]
+                (begin
+                  (spec_string_i64_map.insert (&mut next-index) name slot)
+                  (spec-template-index-build
+                    (box-get rest)
+                    next-index
+                    values
+                    (+ slot 1))))))])]))
 
 (define (spec-template-env-from-list [templates : SpecTemplateList]) : SpecTemplateEnv
   (let
@@ -305,7 +311,7 @@
       (SpecTemplateEnv
         (spec-template-index-build
           templates
-          (hashmap.string-i64-map-with-capacity (+ (* count 2) 16))
+          (spec_string_i64_map.with-capacity (+ (* count 2) 16))
           values
           0)
         values
@@ -314,10 +320,12 @@
 (define (spec-template-lookup [templates : SpecTemplateEnv] [name : String]) : SpecMaybeTemplate
   (if (spec-template-shadow-contains? (struct-get templates shadowed) name)
     (SpecMaybeTemplate.None)
-    (match (hashmap.string-i64-map-get (struct-get templates index) name)
-      [(hashmap.StringI64MapFound slot)
+    (match (spec_string_i64_map.get-borrowed
+      (& (struct-get templates index))
+      (& name))
+      [(spec_string_i64_map.LookupFound slot)
         (array.ref (struct-get templates values) slot)]
-      [(hashmap.StringI64MapMissing) (SpecMaybeTemplate.None)])))
+      [(spec_string_i64_map.LookupMissing) (SpecMaybeTemplate.None)])))
 
 (define (spec-template-env-shadow-name
   [templates : SpecTemplateEnv]
@@ -438,10 +446,10 @@
     (ast-node-pool-context-capture-active)
     decls))
 
-(define (spec-cache-lookup [cache : hashmap.StringStringMap] [key : String]) : SpecMaybeString
-  (match (hashmap.string-string-map-get cache key)
-    [(hashmap.StringStringMapFound name) (SpecMaybeString.Some name)]
-    [(hashmap.StringStringMapMissing) (SpecMaybeString.None)]))
+(define (spec-cache-lookup [cache : spec_string_string_map.Map] [key : String]) : SpecMaybeString
+  (match (spec_string_string_map.get-borrowed (& cache) (& key))
+    [(spec_string_string_map.LookupFound name) (SpecMaybeString.Some name)]
+    [(spec_string_string_map.LookupMissing) (SpecMaybeString.None)]))
 
 (define (spec-decl-list-append-one [decls : AstDeclList] [decl : AstDecl]) : AstDeclList
   (let
@@ -665,13 +673,15 @@
   (let
     [capacity : i64 64]
     [decls : (Array AstDecl) (array.make-array AstDecl capacity)]
-    (GenRegistry (hashmap.string-i64-map-with-capacity capacity) decls 0)))
+    (GenRegistry (spec_string_i64_map.with-capacity capacity) decls 0)))
 
 (define (gen-registry-lookup [registry : GenRegistry] [key : String]) : GenMaybeEntry
-  (match (hashmap.string-i64-map-get (struct-get registry index) key)
-    [(hashmap.StringI64MapFound slot)
+  (match (spec_string_i64_map.get-borrowed
+    (& (struct-get registry index))
+    (& key))
+    [(spec_string_i64_map.LookupFound slot)
       (GenMaybeEntry.Some (array.ref (struct-get registry decls) slot))]
-    [(hashmap.StringI64MapMissing) (GenMaybeEntry.None)]))
+    [(spec_string_i64_map.LookupMissing) (GenMaybeEntry.None)]))
 
 (define (gen-registry-copy-decls
   [src : (Array AstDecl)]
@@ -686,7 +696,7 @@
 
 (define (gen-registry-grow [registry : GenRegistry]) : GenRegistry
   (let
-    [old-index : hashmap.StringI64Map (struct-get registry index)]
+    [old-index : spec_string_i64_map.Map (struct-get registry index)]
     [old-decls : (Array AstDecl) (struct-get registry decls)]
     [old-len : i64 (struct-get registry len)]
     [old-capacity : i64 (array.length old-decls)]
@@ -712,10 +722,11 @@
         registry)]
     [slot : i64 (struct-get ready len)]
     [decls : (Array AstDecl) (struct-get ready decls)]
-    [index : hashmap.StringI64Map (struct-get ready index)]
+    [index : spec_string_i64_map.Map (struct-get ready index)]
     (begin
       (array-set! decls slot decl)
-      (GenRegistry (hashmap.string-i64-map-put index key slot) decls (+ slot 1)))))
+      (spec_string_i64_map.insert (&mut index) key slot)
+      (GenRegistry index decls (+ slot 1)))))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
   (match decl
@@ -2496,49 +2507,53 @@
                             value-subs)
                             [(ResultSpecSubExpr.Ok valued-body)
                               (let
-                                [cached-state : SpecState
-                                  (SpecState.State
-                                    generated
-                                    (hashmap.string-string-map-put
-                                      cache
-                                      key
-                                      generated-name)
-                                    ctfe-env
-                                    pools)]
-                                (match (spec-rewrite-expr
-                                  (ast-node-get valued-body)
-                                  (spec-template-env-shadow-params
-                                    templates
-                                    runtime-params)
-                                  cached-state)
-                                  [(ResultSpecExpr.Ok
-                                      rewritten-body
-                                      rewritten-state)
-                                    (match rewritten-state
-                                      [(SpecState.State
-                                          rewritten-generated
-                                          rewritten-cache
-                                          rewritten-ctfe-env
-                                          rewritten-pools)
-                                        (ResultSpecEnsure.Ok
-                                          generated-name
-                                          (SpecState.State
-                                            (spec-decl-list-append-one
+                                [next-cache : spec_string_string_map.Map cache]
+                                (begin
+                                  (spec_string_string_map.insert
+                                    (&mut next-cache)
+                                    key
+                                    generated-name)
+                                  (let
+                                    [cached-state : SpecState
+                                      (SpecState.State
+                                        generated
+                                        next-cache
+                                        ctfe-env
+                                        pools)]
+                                    (match (spec-rewrite-expr
+                                      (ast-node-get valued-body)
+                                      (spec-template-env-shadow-params
+                                        templates
+                                        runtime-params)
+                                      cached-state)
+                                      [(ResultSpecExpr.Ok
+                                          rewritten-body
+                                          rewritten-state)
+                                        (match rewritten-state
+                                          [(SpecState.State
                                               rewritten-generated
-                                              (ast-decl-def-fn
-                                                generated-name
-                                                (spec-substitute-param-types
-                                                  runtime-params
-                                                  type-subs)
-                                                (spec-substitute-type
-                                                  ret
-                                                  type-subs)
-                                                rewritten-body))
-                                            rewritten-cache
-                                            rewritten-ctfe-env
-                                            rewritten-pools))])]
-                                  [(ResultSpecExpr.Err diag)
-                                    (ResultSpecEnsure.Err diag)]))]
+                                              rewritten-cache
+                                              rewritten-ctfe-env
+                                              rewritten-pools)
+                                            (ResultSpecEnsure.Ok
+                                              generated-name
+                                              (SpecState.State
+                                                (spec-decl-list-append-one
+                                                  rewritten-generated
+                                                  (ast-decl-def-fn
+                                                    generated-name
+                                                    (spec-substitute-param-types
+                                                      runtime-params
+                                                      type-subs)
+                                                    (spec-substitute-type
+                                                      ret
+                                                      type-subs)
+                                                    rewritten-body))
+                                                rewritten-cache
+                                                rewritten-ctfe-env
+                                                rewritten-pools))])]
+                                      [(ResultSpecExpr.Err diag)
+                                        (ResultSpecEnsure.Err diag)]))))]
                             [(ResultSpecSubExpr.Err diag)
                               (ResultSpecEnsure.Err diag)])]
                         [(ResultSpecSubExpr.Err diag)
@@ -5121,7 +5136,7 @@
                   (spec-template-env-from-list templates)
                   (SpecState.State
                     (ast-decl-list-new)
-                    (hashmap.string-string-map-with-capacity 64)
+                    (spec_string_string_map.with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
                     (ast-node-pool-context-capture-active)))
@@ -5156,7 +5171,7 @@
                   (spec-template-env-from-list templates)
                   (SpecState.State
                     (ast-decl-list-new)
-                    (hashmap.string-string-map-with-capacity 64)
+                    (spec_string_string_map.with-capacity 64)
                     (ctfe-env-with-reflections
                       (ctfe-reflections-from-program normalized))
                     (ast-node-pool-context-capture-active)))
@@ -5639,14 +5654,20 @@
             (AstExpr.Literal (AstLiteral.Bool true)))
           SpecTemplateList.Nil))]
     [template-env : SpecTemplateEnv (spec-template-env-from-list templates)]
-    [cache : hashmap.StringStringMap
-      (hashmap.string-string-map-put
-        (hashmap.string-string-map-put
-          (hashmap.string-string-map-with-capacity 8)
-          "two"
-          "generated-two")
-        "one"
-        "generated-one")]
+    [cache : spec_string_string_map.Map
+      (let
+        [seed-cache : spec_string_string_map.Map
+          (spec_string_string_map.with-capacity 8)]
+        (begin
+          (spec_string_string_map.insert
+            (&mut seed-cache)
+            "two"
+            "generated-two")
+          (spec_string_string_map.insert
+            (&mut seed-cache)
+            "one"
+            "generated-one")
+          seed-cache))]
     [values : SpecValueList
       (spec-value-cons
         (CompilerCtfeValue.I64 1)

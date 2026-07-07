@@ -1073,6 +1073,15 @@
   [instr : CompilerIrInstr]) : OptInstrResult
   (OptInstrResult.Result (opt-const-unbind env dst) instr))
 
+(define (opt-invalidate-addr-of
+  [env : OptConstEnv]
+  [dst : i64]
+  [src : i64]
+  [instr : CompilerIrInstr]) : OptInstrResult
+  (OptInstrResult.Result
+    (opt-const-unbind (opt-const-unbind env dst) src)
+    instr))
+
 (define (opt-invalidate-spmd-result
   [env : OptConstEnv]
   [result : CompilerIrSpmdCallResult]
@@ -1100,7 +1109,8 @@
         [(OptKnownConst.NoConst)
           (OptInstrResult.Result (opt-const-unbind env dst) instr)])]
     [(CompilerIrInstr.Alloc dst ty) (opt-invalidate-def env dst instr)]
-    [(CompilerIrInstr.AddrOf dst src) (opt-invalidate-def env dst instr)]
+    [(CompilerIrInstr.AddrOf dst src)
+      (opt-invalidate-addr-of env dst src instr)]
     [(CompilerIrInstr.Gep dst base offset ty)
       (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.Load dst src ty) (opt-invalidate-def env dst instr)]
@@ -1186,6 +1196,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
           (opt-invalidate-spmd-result env result instr)])]
+    [(CompilerIrInstr.StorePtr _ _ _)
+      (OptInstrResult.Result OptConstEnv.Nil instr)]
+    [(CompilerIrInstr.CopyBytes _ _ _)
+      (OptInstrResult.Result OptConstEnv.Nil instr)]
     [(CompilerIrInstr.TailCall _ _ _) (OptInstrResult.Result env instr)]
     [(CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
@@ -1241,7 +1255,8 @@
         [(OptKnownConst.NoConst)
           (OptInstrResult.Result (opt-const-unbind env dst) instr)])]
     [(CompilerIrInstr.Alloc dst ty) (opt-invalidate-def env dst instr)]
-    [(CompilerIrInstr.AddrOf dst src) (opt-invalidate-def env dst instr)]
+    [(CompilerIrInstr.AddrOf dst src)
+      (opt-invalidate-addr-of env dst src instr)]
     [(CompilerIrInstr.Gep dst base offset ty)
       (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.Load dst src ty) (opt-invalidate-def env dst instr)]
@@ -1317,6 +1332,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
           (opt-invalidate-spmd-result env result instr)])]
+    [(CompilerIrInstr.StorePtr _ _ _)
+      (OptInstrResult.Result OptConstEnv.Nil instr)]
+    [(CompilerIrInstr.CopyBytes _ _ _)
+      (OptInstrResult.Result OptConstEnv.Nil instr)]
     [(CompilerIrInstr.TailCall _ _ _) (OptInstrResult.Result env instr)]
     [(CompilerIrInstr.Phi dst inputs ty) (opt-invalidate-def env dst instr)]
     [_ (OptInstrResult.Result env instr)]))
@@ -5744,7 +5763,8 @@
           (OptCopyEnv.Cons dst src (box e1))
           e1))]
     [(CompilerIrInstr.Alloc dst _) (opt-copy-invalidate-var env dst)]
-    [(CompilerIrInstr.AddrOf dst _) (opt-copy-invalidate-var env dst)]
+    [(CompilerIrInstr.AddrOf dst src)
+      (opt-copy-invalidate-var (opt-copy-invalidate-var env dst) src)]
     [(CompilerIrInstr.Gep dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.Load dst _ _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.Cast dst _ _ _) (opt-copy-invalidate-var env dst)]
@@ -5803,6 +5823,8 @@
     [(CompilerIrInstr.Pack dst words _)
       (opt-copy-update-pack-env env dst words)]
     [(CompilerIrInstr.Word dst _ _ _) (opt-copy-invalidate-var env dst)]
+    [(CompilerIrInstr.StorePtr _ _ _) (OptCopyEnv.Nil)]
+    [(CompilerIrInstr.CopyBytes _ _ _) (OptCopyEnv.Nil)]
     [_ env]))
 
 (defenum OptCopyResult

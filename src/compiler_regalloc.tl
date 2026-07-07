@@ -1260,6 +1260,25 @@
         (compiler-reg-cast-moves-blocks blocks CompilerRegMoveList.Nil)
         strict-pairs)]))
 
+(define (compiler-reg-move-list-filter-storage-identity
+  [moves : CompilerRegMoveList]
+  [storage-vars : CompilerLiveI64Set]) : CompilerRegMoveList
+  (match moves
+    [(CompilerRegMoveList.Nil) CompilerRegMoveList.Nil]
+    [(CompilerRegMoveList.Cons move rest)
+      (match move
+        [(CompilerRegMove.Move src dst _)
+          (let
+            [tail : CompilerRegMoveList
+              (compiler-reg-move-list-filter-storage-identity
+                (box-get rest)
+                storage-vars)]
+            (if (or
+              (compiler-live-set-contains? storage-vars src)
+              (compiler-live-set-contains? storage-vars dst))
+              tail
+              (compiler-reg-move-cons move tail)))])]))
+
 (define (compiler-reg-fill-i64-array [items : (Array i64)] [value : i64]) : unit
   (let
     [index : i64 0]
@@ -5084,6 +5103,23 @@
                 (array-ref starts var)
                 (array-ref ends var))))
             (array-set! eligible var 1)
+            unit)
+          (set! var (+ var 1))))
+      eligible)))
+
+(define (compiler-reg-same-value-eligible-vars-excluding
+  [interval-index : CompilerRegIntervalIndex]
+  [clobber-points : CompilerLiveI64Set]
+  [storage-vars : CompilerLiveI64Set]) : (Array i64)
+  (let
+    [eligible : (Array i64)
+      (compiler-reg-same-value-eligible-vars interval-index clobber-points)]
+    [var : i64 0]
+    (begin
+      (while (< var (array-length eligible))
+        (begin
+          (if (compiler-live-set-contains? storage-vars var)
+            (array-set! eligible var 0)
             unit)
           (set! var (+ var 1))))
       eligible)))
@@ -12708,6 +12744,7 @@
 (define (compiler-reg-expand-class-assignments
   [assignments : CompilerRegAssignmentTable]
   [coalesce : CompilerRegCoalesceMap]
+  [storage-vars : CompilerLiveI64Set]
   [orig-starts : (Array i64)]
   [vars : i64]) : CompilerRegAssignmentTable
   (let
@@ -12719,7 +12756,13 @@
         (begin
           (if (and
             (< v (array-length orig-starts))
-            (>= (array-ref orig-starts v) 0))
+            (>= (array-ref orig-starts v) 0)
+            ;; Storage-identity vars (`Alloc` destinations and `AddrOf`
+            ;; sources) need their own formula slot to hold the bytes whose
+            ;; address is exposed. If coalescing merged them into a register
+            ;; root, do not inherit that home; the original copy remains and
+            ;; materializes the storage slot for the later AddrOf.
+            (not (compiler-live-set-contains? storage-vars v)))
             (let
               [r : i64
                 (if (< v (array-length parents))
@@ -14923,7 +14966,13 @@
   [mask-vars-use-vector-registers : bool]
   [abi : CompilerRegTargetAbi]) : CompilerRegPlan
   (let
-    [moves
+    [storage-identity-vars : CompilerLiveI64Set
+      (if allow-caller-saved-zero-call
+        (match func
+          [(CompilerIrFunction.Function _ _ _ _ blocks)
+            (compiler-reg-ineligible-memory blocks (compiler-live-set-empty))])
+        (compiler-live-set-empty))]
+    [raw-moves
       : CompilerRegMoveList
       ;; Phi back-edge moves NON-strict so loop-carried phi/copy pairs coalesce
       ;; (then merge into one root via coalescing-by-rename). SIMD already
@@ -14935,6 +14984,10 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-function-moves-with-casts func false)
         (compiler-reg-function-moves func false))]
+    [moves : CompilerRegMoveList
+      (compiler-reg-move-list-filter-storage-identity
+        raw-moves
+        storage-identity-vars)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
     ;; Same-value overlap-coalescing exclusion points. This is the KIND-0
@@ -14964,12 +15017,18 @@
       (if allow-caller-saved-zero-call
         (compiler-reg-function-same-value-parents-multi
           func
-          (compiler-reg-same-value-eligible-vars interval-index clobber-points)
+          (compiler-reg-same-value-eligible-vars-excluding
+            interval-index
+            clobber-points
+            storage-identity-vars)
           type-info
           interval-index)
         (compiler-reg-function-same-value-parents-filtered
           func
-          (compiler-reg-same-value-eligible-vars interval-index clobber-points)))]
+          (compiler-reg-same-value-eligible-vars-excluding
+            interval-index
+            clobber-points
+            storage-identity-vars)))]
     ;; Edge-precise interference index (LLVM PHIElimination semantics) used ONLY to
     ;; gate coalescing: a loop-carried phi value and its back-edge / merge input do
     ;; not really interfere (the conservative index spuriously overlaps them via
@@ -15317,6 +15376,7 @@
           (compiler-reg-expand-class-assignments
             assignments
             coalesce
+            storage-identity-vars
             (struct-get interval-index starts)
             (array-length (struct-get interval-index starts)))
           func
@@ -18510,7 +18570,9 @@
           (if (and
             (compiler-reg-remat-mov-value? value allow-invariant-loads)
             (>= dst 0)
-            (< dst (array-length candidates)))
+            (and
+              (< dst (array-length candidates))
+              (not (= (array-ref candidates dst) 2))))
             (begin
               (array-set! candidates dst 1)
               (array-set! kinds dst (compiler-reg-remat-kind-mov))
@@ -18522,7 +18584,9 @@
           (if (and
             (compiler-reg-remat-gep? base offset)
             (>= dst 0)
-            (< dst (array-length candidates)))
+            (and
+              (< dst (array-length candidates))
+              (not (= (array-ref candidates dst) 2))))
             (begin
               (array-set! candidates dst 1)
               (array-set! kinds dst (compiler-reg-remat-kind-gep))
@@ -18535,13 +18599,24 @@
           (if (and
             (compiler-reg-remat-load? src allow-invariant-loads)
             (>= dst 0)
-            (< dst (array-length candidates)))
+            (and
+              (< dst (array-length candidates))
+              (not (= (array-ref candidates dst) 2))))
             (begin
               (array-set! candidates dst 1)
               (array-set! kinds dst (compiler-reg-remat-kind-load))
               (array-set! values dst src)
               (array-set! op-types dst ty)
               (array-set! types dst ty))
+            unit)]
+        [(CompilerIrInstr.AddrOf _ src)
+          ;; Address-taken values need stable storage. Mark the source as
+          ;; poisoned so the use-site remat rewrite cannot replace it with a
+          ;; freshly materialized temporary.
+          (if (and (>= src 0) (< src (array-length candidates)))
+            (begin
+              (array-set! candidates src 2)
+              unit)
             unit)]
         [_ unit]))))
 
@@ -22404,6 +22479,22 @@
 
 (cfg
   test
+  (define (compiler-reg-instr-list-has-addr-of?
+    [instrs : CompilerIrInstrList]
+    [dst : i64]
+    [src : i64]) : bool
+    (match instrs
+      [(CompilerIrInstrList.Nil) false]
+      [(CompilerIrInstrList.Cons instr rest)
+        (match instr
+          [(CompilerIrInstr.AddrOf found-dst found-src)
+            (if (and (= found-dst dst) (= found-src src))
+              true
+              (compiler-reg-instr-list-has-addr-of? (box-get rest) dst src))]
+          [_ (compiler-reg-instr-list-has-addr-of? (box-get rest) dst src)])])))
+
+(cfg
+  test
   (define (compiler-reg-instr-list-has-call-indirect-var?
     [instrs : CompilerIrInstrList]
     [callee : i64]) : bool
@@ -22575,6 +22666,34 @@
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Return CompilerIrMaybeValue.No)
                 CompilerIrInstrList.Nil))))
+        CompilerIrBlockList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-addr-of-function) : CompilerIrFunction
+    (CompilerIrFunction.Function
+      "remat_addr_of"
+      CompilerIrParamList.Nil
+      (AstType.Unit)
+      2
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov
+              0
+              (CompilerIrValue.I64 7)
+              (compiler-reg-i64-ty))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.AddrOf 1 0)
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Store
+                  "addr"
+                  (CompilerIrValue.Var 1)
+                  (compiler-reg-addr-of-result-type))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+                  CompilerIrInstrList.Nil)))))
         CompilerIrBlockList.Nil))))
 
 (cfg
@@ -22831,6 +22950,35 @@
                   (= out-vars vars)
                   (= (compiler-reg-assignment-count extra-assignments) 0)
                   (compiler-reg-instr-list-has-call-indirect-var? items 0)))])]))))
+
+(cfg
+  test
+  (define (compiler-reg-remat-addr-of-source-refusal-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-remat-addr-of-function)]
+      [plan : CompilerRegPlan (compiler-reg-remat-single-spill-plan func)]
+      (match func
+        [(CompilerIrFunction.Function _ _ _ vars blocks)
+          (match (compiler-reg-remat-rewrite-blocks
+            func
+            blocks
+            vars
+            (compiler-reg-function-var-types func)
+            plan)
+            [(CompilerRegCallSaveRewrite.Rewrite
+                rewritten
+                _
+                out-vars
+                extra-assignments
+                _)
+              (let
+                [items : CompilerIrInstrList
+                  (compiler-reg-block-instr-list rewritten "entry")]
+                (and
+                  (= out-vars vars)
+                  (= (compiler-reg-assignment-count extra-assignments) 0)
+                  (compiler-reg-instr-list-has-addr-of? items 1 0)
+                  (not (compiler-reg-instr-list-has-addr-of? items 1 vars))))])]))))
 
 (cfg
   test
@@ -25417,6 +25565,7 @@
     (cfg test (compiler-reg-remat-rewrite-shape-ok?) true)
     (cfg test (compiler-reg-remat-register-conflict-ok?) true)
     (cfg test (compiler-reg-remat-caller-clobber-refusal-ok?) true)
+    (cfg test (compiler-reg-remat-addr-of-source-refusal-ok?) true)
     (cfg test (compiler-reg-remat-global-mov-rewrite-ok?) true)
     (cfg test (compiler-reg-remat-global-load-rewrite-ok?) true)
     (cfg test (compiler-reg-remat-global-gep-rewrite-ok?) true)

@@ -196,6 +196,7 @@
     LowerNameCache
     LowerTypeCache
     CompilerLowerMode
+    lower_i64_i64_map.Map
     ;; Tail-call-safe current function parameter var range: [start, end).
     i64
     i64))
@@ -8992,44 +8993,92 @@
 
 (define (lower-state-next-var [state : LowerState]) : i64
   (match state
-    [(LowerState.State next-var _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
+    [(LowerState.State next-var _ _ _ _ _ _ _ _ _ _ _ _ _ _) next-var]))
 
 (define (lower-state-current-label [state : LowerState]) : String
   (match state
-    [(LowerState.State _ _ _ label _ _ _ _ _ _ _ _ _ _) label]))
+    [(LowerState.State _ _ _ label _ _ _ _ _ _ _ _ _ _ _) label]))
 
 (define (lower-state-current-function [state : LowerState]) : String
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _) function]))
+    [(LowerState.State _ _ _ _ _ _ _ function _ _ _ _ _ _ _) function]))
 
 (define (lower-state-spans [state : LowerState]) : CompilerSourceSpans
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ spans _ _ _ _ _) (box-get spans)]))
+    [(LowerState.State _ _ _ _ _ _ _ _ spans _ _ _ _ _ _) (box-get spans)]))
 
 (define (lower-state-names [state : LowerState]) : LowerNameCache
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ names _ _ _ _) names]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ names _ _ _ _ _) names]))
 
 (define (lower-state-type-cache [state : LowerState]) : LowerTypeCache
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ type-cache _ _ _) type-cache]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ type-cache _ _ _ _) type-cache]))
 
 (define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
   (match state
-    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _)
+    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _ _)
       (compiler-ir-function-builder-to-list functions)]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ mode _ _) mode]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ mode _ _ _) mode]))
+
+(define (lower-state-register-address-taken-var?
+  [state : LowerState]
+  [var-id : i64]) : bool
+  (match state
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ address-taken _ _)
+      (lower_i64_i64_map.contains? (& address-taken) var-id)]))
+
+(define (lower-state-register-address-taken-mark
+  [state : LowerState]
+  [var-id : i64]) : LowerState
+  (match state
+    [(LowerState.State
+        next-var
+        next-label
+        next-lambda
+        current-label
+        current-instrs
+        blocks
+        functions
+        function
+        spans
+        names
+        type-cache
+        mode
+        address-taken
+        tail-param-start
+        tail-param-end)
+      (let
+        [next-address-taken : lower_i64_i64_map.Map address-taken]
+        (begin
+          (lower_i64_i64_map.insert (&mut next-address-taken) var-id 1)
+          (LowerState.State
+            next-var
+            next-label
+            next-lambda
+            current-label
+            current-instrs
+            blocks
+            functions
+            function
+            spans
+            names
+            type-cache
+            mode
+            next-address-taken
+            tail-param-start
+            tail-param-end)))]))
 
 (define (lower-state-tail-param-start [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ param-start _) param-start]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ _ param-start _) param-start]))
 
 (define (lower-state-tail-param-end [state : LowerState]) : i64
   (match state
-    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ _ param-end) param-end]))
+    [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ _ _ _ param-end) param-end]))
 
 (define (lower-state-tail-param-range-contains?
   [state : LowerState]
@@ -9053,6 +9102,7 @@
         names
         type-cache
         mode
+        address-taken
         _
         _)
       (LowerState.State
@@ -9068,6 +9118,7 @@
         names
         type-cache
         mode
+        address-taken
         0
         0)]))
 
@@ -9086,6 +9137,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (LowerAlloc.Alloc
@@ -9102,6 +9154,7 @@
           names
           type-cache
           mode
+          address-taken
           tail-param-start
           tail-param-end)
         next-var)]))
@@ -9121,6 +9174,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (LowerLabel.Label
@@ -9137,6 +9191,7 @@
           names
           type-cache
           mode
+          address-taken
           tail-param-start
           tail-param-end)
         (string.append
@@ -9158,6 +9213,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (LowerLambdaName.Name
@@ -9174,6 +9230,7 @@
           names
           type-cache
           mode
+          address-taken
           tail-param-start
           tail-param-end)
         (string.append
@@ -9195,6 +9252,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (let
@@ -9214,6 +9272,7 @@
             names
             type-cache
             mode
+            address-taken
             tail-param-start
             tail-param-end)))]))
 
@@ -9235,6 +9294,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (LowerState.State
@@ -9255,6 +9315,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)]))
 
@@ -9282,6 +9343,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (LowerState.State
@@ -9305,6 +9367,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)]))
 
@@ -9317,6 +9380,7 @@
         current-label
         current-instrs
         blocks
+        _
         _
         _
         _
@@ -9342,7 +9406,7 @@
   [state : LowerState]
   [func : CompilerIrFunction]) : CompilerIrFunctionList
   (match state
-    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _)
+    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _ _)
       (let
         [out : CompilerIrFunctionBuilder functions]
         (begin
@@ -9367,6 +9431,7 @@
         names
         type-cache
         mode
+        address-taken
         tail-param-start
         tail-param-end)
       (let
@@ -9388,6 +9453,7 @@
             names
             type-cache
             mode
+            address-taken
             tail-param-start
             tail-param-end)))]))
 
@@ -13763,6 +13829,66 @@
             (lower-resolve-name state (intern-str name-id)))
           ty)))))
 
+(define (lower-register-address-taken-local-read
+  [ctx : TcContext]
+  [state : LowerState]
+  [local-id : i64]
+  [ty : AstType]) : ResultLowerExpr
+  (if (and
+    (lower-type-register-resident? ctx ty)
+    (lower-state-register-address-taken-var? state local-id))
+    (match (lower-state-alloc-var state)
+      [(LowerAlloc.Alloc addr-state addr-var)
+        (match (lower-load-register-resident-from-ptr
+          ctx
+          (lower-state-emit
+            addr-state
+            (CompilerIrInstr.AddrOf addr-var local-id))
+          (CompilerIrValue.Var addr-var)
+          ty)
+          [(LowerExpr.Expr load-state loaded _)
+            (ResultLowerExpr.Ok (LowerExpr.Expr load-state loaded ty))])])
+    (ResultLowerExpr.Ok
+      (LowerExpr.Expr state (CompilerIrValue.Var local-id) ty))))
+
+(define (lower-var-storage-aware
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [name : String]
+  [ty : AstType]) : ResultLowerExpr
+  (let
+    [id : i64
+      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? id)
+      (lower-register-address-taken-local-read ctx state id ty)
+      (ResultLowerExpr.Ok
+        (LowerExpr.Expr
+          state
+          (CompilerIrValue.Global (lower-resolve-name state name))
+          ty)))))
+
+(define (lower-var-id-storage-aware
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [name-id : i64]
+  [ty : AstType]) : ResultLowerExpr
+  (let
+    [id : i64
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name-id
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? id)
+      (lower-register-address-taken-local-read ctx state id ty)
+      (ResultLowerExpr.Ok
+        (LowerExpr.Expr
+          state
+          (CompilerIrValue.Global
+            (lower-resolve-name state (intern-str name-id)))
+          ty)))))
+
 (define (lower-function-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
     [(AstType.Func _ _) true]
@@ -15009,6 +15135,7 @@
           names
           type-cache
           mode
+          (lower_i64_i64_map.with-capacity 8)
           1
           param-count)]
       (match (lower-load-captures
@@ -18504,7 +18631,7 @@
   (lower-materialize-group-global
     ctx
     (if (sym_i64_env.sym-i64-contains env name)
-      (lower-var state env name expr-ty)
+      (lower-var-storage-aware ctx state env name expr-ty)
       (lower-nullary-variant-or-function-value
         ctx
         state
@@ -18527,7 +18654,7 @@
   (lower-materialize-group-global
     ctx
     (if (sym_i64_env.sym-i64-contains-id env name-id)
-      (lower-var-id state env name-id expr-ty)
+      (lower-var-id-storage-aware ctx state env name-id expr-ty)
       (let
         [name : String (intern-str name-id)]
         (match (lower-source-name-lookup-key ctx type-env name)
@@ -19394,14 +19521,25 @@
                 (tc-type-without-regions (tc-resolve-type ctx place-ty))))
             (match (lower-state-alloc-var state)
               [(LowerAlloc.Alloc allocated var-id)
-                (ResultLowerExpr.Ok
-                  (LowerExpr.Expr
+                (let
+                  [addr-state : LowerState
                     (lower-state-emit-at-expr
                       allocated
                       (CompilerIrInstr.AddrOf var-id local-id)
-                      origin)
-                    (CompilerIrValue.Var var-id)
-                    (tc-type-without-regions (tc-resolve-type ctx place-ty))))]))]
+                      origin)]
+                  [marked-state : LowerState
+                    (if (lower-type-register-resident? ctx place-ty)
+                      (lower-state-register-address-taken-mark
+                        addr-state
+                        local-id)
+                      addr-state)]
+                  [addr-ty : AstType
+                    (tc-type-without-regions (tc-resolve-type ctx place-ty))]
+                  (ResultLowerExpr.Ok
+                    (LowerExpr.Expr
+                      marked-state
+                      (CompilerIrValue.Var var-id)
+                      addr-ty)))]))]
         [(ResultTcType.Err message)
           (ResultLowerExpr.Err (box (lower-diagnostic-at-expr origin message)))])
       (ResultLowerExpr.Err
@@ -27638,6 +27776,7 @@
     (LowerMaybeDirectStore.No)))
 
 (define (lower-mutable-var-storage-address-id
+  [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [name : i64]
@@ -27652,14 +27791,19 @@
     (if (compiler-symbols-handle-found? local-id)
       (match (lower-state-alloc-var state)
         [(LowerAlloc.Alloc allocated var-id)
-          (ResultLowerExpr.Ok
-            (LowerExpr.Expr
+          (let
+            [addr-state : LowerState
               (lower-state-emit-at-expr
                 allocated
                 (CompilerIrInstr.AddrOf var-id local-id)
-                origin)
-              (CompilerIrValue.Var var-id)
-              place-ty))])
+                origin)]
+            (ResultLowerExpr.Ok
+              (LowerExpr.Expr
+                (if (lower-type-register-resident? ctx place-ty)
+                  (lower-state-register-address-taken-mark addr-state local-id)
+                  addr-state)
+                (CompilerIrValue.Var var-id)
+                place-ty)))])
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
@@ -27706,6 +27850,7 @@
             (if (lower-borrow-place-value-reference? ctx place-ty)
               (lower-var-id state env name place-ty)
               (lower-mutable-var-storage-address-id
+                ctx
                 state
                 env
                 name
@@ -43093,6 +43238,7 @@
           names
           type-cache
           mode
+          (lower_i64_i64_map.with-capacity 8)
           0
           param-count)]
       (if (lower-supported-function-return-type? ctx ret-ty)
@@ -46937,6 +47083,29 @@
       (ptr-write! p 41)
       (ptr-read p)
       (ptr->int (ptr-offset (ptr-cast (int->ptr n : (MutPtr i64)) : (Ptr i64)) 2)))))")
+
+(define (compiler-lower-register-addr-of-source) : String
+  "(defstruct Tiny (a i32) (b i32))
+(defstruct Pair (x i64) (y i64))
+(defstruct Wrap (tiny Tiny))
+(define (main) : i64
+  (let
+    [tiny : Tiny (Tiny (cast 1 : i32) (cast 2 : i32))]
+    [pair : Pair (Pair 3 4)]
+    [wrap : Wrap (Wrap (Tiny (cast 7 : i32) (cast 8 : i32)))]
+    [whole : (MutPtr Pair) (unsafe (ptr-addr-of pair))]
+    [tiny-field : (MutPtr i32) (unsafe (ptr-addr-of (struct-get tiny b)))]
+    [pair-field : (MutPtr i64) (unsafe (ptr-addr-of (struct-get pair y)))]
+    [nested-field : (MutPtr i32)
+      (unsafe (ptr-addr-of (struct-get (struct-get wrap tiny) b)))]
+    (unsafe
+      (ptr-write! tiny-field (cast 5 : i32))
+      (ptr-write! pair-field 6)
+      (ptr-write! nested-field (cast 9 : i32))
+      (+ (cast (ptr->int whole) : i64)
+        (+ (cast (ptr-read tiny-field) : i64)
+          (+ (ptr-read pair-field)
+            (cast (ptr-read nested-field) : i64)))))))")
 
 (define (compiler-lower-raw-pointer-direct-call-source) : String
   "(extern (raw-make) : (MutPtr i64))
@@ -55362,6 +55531,7 @@
 (define (compiler-lower-raw-pointer-ops-ok?) : bool
   (and
     (compiler-lower-raw-pointer-addr-of-shape-ok?)
+    (compiler-lower-register-addr-of-shape-ok?)
     (compiler-lower-ok? (compiler-lower-raw-pointer-direct-call-source))
     (compiler-lower-ok? (compiler-lower-raw-pointer-call-value-source))))
 
@@ -55373,6 +55543,19 @@
           (and
             (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
             (= (lower-test-function-addr-of-count functions "main") 1)
+            (>= (lower-test-function-store-ptr-count functions "main") 2))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-register-addr-of-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-register-addr-of-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-call-count functions "main" "tl_alloc") 0)
+            (>= (lower-test-function-addr-of-count functions "main") 3)
+            (>= (lower-test-function-gep-offset-count functions "main" 4) 1)
+            (>= (lower-test-function-gep-offset-count functions "main" 8) 1)
             (>= (lower-test-function-store-ptr-count functions "main") 2))])]
     [(ResultCompilerLower.Err _) false]))
 

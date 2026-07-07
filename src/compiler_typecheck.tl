@@ -3155,6 +3155,19 @@
   (let [item : Pair (Pair 1 2)]
     (unsafe (ptr-addr-of (struct-get item y)))))")
 
+(define (compiler-typecheck-raw-pointer-addr-of-register-aggregate-source) : String
+  "(defstruct Pair (x i64) (y i64))
+(define (main) : (MutPtr Pair)
+  (let [item : Pair (Pair 1 2)]
+    (unsafe (ptr-addr-of item))))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-nested-field-source) : String
+  "(defstruct Tiny (a i32) (b i32))
+(defstruct Wrap (tiny Tiny))
+(define (main) : (MutPtr i32)
+  (let [item : Wrap (Wrap (Tiny (cast 1 : i32) (cast 2 : i32)))]
+    (unsafe (ptr-addr-of (struct-get (struct-get item tiny) b)))))")
+
 (define (compiler-typecheck-raw-pointer-addr-of-fixed-array-element-source) : String
   "(define (main [i : i64]) : (MutPtr i64)
   (let [items : (Array i64 2) (array 1 2)]
@@ -3267,6 +3280,12 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-raw-pointer-addr-of-field-source))
     (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-register-field-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-register-aggregate-source))
+    (compiler-typecheck-ok?
+      (compiler-typecheck-raw-pointer-addr-of-nested-field-source))
+    (compiler-typecheck-ok?
       (compiler-typecheck-raw-pointer-addr-of-fixed-array-element-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-raw-pointer-addr-of-nested-fixed-array-element-source))
@@ -3315,9 +3334,6 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-mut-ref-root-source)
       "typecheck: ptr-addr-of reference roots are not addressable")
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-raw-pointer-addr-of-register-field-source)
-      "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-temp-source)
       "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")

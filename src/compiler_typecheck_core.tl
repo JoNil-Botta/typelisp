@@ -13668,26 +13668,6 @@
             [(AstType.MutRef _ _)
               (ResultTcType.Err
                 "typecheck: ptr-addr-of reference roots are not addressable")]
-            [(AstType.Struct struct-name)
-              (if (tc-name-register-resident? ctx (intern-str struct-name))
-                (ResultTcType.Err
-                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
-                (ResultTcType.Ok ty))]
-            [(AstType.StructArgs struct-name _)
-              (if (tc-name-register-resident? ctx (intern-str struct-name))
-                (ResultTcType.Err
-                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
-                (ResultTcType.Ok ty))]
-            [(AstType.Enum enum-name)
-              (if (tc-name-register-resident? ctx (intern-str enum-name))
-                (ResultTcType.Err
-                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
-                (ResultTcType.Ok ty))]
-            [(AstType.EnumArgs enum-name _)
-              (if (tc-name-register-resident? ctx (intern-str enum-name))
-                (ResultTcType.Err
-                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
-                (ResultTcType.Ok ty))]
             [_ (ResultTcType.Ok ty)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.StructGet receiver-box field)

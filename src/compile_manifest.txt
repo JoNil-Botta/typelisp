@@ -678,7 +678,7 @@ decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#26
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 
-decision|src/tlci_loader.tl|tlci comptime image loader core (#2657): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup ranges, applies load-base fixups, and is exercised through the tlci_loader_smoke integration case; native macro dispatch remains staged
+decision|src/tlci_loader.tl|tlci comptime image loader core (#2657): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup ranges, applies load-base fixups, calls tlci_image_entry through the backend raw C-ABI bridge, validates image registration, and is exercised through the tlci_loader_smoke integration case; native macro dispatch remains staged
 
 case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:

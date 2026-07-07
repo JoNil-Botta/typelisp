@@ -44567,8 +44567,6 @@
   (array.make-array i64 4096))
 (define macro-generated-module-memo-targets : (Array i64)
   (array.make-array i64 4096))
-(define macro-generated-module-memo-full-bodies : (Array bool)
-  (array.make-array bool 4096))
 
 ;; Per-identity export-summary (plan P2): the materialized module's decl list
 ;; (module header + generated body). env-extend-with-module folds this into the
@@ -44657,8 +44655,7 @@
 (define (macro-generated-module-memo-put!
   [identity : String]
   [target-module : String]
-  [summary : AstDeclList]
-  [full-body? : bool]) : unit
+  [summary : AstDeclList]) : unit
   (let
     [identity-id : i64 (intern identity)]
     [target-id : i64 (intern target-module)]
@@ -44687,10 +44684,6 @@
                       cursor
                       target-id)
                     (array-set!
-                      macro-generated-module-memo-full-bodies
-                      cursor
-                      full-body?)
-                    (array-set!
                       macro-generated-module-memo-summaries
                       cursor
                       summary)
@@ -44699,27 +44692,16 @@
                       (+ macro-generated-module-memo-count 1))
                     (set! done true))
                   (if (= slot key)
-                    (let
-                      [stored-full? : bool
-                        (array-ref
-                          macro-generated-module-memo-full-bodies
-                          cursor)]
-                      (if (and stored-full? (not full-body?))
-                        (set! done true)
-                        (begin
-                          (array-set!
-                            macro-generated-module-memo-targets
-                            cursor
-                            target-id)
-                          (array-set!
-                            macro-generated-module-memo-full-bodies
-                            cursor
-                            (or stored-full? full-body?))
-                          (array-set!
-                            macro-generated-module-memo-summaries
-                            cursor
-                            summary)
-                          (set! done true))))
+                    (begin
+                      (array-set!
+                        macro-generated-module-memo-targets
+                        cursor
+                        target-id)
+                      (array-set!
+                        macro-generated-module-memo-summaries
+                        cursor
+                        summary)
+                      (set! done true))
                     (begin
                       (set!
                         cursor
@@ -44766,90 +44748,6 @@
                         (- macro-generated-module-memo-capacity 1)))
                     (set! steps (+ steps 1)))))))
           out)))))
-
-(define (macro-generated-module-memo-full-body? [identity : String]) : bool
-  (let
-    [identity-id : i64 (intern identity)]
-    (begin
-      (macro-generated-module-memo-ensure!)
-      (let
-        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
-        [key : i64 (+ identity-id 1)]
-        [steps : i64 0]
-        [out : bool false]
-        [done : bool false]
-        (begin
-          (while (if done
-            false
-            (< steps macro-generated-module-memo-capacity))
-            (let
-              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
-              (if (= slot 0)
-                (set! done true)
-                (if (= slot key)
-                  (begin
-                    (set!
-                      out
-                      (array-ref macro-generated-module-memo-full-bodies cursor))
-                    (set! done true))
-                  (begin
-                    (set!
-                      cursor
-                      (bit-and
-                        (+ cursor 1)
-                        (- macro-generated-module-memo-capacity 1)))
-                    (set! steps (+ steps 1)))))))
-          out)))))
-
-(define (macro-generated-module-memo-get-full [identity : String]) : CompilerMaybeString
-  (if (macro-generated-module-memo-full-body? identity)
-    (macro-generated-module-memo-get identity)
-    CompilerNoString))
-
-(define (macro-generated-module-memo-full-body-gate-ok?) : bool
-  (let
-    [_reset : unit (macro-generated-module-memo-reset!)]
-    [_enum : unit
-      (macro-generated-module-memo-put!
-        "test.generated.result"
-        "test.generated.target"
-        (ast-decl-list-new)
-        false)]
-    [enum-hit : bool
-      (match (macro-generated-module-memo-get "test.generated.result")
-        [(CompilerSomeString target) (string.eq target "test.generated.target")]
-        [(CompilerNoString) false])]
-    [full-miss : bool
-      (match (macro-generated-module-memo-get-full "test.generated.result")
-        [(CompilerSomeString _) false]
-        [(CompilerNoString) true])]
-    [_full : unit
-      (macro-generated-module-memo-put!
-        "test.generated.result"
-        "test.generated.target"
-        (ast-decl-list-new)
-        true)]
-    [full-hit : bool
-      (match (macro-generated-module-memo-get-full "test.generated.result")
-        [(CompilerSomeString target) (string.eq target "test.generated.target")]
-        [(CompilerNoString) false])]
-    [_ignored-downgrade : unit
-      (macro-generated-module-memo-put!
-        "test.generated.result"
-        "test.generated.target"
-        (ast-decl-list-new)
-        false)]
-    [still-full : bool
-      (match (macro-generated-module-memo-get-full "test.generated.result")
-        [(CompilerSomeString target) (string.eq target "test.generated.target")]
-        [(CompilerNoString) false])]
-    (and enum-hit full-miss full-hit still-full)))
-
-(test
-  macro-generated-module-memo-full-body-gate
-  (if (macro-generated-module-memo-full-body-gate-ok?)
-    unit
-    (io.panic "typecheck: generated module memo full-body gate failed")))
 
 (defenum MacroMaybeSpliceDecls
   (No)
@@ -50648,30 +50546,18 @@
         [idx : i64 start]
         [found : bool false]
         [helper : bool false]
-        [done : bool false]
         (begin
-          (while (and (not helper) (not done))
-            (begin
-              (set!
-                idx
-                (string.index-of-byte (& source) idx (cast alias-first : u8)))
-              (if (or (< idx 0) (> (+ idx alias-len) n))
-                (set! done true)
-                (begin
-                  (if (compiler-load-source-qualified-alias-token-at?
-                    source
-                    alias
-                    idx)
-                    (begin
-                      (set! found true)
-                      (if (macro-generated-result-source-helper-at?
-                        source
-                        alias
-                        idx)
-                        (set! helper true)
-                        unit))
-                    unit)
-                  (set! idx (+ idx 1))))))
+          (while (and (not helper) (<= (+ idx alias-len) n))
+            (if (and
+              (= (string.string-ref source idx) alias-first)
+              (compiler-load-source-qualified-alias-token-at? source alias idx))
+              (begin
+                (set! found true)
+                (if (macro-generated-result-source-helper-at? source alias idx)
+                  (set! helper true)
+                  unit))
+              unit)
+            (set! idx (+ idx 1)))
           (and found (not helper)))))))
 
 (define (macro-generated-result-source-enum-only?
@@ -52310,22 +52196,21 @@
 ;; body (never the surface-empty path, which emits nothing), so every later import
 ;; of the same identity — in any file, in any pass — resolves to this single
 ;; canonical module via macro-generated-module-memo-get and emits only a marker
-;; import.
+;; import. Enum-only result materializations skip this memo so a later helper
+;; import can replay missing declarations and record the full body.
 (define (macro-materialized-record-result
   [identity : String]
   [target-module : String]
   [summary : AstDeclList]
-  [full-body? : bool]
+  [memoize? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (begin
     (match result
       [(ResultMacroDeclExpansion.Ok _ _)
         (begin
-          (macro-generated-module-memo-put!
-            identity
-            target-module
-            summary
-            full-body?)
+          (if memoize?
+            (macro-generated-module-memo-put! identity target-module summary)
+            unit)
           (cfg
             compile-profile
             (compiler-tc-macro-profile-note-generated-module-materialization)))]
@@ -52343,7 +52228,7 @@
   [decl-path : String]
   [macro-name : String]
   [identity : String]
-  [full-body? : bool]
+  [memoize? : bool]
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -52369,7 +52254,7 @@
       identity
       target-module
       materialized
-      full-body?
+      memoize?
       (match (macro-find-module-body-decls orig-decls target-module)
         [(MacroMaybeDeclList.Some existing-body)
           (if (macro-decls-contain-generated-key? existing-body identity)
@@ -52532,7 +52417,7 @@
   [definition-module : String]
   [macro-env : CtfeEnv]
   [rewrite-imports? : bool]
-  [full-body? : bool]
+  [memoize? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -52593,7 +52478,7 @@
                         decl-path
                         macro-name
                         identity
-                        full-body?
+                        memoize?
                         final-body
                         call-expr))]
                   [_
@@ -52639,7 +52524,7 @@
                     decl-path
                     macro-name
                     identity
-                    full-body?
+                    memoize?
                     final-body
                     call-expr))]
               [_
@@ -52907,12 +52792,7 @@
                                     call-ctx
                                     definition-module
                                     params)
-                                    (if (and
-                                      result-macro?
-                                      (not result-enum-only?))
-                                      (macro-generated-module-memo-get-full
-                                        identity)
-                                      (macro-generated-module-memo-get identity))
+                                    (macro-generated-module-memo-get identity)
                                     CompilerNoString)]
                                 (match shortcut-target
                                   [(CompilerSomeString target-module)

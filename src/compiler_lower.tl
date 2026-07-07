@@ -188,9 +188,9 @@
     i64
     i64
     String
-    (Box CompilerIrInstrList)
-    (Box CompilerIrBlockList)
-    (Box CompilerIrFunctionList)
+    CompilerIrInstrBuilder
+    CompilerIrBlockBuilder
+    CompilerIrFunctionBuilder
     String
     (Box CompilerSourceSpans)
     LowerNameCache
@@ -8995,7 +8995,8 @@
 
 (define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
   (match state
-    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _) (box-get functions)]))
+    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _)
+      (compiler-ir-function-builder-to-list functions)]))
 
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
@@ -9175,21 +9176,25 @@
         mode
         tail-param-start
         tail-param-end)
-      (LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        (box (compiler-ir-instr-cons instr (box-get current-instrs)))
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        tail-param-start
-        tail-param-end)]))
+      (let
+        [next-instrs : CompilerIrInstrBuilder current-instrs]
+        (begin
+          (compiler-ir-instr-builder-push! (&mut next-instrs) instr)
+          (LowerState.State
+            next-var
+            next-label
+            next-lambda
+            current-label
+            next-instrs
+            blocks
+            functions
+            function
+            spans
+            names
+            type-cache
+            mode
+            tail-param-start
+            tail-param-end)))]))
 
 (define (lower-state-record-instr-span
   [state : LowerState]
@@ -9263,13 +9268,16 @@
         next-label-id
         next-lambda
         next-label
-        (box CompilerIrInstrList.Nil)
-        (box
-          (compiler-ir-block-cons
-            (CompilerIrBlock.Block
-              current-label
-              (lower-instr-seq-from-reversed-list (box-get current-instrs)))
-            (box-get blocks)))
+        (compiler-ir-instr-builder-new)
+        (let
+          [next-blocks : CompilerIrBlockBuilder blocks]
+          (begin
+            (compiler-ir-block-builder-push!
+              (&mut next-blocks)
+              (CompilerIrBlock.Block
+                current-label
+                (compiler-ir-instr-builder-to-seq current-instrs)))
+            next-blocks))
         functions
         function
         spans
@@ -9300,12 +9308,25 @@
         [current-block : CompilerIrBlock
           (CompilerIrBlock.Block
             current-label
-            (lower-instr-seq-from-reversed-list (box-get current-instrs)))]
-        (compiler-ir-block-list-compact-reversed
-          (compiler-ir-block-cons current-block (box-get blocks))))]))
+            (compiler-ir-instr-builder-to-seq current-instrs))]
+        [next-blocks : CompilerIrBlockBuilder blocks]
+        (begin
+          (compiler-ir-block-builder-push! (&mut next-blocks) current-block)
+          (compiler-ir-block-builder-to-list next-blocks)))]))
 
 (define (lower-state-build-function-blocks [state : LowerState]) : CompilerIrBlockList
   (lower-state-build-blocks state))
+
+(define (lower-state-build-functions-with
+  [state : LowerState]
+  [func : CompilerIrFunction]) : CompilerIrFunctionList
+  (match state
+    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _)
+      (let
+        [out : CompilerIrFunctionBuilder functions]
+        (begin
+          (compiler-ir-function-builder-push! (&mut out) func)
+          (compiler-ir-function-builder-to-list out)))]))
 
 (define (lower-state-add-functions
   [state : LowerState]
@@ -9327,21 +9348,27 @@
         mode
         tail-param-start
         tail-param-end)
-      (LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        (box (lower-function-list-append new-functions (box-get functions)))
-        function
-        (box new-spans)
-        names
-        type-cache
-        mode
-        tail-param-start
-        tail-param-end)]))
+      (let
+        [next-functions : CompilerIrFunctionBuilder functions]
+        (begin
+          (compiler-ir-function-builder-append-list!
+            (&mut next-functions)
+            new-functions)
+          (LowerState.State
+            next-var
+            next-label
+            next-lambda
+            current-label
+            current-instrs
+            blocks
+            next-functions
+            function
+            (box new-spans)
+            names
+            type-cache
+            mode
+            tail-param-start
+            tail-param-end)))]))
 
 (define (lower-materialize
   [state : LowerState]
@@ -14953,9 +14980,9 @@
           0
           0
           "entry"
-          (box CompilerIrInstrList.Nil)
-          (box CompilerIrBlockList.Nil)
-          (box CompilerIrFunctionList.Nil)
+          (compiler-ir-instr-builder-new)
+          (compiler-ir-block-builder-new)
+          (compiler-ir-function-builder-new)
           logical-name
           (box function-spans)
           names
@@ -14985,7 +15012,8 @@
               sret-var)
               [(ResultLowerState.Ok final-state)
                 (ResultLowerFunction.Ok
-                  (compiler-ir-function-cons
+                  (lower-state-build-functions-with
+                    final-state
                     (CompilerIrFunction.Function
                       logical-name
                       (if (>= sret-var 0)
@@ -14995,8 +15023,7 @@
                         (lower-captured-param-list ctx params))
                       ret-ty
                       (lower-state-next-var final-state)
-                      (lower-state-build-function-blocks final-state))
-                    (lower-state-functions final-state))
+                      (lower-state-build-function-blocks final-state)))
                   (lower-state-spans final-state))]
               [(ResultLowerState.Err message) (ResultLowerFunction.Err message)]))]
         [(ResultLowerEnv.Err message) (ResultLowerFunction.Err message)]))))
@@ -43014,9 +43041,9 @@
           0
           0
           "entry"
-          (box CompilerIrInstrList.Nil)
-          (box CompilerIrBlockList.Nil)
-          (box CompilerIrFunctionList.Nil)
+          (compiler-ir-instr-builder-new)
+          (compiler-ir-block-builder-new)
+          (compiler-ir-function-builder-new)
           logical-name
           (box function-spans)
           names
@@ -43028,7 +43055,8 @@
         (match (lower-tail-expr ctx state env type-env body ret-ty sret-var)
           [(ResultLowerState.Ok final-state)
             (ResultLowerFunction.Ok
-              (compiler-ir-function-cons
+              (lower-state-build-functions-with
+                final-state
                 (CompilerIrFunction.Function
                   logical-name
                   (if (>= sret-var 0)
@@ -43038,8 +43066,7 @@
                     (lower-param-list ctx params 0))
                   ret-ir-ty
                   (lower-state-next-var final-state)
-                  (lower-state-build-function-blocks final-state))
-                (lower-state-functions final-state))
+                  (lower-state-build-function-blocks final-state)))
               (lower-state-spans final-state))]
           [(ResultLowerState.Err message) (ResultLowerFunction.Err message)])
         (ResultLowerFunction.Err
@@ -43726,29 +43753,35 @@
     [leaf7-ebx-var : i64 (+ base 8)]
     [feature-mask-var : i64 (+ base 9)]
     [feature-ok-var : i64 (+ base 10)]
-    (compiler-ir-block-cons
-      (compiler-ir-block
-        check-label
-        (compiler-ir-instr-cons
-          (CompilerIrInstr.CpuId
-            max-leaf-var
-            (CompilerIrValue.I64 0)
-            (CompilerIrValue.I64 0)
-            0)
+    [blocks : CompilerIrBlockBuilder
+      (compiler-ir-block-builder-with-capacity
+        (+ 4 (compiler-ir-block-list-count tail)))]
+    (begin
+      (compiler-ir-block-builder-push!
+        (&mut blocks)
+        (compiler-ir-block
+          check-label
           (compiler-ir-instr-cons
-            (CompilerIrInstr.BinOp
-              max-ok-var
-              CompilerIrBinOp.Ge
-              (CompilerIrValue.Var max-leaf-var)
-              (CompilerIrValue.I64 7)
-              (AstType.Bool))
+            (CompilerIrInstr.CpuId
+              max-leaf-var
+              (CompilerIrValue.I64 0)
+              (CompilerIrValue.I64 0)
+              0)
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Branch
-                (CompilerIrValue.Var max-ok-var)
-                osxsave-label
-                fallback-label)
-              CompilerIrInstrList.Nil))))
-      (compiler-ir-block-cons
+              (CompilerIrInstr.BinOp
+                max-ok-var
+                CompilerIrBinOp.Ge
+                (CompilerIrValue.Var max-leaf-var)
+                (CompilerIrValue.I64 7)
+                (AstType.Bool))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Branch
+                  (CompilerIrValue.Var max-ok-var)
+                  osxsave-label
+                  fallback-label)
+                CompilerIrInstrList.Nil)))))
+      (compiler-ir-block-builder-push!
+        (&mut blocks)
         (compiler-ir-block
           osxsave-label
           (compiler-ir-instr-cons
@@ -43776,62 +43809,65 @@
                     (CompilerIrValue.Var osxsave-ok-var)
                     xcr0-label
                     fallback-label)
-                  CompilerIrInstrList.Nil)))))
-        (compiler-ir-block-cons
-          (compiler-ir-block
-            xcr0-label
+                  CompilerIrInstrList.Nil))))))
+      (compiler-ir-block-builder-push!
+        (&mut blocks)
+        (compiler-ir-block
+          xcr0-label
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Xgetbv xcr0-var (CompilerIrValue.I64 0))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Xgetbv xcr0-var (CompilerIrValue.I64 0))
+              (CompilerIrInstr.BinOp
+                xcr0-mask-var
+                CompilerIrBinOp.BitAnd
+                (CompilerIrValue.Var xcr0-var)
+                (CompilerIrValue.I64 xcr0-mask)
+                (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.BinOp
-                  xcr0-mask-var
-                  CompilerIrBinOp.BitAnd
-                  (CompilerIrValue.Var xcr0-var)
+                  xcr0-ok-var
+                  CompilerIrBinOp.Eq
+                  (CompilerIrValue.Var xcr0-mask-var)
                   (CompilerIrValue.I64 xcr0-mask)
-                  (AstType.I64))
+                  (AstType.Bool))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.BinOp
-                    xcr0-ok-var
-                    CompilerIrBinOp.Eq
-                    (CompilerIrValue.Var xcr0-mask-var)
-                    (CompilerIrValue.I64 xcr0-mask)
-                    (AstType.Bool))
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.Branch
-                      (CompilerIrValue.Var xcr0-ok-var)
-                      leaf7-label
-                      fallback-label)
-                    CompilerIrInstrList.Nil)))))
-          (compiler-ir-block-cons
-            (compiler-ir-block
-              leaf7-label
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var xcr0-ok-var)
+                    leaf7-label
+                    fallback-label)
+                  CompilerIrInstrList.Nil))))))
+      (compiler-ir-block-builder-push!
+        (&mut blocks)
+        (compiler-ir-block
+          leaf7-label
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.CpuId
+              leaf7-ebx-var
+              (CompilerIrValue.I64 7)
+              (CompilerIrValue.I64 0)
+              1)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.BinOp
+                feature-mask-var
+                CompilerIrBinOp.BitAnd
+                (CompilerIrValue.Var leaf7-ebx-var)
+                (CompilerIrValue.I64 feature-mask)
+                (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.CpuId
-                  leaf7-ebx-var
-                  (CompilerIrValue.I64 7)
-                  (CompilerIrValue.I64 0)
-                  1)
+                (CompilerIrInstr.BinOp
+                  feature-ok-var
+                  CompilerIrBinOp.Eq
+                  (CompilerIrValue.Var feature-mask-var)
+                  (CompilerIrValue.I64 feature-mask)
+                  (AstType.Bool))
                 (compiler-ir-instr-cons
-                  (CompilerIrInstr.BinOp
-                    feature-mask-var
-                    CompilerIrBinOp.BitAnd
-                    (CompilerIrValue.Var leaf7-ebx-var)
-                    (CompilerIrValue.I64 feature-mask)
-                    (AstType.I64))
-                  (compiler-ir-instr-cons
-                    (CompilerIrInstr.BinOp
-                      feature-ok-var
-                      CompilerIrBinOp.Eq
-                      (CompilerIrValue.Var feature-mask-var)
-                      (CompilerIrValue.I64 feature-mask)
-                      (AstType.Bool))
-                    (compiler-ir-instr-cons
-                      (CompilerIrInstr.Branch
-                        (CompilerIrValue.Var feature-ok-var)
-                        select-label
-                        fallback-label)
-                      CompilerIrInstrList.Nil)))))
-            tail))))))
+                  (CompilerIrInstr.Branch
+                    (CompilerIrValue.Var feature-ok-var)
+                    select-label
+                    fallback-label)
+                  CompilerIrInstrList.Nil))))))
+      (compiler-ir-block-builder-append-list! (&mut blocks) tail)
+      (compiler-ir-block-builder-to-list blocks))))
 
 (define (lower-dispatch-select-blocks
   [cache-name : String]
@@ -43843,21 +43879,26 @@
   [maybe-avx512 : TcMaybeString]
   [base : i64]) : CompilerIrBlockList
   (let
-    [scalar-blocks : CompilerIrBlockList
-      (compiler-ir-block-cons
-        (lower-dispatch-select-block
-          "select_scalar"
-          cache-name
-          scalar-name
-          fn-ty
-          args
-          ret-ty
-          (+ base 24))
-        CompilerIrBlockList.Nil)]
-    [with-avx2 : CompilerIrBlockList
+    [blocks : CompilerIrBlockBuilder
+      (compiler-ir-block-builder-with-capacity 3)]
+    (begin
+      (match maybe-avx512
+        [(TcMaybeString.Some avx512-name)
+          (compiler-ir-block-builder-push!
+            (&mut blocks)
+            (lower-dispatch-select-block
+              "select_avx512"
+              cache-name
+              avx512-name
+              fn-ty
+              args
+              ret-ty
+              (+ base 26)))]
+        [(TcMaybeString.No) unit])
       (match maybe-avx2
         [(TcMaybeString.Some avx2-name)
-          (compiler-ir-block-cons
+          (compiler-ir-block-builder-push!
+            (&mut blocks)
             (lower-dispatch-select-block
               "select_avx2"
               cache-name
@@ -43865,22 +43906,19 @@
               fn-ty
               args
               ret-ty
-              (+ base 25))
-            scalar-blocks)]
-        [(TcMaybeString.No) scalar-blocks])]
-    (match maybe-avx512
-      [(TcMaybeString.Some avx512-name)
-        (compiler-ir-block-cons
-          (lower-dispatch-select-block
-            "select_avx512"
-            cache-name
-            avx512-name
-            fn-ty
-            args
-            ret-ty
-            (+ base 26))
-          with-avx2)]
-      [(TcMaybeString.No) with-avx2])))
+              (+ base 25)))]
+        [(TcMaybeString.No) unit])
+      (compiler-ir-block-builder-push!
+        (&mut blocks)
+        (lower-dispatch-select-block
+          "select_scalar"
+          cache-name
+          scalar-name
+          fn-ty
+          args
+          ret-ty
+          (+ base 24)))
+      (compiler-ir-block-builder-to-list blocks))))
 
 (define (lower-dispatch-resolve-label
   [maybe-avx2 : TcMaybeString]
@@ -43966,45 +44004,53 @@
           (AstDispatchIsa.Scalar))
           [(TcMaybeString.Some scalar-name)
             (let
-              [blocks : CompilerIrBlockList
-                (compiler-ir-block-cons
+              [tail-blocks : CompilerIrBlockList
+                (lower-dispatch-resolve-blocks
+                  maybe-avx2
+                  maybe-avx512
+                  param-count
+                  (lower-dispatch-select-blocks
+                    cache-name
+                    fn-ty
+                    args
+                    ret-ty
+                    scalar-name
+                    maybe-avx2
+                    maybe-avx512
+                    param-count))]
+              [blocks : CompilerIrBlockBuilder
+                (compiler-ir-block-builder-with-capacity
+                  (+ 2 (compiler-ir-block-list-count tail-blocks)))]
+              (begin
+                (compiler-ir-block-builder-push!
+                  (&mut blocks)
                   (lower-dispatch-entry-block
                     cache-name
                     fn-ty
                     param-count
-                    (lower-dispatch-resolve-label maybe-avx2 maybe-avx512))
-                  (compiler-ir-block-cons
-                    (lower-dispatch-cached-block
-                      cache-name
-                      args
-                      ret-ty
-                      (+ param-count 23))
-                    (lower-dispatch-resolve-blocks
-                      maybe-avx2
-                      maybe-avx512
-                      param-count
-                      (lower-dispatch-select-blocks
-                        cache-name
-                        fn-ty
-                        args
-                        ret-ty
-                        scalar-name
-                        maybe-avx2
-                        maybe-avx512
-                        param-count))))]
-              (ResultLowerFunction.Ok
-                (compiler-ir-function-cons
-                  (CompilerIrFunction.Function
-                    logical-name
-                    (lower-dispatch-param-list-from-types
-                      ctx
-                      clean-param-types
-                      0)
+                    (lower-dispatch-resolve-label maybe-avx2 maybe-avx512)))
+                (compiler-ir-block-builder-push!
+                  (&mut blocks)
+                  (lower-dispatch-cached-block
+                    cache-name
+                    args
                     ret-ty
-                    (+ param-count 27)
-                    (compiler-ir-block-list-compact blocks))
-                  CompilerIrFunctionList.Nil)
-                spans))]
+                    (+ param-count 23)))
+                (compiler-ir-block-builder-append-list!
+                  (&mut blocks)
+                  tail-blocks)
+                (ResultLowerFunction.Ok
+                  (compiler-ir-function-list-single
+                    (CompilerIrFunction.Function
+                      logical-name
+                      (lower-dispatch-param-list-from-types
+                        ctx
+                        clean-param-types
+                        0)
+                      ret-ty
+                      (+ param-count 27)
+                      (compiler-ir-block-builder-to-list blocks)))
+                  spans)))]
           [(TcMaybeString.No)
             (ResultLowerFunction.Err
               (box
@@ -44120,9 +44166,11 @@
   [spans : CompilerSourceSpans]
   [names : LowerNameCache]
   [mode : CompilerLowerMode]
-  [functions : CompilerIrFunctionList]) : ResultLowerFunction
+  [functions : CompilerIrFunctionBuilder]) : ResultLowerFunction
   (if (>= index (struct-get variants len))
-    (ResultLowerFunction.Ok functions spans)
+    (ResultLowerFunction.Ok
+      (compiler-ir-function-builder-to-list functions)
+      spans)
     (match (lower-dispatch-lower-variant
       ctx
       top-env
@@ -44137,18 +44185,24 @@
       names
       mode)
       [(ResultLowerFunction.Ok lowered-functions function-spans)
-        (lower-dispatch-lower-variants-from
-          ctx
-          top-env
-          type-cache
-          dispatch-name
-          variants
-          (+ index 1)
-          module
-          function-spans
-          names
-          mode
-          (lower-function-list-append lowered-functions functions))]
+        (let
+          [next-functions : CompilerIrFunctionBuilder functions]
+          (begin
+            (compiler-ir-function-builder-append-list!
+              (&mut next-functions)
+              lowered-functions)
+            (lower-dispatch-lower-variants-from
+              ctx
+              top-env
+              type-cache
+              dispatch-name
+              variants
+              (+ index 1)
+              module
+              function-spans
+              names
+              mode
+              next-functions)))]
       [(ResultLowerFunction.Err message) (ResultLowerFunction.Err message)])))
 
 (define (lower-dispatch-lower-variants
@@ -44160,8 +44214,7 @@
   [module : String]
   [spans : CompilerSourceSpans]
   [names : LowerNameCache]
-  [mode : CompilerLowerMode]
-  [functions : CompilerIrFunctionList]) : ResultLowerFunction
+  [mode : CompilerLowerMode]) : ResultLowerFunction
   (lower-dispatch-lower-variants-from
     ctx
     top-env
@@ -44173,7 +44226,7 @@
     spans
     names
     mode
-    functions))
+    (compiler-ir-function-builder-new)))
 
 (define (lower-dispatch-decl
   [ctx : TcContext]
@@ -44204,8 +44257,7 @@
             module
             spans
             name-cache
-            mode
-            CompilerIrFunctionList.Nil)
+            mode)
             [(ResultLowerFunction.Ok variant-functions variant-spans)
               (match (lower-dispatch-thunk-function
                 decl-ctx
@@ -44216,17 +44268,28 @@
                 name-cache
                 variant-spans)
                 [(ResultLowerFunction.Ok thunk-functions thunk-spans)
-                  (ResultLowerDispatchDecl.Ok
-                    (box
-                      (LowerDispatchDecl.Decl
-                        (CompilerIrGlobal.Global
-                          (lower-dispatch-cache-name logical-name)
-                          fn-ty
-                          (CompilerIrValue.I64 0))
-                        (lower-function-list-append
-                          thunk-functions
-                          variant-functions)
-                        thunk-spans)))]
+                  (let
+                    [functions : CompilerIrFunctionBuilder
+                      (compiler-ir-function-builder-with-capacity
+                        (+
+                          (compiler-ir-function-list-count variant-functions)
+                          (compiler-ir-function-list-count thunk-functions)))]
+                    (begin
+                      (compiler-ir-function-builder-append-list!
+                        (&mut functions)
+                        variant-functions)
+                      (compiler-ir-function-builder-append-list!
+                        (&mut functions)
+                        thunk-functions)
+                      (ResultLowerDispatchDecl.Ok
+                        (box
+                          (LowerDispatchDecl.Decl
+                            (CompilerIrGlobal.Global
+                              (lower-dispatch-cache-name logical-name)
+                              fn-ty
+                              (CompilerIrValue.I64 0))
+                            (compiler-ir-function-builder-to-list functions)
+                            thunk-spans)))))]
                 [(ResultLowerFunction.Err message)
                   (ResultLowerDispatchDecl.Err message)])]
             [(ResultLowerFunction.Err message)
@@ -44366,7 +44429,8 @@
     [cur-decls : AstDeclList decls]
     [cur-local-top-env : TcTypeEnv local-top-env]
     [cur-globals : CompilerIrGlobalList globals]
-    [cur-functions : CompilerIrFunctionList functions]
+    [cur-functions : CompilerIrFunctionBuilder
+      (compiler-ir-function-builder-from-list functions)]
     [cur-externs : CompilerIrExternList externs]
     [cur-spans : CompilerSourceSpans spans]
     [cur-name-cache : LowerNameCache name-cache]
@@ -44387,7 +44451,8 @@
                   (box
                     (LowerDeclsSuccess
                       (lower-global-list-reverse cur-globals)
-                      (compiler-ir-function-list-compact-reversed cur-functions)
+                      (compiler-ir-function-builder-snapshot-list
+                        (& cur-functions))
                       (lower-extern-list-reverse cur-externs)
                       cur-spans))))
               (set! done true))]
@@ -44459,11 +44524,9 @@
                                           global-ty
                                           CompilerIrValue.Unit)
                                         cur-globals))
-                                    (set!
-                                      cur-functions
-                                      (lower-function-list-append
-                                        init-funcs
-                                        cur-functions))
+                                    (compiler-ir-function-builder-append-list!
+                                      (&mut cur-functions)
+                                      init-funcs)
                                     (set! cur-spans init-spans)
                                     (set! cur-decls rest))]
                                 [(ResultLowerFunction.Err init-message)
@@ -44568,11 +44631,9 @@
                                   (compiler-lower-profile-detail-finish
                                     "function"
                                     logical-name))
-                                (set!
-                                  cur-functions
-                                  (lower-function-list-append
-                                    lowered-functions
-                                    cur-functions))
+                                (compiler-ir-function-builder-append-list!
+                                  (&mut cur-functions)
+                                  lowered-functions)
                                 (set! cur-externs next-externs)
                                 (set! cur-spans function-spans)
                                 (set! cur-decls rest)))]
@@ -44608,11 +44669,9 @@
                             (set!
                               cur-globals
                               (compiler-ir-global-cons cache-global cur-globals))
-                            (set!
-                              cur-functions
-                              (lower-function-list-append
-                                lowered-functions
-                                cur-functions))
+                            (compiler-ir-function-builder-append-list!
+                              (&mut cur-functions)
+                              lowered-functions)
                             (set! cur-spans function-spans)
                             (set! cur-decls rest))])]
                     [(ResultLowerDispatchDecl.Err message)
@@ -44729,11 +44788,9 @@
                       mode)
                       [(ResultLowerFunction.Ok cleanup-functions cleanup-spans)
                         (begin
-                          (set!
-                            cur-functions
-                            (lower-function-list-append
-                              cleanup-functions
-                              cur-functions))
+                          (compiler-ir-function-builder-append-list!
+                            (&mut cur-functions)
+                            cleanup-functions)
                           (set! cur-spans cleanup-spans)
                           (set! cur-decls rest))]
                       [(ResultLowerFunction.Err message)
@@ -44772,11 +44829,9 @@
                       mode)
                       [(ResultLowerFunction.Ok cleanup-functions cleanup-spans)
                         (begin
-                          (set!
-                            cur-functions
-                            (lower-function-list-append
-                              cleanup-functions
-                              cur-functions))
+                          (compiler-ir-function-builder-append-list!
+                            (&mut cur-functions)
+                            cleanup-functions)
                           (set! cur-spans cleanup-spans)
                           (set! cur-decls rest))]
                       [(ResultLowerFunction.Err message)

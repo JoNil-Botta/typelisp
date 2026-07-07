@@ -792,6 +792,251 @@
   (CompilerIrFunctionList.Array
     (compiler-ir-function-seq-from-reversed-list functions)))
 
+(defstruct CompilerIrInstrBuilder
+  (slots (Array CompilerIrInstr))
+  (len i64))
+
+(defstruct CompilerIrBlockBuilder
+  (slots (Array CompilerIrBlock))
+  (len i64))
+
+(defstruct CompilerIrFunctionBuilder
+  (slots (Array CompilerIrFunction))
+  (len i64))
+
+(define (compiler-ir-builder-capacity [capacity : i64]) : i64
+  (if (< capacity 1)
+    1
+    capacity))
+
+(define (compiler-ir-instr-builder-with-capacity [capacity : i64]) : CompilerIrInstrBuilder
+  (let
+    [cap : i64 (compiler-ir-builder-capacity capacity)]
+    (CompilerIrInstrBuilder (make-array CompilerIrInstr cap) 0)))
+
+(define (compiler-ir-instr-builder-new) : CompilerIrInstrBuilder
+  (compiler-ir-instr-builder-with-capacity 16))
+
+(define (compiler-ir-instr-builder-copy-range!
+  [dst : (&mut dst (Array CompilerIrInstr))]
+  [src : (& src (Array CompilerIrInstr))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-instr-builder-grow!
+  [builder : (&mut builder CompilerIrInstrBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get builder slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array CompilerIrInstr) (make-array CompilerIrInstr new-cap)]
+    (begin
+      (compiler-ir-instr-builder-copy-range!
+        (&mut bigger)
+        (& (struct-get builder slots))
+        (struct-get builder len))
+      (set! (struct-get builder slots) bigger))))
+
+(define (compiler-ir-instr-builder-push!
+  [builder : (&mut builder CompilerIrInstrBuilder)]
+  [instr : CompilerIrInstr]) : unit
+  (begin
+    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+      unit
+      (compiler-ir-instr-builder-grow! builder))
+    (let
+      [index : i64 (struct-get builder len)]
+      (begin
+        (array-set! (struct-get builder slots) index instr)
+        (set! (struct-get builder len) (+ index 1))))))
+
+(define (compiler-ir-instr-builder-to-seq [builder : CompilerIrInstrBuilder]) : CompilerIrInstrSeq
+  (CompilerIrInstrSeq (struct-get builder slots) (struct-get builder len)))
+
+(define (compiler-ir-instr-builder-to-list [builder : CompilerIrInstrBuilder]) : CompilerIrInstrList
+  (compiler-ir-instr-seq-to-list (compiler-ir-instr-builder-to-seq builder)))
+
+(define (compiler-ir-block-builder-with-capacity [capacity : i64]) : CompilerIrBlockBuilder
+  (let
+    [cap : i64 (compiler-ir-builder-capacity capacity)]
+    (CompilerIrBlockBuilder (make-array CompilerIrBlock cap) 0)))
+
+(define (compiler-ir-block-builder-new) : CompilerIrBlockBuilder
+  (compiler-ir-block-builder-with-capacity 8))
+
+(define (compiler-ir-block-builder-copy-range!
+  [dst : (&mut dst (Array CompilerIrBlock))]
+  [src : (& src (Array CompilerIrBlock))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-block-builder-grow!
+  [builder : (&mut builder CompilerIrBlockBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get builder slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array CompilerIrBlock) (make-array CompilerIrBlock new-cap)]
+    (begin
+      (compiler-ir-block-builder-copy-range!
+        (&mut bigger)
+        (& (struct-get builder slots))
+        (struct-get builder len))
+      (set! (struct-get builder slots) bigger))))
+
+(define (compiler-ir-block-builder-push!
+  [builder : (&mut builder CompilerIrBlockBuilder)]
+  [block : CompilerIrBlock]) : unit
+  (begin
+    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+      unit
+      (compiler-ir-block-builder-grow! builder))
+    (let
+      [index : i64 (struct-get builder len)]
+      (begin
+        (array-set! (struct-get builder slots) index block)
+        (set! (struct-get builder len) (+ index 1))))))
+
+(define (compiler-ir-block-builder-append-list!
+  [builder : (&mut builder CompilerIrBlockBuilder)]
+  [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (compiler-ir-block-builder-push! builder block)
+        (compiler-ir-block-builder-append-list! builder (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (struct-get seq len)]
+        [src : (Array CompilerIrBlock) (struct-get seq slots)]
+        (while (< index count)
+          (begin
+            (compiler-ir-block-builder-push! builder (array-ref src index))
+            (set! index (+ index 1)))))]))
+
+(define (compiler-ir-block-builder-to-list [builder : CompilerIrBlockBuilder]) : CompilerIrBlockList
+  (CompilerIrBlockList.Array
+    (CompilerIrBlockSeq (struct-get builder slots) (struct-get builder len))))
+
+(define (compiler-ir-function-builder-with-capacity [capacity : i64]) : CompilerIrFunctionBuilder
+  (let
+    [cap : i64 (compiler-ir-builder-capacity capacity)]
+    (CompilerIrFunctionBuilder (make-array CompilerIrFunction cap) 0)))
+
+(define (compiler-ir-function-builder-new) : CompilerIrFunctionBuilder
+  (compiler-ir-function-builder-with-capacity 8))
+
+(define (compiler-ir-function-builder-copy-range!
+  [dst : (&mut dst (Array CompilerIrFunction))]
+  [src : (& src (Array CompilerIrFunction))]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (array-set! dst index (array-ref src index))
+        (set! index (+ index 1))))))
+
+(define (compiler-ir-function-builder-grow!
+  [builder : (&mut builder CompilerIrFunctionBuilder)]) : unit
+  (let
+    [old-cap : i64 (array-length (struct-get builder slots))]
+    [new-cap : i64
+      (if (< old-cap 1)
+        1
+        (* old-cap 2))]
+    [bigger : (Array CompilerIrFunction)
+      (make-array CompilerIrFunction new-cap)]
+    (begin
+      (compiler-ir-function-builder-copy-range!
+        (&mut bigger)
+        (& (struct-get builder slots))
+        (struct-get builder len))
+      (set! (struct-get builder slots) bigger))))
+
+(define (compiler-ir-function-builder-push!
+  [builder : (&mut builder CompilerIrFunctionBuilder)]
+  [func : CompilerIrFunction]) : unit
+  (begin
+    (if (< (struct-get builder len) (array-length (struct-get builder slots)))
+      unit
+      (compiler-ir-function-builder-grow! builder))
+    (let
+      [index : i64 (struct-get builder len)]
+      (begin
+        (array-set! (struct-get builder slots) index func)
+        (set! (struct-get builder len) (+ index 1))))))
+
+(define (compiler-ir-function-builder-append-list!
+  [builder : (&mut builder CompilerIrFunctionBuilder)]
+  [functions : CompilerIrFunctionList]) : unit
+  (match functions
+    [(CompilerIrFunctionList.Nil) unit]
+    [(CompilerIrFunctionList.Cons func rest)
+      (begin
+        (compiler-ir-function-builder-push! builder func)
+        (compiler-ir-function-builder-append-list! builder (box-get rest)))]
+    [(CompilerIrFunctionList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (struct-get seq len)]
+        [src : (Array CompilerIrFunction) (struct-get seq slots)]
+        (while (< index count)
+          (begin
+            (compiler-ir-function-builder-push! builder (array-ref src index))
+            (set! index (+ index 1)))))]))
+
+(define (compiler-ir-function-builder-from-list
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionBuilder
+  (let
+    [builder : CompilerIrFunctionBuilder
+      (compiler-ir-function-builder-with-capacity
+        (compiler-ir-function-list-count functions))]
+    (begin
+      (compiler-ir-function-builder-append-list! (&mut builder) functions)
+      builder)))
+
+(define (compiler-ir-function-builder-to-list
+  [builder : CompilerIrFunctionBuilder]) : CompilerIrFunctionList
+  (CompilerIrFunctionList.Array
+    (CompilerIrFunctionSeq (struct-get builder slots) (struct-get builder len))))
+
+(define (compiler-ir-function-builder-snapshot-list
+  [builder : (& builder CompilerIrFunctionBuilder)]) : CompilerIrFunctionList
+  (let
+    [count : i64 (struct-get builder len)]
+    [slots : (Array CompilerIrFunction) (make-array CompilerIrFunction count)]
+    (begin
+      (compiler-ir-function-builder-copy-range!
+        (&mut slots)
+        (& (struct-get builder slots))
+        count)
+      (CompilerIrFunctionList.Array (CompilerIrFunctionSeq slots count)))))
+
+(define (compiler-ir-function-list-single [func : CompilerIrFunction]) : CompilerIrFunctionList
+  (let
+    [builder : CompilerIrFunctionBuilder
+      (compiler-ir-function-builder-with-capacity 1)]
+    (begin
+      (compiler-ir-function-builder-push! (&mut builder) func)
+      (compiler-ir-function-builder-to-list builder))))
+
 (define (compiler-ir-global-cons
   [global : CompilerIrGlobal]
   [rest : CompilerIrGlobalList]) : CompilerIrGlobalList
@@ -4293,6 +4538,119 @@
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Array _) false]))
 
+(define (compiler-ir-block-list-label-at-cons?
+  [blocks : CompilerIrBlockList]
+  [index : i64]
+  [want : String]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (= index 0)
+        (match block
+          [(CompilerIrBlock.Block label _) (string.eq label want)])
+        (compiler-ir-block-list-label-at-cons? (box-get rest) (- index 1) want))]
+    [(CompilerIrBlockList.Array _) false]))
+
+(define (compiler-ir-block-list-label-at?
+  [blocks : CompilerIrBlockList]
+  [index : i64]
+  [want : String]) : bool
+  (compiler-ir-block-list-label-at-cons?
+    (compiler-ir-block-list-force-cons blocks)
+    index
+    want))
+
+(define (compiler-ir-function-list-name-at-cons?
+  [functions : CompilerIrFunctionList]
+  [index : i64]
+  [want : String]) : bool
+  (match functions
+    [(CompilerIrFunctionList.Nil) false]
+    [(CompilerIrFunctionList.Cons func rest)
+      (if (= index 0)
+        (match func
+          [(CompilerIrFunction.Function name _ _ _ _) (string.eq name want)])
+        (compiler-ir-function-list-name-at-cons?
+          (box-get rest)
+          (- index 1)
+          want))]
+    [(CompilerIrFunctionList.Array _) false]))
+
+(define (compiler-ir-function-list-name-at?
+  [functions : CompilerIrFunctionList]
+  [index : i64]
+  [want : String]) : bool
+  (compiler-ir-function-list-name-at-cons?
+    (compiler-ir-function-list-force-cons functions)
+    index
+    want))
+
+(define (compiler-ir-test-function [name : String]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    name
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    1
+    CompilerIrBlockList.Nil))
+
+(define (compiler-ir-dense-builders-order-ok?) : bool
+  (let
+    [instr-builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity 1)]
+    [block-builder : CompilerIrBlockBuilder
+      (compiler-ir-block-builder-with-capacity 1)]
+    [function-builder : CompilerIrFunctionBuilder
+      (compiler-ir-function-builder-with-capacity 1)]
+    [instrs : CompilerIrInstrSeq
+      (compiler-ir-instr-seq-from-list CompilerIrInstrList.Nil)]
+    [blocks : CompilerIrBlockList CompilerIrBlockList.Nil]
+    [functions : CompilerIrFunctionList CompilerIrFunctionList.Nil]
+    (begin
+      (compiler-ir-instr-builder-push!
+        (&mut instr-builder)
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 10) (AstType.I64)))
+      (compiler-ir-instr-builder-push!
+        (&mut instr-builder)
+        (CompilerIrInstr.Mov 2 (CompilerIrValue.I64 20) (AstType.I64)))
+      (compiler-ir-instr-builder-push!
+        (&mut instr-builder)
+        (CompilerIrInstr.Return
+          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2))))
+      (set! instrs (compiler-ir-instr-builder-to-seq instr-builder))
+      (compiler-ir-block-builder-push!
+        (&mut block-builder)
+        (compiler-ir-block "entry" CompilerIrInstrList.Nil))
+      (compiler-ir-block-builder-push!
+        (&mut block-builder)
+        (compiler-ir-block "middle" CompilerIrInstrList.Nil))
+      (compiler-ir-block-builder-push!
+        (&mut block-builder)
+        (compiler-ir-block "done" CompilerIrInstrList.Nil))
+      (set! blocks (compiler-ir-block-builder-to-list block-builder))
+      (compiler-ir-function-builder-push!
+        (&mut function-builder)
+        (compiler-ir-test-function "first"))
+      (compiler-ir-function-builder-push!
+        (&mut function-builder)
+        (compiler-ir-test-function "second"))
+      (compiler-ir-function-builder-push!
+        (&mut function-builder)
+        (compiler-ir-test-function "third"))
+      (set! functions (compiler-ir-function-builder-to-list function-builder))
+      (and
+        (= (compiler-ir-instr-seq-count instrs) 3)
+        (compiler-ir-instr-seq-mov-dst? instrs 0 1)
+        (compiler-ir-instr-seq-mov-dst? instrs 1 2)
+        (compiler-ir-instr-seq-return-var? instrs 2 2)
+        (= (compiler-ir-block-list-count blocks) 3)
+        (compiler-ir-block-list-label-at? blocks 0 "entry")
+        (compiler-ir-block-list-label-at? blocks 1 "middle")
+        (compiler-ir-block-list-label-at? blocks 2 "done")
+        (= (compiler-ir-function-list-count functions) 3)
+        (compiler-ir-function-list-name-at? functions 0 "first")
+        (compiler-ir-function-list-name-at? functions 1 "second")
+        (compiler-ir-function-list-name-at? functions 2 "third")))))
+
 (define (compiler-ir-instr-seq-roundtrip-ok?) : bool
   (let
     [instrs : CompilerIrInstrList
@@ -4337,4 +4695,5 @@
     (unless (compiler-ir-instr-seq-roundtrip-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
+    (unless (compiler-ir-dense-builders-order-ok?) (return 1))
     42))

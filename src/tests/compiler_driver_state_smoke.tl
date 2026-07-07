@@ -287,7 +287,8 @@
 
 (define (compiler-driver-state-smoke-lower-state-instrs [state : LowerState]) : CompilerIrInstrList
   (match state
-    [(LowerState.State _ _ _ _ instrs _ _ _ _ _ _ _ _ _) (box-get instrs)]))
+    [(LowerState.State _ _ _ _ instrs _ _ _ _ _ _ _ _ _)
+      (compiler-ir-instr-builder-to-list instrs)]))
 
 (define (compiler-driver-state-smoke-instr-i64-mov?
   [instr : CompilerIrInstr]
@@ -1365,9 +1366,9 @@
                       0
                       0
                       "entry"
-                      (box CompilerIrInstrList.Nil)
-                      (box CompilerIrBlockList.Nil)
-                      (box CompilerIrFunctionList.Nil)
+                      (compiler-ir-instr-builder-new)
+                      (compiler-ir-block-builder-new)
+                      (compiler-ir-function-builder-new)
                       "main"
                       (box (compiler-source-spans-empty))
                       (lower-empty-global-name-cache)
@@ -1495,9 +1496,9 @@
                       0
                       0
                       "entry"
-                      (box CompilerIrInstrList.Nil)
-                      (box CompilerIrBlockList.Nil)
-                      (box CompilerIrFunctionList.Nil)
+                      (compiler-ir-instr-builder-new)
+                      (compiler-ir-block-builder-new)
+                      (compiler-ir-function-builder-new)
                       "loop"
                       (box (compiler-source-spans-empty))
                       (lower-empty-global-name-cache)
@@ -1767,9 +1768,9 @@
                       0
                       0
                       "entry"
-                      (box CompilerIrInstrList.Nil)
-                      (box CompilerIrBlockList.Nil)
-                      (box CompilerIrFunctionList.Nil)
+                      (compiler-ir-instr-builder-new)
+                      (compiler-ir-block-builder-new)
+                      (compiler-ir-function-builder-new)
                       "main"
                       (box (compiler-source-spans-empty))
                       (lower-empty-global-name-cache)

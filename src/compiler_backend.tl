@@ -48596,15 +48596,23 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-peephole-asm-iter
   [asm : String]
   [prev-len : i64]
+  [prev-shrink : i64]
   [pass : i64]) : String
   (if (>= pass 4)
     asm
     (let
       [next : String (compiler-backend-peephole-asm-once asm)]
       [next-len : i64 (string.string-length next)]
-      (if (>= next-len prev-len)
+      [shrink : i64 (- prev-len next-len)]
+      ;; The rewrite chain only ever shortens, so a pass that no longer shrinks
+      ;; the output has converged. Stop one pass earlier once the cascade has
+      ;; decayed past 1/16 of the previous pass's removal: the first 1-2 passes
+      ;; do the real work (a 40MB self-compile removes ~910KB then ~10KB), and a
+      ;; later pass that removes only a few hundred bytes is not worth another
+      ;; full 40MB walk. The pass>=4 cap stays as a pathological-loop backstop.
+      (if (or (<= shrink 0) (and (>= pass 1) (< shrink (shr prev-shrink 4))))
         next
-        (compiler-backend-peephole-asm-iter next next-len (+ pass 1))))))
+        (compiler-backend-peephole-asm-iter next next-len shrink (+ pass 1))))))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   ;; GAP5: after the owner-map peephole fixpoint has forwarded every
@@ -48613,7 +48621,7 @@ tl_tlci_call_image_entry:
   ;; empty metadata table (Windows, unit tests on hand-written text) the sweep
   ;; returns its input unchanged.
   (compiler-backend-deadstore-sweep
-    (compiler-backend-peephole-asm-iter asm (string.string-length asm) 0)))
+    (compiler-backend-peephole-asm-iter asm (string.string-length asm) 0 0)))
 
 (define (compiler-backend-peephole-text-buf [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (text_buf.append
@@ -48690,8 +48698,26 @@ tl_tlci_call_image_entry:
           (match emitted
             [(ResultCompilerBackendBuffer.Ok buf)
               (let
-                [raw-asm : String (text_buf.render buf)]
-                [peepholed : String (compiler-backend-peephole-asm raw-asm)]
+                [raw-asm : String
+                  (begin
+                    (cfg compile-profile (compiler-backend-profile-start))
+                    (let
+                      [rendered : String (text_buf.render buf)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "render"))
+                        rendered)))]
+                [peepholed : String
+                  (begin
+                    (cfg compile-profile (compiler-backend-profile-start))
+                    (let
+                      [peeped : String (compiler-backend-peephole-asm raw-asm)]
+                      (begin
+                        (cfg
+                          compile-profile
+                          (compiler-backend-profile-finish "peephole"))
+                        peeped)))]
                 (begin
                   (unsafe
                     (arena.destroy raw-arena))

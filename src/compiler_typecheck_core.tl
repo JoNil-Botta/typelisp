@@ -44567,6 +44567,8 @@
   (array.make-array i64 4096))
 (define macro-generated-module-memo-targets : (Array i64)
   (array.make-array i64 4096))
+(define macro-generated-module-memo-full-bodies : (Array bool)
+  (array.make-array bool 4096))
 
 ;; Per-identity export-summary (plan P2): the materialized module's decl list
 ;; (module header + generated body). env-extend-with-module folds this into the
@@ -44596,6 +44598,7 @@
         (while (< i macro-generated-module-memo-capacity)
           (begin
             (array-set! macro-generated-module-memo-keys i 0)
+            (array-set! macro-generated-module-memo-full-bodies i false)
             (array-set!
               macro-generated-module-memo-summaries
               i
@@ -44610,7 +44613,9 @@
     (* identity-id 2654435761)
     (- macro-generated-module-memo-capacity 1)))
 
-(define (macro-generated-module-memo-get [identity : String]) : CompilerMaybeString
+(define (macro-generated-module-memo-get
+  [identity : String]
+  [requires-full-body? : bool]) : CompilerMaybeString
   (let
     [identity-id : i64 (intern identity)]
     (begin
@@ -44630,13 +44635,20 @@
               (if (= slot 0)
                 (set! done true)
                 (if (= slot key)
-                  (begin
-                    (set!
-                      out
-                      (CompilerSomeString
-                        (intern-str
-                          (array-ref macro-generated-module-memo-targets cursor))))
-                    (set! done true))
+                  (if (and
+                    requires-full-body?
+                    (not
+                      (array-ref macro-generated-module-memo-full-bodies cursor)))
+                    (set! done true)
+                    (begin
+                      (set!
+                        out
+                        (CompilerSomeString
+                          (intern-str
+                            (array-ref
+                              macro-generated-module-memo-targets
+                              cursor))))
+                      (set! done true)))
                   (begin
                     (set!
                       cursor
@@ -44655,7 +44667,8 @@
 (define (macro-generated-module-memo-put!
   [identity : String]
   [target-module : String]
-  [summary : AstDeclList]) : unit
+  [summary : AstDeclList]
+  [full-body? : bool]) : unit
   (let
     [identity-id : i64 (intern identity)]
     [target-id : i64 (intern target-module)]
@@ -44684,6 +44697,10 @@
                       cursor
                       target-id)
                     (array-set!
+                      macro-generated-module-memo-full-bodies
+                      cursor
+                      full-body?)
+                    (array-set!
                       macro-generated-module-memo-summaries
                       cursor
                       summary)
@@ -44692,16 +44709,27 @@
                       (+ macro-generated-module-memo-count 1))
                     (set! done true))
                   (if (= slot key)
-                    (begin
-                      (array-set!
-                        macro-generated-module-memo-targets
-                        cursor
-                        target-id)
-                      (array-set!
-                        macro-generated-module-memo-summaries
-                        cursor
-                        summary)
-                      (set! done true))
+                    (let
+                      [stored-full? : bool
+                        (array-ref
+                          macro-generated-module-memo-full-bodies
+                          cursor)]
+                      (if (and stored-full? (not full-body?))
+                        (set! done true)
+                        (begin
+                          (array-set!
+                            macro-generated-module-memo-targets
+                            cursor
+                            target-id)
+                          (array-set!
+                            macro-generated-module-memo-full-bodies
+                            cursor
+                            (or stored-full? full-body?))
+                          (array-set!
+                            macro-generated-module-memo-summaries
+                            cursor
+                            summary)
+                          (set! done true))))
                     (begin
                       (set!
                         cursor
@@ -44748,6 +44776,51 @@
                         (- macro-generated-module-memo-capacity 1)))
                     (set! steps (+ steps 1)))))))
           out)))))
+
+(define (macro-generated-module-memo-full-body-gate-ok?) : bool
+  (let
+    [_reset : unit (macro-generated-module-memo-reset!)]
+    [_enum : unit
+      (macro-generated-module-memo-put!
+        "test.generated.result"
+        "test.generated.target"
+        (ast-decl-list-new)
+        false)]
+    [enum-hit : bool
+      (match (macro-generated-module-memo-get "test.generated.result" false)
+        [(CompilerSomeString target) (string.eq target "test.generated.target")]
+        [(CompilerNoString) false])]
+    [full-miss : bool
+      (match (macro-generated-module-memo-get "test.generated.result" true)
+        [(CompilerSomeString _) false]
+        [(CompilerNoString) true])]
+    [_full : unit
+      (macro-generated-module-memo-put!
+        "test.generated.result"
+        "test.generated.target"
+        (ast-decl-list-new)
+        true)]
+    [full-hit : bool
+      (match (macro-generated-module-memo-get "test.generated.result" true)
+        [(CompilerSomeString target) (string.eq target "test.generated.target")]
+        [(CompilerNoString) false])]
+    [_ignored-downgrade : unit
+      (macro-generated-module-memo-put!
+        "test.generated.result"
+        "test.generated.target"
+        (ast-decl-list-new)
+        false)]
+    [still-full : bool
+      (match (macro-generated-module-memo-get "test.generated.result" true)
+        [(CompilerSomeString target) (string.eq target "test.generated.target")]
+        [(CompilerNoString) false])]
+    (and enum-hit full-miss full-hit still-full)))
+
+(test
+  macro-generated-module-memo-full-body-gate
+  (if (macro-generated-module-memo-full-body-gate-ok?)
+    unit
+    (io.panic "typecheck: generated module memo full-body gate failed")))
 
 (defenum MacroMaybeSpliceDecls
   (No)
@@ -52201,12 +52274,17 @@
   [identity : String]
   [target-module : String]
   [summary : AstDeclList]
+  [full-body? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (begin
     (match result
       [(ResultMacroDeclExpansion.Ok _ _)
         (begin
-          (macro-generated-module-memo-put! identity target-module summary)
+          (macro-generated-module-memo-put!
+            identity
+            target-module
+            summary
+            full-body?)
           (cfg
             compile-profile
             (compiler-tc-macro-profile-note-generated-module-materialization)))]
@@ -52224,6 +52302,7 @@
   [decl-path : String]
   [macro-name : String]
   [identity : String]
+  [full-body? : bool]
   [body-rest : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -52249,6 +52328,7 @@
       identity
       target-module
       materialized
+      full-body?
       (match (macro-find-module-body-decls orig-decls target-module)
         [(MacroMaybeDeclList.Some existing-body)
           (if (macro-decls-contain-generated-key? existing-body identity)
@@ -52411,6 +52491,7 @@
   [definition-module : String]
   [macro-env : CtfeEnv]
   [rewrite-imports? : bool]
+  [full-body? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -52471,6 +52552,7 @@
                         decl-path
                         macro-name
                         identity
+                        full-body?
                         final-body
                         call-expr))]
                   [_
@@ -52516,6 +52598,7 @@
                     decl-path
                     macro-name
                     identity
+                    full-body?
                     final-body
                     call-expr))]
               [_
@@ -52767,12 +52850,25 @@
                             call-expr)
                             [(ResultGenKey.Ok identity _)
                               (let
+                                [result-macro? : bool
+                                  (macro-result-module-macro?
+                                    macro-name
+                                    definition-module)]
+                                [result-enum-only? : bool
+                                  (if result-macro?
+                                    (macro-generated-result-source-enum-only?
+                                      decl-path
+                                      alias
+                                      span)
+                                    false)]
                                 [shortcut-target : CompilerMaybeString
                                   (if (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
                                     definition-module
                                     params)
-                                    (macro-generated-module-memo-get identity)
+                                    (macro-generated-module-memo-get
+                                      identity
+                                      (not result-enum-only?))
                                     CompilerNoString)]
                                 (match shortcut-target
                                   [(CompilerSomeString target-module)
@@ -52792,9 +52888,7 @@
                                             expanded
                                             decl-path))))]
                                   [(CompilerNoString)
-                                    (if (macro-result-module-macro?
-                                      macro-name
-                                      definition-module)
+                                    (if result-macro?
                                       (let
                                         [fast-result : ResultMacroParsedDecls
                                           (begin
@@ -52806,7 +52900,7 @@
                                               orig-decls
                                               module
                                               expanded-args
-                                              false
+                                              result-enum-only?
                                               call-expr))]
                                         (begin
                                           (cfg
@@ -52831,6 +52925,7 @@
                                                 (ctfe-env-empty-with-pools
                                                   (tc-context-pools call-ctx))
                                                 false
+                                                (not result-enum-only?)
                                                 generated
                                                 call-expr)]
                                             [(ResultMacroParsedDecls.Err diag)
@@ -52874,6 +52969,7 @@
                                                   macro-env
                                                   (tc-macro-param-list-needs-call-context?
                                                     params)
+                                                  true
                                                   generated
                                                   call-expr)]
                                               [(ResultMacroParsedDecls.Err diag)

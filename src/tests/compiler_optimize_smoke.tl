@@ -22,6 +22,7 @@
 ;; only when every self-test passes.
 (import "../compiler_optimize.tl")
 (import stdlib.string)
+(import stdlib.test)
 
 (define (opt-count-switch-instr-seq-from
   [instrs : CompilerIrInstrSeq]
@@ -1306,56 +1307,61 @@
             3)]))))
 
 (define (main) : i64
-  (begin
-    (unless (= (compiler-optimize-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-typed-fold-self-test) 42) (return 1))
-    (unless (= (smoke-noop-int-cast-mov-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-strength-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-dce-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-dce-mem-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-divrem-safety-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-const-divisor-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-cse-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-copy-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-bounds-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-bounds-dom-self-test) 42) (return 1))
-    (unless (= (smoke-object-bounds-self-test) 42) (return 1))
-    (unless (= (smoke-range-bce-self-test) 42) (return 1))
-    (unless (= (smoke-ssa-iv-bce-self-test) 42) (return 1))
-    (unless (= (smoke-nonlength-guard-bce-self-test) 42) (return 1))
-    (unless (= (smoke-additive-bce-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-sccp-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-global-value-number-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-cfg-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-switch-form-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-natural-loop-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-loop-rotation-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-rotate-ssa-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-licm-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-induction-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-unroll-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-affine-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-affine-pipeline-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-ssa-preexisting-phi-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-licm-multi-exit-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-bce-version-self-test) 42) (return 1))
-    (unless
-      (= (compiler-optimize-bce-version-pipeline-self-test) 42)
-      (return 1))
-    (unless (= (compiler-optimize-ssa-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-level-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-callgraph-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-scc-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-inline-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-fixed-point-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-tailrec-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-global-dce-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-aggregate-candidate-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-aggregate-promote-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-aggregate-sroa-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-spans-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-gvn-self-test) 42) (return 1))
-    (unless (= (smoke-heavy-pass-large-gvn-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-load-cse-self-test) 42) (return 1))
-    (unless (= (compiler-optimize-scratch-region-self-test) 42) (return 1))
-    (compiler-optimize-alias-self-test)))
+  (cond
+    [(not (= (compiler-optimize-self-test) 42)) 1]
+    [(not (= (compiler-optimize-typed-fold-self-test) 42)) 2]
+    [(not (= (smoke-noop-int-cast-mov-self-test) 42)) 3]
+    [(not (= (compiler-optimize-strength-self-test) 42)) 4]
+    [(not (= (compiler-optimize-dce-self-test) 42)) 5]
+    [(not (= (compiler-optimize-dce-mem-self-test) 42)) 6]
+    [(not (= (compiler-optimize-divrem-safety-self-test) 42)) 7]
+    [(not (= (compiler-optimize-const-divisor-self-test) 42)) 8]
+    [(not (= (compiler-optimize-cse-self-test) 42)) 9]
+    [(not (= (compiler-optimize-copy-self-test) 42)) 10]
+    [(not (= (compiler-optimize-bounds-self-test) 42)) 11]
+    [(not (= (compiler-optimize-bounds-dom-self-test) 42)) 12]
+    [(not (= (smoke-object-bounds-self-test) 42)) 13]
+    [(not (= (smoke-range-bce-self-test) 42)) 14]
+    [(not (= (smoke-ssa-iv-bce-self-test) 42)) 15]
+    [(not (= (smoke-nonlength-guard-bce-self-test) 42)) 16]
+    [(not (= (smoke-additive-bce-self-test) 42)) 17]
+    [(not (= (compiler-optimize-sccp-self-test) 42)) 18]
+    [(not (= (compiler-optimize-global-value-number-self-test) 42)) 19]
+    [(not (= (compiler-optimize-cfg-self-test) 42)) 20]
+    [(not (= (compiler-optimize-switch-form-self-test) 42)) 21]
+    [(not (= (compiler-optimize-natural-loop-self-test) 42)) 22]
+    [(not (= (compiler-optimize-loop-rotation-self-test) 42)) 23]
+    [(not (= (compiler-optimize-rotate-ssa-self-test) 42)) 24]
+    [(not (= (compiler-optimize-licm-self-test) 42)) 25]
+    [(not (= (compiler-optimize-induction-self-test) 42)) 26]
+    [(not (= (compiler-optimize-unroll-self-test) 42)) 27]
+    [(not (= (compiler-optimize-affine-self-test) 42)) 28]
+    [(not (= (compiler-optimize-affine-pipeline-self-test) 42)) 29]
+    [(not (= (compiler-optimize-ssa-preexisting-phi-self-test) 42)) 30]
+    [(not (= (compiler-optimize-licm-multi-exit-self-test) 42)) 31]
+    [(not (= (compiler-optimize-bce-version-self-test) 42)) 32]
+    [(not (= (compiler-optimize-bce-version-pipeline-self-test) 42)) 33]
+    [(not (= (compiler-optimize-ssa-self-test) 42)) 34]
+    [(not (= (compiler-optimize-level-self-test) 42)) 35]
+    [(not (= (compiler-optimize-callgraph-self-test) 42)) 36]
+    [(not (= (compiler-optimize-scc-self-test) 42)) 37]
+    [(not (= (compiler-optimize-inline-self-test) 42)) 38]
+    [(not (= (compiler-optimize-fixed-point-self-test) 42)) 39]
+    [(not (= (compiler-optimize-tailrec-self-test) 42)) 40]
+    [(not (= (compiler-optimize-global-dce-self-test) 42)) 41]
+    [(not (= (compiler-optimize-aggregate-candidate-self-test) 42)) 42]
+    [(not (= (compiler-optimize-aggregate-promote-self-test) 42)) 43]
+    [(not (= (compiler-optimize-aggregate-sroa-self-test) 42)) 44]
+    [(not (= (compiler-optimize-spans-self-test) 42)) 45]
+    [(not (= (compiler-optimize-gvn-self-test) 42)) 46]
+    [(not (= (smoke-heavy-pass-large-gvn-self-test) 42)) 47]
+    [(not (= (compiler-optimize-load-cse-self-test) 44)) 48]
+    [(not (= (compiler-optimize-scratch-region-self-test) 42)) 49]
+    [else (compiler-optimize-alias-self-test)]))
+
+(test
+  load-cse-copybytes-forwarding
+  (test.assert-i64-eq
+    (compiler-optimize-load-cse-self-test)
+    44
+    "load-cse copybytes forwarding"))

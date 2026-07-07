@@ -14,7 +14,8 @@
 ;; diagnostic when one is available.
 (import stdlib.io)
 (import stdlib.process)
-(import stdlib.vector as svec)
+(import (vector.vector String) as doc_svec)
+(import "doc_string_vec_bridge.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
@@ -1346,7 +1347,7 @@
 (define (doc-test-emit-runnable-assembly
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [target : CompilerBackendTarget]) : ResultSourceToolString
   (begin
     (compiler-driver-reset-file-state!)
@@ -1362,7 +1363,7 @@
         (match (compiler-driver-load-source-with-runtime-with-pools
           virtual-path
           code
-          stdlib-roots
+          (doc-string-vec-to-legacy (& stdlib-roots))
           cfgs
           pools)
           [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -1371,7 +1372,7 @@
               (ast-program decls)
               paths
               (CompilerLowerMode.Scalar)
-              stdlib-roots
+              (doc-string-vec-to-legacy (& stdlib-roots))
               (tc-prefix-default-cache-scope)
               pools)
               [(ResultCompilerLower.Ok program spans)
@@ -1506,7 +1507,7 @@
 (define (doc-test-run-runnable-output
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [target : CompilerBackendTarget]
   [temp-dir : String]) : DocTestMaybeFailure
   (let
@@ -1542,7 +1543,7 @@
 (define (doc-test-run-runnable-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : svec.StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1580,12 +1581,12 @@
   (string.append path (string.append ".doctest." (string.int->string index))))
 
 (define (doc-test-check-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-check-example-with-roots path example (svec.string-vec-new)))
+  (doc-test-check-example-with-roots path example (doc_svec.new)))
 
 (define (doc-test-typecheck-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : svec.StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
   (let
     [index : i64 (doc-test-example-index example)]
     [source-line : i64 (doc-test-example-source-line example)]
@@ -1595,7 +1596,7 @@
     (match (compiler-check-source-with-roots
       (doc-test-example-virtual-path path index)
       code
-      stdlib-roots)
+      (doc-string-vec-to-legacy (& stdlib-roots)))
       [(ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestMaybeFailure.Some
@@ -1618,7 +1619,7 @@
 (define (doc-test-typecheck-package-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestMaybeFailure
   (let
@@ -1630,7 +1631,7 @@
     (match (compiler-check-package-source-with-roots
       (doc-test-example-virtual-path path index)
       code
-      stdlib-roots
+      (doc-string-vec-to-legacy (& stdlib-roots))
       manifest-dir
       deps)
       [(ResultCompilerCheck.Ok _)
@@ -1653,12 +1654,12 @@
               (doc-test-unexpected-error-message index (box-get diag)))))])))
 
 (define (doc-test-typecheck-example [path : String] [example : DocTestExample]) : DocTestMaybeFailure
-  (doc-test-typecheck-example-with-roots path example (svec.string-vec-new)))
+  (doc-test-typecheck-example-with-roots path example (doc_svec.new)))
 
 (define (doc-test-check-example-with-roots
   [path : String]
   [example : DocTestExample]
-  [stdlib-roots : svec.StringVec]) : DocTestMaybeFailure
+  [stdlib-roots : doc_svec.Vec]) : DocTestMaybeFailure
   (if (doc-test-expectation-run? (doc-test-example-expectation example))
     (doc-test-run-runnable-example-with-roots path example stdlib-roots)
     (doc-test-typecheck-example-with-roots path example stdlib-roots)))
@@ -1667,18 +1668,14 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]) : DocTestRunFailureList
-  (doc-test-run-examples-with-roots
-    path
-    examples
-    failures
-    (svec.string-vec-new)))
+  (doc-test-run-examples-with-roots path examples failures (doc_svec.new)))
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : svec.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1703,7 +1700,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : svec.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
   (doc-test-run-examples-with-roots-from path examples 0 failures stdlib-roots))
 
 (define (doc-test-typecheck-examples-with-roots-from
@@ -1711,7 +1708,7 @@
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : svec.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1736,7 +1733,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : svec.StringVec]) : DocTestRunFailureList
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
   (doc-test-typecheck-examples-with-roots-from
     path
     examples
@@ -1749,7 +1746,7 @@
   [examples : DocTestExampleList]
   [index : i64]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
   (if (>= index (doc-test-example-list-count examples))
@@ -1785,7 +1782,7 @@
   [path : String]
   [examples : DocTestExampleList]
   [failures : DocTestRunFailureList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunFailureList
   (doc-test-typecheck-package-examples-with-roots-from
@@ -1830,12 +1827,12 @@
 ;; errors are folded in as failures first, then each example is checked. A source
 ;; with no examples and no errors reports success with a zero count.
 (define (doc-test-run-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-run-source-with-roots path source (svec.string-vec-new)))
+  (doc-test-run-source-with-roots path source (doc_svec.new)))
 
 (define (doc-test-run-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : svec.StringVec]) : DocTestRunReport
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
@@ -1854,16 +1851,16 @@
 
 (define (doc-test-run-file-with-roots
   [path : String]
-  [stdlib-roots : svec.StringVec]) : DocTestRunReport
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (doc-test-run-source-with-roots path (io.read-file path) stdlib-roots))
 
 (define (doc-test-typecheck-source [path : String] [source : String]) : DocTestRunReport
-  (doc-test-typecheck-source-with-roots path source (svec.string-vec-new)))
+  (doc-test-typecheck-source-with-roots path source (doc_svec.new)))
 
 (define (doc-test-typecheck-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : svec.StringVec]) : DocTestRunReport
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (match (doc-test-extract-source source)
     [(DocTestExtraction.Extraction examples errors)
       (DocTestRunReport.Report
@@ -1880,7 +1877,7 @@
 (define (doc-test-typecheck-package-source-with-roots
   [path : String]
   [source : String]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (doc-test-extract-source source)
@@ -1903,7 +1900,7 @@
 
 (define (doc-test-typecheck-file-with-roots
   [path : String]
-  [stdlib-roots : svec.StringVec]) : DocTestRunReport
+  [stdlib-roots : doc_svec.Vec]) : DocTestRunReport
   (doc-test-typecheck-source-with-roots path (io.read-file path) stdlib-roots))
 
 (define (doc-test-path-under-root? [path : String] [root : String]) : bool
@@ -1939,7 +1936,7 @@
 
 (define (doc-test-typecheck-package-path-list-with-roots-from
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]
   [last-path : String]
@@ -1961,7 +1958,9 @@
         [stdlib-path : String
           (if (compiler-load-stdlib-import? normalized)
             normalized
-            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
+            (compiler-load-stdlib-owned-path-from-roots
+              rooted
+              (doc-string-vec-to-legacy (& stdlib-roots))))]
         [manifest-stdlib-root : String
           (compiler-load-normalize-path
             (compiler-load-join-root-path manifest-dir "stdlib"))]
@@ -2010,7 +2009,7 @@
 
 (define (doc-test-typecheck-package-file-text-with-roots
   [path : String]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (match (io.try-read-file (& path))
@@ -2026,7 +2025,7 @@
 
 (define (doc-test-typecheck-package-paths-with-roots
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : DocTestRunReport
   (doc-test-typecheck-package-path-list-with-roots-from
@@ -2411,11 +2410,11 @@
 (define answer : i64 1)
 ")
 
-(define (doc-test-run-smoke-stdlib-roots) : svec.StringVec
+(define (doc-test-run-smoke-stdlib-roots) : doc_svec.Vec
   (let
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : doc_svec.Vec (doc_svec.new)]
     (begin
-      (set! roots (svec.string-vec-push roots "stdlib"))
+      (doc_svec.push (&mut roots) "stdlib")
       roots)))
 
 (define (doc-test-run-runnable-wrong-exit-source) : String
@@ -2736,13 +2735,11 @@ typecheck: return type mismatch"))]
     [root : String "target/doc_test_session_cache"]
     [dep-file : String "target/doc_test_session_cache/dep.tl"]
     [doc-file : String "target/doc_test_session_cache/docs.tl"]
-    [roots : svec.StringVec
+    [roots : doc_svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : doc_svec.Vec (doc_svec.new)]
         (begin
-          (set!
-            items
-            (svec.string-vec-push items "target/doc_test_session_cache"))
+          (doc_svec.push (&mut items) "target/doc_test_session_cache")
           items))]
     (begin
       (compiler-load-test-mkdir "target")

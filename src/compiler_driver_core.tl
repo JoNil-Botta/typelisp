@@ -1639,6 +1639,10 @@
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 state)]
+            [defer-source-destroy? : bool
+              (and
+                release-source-pools?
+                (compiler-parse-current-load-has-type-literal?))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1657,7 +1661,9 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  source-pools-arena)
+                  (if defer-source-destroy?
+                    0
+                    source-pools-arena))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1684,6 +1690,13 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                unit)]
+            [_destroy-deferred-source : unit
+              (if (and defer-source-destroy? dest-committed?)
+                (begin
+                  (compiler-typecheck-ctfe-env-cache-clear!)
+                  (unsafe
+                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?
@@ -1747,6 +1760,10 @@
             [release-source-pools? : bool
               (compiler-driver-state-can-release-checked-lower-source-pools?
                 state)]
+            [defer-source-destroy? : bool
+              (and
+                release-source-pools?
+                (compiler-parse-current-load-has-type-literal?))]
             [dest-pools : AstNodePoolContext
               (if release-source-pools?
                 (compiler-driver-state-new-checked-lower-pools)
@@ -1765,7 +1782,9 @@
               (if release-source-pools?
                 (compiler-lower-checked-dest-pools-use!
                   dest-pools
-                  source-pools-arena)
+                  (if defer-source-destroy?
+                    0
+                    source-pools-arena))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -1792,6 +1811,13 @@
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
                 (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                unit)]
+            [_destroy-deferred-source : unit
+              (if (and defer-source-destroy? dest-committed?)
+                (begin
+                  (compiler-typecheck-ctfe-env-cache-clear!)
+                  (unsafe
+                    (arena.tl_arena_destroy source-pools-arena)))
                 unit)]
             [_restore-entry-arena : unit
               (if release-source-pools?

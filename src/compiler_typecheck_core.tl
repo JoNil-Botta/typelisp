@@ -29451,44 +29451,22 @@
                   (ctfe-metadata-decl-capacity decls)))))])]))
 
 ;; CTFE base environment (reflection + layout metadata). This is invariant across
-;; a single compile view (same program/symbols/registries), but is requested up
-;; to ~8 times per compile -- once in macro expansion plus once per comptime
-;; evaluation in the typecheck and lower passes -- and each
-;; `ctfe-reflections-from-program` / `tc-ctfe-layouts` build walks the whole
-;; program (O(program), tens of MB). Cache the first build for the active view;
-;; checked-pool lowering clears it when the old parsed pools are released so the
-;; next demand rebuilds metadata against the compacted checked pools. Fresh
-;; builds are forced into the context pool arena because typecheck may request
-;; the env while checking a function body in a rewound scratch arena.
+;; a single compile (same program/symbols/registries), but is requested up to ~8
+;; times per compile -- once in macro expansion plus once per comptime evaluation
+;; in the typecheck and lower passes -- and each `ctfe-reflections-from-program` /
+;; `tc-ctfe-layouts` build walks the whole program (O(program), tens of MB). The
+;; cache is populated eagerly in `macro-expand-program` (which always runs first,
+;; in the enclosing program arena, so the cached value never dangles into a
+;; rewound scratch arena) and reset per compile at the top of that function.
 (define (tc-ctfe-env [ctx : TcContext]) : CtfeEnv
-  (if (and
-    macro-expand-ctfe-env-ready
-    (or (not ctfe-needs-metadata) macro-expand-ctfe-env-has-metadata))
+  (if macro-expand-ctfe-env-ready
     (ctfe-env-rebase-pools macro-expand-ctfe-env-value (tc-context-pools ctx))
-    (let
-      [pools : AstNodePoolContext (tc-context-pools ctx)]
-      [prev-arena : i64 (arena.tl_arena_current)]
-      [base-arena : i64 (ast-node-pool-context-base-arena pools)]
-      [_set-arena : unit
-        (unsafe
-          (arena.tl_arena_set base-arena))]
-      [fresh : CtfeEnv
-        (if ctfe-needs-metadata
-          (ctfe-env-with-metadata-and-pools
-            (tc-ctfe-layouts ctx)
-            (ctfe-reflections-from-program (tc-context-program ctx))
-            pools)
-          (ctfe-env-empty-with-pools pools))]
-      [_sync-pools : unit
-        (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))]
-      [_restore-arena : unit
-        (unsafe
-          (arena.tl_arena_set prev-arena))]
-      (begin
-        (set! macro-expand-ctfe-env-value fresh)
-        (set! macro-expand-ctfe-env-has-metadata ctfe-needs-metadata)
-        (set! macro-expand-ctfe-env-ready true)
-        (ctfe-env-rebase-pools macro-expand-ctfe-env-value pools)))))
+    (if ctfe-needs-metadata
+      (ctfe-env-with-metadata-and-pools
+        (tc-ctfe-layouts ctx)
+        (ctfe-reflections-from-program (tc-context-program ctx))
+        (tc-context-pools ctx))
+      (ctfe-env-empty-with-pools (tc-context-pools ctx)))))
 
 (define (tc-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -54339,6 +54317,12 @@
     [(MacroMaybeGeneratedNormalImport.Some _ _ _ _ _ _) true]
     [(MacroMaybeGeneratedNormalImport.No) false]))
 
+(define (macro-decls-start-with-module-import-placeholder?
+  [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons decl _) (macro-decl-module-import-placeholder? decl)]
+    [(AstDeclListStep.Nil) false]))
+
 ;; The single demand-driven expansion walk. Every macro placeholder is expanded
 ;; and its splice forced inline: the walk rebuilds the whole-program
 ;; symbols/env over the spliced view (macro-expand-rebuild-context-for-splice)
@@ -54456,6 +54440,9 @@
                                       rest
                                       rest-paths
                                       decl-path)]
+                                  [defer-refresh? : bool
+                                    (macro-decls-start-with-module-import-placeholder?
+                                      rest)]
                                   (begin
                                     (match (macro-extend-top-env-with-module-marker
                                       cur-ctx
@@ -54467,40 +54454,62 @@
                                         (begin
                                           (tc-nominal-owner-cache-reset!)
                                           (macro-alias-derived-cache-reset!)
-                                          (match (tc-build-top-env-list-in-module
-                                            next-ctx
-                                            refresh-decls
-                                            next-top-env
-                                            cur-module)
-                                            [(ResultTcEnv.Ok refreshed-top-env)
-                                              (begin
-                                                (set!
-                                                  cur-top-env
-                                                  (tc-env-with-cache
-                                                    refreshed-top-env))
-                                                (set! cur-orig-decls next-decls)
-                                                (set! cur-ctx next-ctx)
-                                                (set!
-                                                  out-rev
-                                                  (macro-decl-list-reverse-into
-                                                    expanded
-                                                    out-rev))
-                                                (set!
-                                                  out-paths-rev
-                                                  (macro-decl-path-list-reverse-into
-                                                    expanded-paths
-                                                    out-paths-rev))
-                                                (set! cur-decls rest)
-                                                (set! cur-paths rest-paths))]
-                                            [(ResultTcEnv.Err refresh-message)
-                                              (begin
-                                                (set!
-                                                  result
-                                                  (ResultMacroDeclsWithPaths.Err
-                                                    (box
-                                                      (tc-diag-at-start
-                                                        refresh-message))))
-                                                (set! done true))]))]
+                                          (if defer-refresh?
+                                            (begin
+                                              (set!
+                                                cur-top-env
+                                                (tc-env-with-cache next-top-env))
+                                              (set! cur-orig-decls next-decls)
+                                              (set! cur-ctx next-ctx)
+                                              (set!
+                                                out-rev
+                                                (macro-decl-list-reverse-into
+                                                  expanded
+                                                  out-rev))
+                                              (set!
+                                                out-paths-rev
+                                                (macro-decl-path-list-reverse-into
+                                                  expanded-paths
+                                                  out-paths-rev))
+                                              (set! cur-decls rest)
+                                              (set! cur-paths rest-paths))
+                                            (match (tc-build-top-env-list-in-module
+                                              next-ctx
+                                              refresh-decls
+                                              next-top-env
+                                              cur-module)
+                                              [(ResultTcEnv.Ok
+                                                  refreshed-top-env)
+                                                (begin
+                                                  (set!
+                                                    cur-top-env
+                                                    (tc-env-with-cache
+                                                      refreshed-top-env))
+                                                  (set!
+                                                    cur-orig-decls
+                                                    next-decls)
+                                                  (set! cur-ctx next-ctx)
+                                                  (set!
+                                                    out-rev
+                                                    (macro-decl-list-reverse-into
+                                                      expanded
+                                                      out-rev))
+                                                  (set!
+                                                    out-paths-rev
+                                                    (macro-decl-path-list-reverse-into
+                                                      expanded-paths
+                                                      out-paths-rev))
+                                                  (set! cur-decls rest)
+                                                  (set! cur-paths rest-paths))]
+                                              [(ResultTcEnv.Err refresh-message)
+                                                (begin
+                                                  (set!
+                                                    result
+                                                    (ResultMacroDeclsWithPaths.Err
+                                                      (box
+                                                        (tc-diag-at-start
+                                                          refresh-message))))
+                                                  (set! done true))])))]
                                       [(ResultTcEnv.Err message)
                                         (begin
                                           (set!

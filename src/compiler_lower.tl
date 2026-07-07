@@ -540,17 +540,8 @@
           (arena.tl_arena_set dest-arena))
         (if (= old-arena 0)
           unit
-          (begin
-            ;; The cached CTFE metadata was built over the source pools. Clear it
-            ;; before releasing those pools so later typecheck/lower comptime
-            ;; queries rebuild once against the compacted checked pools.
-            (compiler-typecheck-ctfe-env-cache-clear!)
-            ;; Full aggregate layouts contain AstType values and field-list
-            ;; nodes cloned while the source pools were active. Recompute them
-            ;; against the compacted checked pools after the release boundary.
-            (tc-agg-caches-reset!)
-            (unsafe
-              (arena.tl_arena_destroy old-arena))))))
+          (unsafe
+            (arena.tl_arena_destroy old-arena)))))
     unit))
 
 (defenum LowerFieldInfo

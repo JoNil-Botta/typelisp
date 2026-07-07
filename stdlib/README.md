@@ -383,11 +383,13 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   primitive itself and remains core until source code can express an equal or
   better overlap-safe copy primitive. `tl_memchr` is the allocation-free byte
   search primitive used by borrowed string/byte scans until source code can
-  express equally efficient raw byte search. Windows `__chkstk` is required by
-  the MSVC ABI for large stack frames. Windows `tl_setup_argv` and `_tl_start`
-  are the freestanding entry bootstrap: they build the initial argv block from
-  `GetCommandLineA`, clear the TEB current-arena slot, call `main`, and exit via
-  `ExitProcess`.
+  express equally efficient raw byte search. `tl_tlci_call_image_entry` is the
+  raw C-ABI bridge that lets the tlci loader call a mapped `tlci_image_entry`
+  address with the host callback table and writable registration record.
+  Windows `__chkstk` is required by the MSVC ABI for large stack frames. Windows
+  `tl_setup_argv` and `_tl_start` are the freestanding entry bootstrap: they
+  build the initial argv block from `GetCommandLineA`, clear the TEB
+  current-arena slot, call `main`, and exit via `ExitProcess`.
 - **Stdlib FFI wrapper dependency:** backend shims still needed by stdlib
   wrappers around OS/profile surfaces: `tl_profile_alloc_total`,
   `tl_profile_alloc_live`, `tl_profile_alloc_peak`,

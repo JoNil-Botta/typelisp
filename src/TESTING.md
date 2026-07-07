@@ -56,9 +56,10 @@ run the module through the TypeLisp executable boundary.
 The package follows the standard layout: `typelisp build` resolves the default
 `src/main.tl` entry (no explicit `entry` in `typelisp.pkg`), and every top-level
 `src/*.tl` is reachable from `main.tl` except four deliberate exceptions:
-`tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (documented dormant
-future-feature modules, #2651/#2671/#2657) and `compiler_backend_tests.tl` (the
-backend smoke helper, kept in `src/` so it stages for the native
+`tlci_core.tl`, `tlci_pages.tl`, and `tlci_loader.tl` (staged tlci feature
+modules with dedicated smokes, #2651/#2671/#2657) and
+`compiler_backend_tests.tl` (the backend smoke helper, kept in `src/` so it
+stages for the native
 `compiler_backend_smoke` case and the `verify-integration.sh` fixture drivers).
 These carry `decision` rows in the compile manifest.
 

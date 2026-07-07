@@ -1175,12 +1175,17 @@
               "foreign_exact"
               (CompilerObjectSymbolBinding.Extern)
               (CompilerObjectSymbolKind.Function)))
+          (compiler-object-symbol-list-contains?
+            symbols
+            "tl_alloc"
+            (CompilerObjectSymbolBinding.Local)
+            (CompilerObjectSymbolKind.Runtime))
+          (compiler-object-symbol-list-contains?
+            symbols
+            "tl_tlci_call_image_entry"
+            (CompilerObjectSymbolBinding.Local)
+            (CompilerObjectSymbolKind.Runtime))
           (backend-and8
-            (compiler-object-symbol-list-contains?
-              symbols
-              "tl_alloc"
-              (CompilerObjectSymbolBinding.Local)
-              (CompilerObjectSymbolKind.Runtime))
             (compiler-object-section-contains-label?
               sections
               (CompilerObjectSectionKind.Data)
@@ -1208,7 +1213,8 @@
             (compiler-object-section-contains-f64?
               sections
               (CompilerObjectSectionKind.Rodata)
-              (compiler-backend-test-f64-bits "4.0")))
+              (compiler-backend-test-f64-bits "4.0"))
+            true)
           (compiler-object-section-contains-f32?
             sections
             (CompilerObjectSectionKind.Data)
@@ -1241,6 +1247,10 @@
             (compiler-object-section-contains-bytes?
               sections
               (compiler-backend-object-linux-exit-bytes)))
+          (compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-tlci-entry-bytes
+              (CompilerBackendTarget.Linux)))
           (compiler-object-relocation-list-contains?
             relocs
             (CompilerObjectRelocationKind.Abs64)
@@ -10397,6 +10407,7 @@
       "tl_thread_entry_ptr")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_memcpy")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_memchr")
+    (compiler-backend-runtime-helper-owner-core-ok? "tl_tlci_call_image_entry")
     (compiler-backend-runtime-helper-owner-core-ok? "__chkstk")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_setup_argv")
     (compiler-backend-runtime-helper-owner-core-ok? "_tl_start")))
@@ -10799,11 +10810,13 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_alloc")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_mark")
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset")
-      true)))
+      (compiler-backend-runtime-global-symbol-ok?
+        asm
+        "tl_tlci_call_image_entry"))))
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 16)
+    (= (compiler-backend-string-count asm "    .globl ") 17)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -10812,7 +10825,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 19)
+    (= (compiler-backend-string-count asm "    .globl ") 20)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -17179,14 +17192,18 @@
     (compiler-backend-direct-tail-call-mixed-source)
     target)
     [(ResultCompilerBackend.Ok asm)
-      (and
-        (compiler-backend-string-contains? asm "    jmp _tl_finishmixed\n")
-        (not
-          (compiler-backend-string-contains? asm "    call _tl_finishmixed\n"))
-        (not (compiler-backend-string-contains? asm "    subq $8, %rsp\n"))
-        (compiler-backend-string-contains?
-          asm
-          (compiler-backend-direct-tail-call-mixed-slot target)))]
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_stepmixed")]
+        (and
+          (compiler-backend-string-contains? body "    jmp _tl_finishmixed\n")
+          (not
+            (compiler-backend-string-contains?
+              body
+              "    call _tl_finishmixed\n"))
+          (not (compiler-backend-string-contains? body "    subq $8, %rsp\n"))
+          (compiler-backend-string-contains?
+            body
+            (compiler-backend-direct-tail-call-mixed-slot target))))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-tail-call-ok?) : bool

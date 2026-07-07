@@ -7607,11 +7607,13 @@
       (and
         (>= name-id 0)
         (cbi.compiler-builtin-backend-fixed-fault-id? name-id)))
-    ;; Primitive copy/search helpers are emitted unconditionally;
-    ;; calls to them use raw symbols, not user-mangled _tl_ names. Main's
-    ;; intern-id fault set does not include them, so keep explicit checks.
+    ;; Primitive copy/search helpers and the tlci raw-entry bridge are emitted
+    ;; unconditionally; calls to them use raw symbols, not user-mangled _tl_
+    ;; names. Main's intern-id fault set does not include them, so keep explicit
+    ;; checks.
     (string.eq name "tl_memcpy")
-    (string.eq name "tl_memchr")))
+    (string.eq name "tl_memchr")
+    (string.eq name "tl_tlci_call_image_entry")))
 
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
@@ -40247,6 +40249,8 @@
   (cond
     [(string.eq name "tl_memcpy") (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "tl_memchr") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_tlci_call_image_entry")
+      (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "__chkstk") (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "tl_setup_argv") (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "_tl_start") (CompilerBackendRuntimeHelperOwner.Core)]
@@ -42973,6 +42977,32 @@ tl_memchr:
     ret
 "))
 
+(define (compiler-backend-runtime-tlci-entry-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_tlci_call_image_entry
+tl_tlci_call_image_entry:
+    movq %rcx, %rax
+    movq %rdx, %rcx
+    movq %r8, %rdx
+    subq $40, %rsp
+    call *%rax
+    addq $40, %rsp
+    ret
+
+"
+    "    .globl tl_tlci_call_image_entry
+tl_tlci_call_image_entry:
+    movq %rdi, %rax
+    movq %rsi, %rdi
+    movq %rdx, %rsi
+    subq $8, %rsp
+    call *%rax
+    addq $8, %rsp
+    ret
+
+"))
+
 (define (compiler-backend-runtime-atomic-functions
   [_target : CompilerBackendTarget]) : String
   "")
@@ -43103,6 +43133,8 @@ tl_memchr:
           (compiler-backend-runtime-profile-functions-for-target target profile)]
         [memcpy-asm : String (compiler-backend-runtime-memcpy-functions target)]
         [memchr-asm : String (compiler-backend-runtime-memchr-functions target)]
+        [tlci-entry-asm : String
+          (compiler-backend-runtime-tlci-entry-functions target)]
         [atomic-asm : String (compiler-backend-runtime-atomic-functions target)]
         [runtime-front-asm : String
           (string.append
@@ -43110,17 +43142,19 @@ tl_memchr:
             (string.append
               memchr-asm
               (string.append
-                atomic-asm
+                tlci-entry-asm
                 (string.append
-                  arena-asm
+                  atomic-asm
                   (string.append
-                    profile-asm
-                    (str_cat.str-cat
-                      alloc-asm
-                      region-mark-asm
-                      region-reset-asm
-                      oob-asm
-                      div-abort-asm))))))]
+                    arena-asm
+                    (string.append
+                      profile-asm
+                      (str_cat.str-cat
+                        alloc-asm
+                        region-mark-asm
+                        region-reset-asm
+                        oob-asm
+                        div-abort-asm)))))))]
         [runtime-string-asm : String
           (string.append
             (str_cat.str-cat
@@ -45808,6 +45842,9 @@ tl_memchr:
   (let
     [symbols : BackendStringList BackendStringList.Nil]
     (begin
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_tlci_call_image_entry" symbols))
       (set! symbols (compiler-backend-string-cons "tl_memchr" symbols))
       (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
       (set! symbols (compiler-backend-string-cons "tl_shift_abort" symbols))
@@ -45829,7 +45866,8 @@ tl_memchr:
     (compiler-backend-plan-provides? plan name)
     (string.eq name "tl_alloc")
     (string.eq name "tl_memcpy")
-    (string.eq name "tl_memchr")))
+    (string.eq name "tl_memchr")
+    (string.eq name "tl_tlci_call_image_entry")))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
@@ -45902,6 +45940,14 @@ tl_memchr:
 
 (define (compiler-backend-object-windows-ret-bytes) : String
   (compiler-backend-object-bytes-from-hex "c3"))
+
+(define (compiler-backend-object-tlci-entry-bytes
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-object-bytes-from-hex
+      "4889c84889d14c89c24883ec28ffd04883c428c3")
+    (compiler-backend-object-bytes-from-hex
+      "4889f84889f74889d64883ec08ffd04883c408c3")))
 
 (define (compiler-backend-object-windows-entry-gs-clear-bytes) : String
   (compiler-backend-object-bytes-from-hex "6548c704252800000000000000"))
@@ -46047,6 +46093,15 @@ tl_memchr:
       (CompilerObjectRelocationKind.Call)
       target)
     (CompilerObjectX64Instr.Call target)))
+
+(define (compiler-backend-object-add-tlci-entry-runtime-text
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-text-bytes
+    (compiler-backend-object-add-text
+      parts
+      (CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+    (compiler-backend-object-tlci-entry-bytes target)))
 
 (define (compiler-backend-object-linux-exit-bytes) : String
   (compiler-backend-object-bytes-from-hex "4889c748c7c03c0000000f05"))
@@ -46504,34 +46559,36 @@ tl_memchr:
       (compiler-backend-runtime-index entry-functions externs)]
     [seed : CompilerBackendObjectParts
       (compiler-backend-object-entry-symbols
-        (compiler-backend-object-runtime-symbols
-          (compiler-backend-object-externs
-            (compiler-backend-object-f64-sign-bit
-              (compiler-backend-object-floats
-                (compiler-backend-object-bytes
-                  (compiler-backend-object-strings
-                    (compiler-backend-object-closure-descriptors
-                      (compiler-backend-object-globals
-                        (compiler-backend-object-functions
-                          (compiler-backend-object-parts-empty)
+        (compiler-backend-object-add-tlci-entry-runtime-text
+          (compiler-backend-object-runtime-symbols
+            (compiler-backend-object-externs
+              (compiler-backend-object-f64-sign-bit
+                (compiler-backend-object-floats
+                  (compiler-backend-object-bytes
+                    (compiler-backend-object-strings
+                      (compiler-backend-object-closure-descriptors
+                        (compiler-backend-object-globals
+                          (compiler-backend-object-functions
+                            (compiler-backend-object-parts-empty)
+                            target
+                            entry-functions
+                            plan
+                            program-index)
                           target
-                          entry-functions
-                          plan
-                          program-index)
-                        target
-                        globals)
-                      closure-names
-                      program-index)
-                    strings)
-                  bytes)
-                floats)
-              uses-f64-neg)
-            externs
+                          globals)
+                        closure-names
+                        program-index)
+                      strings)
+                    bytes)
+                  floats)
+                uses-f64-neg)
+              externs
+              plan
+              runtime-index
+              closure-names)
             plan
-            runtime-index
-            closure-names)
-          plan
-          (compiler-backend-object-runtime-symbols-list))
+            (compiler-backend-object-runtime-symbols-list))
+          target)
         target
         emit-entry
         crt-entry)]

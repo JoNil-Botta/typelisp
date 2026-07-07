@@ -335,6 +335,16 @@ tl_memchr:
     movq $-1, %rax
 .Ltl_memchr_found:
     ret
+    .globl tl_tlci_call_image_entry
+tl_tlci_call_image_entry:
+    movq %rdi, %rax
+    movq %rsi, %rdi
+    movq %rdx, %rsi
+    subq $8, %rsp
+    call *%rax
+    addq $8, %rsp
+    ret
+
     .globl tl_thread_init
 tl_thread_init:
     movq $4096, %rsi

@@ -50519,18 +50519,16 @@
 
 (define (macro-generated-result-source-helper-at?
   [source : String]
-  [alias : String]
-  [idx : i64]) : bool
+  [alias-len : i64]
+  [idx : i64]
+  [n : i64]) : bool
   (let
-    [alias-len : i64 (string.string-length alias)]
     [member-start : i64 (+ (+ idx alias-len) 1)]
-    [n : i64 (string.string-length source)]
-    (and
-      (compiler-load-source-qualified-alias-token-at? source alias idx)
-      (< member-start n)
+    (if (< member-start n)
       (let
         [member-head : char (string.string-ref source member-start)]
-        (and (>= member-head 'a') (<= member-head 'z'))))))
+        (and (>= member-head 'a') (<= member-head 'z')))
+      false)))
 
 (define (macro-generated-result-source-enum-only-scan?
   [source : String]
@@ -50553,7 +50551,11 @@
               (compiler-load-source-qualified-alias-token-at? source alias idx))
               (begin
                 (set! found true)
-                (if (macro-generated-result-source-helper-at? source alias idx)
+                (if (macro-generated-result-source-helper-at?
+                  source
+                  alias-len
+                  idx
+                  n)
                   (set! helper true)
                   unit))
               unit)

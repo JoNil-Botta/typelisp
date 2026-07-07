@@ -10966,8 +10966,8 @@
 ;; inside a kind-0-free region. Unlike loop-split's guarded rcx/rdx widening,
 ;; call-region shadows keep the stable r8/r9/rsi/rdi subset: rax/rcx/rdx carry
 ;; div/shift/return fixed uses, r10/r11 are the emergency scavenger's default
-;; picks. %rsi/%rdi are callee-saved on Win64 and excluded there (the backend
-;; saves only the SysV callee set).
+;; picks. %rsi/%rdi are callee-saved homes on Win64, so shadows there stay on
+;; the two common caller-saved registers.
 (define (compiler-reg-call-region-pool [abi : CompilerRegTargetAbi]) : (Array
     String)
   (match abi
@@ -13798,14 +13798,11 @@
         (compiler-reg-greedy-integer-pool))]
     [(CompilerRegTargetAbi.Windows)
       ;; Win64: %rsi/%rdi are nonvolatile (callee-saved). The backend prologue/
-      ;; epilogue (compiler-backend-emit-save-callee-regs) saves only the SysV
-      ;; callee set (r12-r15,rbx), so -- to stay sound WITHOUT a Win64-specific
-      ;; save-set -- EXCLUDE %rsi/%rdi from the Win64 allocatable pool (12 GP regs).
+      ;; epilogue saves them with the Win64 callee-save suffix. Keep the existing
+      ;; r12-r15,rbx order first so old homes are stable until pressure reaches
+      ;; the two extra Win64 nonvolatile registers.
       ;; caller-saved (volatile) first: rax,rcx,rdx,r8,r9,r10,r11 (7), then the
-      ;; backend-saved callee suffix r12-r15,rbx (5). Reclaiming %rsi/%rdi as Win64
-      ;; homes requires a Win64 callee save-set -- a follow-up; this keeps Win64
-      ;; CORRECT now (previously %rsi/%rdi sat in the caller-saved prefix and were
-      ;; clobbered without save, corrupting the caller's nonvolatile registers).
+      ;; backend-saved callee suffix r12-r15,rbx,rsi,rdi (7).
       (compiler-reg-string-cons
         "%rax"
         (compiler-reg-string-cons
@@ -13820,19 +13817,25 @@
                   "%r10"
                   (compiler-reg-string-cons
                     "%r11"
-                    (compiler-reg-sysv-integer-registers))))))))]))
+                    (compiler-reg-string-list-append
+                      (compiler-reg-sysv-integer-registers)
+                      (compiler-reg-string-cons
+                        "%rsi"
+                        (compiler-reg-string-cons
+                          "%rdi"
+                          CompilerRegStringList.Nil))))))))))]))
 
 (define (compiler-reg-greedy-caller-saved-count-for-abi
   [abi : CompilerRegTargetAbi]) : i64
   (match abi
     [(CompilerRegTargetAbi.Linux) (compiler-reg-greedy-caller-saved-count)]
     [(CompilerRegTargetAbi.Windows)
-      ;; Win64 pool = 7 caller-saved + the 5 backend-saved callee regs (r12-r15,rbx);
-      ;; %rsi/%rdi are excluded (see pool-for-abi). 12 - 5 = 7 caller-saved.
+      ;; Win64 pool = 7 caller-saved + 7 backend-saved callee regs
+      ;; (r12-r15,rbx,rsi,rdi). 14 - 7 = 7 caller-saved.
       (-
         (compiler-reg-string-list-count
           (compiler-reg-greedy-integer-pool-for-abi abi))
-        (compiler-reg-string-list-count (compiler-reg-sysv-integer-registers)))]))
+        (compiler-reg-callee-saved-integer-register-count-for-abi abi))]))
 
 ;; Coarse clobber-span test: does var's [start,end] cross any clobber-point?
 ;; (The clobber-span half of the old per-register zero-call gate, sans the
@@ -19680,6 +19683,60 @@
 
 (cfg
   test
+  (define (compiler-reg-win64-rsi-rdi-pressure-function) : CompilerIrFunction
+    (let
+      [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
+      [params : CompilerIrParamList CompilerIrParamList.Nil]
+      [i : i64 6]
+      (begin
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+            instrs))
+        (while (>= i 0)
+          (begin
+            (set!
+              instrs
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Store
+                  "g"
+                  (CompilerIrValue.Var i)
+                  (compiler-reg-i64-ty))
+                instrs))
+            (set! i (- i 1))))
+        (set!
+          instrs
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Call
+              7
+              "side_effect"
+              (CompilerIrCallArgs.Nil)
+              (AstType.Unit))
+            instrs))
+        (set! i 6)
+        (while (>= i 0)
+          (begin
+            (set!
+              params
+              (compiler-ir-param-cons
+                (CompilerIrParam.Param
+                  (string.append "p" (string.int->string i))
+                  (compiler-reg-i64-ty)
+                  i)
+                params))
+            (set! i (- i 1))))
+        (CompilerIrFunction.Function
+          "win64_rsi_rdi_pressure"
+          params
+          (AstType.Unit)
+          8
+          (compiler-ir-block-cons
+            (compiler-ir-block "entry" instrs)
+            CompilerIrBlockList.Nil))))))
+
+(cfg
+  test
   (define (compiler-reg-zero-call-param-conflict-function) : CompilerIrFunction
     (let
       [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
@@ -21048,6 +21105,19 @@
           (compiler-reg-location-register?
             (compiler-reg-assignment-lookup assignments 2)
             "%r12"))])))
+
+(cfg
+  test
+  (define (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) : bool
+    (match (compiler-reg-plan-function-scalar-for-abi
+      CompilerRegTargetAbi.Windows
+      (compiler-reg-win64-rsi-rdi-pressure-function))
+      [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+        (and
+          (not (compiler-live-set-contains? ineligible 0))
+          (not (compiler-live-set-contains? ineligible 6))
+          (compiler-reg-assignments-use-register? assignments "%rsi")
+          (compiler-reg-assignments-use-register? assignments "%rdi"))])))
 
 (cfg
   test
@@ -24895,17 +24965,13 @@
         (compiler-reg-string-list-count
           (compiler-reg-greedy-integer-pool-for-abi
             CompilerRegTargetAbi.Windows))
-        12)
-      (not
-        (compiler-reg-string-list-contains?
-          (compiler-reg-greedy-integer-pool-for-abi
-            CompilerRegTargetAbi.Windows)
-          "%rsi"))
-      (not
-        (compiler-reg-string-list-contains?
-          (compiler-reg-greedy-integer-pool-for-abi
-            CompilerRegTargetAbi.Windows)
-          "%rdi"))
+        14)
+      (compiler-reg-string-list-contains?
+        (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)
+        "%rsi")
+      (compiler-reg-string-list-contains?
+        (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Windows)
+        "%rdi")
       ;; The scalar zero-call extension is the older three-register subset.
       ;; Keep ABI/result registers and Win64 callee-saved %rsi/%rdi out of it.
       (= (compiler-reg-string-list-count zero-call-callers) 3)
@@ -25287,6 +25353,7 @@
     (compiler-reg-scalar-handle-call-arg-ok?)
     (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
+    (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true)
     (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
     (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)

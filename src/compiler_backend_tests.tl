@@ -3941,6 +3941,13 @@
           (CompilerRegLocation.Register "%rdi"))
         CompilerRegAssignmentList.Nil))))
 
+(define (compiler-backend-win64-callee-save-full-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 5 (CompilerRegLocation.Register "%rsi"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 6 (CompilerRegLocation.Register "%rdi"))
+      (compiler-backend-callee-save-assignments5))))
+
 (define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -4066,19 +4073,33 @@
     [_win : unit (compiler-backend-set-current-fn-win64!)]
     [assignments : CompilerRegAssignmentList
       (compiler-backend-win64-callee-save-assignments)]
+    [full : CompilerRegAssignmentList
+      (compiler-backend-win64-callee-save-full-assignments)]
     [save : String (compiler-backend-emit-save-callee-regs assignments 3)]
     [restore : String (compiler-backend-emit-restore-callee-regs assignments 3)]
+    [full-restore : String (compiler-backend-emit-restore-callee-regs full 1)]
     [ok : bool
       (and
         (compiler-backend-plan-uses-callee-regs? assignments)
         (= (compiler-backend-frame-slots 3 assignments) 10)
+        (= (compiler-backend-frame-slots 1 full) 8)
         (string.eq
           save
           "    movq %r12, -32(%rbp)\n    movq %rsi, -72(%rbp)\n    movq %rdi, -80(%rbp)\n")
         (string.eq
           restore
           "    movq -80(%rbp), %rdi\n    movq -72(%rbp), %rsi\n    movq -32(%rbp), %r12\n")
-        (not (compiler-backend-string-contains? restore "popq")))]
+        (not (compiler-backend-string-contains? restore "popq"))
+        (not (compiler-backend-string-contains? full-restore "popq"))
+        (compiler-backend-string-contains?
+          full-restore
+          "    movq -64(%rbp), %rdi\n")
+        (compiler-backend-string-contains?
+          full-restore
+          "    movq -56(%rbp), %rsi\n")
+        (compiler-backend-string-contains?
+          full-restore
+          "    movq -48(%rbp), %rbx\n"))]
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
     ok))
 
@@ -6692,9 +6713,10 @@
       (CompilerBackendTarget.Windows))
       [(ResultCompilerBackend.Ok asm)
         (let
+          [body : String (compiler-backend-asm-function-body asm "_tl_heavy")]
           [ok : bool
             (and
-              (compiler-backend-string-contains? asm "heavy:\n")
+              (not (string.eq body ""))
               (not (compiler-backend-string-contains? asm ".seh_pushreg %r12"))
               (not (compiler-backend-string-contains? asm ".seh_pushreg %rsi"))
               (not (compiler-backend-string-contains? asm ".seh_pushreg %rdi")))]

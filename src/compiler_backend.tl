@@ -6265,7 +6265,12 @@
     (compiler-backend-callee-needs-save? assignments "%r14")
     (compiler-backend-callee-needs-save? assignments "%r15")
     ;; M-G3 stage 2: %rbp is the 6th pool CSR in FPO functions.
-    (compiler-backend-callee-needs-save? assignments "%rbp")))
+    (compiler-backend-callee-needs-save? assignments "%rbp")
+    (and
+      (compiler-backend-current-fn-win64?)
+      (or
+        (compiler-backend-callee-needs-save? assignments "%rsi")
+        (compiler-backend-callee-needs-save? assignments "%rdi")))))
 
 ;; Callee-saved registers are spilled to frame slots that sit just below the
 ;; var slots: r12..r15 occupy idx 0..3 (offset -(8*(vars+idx+1))(%rbp)) and %rbx
@@ -6306,7 +6311,7 @@
       (+ base vars)
       base)))
 
-;; Frame slots reserving the LARGEST possible callee-save area (all 5 callee
+;; Frame slots reserving the LARGEST possible callee-save area (all callee
 ;; regs). The emergency spill slot is placed pre-body from frame-slots, but
 ;; on-demand scavenge callee-save can grow the real (post-body) callee-save area
 ;; -- so the emergency slot must sit below the maximum area or it overlaps an
@@ -6316,8 +6321,14 @@
   [vars : i64]
   [has-group-vars : bool]) : i64
   (let
-    ;; M-G3 stage 2: 6 covers the largest callee-save area (r12-r15, rbx, rbp).
-    [base : i64 (+ vars 6)]
+    ;; Linux FPO max is 6 (r12-r15,rbx,rbp). Win64 max is 7
+    ;; (r12-r15,rbx,rsi,rdi).
+    [base : i64
+      (+
+        vars
+        (if (compiler-backend-current-fn-win64?)
+          7
+          6))]
     (if has-group-vars
       (+ base vars)
       base)))
@@ -7101,12 +7112,20 @@
     ;; the FPO audit fails on an rbp-planned function it is DEMOTED (re-planned
     ;; without %rbp), so `popq %rbp` can never precede a real `leave`.
     [rbp : bool (compiler-backend-callee-needs-save? assignments "%rbp")]
-    (or
-      (and r12 r13 (not r14) (not r15) (not rbx) (not rbp))
-      (and r12 r13 r14 (not r15) (not rbx) (not rbp))
-      (and r12 r13 r14 r15 (not rbx) (not rbp))
-      (and r12 r13 r14 r15 rbx (not rbp))
-      (and r12 r13 r14 r15 rbx rbp))))
+    [win-extra : bool
+      (and
+        (compiler-backend-current-fn-win64?)
+        (or
+          (compiler-backend-callee-needs-save? assignments "%rsi")
+          (compiler-backend-callee-needs-save? assignments "%rdi")))]
+    (and
+      (not win-extra)
+      (or
+        (and r12 r13 (not r14) (not r15) (not rbx) (not rbp))
+        (and r12 r13 r14 (not r15) (not rbx) (not rbp))
+        (and r12 r13 r14 r15 (not rbx) (not rbp))
+        (and r12 r13 r14 r15 rbx (not rbp))
+        (and r12 r13 r14 r15 rbx rbp)))))
 
 (define (compiler-backend-callee-save-pop-start-idx
   [assignments : CompilerRegAssignmentList]) : i64

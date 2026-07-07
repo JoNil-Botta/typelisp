@@ -35548,6 +35548,8 @@
 ;; (push-count > 0).
 (define compiler-backend-fpo-push-count : i64
   0)
+(define compiler-backend-peephole-r10-dead-scan-cap-hits : i64
+  0)
 
 ;; Index of the first "(%rbp" occurrence in [start,end), or -1.
 (define (compiler-backend-rsp-rebase-find-rbp
@@ -36397,30 +36399,30 @@
 ;; an empty metadata table (Windows, unit tests on hand-written text) the
 ;; pass returns its input unchanged.
 (define compiler-backend-sweep-capacity : i64
-  65536)
+  131072)
 (define compiler-backend-sweep-bytes-capacity : i64
-  4194304)
+  8388608)
 (define compiler-backend-sweep-sym-off : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-sym-len : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-lo-arr : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-hi-arr : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-disp-arr : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 
 ;; Emergency-slot window [em-lo, em-hi] in the same canonical delta-0
 ;; rsp-relative bytes as [lo, hi]. Empty (em-lo > em-hi) when the function used
 ;; no emergency scavenge slots or has outgoing stack-arg space (whose callee
 ;; reads are invisible to the text scan and may alias the emergency window).
 (define compiler-backend-sweep-em-lo-arr : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-em-hi-arr : (Array i64)
-  (array.make-array i64 65536))
+  (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-sym-bytes : (Array u8)
-  (array.make-array u8 4194304))
+  (array.make-array u8 compiler-backend-sweep-bytes-capacity))
 (define compiler-backend-sweep-sym-bytes-count : i64
   0)
 (define compiler-backend-sweep-count : i64
@@ -36428,6 +36430,12 @@
 (define compiler-backend-sweep-swept-stores : i64
   0)
 (define compiler-backend-sweep-swept-funcs : i64
+  0)
+(define compiler-backend-sweep-dropped-funcs : i64
+  0)
+(define compiler-backend-sweep-dropped-table-cap : i64
+  0)
+(define compiler-backend-sweep-dropped-bytes-cap : i64
   0)
 
 ;; Sentinel for "this line is not a candidate store".
@@ -36439,7 +36447,10 @@
     (set! compiler-backend-sweep-count 0)
     (set! compiler-backend-sweep-sym-bytes-count 0)
     (set! compiler-backend-sweep-swept-stores 0)
-    (set! compiler-backend-sweep-swept-funcs 0)))
+    (set! compiler-backend-sweep-swept-funcs 0)
+    (set! compiler-backend-sweep-dropped-funcs 0)
+    (set! compiler-backend-sweep-dropped-table-cap 0)
+    (set! compiler-backend-sweep-dropped-bytes-cap 0)))
 
 ;; Record one FPO-audited function's sweep metadata. A full table silently
 ;; drops the entry (the function is simply not swept -- sound).
@@ -36459,7 +36470,20 @@
     (if (or
       (>= compiler-backend-sweep-count compiler-backend-sweep-capacity)
       (> (+ start len) compiler-backend-sweep-bytes-capacity))
-      unit
+      (begin
+        (set!
+          compiler-backend-sweep-dropped-funcs
+          (+ compiler-backend-sweep-dropped-funcs 1))
+        (if (>= compiler-backend-sweep-count compiler-backend-sweep-capacity)
+          (set!
+            compiler-backend-sweep-dropped-table-cap
+            (+ compiler-backend-sweep-dropped-table-cap 1))
+          unit)
+        (if (> (+ start len) compiler-backend-sweep-bytes-capacity)
+          (set!
+            compiler-backend-sweep-dropped-bytes-cap
+            (+ compiler-backend-sweep-dropped-bytes-cap 1))
+          unit))
       (let
         [j : i64 0]
         [idx : i64 compiler-backend-sweep-count]
@@ -37113,6 +37137,12 @@
               (string.int->string compiler-backend-sweep-swept-funcs)
               "|stores="
               (string.int->string compiler-backend-sweep-swept-stores)
+              "|dropped="
+              (string.int->string compiler-backend-sweep-dropped-funcs)
+              "|table-cap-drops="
+              (string.int->string compiler-backend-sweep-dropped-table-cap)
+              "|bytes-cap-drops="
+              (string.int->string compiler-backend-sweep-dropped-bytes-cap)
               "\n"
               "")))
         (if (not matched)
@@ -43669,7 +43699,17 @@ tl_memchr:
                                     (string.int->string
                                       compiler-backend-fpo-push-count)
                                     "\n"
-                                    "")))))
+                                    "")))
+                              (io.print-error
+                                (str_cat.str-cat
+                                  "peephole-r10-dead-scan|cap="
+                                  (string.int->string
+                                    compiler-backend-peephole-r10-dead-scan-line-cap)
+                                  "|cap-hits="
+                                  (string.int->string
+                                    compiler-backend-peephole-r10-dead-scan-cap-hits)
+                                  "\n"
+                                  ""))))
                           (cfg
                             scavenge-census
                             (compiler-backend-scavenge-census-print!))
@@ -43703,6 +43743,7 @@ tl_memchr:
     (set! compiler-backend-fpo-rbp-plan-count 0)
     (set! compiler-backend-fpo-demote-count 0)
     (set! compiler-backend-fpo-push-count 0)
+    (set! compiler-backend-peephole-r10-dead-scan-cap-hits 0)
     ;; GAP5: clear the post-emission dead-frame-store sweep metadata before
     ;; recording this program's FPO functions (a stale entry from a prior
     ;; program emit in the same process must not leak into the sweep).
@@ -46949,6 +46990,9 @@ tl_memchr:
 ;; touches %r10 must be a clean write; the scan passes only over non-%r10 movq
 ;; lines; any other line (ALU / call / jmp / label / ret / directive) stops the
 ;; scan as "not provably dead". Returns true only on a definite clean re-write.
+(define compiler-backend-peephole-r10-dead-scan-line-cap : i64
+  128)
+
 (define (compiler-backend-peephole-r10-dead-after?
   [asm : String]
   [asm-data : (Ptr u8)]
@@ -46959,7 +47003,10 @@ tl_memchr:
     [k : i64 0]
     [result : i64 -1]
     (begin
-      (while (and (< i n) (< result 0) (< k 32))
+      (while (and
+        (< i n)
+        (< result 0)
+        (< k compiler-backend-peephole-r10-dead-scan-line-cap))
         (let
           [end : i64 (compiler-backend-peephole-line-end asm-data i n)]
           (begin
@@ -46983,6 +47030,11 @@ tl_memchr:
                 (+ end 1)
                 end))
             (set! k (+ k 1)))))
+      (if (and (< result 0) (< i n))
+        (set!
+          compiler-backend-peephole-r10-dead-scan-cap-hits
+          (+ compiler-backend-peephole-r10-dead-scan-cap-hits 1))
+        unit)
       (= result 1))))
 
 (define (compiler-backend-peephole-r10-base-fold-line-range

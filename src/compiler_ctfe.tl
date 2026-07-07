@@ -438,20 +438,16 @@
 (defenum CtfeLayoutField
   (Field String i64))
 
-(comptime-decl
-  (:generated vector-family CtfeLayoutFieldList "CtfeLayoutField")
-  (defstruct CtfeLayoutFieldList
-    (slots (Array CtfeLayoutField))
-    (len i64)))
+(defstruct CtfeLayoutFieldList
+  (slots (Array CtfeLayoutField))
+  (len i64))
 
 (defenum CtfeLayoutInfo
   (Info String bool i64 i64 CtfeLayoutFieldList))
 
-(comptime-decl
-  (:generated vector-family CtfeLayoutInfoList "CtfeLayoutInfo")
-  (defstruct CtfeLayoutInfoList
-    (slots (Array CtfeLayoutInfo))
-    (len i64)))
+(defstruct CtfeLayoutInfoList
+  (slots (Array CtfeLayoutInfo))
+  (len i64))
 
 (defenum CtfeMaybeLayoutInfo
   (None)
@@ -466,30 +462,24 @@
 (defenum CtfeReflectField
   (Field String AstType))
 
-(comptime-decl
-  (:generated vector-family CtfeReflectFieldList "CtfeReflectField")
-  (defstruct CtfeReflectFieldList
-    (slots (Array CtfeReflectField))
-    (len i64)))
+(defstruct CtfeReflectFieldList
+  (slots (Array CtfeReflectField))
+  (len i64))
 
 (defenum CtfeReflectVariant
   (Variant String AstTypeList))
 
-(comptime-decl
-  (:generated vector-family CtfeReflectVariantList "CtfeReflectVariant")
-  (defstruct CtfeReflectVariantList
-    (slots (Array CtfeReflectVariant))
-    (len i64)))
+(defstruct CtfeReflectVariantList
+  (slots (Array CtfeReflectVariant))
+  (len i64))
 
 (defenum CtfeReflectInfo
   (Struct String String String CtfeReflectFieldList)
   (Enum String String String CtfeReflectVariantList))
 
-(comptime-decl
-  (:generated vector-family CtfeReflectInfoList "CtfeReflectInfo")
-  (defstruct CtfeReflectInfoList
-    (slots (Array CtfeReflectInfo))
-    (len i64)))
+(defstruct CtfeReflectInfoList
+  (slots (Array CtfeReflectInfo))
+  (len i64))
 
 (defenum CtfeMaybeReflectInfo
   (None)

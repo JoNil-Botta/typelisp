@@ -36,29 +36,23 @@
 (defenum DocTestLine
   (Line i64 String))
 
-(comptime-decl
-  (:generated vector-family DocTestLineList "DocTestLine")
-  (defstruct DocTestLineList
-    (slots (Array DocTestLine))
-    (len i64)))
+(defstruct DocTestLineList
+  (slots (Array DocTestLine))
+  (len i64))
 
 (defenum DocTestExample
   (Example i64 i64 DocTestExpectation String))
 
-(comptime-decl
-  (:generated vector-family DocTestExampleList "DocTestExample")
-  (defstruct DocTestExampleList
-    (slots (Array DocTestExample))
-    (len i64)))
+(defstruct DocTestExampleList
+  (slots (Array DocTestExample))
+  (len i64))
 
 (defenum DocTestError
   (Error i64 String))
 
-(comptime-decl
-  (:generated vector-family DocTestErrorList "DocTestError")
-  (defstruct DocTestErrorList
-    (slots (Array DocTestError))
-    (len i64)))
+(defstruct DocTestErrorList
+  (slots (Array DocTestError))
+  (len i64))
 
 (defenum DocTestExtraction
   (Extraction DocTestExampleList DocTestErrorList))
@@ -1024,11 +1018,9 @@
 (defenum DocTestRunFailure
   (Failure String i64 i64 String))
 
-(comptime-decl
-  (:generated vector-family DocTestRunFailureList "DocTestRunFailure")
-  (defstruct DocTestRunFailureList
-    (slots (Array DocTestRunFailure))
-    (len i64)))
+(defstruct DocTestRunFailureList
+  (slots (Array DocTestRunFailure))
+  (len i64))
 
 ;; Outcome of running a source: how many examples were checked and which failed.
 (defenum DocTestRunReport

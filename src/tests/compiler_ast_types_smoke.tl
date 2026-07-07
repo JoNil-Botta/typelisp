@@ -561,30 +561,27 @@
         source-pools
         (AstExpr.BinaryData "bytes"))]
     [links : AstExternLinkInputList
-      (begin
-        (let
-          [items : AstExternLinkInputList (ast-extern-link-input-list-new)]
-          (begin
-            (ast-extern-link-input-list-push
-              (&mut items)
-              (AstExternLinkInput.Lib "m"))
-            items)))]
+      (let
+        [items : AstExternLinkInputList (ast-extern-link-input-list-new)]
+        (begin
+          (ast-extern-link-input-list-push
+            (&mut items)
+            (AstExternLinkInput.Lib "m"))
+          items))]
     [variants : AstDispatchVariantList
-      (begin
-        (let
-          [items : AstDispatchVariantList (ast-dispatch-variant-list-new)]
-          (begin
-            (ast-dispatch-variant-list-push
-              (&mut items)
-              (AstDispatchVariant.Variant (AstDispatchIsa.Avx2) "fast"))
-            items)))]
+      (let
+        [items : AstDispatchVariantList (ast-dispatch-variant-list-new)]
+        (begin
+          (ast-dispatch-variant-list-push
+            (&mut items)
+            (AstDispatchVariant.Variant (AstDispatchIsa.Avx2) "fast"))
+          items))]
     [lifetimes : AstLifetimeList
-      (begin
-        (let
-          [items : AstLifetimeList (ast-lifetime-list-new)]
-          (begin
-            (ast-lifetime-list-push (&mut items) "owner")
-            items)))]
+      (let
+        [items : AstLifetimeList (ast-lifetime-list-new)]
+        (begin
+          (ast-lifetime-list-push (&mut items) "owner")
+          items))]
     [program : AstProgram
       (ast-program
         (ast-decl-cons

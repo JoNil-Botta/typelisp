@@ -28,6 +28,7 @@
 (import stdlib.hash)
 (import stdlib.hashmap)
 (import (hashmap String i64) as opt_string_i64_map)
+(import (hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.string)
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
 (import stdlib.option)
@@ -1326,24 +1327,28 @@
 ;; another remaining block is never dropped. DCE itself does not decide
 ;; reachability.
 ;; Used-var set: var ids referenced somewhere in the function. Backed by
-;; hashmap.I64I64Map (stored value 1 = present) for O(1) membership; previously a linked
+;; opt_i64_i64_map.Map (stored value 1 = present) for O(1) membership; previously a linked
 ;; list with O(n) contains and O(n^2) dedup'd inserts.
-(define (opt-used-contains [set : hashmap.I64I64Map] [var : i64]) : bool
-  (hashmap.i64-i64-map-contains? set var))
+(define (opt-used-contains [set : opt_i64_i64_map.Map] [var : i64]) : bool
+  (opt_i64_i64_map.contains? (& set) var))
 
-(define (opt-used-add [set : hashmap.I64I64Map] [var : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put set var 1))
+(define (opt-used-add [set : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+  (let
+    [out : opt_i64_i64_map.Map set]
+    (begin
+      (opt_i64_i64_map.insert (&mut out) var 1)
+      out)))
 
 (define (opt-collect-value-uses
-  [set : hashmap.I64I64Map]
-  [value : CompilerIrValue]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [value : CompilerIrValue]) : opt_i64_i64_map.Map
   (match value
     [(CompilerIrValue.Var id) (opt-used-add set id)]
     [_ set]))
 
 (define (opt-collect-value-list-uses
-  [set : hashmap.I64I64Map]
-  [values : CompilerIrValueList]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [values : CompilerIrValueList]) : opt_i64_i64_map.Map
   (match values
     [(CompilerIrValueList.Nil) set]
     [(CompilerIrValueList.Cons value rest)
@@ -1352,9 +1357,9 @@
         (box-get rest))]))
 
 (define (opt-collect-call-args-array-uses
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [values : (Array CompilerIrValue)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : opt_i64_i64_map.Map
   (if (>= index (array-length values))
     set
     (opt-collect-call-args-array-uses
@@ -1363,8 +1368,8 @@
       (+ index 1))))
 
 (define (opt-collect-call-args-uses
-  [set : hashmap.I64I64Map]
-  [args : CompilerIrCallArgs]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [args : CompilerIrCallArgs]) : opt_i64_i64_map.Map
   (match args
     [(CompilerIrCallArgs.Nil) set]
     [(CompilerIrCallArgs.One value) (opt-collect-value-uses set value)]
@@ -1374,8 +1379,8 @@
       (opt-collect-call-args-array-uses set values 0)]))
 
 (define (opt-collect-spmd-call-args-uses
-  [set : hashmap.I64I64Map]
-  [args : CompilerIrSpmdCallArgList]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [args : CompilerIrSpmdCallArgList]) : opt_i64_i64_map.Map
   (match args
     [(IrSpmdCallArgNil) set]
     [(IrSpmdCallArgCons arg rest)
@@ -1386,16 +1391,16 @@
             (box-get rest))])]))
 
 (define (opt-collect-phi-uses
-  [set : hashmap.I64I64Map]
-  [inputs : CompilerIrPhiInputList]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [inputs : CompilerIrPhiInputList]) : opt_i64_i64_map.Map
   (match inputs
     [(CompilerIrPhiInputList.Nil) set]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (opt-collect-phi-uses (opt-collect-value-uses set value) (box-get rest))]))
 
 (define (opt-collect-instr-uses
-  [set : hashmap.I64I64Map]
-  [instr : CompilerIrInstr]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match instr
     [(CompilerIrInstr.Mov _ src _) (opt-collect-value-uses set src)]
     [(CompilerIrInstr.BinOp _ _ l r _)
@@ -1518,8 +1523,8 @@
     [_ set]))
 
 (define (opt-collect-instrs-uses
-  [set : hashmap.I64I64Map]
-  [instrs : CompilerIrInstrList]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrList]) : opt_i64_i64_map.Map
   (match instrs
     [(CompilerIrInstrList.Nil) set]
     [(CompilerIrInstrList.Cons instr rest)
@@ -1528,10 +1533,10 @@
         (box-get rest))]))
 
 (define (opt-collect-instr-seq-uses-from
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
-  [count : i64]) : hashmap.I64I64Map
+  [count : i64]) : opt_i64_i64_map.Map
   (if (>= index count)
     set
     (opt-collect-instr-seq-uses-from
@@ -1541,8 +1546,8 @@
       count)))
 
 (define (opt-collect-instr-seq-uses
-  [set : hashmap.I64I64Map]
-  [instrs : CompilerIrInstrSeq]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [instrs : CompilerIrInstrSeq]) : opt_i64_i64_map.Map
   (opt-collect-instr-seq-uses-from
     set
     (struct-get instrs slots)
@@ -1550,8 +1555,8 @@
     (struct-get instrs len)))
 
 (define (opt-collect-blocks-uses
-  [set : hashmap.I64I64Map]
-  [blocks : CompilerIrBlockList]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -1615,7 +1620,7 @@
 ;; `opt-loop-bce-blocks` leaves behind once it proves an array index in range,
 ;; which otherwise survives every later pass because these producers were
 ;; excluded here.
-(define (opt-instr-dead? [set : hashmap.I64I64Map] [instr : CompilerIrInstr]) : bool
+(define (opt-instr-dead? [set : opt_i64_i64_map.Map] [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Mov dst _ _) (not (opt-used-contains set dst))]
     [(CompilerIrInstr.AddrOf dst _) (not (opt-used-contains set dst))]
@@ -1651,7 +1656,7 @@
     [_ false]))
 
 (define (opt-dce-instrs-from
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrList]
   [prev-alloc-dst : i64]) : CompilerIrInstrList
   (match instrs
@@ -1679,12 +1684,12 @@
                 (opt-dce-instrs-from set rest-list -2))])))]))
 
 (define (opt-dce-instrs
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-dce-instrs-from set instrs -2))
 
 (define (opt-dce-instr-seq-from
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [slots : (Array CompilerIrInstr)]
   [index : i64]
   [count : i64]) : CompilerIrInstrList
@@ -1709,7 +1714,7 @@
           [_ (compiler-ir-instr-cons instr rest)])))))
 
 (define (opt-dce-instr-seq
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-dce-instr-seq-from
     set
@@ -1717,13 +1722,13 @@
     0
     (struct-get instrs len)))
 
-(define (opt-dce-block [set : hashmap.I64I64Map] [block : CompilerIrBlock]) : CompilerIrBlock
+(define (opt-dce-block [set : opt_i64_i64_map.Map] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (compiler-ir-block label (opt-dce-instr-seq set instrs))]))
 
 (define (opt-dce-block-list
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -7855,10 +7860,10 @@
   (Some OptVarDef))
 
 (defenum OptVarSetResult
-  (Ok hashmap.I64I64Map)
+  (Ok opt_i64_i64_map.Map)
   (Err))
 
-(define (opt-var-set-add-unique [set : hashmap.I64I64Map] [var : i64]) : OptVarSetResult
+(define (opt-var-set-add-unique [set : opt_i64_i64_map.Map] [var : i64]) : OptVarSetResult
   (if (opt-used-contains set var)
     (OptVarSetResult.Err)
     (OptVarSetResult.Ok (opt-used-add set var))))
@@ -7926,7 +7931,7 @@
 
 (define (opt-verify-param-def-set
   [params : CompilerIrParamList]
-  [set : hashmap.I64I64Map]) : OptVarSetResult
+  [set : opt_i64_i64_map.Map]) : OptVarSetResult
   (match params
     [(CompilerIrParamList.Nil) (OptVarSetResult.Ok set)]
     [(CompilerIrParamList.Cons param rest)
@@ -7939,7 +7944,7 @@
 
 (define (opt-verify-instr-def-set
   [instrs : CompilerIrInstrList]
-  [set : hashmap.I64I64Map]) : OptVarSetResult
+  [set : opt_i64_i64_map.Map]) : OptVarSetResult
   (match instrs
     [(CompilerIrInstrList.Nil) (OptVarSetResult.Ok set)]
     [(CompilerIrInstrList.Cons instr rest)
@@ -7954,7 +7959,7 @@
 (define (opt-verify-instr-def-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [set : hashmap.I64I64Map]) : OptVarSetResult
+  [set : opt_i64_i64_map.Map]) : OptVarSetResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptVarSetResult.Ok set)
     (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
@@ -7967,7 +7972,7 @@
 
 (define (opt-verify-block-def-set
   [blocks : CompilerIrBlockList]
-  [set : hashmap.I64I64Map]) : OptVarSetResult
+  [set : opt_i64_i64_map.Map]) : OptVarSetResult
   (match blocks
     [(CompilerIrBlockList.Nil) (OptVarSetResult.Ok set)]
     [(CompilerIrBlockList.Cons block rest)
@@ -7983,9 +7988,7 @@
 (define (opt-verify-single-defs?
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : bool
-  (match (opt-verify-param-def-set
-    params
-    (hashmap.i64-i64-map-with-capacity 64))
+  (match (opt-verify-param-def-set params (opt_i64_i64_map.with-capacity 64))
     [(OptVarSetResult.Err) false]
     [(OptVarSetResult.Ok param-set)
       (match (opt-verify-block-def-set blocks param-set)
@@ -8709,7 +8712,7 @@
   (Cons i64 AstType (Box OptSsaVarTypes)))
 
 (defenum OptSsaFacts
-  (Facts hashmap.I64I64Map hashmap.I64I64Map OptSsaVarTypes))
+  (Facts opt_i64_i64_map.Map opt_i64_i64_map.Map OptSsaVarTypes))
 
 (defenum OptSsaVarBlocks
   (Nil)
@@ -8755,13 +8758,18 @@
 (defenum OptSsaBlockResult
   (Result CompilerIrInstrList OptSsaRenameEnv i64))
 
-(define (opt-ssa-count [counts : hashmap.I64I64Map] [var : i64]) : i64
-  (match (hashmap.i64-i64-map-get counts var)
-    [(hashmap.I64I64MapFound n) n]
-    [(hashmap.I64I64MapMissing) 0]))
+(define (opt-ssa-count [counts : opt_i64_i64_map.Map] [var : i64]) : i64
+  (match (opt_i64_i64_map.get (& counts) var)
+    [(opt_i64_i64_map.LookupFound n) n]
+    [(opt_i64_i64_map.LookupMissing) 0]))
 
-(define (opt-ssa-count-add [counts : hashmap.I64I64Map] [var : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put counts var (+ 1 (opt-ssa-count counts var))))
+(define (opt-ssa-count-add [counts : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+  (let
+    [next-count : i64 (+ 1 (opt-ssa-count counts var))]
+    [out : opt_i64_i64_map.Map counts]
+    (begin
+      (opt_i64_i64_map.insert (&mut out) var next-count)
+      out)))
 
 (define (opt-ssa-scalar-type? [ty : AstType]) : bool
   (match ty
@@ -8811,7 +8819,7 @@
   (match facts
     [(OptSsaFacts.Facts counts bad types)
       (let
-        [next-counts : hashmap.I64I64Map (opt-ssa-count-add counts var)]
+        [next-counts : opt_i64_i64_map.Map (opt-ssa-count-add counts var)]
         (if (not (opt-ssa-scalar-type? ty))
           (OptSsaFacts.Facts next-counts (opt-used-add bad var) types)
           (match (opt-ssa-var-type-lookup types var)
@@ -8946,8 +8954,8 @@
     (opt-ssa-facts-add-params
       params
       (OptSsaFacts.Facts
-        (hashmap.i64-i64-map-with-capacity 64)
-        (hashmap.i64-i64-map-with-capacity 64)
+        (opt_i64_i64_map.with-capacity 64)
+        (opt_i64_i64_map.with-capacity 64)
         (OptSsaVarTypes.Nil)))))
 
 (define (opt-ssa-candidate? [facts : OptSsaFacts] [var : i64]) : bool
@@ -13425,9 +13433,9 @@
           exit-label))]))
 
 (define (opt-rotate-ssa-uses-except-header
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [header : String]) : hashmap.I64I64Map
+  [header : String]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -13446,9 +13454,9 @@
         header)]))
 
 (define (opt-rotate-ssa-uses-outside-body
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [body : OptLabelSet]) : hashmap.I64I64Map
+  [body : OptLabelSet]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -13481,7 +13489,7 @@
 ;; blocks plus the header's own phi inputs.
 (define (opt-rotate-ssa-guard-dsts-local?
   [guard : CompilerIrInstrList]
-  [uses : hashmap.I64I64Map]) : bool
+  [uses : opt_i64_i64_map.Map]) : bool
   (match guard
     [(CompilerIrInstrList.Nil) true]
     [(CompilerIrInstrList.Cons instr rest)
@@ -13597,7 +13605,7 @@
 ;; the destination remap for the outside-use rewrite.
 (define (opt-rotate-ssa-exit-phis
   [recs : OptRotateSsaPhiRecs]
-  [outside-uses : hashmap.I64I64Map]
+  [outside-uses : opt_i64_i64_map.Map]
   [preheader : String]
   [latch : String]
   [next-var : i64]) : OptRotateSsaExitPhis
@@ -13782,7 +13790,7 @@
       (opt-rotate-ssa-guard-dsts-local?
         guard
         (opt-rotate-ssa-uses-except-header
-          (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) phis)
+          (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) phis)
           blocks
           header)))
       ;; The preheader clone's loop arm targets the landing block instead of
@@ -13811,7 +13819,7 @@
               (match (opt-rotate-ssa-exit-phis
                 recs
                 (opt-rotate-ssa-uses-outside-body
-                  (hashmap.i64-i64-map-with-capacity 64)
+                  (opt_i64_i64_map.with-capacity 64)
                   blocks
                   body)
                 preheader
@@ -13945,10 +13953,10 @@
 ;; allocations, bounds checks, phis, vector memory ops, and trapping arithmetic
 ;; are left in place.
 (defenum OptLicmInstrsResult
-  (Result CompilerIrInstrList CompilerIrInstrList hashmap.I64I64Map bool))
+  (Result CompilerIrInstrList CompilerIrInstrList opt_i64_i64_map.Map bool))
 
 (defenum OptLicmBlocksResult
-  (Result CompilerIrBlockList CompilerIrInstrList hashmap.I64I64Map bool))
+  (Result CompilerIrBlockList CompilerIrInstrList opt_i64_i64_map.Map bool))
 
 (defstruct OptLicmStoreSummary
   (call-or-unknown? bool)
@@ -13975,7 +13983,7 @@
 
 (define (opt-licm-collect-defs-instrs
   [instrs : CompilerIrInstrList]
-  [set : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match instrs
     [(CompilerIrInstrList.Nil) set]
     [(CompilerIrInstrList.Cons instr rest)
@@ -13987,7 +13995,7 @@
 (define (opt-licm-collect-defs-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [set : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     set
     (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
@@ -14001,12 +14009,12 @@
 
 (define (opt-licm-collect-defs-instr-seq
   [instrs : CompilerIrInstrSeq]
-  [set : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (opt-licm-collect-defs-instr-seq-from instrs 0 set))
 
 (define (opt-licm-collect-defs-blocks
   [blocks : CompilerIrBlockList]
-  [set : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -14019,8 +14027,8 @@
       (opt-licm-collect-defs-blocks (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (opt-licm-value-invariant?
-  [loop-defs : hashmap.I64I64Map]
-  [hoisted : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.Var var)
@@ -14035,8 +14043,8 @@
     [_ true]))
 
 (define (opt-licm-values-invariant?
-  [loop-defs : hashmap.I64I64Map]
-  [hoisted : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
   [a : CompilerIrValue]
   [b : CompilerIrValue]) : bool
   (and
@@ -14482,9 +14490,9 @@
     summary))
 
 (define (opt-licm-candidate?
-  [loop-defs : hashmap.I64I64Map]
-  [hoisted : hashmap.I64I64Map]
-  [sources : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
+  [hoisted : opt_i64_i64_map.Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
@@ -14518,20 +14526,20 @@
     [_ false]))
 
 (define (opt-licm-add-hoisted-def
-  [hoisted : hashmap.I64I64Map]
-  [instr : CompilerIrInstr]) : hashmap.I64I64Map
+  [hoisted : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match (opt-instr-def-var instr)
     [(option_i64.Some var) (opt-used-add hoisted var)]
     [(option_i64.None) hoisted]))
 
 (define (opt-licm-filter-instrs
-  [loop-defs : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrList]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
-  [hoisted : hashmap.I64I64Map]) : OptLicmInstrsResult
+  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (match instrs
     [(CompilerIrInstrList.Nil)
       (OptLicmInstrsResult.Result
@@ -14578,14 +14586,14 @@
               changed)]))]))
 
 (define (opt-licm-filter-instr-seq-from
-  [loop-defs : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
-  [hoisted : hashmap.I64I64Map]) : OptLicmInstrsResult
+  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (OptLicmInstrsResult.Result
       (CompilerIrInstrList.Nil)
@@ -14634,13 +14642,13 @@
               changed)])))))
 
 (define (opt-licm-filter-instr-seq
-  [loop-defs : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
-  [hoisted : hashmap.I64I64Map]) : OptLicmInstrsResult
+  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
   (opt-licm-filter-instr-seq-from
     loop-defs
     instrs
@@ -14652,13 +14660,13 @@
     hoisted))
 
 (define (opt-licm-filter-body-blocks
-  [loop-defs : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [store-summary : OptLicmStoreSummary]
   [ptrs : OptLicmPtrEnv]
-  [hoisted : hashmap.I64I64Map]) : OptLicmBlocksResult
+  [hoisted : opt_i64_i64_map.Map]) : OptLicmBlocksResult
   (match blocks
     [(CompilerIrBlockList.Nil)
       (OptLicmBlocksResult.Result
@@ -15114,7 +15122,7 @@
 
 (define (opt-licm-apply-loop
   [index : OptCfgIndex]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [direct-call-clean : opt_string_i64_map.Map]
   [blocks : CompilerIrBlockList]
@@ -15125,10 +15133,10 @@
         [body-blocks : CompilerIrBlockList
           (opt-natural-loop-current-body-blocks index loop blocks)]
         [map-capacity : i64 (opt-licm-body-map-capacity body-blocks)]
-        [loop-defs : hashmap.I64I64Map
+        [loop-defs : opt_i64_i64_map.Map
           (opt-licm-collect-defs-blocks
             body-blocks
-            (hashmap.i64-i64-map-with-capacity map-capacity))]
+            (opt_i64_i64_map.with-capacity map-capacity))]
         [store-state : OptLicmStoreState
           (opt-licm-store-state-blocks
             types
@@ -15169,7 +15177,7 @@
           types
           store-summary
           ptrs
-          (hashmap.i64-i64-map-with-capacity map-capacity))
+          (opt_i64_i64_map.with-capacity map-capacity))
           [(OptLicmBlocksResult.Result filtered-body hoisted _ changed)
             (if changed
               ;; M-G (B1): fold duplicate hoisted loads/geps onto their first
@@ -15199,7 +15207,7 @@
 
 (define (opt-licm-apply-loops
   [index : OptCfgIndex]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [direct-call-clean : opt_string_i64_map.Map]
   [loops : OptNaturalLoopList]
@@ -15217,7 +15225,7 @@
 
 (define (opt-licm-blocks-with-context-and-direct-call-clean
   [context : OptCfgContext]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [direct-call-clean : opt_string_i64_map.Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -15231,7 +15239,7 @@
 
 (define (opt-licm-blocks-with-context
   [context : OptCfgContext]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-blocks-with-context-and-direct-call-clean
@@ -15244,7 +15252,7 @@
 (define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (opt-licm-blocks-with-context
     (opt-cfg-context-build blocks)
-    (opt-gvn-sources-blocks blocks (hashmap.i64-i64-map-with-capacity 64))
+    (opt-gvn-sources-blocks blocks (opt_i64_i64_map.with-capacity 64))
     (OptSsaVarTypes.Nil)
     blocks))
 
@@ -15258,12 +15266,12 @@
       (match func
         [(CompilerIrFunction.Function name params ret-ty frame blocks)
           (let
-            [sources : hashmap.I64I64Map
+            [sources : opt_i64_i64_map.Map
               (opt-gvn-sources-blocks
                 blocks
                 (opt-gvn-sources-params
                   params
-                  (hashmap.i64-i64-map-with-capacity 64)))]
+                  (opt_i64_i64_map.with-capacity 64)))]
             [types : OptSsaVarTypes
               (opt-licm-type-env-from-function params blocks)]
             [hoisted-blocks : CompilerIrBlockList
@@ -15785,14 +15793,19 @@
     [_ (option_i64.None)]))
 
 (define (opt-induction-affine-offset-env-instr
-  [env : hashmap.I64I64Map]
+  [env : opt_i64_i64_map.Map]
   [phi-var : i64]
-  [instr : CompilerIrInstr]) : hashmap.I64I64Map
+  [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match instr
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (if (opt-induction-i64-type? ty)
         (match (opt-induction-affine-offset-from-binop op lhs rhs phi-var)
-          [(option_i64.Some offset) (hashmap.i64-i64-map-put env dst offset)]
+          [(option_i64.Some offset)
+            (let
+              [out : opt_i64_i64_map.Map env]
+              (begin
+                (opt_i64_i64_map.insert (&mut out) dst offset)
+                out))]
           [(option_i64.None) env])
         env)]
     [_ env]))
@@ -15801,7 +15814,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [phi-var : i64]
-  [env : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     env
     (opt-induction-affine-offset-env-instr-seq-from
@@ -15816,13 +15829,13 @@
 (define (opt-induction-affine-offset-env-instr-seq
   [instrs : CompilerIrInstrSeq]
   [phi-var : i64]
-  [env : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (opt-induction-affine-offset-env-instr-seq-from instrs 0 phi-var env))
 
 (define (opt-induction-affine-offset-env-blocks
   [body-blocks : CompilerIrBlockList]
   [phi-var : i64]
-  [env : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [env : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match body-blocks
     [(CompilerIrBlockList.Nil) env]
     [(CompilerIrBlockList.Cons block rest)
@@ -15840,30 +15853,29 @@
 
 (define (opt-induction-affine-offset-env
   [body-blocks : CompilerIrBlockList]
-  [fact : OptInductionFact]) : hashmap.I64I64Map
+  [fact : OptInductionFact]) : opt_i64_i64_map.Map
   (match fact
     [(OptInductionFact.Fact phi-var _ _ _ _)
       (opt-induction-affine-offset-env-blocks
         body-blocks
         phi-var
-        (hashmap.i64-i64-map-with-capacity
-          (opt-licm-body-map-capacity body-blocks)))]))
+        (opt_i64_i64_map.with-capacity (opt-licm-body-map-capacity body-blocks)))]))
 
 (define (opt-induction-value-offset
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [value : CompilerIrValue]
   [phi-var : i64]) : option_i64.Option
   (match value
     [(CompilerIrValue.Var var)
       (if (= var phi-var)
         (option_i64.Some 0)
-        (match (hashmap.i64-i64-map-get offsets var)
-          [(hashmap.I64I64MapFound offset) (option_i64.Some offset)]
-          [(hashmap.I64I64MapMissing) (option_i64.None)]))]
+        (match (opt_i64_i64_map.get (& offsets) var)
+          [(opt_i64_i64_map.LookupFound offset) (option_i64.Some offset)]
+          [(opt_i64_i64_map.LookupMissing) (option_i64.None)]))]
     [_ (option_i64.None)]))
 
 (define (opt-induction-mul-derived
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [lhs : CompilerIrValue]
   [rhs : CompilerIrValue]
   [phi-var : i64]
@@ -15895,7 +15907,7 @@
 ;; iff it is not defined inside the loop body. Evaluating it directly avoids
 ;; allocating an empty sentinel map per GEP candidate.
 (define (opt-induction-value-base-invariant?
-  [loop-defs : hashmap.I64I64Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.Var var) (not (opt-used-contains loop-defs var))]
@@ -15903,8 +15915,8 @@
 
 (define (opt-induction-find-derived-instr
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
-  [loop-defs : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : OptMaybeInductionDerived
   (match fact
     [(OptInductionFact.Fact phi-var _ _ step _)
@@ -15992,8 +16004,8 @@
 
 (define (opt-induction-collect-derived-instr-seq-from
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
-  [loop-defs : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
@@ -16023,8 +16035,8 @@
 
 (define (opt-induction-collect-derived-instr-seq
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
-  [loop-defs : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
   (opt-induction-collect-derived-instr-seq-from
@@ -16037,8 +16049,8 @@
 
 (define (opt-induction-collect-derived-blocks
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
-  [loop-defs : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
+  [loop-defs : opt_i64_i64_map.Map]
   [body-blocks : CompilerIrBlockList]
   [deriveds : OptInductionDerivedList]) : OptInductionDerivedList
   (match body-blocks
@@ -16072,7 +16084,7 @@
 
 (define (opt-induction-derived-matches?
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [instr : CompilerIrInstr]) : bool
   (match fact
@@ -16111,7 +16123,7 @@
 
 (define (opt-induction-rewrite-instr
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instr : CompilerIrInstr]) : CompilerIrInstr
@@ -16127,7 +16139,7 @@
 
 (define (opt-induction-rewrite-instrs
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
@@ -16145,7 +16157,7 @@
 
 (define (opt-induction-rewrite-instr-seq-from
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instrs : CompilerIrInstrSeq]
@@ -16169,7 +16181,7 @@
 
 (define (opt-induction-rewrite-instr-seq
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
@@ -16185,7 +16197,7 @@
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [derived : OptInductionDerived]
   [derived-phi : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -16227,7 +16239,7 @@
   [body : OptLoopBody]
   [index : OptCfgIndex]
   [fact : OptInductionFact]
-  [offsets : hashmap.I64I64Map]
+  [offsets : opt_i64_i64_map.Map]
   [deriveds : OptInductionDerivedList]
   [frame : i64]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -16502,12 +16514,12 @@
           (match (opt-induction-find-fact body-blocks loop preheader)
             [(OptMaybeInductionFact.Some fact)
               (let
-                [loop-defs : hashmap.I64I64Map
+                [loop-defs : opt_i64_i64_map.Map
                   (opt-licm-collect-defs-blocks
                     body-blocks
-                    (hashmap.i64-i64-map-with-capacity
+                    (opt_i64_i64_map.with-capacity
                       (opt-licm-body-map-capacity body-blocks)))]
-                [offsets : hashmap.I64I64Map
+                [offsets : opt_i64_i64_map.Map
                   (opt-induction-affine-offset-env body-blocks fact)]
                 [deriveds : OptInductionDerivedList
                   (opt-induction-collect-derived-blocks
@@ -18335,7 +18347,7 @@
 ;; either arm.
 ;; GVN value-source multiset: maps each def-site var id to how many times it is
 ;; defined (parameter seed + instruction destinations). A var is reusable across
-;; dominance only when its count is exactly 1. Backed by hashmap.I64I64Map for O(1)
+;; dominance only when its count is exactly 1. Backed by opt_i64_i64_map.Map for O(1)
 ;; membership; previously a linked list scanned O(n) per query inside the
 ;; per-instruction build and rewrite loops (O(n^2) per GVN pass).
 ;; The expression table itself is scoped by dominator-tree traversal: each block
@@ -18366,24 +18378,29 @@
 
 ;; Number of times `var` appears as a definition site (instruction destination
 ;; or seeded parameter) in the collected value-source list.
-(define (opt-gvn-count [sources : hashmap.I64I64Map] [var : i64]) : i64
-  (match (hashmap.i64-i64-map-get sources var)
-    [(hashmap.I64I64MapFound n) n]
-    [(hashmap.I64I64MapMissing) 0]))
+(define (opt-gvn-count [sources : opt_i64_i64_map.Map] [var : i64]) : i64
+  (match (opt_i64_i64_map.get (& sources) var)
+    [(opt_i64_i64_map.LookupFound n) n]
+    [(opt_i64_i64_map.LookupMissing) 0]))
 
 ;; Record one more definition of `var` in the value-source multiset.
-(define (opt-gvn-defs-add [sources : hashmap.I64I64Map] [var : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put sources var (+ 1 (opt-gvn-count sources var))))
+(define (opt-gvn-defs-add [sources : opt_i64_i64_map.Map] [var : i64]) : opt_i64_i64_map.Map
+  (let
+    [next-count : i64 (+ 1 (opt-gvn-count sources var))]
+    [out : opt_i64_i64_map.Map sources]
+    (begin
+      (opt_i64_i64_map.insert (&mut out) var next-count)
+      out)))
 
 ;; A var is reusable across dominance only when it has exactly one value source.
-(define (opt-gvn-stable-var? [sources : hashmap.I64I64Map] [var : i64]) : bool
+(define (opt-gvn-stable-var? [sources : opt_i64_i64_map.Map] [var : i64]) : bool
   (= (opt-gvn-count sources var) 1))
 
 ;; Operand values that hold a single unchanging value: literals and single-source
 ;; vars. Globals, global addresses, function references, and float/string
 ;; literals are excluded to match the existing copy-propagation conservatism.
 (define (opt-gvn-value-stable?
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.Var id) (opt-gvn-stable-var? sources id)]
@@ -18476,7 +18493,7 @@
 
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
-  [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match params
     [(CompilerIrParamList.Nil) acc]
     [(CompilerIrParamList.Cons param rest)
@@ -18486,7 +18503,7 @@
 
 (define (opt-gvn-sources-instrs
   [instrs : CompilerIrInstrList]
-  [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match instrs
     [(CompilerIrInstrList.Nil) acc]
     [(CompilerIrInstrList.Cons instr rest)
@@ -18501,7 +18518,7 @@
 (define (opt-gvn-sources-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     acc
     (let
@@ -18515,7 +18532,7 @@
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
-  [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) acc]
     [(CompilerIrBlockList.Cons block rest)
@@ -18534,7 +18551,7 @@
 
 (define (opt-gvn-recordable-instr?
   [instr : CompilerIrInstr]
-  [sources : hashmap.I64I64Map]) : bool
+  [sources : opt_i64_i64_map.Map]) : bool
   (match instr
     [(CompilerIrInstr.BinOp dst _ l r _)
       (and
@@ -18555,7 +18572,7 @@
     [_ false]))
 
 (define (opt-gvn-record-count-instr-seq-from
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : i64
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -18569,7 +18586,7 @@
       (opt-gvn-record-count-instr-seq-from sources instrs (+ index 1)))))
 
 (define (opt-gvn-record-count-blocks
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) 0]
@@ -18657,7 +18674,7 @@
 (define (opt-gvn-record
   [instr : CompilerIrInstr]
   [def-block-id : i64]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [table : OptGvnMap]
   [changes : OptGvnScopeChanges]) : OptGvnScopeChanges
   (match instr
@@ -18695,7 +18712,7 @@
     [_ changes]))
 
 (define (opt-gvn-record-scope-instr-seq-from
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [def-block-id : i64]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -18738,7 +18755,7 @@
 
 (define (opt-gvn-rewrite-instr
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [instr : CompilerIrInstr]) : CompilerIrInstr
   (match instr
     [(CompilerIrInstr.BinOp dst op l r ty)
@@ -18788,7 +18805,7 @@
 
 (define (opt-gvn-rewrite-instr-seq-from
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [out : CompilerIrInstrList]) : CompilerIrInstrList
@@ -18808,7 +18825,7 @@
 
 (define (opt-gvn-rewrite-instr-seq
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-gvn-rewrite-instr-seq-from
     table
@@ -18819,7 +18836,7 @@
 
 (define (opt-gvn-rewrite-block
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -18871,7 +18888,7 @@
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
   [id : i64]) : unit
@@ -18916,7 +18933,7 @@
   [context : OptCfgContext]
   [children : OptCfgCsr]
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
   [parent-id : i64]) : unit
@@ -18942,7 +18959,7 @@
 (define (opt-gvn-rewrite-dom
   [context : OptCfgContext]
   [table : OptGvnMap]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
     [doms : OptDomInfo (struct-get context doms)]
@@ -18976,10 +18993,10 @@
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [sources : hashmap.I64I64Map
+    [sources : opt_i64_i64_map.Map
       (opt-gvn-sources-blocks
         blocks
-        (opt-gvn-sources-params params (hashmap.i64-i64-map-with-capacity 64)))]
+        (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
     [table : OptGvnMap
       (opt-gvn-map-empty (opt-gvn-record-count-blocks sources blocks))]
     [gvn : CompilerIrBlockList
@@ -19036,9 +19053,9 @@
     (= (opt-int-width to-ty) 64)))
 
 (define (opt-bounds-dom-copies-add-instr
-  [sources : hashmap.I64I64Map]
-  [copies : hashmap.I64I64Map]
-  [instr : CompilerIrInstr]) : hashmap.I64I64Map
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [instr : CompilerIrInstr]) : opt_i64_i64_map.Map
   (match instr
     [(CompilerIrInstr.Mov dst src _)
       (match src
@@ -19046,7 +19063,11 @@
           (if (and
             (opt-gvn-stable-var? sources dst)
             (opt-gvn-stable-var? sources s))
-            (hashmap.i64-i64-map-put copies dst s)
+            (let
+              [out : opt_i64_i64_map.Map copies]
+              (begin
+                (opt_i64_i64_map.insert (&mut out) dst s)
+                out))
             copies)]
         [_ copies])]
     [(CompilerIrInstr.Cast dst src from-ty to-ty)
@@ -19056,15 +19077,19 @@
             (opt-bounds-dom-reinterpret-cast? from-ty to-ty)
             (opt-gvn-stable-var? sources dst)
             (opt-gvn-stable-var? sources s))
-            (hashmap.i64-i64-map-put copies dst s)
+            (let
+              [out : opt_i64_i64_map.Map copies]
+              (begin
+                (opt_i64_i64_map.insert (&mut out) dst s)
+                out))
             copies)]
         [_ copies])]
     [_ copies]))
 
 (define (opt-bounds-dom-copies-add-blocks
-  [sources : hashmap.I64I64Map]
-  [copies : hashmap.I64I64Map]
-  [blocks : CompilerIrBlockList]) : hashmap.I64I64Map
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
+  [blocks : CompilerIrBlockList]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) copies]
     [(CompilerIrBlockList.Cons block rest)
@@ -19073,7 +19098,7 @@
           (let
             [count : i64 (compiler-ir-instr-seq-count instrs)]
             [i : i64 0]
-            [acc : hashmap.I64I64Map copies]
+            [acc : opt_i64_i64_map.Map copies]
             (begin
               (while (< i count)
                 (begin
@@ -19092,7 +19117,7 @@
         (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-bounds-dom-resolve
-  [copies : hashmap.I64I64Map]
+  [copies : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : CompilerIrValue
   (match value
     [(CompilerIrValue.Var id)
@@ -19101,12 +19126,12 @@
         [hops : i64 0]
         (begin
           (while (< hops 8)
-            (match (hashmap.i64-i64-map-get copies cur)
-              [(hashmap.I64I64MapFound next)
+            (match (opt_i64_i64_map.get (& copies) cur)
+              [(opt_i64_i64_map.LookupFound next)
                 (begin
                   (set! cur next)
                   (set! hops (+ hops 1)))]
-              [(hashmap.I64I64MapMissing) (set! hops 8)]))
+              [(opt_i64_i64_map.LookupMissing) (set! hops 8)]))
           (if (= cur id)
             value
             (CompilerIrValue.Var cur))))]
@@ -19114,8 +19139,8 @@
 
 (define (opt-bounds-dom-instrs-from
   [facts : OptBoundsFacts]
-  [sources : hashmap.I64I64Map]
-  [copies : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : OptBoundsDomWalk
   (if (>= index (compiler-ir-instr-seq-count instrs))
@@ -19166,8 +19191,8 @@
 (define (opt-bounds-dom-rewrite-id
   [context : OptCfgContext]
   [children : OptCfgCsr]
-  [sources : hashmap.I64I64Map]
-  [copies : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
   [facts : OptBoundsFacts]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
@@ -19210,8 +19235,8 @@
 (define (opt-bounds-dom-rewrite-children
   [context : OptCfgContext]
   [children : OptCfgCsr]
-  [sources : hashmap.I64I64Map]
-  [copies : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
+  [copies : opt_i64_i64_map.Map]
   [facts : OptBoundsFacts]
   [blocks : CompilerIrBlockList]
   [out : (Array OptGvnBlockResult)]
@@ -19241,14 +19266,14 @@
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let
-    [sources : hashmap.I64I64Map
+    [sources : opt_i64_i64_map.Map
       (opt-gvn-sources-blocks
         blocks
-        (opt-gvn-sources-params params (hashmap.i64-i64-map-with-capacity 64)))]
-    [copies : hashmap.I64I64Map
+        (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
+    [copies : opt_i64_i64_map.Map
       (opt-bounds-dom-copies-add-blocks
         sources
-        (hashmap.i64-i64-map-with-capacity 64)
+        (opt_i64_i64_map.with-capacity 64)
         blocks)]
     [doms : OptDomInfo (struct-get context doms)]
     [index : OptCfgIndex (struct-get context index)]
@@ -20331,7 +20356,7 @@
   (opt-range-facts-propagate-label-from facts facts parent-label child-label))
 
 (define (opt-range-expr-stable?
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [expr : OptLoopBceExpr]) : bool
   (match expr
     [(OptLoopBceExpr.Unknown) false]
@@ -20454,7 +20479,7 @@
 
 (define (opt-range-add-nonnegative-from-compare
   [facts : OptRangeFacts]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [label : String]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -20497,7 +20522,7 @@
 
 (define (opt-range-add-less-than-from-compare
   [facts : OptRangeFacts]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [label : String]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -20519,7 +20544,7 @@
 
 (define (opt-range-add-less-than-or-eq-from-compare
   [facts : OptRangeFacts]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [label : String]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -20541,7 +20566,7 @@
 
 (define (opt-range-add-edge-facts
   [facts : OptRangeFacts]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [label : String]
   [op : CompilerIrBinOp]
@@ -20765,7 +20790,7 @@
         (opt-loop-bce-guard-lookup (box-get rest) label))]))
 
 (define (opt-loop-bce-value-expr
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [env : OptLoopBceExprEnv]
   [value : CompilerIrValue]) : OptLoopBceExpr
   (match value
@@ -20864,7 +20889,7 @@
 
 (define (opt-loop-bce-state-bind-expr
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [dst : i64]
   [expr : OptLoopBceExpr]) : OptLoopBceState
   (let
@@ -20921,7 +20946,7 @@
 
 (define (opt-loop-bce-state-bind-cmp
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [dst : i64]
   [op : CompilerIrBinOp]
   [lhs : OptLoopBceExpr]
@@ -21349,7 +21374,7 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [header-label : String]
   [body-label : String]
   [iv : OptLoopBceExpr]
@@ -21390,7 +21415,7 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [header-label : String]
   [body-label : String]
   [iv : OptLoopBceExpr]
@@ -21421,7 +21446,7 @@
   [doms : OptDomInfo]
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [header-label : String]
   [body-label : String]
   [op : CompilerIrBinOp]
@@ -21484,7 +21509,7 @@
 
 (define (opt-loop-bce-branch-state
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -21612,7 +21637,7 @@
 
 (define (opt-loop-bce-update-gep
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [dst : i64]
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
@@ -21650,7 +21675,7 @@
 
 (define (opt-loop-bce-update-load
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [dst : i64]
   [src : CompilerIrValue]
   [ty : AstType]) : OptLoopBceState
@@ -21701,7 +21726,7 @@
 
 (define (opt-loop-bce-update-storeptr
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [ptr : CompilerIrValue]
   [value : CompilerIrValue]) : OptLoopBceState
   (let
@@ -21724,7 +21749,7 @@
 (define (opt-loop-bce-update-call
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [dst : i64]
   [name : String]
   [args : CompilerIrCallArgs]) : OptLoopBceState
@@ -21743,7 +21768,7 @@
 (define (opt-loop-bce-update-instr
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -21931,7 +21956,7 @@
 
 (define (opt-loop-bce-range-can-remove?
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [block-label : String]
   [index : CompilerIrValue]
   [length : CompilerIrValue]) : bool
@@ -21956,7 +21981,7 @@
 
 (define (opt-loop-bce-can-remove?
   [state : OptLoopBceState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [block-label : String]
   [index : CompilerIrValue]
   [length : CompilerIrValue]) : bool
@@ -21979,7 +22004,7 @@
 (define (opt-loop-bce-rewrite-instrs
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -22041,7 +22066,7 @@
 (define (opt-loop-bce-rewrite-block
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -22363,7 +22388,7 @@
 
 (define (opt-loop-bce-rewrite-id
   [summaries : OptLoopBceSummaries]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -22413,7 +22438,7 @@
 
 (define (opt-loop-bce-rewrite-children
   [summaries : OptLoopBceSummaries]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [types : OptSsaVarTypes]
   [blocks : CompilerIrBlockList]
   [doms : OptDomInfo]
@@ -22471,10 +22496,10 @@
         (opt-cfg-natural-loops-with-context blocks context)]
       [out : (Array OptLoopBceBlockResult)
         (array.make-array OptLoopBceBlockResult count)]
-      [sources : hashmap.I64I64Map
+      [sources : opt_i64_i64_map.Map
         (opt-gvn-sources-blocks
           blocks
-          (opt-gvn-sources-params params (hashmap.i64-i64-map-with-capacity 64)))]
+          (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
       [ssa-facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
       [types : OptSsaVarTypes
         (match ssa-facts
@@ -23455,7 +23480,7 @@
 (define (opt-unroll-block-defs
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     acc
     (let
@@ -23482,7 +23507,7 @@
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [last : i64]
-  [acc : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
   (if (>= index last)
     acc
     (opt-unroll-uses-before
@@ -23582,7 +23607,7 @@
       [_ (OptUnrollMaybePhis.No)])))
 
 (define (opt-unroll-invariant-bound?
-  [defs : hashmap.I64I64Map]
+  [defs : opt_i64_i64_map.Map]
   [bound : CompilerIrValue]) : bool
   (match bound
     [(CompilerIrValue.I64 _) true]
@@ -23772,7 +23797,7 @@
                     (opt-unroll-block-defs
                       instrs
                       0
-                      (hashmap.i64-i64-map-with-capacity 32))
+                      (opt_i64_i64_map.with-capacity 32))
                     cmp-rhs)
                     (opt-unroll-shape-step
                       blocks
@@ -23811,7 +23836,7 @@
           instrs
           0
           last
-          (hashmap.i64-i64-map-with-capacity 64))
+          (opt_i64_i64_map.with-capacity 64))
         cond-var))
       (OptUnrollMaybeShape.No)
       (opt-unroll-shape-counter blocks label instrs phi-count last cond-var))))
@@ -24774,7 +24799,7 @@
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
-  [defs : hashmap.I64I64Map]
+  [defs : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : CompilerIrMaybeValue
   (match value
     [(CompilerIrValue.I64 k)
@@ -24792,7 +24817,7 @@
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
-  [defs : hashmap.I64I64Map]
+  [defs : opt_i64_i64_map.Map]
   [iphi : i64]
   [bound : CompilerIrValue]
   [cell : (Array i64)]
@@ -24864,7 +24889,7 @@
   [index : i64]
   [phi-count : i64]
   [last : i64]
-  [defs : hashmap.I64I64Map]
+  [defs : opt_i64_i64_map.Map]
   [iphi : i64]
   [bound : CompilerIrValue]
   [cell : (Array i64)]
@@ -24936,7 +24961,7 @@
   [instrs : CompilerIrInstrSeq]
   [phi-count : i64]
   [last : i64]
-  [defs : hashmap.I64I64Map]
+  [defs : opt_i64_i64_map.Map]
   [iphi : i64]
   [seed : CompilerIrValue]
   [bound : CompilerIrValue]
@@ -25142,7 +25167,7 @@
   [phi-count : i64]
   [last : i64]
   [cond-var : i64]
-  [defs : hashmap.I64I64Map]) : OptUnrollMaybeShape
+  [defs : opt_i64_i64_map.Map]) : OptUnrollMaybeShape
   (let
     [cond-index : i64 (opt-unroll-def-index instrs phi-count last cond-var)]
     (if (< cond-index 0)
@@ -25210,7 +25235,7 @@
                           (opt-unroll-block-defs
                             instrs
                             0
-                            (hashmap.i64-i64-map-with-capacity 32)))))
+                            (opt_i64_i64_map.with-capacity 32)))))
                     (OptUnrollMaybeShape.No))]
                 [_ (OptUnrollMaybeShape.No)])]
             [_ (OptUnrollMaybeShape.No)])))]))
@@ -25219,9 +25244,9 @@
 ;; Uses of loop defs anywhere outside the loop block, except as the loop-edge
 ;; inputs of the exit block's phis (those get the parallel fast input).
 (define (opt-bce-version-outside-phi-uses
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [inputs : CompilerIrPhiInputList]
-  [loop-label : String]) : hashmap.I64I64Map
+  [loop-label : String]) : opt_i64_i64_map.Map
   (match inputs
     [(CompilerIrPhiInputList.Nil) set]
     [(CompilerIrPhiInputList.Cons value label rest)
@@ -25233,10 +25258,10 @@
         loop-label)]))
 
 (define (opt-bce-version-outside-uses-seq
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [loop-label : String]) : hashmap.I64I64Map
+  [loop-label : String]) : opt_i64_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     set
     (let
@@ -25251,9 +25276,9 @@
         loop-label))))
 
 (define (opt-bce-version-outside-uses
-  [set : hashmap.I64I64Map]
+  [set : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
-  [loop-label : String]) : hashmap.I64I64Map
+  [loop-label : String]) : opt_i64_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) set]
     [(CompilerIrBlockList.Cons block rest)
@@ -25274,7 +25299,7 @@
 (define (opt-bce-version-defs-escape?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [outside : hashmap.I64I64Map]) : bool
+  [outside : opt_i64_i64_map.Map]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
     (let
@@ -25533,14 +25558,11 @@
             [_ label])]
         [guard-label : String (string.append label "__bce_guard")]
         [fast-label : String (string.append label "__bce_fast")]
-        [defs : hashmap.I64I64Map
-          (opt-unroll-block-defs
-            instrs
-            0
-            (hashmap.i64-i64-map-with-capacity 32))]
-        [outside : hashmap.I64I64Map
+        [defs : opt_i64_i64_map.Map
+          (opt-unroll-block-defs instrs 0 (opt_i64_i64_map.with-capacity 32))]
+        [outside : opt_i64_i64_map.Map
           (opt-bce-version-outside-uses
-            (hashmap.i64-i64-map-with-capacity 64)
+            (opt_i64_i64_map.with-capacity 64)
             blocks
             label)]
         (if (or
@@ -26774,7 +26796,7 @@
   (Cons i64 (Box OptReachWorklist)))
 
 (defenum OptReachState
-  (State hashmap.I64I64Map OptReachWorklist opt_string_i64_map.Map))
+  (State opt_i64_i64_map.Map OptReachWorklist opt_string_i64_map.Map))
 
 (defenum OptPrunedProgram
   (Program CompilerIrGlobalList CompilerIrFunctionList))
@@ -30924,12 +30946,16 @@
 (define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match state
     [(OptReachState.State reachable worklist globals)
-      (if (hashmap.i64-i64-map-contains? reachable slot)
+      (if (opt_i64_i64_map.contains? (& reachable) slot)
         state
-        (OptReachState.State
-          (hashmap.i64-i64-map-put reachable slot 1)
-          (OptReachWorklist.Cons slot (box worklist))
-          globals))]))
+        (let
+          [next-reachable : opt_i64_i64_map.Map reachable]
+          (begin
+            (opt_i64_i64_map.insert (&mut next-reachable) slot 1)
+            (OptReachState.State
+              next-reachable
+              (OptReachWorklist.Cons slot (box worklist))
+              globals))))]))
 
 (define (opt-reach-add-global [state : OptReachState] [name : String]) : OptReachState
   (match state
@@ -31360,17 +31386,17 @@
 ;; the index (the same name->slot map the reach walk used) and test membership.
 (define (opt-reach-slot-set-contains-name?
   [index : OptFunctionIndex]
-  [reachable : hashmap.I64I64Map]
+  [reachable : opt_i64_i64_map.Map]
   [name : String]) : bool
   (match (opt_string_i64_map.get (& (struct-get index ids)) name)
     [(opt_string_i64_map.LookupMissing) false]
     [(opt_string_i64_map.LookupFound slot)
-      (hashmap.i64-i64-map-contains? reachable slot)]))
+      (opt_i64_i64_map.contains? (& reachable) slot)]))
 
 (define (opt-filter-reachable-functions
   [index : OptFunctionIndex]
   [functions : CompilerIrFunctionList]
-  [reachable : hashmap.I64I64Map]) : CompilerIrFunctionList
+  [reachable : opt_i64_i64_map.Map]) : CompilerIrFunctionList
   (match functions
     [(CompilerIrFunctionList.Nil) (CompilerIrFunctionList.Nil)]
     [(CompilerIrFunctionList.Cons func rest)
@@ -31510,8 +31536,8 @@
   (if (opt-function-list-defines? functions "main")
     (let
       [index : OptFunctionIndex (opt-function-index-build functions)]
-      [reachable : hashmap.I64I64Map
-        (hashmap.i64-i64-map-with-capacity
+      [reachable : opt_i64_i64_map.Map
+        (opt_i64_i64_map.with-capacity
           (opt-function-index-capacity (opt-function-list-count functions)))]
       [reachable-globals : opt_string_i64_map.Map
         (opt_string_i64_map.with-capacity
@@ -31731,7 +31757,7 @@
             (OptLoopBceCleanScan.Scan
               (opt-loop-bce-update-gep
                 state
-                (hashmap.i64-i64-map-with-capacity 1)
+                (opt_i64_i64_map.with-capacity 1)
                 dst
                 base
                 offset
@@ -31741,7 +31767,7 @@
             (OptLoopBceCleanScan.Scan
               (opt-loop-bce-update-load
                 state
-                (hashmap.i64-i64-map-with-capacity 1)
+                (opt_i64_i64_map.with-capacity 1)
                 dst
                 src
                 ty)
@@ -34852,7 +34878,7 @@
     [folded : CompilerIrInstrList (opt-fold-instrs (OptConstEnv.Nil) instrs)]
     [dce : CompilerIrInstrList
       (opt-dce-instrs
-        (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) instrs)
+        (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)
         instrs)]
     [bounds : CompilerIrInstrList
       (opt-bounds-instrs (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil) instrs)]
@@ -34877,7 +34903,7 @@
     [mask-idempotent-dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses
-          (hashmap.i64-i64-map-with-capacity 64)
+          (opt_i64_i64_map.with-capacity 64)
           mask-idempotent-copy)
         mask-idempotent-copy)]
     (cond
@@ -35524,8 +35550,8 @@
 
 (define (opt-dce-clean-list-count [instrs : CompilerIrInstrList]) : i64
   (let
-    [used : hashmap.I64I64Map
-      (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) instrs)]
+    [used : opt_i64_i64_map.Map
+      (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
     [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
     (compiler-ir-instr-list-count cleaned)))
 
@@ -35560,16 +35586,16 @@
 (define (compiler-optimize-dce-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-dce-self-test-instrs)]
-    [used : hashmap.I64I64Map
-      (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) instrs)]
+    [used : opt_i64_i64_map.Map
+      (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
     [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
     [again : CompilerIrInstrList
       (opt-dce-instrs
-        (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) cleaned)
+        (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cleaned)
         cleaned)]
     [unused-word-dead : bool
       (opt-instr-dead?
-        (hashmap.i64-i64-map-with-capacity 4)
+        (opt_i64_i64_map.with-capacity 4)
         (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 0 (AstType.I64)))]
     [alloc-tests : i64 (compiler-optimize-dce-alloc-self-test)]
     (cond
@@ -35600,8 +35626,8 @@
 (define (compiler-optimize-dce-mem-self-test) : i64
   (let
     [instrs : CompilerIrInstrList (opt-dce-mem-self-test-instrs)]
-    [used : hashmap.I64I64Map
-      (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) instrs)]
+    [used : opt_i64_i64_map.Map
+      (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) instrs)]
     [cleaned : CompilerIrInstrList (opt-dce-instrs used instrs)]
     (if (opt-used-contains used 0)
       (if (= (compiler-ir-instr-list-count cleaned) 3)
@@ -36982,7 +37008,7 @@
         (opt-cse-instrs (OptExprTable.Nil) (opt-copy-cse-instrs)))]
     [cse-dce : CompilerIrInstrList
       (opt-dce-instrs
-        (opt-collect-instrs-uses (hashmap.i64-i64-map-with-capacity 64) cse)
+        (opt-collect-instrs-uses (opt_i64_i64_map.with-capacity 64) cse)
         cse)]
     [f64 : CompilerIrInstrList
       (opt-copy-instrs (OptCopyEnv.Nil) (opt-copy-f64-instrs))]
@@ -38240,7 +38266,7 @@
     [dce : CompilerIrInstrList
       (opt-dce-instrs
         (opt-collect-instrs-uses
-          (hashmap.i64-i64-map-with-capacity 64)
+          (opt_i64_i64_map.with-capacity 64)
           (opt-bounds-dce-instrs))
         (opt-bounds-dce-instrs))]
     [cross : CompilerIrBlockList
@@ -44408,8 +44434,8 @@
       [(not (opt-verify-ok? (opt-verify-function load-varying-func))) 24]
       [(not (= (opt-count-load-label-blocks load-varying "loop") 1)) 25]
       [(opt-licm-value-invariant?
-          (hashmap.i64-i64-map-with-capacity 4)
-          (hashmap.i64-i64-map-with-capacity 4)
+          (opt_i64_i64_map.with-capacity 4)
+          (opt_i64_i64_map.with-capacity 4)
           (CompilerIrValue.Global "g"))
         26]
       [(not (opt-licm-store-summary-clean? clean-summary)) 27]
@@ -47568,10 +47594,10 @@
 ;; joins and clears build a fresh table, so retained per-block exit states
 ;; are never aliased by a successor's mutations.
 (defenum OptAliasFacts
-  (Facts hashmap.I64I64Map))
+  (Facts opt_i64_i64_map.Map))
 
 (define (opt-alias-empty) : OptAliasFacts
-  (OptAliasFacts.Facts (hashmap.i64-i64-map-with-capacity 17)))
+  (OptAliasFacts.Facts (opt_i64_i64_map.with-capacity 17)))
 
 (define (opt-alias-kind-encode [kind : OptAliasKind]) : i64
   (match kind
@@ -47613,21 +47639,23 @@
 (define (opt-alias-lookup [facts : OptAliasFacts] [var : i64]) : OptMaybeAliasKind
   (match facts
     [(OptAliasFacts.Facts map)
-      (match (hashmap.i64-i64-map-get map var)
-        [(hashmap.I64I64MapFound value)
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound value)
           (OptMaybeAliasKind.Some (opt-alias-kind-decode value))]
-        [(hashmap.I64I64MapMissing) (OptMaybeAliasKind.No)])]))
+        [(opt_i64_i64_map.LookupMissing) (OptMaybeAliasKind.No)])]))
 
 (define (opt-alias-bound? [facts : OptAliasFacts] [var : i64]) : bool
   (match facts
-    [(OptAliasFacts.Facts map) (hashmap.i64-i64-map-contains? map var)]))
+    [(OptAliasFacts.Facts map) (opt_i64_i64_map.contains? (& map) var)]))
 
 (define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasFacts.Facts map)
-      (match (hashmap.i64-i64-map-remove map var)
-        [(hashmap.I64I64MapRemoveOk updated) (OptAliasFacts.Facts updated)]
-        [(hashmap.I64I64MapRemoveMissing updated) (OptAliasFacts.Facts updated)])]))
+      (let
+        [out : opt_i64_i64_map.Map map]
+        (begin
+          (opt_i64_i64_map.remove (&mut out) var)
+          (OptAliasFacts.Facts out)))]))
 
 (define (opt-alias-bind
   [facts : OptAliasFacts]
@@ -47635,8 +47663,11 @@
   [kind : OptAliasKind]) : OptAliasFacts
   (match facts
     [(OptAliasFacts.Facts map)
-      (OptAliasFacts.Facts
-        (hashmap.i64-i64-map-put map var (opt-alias-kind-encode kind)))]))
+      (let
+        [out : opt_i64_i64_map.Map map]
+        (begin
+          (opt_i64_i64_map.insert (&mut out) var (opt-alias-kind-encode kind))
+          (OptAliasFacts.Facts out)))]))
 
 (define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (opt-alias-bind facts var (OptAliasKind.Unique)))
@@ -47691,15 +47722,15 @@
         [(OptAliasFacts.Facts bmap)
           (let
             [out : OptAliasFacts (opt-alias-empty)]
-            [capacity : i64 (hashmap.i64-i64-map-capacity amap)]
-            [i : i64 (hashmap.i64-i64-map-next-occupied amap 0)]
+            [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
+            [i : i64 (opt_i64_i64_map.next-occupied (& amap) 0)]
             (begin
               (while (< i capacity)
                 (begin
-                  (match (hashmap.i64-i64-map-entry-at amap i)
-                    [(hashmap.I64I64MapEntrySome var value)
-                      (match (hashmap.i64-i64-map-get bmap var)
-                        [(hashmap.I64I64MapFound bvalue)
+                  (match (opt_i64_i64_map.entry-at (& amap) i)
+                    [(opt_i64_i64_map.EntrySome var value)
+                      (match (opt_i64_i64_map.get (& bmap) var)
+                        [(opt_i64_i64_map.LookupFound bvalue)
                           (if (= value bvalue)
                             (set!
                               out
@@ -47708,14 +47739,14 @@
                                 var
                                 (opt-alias-kind-decode value)))
                             unit)]
-                        [(hashmap.I64I64MapMissing) unit])]
-                    [(hashmap.I64I64MapEntryNone) unit])
-                  (set! i (hashmap.i64-i64-map-next-occupied amap (+ i 1)))))
+                        [(opt_i64_i64_map.LookupMissing) unit])]
+                    [(opt_i64_i64_map.EntryNone) unit])
+                  (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
               out))])]))
 
 (define (opt-alias-facts-len [facts : OptAliasFacts]) : i64
   (match facts
-    [(OptAliasFacts.Facts map) (hashmap.i64-i64-map-len map)]))
+    [(OptAliasFacts.Facts map) (opt_i64_i64_map.len (& map))]))
 
 ;; Deep-copy the fact table. Per-block exit states are retained for every
 ;; successor's entry intersection, so a single-predecessor entry must not
@@ -47724,19 +47755,19 @@
   (match facts
     [(OptAliasFacts.Facts map)
       (let
-        [out : hashmap.I64I64Map
-          (hashmap.i64-i64-map-with-capacity
-            (+ (* (hashmap.i64-i64-map-len map) 2) 17))]
-        [capacity : i64 (hashmap.i64-i64-map-capacity map)]
-        [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
+        [out : opt_i64_i64_map.Map
+          (opt_i64_i64_map.with-capacity
+            (+ (* (opt_i64_i64_map.len (& map)) 2) 17))]
+        [capacity : i64 (opt_i64_i64_map.capacity (& map))]
+        [i : i64 (opt_i64_i64_map.next-occupied (& map) 0)]
         (begin
           (while (< i capacity)
             (begin
-              (match (hashmap.i64-i64-map-entry-at map i)
-                [(hashmap.I64I64MapEntrySome var value)
-                  (set! out (hashmap.i64-i64-map-put out var value))]
-                [(hashmap.I64I64MapEntryNone) unit])
-              (set! i (hashmap.i64-i64-map-next-occupied map (+ i 1)))))
+              (match (opt_i64_i64_map.entry-at (& map) i)
+                [(opt_i64_i64_map.EntrySome var value)
+                  (opt_i64_i64_map.insert (&mut out) var value)]
+                [(opt_i64_i64_map.EntryNone) unit])
+              (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
           (OptAliasFacts.Facts out)))]))
 
 ;; A memory effect that can mutate or unknown-observe memory clears all facts.
@@ -49436,10 +49467,10 @@
 ;; Function-constant header-typed var set: var -> 1 (array/string handle at
 ;; every typed def) or 2 (poisoned: any non-handle or untyped def).
 (defenum OptLoadHeaderSet
-  (OptLoadHeaderSet hashmap.I64I64Map))
+  (OptLoadHeaderSet opt_i64_i64_map.Map))
 
 (define (opt-load-header-set-empty) : OptLoadHeaderSet
-  (OptLoadHeaderSet (hashmap.i64-i64-map-with-capacity 17)))
+  (OptLoadHeaderSet (opt_i64_i64_map.with-capacity 17)))
 
 (define (opt-load-header-set-mark
   [set : OptLoadHeaderSet]
@@ -49448,17 +49479,25 @@
   (match set
     [(OptLoadHeaderSet map)
       (if header?
-        (if (hashmap.i64-i64-map-contains? map var)
+        (if (opt_i64_i64_map.contains? (& map) var)
           set
-          (OptLoadHeaderSet (hashmap.i64-i64-map-put map var 1)))
-        (OptLoadHeaderSet (hashmap.i64-i64-map-put map var 2)))]))
+          (let
+            [out : opt_i64_i64_map.Map map]
+            (begin
+              (opt_i64_i64_map.insert (&mut out) var 1)
+              (OptLoadHeaderSet out))))
+        (let
+          [out : opt_i64_i64_map.Map map]
+          (begin
+            (opt_i64_i64_map.insert (&mut out) var 2)
+            (OptLoadHeaderSet out))))]))
 
 (define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
   (match set
     [(OptLoadHeaderSet map)
-      (match (hashmap.i64-i64-map-get map var)
-        [(hashmap.I64I64MapFound value) (= value 1)]
-        [(hashmap.I64I64MapMissing) false])]))
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound value) (= value 1)]
+        [(opt_i64_i64_map.LookupMissing) false])]))
 
 (define (opt-load-header-set-add-params
   [params : CompilerIrParamList]
@@ -49634,52 +49673,56 @@
 ;; hashmaps threaded linearly (the opt-alias-facts pattern): block entries in
 ;; the cross-block pass clone before processing.
 (defenum OptLoadPtrKinds
-  (OptLoadPtrKinds hashmap.I64I64Map hashmap.I64I64Map))
+  (OptLoadPtrKinds opt_i64_i64_map.Map opt_i64_i64_map.Map))
 
 (define (opt-load-kinds-empty) : OptLoadPtrKinds
   (OptLoadPtrKinds
-    (hashmap.i64-i64-map-with-capacity 17)
-    (hashmap.i64-i64-map-with-capacity 17)))
+    (opt_i64_i64_map.with-capacity 17)
+    (opt_i64_i64_map.with-capacity 17)))
 
 (define (opt-load-kinds-lookup [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadLocKind
   (match kinds
     [(OptLoadPtrKinds map _)
-      (match (hashmap.i64-i64-map-get map var)
-        [(hashmap.I64I64MapFound value) (opt-load-loc-kind-decode value)]
-        [(hashmap.I64I64MapMissing) (OptLoadLocUnknown)])]))
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound value) (opt-load-loc-kind-decode value)]
+        [(opt_i64_i64_map.LookupMissing) (OptLoadLocUnknown)])]))
 
-(define (opt-load-kinds-ref-count [refs : hashmap.I64I64Map] [base : i64]) : i64
-  (match (hashmap.i64-i64-map-get refs base)
-    [(hashmap.I64I64MapFound value) value]
-    [(hashmap.I64I64MapMissing) 0]))
+(define (opt-load-kinds-ref-count [refs : opt_i64_i64_map.Map] [base : i64]) : i64
+  (match (opt_i64_i64_map.get (& refs) base)
+    [(opt_i64_i64_map.LookupFound value) value]
+    [(opt_i64_i64_map.LookupMissing) 0]))
 
 (define (opt-load-kinds-ref-add
-  [refs : hashmap.I64I64Map]
+  [refs : opt_i64_i64_map.Map]
   [base : i64]
-  [delta : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put
-    refs
-    base
-    (+ (opt-load-kinds-ref-count refs base) delta)))
+  [delta : i64]) : opt_i64_i64_map.Map
+  (let
+    [next-count : i64 (+ (opt-load-kinds-ref-count refs base) delta)]
+    [out : opt_i64_i64_map.Map refs]
+    (begin
+      (opt_i64_i64_map.insert (&mut out) base next-count)
+      out)))
 
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
 (define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds map refs)
-      (match (hashmap.i64-i64-map-get map var)
-        [(hashmap.I64I64MapFound old-value)
+      (match (opt_i64_i64_map.get (& map) var)
+        [(opt_i64_i64_map.LookupFound old-value)
           (let
-            [map2 : hashmap.I64I64Map
-              (match (hashmap.i64-i64-map-remove map var)
-                [(hashmap.I64I64MapRemoveOk updated) updated]
-                [(hashmap.I64I64MapRemoveMissing updated) updated])]
-            [refs2 : hashmap.I64I64Map
+            [map2 : opt_i64_i64_map.Map
+              (let
+                [out : opt_i64_i64_map.Map map]
+                (begin
+                  (opt_i64_i64_map.remove (&mut out) var)
+                  out))]
+            [refs2 : opt_i64_i64_map.Map
               (match (opt-load-loc-kind-decode old-value)
                 [(OptLoadLocField base _ _ _)
                   (opt-load-kinds-ref-add refs base (- 0 1))]
                 [_ refs])]
             (OptLoadPtrKinds map2 refs2))]
-        [(hashmap.I64I64MapMissing) kinds])]))
+        [(opt_i64_i64_map.LookupMissing) kinds])]))
 
 ;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
 ;; new pointers just stay unclassified once the cap is hit).
@@ -49694,19 +49737,23 @@
         [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
         (match removed
           [(OptLoadPtrKinds map refs)
-            (if (>= (hashmap.i64-i64-map-len map) 96)
+            (if (>= (opt_i64_i64_map.len (& map)) 96)
               removed
               (let
-                [refs2 : hashmap.I64I64Map
+                [refs2 : opt_i64_i64_map.Map
                   (match kind
                     [(OptLoadLocField base _ _ _)
                       (opt-load-kinds-ref-add refs base 1)]
                     [_ refs])]
                 (OptLoadPtrKinds
-                  (hashmap.i64-i64-map-put
-                    map
-                    var
-                    (opt-load-loc-kind-encode kind))
+                  (let
+                    [out : opt_i64_i64_map.Map map]
+                    (begin
+                      (opt_i64_i64_map.insert
+                        (&mut out)
+                        var
+                        (opt-load-loc-kind-encode kind))
+                      out))
                   refs2)))]))]))
 
 ;; Redefinition of `var`: drop its own binding, and (only when some Field kind
@@ -49720,16 +49767,15 @@
         (if (<= (opt-load-kinds-ref-count refs var) 0)
           removed
           (let
-            [capacity : i64 (hashmap.i64-i64-map-capacity map)]
-            [out : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 17)]
-            [out-refs : hashmap.I64I64Map
-              (hashmap.i64-i64-map-with-capacity 17)]
-            [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
+            [capacity : i64 (opt_i64_i64_map.capacity (& map))]
+            [out : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+            [out-refs : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+            [i : i64 (opt_i64_i64_map.next-occupied (& map) 0)]
             (begin
               (while (< i capacity)
                 (begin
-                  (match (hashmap.i64-i64-map-entry-at map i)
-                    [(hashmap.I64I64MapEntrySome bound-var value)
+                  (match (opt_i64_i64_map.entry-at (& map) i)
+                    [(opt_i64_i64_map.EntrySome bound-var value)
                       (let
                         [drop? : bool
                           (match (opt-load-loc-kind-decode value)
@@ -49738,42 +49784,40 @@
                         (if drop?
                           unit
                           (begin
-                            (set!
-                              out
-                              (hashmap.i64-i64-map-put out bound-var value))
+                            (opt_i64_i64_map.insert (&mut out) bound-var value)
                             (match (opt-load-loc-kind-decode value)
                               [(OptLoadLocField base _ _ _)
                                 (set!
                                   out-refs
                                   (opt-load-kinds-ref-add out-refs base 1))]
                               [_ unit]))))]
-                    [(hashmap.I64I64MapEntryNone) unit])
-                  (set! i (hashmap.i64-i64-map-next-occupied map (+ i 1)))))
+                    [(opt_i64_i64_map.EntryNone) unit])
+                  (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
               (OptLoadPtrKinds out out-refs))))])))
 
 (define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
     [(OptLoadPtrKinds map refs)
       (let
-        [out : hashmap.I64I64Map
-          (hashmap.i64-i64-map-with-capacity
-            (+ (* (hashmap.i64-i64-map-len map) 2) 17))]
-        [out-refs : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 17)]
-        [capacity : i64 (hashmap.i64-i64-map-capacity map)]
-        [i : i64 (hashmap.i64-i64-map-next-occupied map 0)]
+        [out : opt_i64_i64_map.Map
+          (opt_i64_i64_map.with-capacity
+            (+ (* (opt_i64_i64_map.len (& map)) 2) 17))]
+        [out-refs : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+        [capacity : i64 (opt_i64_i64_map.capacity (& map))]
+        [i : i64 (opt_i64_i64_map.next-occupied (& map) 0)]
         (begin
           (while (< i capacity)
             (begin
-              (match (hashmap.i64-i64-map-entry-at map i)
-                [(hashmap.I64I64MapEntrySome var value)
+              (match (opt_i64_i64_map.entry-at (& map) i)
+                [(opt_i64_i64_map.EntrySome var value)
                   (begin
-                    (set! out (hashmap.i64-i64-map-put out var value))
+                    (opt_i64_i64_map.insert (&mut out) var value)
                     (match (opt-load-loc-kind-decode value)
                       [(OptLoadLocField base _ _ _)
                         (set! out-refs (opt-load-kinds-ref-add out-refs base 1))]
                       [_ unit]))]
-                [(hashmap.I64I64MapEntryNone) unit])
-              (set! i (hashmap.i64-i64-map-next-occupied map (+ i 1)))))
+                [(opt_i64_i64_map.EntryNone) unit])
+              (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
           (OptLoadPtrKinds out out-refs)))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
@@ -49784,15 +49828,15 @@
         [(OptLoadPtrKinds bmap _)
           (let
             [out : OptLoadPtrKinds (opt-load-kinds-empty)]
-            [capacity : i64 (hashmap.i64-i64-map-capacity amap)]
-            [i : i64 (hashmap.i64-i64-map-next-occupied amap 0)]
+            [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
+            [i : i64 (opt_i64_i64_map.next-occupied (& amap) 0)]
             (begin
               (while (< i capacity)
                 (begin
-                  (match (hashmap.i64-i64-map-entry-at amap i)
-                    [(hashmap.I64I64MapEntrySome var value)
-                      (match (hashmap.i64-i64-map-get bmap var)
-                        [(hashmap.I64I64MapFound bvalue)
+                  (match (opt_i64_i64_map.entry-at (& amap) i)
+                    [(opt_i64_i64_map.EntrySome var value)
+                      (match (opt_i64_i64_map.get (& bmap) var)
+                        [(opt_i64_i64_map.LookupFound bvalue)
                           (if (= value bvalue)
                             (set!
                               out
@@ -49801,9 +49845,9 @@
                                 var
                                 (opt-load-loc-kind-decode value)))
                             unit)]
-                        [(hashmap.I64I64MapMissing) unit])]
-                    [(hashmap.I64I64MapEntryNone) unit])
-                  (set! i (hashmap.i64-i64-map-next-occupied amap (+ i 1)))))
+                        [(opt_i64_i64_map.LookupMissing) unit])]
+                    [(opt_i64_i64_map.EntryNone) unit])
+                  (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
               out))])]))
 
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
@@ -50139,14 +50183,14 @@
 ;; caches/forwards through single-source vars, mirroring its original
 ;; gates; the block-local pass needs none).
 (define (opt-load-key-gvn-stable?
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [key : OptLoadKey]) : bool
   (match key
     [(OptLoadKey.Raw value _ _) (opt-gvn-value-stable? sources value)]
     [(OptLoadKey.Field base _ _ _) (opt-gvn-stable-var? sources base)]))
 
 (define (opt-load-value-gvn-stable?
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [value : CompilerIrValue]) : bool
   (match value
     [(CompilerIrValue.Var v) (opt-gvn-stable-var? sources v)]
@@ -50221,7 +50265,7 @@
   ;; lint-allow: unused-variable
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [ptr : CompilerIrValue]
   [value : CompilerIrValue]
@@ -50287,7 +50331,7 @@
 (define (opt-load-cse-core-load
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [dst : i64]
   [src : CompilerIrValue]
@@ -50339,7 +50383,7 @@
 (define (opt-load-cse-dispatch
   [hs : OptLoadHeaderSet]
   [gated? : bool]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseResult
   (match instr
@@ -50364,7 +50408,7 @@
 
 (define (opt-load-cse-instrs-from
   [hs : OptLoadHeaderSet]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match instrs
@@ -50380,11 +50424,7 @@
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (opt-load-cse-instrs-from
-    hs
-    (hashmap.i64-i64-map-with-capacity 1)
-    state
-    instrs))
+  (opt-load-cse-instrs-from hs (opt_i64_i64_map.with-capacity 1) state instrs))
 
 ;; --- cross-block redundant-load GVN -----------------------------------------
 (defenum OptMaybeLoadCseState
@@ -50517,7 +50557,7 @@
 (define (opt-load-gvn-instr-seq-from
   [hs : OptLoadHeaderSet]
   [state : OptLoadCseState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [out-rev : CompilerIrInstrList]) : OptLoadGvnBlockRewrite
@@ -50543,7 +50583,7 @@
 (define (opt-load-gvn-rewrite-block
   [hs : OptLoadHeaderSet]
   [entry-state : OptLoadCseState]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [block : CompilerIrBlock]) : OptLoadGvnBlockRewrite
   (match block
     [(CompilerIrBlock.Block _ instrs)
@@ -50558,7 +50598,7 @@
 (define (opt-load-gvn-process-id
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
@@ -50591,7 +50631,7 @@
 (define (opt-load-gvn-process-rpo
   [context : OptCfgContext]
   [hs : OptLoadHeaderSet]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [blocks : CompilerIrBlockList]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
@@ -50626,7 +50666,7 @@
 
 (define (opt-load-gvn-blocks-with-context
   [context : OptCfgContext]
-  [sources : hashmap.I64I64Map]
+  [sources : opt_i64_i64_map.Map]
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (let

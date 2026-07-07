@@ -4848,16 +4848,31 @@
             (opt-instr-list-eq (box-get at) (box-get bt)))]
         [_ false])]))
 
+(define (opt-instr-seq-eq-from
+  [a : CompilerIrInstrSeq]
+  [b : CompilerIrInstrSeq]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (opt-instr-eq
+        (compiler-ir-instr-seq-ref a index)
+        (compiler-ir-instr-seq-ref b index))
+      (opt-instr-seq-eq-from a b (+ index 1) count))))
+
+(define (opt-instr-seq-eq [a : CompilerIrInstrSeq] [b : CompilerIrInstrSeq]) : bool
+  (let
+    [acount : i64 (compiler-ir-instr-seq-count a)]
+    [bcount : i64 (compiler-ir-instr-seq-count b)]
+    (and (= acount bcount) (opt-instr-seq-eq-from a b 0 acount))))
+
 (define (opt-block-eq [a : CompilerIrBlock] [b : CompilerIrBlock]) : bool
   (match a
     [(CompilerIrBlock.Block alabel ainstrs)
       (match b
         [(CompilerIrBlock.Block blabel binstrs)
-          (and
-            (string.eq alabel blabel)
-            (opt-instr-list-eq
-              (compiler-ir-instr-seq-to-list ainstrs)
-              (compiler-ir-instr-seq-to-list binstrs)))])]))
+          (and (string.eq alabel blabel) (opt-instr-seq-eq ainstrs binstrs))])]))
 
 (define (opt-block-list-eq [a : CompilerIrBlockList] [b : CompilerIrBlockList]) : bool
   (match a
@@ -13667,28 +13682,64 @@
       (CompilerIrInstr.Phi dst (opt-rotate-ssa-subst-phi-inputs env inputs) ty)]
     [_ (opt-copy-subst-instr env instr)]))
 
-(define (opt-rotate-ssa-subst-instrs
+(define (opt-rotate-ssa-rewrite-instr-seq-from
   [env : OptCopyEnv]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (opt-rotate-ssa-subst-instr env instr)
-        (opt-rotate-ssa-subst-instrs env (box-get rest)))]))
+  [subst? : bool]
+  [replace-index : i64]
+  [guard : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    acc
+    (if (= index replace-index)
+      (opt-rotate-ssa-rewrite-instr-seq-from
+        env
+        subst?
+        replace-index
+        guard
+        instrs
+        (- index 1)
+        guard)
+      (let
+        [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+        [rewritten : CompilerIrInstr
+          (if subst?
+            (opt-rotate-ssa-subst-instr env instr)
+            instr)]
+        (opt-rotate-ssa-rewrite-instr-seq-from
+          env
+          subst?
+          replace-index
+          guard
+          instrs
+          (- index 1)
+          (compiler-ir-instr-cons rewritten acc))))))
 
-(define (opt-rotate-ssa-replace-final-jump
-  [instrs : CompilerIrInstrList]
-  [guard : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) guard]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(CompilerIrInstrList.Nil) guard]
-        [_
-          (compiler-ir-instr-cons
-            instr
-            (opt-rotate-ssa-replace-final-jump (box-get rest) guard))])]))
+(define (opt-rotate-ssa-rewrite-instr-seq
+  [env : OptCopyEnv]
+  [subst? : bool]
+  [replace-final? : bool]
+  [guard : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (let
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [replace-index : i64
+      (if (and replace-final? (> count 0))
+        (- count 1)
+        (- 0 1))]
+    [initial : CompilerIrInstrList
+      (if (and replace-final? (= count 0))
+        guard
+        CompilerIrInstrList.Nil)]
+    (opt-rotate-ssa-rewrite-instr-seq-from
+      env
+      subst?
+      replace-index
+      guard
+      instrs
+      (- count 1)
+      initial)))
 
 (define (opt-rotate-ssa-block-touched?
   [plan : OptRotateSsaPlan]
@@ -13709,21 +13760,24 @@
   [label : String]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (let
-    [base : CompilerIrInstrList
-      (if (opt-label-contains (struct-get plan body) label)
-        (compiler-ir-instr-seq-to-list instrs)
-        (opt-rotate-ssa-subst-instrs
-          (struct-get plan exit-env)
-          (compiler-ir-instr-seq-to-list instrs)))]
-    [retargeted : CompilerIrInstrList
+    [replace-final? : bool
+      (or
+        (string.eq label (struct-get plan preheader))
+        (string.eq label (struct-get plan latch)))]
+    [guard : CompilerIrInstrList
       (cond
         [(string.eq label (struct-get plan preheader))
-          (opt-rotate-ssa-replace-final-jump
-            base
-            (struct-get plan preheader-guard))]
+          (struct-get plan preheader-guard)]
         [(string.eq label (struct-get plan latch))
-          (opt-rotate-ssa-replace-final-jump base (struct-get plan latch-guard))]
-        [else base])]
+          (struct-get plan latch-guard)]
+        [else CompilerIrInstrList.Nil])]
+    [retargeted : CompilerIrInstrList
+      (opt-rotate-ssa-rewrite-instr-seq
+        (struct-get plan exit-env)
+        (not (opt-label-contains (struct-get plan body) label))
+        replace-final?
+        guard
+        instrs)]
     (cond
       [(string.eq label (struct-get plan body-label))
         (opt-aggregate-instr-list-append (struct-get plan phis) retargeted)]
@@ -14900,6 +14954,30 @@
         (opt-copy-subst-instr env instr)
         (opt-licm-subst-instr-list env (box-get rest)))]))
 
+(define (opt-licm-subst-instr-seq-from
+  [env : OptCopyEnv]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [acc : CompilerIrInstrList]) : CompilerIrInstrList
+  (if (< index 0)
+    acc
+    (opt-licm-subst-instr-seq-from
+      env
+      instrs
+      (- index 1)
+      (compiler-ir-instr-cons
+        (opt-copy-subst-instr env (compiler-ir-instr-seq-ref instrs index))
+        acc))))
+
+(define (opt-licm-subst-instr-seq
+  [env : OptCopyEnv]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
+  (opt-licm-subst-instr-seq-from
+    env
+    instrs
+    (- (compiler-ir-instr-seq-count instrs) 1)
+    CompilerIrInstrList.Nil))
+
 (define (opt-licm-subst-body-blocks
   [env : OptCopyEnv]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -14909,11 +14987,7 @@
       (match block
         [(CompilerIrBlock.Block label instrs)
           (compiler-ir-block-cons
-            (compiler-ir-block
-              label
-              (opt-licm-subst-instr-list
-                env
-                (compiler-ir-instr-seq-to-list instrs)))
+            (compiler-ir-block label (opt-licm-subst-instr-seq env instrs))
             (opt-licm-subst-body-blocks env (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-licm-subst-body-blocks env (compiler-ir-block-seq-to-list seq))]))
@@ -22001,7 +22075,7 @@
               (opt-loop-bce-expr-eq guard-length length-expr))]
           [(OptLoopBceGuardEnv.Nil) false])))))
 
-(define (opt-loop-bce-rewrite-instrs
+(define (opt-loop-bce-rewrite-instr-seq-from
   [state : OptLoopBceState]
   [summaries : OptLoopBceSummaries]
   [sources : opt_i64_i64_map.Map]
@@ -22011,44 +22085,36 @@
   [index : OptCfgIndex]
   [loops : OptNaturalLoopList]
   [block-label : String]
-  [instrs : CompilerIrInstrList]) : OptLoopBceRewrite
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (OptLoopBceRewrite.Rewrite state (CompilerIrInstrList.Nil))]
-    [(CompilerIrInstrList.Cons instr rest)
-      (let
-        [drop? : bool
-          (match instr
-            [(CompilerIrInstr.BoundsCheck idx len _)
-              (opt-loop-bce-can-remove? state sources block-label idx len)]
-            [_ false])]
-        (if drop?
-          (opt-loop-bce-rewrite-instrs
-            state
-            summaries
-            sources
-            types
-            blocks
-            doms
-            index
-            loops
-            block-label
-            (box-get rest))
-          (let
-            [next-state : OptLoopBceState
-              (opt-loop-bce-update-instr
-                state
-                summaries
-                sources
-                types
-                blocks
-                doms
-                index
-                loops
-                block-label
-                instr)]
-            (match (opt-loop-bce-rewrite-instrs
-              next-state
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]) : OptLoopBceRewrite
+  (if (>= pos count)
+    (OptLoopBceRewrite.Rewrite state CompilerIrInstrList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
+      [drop? : bool
+        (match instr
+          [(CompilerIrInstr.BoundsCheck idx len _)
+            (opt-loop-bce-can-remove? state sources block-label idx len)]
+          [_ false])]
+      (if drop?
+        (opt-loop-bce-rewrite-instr-seq-from
+          state
+          summaries
+          sources
+          types
+          blocks
+          doms
+          index
+          loops
+          block-label
+          instrs
+          (+ pos 1)
+          count)
+        (let
+          [next-state : OptLoopBceState
+            (opt-loop-bce-update-instr
+              state
               summaries
               sources
               types
@@ -22057,11 +22123,49 @@
               index
               loops
               block-label
-              (box-get rest))
-              [(OptLoopBceRewrite.Rewrite out-state out-rest)
-                (OptLoopBceRewrite.Rewrite
-                  out-state
-                  (compiler-ir-instr-cons instr out-rest))]))))]))
+              instr)]
+          (match (opt-loop-bce-rewrite-instr-seq-from
+            next-state
+            summaries
+            sources
+            types
+            blocks
+            doms
+            index
+            loops
+            block-label
+            instrs
+            (+ pos 1)
+            count)
+            [(OptLoopBceRewrite.Rewrite out-state out-rest)
+              (OptLoopBceRewrite.Rewrite
+                out-state
+                (compiler-ir-instr-cons instr out-rest))]))))))
+
+(define (opt-loop-bce-rewrite-instr-seq
+  [state : OptLoopBceState]
+  [summaries : OptLoopBceSummaries]
+  [sources : opt_i64_i64_map.Map]
+  [types : OptSsaVarTypes]
+  [blocks : CompilerIrBlockList]
+  [doms : OptDomInfo]
+  [index : OptCfgIndex]
+  [loops : OptNaturalLoopList]
+  [block-label : String]
+  [instrs : CompilerIrInstrSeq]) : OptLoopBceRewrite
+  (opt-loop-bce-rewrite-instr-seq-from
+    state
+    summaries
+    sources
+    types
+    blocks
+    doms
+    index
+    loops
+    block-label
+    instrs
+    0
+    (compiler-ir-instr-seq-count instrs)))
 
 (define (opt-loop-bce-rewrite-block
   [state : OptLoopBceState]
@@ -22075,7 +22179,7 @@
   [block : CompilerIrBlock]) : OptLoopBceBlockRewrite
   (match block
     [(CompilerIrBlock.Block label instrs)
-      (match (opt-loop-bce-rewrite-instrs
+      (match (opt-loop-bce-rewrite-instr-seq
         state
         summaries
         sources
@@ -22085,7 +22189,7 @@
         index
         loops
         label
-        (compiler-ir-instr-seq-to-list instrs))
+        instrs)
         [(OptLoopBceRewrite.Rewrite out-state out-instrs)
           (OptLoopBceBlockRewrite.Rewrite
             out-state
@@ -28957,20 +29061,22 @@
       (opt-inline-remap-value value sa np base)]
     [(CompilerIrMaybeValue.No) (CompilerIrValue.Unit)]))
 
-(define (opt-inline-clone-multiblock-instrs
-  [instrs : CompilerIrInstrList]
+(define (opt-inline-clone-multiblock-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
   [cloned-label : String]
   [prefix : String]
   [cont-label : String]
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : OptInlineMultiInstrClone
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (OptInlineMultiInstrClone.Clone
-        CompilerIrInstrList.Nil
-        CompilerIrPhiInputList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (>= pos count)
+    (OptInlineMultiInstrClone.Clone
+      CompilerIrInstrList.Nil
+      CompilerIrPhiInputList.Nil)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
       (match instr
         [(CompilerIrInstr.Return maybe)
           (OptInlineMultiInstrClone.Clone
@@ -28985,8 +29091,10 @@
           (let
             [cloned : CompilerIrInstr
               (opt-inline-clone-multiblock-instr instr prefix sa np base)]
-            (match (opt-inline-clone-multiblock-instrs
-              (box-get rest)
+            (match (opt-inline-clone-multiblock-instr-seq-from
+              instrs
+              (+ pos 1)
+              count
               cloned-label
               prefix
               cont-label
@@ -28996,7 +29104,26 @@
               [(OptInlineMultiInstrClone.Clone rest-instrs rest-inputs)
                 (OptInlineMultiInstrClone.Clone
                   (compiler-ir-instr-cons cloned rest-instrs)
-                  rest-inputs)]))])]))
+                  rest-inputs)]))]))))
+
+(define (opt-inline-clone-multiblock-instr-seq
+  [instrs : CompilerIrInstrSeq]
+  [cloned-label : String]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]) : OptInlineMultiInstrClone
+  (opt-inline-clone-multiblock-instr-seq-from
+    instrs
+    0
+    (compiler-ir-instr-seq-count instrs)
+    cloned-label
+    prefix
+    cont-label
+    sa
+    np
+    base))
 
 (define (opt-inline-clone-multiblock-block
   [block : CompilerIrBlock]
@@ -29009,8 +29136,8 @@
     [(CompilerIrBlock.Block label instrs)
       (let
         [cloned-label : String (opt-inline-prefix-label prefix label)]
-        (match (opt-inline-clone-multiblock-instrs
-          (compiler-ir-instr-seq-to-list instrs)
+        (match (opt-inline-clone-multiblock-instr-seq
+          instrs
           cloned-label
           prefix
           cont-label
@@ -29390,8 +29517,10 @@
         added-so-far
         out-spans)]))
 
-(define (opt-inline-walk-instrs
-  [instrs : CompilerIrInstrList]
+(define (opt-inline-walk-instr-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [end : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
@@ -29402,10 +29531,10 @@
   [added-so-far : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineState
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (OptInlineState.State CompilerIrInstrList.Nil vars added-so-far)]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (>= pos end)
+    (OptInlineState.State CompilerIrInstrList.Nil vars added-so-far)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
       (match (opt-inline-try
         instr
         index
@@ -29419,8 +29548,10 @@
         scc-result
         caller-scc)
         [(OptInlineState.State expanded vars2 added2)
-          (match (opt-inline-walk-instrs
-            (box-get rest)
+          (match (opt-inline-walk-instr-seq-from
+            instrs
+            (+ pos 1)
+            end
             index
             census
             func-name
@@ -29435,10 +29566,12 @@
               (OptInlineState.State
                 (opt-inline-append expanded rest-list)
                 vars3
-                added3)])])]))
+                added3)])]))))
 
-(define (opt-inline-walk-instrs-with-spans
-  [instrs : CompilerIrInstrList]
+(define (opt-inline-walk-instr-seq-with-spans-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [end : i64]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
@@ -29451,14 +29584,14 @@
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineSpanState
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (OptInlineSpanState.State
-        CompilerIrInstrList.Nil
-        vars
-        added-so-far
-        out-spans)]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (>= pos end)
+    (OptInlineSpanState.State
+      CompilerIrInstrList.Nil
+      vars
+      added-so-far
+      out-spans)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
       (match (opt-inline-try-with-spans
         instr
         index
@@ -29474,8 +29607,10 @@
         source-spans
         out-spans)
         [(OptInlineSpanState.State expanded vars2 added2 spans2)
-          (match (opt-inline-walk-instrs-with-spans
-            (box-get rest)
+          (match (opt-inline-walk-instr-seq-with-spans-from
+            instrs
+            (+ pos 1)
+            end
             index
             census
             func-name
@@ -29493,11 +29628,11 @@
                 (opt-inline-append expanded rest-list)
                 vars3
                 added3
-                spans3)])])]))
+                spans3)])]))))
 
-(define (opt-inline-rewrite-single-block
+(define (opt-inline-rewrite-single-block-seq
   [block-label : String]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
@@ -29506,8 +29641,10 @@
   [added-so-far : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
-  (match (opt-inline-walk-instrs
+  (match (opt-inline-walk-instr-seq-from
     instrs
+    0
+    (compiler-ir-instr-seq-count instrs)
     index
     census
     func-name
@@ -29526,10 +29663,11 @@
         vars2
         added2)]))
 
-(define (opt-inline-multiblock-build-rewrite
+(define (opt-inline-multiblock-build-rewrite-seq
   [block-label : String]
-  [prefix-rev : CompilerIrInstrList]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [call-pos : i64]
+  [count : i64]
   [site-pos : i64]
   [call-instr : CompilerIrInstr]
   [callee : CompilerIrFunction]
@@ -29608,10 +29746,10 @@
                           caller-blocks
                           added-so-far))))]
                 (if inline?
-                  (match (opt-inline-walk-instrs
-                    (compiler-ir-instr-list-reverse-onto
-                      prefix-rev
-                      CompilerIrInstrList.Nil)
+                  (match (opt-inline-walk-instr-seq-from
+                    instrs
+                    0
+                    call-pos
                     index
                     census
                     func-name
@@ -29679,8 +29817,10 @@
                           [(OptInlineMultiClone.Clone
                               cloned-blocks
                               return-inputs)
-                            (match (opt-inline-walk-instrs
-                              rest
+                            (match (opt-inline-walk-instr-seq-from
+                              instrs
+                              (+ call-pos 1)
+                              count
                               index
                               census
                               func-name
@@ -29718,10 +29858,11 @@
               (OptInlineMaybeBlockRewrite.NoBlockRewrite)))])]
     [_ (OptInlineMaybeBlockRewrite.NoBlockRewrite)]))
 
-(define (opt-inline-try-multiblock-rewrite-from
-  [instrs : CompilerIrInstrList]
+(define (opt-inline-try-multiblock-rewrite-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
   [block-label : String]
-  [prefix-rev : CompilerIrInstrList]
   [site-pos : i64]
   [all-blocks : CompilerIrBlockList]
   [index : OptFunctionIndex]
@@ -29732,20 +29873,20 @@
   [added-so-far : i64]
   [scc-result : OptSccResult]
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (opt-inline-rewrite-single-block
-        block-label
-        (compiler-ir-instr-list-reverse-onto prefix-rev CompilerIrInstrList.Nil)
-        index
-        census
-        func-name
-        vars
-        caller-blocks
-        added-so-far
-        scc-result
-        caller-scc)]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (>= pos count)
+    (opt-inline-rewrite-single-block-seq
+      block-label
+      instrs
+      index
+      census
+      func-name
+      vars
+      caller-blocks
+      added-so-far
+      scc-result
+      caller-scc)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
       (match instr
         [(CompilerIrInstr.Call _ cname _ _)
           (match (opt-inline-lookup-multiblock-inlinable
@@ -29755,10 +29896,11 @@
             scc-result
             caller-scc)
             [(OptMaybeFunction.Some callee)
-              (match (opt-inline-multiblock-build-rewrite
+              (match (opt-inline-multiblock-build-rewrite-seq
                 block-label
-                prefix-rev
-                (box-get rest)
+                instrs
+                pos
+                count
                 site-pos
                 instr
                 callee
@@ -29779,10 +29921,11 @@
                     vars2
                     added2)]
                 [(OptInlineMaybeBlockRewrite.NoBlockRewrite)
-                  (opt-inline-try-multiblock-rewrite-from
-                    (box-get rest)
+                  (opt-inline-try-multiblock-rewrite-seq-from
+                    instrs
+                    (+ pos 1)
+                    count
                     block-label
-                    (compiler-ir-instr-cons instr prefix-rev)
                     (+ site-pos 1)
                     all-blocks
                     index
@@ -29794,10 +29937,11 @@
                     scc-result
                     caller-scc)])]
             [(OptMaybeFunction.No)
-              (opt-inline-try-multiblock-rewrite-from
-                (box-get rest)
+              (opt-inline-try-multiblock-rewrite-seq-from
+                instrs
+                (+ pos 1)
+                count
                 block-label
-                (compiler-ir-instr-cons instr prefix-rev)
                 (+ site-pos 1)
                 all-blocks
                 index
@@ -29809,10 +29953,11 @@
                 scc-result
                 caller-scc)])]
         [_
-          (opt-inline-try-multiblock-rewrite-from
-            (box-get rest)
+          (opt-inline-try-multiblock-rewrite-seq-from
+            instrs
+            (+ pos 1)
+            count
             block-label
-            (compiler-ir-instr-cons instr prefix-rev)
             (+ site-pos 1)
             all-blocks
             index
@@ -29822,7 +29967,7 @@
             caller-blocks
             added-so-far
             scc-result
-            caller-scc)])]))
+            caller-scc)]))))
 
 (define (opt-inline-rewrite-block
   [block : CompilerIrBlock]
@@ -29837,37 +29982,38 @@
   [caller-scc : i64]) : OptInlineMaybeBlockRewrite
   (match block
     [(CompilerIrBlock.Block label seq)
-      (let
-        [instrs : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
-        (if (opt-inline-blocks-phi-label? all-blocks label)
-          (opt-inline-rewrite-single-block
-            label
-            instrs
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc)
-          (opt-inline-try-multiblock-rewrite-from
-            instrs
-            label
-            CompilerIrInstrList.Nil
-            0
-            all-blocks
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc)))]))
+      (if (opt-inline-blocks-phi-label? all-blocks label)
+        (opt-inline-rewrite-single-block-seq
+          label
+          seq
+          index
+          census
+          func-name
+          vars
+          caller-blocks
+          added-so-far
+          scc-result
+          caller-scc)
+        (opt-inline-try-multiblock-rewrite-seq-from
+          seq
+          0
+          (compiler-ir-instr-seq-count seq)
+          label
+          0
+          all-blocks
+          index
+          census
+          func-name
+          vars
+          caller-blocks
+          added-so-far
+          scc-result
+          caller-scc))]))
 
-(define (opt-inline-clone-multiblock-instrs-with-spans
-  [instrs : CompilerIrInstrList]
+(define (opt-inline-clone-multiblock-instr-seq-with-spans-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
   [cloned-label : String]
   [prefix : String]
   [cont-label : String]
@@ -29879,13 +30025,13 @@
   [caller : String]
   [call-instr : CompilerIrInstr]
   [callee : String]) : OptInlineMultiSpanInstrClone
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (OptInlineMultiSpanInstrClone.Clone
-        CompilerIrInstrList.Nil
-        CompilerIrPhiInputList.Nil
-        out-spans)]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (>= pos count)
+    (OptInlineMultiSpanInstrClone.Clone
+      CompilerIrInstrList.Nil
+      CompilerIrPhiInputList.Nil
+      out-spans)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
       (match instr
         [(CompilerIrInstr.Return maybe)
           (OptInlineMultiSpanInstrClone.Clone
@@ -29910,8 +30056,10 @@
                 callee
                 instr
                 cloned)]
-            (match (opt-inline-clone-multiblock-instrs-with-spans
-              (box-get rest)
+            (match (opt-inline-clone-multiblock-instr-seq-with-spans-from
+              instrs
+              (+ pos 1)
+              count
               cloned-label
               prefix
               cont-label
@@ -29930,7 +30078,36 @@
                 (OptInlineMultiSpanInstrClone.Clone
                   (compiler-ir-instr-cons cloned rest-instrs)
                   rest-inputs
-                  spans3)]))])]))
+                  spans3)]))]))))
+
+(define (opt-inline-clone-multiblock-instr-seq-with-spans
+  [instrs : CompilerIrInstrSeq]
+  [cloned-label : String]
+  [prefix : String]
+  [cont-label : String]
+  [sa : CompilerIrCallArgs]
+  [np : i64]
+  [base : i64]
+  [source-spans : CompilerSourceSpans]
+  [out-spans : CompilerSourceSpans]
+  [caller : String]
+  [call-instr : CompilerIrInstr]
+  [callee : String]) : OptInlineMultiSpanInstrClone
+  (opt-inline-clone-multiblock-instr-seq-with-spans-from
+    instrs
+    0
+    (compiler-ir-instr-seq-count instrs)
+    cloned-label
+    prefix
+    cont-label
+    sa
+    np
+    base
+    source-spans
+    out-spans
+    caller
+    call-instr
+    callee))
 
 (define (opt-inline-clone-multiblock-block-with-spans
   [block : CompilerIrBlock]
@@ -29948,8 +30125,8 @@
     [(CompilerIrBlock.Block label instrs)
       (let
         [cloned-label : String (opt-inline-prefix-label prefix label)]
-        (match (opt-inline-clone-multiblock-instrs-with-spans
-          (compiler-ir-instr-seq-to-list instrs)
+        (match (opt-inline-clone-multiblock-instr-seq-with-spans
+          instrs
           cloned-label
           prefix
           cont-label
@@ -30032,9 +30209,9 @@
         call-instr
         callee)]))
 
-(define (opt-inline-rewrite-single-block-with-spans
+(define (opt-inline-rewrite-single-block-seq-with-spans
   [block-label : String]
-  [instrs : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [func-name : String]
@@ -30045,8 +30222,10 @@
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
-  (match (opt-inline-walk-instrs-with-spans
+  (match (opt-inline-walk-instr-seq-with-spans-from
     instrs
+    0
+    (compiler-ir-instr-seq-count instrs)
     index
     census
     func-name
@@ -30068,10 +30247,11 @@
         added2
         spans2)]))
 
-(define (opt-inline-multiblock-build-span-rewrite
+(define (opt-inline-multiblock-build-span-rewrite-seq
   [block-label : String]
-  [prefix-rev : CompilerIrInstrList]
-  [rest : CompilerIrInstrList]
+  [instrs : CompilerIrInstrSeq]
+  [call-pos : i64]
+  [count : i64]
   [site-pos : i64]
   [call-instr : CompilerIrInstr]
   [callee : CompilerIrFunction]
@@ -30110,17 +30290,8 @@
                   (and
                     (not stage-args?)
                     (opt-inline-tiny-predicate-callee? callee census))]
-                ;; Bounds-carrying multiblock callees stay ACYCLIC-only.
-                ;; Lifting this with rotate_ssa in place was measured and
-                ;; still regressed (array_sum +50%, crc32 +67%, vm +15%):
-                ;; rotation restores the bottom-tested shape inside the
-                ;; caller, but loop-BCE runs before it in the pipeline and
-                ;; never re-derives the merged loops' range facts, so the
-                ;; per-iteration bounds checks come back and the merged
-                ;; function's pressure grows. A standalone loop function is
-                ;; still systematically better optimized than the same loop
-                ;; inlined; lift this only after BCE learns the rotated
-                ;; merged shapes (or runs after rotation).
+                ;; Bounds-carrying multiblock callees stay ACYCLIC-only. See
+                ;; the non-span sequence builder above for the measured reason.
                 [bounds-ok? : bool
                   (opt-inline-bounds-inline-ok?
                     (opt-inline-blocks-have-bounds-check? cblocks)
@@ -30152,10 +30323,10 @@
                           caller-blocks
                           added-so-far))))]
                 (if inline?
-                  (match (opt-inline-walk-instrs-with-spans
-                    (compiler-ir-instr-list-reverse-onto
-                      prefix-rev
-                      CompilerIrInstrList.Nil)
+                  (match (opt-inline-walk-instr-seq-with-spans-from
+                    instrs
+                    0
+                    call-pos
                     index
                     census
                     func-name
@@ -30232,8 +30403,10 @@
                               cloned-blocks
                               return-inputs
                               spans3)
-                            (match (opt-inline-walk-instrs-with-spans
-                              rest
+                            (match (opt-inline-walk-instr-seq-with-spans-from
+                              instrs
+                              (+ call-pos 1)
+                              count
                               index
                               census
                               func-name
@@ -30285,10 +30458,11 @@
               (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)))])]
     [_ (OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)]))
 
-(define (opt-inline-try-multiblock-span-rewrite-from
-  [instrs : CompilerIrInstrList]
+(define (opt-inline-try-multiblock-span-rewrite-seq-from
+  [instrs : CompilerIrInstrSeq]
+  [pos : i64]
+  [count : i64]
   [block-label : String]
-  [prefix-rev : CompilerIrInstrList]
   [site-pos : i64]
   [all-blocks : CompilerIrBlockList]
   [index : OptFunctionIndex]
@@ -30301,22 +30475,22 @@
   [caller-scc : i64]
   [source-spans : CompilerSourceSpans]
   [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (opt-inline-rewrite-single-block-with-spans
-        block-label
-        (compiler-ir-instr-list-reverse-onto prefix-rev CompilerIrInstrList.Nil)
-        index
-        census
-        func-name
-        vars
-        caller-blocks
-        added-so-far
-        scc-result
-        caller-scc
-        source-spans
-        out-spans)]
-    [(CompilerIrInstrList.Cons instr rest)
+  (if (>= pos count)
+    (opt-inline-rewrite-single-block-seq-with-spans
+      block-label
+      instrs
+      index
+      census
+      func-name
+      vars
+      caller-blocks
+      added-so-far
+      scc-result
+      caller-scc
+      source-spans
+      out-spans)
+    (let
+      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs pos)]
       (match instr
         [(CompilerIrInstr.Call _ cname _ _)
           (match (opt-inline-lookup-multiblock-inlinable
@@ -30326,10 +30500,11 @@
             scc-result
             caller-scc)
             [(OptMaybeFunction.Some callee)
-              (match (opt-inline-multiblock-build-span-rewrite
+              (match (opt-inline-multiblock-build-span-rewrite-seq
                 block-label
-                prefix-rev
-                (box-get rest)
+                instrs
+                pos
+                count
                 site-pos
                 instr
                 callee
@@ -30354,10 +30529,11 @@
                     added2
                     spans2)]
                 [(OptInlineMaybeSpanBlockRewrite.NoSpanBlockRewrite)
-                  (opt-inline-try-multiblock-span-rewrite-from
-                    (box-get rest)
+                  (opt-inline-try-multiblock-span-rewrite-seq-from
+                    instrs
+                    (+ pos 1)
+                    count
                     block-label
-                    (compiler-ir-instr-cons instr prefix-rev)
                     (+ site-pos 1)
                     all-blocks
                     index
@@ -30371,10 +30547,11 @@
                     source-spans
                     out-spans)])]
             [(OptMaybeFunction.No)
-              (opt-inline-try-multiblock-span-rewrite-from
-                (box-get rest)
+              (opt-inline-try-multiblock-span-rewrite-seq-from
+                instrs
+                (+ pos 1)
+                count
                 block-label
-                (compiler-ir-instr-cons instr prefix-rev)
                 (+ site-pos 1)
                 all-blocks
                 index
@@ -30388,10 +30565,11 @@
                 source-spans
                 out-spans)])]
         [_
-          (opt-inline-try-multiblock-span-rewrite-from
-            (box-get rest)
+          (opt-inline-try-multiblock-span-rewrite-seq-from
+            instrs
+            (+ pos 1)
+            count
             block-label
-            (compiler-ir-instr-cons instr prefix-rev)
             (+ site-pos 1)
             all-blocks
             index
@@ -30403,7 +30581,7 @@
             scc-result
             caller-scc
             source-spans
-            out-spans)])]))
+            out-spans)]))))
 
 (define (opt-inline-rewrite-block-with-spans
   [block : CompilerIrBlock]
@@ -30420,38 +30598,37 @@
   [out-spans : CompilerSourceSpans]) : OptInlineMaybeSpanBlockRewrite
   (match block
     [(CompilerIrBlock.Block label seq)
-      (let
-        [instrs : CompilerIrInstrList (compiler-ir-instr-seq-to-list seq)]
-        (if (opt-inline-blocks-phi-label? all-blocks label)
-          (opt-inline-rewrite-single-block-with-spans
-            label
-            instrs
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc
-            source-spans
-            out-spans)
-          (opt-inline-try-multiblock-span-rewrite-from
-            instrs
-            label
-            CompilerIrInstrList.Nil
-            0
-            all-blocks
-            index
-            census
-            func-name
-            vars
-            caller-blocks
-            added-so-far
-            scc-result
-            caller-scc
-            source-spans
-            out-spans)))]))
+      (if (opt-inline-blocks-phi-label? all-blocks label)
+        (opt-inline-rewrite-single-block-seq-with-spans
+          label
+          seq
+          index
+          census
+          func-name
+          vars
+          caller-blocks
+          added-so-far
+          scc-result
+          caller-scc
+          source-spans
+          out-spans)
+        (opt-inline-try-multiblock-span-rewrite-seq-from
+          seq
+          0
+          (compiler-ir-instr-seq-count seq)
+          label
+          0
+          all-blocks
+          index
+          census
+          func-name
+          vars
+          caller-blocks
+          added-so-far
+          scc-result
+          caller-scc
+          source-spans
+          out-spans))]))
 
 (define (opt-inline-blocks
   [blocks : CompilerIrBlockList]
@@ -34203,6 +34380,8 @@
 (define (opt-aggregate-promote-test-function [instrs : CompilerIrInstrList]) : CompilerIrFunction
   (opt-aggregate-stack-promote-function (opt-spans-function instrs)))
 
+;; Self-test helper: materializes the optimized first block for list-shaped
+;; assertions only, outside the production optimizer pipeline.
 (define (opt-aggregate-promote-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (match (opt-aggregate-promote-test-function instrs)
     [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -34505,6 +34684,7 @@
         needle)]))
 
 (define (opt-aggregate-sroa-test-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  ;; Self-test helper: materializes one optimized block for list assertions.
   (match (opt-aggregate-sroa-function (opt-spans-function instrs))
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (match (compiler-ir-block-list-force-cons blocks)
@@ -38494,6 +38674,8 @@
       (CompilerIrFunctionList.Nil))
     (CompilerIrExternList.Nil)))
 
+;; Self-test helper: exposes the first optimized block as a list for existing
+;; instruction-count assertions; not used by production passes.
 (define (opt-function-first-instrs [func : CompilerIrFunction]) : CompilerIrInstrList
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
@@ -51385,6 +51567,7 @@
     [pipeline : CompilerIrBlock
       (optimize-block
         (compiler-ir-block "entry" (opt-load-cse-positive-instrs)))]
+    ;; Self-test inspection of optimize-block output, not a hot pass path.
     [pipeline-instrs : CompilerIrInstrList
       (match pipeline
         [(CompilerIrBlock.Block _ instrs)

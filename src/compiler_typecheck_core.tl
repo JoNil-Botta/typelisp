@@ -13634,6 +13634,12 @@
       (match (tc-ptr-addr-of-local-lookup env (intern-str name))
         [(ResultTcType.Ok ty)
           (match (tc-type-strip-region (tc-resolve-type ctx ty))
+            [(AstType.Ref _ _)
+              (ResultTcType.Err
+                "typecheck: ptr-addr-of reference roots are not addressable")]
+            [(AstType.MutRef _ _)
+              (ResultTcType.Err
+                "typecheck: ptr-addr-of reference roots are not addressable")]
             [(AstType.Struct struct-name)
               (if (tc-name-register-resident? ctx (intern-str struct-name))
                 (ResultTcType.Err

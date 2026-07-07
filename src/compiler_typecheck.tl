@@ -3646,6 +3646,14 @@
   "(define (main [items : (Array i64)] [i : i64]) : (MutPtr i64)
   (unsafe (ptr-addr-of (array-ref items i))))")
 
+(define (compiler-typecheck-raw-pointer-addr-of-ref-root-source) : String
+  "(define (main [r : (& r i64)]) : (MutPtr (& r i64))
+  (unsafe (ptr-addr-of r)))")
+
+(define (compiler-typecheck-raw-pointer-addr-of-mut-ref-root-source) : String
+  "(define (main [r : (&mut r i64)]) : (MutPtr (&mut r i64))
+  (unsafe (ptr-addr-of r)))")
+
 (define (compiler-typecheck-raw-pointer-addr-of-temp-source) : String
   "(define (main [x : i64]) : (MutPtr i64)
   (unsafe (ptr-addr-of (+ x 1))))")
@@ -3742,6 +3750,12 @@
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-dynamic-array-element-source)
       "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-addr-of-ref-root-source)
+      "typecheck: ptr-addr-of reference roots are not addressable")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-raw-pointer-addr-of-mut-ref-root-source)
+      "typecheck: ptr-addr-of reference roots are not addressable")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-addr-of-register-field-source)
       "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")

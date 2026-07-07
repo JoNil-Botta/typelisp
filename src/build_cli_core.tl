@@ -3288,7 +3288,7 @@
     [(ResultPackageSourceSet.Ok source-set)
       (tltest-inline-typecheck-package-sources-with-cfg
         (struct-get source-set sources)
-        (cli-string-vec-to-legacy (& stdlib-roots))
+        stdlib-roots
         manifest-dir
         name
         deps
@@ -4350,7 +4350,7 @@
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             source
-            (cli-string-vec-to-legacy (& stdlib-roots))
+            stdlib-roots
             (compiler-driver-target-cfgs target (compiler-cfg-empty))
             "typecheck-prefix-inline-build")]
         (if (= inline-test-status 0)

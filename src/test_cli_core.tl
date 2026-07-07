@@ -11,7 +11,9 @@
 (import stdlib.process)
 (import stdlib.hashmap)
 (import (hashmap String i64) as tltest_name_map)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector.vector String) as cli_svec)
+(import "cli_string_vec_bridge.tl")
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
 (import "compiler_load.tl")
@@ -27,9 +29,9 @@
   (Check))
 
 (defenum TestConfig
-  (File String String String svec.StringVec i64 TestMode)
-  (Batch svec.StringVec String String svec.StringVec i64 TestMode)
-  (Package String bool String String svec.StringVec i64 TestMode))
+  (File String String String cli_svec.Vec i64 TestMode)
+  (Batch cli_svec.Vec String String cli_svec.Vec i64 TestMode)
+  (Package String bool String String cli_svec.Vec i64 TestMode))
 
 (defenum ResultTestConfig
   (Ok TestConfig)
@@ -40,7 +42,7 @@
   (Some String))
 
 (defenum ResultTestBatchPaths
-  (Ok svec.StringVec)
+  (Ok cli_svec.Vec)
   (Err String))
 
 (defenum InlineTest
@@ -78,6 +80,9 @@
 (define (tltest-invalid-opt-level [value : String]) : String
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
 
+(define (tltest-roots-to-legacy [roots : (& roots cli_svec.Vec)]) : vector.StringVec
+  (cli-string-vec-to-legacy roots))
+
 (define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
     [i : i64 start]
@@ -112,7 +117,7 @@
   [text : String]
   [start : i64]
   [n : i64]
-  [paths : svec.StringVec]) : svec.StringVec
+  [paths : cli_svec.Vec]) : cli_svec.Vec
   (if (>= start n)
     paths
     (let
@@ -125,31 +130,28 @@
           next-start
           n
           (let
-            [next-paths : svec.StringVec paths]
+            [next-paths : cli_svec.Vec paths]
             (begin
-              (set!
-                next-paths
-                (svec.string-vec-push
-                  next-paths
-                  (string.substring text start (- line-end start))))
+              (cli_svec.push
+                (&mut next-paths)
+                (string.substring text start (- line-end start)))
               next-paths)))))))
 
-(define (tltest-batch-paths-from-text [text : String]) : svec.StringVec
+(define (tltest-batch-paths-from-text [text : String]) : cli_svec.Vec
   (tltest-batch-paths-from-text-from
     text
     0
     (string.string-length text)
-    (svec.string-vec-new)))
+    (cli_svec.new)))
 
 (define (tltest-batch-paths-from-text-self-test?) : bool
   (let
-    [paths : svec.StringVec
-      (tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
+    [paths : cli_svec.Vec (tltest-batch-paths-from-text "a.tl\n\nb.tl\r\nc.tl")]
     (and
-      (= (svec.string-vec-len (& paths)) 3)
-      (string.eq (svec.string-vec-get (& paths) 0 "") "a.tl")
-      (string.eq (svec.string-vec-get (& paths) 1 "") "b.tl")
-      (string.eq (svec.string-vec-get (& paths) 2 "") "c.tl"))))
+      (= (cli_svec.len (& paths)) 3)
+      (string.eq (cli_svec.get (& paths) 0 "") "a.tl")
+      (string.eq (cli_svec.get (& paths) 1 "") "b.tl")
+      (string.eq (cli_svec.get (& paths) 2 "") "c.tl"))))
 
 (test
   test-batch-paths-vector-preserves-order
@@ -174,7 +176,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [batch-list : TestMaybeString]) : ResultTestConfig
@@ -191,7 +193,7 @@
             [(TestMode.Check)
               (match (tltest-batch-paths list-path)
                 [(ResultTestBatchPaths.Ok paths)
-                  (if (svec.string-vec-is-empty? (& paths))
+                  (if (cli_svec.is-empty? (& paths))
                     (ResultTestConfig.Err "test: --batch list is empty")
                     (ResultTestConfig.Ok
                       (TestConfig.Batch
@@ -242,7 +244,7 @@
   [has-manifest : bool]
   [target : String]
   [mode : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [has-opt-level : bool]
   [opt-level : i64]
   [test-mode : TestMode]
@@ -334,11 +336,9 @@
               target
               mode
               (let
-                [next-roots : svec.StringVec roots]
+                [next-roots : cli_svec.Vec roots]
                 (begin
-                  (set!
-                    next-roots
-                    (svec.string-vec-push next-roots (io.arg (+ idx 1))))
+                  (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
               has-opt-level
               opt-level
@@ -460,7 +460,7 @@
       false
       (source-tool-default-target-name)
       "scalar"
-      (svec.string-vec-new)
+      (cli_svec.new)
       false
       (compiler-optimize-default-level)
       TestMode.Run
@@ -1919,7 +1919,7 @@
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (match (tltest-collect source decls paths)
@@ -1934,33 +1934,36 @@
             runtime-paths
             tests)
             [(InlineRuntimeDecls.Decls pruned-decls pruned-paths)
-              (match (typecheck-compiler-program-with-paths-cache
-                (tltest-inline-typecheck-program pruned-decls tests)
-                (tltest-inline-typecheck-paths pruned-paths tests)
-                roots
-                (compiler-typecheck-prefix-cache-scope
-                  cache-scope-prefix
-                  roots
-                  cfgs))
-                [(ResultCompilerTypecheck.Ok _) 0]
-                [(ResultCompilerTypecheck.Err diag)
-                  (begin
-                    (io.print-error
-                      (compiler-diagnostic-render
-                        (tltest-diagnostic-with-source-fallback
-                          source
-                          (box-get diag))))
-                    1)])])))]))
+              (let
+                [legacy-roots : vector.StringVec
+                  (tltest-roots-to-legacy (& roots))]
+                (match (typecheck-compiler-program-with-paths-cache
+                  (tltest-inline-typecheck-program pruned-decls tests)
+                  (tltest-inline-typecheck-paths pruned-paths tests)
+                  legacy-roots
+                  (compiler-typecheck-prefix-cache-scope
+                    cache-scope-prefix
+                    legacy-roots
+                    cfgs))
+                  [(ResultCompilerTypecheck.Ok _) 0]
+                  [(ResultCompilerTypecheck.Err diag)
+                    (begin
+                      (io.print-error
+                        (compiler-diagnostic-render
+                          (tltest-diagnostic-with-source-fallback
+                            source
+                            (box-get diag))))
+                      1)]))])))]))
 
-(define (tltest-inline-stdlib-source?
-  [source : String]
-  [roots : svec.StringVec]) : bool
+(define (tltest-inline-stdlib-source? [source : String] [roots : cli_svec.Vec]) : bool
   (let
     [normalized : String (compiler-load-normalize-path source)]
     [stdlib-path : String
       (if (compiler-load-stdlib-import? normalized)
         normalized
-        (compiler-load-stdlib-owned-path-from-roots normalized roots))]
+        (compiler-load-stdlib-owned-path-from-roots
+          normalized
+          (tltest-roots-to-legacy (& roots))))]
     (compiler-load-stdlib-import? stdlib-path)))
 
 (define (tltest-inline-clear-load-only-caches!) : unit
@@ -1987,7 +1990,7 @@
 
 (define (tltest-inline-typecheck-file-with-cfg
   [source : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (or
@@ -1997,9 +2000,13 @@
     0
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
       (begin
         (tltest-inline-reset-load-state!)
-        (match (compiler-driver-load-file-with-runtime source roots test-cfgs)
+        (match (compiler-driver-load-file-with-runtime
+          source
+          legacy-roots
+          test-cfgs)
           [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (tltest-inline-typecheck-loaded
               source
@@ -2017,7 +2024,7 @@
 
 (define (tltest-inline-typecheck-package-source-with-cfg
   [source : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -2026,9 +2033,10 @@
   (if (tltest-source-has-inline-tests? source)
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
+      [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
       (match (compiler-driver-load-package-file-with-runtime-owned-cfg
         source
-        roots
+        legacy-roots
         manifest-dir
         package-owner
         deps
@@ -2039,7 +2047,7 @@
             (compiler-load-package-owned-path
               package-owner
               manifest-dir
-              roots
+              legacy-roots
               source)
             decls
             paths
@@ -2079,7 +2087,7 @@
 (define (tltest-inline-typecheck-package-sources-from
   [sources : PackageSourceList]
   [index : i64]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -2132,7 +2140,7 @@
 
 (define (tltest-inline-typecheck-package-sources-with-cfg
   [sources : PackageSourceList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [manifest-dir : String]
   [package-owner : String]
   [deps : CompilerPkgDeps]
@@ -2870,7 +2878,7 @@
 
 (define (tltest-nested-module-macro-vector-source) : String
   "(import stdlib.vector)
-(import (vector.vector String) as svec)
+(import (vector.vector String) as cli_svec)
 (import stdlib.vector_slice)
 
 (defstruct Pair
@@ -2923,18 +2931,23 @@
 (define (tltest-nested-module-macro-vector-typecheck-ok?
   [program : AstProgram]
   [harness-paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : bool
-  (match (typecheck-compiler-program-with-paths-cache
-    (tltest-program-with-print-runtime program target)
-    (tltest-paths-with-print-runtime target harness-paths)
-    roots
-    (tltest-typecheck-cache-scope roots target))
-    [(ResultCompilerTypecheck.Ok _) true]
-    [(ResultCompilerTypecheck.Err diag)
-      (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
-        false)]))
+  (let
+    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    (match (typecheck-compiler-program-with-paths-cache
+      (tltest-program-with-print-runtime program target)
+      (tltest-paths-with-print-runtime target harness-paths)
+      legacy-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest-cfgs target)))
+      [(ResultCompilerTypecheck.Ok _) true]
+      [(ResultCompilerTypecheck.Err diag)
+        (begin
+          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          false)])))
 
 (define (tltest-function-base-defined?
   [funcs : CompilerIrFunctionList]
@@ -2956,26 +2969,31 @@
   [source : String]
   [program : AstProgram]
   [harness-paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : bool
-  (match (lower-compiler-program-with-decl-paths-mode-cache
-    source
-    (tltest-program-with-print-runtime program target)
-    (tltest-paths-with-print-runtime target harness-paths)
-    (CompilerLowerMode.Scalar)
-    roots
-    (tltest-typecheck-cache-scope roots target))
-    [(ResultCompilerLower.Ok lowered _)
-      (match lowered
-        [(CompilerIrProgram.Program _ functions _)
-          (tltest-function-base-defined? functions "clone$Pair")])]
-    [(ResultCompilerLower.Err _) false]))
+  (let
+    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    (match (lower-compiler-program-with-decl-paths-mode-cache
+      source
+      (tltest-program-with-print-runtime program target)
+      (tltest-paths-with-print-runtime target harness-paths)
+      (CompilerLowerMode.Scalar)
+      legacy-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest-cfgs target)))
+      [(ResultCompilerLower.Ok lowered _)
+        (match lowered
+          [(CompilerIrProgram.Program _ functions _)
+            (tltest-function-base-defined? functions "clone$Pair")])]
+      [(ResultCompilerLower.Err _) false])))
 
 (define (tltest-nested-module-macro-vector-loaded-ok?
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : bool
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
@@ -3010,13 +3028,13 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "nested_vector.tl")]
-        [roots : svec.StringVec (tltest-roots-for-self-test)]
+        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (io.write-file source (tltest-nested-module-macro-vector-source))
           (match (compiler-driver-load-file-with-runtime
             source
-            roots
+            (tltest-roots-to-legacy (& roots))
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err _) false]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -3068,7 +3086,7 @@
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : bool
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
@@ -3086,13 +3104,13 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "nested_result.tl")]
-        [roots : svec.StringVec (tltest-roots-for-self-test)]
+        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (io.write-file source (tltest-nested-generated-result-helper-source))
           (match (compiler-driver-load-file-with-runtime
             source
-            roots
+            (tltest-roots-to-legacy (& roots))
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err _) false]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -3118,12 +3136,12 @@
     (compiler-driver-target-cfgs backend-target (compiler-cfg-empty))
     "test"))
 
-(define (tltest-roots-for-self-test) : svec.StringVec
+(define (tltest-roots-for-self-test) : cli_svec.Vec
   (let
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : cli_svec.Vec (cli_svec.new)]
     (begin
-      (set! roots (svec.string-vec-push roots "stdlib"))
-      (set! roots (svec.string-vec-push roots "src"))
+      (cli_svec.push (&mut roots) "stdlib")
+      (cli_svec.push (&mut roots) "src")
       roots)))
 
 (define (tltest-package-cfg-inline-load-self-test?) : bool
@@ -3132,24 +3150,30 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "cfg_inline.tl")]
-        [roots : svec.StringVec (tltest-roots-for-self-test)]
+        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         (begin
           (io.write-file source "(cfg test (test package-cfg-inline unit))\n")
-          (match (compiler-driver-load-package-file-with-runtime-owned-cfg
-            source
-            roots
-            "."
-            "tltest"
-            (compiler-pkg-deps-empty)
-            true
-            (tltest-cfgs (CompilerBackendTarget.Linux)))
-            [(ResultCompilerLoadWithPaths.Err _) false]
-            [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-              (let
-                [owned-source : String
-                  (compiler-load-package-owned-path "tltest" "." roots source)]
-                (match (tltest-build-harness owned-source decls paths)
-                  [(InlineHarness.Harness _ _ count) (= count 1)]))])))]))
+          (let
+            [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+            (match (compiler-driver-load-package-file-with-runtime-owned-cfg
+              source
+              legacy-roots
+              "."
+              "tltest"
+              (compiler-pkg-deps-empty)
+              true
+              (tltest-cfgs (CompilerBackendTarget.Linux)))
+              [(ResultCompilerLoadWithPaths.Err _) false]
+              [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+                (let
+                  [owned-source : String
+                    (compiler-load-package-owned-path
+                      "tltest"
+                      "."
+                      legacy-roots
+                      source)]
+                  (match (tltest-build-harness owned-source decls paths)
+                    [(InlineHarness.Harness _ _ count) (= count 1)]))]))))]))
 
 (test
   test-cli-package-loader-enables-test-cfg
@@ -3163,7 +3187,7 @@
     [(ResultSourceToolString.Ok dir)
       (let
         [source : String (source-tool-fs-path-join dir "io_run.tl")]
-        [roots : svec.StringVec (tltest-roots-for-self-test)]
+        [roots : cli_svec.Vec (tltest-roots-for-self-test)]
         [target : CompilerBackendTarget (CompilerBackendTarget.Linux)]
         (begin
           (tltest-inline-reset-load-state!)
@@ -3178,7 +3202,7 @@
 ")
           (match (compiler-driver-load-file-with-runtime
             source
-            roots
+            (tltest-roots-to-legacy (& roots))
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err diag)
               (begin
@@ -3190,7 +3214,7 @@
                 (ast-program decls)
                 paths
                 (CompilerLowerMode.Scalar)
-                roots
+                (tltest-roots-to-legacy (& roots))
                 (tltest-typecheck-cache-scope roots target))
                 [(ResultCompilerLower.Ok _ _) true]
                 [(ResultCompilerLower.Err diag)
@@ -3209,35 +3233,42 @@
     (io.panic "stdlib/io imported stdout-write failed to lower string helper")))
 
 (define (tltest-typecheck-cache-scope
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]) : String
-  (compiler-typecheck-prefix-cache-scope
-    "typecheck-prefix-test-cli"
-    roots
-    (tltest-cfgs backend-target)))
+  (let
+    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    (compiler-typecheck-prefix-cache-scope
+      "typecheck-prefix-test-cli"
+      legacy-roots
+      (tltest-cfgs backend-target))))
 
 (define (tltest-check-only
   [program : AstProgram]
   [paths : AstDeclPathList]
   [count : i64]
   [target : CompilerBackendTarget]
-  [roots : svec.StringVec]) : i64
-  (match (typecheck-compiler-program-with-paths-cache
-    (tltest-program-with-print-runtime program target)
-    (tltest-paths-with-print-runtime target paths)
-    roots
-    (tltest-typecheck-cache-scope roots target))
-    [(ResultCompilerTypecheck.Ok _)
-      (begin
-        (io.print-string
-          (string.append
-            "TypeLisp test typecheck passed: "
-            (string.append (string.int->string count) " test(s)\n")))
-        0)]
-    [(ResultCompilerTypecheck.Err diag)
-      (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
-        1)]))
+  [roots : cli_svec.Vec]) : i64
+  (let
+    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    (match (typecheck-compiler-program-with-paths-cache
+      (tltest-program-with-print-runtime program target)
+      (tltest-paths-with-print-runtime target paths)
+      legacy-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest-cfgs target)))
+      [(ResultCompilerTypecheck.Ok _)
+        (begin
+          (io.print-string
+            (string.append
+              "TypeLisp test typecheck passed: "
+              (string.append (string.int->string count) " test(s)\n")))
+          0)]
+      [(ResultCompilerTypecheck.Err diag)
+        (begin
+          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          1)])))
 
 (define (tltest-stderr-ends-with-newline? [text : String]) : bool
   (let
@@ -3374,7 +3405,7 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]
   [opt-level : i64]
   [temp-dir : String]) : i64
@@ -3382,13 +3413,17 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
+    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
     (match (lower-compiler-program-with-decl-paths-mode-cache
       entry-path
       program
       paths
       (CompilerLowerMode.Scalar)
-      roots
-      (tltest-typecheck-cache-scope roots target))
+      legacy-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest-cfgs target)))
       [(ResultCompilerLower.Ok ir spans)
         (match (source-tool-lowered-object-or-assembly-and-link
           source
@@ -3453,7 +3488,7 @@
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : String]
   [opt-level : i64]) : i64
   (match (source-tool-target target)
@@ -3483,7 +3518,7 @@
   [source : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : String]
   [opt-level : i64]) : i64
   (tltest-run-direct-with-entry
@@ -3498,27 +3533,32 @@
 (define (tltest-no-tests-check
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : i64
-  (match (typecheck-compiler-program-with-paths-cache
-    (ast-program decls)
-    paths
-    roots
-    (tltest-typecheck-cache-scope roots target))
-    [(ResultCompilerTypecheck.Ok _)
-      (begin
-        (io.print-string "TypeLisp test typecheck passed: 0 test(s)\n")
-        0)]
-    [(ResultCompilerTypecheck.Err diag)
-      (begin
-        (io.print-error (compiler-diagnostic-render (box-get diag)))
-        1)]))
+  (let
+    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    (match (typecheck-compiler-program-with-paths-cache
+      (ast-program decls)
+      paths
+      legacy-roots
+      (compiler-typecheck-prefix-cache-scope
+        "typecheck-prefix-test-cli"
+        legacy-roots
+        (tltest-cfgs target)))
+      [(ResultCompilerTypecheck.Ok _)
+        (begin
+          (io.print-string "TypeLisp test typecheck passed: 0 test(s)\n")
+          0)]
+      [(ResultCompilerTypecheck.Err diag)
+        (begin
+          (io.print-error (compiler-diagnostic-render (box-get diag)))
+          1)])))
 
 (define (tltest-no-tests-run
   [source : String]
   [target : String]
   [_mode : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]) : i64
   ;; With no inline tests there is no source harness to validate here. `test
   ;; --check` owns source typechecking; run mode only needs the zero-test runner.
@@ -3793,7 +3833,7 @@
 (define (tltest-package-run-one
   [source : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3844,21 +3884,26 @@
   [source : String]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : ResultTestPackageTotals
   (begin
     (io.print-string (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
-      (match (typecheck-compiler-program-with-paths-cache
-        (ast-program decls)
-        paths
-        roots
-        (tltest-typecheck-cache-scope roots target))
-        [(ResultCompilerTypecheck.Ok _) (ResultTestPackageTotals.Ok 1 1)]
-        [(ResultCompilerTypecheck.Err diag)
-          (begin
-            (io.print-error (compiler-diagnostic-render (box-get diag)))
-            (ResultTestPackageTotals.Err 1))])
+      (let
+        [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+        (match (typecheck-compiler-program-with-paths-cache
+          (ast-program decls)
+          paths
+          legacy-roots
+          (compiler-typecheck-prefix-cache-scope
+            "typecheck-prefix-test-cli"
+            legacy-roots
+            (tltest-cfgs target)))
+          [(ResultCompilerTypecheck.Ok _) (ResultTestPackageTotals.Ok 1 1)]
+          [(ResultCompilerTypecheck.Err diag)
+            (begin
+              (io.print-error (compiler-diagnostic-render (box-get diag)))
+              (ResultTestPackageTotals.Err 1))]))
       (begin
         (io.print-error (tltest-package-integration-missing-main source))
         (ResultTestPackageTotals.Err 1)))))
@@ -3866,7 +3911,7 @@
 (define (tltest-package-integration-run
   [source : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultTestPackageTotals
@@ -3893,7 +3938,7 @@
 (define (tltest-package-run-integration-source
   [source : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3902,7 +3947,7 @@
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (match (compiler-driver-load-package-file-with-runtime-owned-cfg
     source
-    roots
+    (tltest-roots-to-legacy (& roots))
     manifest-dir
     package-owner
     deps
@@ -3935,7 +3980,7 @@
 (define (tltest-package-run-integration-source-isolated-count
   [source : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3961,7 +4006,7 @@
 (define (tltest-package-run-source
   [source : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -3969,43 +4014,45 @@
   [package-owner : String]
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
-    (match (compiler-driver-load-package-file-with-runtime-owned-cfg
-      source
-      roots
-      manifest-dir
-      package-owner
-      deps
-      true
-      (tltest-cfgs backend-target))
-      [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
-        (let
-          [owned-source : String
-            (compiler-load-package-owned-path
-              package-owner
-              manifest-dir
+    (let
+      [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+      (match (compiler-driver-load-package-file-with-runtime-owned-cfg
+        source
+        legacy-roots
+        manifest-dir
+        package-owner
+        deps
+        true
+        (tltest-cfgs backend-target))
+        [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+          (let
+            [owned-source : String
+              (compiler-load-package-owned-path
+                package-owner
+                manifest-dir
+                legacy-roots
+                source)]
+            (tltest-package-run-one
+              owned-source
+              target
               roots
-              source)]
-          (tltest-package-run-one
-            owned-source
-            target
-            roots
-            opt-level
-            test-mode
-            backend-target
-            decls
-            paths))]
-      [(ResultCompilerLoadWithPaths.Err diag)
-        (begin
-          (io.print-error
-            (string.append "test: package source failed: " source))
-          (io.print-error (compiler-diagnostic-render (box-get diag)))
-          (ResultTestPackageTotals.Err 1))])
+              opt-level
+              test-mode
+              backend-target
+              decls
+              paths))]
+        [(ResultCompilerLoadWithPaths.Err diag)
+          (begin
+            (io.print-error
+              (string.append "test: package source failed: " source))
+            (io.print-error (compiler-diagnostic-render (box-get diag)))
+            (ResultTestPackageTotals.Err 1))]))
     (ResultTestPackageTotals.Ok 0 0)))
 
 (define (tltest-package-run-source-isolated-count
   [source : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -4033,7 +4080,7 @@
   [index : i64]
   [tests-prefix : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -4096,7 +4143,7 @@
   [sources : PackageSourceList]
   [tests-prefix : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -4125,7 +4172,7 @@
   [index : i64]
   [tests-prefix : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -4186,7 +4233,7 @@
   [sources : PackageSourceList]
   [tests-prefix : String]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]
   [backend-target : CompilerBackendTarget]
@@ -4214,7 +4261,7 @@
   [manifest-path : String]
   [has-manifest : bool]
   [target : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [opt-level : i64]
   [test-mode : TestMode]) : i64
   (match (source-tool-target target)
@@ -4287,7 +4334,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [backend-target : CompilerBackendTarget]
-  [roots : svec.StringVec]) : ResultTestFileCheck
+  [roots : cli_svec.Vec]) : ResultTestFileCheck
   (match (tltest-build-harness source decls paths)
     [(InlineHarness.Harness program harness-paths count)
       (begin
@@ -4308,11 +4355,11 @@
 
 (define (tltest-check-file-source
   [source : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
   (match (compiler-driver-load-file-with-runtime
     source
-    roots
+    (tltest-roots-to-legacy (& roots))
     (tltest-cfgs backend-target))
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (tltest-check-file-loaded source decls paths backend-target roots)]
@@ -4332,7 +4379,7 @@
 
 (define (tltest-run-batch-check-path
   [source : String]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]) : i64
   (with-scratch
     (begin
@@ -4342,14 +4389,14 @@
         [(ResultTestFileCheck.Ok count) count]))))
 
 (define (tltest-run-batch-check-paths-from
-  [paths : svec.StringVec]
+  [paths : cli_svec.Vec]
   [index : i64]
-  [roots : svec.StringVec]
+  [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
   (let
-    [count : i64 (svec.string-vec-len (& paths))]
+    [count : i64 (cli_svec.len (& paths))]
     [cursor : i64 index]
     [files : i64 file-count]
     [tests : i64 test-count]
@@ -4357,7 +4404,7 @@
     (begin
       (while (and (= status 0) (< cursor count))
         (let
-          [source : String (svec.string-vec-get (& paths) cursor "")]
+          [source : String (cli_svec.get (& paths) cursor "")]
           ;; Match compile --batch: isolate each entry in a destroyable scratch
           ;; arena. Lexical arena rewind keeps overflow chunks retired until the
           ;; owning arena is destroyed, so destroying the entry arena is
@@ -4381,8 +4428,8 @@
         status))))
 
 (define (tltest-run-batch-check-paths
-  [paths : svec.StringVec]
-  [roots : svec.StringVec]
+  [paths : cli_svec.Vec]
+  [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]
   [file-count : i64]
   [test-count : i64]) : i64
@@ -4395,9 +4442,9 @@
     test-count))
 
 (define (tltest-run-batch-check
-  [paths : svec.StringVec]
+  [paths : cli_svec.Vec]
   [target : String]
-  [roots : svec.StringVec]) : i64
+  [roots : cli_svec.Vec]) : i64
   (begin
     (compiler-load-session-cache-enable!)
     (compiler-load-session-program-cache-disable!)
@@ -4431,7 +4478,7 @@
         [(ResultSourceToolTarget.Ok backend-target)
           (match (compiler-driver-load-file-with-runtime
             source
-            roots
+            (tltest-roots-to-legacy (& roots))
             (tltest-cfgs backend-target))
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (match (tltest-build-harness source decls paths)

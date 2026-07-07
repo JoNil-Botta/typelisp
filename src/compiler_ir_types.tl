@@ -2496,9 +2496,14 @@
 (defenum CompilerSourceSpansEntry
   (Entry String AstSourceSpan))
 
+(defstruct CompilerSourceSpansEntrySeq
+  (slots (Array CompilerSourceSpansEntry))
+  (len i64))
+
 (defenum CompilerSourceSpansEntryList
   (Nil)
-  (Cons CompilerSourceSpansEntry (Box CompilerSourceSpansEntryList)))
+  (Cons CompilerSourceSpansEntry (Box CompilerSourceSpansEntryList))
+  (Array CompilerSourceSpansEntrySeq))
 
 (defenum CompilerSourceSpans
   (Spans CompilerSourceSpansEntryList CompilerSourceSpansEntryList i64))
@@ -2518,23 +2523,124 @@
     [(CompilerSourceSpans.Spans entries _ _)
       (CompilerSourceSpans.Spans entries (CompilerSourceSpansEntryList.Nil) 0)]))
 
+(define (compiler-source-spans-entry-list-count
+  [entries : CompilerSourceSpansEntryList]) : i64
+  (match entries
+    [(CompilerSourceSpansEntryList.Nil) 0]
+    [(CompilerSourceSpansEntryList.Cons _ rest)
+      (let
+        [rest : CompilerSourceSpansEntryList (box-get rest)]
+        (+ 1 (compiler-source-spans-entry-list-count rest)))]
+    [(CompilerSourceSpansEntryList.Array seq) (struct-get seq len)]))
+
+(define (compiler-source-spans-entry-list-copy-array-range!
+  [dst : (&mut dst (Array CompilerSourceSpansEntry))]
+  [src : (& src (Array CompilerSourceSpansEntry))]
+  [index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 index]
+    (while (< i count)
+      (begin
+        (array-set! dst i (array-ref src i))
+        (set! i (+ i 1))))))
+
+(define (compiler-source-spans-entry-list-copy-array-into!
+  [dst : (&mut dst (Array CompilerSourceSpansEntry))]
+  [src : (& src (Array CompilerSourceSpansEntry))]
+  [dst-index : i64]
+  [src-index : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (array-set! dst (+ dst-index i) (array-ref src (+ src-index i)))
+        (set! i (+ i 1))))))
+
+(define (compiler-source-spans-entry-list-copy-cons!
+  [entries : CompilerSourceSpansEntryList]
+  [dst : (&mut dst (Array CompilerSourceSpansEntry))]
+  [index : i64]) : i64
+  (match entries
+    [(CompilerSourceSpansEntryList.Nil) index]
+    [(CompilerSourceSpansEntryList.Cons entry rest)
+      (begin
+        (array-set! dst index entry)
+        (compiler-source-spans-entry-list-copy-cons!
+          (box-get rest)
+          dst
+          (+ index 1)))]
+    [(CompilerSourceSpansEntryList.Array seq)
+      (begin
+        (compiler-source-spans-entry-list-copy-array-into!
+          dst
+          (& (struct-get seq slots))
+          index
+          0
+          (struct-get seq len))
+        (+ index (struct-get seq len)))]))
+
+(define (compiler-source-spans-entry-list-capacity-for [count : i64]) : i64
+  (let
+    [min-cap : i64
+      (if (< count 4)
+        4
+        count)]
+    [cap : i64 4]
+    (begin
+      (while (< cap min-cap)
+        (set! cap (* cap 2)))
+      cap)))
+
+(define (compiler-source-spans-entry-list-push-array
+  [seq : CompilerSourceSpansEntrySeq]
+  [entry : CompilerSourceSpansEntry]) : CompilerSourceSpansEntryList
+  (let
+    [slots : (Array CompilerSourceSpansEntry) (struct-get seq slots)]
+    [len : i64 (struct-get seq len)]
+    [cap : i64 (array-length slots)]
+    (if (< len cap)
+      (begin
+        (array-set! slots len entry)
+        (CompilerSourceSpansEntryList.Array
+          (CompilerSourceSpansEntrySeq slots (+ len 1))))
+      (let
+        [new-cap : i64
+          (compiler-source-spans-entry-list-capacity-for (+ len 1))]
+        [bigger : (Array CompilerSourceSpansEntry)
+          (make-array CompilerSourceSpansEntry new-cap)]
+        (begin
+          (compiler-source-spans-entry-list-copy-array-range!
+            (&mut bigger)
+            (& slots)
+            0
+            len)
+          (array-set! bigger len entry)
+          (CompilerSourceSpansEntryList.Array
+            (CompilerSourceSpansEntrySeq bigger (+ len 1))))))))
+
 (define (compiler-source-spans-entry-list-append
   [entries : CompilerSourceSpansEntryList]
   [entry : CompilerSourceSpansEntry]) : CompilerSourceSpansEntryList
   (match entries
-    [(CompilerSourceSpansEntryList.Nil)
-      (CompilerSourceSpansEntryList.Cons
-        entry
-        (box (CompilerSourceSpansEntryList.Nil)))]
-    [(CompilerSourceSpansEntryList.Cons head rest)
+    [(CompilerSourceSpansEntryList.Array seq)
+      (compiler-source-spans-entry-list-push-array seq entry)]
+    [_
       (let
-        [rest : CompilerSourceSpansEntryList (box-get rest)]
-        (CompilerSourceSpansEntryList.Cons
-          head
-          (box (compiler-source-spans-entry-list-append rest entry))))]))
+        [count : i64 (compiler-source-spans-entry-list-count entries)]
+        [cap : i64 (compiler-source-spans-entry-list-capacity-for (+ count 1))]
+        [slots : (Array CompilerSourceSpansEntry)
+          (make-array CompilerSourceSpansEntry cap)]
+        (begin
+          (compiler-source-spans-entry-list-copy-cons! entries (&mut slots) 0)
+          (array-set! slots count entry)
+          (CompilerSourceSpansEntryList.Array
+            (CompilerSourceSpansEntrySeq slots (+ count 1)))))]))
 
-;; Record `name -> span`. Function names are unique in lowered programs, so a
-;; prepend keeps diagnostics equivalent while avoiding O(n^2) provenance builds.
+;; Record `name -> span`. Function names are unique in lowered programs. The
+;; dense list stores new entries at the end, and lookup scans newest-to-oldest to
+;; preserve the old cons-list first-binding behavior without O(n^2) appends.
 (define (compiler-source-spans-insert
   [spans : CompilerSourceSpans]
   [name : String]
@@ -2542,11 +2648,23 @@
   (match spans
     [(CompilerSourceSpans.Spans entries instr-entries instr-count)
       (CompilerSourceSpans.Spans
-        (CompilerSourceSpansEntryList.Cons
-          (CompilerSourceSpansEntry.Entry name span)
-          (box entries))
+        (compiler-source-spans-entry-list-append
+          entries
+          (CompilerSourceSpansEntry.Entry name span))
         instr-entries
         instr-count)]))
+
+(define (compiler-source-spans-entry-array-lookup
+  [slots : (Array CompilerSourceSpansEntry)]
+  [index : i64]
+  [name : String]) : CompilerMaybeSourceSpan
+  (if (< index 0)
+    (CompilerMaybeSourceSpan.No)
+    (match (array-ref slots index)
+      [(CompilerSourceSpansEntry.Entry entry-name span)
+        (if (string.eq entry-name name)
+          (CompilerMaybeSourceSpan.Some span)
+          (compiler-source-spans-entry-array-lookup slots (- index 1) name))])))
 
 (define (compiler-source-spans-entry-list-lookup
   [entries : CompilerSourceSpansEntryList]
@@ -2560,7 +2678,12 @@
           [(CompilerSourceSpansEntry.Entry entry-name span)
             (if (string.eq entry-name name)
               (CompilerMaybeSourceSpan.Some span)
-              (compiler-source-spans-entry-list-lookup rest name))]))]))
+              (compiler-source-spans-entry-list-lookup rest name))]))]
+    [(CompilerSourceSpansEntryList.Array seq)
+      (compiler-source-spans-entry-array-lookup
+        (struct-get seq slots)
+        (- (struct-get seq len) 1)
+        name)]))
 
 (define (compiler-source-spans-lookup
   [spans : CompilerSourceSpans]
@@ -2583,9 +2706,9 @@
     [(CompilerSourceSpans.Spans entries instr-entries instr-count)
       (CompilerSourceSpans.Spans
         entries
-        (CompilerSourceSpansEntryList.Cons
-          (CompilerSourceSpansEntry.Entry key span)
-          (box instr-entries))
+        (compiler-source-spans-entry-list-append
+          instr-entries
+          (CompilerSourceSpansEntry.Entry key span))
         (+ instr-count 1))]))
 
 (define (compiler-source-spans-insert-instr
@@ -2964,16 +3087,6 @@
             instr-entries
             (compiler-source-spans-value-key function dst))]
         [_ (CompilerMaybeSourceSpan.No)])]))
-
-;; Number of recorded entries; supports provenance smoke assertions.
-(define (compiler-source-spans-entry-list-count
-  [entries : CompilerSourceSpansEntryList]) : i64
-  (match entries
-    [(CompilerSourceSpansEntryList.Nil) 0]
-    [(CompilerSourceSpansEntryList.Cons _ rest)
-      (let
-        [rest : CompilerSourceSpansEntryList (box-get rest)]
-        (+ 1 (compiler-source-spans-entry-list-count rest)))]))
 
 (define (compiler-source-spans-count [spans : CompilerSourceSpans]) : i64
   (match spans
@@ -4529,10 +4642,11 @@
         (compiler-ir-instr-describe instr)
         "  switch %9 base 4 [4:four, 5:five] default other"))))
 
-(define (compiler-ir-source-spans-boxed-list-ok?) : bool
+(define (compiler-ir-source-spans-entry-list-ok?) : bool
   (let
     [span1 : AstSourceSpan (ast-source-span 1 2 1 3)]
     [span2 : AstSourceSpan (ast-source-span 4 5 4 8)]
+    [span3 : AstSourceSpan (ast-source-span 7 8 7 12)]
     [entries : CompilerSourceSpansEntryList
       (compiler-source-spans-entry-list-append
         (compiler-source-spans-entry-list-append
@@ -4544,6 +4658,26 @@
         (compiler-source-spans-insert (compiler-source-spans-empty) "one" span1)
         "two"
         span2)]
+    [shadowed : CompilerSourceSpans
+      (compiler-source-spans-insert
+        (compiler-source-spans-insert
+          (compiler-source-spans-empty)
+          "same"
+          span1)
+        "same"
+        span3)]
+    [instr : CompilerIrInstr
+      (CompilerIrInstr.Mov 9 (CompilerIrValue.I64 1) (AstType.I64))]
+    [instr-spans : CompilerSourceSpans
+      (compiler-source-spans-insert-instr
+        (compiler-source-spans-insert-instr
+          (compiler-source-spans-empty)
+          "f"
+          instr
+          span1)
+        "f"
+        instr
+        span3)]
     (and
       (= (compiler-source-spans-entry-list-count entries) 2)
       (= (compiler-source-spans-count spans) 2)
@@ -4552,6 +4686,18 @@
           (and
             (= (ast-source-span-start-line found) 4)
             (= (ast-source-span-end-col found) 8))]
+        [(CompilerMaybeSourceSpan.No) false])
+      (match (compiler-source-spans-lookup shadowed "same")
+        [(CompilerMaybeSourceSpan.Some found)
+          (and
+            (= (ast-source-span-start-line found) 7)
+            (= (ast-source-span-end-col found) 12))]
+        [(CompilerMaybeSourceSpan.No) false])
+      (match (compiler-source-spans-lookup-instr instr-spans "f" instr)
+        [(CompilerMaybeSourceSpan.Some found)
+          (and
+            (= (ast-source-span-start-line found) 7)
+            (= (ast-source-span-end-col found) 12))]
         [(CompilerMaybeSourceSpan.No) false]))))
 
 (define (compiler-ir-instr-list-first-mov-dst?
@@ -4805,7 +4951,7 @@
     (unless (compiler-ir-display-self-test-ok?) (return 1))
     (unless (compiler-ir-tail-call-render-ok?) (return 1))
     (unless (compiler-ir-switch-render-ok?) (return 1))
-    (unless (compiler-ir-source-spans-boxed-list-ok?) (return 1))
+    (unless (compiler-ir-source-spans-entry-list-ok?) (return 1))
     (unless (compiler-ir-instr-seq-roundtrip-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))

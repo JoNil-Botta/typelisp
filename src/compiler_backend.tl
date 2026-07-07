@@ -1009,7 +1009,37 @@
                 (box-get rest)
                 map
                 values
-                (+ index 1))))])]))
+                (+ index 1))))])]
+    [(CompilerSourceSpansEntryList.Array seq)
+      (compiler-backend-source-span-index-add-array
+        (struct-get seq slots)
+        (- (struct-get seq len) 1)
+        map
+        values)]))
+
+(define (compiler-backend-source-span-index-add-array
+  [slots : (Array CompilerSourceSpansEntry)]
+  [index : i64]
+  [map : backend_string_i64_map.Map]
+  [values : (Array CompilerMaybeSourceSpan)]) : backend_string_i64_map.Map
+  (if (< index 0)
+    map
+    (match (array-ref slots index)
+      [(CompilerSourceSpansEntry.Entry name span)
+        (if (backend_string_i64_map.contains? (& map) name)
+          (compiler-backend-source-span-index-add-array
+            slots
+            (- index 1)
+            map
+            values)
+          (begin
+            (backend_string_i64_map.insert (&mut map) name index)
+            (array-set! values index (CompilerMaybeSourceSpan.Some span))
+            (compiler-backend-source-span-index-add-array
+              slots
+              (- index 1)
+              map
+              values)))])))
 
 (define (compiler-backend-source-span-index-build [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
   (match spans

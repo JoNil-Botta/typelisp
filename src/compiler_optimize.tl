@@ -33160,14 +33160,7 @@
   [spans : CompilerSourceSpans]
   [key : String]
   [span : AstSourceSpan]) : CompilerSourceSpans
-  (match spans
-    [(CompilerSourceSpans.Spans entries instr-entries instr-count)
-      (CompilerSourceSpans.Spans
-        entries
-        (CompilerSourceSpansEntryList.Cons
-          (CompilerSourceSpansEntry.Entry key span)
-          (box instr-entries))
-        (+ instr-count 1))]))
+  (compiler-source-spans-insert-instr-entry spans key span))
 
 ;; The remap previously rebuilt the "value:<function>:<var>" key string --
 ;; three appends -- for EVERY instruction in the program, then rebuilt the

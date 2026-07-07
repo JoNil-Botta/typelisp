@@ -15,6 +15,8 @@
 (import stdlib.arena)
 (import stdlib.hash)
 (import stdlib.hashmap)
+(import (hashmap String i64) as backend_string_i64_map)
+(import (hashmap i64 i64) as backend_i64_i64_map)
 (import stdlib.string)
 (import stdlib.byte_buf_core)
 (import stdlib.str_cat_runtime as str_cat)
@@ -241,7 +243,7 @@
 (defenum CompilerBackendGlobalTypeList
   (Nil)
   (Cons String AstType (Box CompilerBackendGlobalTypeList))
-  (Cache hashmap.StringI64Map (Array AstType)))
+  (Cache backend_string_i64_map.Map (Array AstType)))
 
 (defenum ResultCompilerBackend
   (Ok String)
@@ -305,7 +307,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerBackendSymbolValidation
-  (Ok hashmap.StringI64Map)
+  (Ok backend_string_i64_map.Map)
   (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendRuntimePlan
@@ -347,9 +349,9 @@
     CompilerBackendRuntimeTailPlan))
 
 (defstruct CompilerBackendRuntimeIndex
-  (defines hashmap.StringI64Map)
-  (externs hashmap.StringI64Map)
-  (calls hashmap.StringI64Map)
+  (defines backend_string_i64_map.Map)
+  (externs backend_string_i64_map.Map)
+  (calls backend_string_i64_map.Map)
   (needs-div-abort bool)
   (needs-shift-abort bool))
 
@@ -358,25 +360,25 @@
   (index CompilerBackendRuntimeIndex))
 
 (defstruct CompilerBackendProgramIndex
-  (functions hashmap.I64I64Map)
+  (functions backend_i64_i64_map.Map)
   (function-names (Array String))
   (function-signatures (Array CompilerBackendMaybeSignature))
-  (extern-signatures hashmap.I64I64Map)
+  (extern-signatures backend_i64_i64_map.Map)
   (extern-names (Array String))
   (extern-signature-values (Array CompilerBackendMaybeSignature))
-  (extern-references hashmap.I64I64Map)
+  (extern-references backend_i64_i64_map.Map)
   (extern-link-symbols (Array String))
   (extern-provided (Array bool))
   ;; Aggregate type name -> machine-word count, for every register-group
   ;; type constructed anywhere in the program (whole-program compile). Drives the
   ;; backend/regalloc 2-word-vs-handle decision that the type name alone cannot.
-  (group-word-counts hashmap.StringI64Map)
+  (group-word-counts backend_string_i64_map.Map)
   ;; Aggregate type name -> bit mask of SSE-class words. Bit 0 marks
   ;; word0, bit 1 marks word1. A missing/zero mask means all INTEGER words.
-  (group-word-class-masks hashmap.StringI64Map))
+  (group-word-class-masks backend_string_i64_map.Map))
 
 (defstruct CompilerBackendSourceSpanIndex
-  (entries hashmap.StringI64Map)
+  (entries backend_string_i64_map.Map)
   (values (Array CompilerMaybeSourceSpan)))
 
 (define (compiler-backend-runtime-tail-profile?
@@ -589,7 +591,7 @@
 ;; Backed ENTIRELY by pointer-free globals: an open-addressing table of byte
 ;; offsets/lengths (`(Array i64)`) into one flat `(Array u8)` key-byte arena.
 ;; Pointer-free Array globals are the only globals that reliably survive a full
-;; program emission -- a `(Array String)`/`StringI64Map`/struct/box global has
+;; program emission -- an `(Array String)`/string map/struct/box global has
 ;; its element/slots pointers dropped by the GC root scan and dangles mid-
 ;; peephole (observed SIGSEGV: contains? on a collected String cell). The intern
 ;; TABLE is likewise torn down before the peephole runs, so interning is NOT used
@@ -770,11 +772,11 @@
         (compiler-backend-string-list-contains? (box-get rest) needle))]))
 
 (defstruct BackendStringSet
-  (seen hashmap.StringI64Map)
+  (seen backend_string_i64_map.Map)
   (items BackendStringList))
 
 (defstruct BackendFloatSet
-  (seen hashmap.StringI64Map)
+  (seen backend_string_i64_map.Map)
   (items BackendFloatList))
 
 (defstruct CompilerBackendProgramCollections
@@ -788,12 +790,12 @@
 
 (defenum CompilerBackendCollectState
   (Collections CompilerBackendProgramCollections)
-  (GroupCounts hashmap.StringI64Map)
-  (GroupClassMasks hashmap.StringI64Map CompilerRegVarTypes))
+  (GroupCounts backend_string_i64_map.Map)
+  (GroupClassMasks backend_string_i64_map.Map CompilerRegVarTypes))
 
 (define (compiler-backend-string-set-new [capacity : i64]) : BackendStringSet
   (BackendStringSet
-    (hashmap.string-i64-map-with-capacity capacity)
+    (backend_string_i64_map.with-capacity capacity)
     BackendStringList.Nil))
 
 (define (compiler-backend-float-payload-bits [ty : AstType] [bits : u64]) : u64
@@ -812,17 +814,21 @@
 
 (define (compiler-backend-float-set-new [capacity : i64]) : BackendFloatSet
   (BackendFloatSet
-    (hashmap.string-i64-map-with-capacity capacity)
+    (backend_string_i64_map.with-capacity capacity)
     BackendFloatList.Nil))
 
 (define (compiler-backend-string-set-add
   [set : BackendStringSet]
   [text : String]) : BackendStringSet
-  (if (hashmap.string-i64-map-contains? (struct-get set seen) text)
-    set
-    (BackendStringSet
-      (hashmap.string-i64-map-put (struct-get set seen) text 1)
-      (compiler-backend-string-cons text (struct-get set items)))))
+  (let
+    [seen : backend_string_i64_map.Map (struct-get set seen)]
+    (if (backend_string_i64_map.contains? (& seen) text)
+      set
+      (begin
+        (backend_string_i64_map.insert (&mut seen) text 1)
+        (BackendStringSet
+          seen
+          (compiler-backend-string-cons text (struct-get set items)))))))
 
 (define (compiler-backend-float-set-add
   [set : BackendFloatSet]
@@ -831,11 +837,14 @@
   (let
     [payload-bits : u64 (compiler-backend-float-payload-bits ty bits)]
     [key : String (compiler-backend-float-key ty payload-bits)]
-    (if (hashmap.string-i64-map-contains? (struct-get set seen) key)
+    [seen : backend_string_i64_map.Map (struct-get set seen)]
+    (if (backend_string_i64_map.contains? (& seen) key)
       set
-      (BackendFloatSet
-        (hashmap.string-i64-map-put (struct-get set seen) key 1)
-        (compiler-backend-float-cons ty payload-bits (struct-get set items))))))
+      (begin
+        (backend_string_i64_map.insert (&mut seen) key 1)
+        (BackendFloatSet
+          seen
+          (compiler-backend-float-cons ty payload-bits (struct-get set items)))))))
 
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
@@ -979,30 +988,28 @@
 
 (define (compiler-backend-source-span-index-add
   [entries : CompilerSourceSpansEntryList]
-  [map : hashmap.StringI64Map]
+  [map : backend_string_i64_map.Map]
   [values : (Array CompilerMaybeSourceSpan)]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : backend_string_i64_map.Map
   (match entries
     [(CompilerSourceSpansEntryList.Nil) map]
     [(CompilerSourceSpansEntryList.Cons entry rest)
       (match entry
         [(CompilerSourceSpansEntry.Entry name span)
-          (if (hashmap.string-i64-map-contains? map name)
+          (if (backend_string_i64_map.contains? (& map) name)
             (compiler-backend-source-span-index-add
               (box-get rest)
               map
               values
               index)
-            (match (hashmap.string-i64-map-insert map name index)
-              [(hashmap.StringI64MapInsertOk next-map)
-                (begin
-                  (array-set! values index (CompilerMaybeSourceSpan.Some span))
-                  (compiler-backend-source-span-index-add
-                    (box-get rest)
-                    next-map
-                    values
-                    (+ index 1)))]
-              [(hashmap.StringI64MapInsertFull next-map) next-map]))])]))
+            (begin
+              (backend_string_i64_map.insert (&mut map) name index)
+              (array-set! values index (CompilerMaybeSourceSpan.Some span))
+              (compiler-backend-source-span-index-add
+                (box-get rest)
+                map
+                values
+                (+ index 1))))])]))
 
 (define (compiler-backend-source-span-index-build [spans : CompilerSourceSpans]) : CompilerBackendSourceSpanIndex
   (match spans
@@ -1016,7 +1023,7 @@
           (CompilerBackendSourceSpanIndex
             (compiler-backend-source-span-index-add
               entries
-              (hashmap.string-i64-map-with-capacity (+ (* count 2) 16))
+              (backend_string_i64_map.with-capacity (+ (* count 2) 16))
               values
               0)
             values)))]))
@@ -1024,12 +1031,12 @@
 (define (compiler-backend-source-span-index-lookup
   [index : CompilerBackendSourceSpanIndex]
   [name : String]) : CompilerMaybeSourceSpan
-  (match (hashmap.string-i64-map-get (struct-get index entries) name)
-    [(hashmap.StringI64MapFound slot)
+  (match (backend_string_i64_map.get (& (struct-get index entries)) name)
+    [(backend_string_i64_map.LookupFound slot)
       (if (and (>= slot 0) (< slot (array-length (struct-get index values))))
         (array-ref (struct-get index values) slot)
         (CompilerMaybeSourceSpan.No))]
-    [(hashmap.StringI64MapMissing) (CompilerMaybeSourceSpan.No)]))
+    [(backend_string_i64_map.LookupMissing) (CompilerMaybeSourceSpan.No)]))
 
 (define (compiler-backend-function-diagnostic-index
   [index : CompilerBackendSourceSpanIndex]
@@ -7538,9 +7545,10 @@
         runtime-symbol
         (if (compiler-backend-compact-function-symbol? name)
           (match (compiler-backend-index-function-slot index name)
-            [(hashmap.I64I64MapFound slot)
+            [(backend_i64_i64_map.LookupFound slot)
               (str_cat.str-cat "_tl_f" (string.int->string slot) "")]
-            [(hashmap.I64I64MapMissing) (compiler-backend-user-symbol name)])
+            [(backend_i64_i64_map.LookupMissing)
+              (compiler-backend-user-symbol name)])
           (compiler-backend-user-symbol name))))))
 
 (define (compiler-backend-function-symbol-map-comment
@@ -7633,9 +7641,9 @@
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
   (match (compiler-backend-index-function-slot index name)
-    [(hashmap.I64I64MapFound slot)
+    [(backend_i64_i64_map.LookupFound slot)
       (str_cat.str-cat "f" (string.int->string slot) "")]
-    [(hashmap.I64I64MapMissing) (compiler-backend-user-symbol name)]))
+    [(backend_i64_i64_map.LookupMissing) (compiler-backend-user-symbol name)]))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
@@ -9997,10 +10005,10 @@
         (CompilerRegMaybeType.Some ty)
         (compiler-backend-global-type-lookup (box-get rest) name))]
     [(CompilerBackendGlobalTypeList.Cache ids values)
-      (match (hashmap.string-i64-map-get ids name)
-        [(hashmap.StringI64MapFound index)
+      (match (backend_string_i64_map.get (& ids) name)
+        [(backend_string_i64_map.LookupFound index)
           (CompilerRegMaybeType.Some (array-ref values index))]
-        [(hashmap.StringI64MapMissing) (CompilerRegMaybeType.No)])]))
+        [(backend_string_i64_map.LookupMissing) (CompilerRegMaybeType.No)])]))
 
 (define (compiler-backend-global-type-list-boxed-ok?) : bool
   (let
@@ -10032,9 +10040,9 @@
 
 (define (compiler-backend-global-types-fill
   [globals : CompilerIrGlobalList]
-  [ids : hashmap.StringI64Map]
+  [ids : backend_string_i64_map.Map]
   [values : (Array AstType)]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : backend_string_i64_map.Map
   (match globals
     [(CompilerIrGlobalList.Nil) ids]
     [(CompilerIrGlobalList.Cons global rest)
@@ -10042,9 +10050,10 @@
         [(CompilerIrGlobal.Global name ty _)
           (begin
             (array-set! values index ty)
+            (backend_string_i64_map.insert (&mut ids) name index)
             (compiler-backend-global-types-fill
               (box-get rest)
-              (hashmap.string-i64-map-put ids name index)
+              ids
               values
               (+ index 1)))])]))
 
@@ -10055,7 +10064,7 @@
     (CompilerBackendGlobalTypeList.Cache
       (compiler-backend-global-types-fill
         globals
-        (hashmap.string-i64-map-with-capacity (+ (* count 2) 16))
+        (backend_string_i64_map.with-capacity (+ (* count 2) 16))
         values
         0)
       values)))
@@ -10823,24 +10832,24 @@
 
 ;; Any block outside [h..le] branching to a block strictly inside (h..le]?
 (define (compiler-backend-const-hoist-succs-inside?
-  [ids : hashmap.StringI64Map]
+  [ids : backend_string_i64_map.Map]
   [succs : CompilerLiveLabelSet]
   [h : i64]
   [le : i64]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
     [(CompilerLiveLabelSet.Cons label rest)
-      (match (hashmap.string-i64-map-get ids label)
-        [(hashmap.StringI64MapFound q)
+      (match (backend_string_i64_map.get (& ids) label)
+        [(backend_string_i64_map.LookupFound q)
           (if (and (> q h) (<= q le))
             true
             (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le))]
-        [(hashmap.StringI64MapMissing)
+        [(backend_string_i64_map.LookupMissing)
           (compiler-backend-const-hoist-succs-inside? ids (box-get rest) h le)])]))
 
 (define (compiler-backend-const-hoist-side-entry?
   [orig : (Array CompilerIrBlock)]
-  [ids : hashmap.StringI64Map]
+  [ids : backend_string_i64_map.Map]
   [h : i64]
   [le : i64]) : bool
   (let
@@ -11010,10 +11019,10 @@
         (if (not (compiler-backend-const-hoist-any-magic? orig))
           empty
           (let
-            [ids : hashmap.StringI64Map
+            [ids : backend_string_i64_map.Map
               (compiler-reg-loop-depth-block-ids
                 cons-blocks
-                (hashmap.string-i64-map-with-capacity
+                (backend_string_i64_map.with-capacity
                   (compiler-reg-bits-map-capacity count))
                 0)]
             [loop-ends : (Array i64)
@@ -18925,17 +18934,19 @@
 ;; build side interning, an id-map miss is a definitive "absent" and the scan
 ;; is gone.
 (define (compiler-backend-program-index-bind-name
-  [ids : hashmap.I64I64Map]
+  [ids : backend_i64_i64_map.Map]
   [name : String]
-  [index : i64]) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put ids (ci.intern name) index))
+  [index : i64]) : backend_i64_i64_map.Map
+  (begin
+    (backend_i64_i64_map.insert (&mut ids) (ci.intern name) index)
+    ids))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
-  [ids : hashmap.I64I64Map]
+  [ids : backend_i64_i64_map.Map]
   [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : backend_i64_i64_map.Map
   (match functions
     [(CompilerIrFunctionList.Nil) ids]
     [(CompilerIrFunctionList.Cons func rest)
@@ -18973,10 +18984,10 @@
 
 (define (compiler-backend-program-index-extern-signatures-into
   [externs : CompilerIrExternList]
-  [signature-ids : hashmap.I64I64Map]
+  [signature-ids : backend_i64_i64_map.Map]
   [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(CompilerIrExternList.Nil) signature-ids]
     [(CompilerIrExternList.Cons item rest)
@@ -19001,10 +19012,10 @@
 ;; First pass: fill the side arrays and bind the LINK SYMBOLS only.
 (define (compiler-backend-program-index-extern-references-into
   [externs : CompilerIrExternList]
-  [reference-ids : hashmap.I64I64Map]
+  [reference-ids : backend_i64_i64_map.Map]
   [link-symbols : (Array String)]
   [provideds : (Array bool)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(CompilerIrExternList.Nil) reference-ids]
     [(CompilerIrExternList.Cons item rest)
@@ -19029,8 +19040,8 @@
 ;; searched before link symbols) in the single reference map.
 (define (compiler-backend-program-index-extern-reference-names-into
   [externs : CompilerIrExternList]
-  [reference-ids : hashmap.I64I64Map]
-  [index : i64]) : hashmap.I64I64Map
+  [reference-ids : backend_i64_i64_map.Map]
+  [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(CompilerIrExternList.Nil) reference-ids]
     [(CompilerIrExternList.Cons item rest)
@@ -19058,27 +19069,27 @@
     [_ ""]))
 
 (define (compiler-backend-collect-group-counts-instr
-  [map : hashmap.StringI64Map]
-  [instr : CompilerIrInstr]) : hashmap.StringI64Map
+  [map : backend_string_i64_map.Map]
+  [instr : CompilerIrInstr]) : backend_string_i64_map.Map
   (match instr
     [(CompilerIrInstr.Pack _ words ty)
       (let
         [name : String (compiler-backend-aggregate-type-name ty)]
         (if (string.eq name "")
           map
-          (if (hashmap.string-i64-map-contains? map name)
+          (if (backend_string_i64_map.contains? (& map) name)
             map
-            (match (hashmap.string-i64-map-insert
-              map
-              name
-              (compiler-ir-value-list-count words))
-              [(hashmap.StringI64MapInsertOk next) next]
-              [(hashmap.StringI64MapInsertFull next) next]))))]
+            (begin
+              (backend_string_i64_map.insert
+                (&mut map)
+                name
+                (compiler-ir-value-list-count words))
+              map))))]
     [_ map]))
 
 (define (compiler-backend-collect-group-counts-functions
-  [map : hashmap.StringI64Map]
-  [functions : CompilerIrFunctionList]) : hashmap.StringI64Map
+  [map : backend_string_i64_map.Map]
+  [functions : CompilerIrFunctionList]) : backend_string_i64_map.Map
   (match (compiler-backend-collect-functions-shared
     (CompilerBackendCollectState.GroupCounts map)
     functions)
@@ -19124,9 +19135,9 @@
     (array.make-array AstType 0)))
 
 (define (compiler-backend-collect-group-counts-instr-seq
-  [map : hashmap.StringI64Map]
+  [map : backend_string_i64_map.Map]
   [instrs : CompilerIrInstrSeq]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : backend_string_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     map
     (compiler-backend-collect-group-counts-instr-seq
@@ -19137,10 +19148,10 @@
       (+ index 1))))
 
 (define (compiler-backend-collect-group-class-masks-instr-seq
-  [map : hashmap.StringI64Map]
+  [map : backend_string_i64_map.Map]
   [type-info : CompilerRegVarTypes]
   [instrs : CompilerIrInstrSeq]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : backend_string_i64_map.Map
   (if (>= index (compiler-ir-instr-seq-count instrs))
     map
     (compiler-backend-collect-group-class-masks-instr-seq
@@ -19245,20 +19256,25 @@
       (compiler-backend-collect-function-seq-shared state seq 0)]))
 
 (define (compiler-backend-merge-group-class-mask
-  [map : hashmap.StringI64Map]
+  [map : backend_string_i64_map.Map]
   [name : String]
-  [mask : i64]) : hashmap.StringI64Map
+  [mask : i64]) : backend_string_i64_map.Map
   (if (string.eq name "")
     map
-    (match (hashmap.string-i64-map-get map name)
-      [(hashmap.StringI64MapFound found)
-        (hashmap.string-i64-map-put map name (bit-or found mask))]
-      [(hashmap.StringI64MapMissing) (hashmap.string-i64-map-put map name mask)])))
+    (match (backend_string_i64_map.get (& map) name)
+      [(backend_string_i64_map.LookupFound found)
+        (begin
+          (backend_string_i64_map.insert (&mut map) name (bit-or found mask))
+          map)]
+      [(backend_string_i64_map.LookupMissing)
+        (begin
+          (backend_string_i64_map.insert (&mut map) name mask)
+          map)])))
 
 (define (compiler-backend-collect-group-class-masks-instr
-  [map : hashmap.StringI64Map]
+  [map : backend_string_i64_map.Map]
   [type-info : CompilerRegVarTypes]
-  [instr : CompilerIrInstr]) : hashmap.StringI64Map
+  [instr : CompilerIrInstr]) : backend_string_i64_map.Map
   (match instr
     [(CompilerIrInstr.Pack _ words ty)
       (compiler-backend-merge-group-class-mask
@@ -19268,8 +19284,8 @@
     [_ map]))
 
 (define (compiler-backend-collect-group-class-masks-functions
-  [map : hashmap.StringI64Map]
-  [functions : CompilerIrFunctionList]) : hashmap.StringI64Map
+  [map : backend_string_i64_map.Map]
+  [functions : CompilerIrFunctionList]) : backend_string_i64_map.Map
   (match (compiler-backend-collect-functions-shared
     (CompilerBackendCollectState.GroupClassMasks
       map
@@ -19293,37 +19309,37 @@
     [extern-link-symbols : (Array String)
       (array.make-array String extern-count)]
     [extern-provided : (Array bool) (array.make-array bool extern-count)]
-    [function-ids : hashmap.I64I64Map
+    [function-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-functions-into
         functions
-        (hashmap.i64-i64-map-with-capacity (+ (* function-count 2) 1))
+        (backend_i64_i64_map.with-capacity (+ (* function-count 2) 1))
         function-names
         function-signatures
         0)]
-    [extern-signature-ids : hashmap.I64I64Map
+    [extern-signature-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-signatures-into
         externs
-        (hashmap.i64-i64-map-with-capacity (+ (* extern-count 2) 1))
+        (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
         extern-names
         extern-signatures
         0)]
-    [extern-reference-ids : hashmap.I64I64Map
+    [extern-reference-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-reference-names-into
         externs
         (compiler-backend-program-index-extern-references-into
           externs
-          (hashmap.i64-i64-map-with-capacity (+ (* extern-count 4) 1))
+          (backend_i64_i64_map.with-capacity (+ (* extern-count 4) 1))
           extern-link-symbols
           extern-provided
           0)
         0)]
-    [group-word-counts : hashmap.StringI64Map
+    [group-word-counts : backend_string_i64_map.Map
       (compiler-backend-collect-group-counts-functions
-        (hashmap.string-i64-map-with-capacity (+ (* function-count 2) 1))
+        (backend_string_i64_map.with-capacity (+ (* function-count 2) 1))
         functions)]
-    [group-word-class-masks : hashmap.StringI64Map
+    [group-word-class-masks : backend_string_i64_map.Map
       (compiler-backend-collect-group-class-masks-functions
-        (hashmap.string-i64-map-with-capacity (+ (* function-count 2) 1))
+        (backend_string_i64_map.with-capacity (+ (* function-count 2) 1))
         functions)]
     (CompilerBackendProgramIndex
       function-ids
@@ -19347,11 +19363,11 @@
     [name : String (compiler-backend-aggregate-type-name ty)]
     (if (string.eq name "")
       1
-      (match (hashmap.string-i64-map-get
-        (struct-get index group-word-counts)
+      (match (backend_string_i64_map.get
+        (& (struct-get index group-word-counts))
         name)
-        [(hashmap.StringI64MapFound count) count]
-        [(hashmap.StringI64MapMissing) 1]))))
+        [(backend_string_i64_map.LookupFound count) count]
+        [(backend_string_i64_map.LookupMissing) 1]))))
 
 (define (compiler-backend-group-type?
   [index : CompilerBackendProgramIndex]
@@ -19365,11 +19381,11 @@
     [name : String (compiler-backend-aggregate-type-name ty)]
     (if (string.eq name "")
       0
-      (match (hashmap.string-i64-map-get
-        (struct-get index group-word-class-masks)
+      (match (backend_string_i64_map.get
+        (& (struct-get index group-word-class-masks))
         name)
-        [(hashmap.StringI64MapFound mask) mask]
-        [(hashmap.StringI64MapMissing) 0]))))
+        [(backend_string_i64_map.LookupFound mask) mask]
+        [(backend_string_i64_map.LookupMissing) 0]))))
 
 (define (compiler-backend-group-word-sse?
   [index : CompilerBackendProgramIndex]
@@ -19389,59 +19405,61 @@
 ;; map probe covers both spellings.
 (define (compiler-backend-index-function-slot
   [index : CompilerBackendProgramIndex]
-  [name : String]) : hashmap.I64I64MapLookup
+  [name : String]) : backend_i64_i64_map.Lookup
   (match (ci.intern-lookup name)
     [(InternLookupFound name-id)
-      (hashmap.i64-i64-map-get (struct-get index functions) name-id)]
-    [(InternLookupMissing) (hashmap.I64I64MapMissing)]))
+      (backend_i64_i64_map.get (& (struct-get index functions)) name-id)]
+    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
 
 (define (compiler-backend-index-extern-signature-slot
   [index : CompilerBackendProgramIndex]
-  [name : String]) : hashmap.I64I64MapLookup
+  [name : String]) : backend_i64_i64_map.Lookup
   (match (ci.intern-lookup name)
     [(InternLookupFound name-id)
-      (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)]
-    [(InternLookupMissing) (hashmap.I64I64MapMissing)]))
+      (backend_i64_i64_map.get (& (struct-get index extern-signatures)) name-id)]
+    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
 
 (define (compiler-backend-index-extern-reference-slot
   [index : CompilerBackendProgramIndex]
-  [name : String]) : hashmap.I64I64MapLookup
+  [name : String]) : backend_i64_i64_map.Lookup
   (match (ci.intern-lookup name)
     [(InternLookupFound name-id)
-      (hashmap.i64-i64-map-get (struct-get index extern-references) name-id)]
-    [(InternLookupMissing) (hashmap.I64I64MapMissing)]))
+      (backend_i64_i64_map.get (& (struct-get index extern-references)) name-id)]
+    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
 
 (define (compiler-backend-index-function-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
-  (match (hashmap.i64-i64-map-get (struct-get index functions) name-id)
-    [(hashmap.I64I64MapFound slot)
+  (match (backend_i64_i64_map.get (& (struct-get index functions)) name-id)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index function-signatures) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
+    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
   [name : String]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-slot index name)
-    [(hashmap.I64I64MapFound slot)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index function-signatures) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
+    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-extern-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
-  (match (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)
-    [(hashmap.I64I64MapFound slot)
+  (match (backend_i64_i64_map.get
+    (& (struct-get index extern-signatures))
+    name-id)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-signature-values) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
+    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-extern-signature
   [index : CompilerBackendProgramIndex]
   [name : String]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-extern-signature-slot index name)
-    [(hashmap.I64I64MapFound slot)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-signature-values) slot)]
-    [(hashmap.I64I64MapMissing) (CompilerBackendMaybeSignature.No)]))
+    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
 
 (define (compiler-backend-index-signature
   [index : CompilerBackendProgramIndex]
@@ -19455,58 +19473,64 @@
 (define (compiler-backend-index-function-defines-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (hashmap.i64-i64-map-contains? (struct-get index functions) name-id))
+  (backend_i64_i64_map.contains? (& (struct-get index functions)) name-id))
 
 (define (compiler-backend-index-function-defines?
   [index : CompilerBackendProgramIndex]
   [name : String]) : bool
   (match (compiler-backend-index-function-slot index name)
-    [(hashmap.I64I64MapFound _) true]
-    [(hashmap.I64I64MapMissing) false]))
+    [(backend_i64_i64_map.LookupFound _) true]
+    [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-index-extern-references-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (hashmap.i64-i64-map-contains? (struct-get index extern-references) name-id))
+  (backend_i64_i64_map.contains?
+    (& (struct-get index extern-references))
+    name-id))
 
 (define (compiler-backend-index-extern-references?
   [index : CompilerBackendProgramIndex]
   [name : String]) : bool
   (match (compiler-backend-index-extern-reference-slot index name)
-    [(hashmap.I64I64MapFound _) true]
-    [(hashmap.I64I64MapMissing) false]))
+    [(backend_i64_i64_map.LookupFound _) true]
+    [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-index-extern-link-symbol-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : String
-  (match (hashmap.i64-i64-map-get (struct-get index extern-references) name-id)
-    [(hashmap.I64I64MapFound slot)
+  (match (backend_i64_i64_map.get
+    (& (struct-get index extern-references))
+    name-id)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-link-symbols) slot)]
-    [(hashmap.I64I64MapMissing) (ci.intern-str name-id)]))
+    [(backend_i64_i64_map.LookupMissing) (ci.intern-str name-id)]))
 
 (define (compiler-backend-index-extern-link-symbol
   [index : CompilerBackendProgramIndex]
   [name : String]) : String
   (match (compiler-backend-index-extern-reference-slot index name)
-    [(hashmap.I64I64MapFound slot)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-link-symbols) slot)]
-    [(hashmap.I64I64MapMissing) name]))
+    [(backend_i64_i64_map.LookupMissing) name]))
 
 (define (compiler-backend-index-extern-provided-id?
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : bool
-  (match (hashmap.i64-i64-map-get (struct-get index extern-signatures) name-id)
-    [(hashmap.I64I64MapFound slot)
+  (match (backend_i64_i64_map.get
+    (& (struct-get index extern-signatures))
+    name-id)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-provided) slot)]
-    [(hashmap.I64I64MapMissing) false]))
+    [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-index-extern-provided?
   [index : CompilerBackendProgramIndex]
   [name : String]) : bool
   (match (compiler-backend-index-extern-signature-slot index name)
-    [(hashmap.I64I64MapFound slot)
+    [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-provided) slot)]
-    [(hashmap.I64I64MapMissing) false]))
+    [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-symbol-validation-error [message : String]) : ResultCompilerBackendSymbolValidation
   (ResultCompilerBackendSymbolValidation.Err
@@ -19528,7 +19552,7 @@
 
 (define (compiler-backend-validate-global-symbols-into
   [globals : CompilerIrGlobalList]
-  [seen : hashmap.StringI64Map]) : ResultCompilerBackendSymbolValidation
+  [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
   (match globals
     [(CompilerIrGlobalList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
     [(CompilerIrGlobalList.Cons global rest)
@@ -19536,14 +19560,16 @@
         [(CompilerIrGlobal.Global name _ _)
           (let
             [symbol : String (compiler-backend-user-symbol name)]
-            (if (hashmap.string-i64-map-contains? seen symbol)
+            (if (backend_string_i64_map.contains? (& seen) symbol)
               (compiler-backend-symbol-validation-error
                 (string.append
                   "backend: duplicate emitted global symbol "
                   symbol))
-              (compiler-backend-validate-global-symbols-into
-                (box-get rest)
-                (hashmap.string-i64-map-put seen symbol 1))))])]))
+              (begin
+                (backend_string_i64_map.insert (&mut seen) symbol 1)
+                (compiler-backend-validate-global-symbols-into
+                  (box-get rest)
+                  seen))))])]))
 
 (define (compiler-backend-runtime-prelude-string-helper-export?
   [name : String]
@@ -19569,7 +19595,7 @@
   [functions : CompilerIrFunctionList]
   [_plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]
-  [seen : hashmap.StringI64Map]) : ResultCompilerBackendSymbolValidation
+  [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
   (match functions
     [(CompilerIrFunctionList.Nil)
       (ResultCompilerBackendSymbolValidation.Ok seen)]
@@ -19585,7 +19611,7 @@
                   (compiler-backend-index-extern-provided? index name))
                 (compiler-backend-symbol-validation-error
                   "backend: main cannot use :export-symbol")]
-              [(hashmap.string-i64-map-contains? seen symbol)
+              [(backend_string_i64_map.contains? (& seen) symbol)
                 (compiler-backend-symbol-validation-error
                   (string.append
                     "backend: duplicate emitted function symbol "
@@ -19609,11 +19635,13 @@
                     "backend: exported function symbol collides with runtime symbol "
                     symbol))]
               [else
-                (compiler-backend-validate-function-symbols-into
-                  (box-get rest)
-                  _plan
-                  index
-                  (hashmap.string-i64-map-put seen symbol 1))]))])]
+                (begin
+                  (backend_string_i64_map.insert (&mut seen) symbol 1)
+                  (compiler-backend-validate-function-symbols-into
+                    (box-get rest)
+                    _plan
+                    index
+                    seen))]))])]
     [(CompilerIrFunctionList.Array seq)
       (compiler-backend-validate-function-symbols-into
         (compiler-ir-function-seq-to-list seq)
@@ -19624,7 +19652,7 @@
 (define (compiler-backend-validate-extern-symbols-into
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
-  [seen : hashmap.StringI64Map]) : ResultCompilerBackendSymbolValidation
+  [seen : backend_string_i64_map.Map]) : ResultCompilerBackendSymbolValidation
   (match externs
     [(CompilerIrExternList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
     [(CompilerIrExternList.Cons ext rest)
@@ -19637,7 +19665,7 @@
             plan)
             (let
               [symbol : String (compiler-backend-link-symbol link-symbol plan)]
-              (if (hashmap.string-i64-map-contains? seen symbol)
+              (if (backend_string_i64_map.contains? (& seen) symbol)
                 (compiler-backend-symbol-validation-error
                   (string.append
                     "backend: extern symbol collides with emitted symbol "
@@ -19659,7 +19687,7 @@
   [index : CompilerBackendProgramIndex]) : ResultCompilerBackendSymbolValidation
   (match (compiler-backend-validate-global-symbols-into
     globals
-    (hashmap.string-i64-map-with-capacity
+    (backend_string_i64_map.with-capacity
       (+
         (*
           (+
@@ -35306,21 +35334,21 @@
 ;; successor, so the resulting count is the number of DISTINCT predecessor
 ;; blocks -- exactly the "is this label a merge?" signal we need.
 (define (compiler-backend-peephole-predcount-bump
-  [counts : hashmap.StringI64Map]
-  [labels : OptLabelSet]) : hashmap.StringI64Map
+  [counts : backend_string_i64_map.Map]
+  [labels : OptLabelSet]) : backend_string_i64_map.Map
   (match labels
     [(OptLabelSet.Nil) counts]
     [(OptLabelSet.Cons label rest)
-      (compiler-backend-peephole-predcount-bump
-        (hashmap.string-i64-map-put
-          counts
+      (begin
+        (backend_string_i64_map.insert
+          (&mut counts)
           label
           (+
             1
-            (match (hashmap.string-i64-map-get counts label)
-              [(hashmap.StringI64MapFound v) v]
-              [(hashmap.StringI64MapMissing) 0])))
-        (box-get rest))]))
+            (match (backend_string_i64_map.get (& counts) label)
+              [(backend_string_i64_map.LookupFound v) v]
+              [(backend_string_i64_map.LookupMissing) 0])))
+        (compiler-backend-peephole-predcount-bump counts (box-get rest)))]))
 
 ;; Count predecessors of every block from the AUTHORITATIVE CFG successor set
 ;; (explicit IrInstrJump / IrInstrBranch / IrInstrSwitch targets PLUS the
@@ -35330,7 +35358,7 @@
 ;; this enumeration is complete (those are the only label-bearing terminators).
 (define (compiler-backend-peephole-predcount-build
   [blocks : CompilerIrBlockList]
-  [counts : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [counts : backend_string_i64_map.Map]) : backend_string_i64_map.Map
   (match blocks
     [(CompilerIrBlockList.Nil) counts]
     [(CompilerIrBlockList.Array seq)
@@ -35393,7 +35421,7 @@
 (define (compiler-backend-peephole-carry-safe-scan
   [label-scope : String]
   [entry-label : String]
-  [predcount : hashmap.StringI64Map]
+  [predcount : backend_string_i64_map.Map]
   [prev : CompilerIrBlock]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
@@ -35414,9 +35442,9 @@
               (not (compiler-backend-peephole-prev-splits-edge? prev))
               (=
                 1
-                (match (hashmap.string-i64-map-get predcount cur-label)
-                  [(hashmap.StringI64MapFound v) v]
-                  [(hashmap.StringI64MapMissing) 0]))
+                (match (backend_string_i64_map.get (& predcount) cur-label)
+                  [(backend_string_i64_map.LookupFound v) v]
+                  [(backend_string_i64_map.LookupMissing) 0]))
               (opt-label-contains
                 (opt-cfg-block-successors-with-next prev cur-label)
                 cur-label))
@@ -35449,7 +35477,7 @@
             entry-label
             (compiler-backend-peephole-predcount-build
               (compiler-ir-block-cons entry (box-get rest))
-              (hashmap.string-i64-map-with-capacity 64))
+              (backend_string_i64_map.with-capacity 64))
             entry
             (box-get rest))])]))
 
@@ -39888,21 +39916,21 @@
 
 (define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
   (CompilerBackendRuntimeIndex
-    (hashmap.string-i64-map-with-capacity 256)
-    (hashmap.string-i64-map-with-capacity 256)
-    (hashmap.string-i64-map-with-capacity 256)
+    (backend_string_i64_map.with-capacity 256)
+    (backend_string_i64_map.with-capacity 256)
+    (backend_string_i64_map.with-capacity 256)
     false
     false))
 
 (define (compiler-backend-runtime-index-defines?
   [index : CompilerBackendRuntimeIndex]
   [name : String]) : bool
-  (hashmap.string-i64-map-contains? (struct-get index defines) name))
+  (backend_string_i64_map.contains? (& (struct-get index defines)) name))
 
 (define (compiler-backend-runtime-index-extern?
   [index : CompilerBackendRuntimeIndex]
   [name : String]) : bool
-  (hashmap.string-i64-map-contains? (struct-get index externs) name))
+  (backend_string_i64_map.contains? (& (struct-get index externs)) name))
 
 (define (compiler-backend-runtime-index-extern-alias?
   [index : CompilerBackendRuntimeIndex]
@@ -39915,7 +39943,7 @@
 (define (compiler-backend-runtime-index-calls?
   [index : CompilerBackendRuntimeIndex]
   [name : String]) : bool
-  (hashmap.string-i64-map-contains? (struct-get index calls) name))
+  (backend_string_i64_map.contains? (& (struct-get index calls)) name))
 
 (define (compiler-backend-runtime-index-needs-div-abort?
   [index : CompilerBackendRuntimeIndex]) : bool
@@ -39928,32 +39956,44 @@
 (define (compiler-backend-runtime-index-add-define
   [index : CompilerBackendRuntimeIndex]
   [name : String]) : CompilerBackendRuntimeIndex
-  (CompilerBackendRuntimeIndex
-    (hashmap.string-i64-map-put (struct-get index defines) name 1)
-    (struct-get index externs)
-    (struct-get index calls)
-    (struct-get index needs-div-abort)
-    (struct-get index needs-shift-abort)))
+  (let
+    [defines : backend_string_i64_map.Map (struct-get index defines)]
+    (begin
+      (backend_string_i64_map.insert (&mut defines) name 1)
+      (CompilerBackendRuntimeIndex
+        defines
+        (struct-get index externs)
+        (struct-get index calls)
+        (struct-get index needs-div-abort)
+        (struct-get index needs-shift-abort)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
   [index : CompilerBackendRuntimeIndex]
   [name : String]) : CompilerBackendRuntimeIndex
-  (CompilerBackendRuntimeIndex
-    (struct-get index defines)
-    (hashmap.string-i64-map-put (struct-get index externs) name 1)
-    (struct-get index calls)
-    (struct-get index needs-div-abort)
-    (struct-get index needs-shift-abort)))
+  (let
+    [externs : backend_string_i64_map.Map (struct-get index externs)]
+    (begin
+      (backend_string_i64_map.insert (&mut externs) name 1)
+      (CompilerBackendRuntimeIndex
+        (struct-get index defines)
+        externs
+        (struct-get index calls)
+        (struct-get index needs-div-abort)
+        (struct-get index needs-shift-abort)))))
 
 (define (compiler-backend-runtime-index-add-call
   [index : CompilerBackendRuntimeIndex]
   [name : String]) : CompilerBackendRuntimeIndex
-  (CompilerBackendRuntimeIndex
-    (struct-get index defines)
-    (struct-get index externs)
-    (hashmap.string-i64-map-put (struct-get index calls) name 1)
-    (struct-get index needs-div-abort)
-    (struct-get index needs-shift-abort)))
+  (let
+    [calls : backend_string_i64_map.Map (struct-get index calls)]
+    (begin
+      (backend_string_i64_map.insert (&mut calls) name 1)
+      (CompilerBackendRuntimeIndex
+        (struct-get index defines)
+        (struct-get index externs)
+        calls
+        (struct-get index needs-div-abort)
+        (struct-get index needs-shift-abort)))))
 
 (define (compiler-backend-runtime-index-with-div-abort
   [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex

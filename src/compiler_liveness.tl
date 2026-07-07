@@ -587,6 +587,17 @@
     [(CompilerIrCallArgs.Array values)
       (compiler-live-call-args-array-vars values 0)]))
 
+(define (compiler-live-spmd-call-args-seq-vars
+  [seq : CompilerIrSpmdCallArgSeq]
+  [index : i64]) : CompilerLiveI64Set
+  (if (>= index (struct-get seq len))
+    (compiler-live-set-empty)
+    (match (array-ref (struct-get seq slots) index)
+      [(IrSpmdCallArg _ value _)
+        (compiler-live-value-vars-into
+          (compiler-live-spmd-call-args-seq-vars seq (+ index 1))
+          value)])))
+
 (define (compiler-live-spmd-call-args-vars [args : CompilerIrSpmdCallArgList]) : CompilerLiveI64Set
   (match args
     [(IrSpmdCallArgNil) (compiler-live-set-empty)]
@@ -595,7 +606,8 @@
         [(IrSpmdCallArg _ value _)
           (compiler-live-value-vars-into
             (compiler-live-spmd-call-args-vars (box-get rest))
-            value)])]))
+            value)])]
+    [(IrSpmdCallArgArray seq) (compiler-live-spmd-call-args-seq-vars seq 0)]))
 
 (define (compiler-live-spmd-call-result-defs
   [result : CompilerIrSpmdCallResult]) : CompilerLiveI64Set

@@ -16500,7 +16500,18 @@
             (compiler-reg-color-invalidate-spmd-call-args!
               roots
               invalid
-              (box-get rest)))])]))
+              (box-get rest)))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (while (< i count)
+          (begin
+            (match (array-ref slots i)
+              [(IrSpmdCallArg _ value _)
+                (compiler-reg-color-invalidate-value! roots invalid value)])
+            (set! i (+ i 1)))))]))
 
 (define (compiler-reg-color-invalidate-phi!
   [roots : (Array i64)]
@@ -17594,7 +17605,23 @@
     [(IrSpmdCallArgCons arg rest)
       (IrSpmdCallArgCons
         (compiler-reg-remap-spmd-call-arg remap arg)
-        (box (compiler-reg-remap-spmd-call-args remap (box-get rest))))]))
+        (box (compiler-reg-remap-spmd-call-args remap (box-get rest))))]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        [out : (Array CompilerIrSpmdCallArg)
+          (array.make-array CompilerIrSpmdCallArg count)]
+        [i : i64 0]
+        (begin
+          (while (< i count)
+            (begin
+              (array-set!
+                out
+                i
+                (compiler-reg-remap-spmd-call-arg remap (array-ref slots i)))
+              (set! i (+ i 1))))
+          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq out count))))]))
 
 (define (compiler-reg-remap-spmd-call-result
   [remap : (Array i64)]

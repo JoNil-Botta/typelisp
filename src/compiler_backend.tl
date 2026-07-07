@@ -26947,7 +26947,18 @@
         [(IrSpmdCallArg _ value _)
           (begin
             (compiler-backend-count-value-use counts value)
-            (compiler-backend-count-spmd-call-args-uses counts (box-get rest)))])]))
+            (compiler-backend-count-spmd-call-args-uses counts (box-get rest)))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (while (< i count)
+          (begin
+            (match (array-ref slots i)
+              [(IrSpmdCallArg _ value _)
+                (compiler-backend-count-value-use counts value)])
+            (set! i (+ i 1)))))]))
 
 (define (compiler-backend-count-phi-input-uses
   [counts : (Array i64)]
@@ -39233,7 +39244,23 @@
         [(IrSpmdCallArg _ value _)
           (compiler-backend-collect-spmd-call-args-collections
             (compiler-backend-collect-value-collections collections value)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [out : CompilerBackendProgramCollections collections]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (set!
+                    out
+                    (compiler-backend-collect-value-collections out value))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (compiler-backend-collect-phi-collections
   [collections : CompilerBackendProgramCollections]
@@ -44216,7 +44243,21 @@ tl_memchr:
           (compiler-backend-object-spmd-call-args
             (compiler-backend-object-value-ref parts site value)
             site
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [out : CompilerBackendObjectParts parts]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (set! out (compiler-backend-object-value-ref out site value))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (compiler-backend-object-value-list-ref
   [parts : CompilerBackendObjectParts]

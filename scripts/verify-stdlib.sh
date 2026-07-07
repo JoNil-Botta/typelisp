@@ -152,6 +152,44 @@ stdlib_runtime_gap_applies() {
     [ "$_gap_host" = all ] || [ "$_gap_host" = "$_host" ]
 }
 
+verify_embedded_stdlib_payload() {
+    _embedded=src/compiler_embedded_stdlib.tl
+    _paths="$WORKDIR/embedded-stdlib-include-paths.txt"
+    _missing="$WORKDIR/embedded-stdlib-missing-paths.txt"
+    _test_refs="$WORKDIR/embedded-stdlib-test-refs.txt"
+    _test_lookup_refs="$WORKDIR/embedded-stdlib-test-lookup-refs.txt"
+
+    sed -n 's/^[[:space:]]*(include-str [^"]* "\([^"]*\)").*/\1/p' "$_embedded" > "$_paths"
+    if [ ! -s "$_paths" ]; then
+        echo "embedded stdlib has no include-str payloads: $_embedded" >&2
+        exit 1
+    fi
+
+    if grep -n 'stdlib/tests/' "$_embedded" > "$_test_refs"; then
+        echo "embedded stdlib must not include stdlib/tests fixtures" >&2
+        sed 's/^/  /' "$_test_refs" >&2
+        exit 1
+    fi
+    if grep -n '"tests/' "$_embedded" > "$_test_lookup_refs"; then
+        echo "embedded stdlib must not provide tests/ lookup arms" >&2
+        sed 's/^/  /' "$_test_lookup_refs" >&2
+        exit 1
+    fi
+
+    : > "$_missing"
+    while IFS= read -r _path; do
+        if [ ! -f "$_path" ]; then
+            printf '%s\n' "$_path" >> "$_missing"
+        fi
+    done < "$_paths"
+
+    if [ -s "$_missing" ]; then
+        echo "embedded stdlib references missing files" >&2
+        sed 's/^/  /' "$_missing" >&2
+        exit 1
+    fi
+}
+
 # Every canonical stdlib module must be listed here. Keep this manifest in sync
 # with stdlib/README.md so new modules land with an explicit verification
 # decision. Fixture files under stdlib/tests/ are covered by stdlib_test_manifest
@@ -281,6 +319,8 @@ EOF
 WORKDIR="$ROOT/target/stdlib-verify"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
+
+verify_embedded_stdlib_payload
 
 EXPECTED="$WORKDIR/expected-stdlib-files.txt"
 ACTUAL="$WORKDIR/actual-stdlib-files.txt"

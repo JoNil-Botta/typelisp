@@ -13,6 +13,7 @@
 (import "compiler_load.tl")
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
+(import "cli_string_vec_bridge.tl")
 (import "lsp_vector_families.tl")
 (import stdlib.string)
 (import token)
@@ -1286,7 +1287,10 @@
   [stdlib-roots : svec.StringVec]) : json.JsonList
   (lsp-lint-findings-to-json
     text
-    (selfhost-lint-source-with-roots path text stdlib-roots)
+    (selfhost-lint-source-with-roots
+      path
+      text
+      (cli-string-vec-from-legacy (& stdlib-roots)))
     0
     json.JsonListNil))
 

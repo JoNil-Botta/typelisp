@@ -512,6 +512,8 @@ contains|_tl_compiler_symbols_self_test:
 contains|symbols: duplicate value declaration
 end
 
+decision|src/compiler_typecheck_api.tl|production typechecker wrapper split out of compiler_typecheck.tl so selfhost tools can import typecheck entry points without pulling the self-test fixture suite; main-less, imported by check/lower/build/test/doc/repl command cores and exercised through their selfhost cases plus selfhost_compiler_typecheck
+
 case|selfhost_compiler_typecheck|src/compiler_typecheck.tl|assembly|skip|direct
 contains|_tl_typecheck_compiler_program:
 contains|_tl_compiler_typecheck_self_test:

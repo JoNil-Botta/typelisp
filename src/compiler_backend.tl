@@ -42689,10 +42689,11 @@ tl_arena_destroy:
 
 ")))))))
 
-;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. These calls are
-;; part of the checked backend-core page boundary. The arg arrives in
-;; %rcx; a 32-byte shadow space is reserved before each call. A mapping failure
-;; traps via `ud2` (no libc dependency).
+;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. Windows commits
+;; arena chunks eagerly, so its default chunk is 16 MiB instead of Linux's
+;; 64 MiB mmap chunk; oversized single allocations still map a larger chunk.
+;; The arg arrives in %rcx; a 32-byte shadow space is reserved before each call.
+;; A mapping failure traps via `ud2` (no libc dependency).
 (define (compiler-backend-runtime-windows-arena-functions [profile : bool]) : String
   (string.append
     "    .globl tl_arena_current
@@ -42727,7 +42728,7 @@ tl_arena_make:
     push %rsi
     sub $32, %rsp
     xorq %rcx, %rcx
-    movq $0x4000000, %rdx
+    movq $0x1000000, %rdx
     movq $0x3000, %r8
     movq $0x4, %r9
     call VirtualAlloc
@@ -42742,7 +42743,7 @@ tl_arena_make:
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
-    addq $0x4000000, %rcx
+    addq $0x1000000, %rcx
     movq %rcx, 24(%rax)
     add $32, %rsp
     popq %rsi
@@ -42760,7 +42761,7 @@ tl_arena_make_atomic:
     push %rsi
     sub $32, %rsp
     xorq %rcx, %rcx
-    movq $0x4000000, %rdx
+    movq $0x1000000, %rdx
     movq $0x3000, %r8
     movq $0x4, %r9
     call VirtualAlloc
@@ -42775,7 +42776,7 @@ tl_arena_make_atomic:
     movq %rcx, 8(%rax)
     movq %rcx, 16(%rax)
     movq %rax, %rcx
-    addq $0x4000000, %rcx
+    addq $0x1000000, %rcx
     movq %rcx, 24(%rax)
     add $32, %rsp
     popq %rsi
@@ -43112,7 +43113,7 @@ tl_alloc:
     jmp .L_tl_alloc_abort
 .L_tl_alloc_atomic_map:
     movq %r11, -8(%rbp)
-    movq $0x4000000, %rdx
+    movq $0x1000000, %rdx
     movq %r11, %rax
     addq $64, %rax
     jc .L_tl_alloc_abort
@@ -43157,7 +43158,7 @@ tl_alloc:
     ret
 .L_tl_alloc_new_arena:
     movq %r11, -8(%rbp)
-    movq $0x4000000, %rdx
+    movq $0x1000000, %rdx
     movq %r11, %rax
     addq $64, %rax
     jc .L_tl_alloc_abort

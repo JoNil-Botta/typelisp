@@ -2063,7 +2063,7 @@
           manifest-dir
           (struct-get manifest deps)
           true
-          (compiler-check-language-cfgs))
+          (selfhost-lint-package-dead-cfgs))
           [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
             (ResultSelfhostLintDeadSources.Ok
               (selfhost-lint-package-dead-paths-to-sources

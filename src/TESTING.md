@@ -255,13 +255,14 @@ The repeated compile-batch and doctest workloads also fail when they do not
 produce the expected cache hits.
 
 `scripts/measure-unused-import-cost.sh` is the paired #3803 diagnostic harness
-for the unused `format_doc.tl` import experiment. It copies `src/*.tl` into two
-same-length scratch source trees under `target/`, injects only
-`(import "format_doc.tl")` into the second copy of `main.tl`, and reports the
-base, with-import, and delta `self_compile/compile_cli_opt1` instruction counts
-from one compiler binary. The instruction-count path is Linux/cachegrind-only;
-use WSL on Windows. Pass `--profile` to also build a `compile-profile` CLI and
-print load, lower/macro, optimize, backend, and total phase deltas.
+for the unused legacy-string import experiment. It copies `src/*.tl` into two
+same-length scratch source trees under `target/`, injects only the
+compatibility spelling `(import "format_doc.tl")` into the second copy of
+`main.tl`, and reports the base, with-import, and delta
+`self_compile/compile_cli_opt1` instruction counts from one compiler binary.
+The instruction-count path is Linux/cachegrind-only; use WSL on Windows. Pass
+`--profile` to also build a `compile-profile` CLI and print load, lower/macro,
+optimize, backend, and total phase deltas.
 
 `scripts/measure-result-import-cost.sh` is the paired #3903/#3215 diagnostic
 harness for generated `(result T E)` imports in hot selfhost modules. It copies

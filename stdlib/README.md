@@ -27,23 +27,23 @@ use.
   one dynamic-array element. The first surface supports `i32` and `i64`
   load/store/add/fetch-add helpers and is the only safe overlap-tolerant SPMD
   scatter write path; ordinary `array-set!` remains non-atomic. Import it with
-  `(import "stdlib/atomic.tl")`.
+  `(import stdlib.atomic)`.
 - `args.tl`: reusable argv option parser over explicit specs. It supports
   short/long boolean flags, short/long value flags, repeated options,
   positional preservation, and `--` end-of-options handling, with structured
   missing-value and unknown-option diagnostics. The intended CLI migration path
   is for selfhost command modules to define local specs and replace hand-rolled
-  flag loops incrementally. Import it with `(import "stdlib/args.tl")`.
+  flag loops incrementally. Import it with `(import stdlib.args)`.
 - `byte_buf.tl`: owned mutable binary byte buffers backed by active-arena
   `(Array u8)` storage. The `byte-buf-*` API covers construction, capacity
   inspection, reserve/growth, push, append/copy from arrays and strings, live
   range reads/writes, clear/reuse, copy-out to arrays or strings, and borrowed
   immutable/mutable `bytes` views over strings, buffers, and byte sub-slices.
-  Import it with `(import "stdlib/byte_buf.tl")`.
+  Import it with `(import stdlib.byte_buf)`.
 - `byte_buf_core.tl`: lightweight append-only binary byte builder for compiler
   and runtime hot paths that need construction, push, append, reserve, length,
   and explicit finish/copy boundaries without importing the full borrowed
-  `bytes` view surface. Import it with `(import "stdlib/byte_buf_core.tl")`.
+  `bytes` view surface. Import it with `(import stdlib.byte_buf_core)`.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
@@ -60,17 +60,17 @@ use.
   The compiler verifies these shapes when the module is loaded and maps the
   syntax declarations and helper calls to the current compile-time-only macro
   representation during the CTFE migration. Import it with
-  `(import "stdlib/comptime.tl")`.
+  `(import stdlib.comptime)`.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
-  over backend runtime symbols. Import it with `(import "stdlib/io.tl")`.
+  over backend runtime symbols. Import it with `(import stdlib.io)`.
 - `io_core.tl`: private backing module for `io.tl` file-handle table storage.
-  User programs should import `io.tl`; this module exists to keep raw handle
+  User programs should import `stdlib.io`; this module exists to keep raw handle
   internals out of the public `stdlib.io` surface.
 - `io_caller_result.tl`: lifetime-preserving `read-file-or-result` surface that
   can return a borrow of the caller fallback or owned file contents. Import it
-  with `(import "stdlib/io_caller_result.tl")`; it remains separate from
+  with `(import stdlib.io_caller_result)`; it remains separate from
   `io.tl` while the compatibility wrapper keeps the owned `String` API.
 - `iterator.tl`: stdlib iterator protocol conventions plus the first scalar
   value/range iterable, `I64Range`. The protocol is module-level rather than
@@ -79,7 +79,7 @@ use.
   current flat compatibility names are `range`, `range-inclusive`,
   `i64-range-iterator`, and `i64-range-next`; repeated `next` after exhaustion
   returns `I64RangeDone`.
-  Import it with `(import "stdlib/iterator.tl")`.
+  Import it with `(import stdlib.iterator)`.
 - `env.tl`: recoverable environment variable lookup and PATH-style list/vector
   helpers, including the stdlib-owned `var-exists?`, `var-value`, and
   target-cfg-derived `path-separator` wrappers. Lookups are implemented
@@ -91,7 +91,7 @@ use.
   `path-list`, `path-split`, and `path-join` remain list-compatible
   wrappers; new append-heavy callers should use the `StringVec` variants
   `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it
-  with `(import "stdlib/env.tl")`.
+  with `(import stdlib.env)`.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
   wrappers over backend runtime symbols (#1167). `runs-avx2?` /
   `runs-avx512f?` / `runs-avx512bw?` report an ISA as runnable only when both
@@ -102,7 +102,7 @@ use.
   `defdispatch` runtime SIMD dispatch design in `SPEC.md` uses the same
   capability model internally; ordinary dispatched calls should not require user
   code to import this module. Import it
-  with `(import "stdlib/cpu.tl")` when code needs explicit host capability
+  with `(import stdlib.cpu)` when code needs explicit host capability
   checks.
 - `core_macros.tl`: typed expression macros for core guard and boolean forms.
   The compile driver imports it as an implicit prelude, so bare `when`,
@@ -113,20 +113,20 @@ use.
   `tests/core_macros_api.tl`.
 - `array.tl`: public dynamic/fixed array helper macros that expand to
   compiler-private array intrinsics during the #3421 migration. Import it with
-  `(import "stdlib/array.tl")` when new code should depend on the stdlib-owned
+  `(import stdlib.array)` when new code should depend on the stdlib-owned
   array surface instead of transitional compiler-public aliases.
 - `fs.tl`: minimal recoverable filesystem helpers for tool artifact paths,
   current-directory lookup, lexical path normalization, safe relative suffix
   checks, temporary directories, cleanup, process ids, coarse file-kind probes,
   and vector-backed directory listing, with public status helpers bound directly
-  to platform externs where available. Import it with `(import "stdlib/fs.tl")`.
+  to platform externs where available. Import it with `(import stdlib.fs)`.
 - `ffi.tl`: FFI buffer helpers, including explicit NUL-terminated borrowed
   `bytes` copies into caller-owned `(MutPtr u8)` storage and active-arena
   `(Ptr u8)` C string allocation. Compatibility `String` wrappers borrow their
   input text and delegate to the byte-slice path. Import it with
-  `(import "stdlib/ffi.tl")`.
+  `(import stdlib.ffi)`.
 - `hash.tl`: deterministic, non-cryptographic hash and key equality helpers for
-  future collections. Import it with `(import "stdlib/hash.tl")`.
+  future collections. Import it with `(import stdlib.hash)`.
 - `hashmap.tl`: generated concrete hashmap family (collections v1, #817) over
   open-addressed linear-probing slot arrays. `StringI64Map` remains the
   compatibility `String -> i64` map, while generated `StringStringMap`,
@@ -151,7 +151,7 @@ use.
   still unsupported. Use these stdlib maps for ordinary program data and keep
   compiler-specialized symbol tables where their value domain or lifecycle is
   deliberately narrower. Import it with
-  `(import "stdlib/hashmap.tl")`. Module imports such as
+  `(import stdlib.hashmap)`. Module imports such as
   `(import (hashmap String String) as map)` expose the same scalar families
   with `Map`, `&` readers, and `&mut` in-place mutators.
 - `set.tl`: module-emitting `(set T)` macro over the same open-addressing
@@ -169,7 +169,7 @@ use.
   module with `sort!`; scalar element types use built-in `<`, while String and
   aggregate element types pass an explicit less-than function. The module also
   exposes borrowed and owned string less-than helpers. Import it with
-  `(import "stdlib/sort.tl")`.
+  `(import stdlib.sort)`.
 - `sync.tl`: semaphore-backed synchronization helpers over `thread.tl`.
   `(channel i64)` emits a bounded `channel_i64.Channel` module whose queued
   scalar messages live in runtime-owned OS memory. `ChannelI64PairChannel` moves
@@ -190,14 +190,14 @@ use.
   fixed-array, dynamic-array, and struct roots with nested structs and arrays:
   instantiate with `(import (serialize.serialize json Person) as person_json)`
   to get `to-json` / `from-json` aliases alongside generic `encode` / `decode`.
-  Import it with `(import "stdlib/json.tl")`.
+  Import it with `(import stdlib.json)`.
 - `math.tl`: pure scalar math helpers with no runtime imports or platform
   externs: absolute value for `i64`, `f64`, and `f32`, plus min, max, clamp,
   and sign predicates for `i64` and `f64`.
   Transcendental/libm-style functions such as `sqrt`, trigonometry,
   `log`, and `pow` are intentionally deferred until a freestanding soft-math or
   explicit platform-extern policy is chosen. Import it with
-  `(import "stdlib/math.tl")`.
+  `(import stdlib.math)`.
 - `option.tl`: module-emitting `(option T)` macro for absence-only results.
   Import it with `(import stdlib.option)` and instantiate with a module
   alias such as `(import (option i64) as option_i64)`. Each generated module
@@ -232,7 +232,7 @@ use.
   override are removed, vector override entries are emitted in vector order after
   inherited entries, and duplicate override names are preserved in that order.
   Import it with
-  `(import "stdlib/process.tl")`.
+  `(import stdlib.process)`.
 - `process_runtime.tl`: TypeLisp implementation of the process-execution runtime
   (`tl_process_output`/`tl_process_start`/`tl_process_wait`) that `process.tl`
   calls — Linux uses raw syscalls (fork/execve with memfd-captured output),
@@ -254,7 +254,7 @@ use.
   Import the macro with `(import stdlib.queue)`.
 - `random.tl`: deterministic, seeded, non-cryptographic random helpers,
   array/vector/list weighted-index selection for selfhost tools, and an
-  OS-entropy seed source. Import it with `(import "stdlib/random.tl")`.
+  OS-entropy seed source. Import it with `(import stdlib.random)`.
 - `runtime.tl`: always-linked runtime prelude. Holds the fault/abort handlers
   (out-of-bounds, divide-by-zero, shift) the backend emits checks against, plus
   the low-level OS write/exit primitives they use, as TypeLisp exported under
@@ -262,19 +262,20 @@ use.
   every executable; programs do not import it by hand.
 - `string.tl`: string utility functions built on compiler/runtime primitives,
   including append/concat-all, substring, equality, integer rendering, and
-  integer parsing helpers. Import it with `(import "stdlib/string.tl")`.
+  integer parsing helpers. Import it with `(import stdlib.string)`.
 - `str_cat.tl`: the variadic `str-cat` concatenation macro, which expands to a
   single-allocation copy regardless of arity. Kept separate from
   `core_macros.tl` so importing it does not shadow core guard/boolean macro
-  forms. Prefer `(import stdlib.str_cat)` and call `str_cat.str-cat`; legacy
-  path imports can still call unqualified `str-cat`.
+  forms. Import it with `(import stdlib.str_cat)` and call `str_cat.str-cat`;
+  compatibility fixtures may still exercise old flat import behavior until the
+  final legacy-import removal.
 - `string_caller_result.tl`: lifetime-preserving string replacement
   caller-result surface. It exposes `string-replace-result`, which selects
   between no-match borrowed results and replacement-owned results. Import it
-  with `(import "stdlib/string_caller_result.tl")`; it remains separate from
+  with `(import stdlib.string_caller_result)`; it remains separate from
   `string.tl` while the compatibility wrapper keeps the owned `String` API.
 - `test.tl`: minimal assertion helpers for TypeLisp fixtures. Import it with
-  `(import "stdlib/test.tl")`.
+  `(import stdlib.test)`.
 - `thread.tl`: minimal native thread primitives for selfhost worker pools:
   spawn/join for `(-> i64 i64)` entries, counting semaphores, and default worker
   count, plus generated `(thread.handle T)` modules for checked scalar nullary
@@ -290,14 +291,14 @@ use.
   counters. `unix-ms` returns wall-clock Unix epoch milliseconds and
   `monotonic-ms` returns monotonic elapsed milliseconds, both as
   `ResultTimeMs`. Calendar conversion, formatting, time zones, locale,
-  sleeping, and timers are deferred. Import it with `(import "stdlib/time.tl")`.
+  sleeping, and timers are deferred. Import it with `(import stdlib.time)`.
 - `text_buf.tl`: arena-aware text buffer helpers for incremental String
   construction with owned `TextBuf` chunks and the shared ordered-chunk render
   helper used by the borrowed companion. Its declarations are emitted from
-  `text_buf_family.tl`; import it with `(import "stdlib/text_buf.tl")`.
+  `text_buf_family.tl`; import it with `(import stdlib.text_buf)`.
 - `text_buf_borrowed.tl`: lifetime-parameterized `TextBufBorrowed`
   borrowed-chunk companion surface. Import it with
-  `(import "stdlib/text_buf_borrowed.tl")`; it remains separate from
+  `(import stdlib.text_buf_borrowed)`; it remains separate from
   `text_buf.tl` while the compatibility surface keeps owned chunk storage, but
   both surfaces are emitted from `text_buf_family.tl` and adapt to the owned
   render helper at explicit materialization boundaries.
@@ -335,11 +336,11 @@ use.
   (#1867/#2357), the same API stores aggregate elements inline in the backing
   array. Use generated vectors for append-heavy private sequences and keep
   recursive enum lists for AST/list structures where the cons shape is the
-  modeled data. Import it with `(import "stdlib/vector.tl")`.
+  modeled data. Import it with `(import stdlib.vector)`.
 - `vector_slice.tl`: lifetime-scoped typed slice views generated by the
   `(slice T)` module macro over the matching `(vector T)` module and explicit
-  `(Array T)` live prefixes. Import the file with
-  `(import "stdlib/vector_slice.tl")`, then instantiate concrete modules such as
+  `(Array T)` live prefixes. Import the module with
+  `(import stdlib.vector_slice)`, then instantiate concrete modules such as
   `(import (slice i64) as i64s)`. Each generated module provides immutable
   `Slice`, mutable `MutSlice`, `from-vec`, `from-array`, `all-vec`,
   `from-vec-mut`, `from-array-mut`, `all-vec-mut`, `get`, `set`, `len`,
@@ -351,7 +352,7 @@ use.
   array/vector storage.
 - `msvc.tl`: MSVC tool discovery (`link.exe` + `PATH`/`LIB`/`INCLUDE` command
   environment) from a configured Developer Command Prompt. Import it with
-  `(import "stdlib/msvc.tl")`.
+  `(import stdlib.msvc)`.
 
 ## Backend Runtime Helper Ownership
 
@@ -570,46 +571,45 @@ or invalid handles, and unsupported Windows operations return structured
 Stdlib modules are imported explicitly:
 
 ```lisp
-(import "stdlib/arena.tl")
-(import "stdlib/args.tl")
-(import "stdlib/array.tl")
-(import "stdlib/byte_buf.tl")
-(import "stdlib/env.tl")
-(import "stdlib/ffi.tl")
-(import "stdlib/fs.tl")
-(import "stdlib/hash.tl")
-(import "stdlib/hashmap.tl")
-(import "stdlib/io.tl")
-(import "stdlib/iterator.tl")
-(import "stdlib/json.tl")
-(import "stdlib/math.tl")
-(import "stdlib/msvc.tl")
-(import "stdlib/process.tl")
-(import "stdlib/random.tl")
-(import "stdlib/serialize.tl")
+(import stdlib.arena)
+(import stdlib.args)
+(import stdlib.array)
+(import stdlib.byte_buf)
+(import stdlib.env)
+(import stdlib.ffi)
+(import stdlib.fs)
+(import stdlib.hash)
+(import stdlib.hashmap)
+(import stdlib.io)
+(import stdlib.iterator)
+(import stdlib.json)
+(import stdlib.math)
+(import stdlib.msvc)
+(import stdlib.process)
+(import stdlib.random)
+(import stdlib.serialize)
 (import stdlib.set)
-(import "stdlib/sort.tl")
-(import "stdlib/string.tl")
-(import "stdlib/test.tl")
-(import "stdlib/time.tl")
-(import "stdlib/text_buf.tl")
-(import "stdlib/text_buf_family.tl")
-(import "stdlib/vector_slice.tl")
+(import stdlib.sort)
+(import stdlib.string)
+(import stdlib.test)
+(import stdlib.time)
+(import stdlib.text_buf)
+(import stdlib.text_buf_family)
+(import stdlib.vector_slice)
 ```
 
-For imports whose path starts with `stdlib/`, the loader first tries the path
-relative to the importing file. If that local path cannot be loaded, each
-configured stdlib root is searched by stripping the leading `stdlib/` and
-joining the remaining suffix to the root. If no configured root provides the
-module, the compiler uses its embedded copy of the checked-in stdlib as the
-final fallback.
+For dotted imports under `stdlib.`, the loader first checks whether the
+importing source tree provides that module identity locally. If not, configured
+stdlib roots are searched by mapping the dotted suffix to a path below the
+root. If no configured root provides the module, the compiler uses its
+embedded copy of the checked-in stdlib as the final fallback.
 
-That means local project files take precedence over configured stdlib roots.
+That means local project modules take precedence over configured stdlib roots.
 Configured stdlib roots take precedence over embedded modules. Configured and
-embedded stdlib fallbacks only serve normal relative suffixes below the root;
-paths such as `stdlib/../outside.tl` are not resolved through fallback.
-When compiling or checking sources outside the repository tree, prefer passing
-the repository stdlib directory explicitly:
+embedded stdlib fallbacks only serve normal dotted suffixes below the root; path
+traversal is not part of the dotted import model. When compiling or checking
+sources outside the repository tree, prefer passing the repository stdlib
+directory explicitly:
 
 ```sh
 typelisp check path/to/main.tl --stdlib-root /path/to/typelisp/stdlib
@@ -624,9 +624,10 @@ before that environment fallback, and both are searched before the embedded
 stdlib, so scripts and CI should keep passing `--stdlib-root` when they need
 reproducible resolution.
 
-Copying or staging `stdlib/` next to an entry source still works because imports
-remain filesystem paths, but `--stdlib-root` is the canonical way to verify root
-lookup and override behavior.
+Copying or staging `stdlib/` next to an entry source still works because the
+loader can resolve dotted `stdlib.*` identities from the local source tree, but
+`--stdlib-root` is the canonical way to verify root lookup and override
+behavior.
 
 The assertion helpers in `stdlib/test.tl` are also intended for inline
 `(test ...)` items. They do not allocate on success; `assert-string-eq` takes
@@ -643,12 +644,12 @@ contracts, and intentional panic/exit-status checks.
 
 ## Adding a Module
 
-1. Add the module under `stdlib/`, using a stable explicit import path such as
-   `stdlib/name.tl`.
-2. Keep the module self-contained except for explicit `(import "...")`
+1. Add the module under `stdlib/`, using a stable canonical identity such as
+   `stdlib.name`.
+2. Keep the module self-contained except for explicit dotted import
    dependencies.
 3. Include a short header comment with its purpose, required primitives, and
-   import path.
+   module identity.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
 5. Add new stdlib `.tl` files, including test fixtures, to

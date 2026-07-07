@@ -5,7 +5,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector as svec)
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_ir_types.tl")
@@ -56925,6 +56925,10 @@
         [(InternLookupFound _) false]
         [(InternLookupMissing) true]))))
 
+(define (compiler-lower-branch-mismatch-source) : String
+  "(define (main [flag : bool]) : i64
+  (if flag 1 false))")
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -56969,7 +56973,7 @@
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?
-        (compiler-typecheck-branch-mismatch-source)
+        (compiler-lower-branch-mismatch-source)
         "typecheck: if branches must match")
         unit
         (set! ok false))

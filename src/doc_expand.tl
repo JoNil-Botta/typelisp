@@ -6,7 +6,7 @@
 (import "doc_render.tl")
 (import "doc_string_vec_bridge.tl")
 (import "compiler_load.tl")
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 
 (define (doc-cat2 [a : String] [b : String]) : String
   (string.concat3 a b ""))

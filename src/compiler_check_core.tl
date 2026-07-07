@@ -4,7 +4,7 @@
 (import stdlib.vector as svec)
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck

@@ -29,7 +29,7 @@
 (import stdlib.process)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
 (import stdlib.string)

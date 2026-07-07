@@ -3898,14 +3898,18 @@
 (define (lsp-decl-query-name-ok?
   [entry : LspDeclEntry]
   [exact-name : String]
-  [query : String]) : bool
+  [contains-filter : String]
+  [prefix : String]) : bool
   (let
     [name : String (struct-get entry name)]
     (and
       (or (= (string.string-length exact-name) 0) (string.eq name exact-name))
       (or
-        (= (string.string-length query) 0)
-        (string.contains (& name) (& query))))))
+        (= (string.string-length contains-filter) 0)
+        (string.contains (& name) (& contains-filter)))
+      (or
+        (= (string.string-length prefix) 0)
+        (string.is-string-prefix-at (& name) (& prefix) 0)))))
 
 (define (lsp-decl-query-kind-ok? [entry : LspDeclEntry] [kind : String]) : bool
   (or
@@ -3913,31 +3917,44 @@
     (string.eq (struct-get entry kind) kind)))
 
 (define (lsp-decl-find-entry-json [entry : LspDeclEntry]) : json.Json
-  (lsp-json-object4
-    "name"
-    (json.JsonString (struct-get entry name))
-    "kind"
-    (json.JsonString (struct-get entry kind))
-    "position"
-    (lsp-position
-      (- (struct-get entry name-line) 1)
-      (- (struct-get entry name-col) 1))
-    "range"
-    (lsp-json-object2
-      "start"
-      (lsp-position
-        (- (struct-get entry form-start-line) 1)
-        (- (struct-get entry form-start-col) 1))
-      "end"
-      (lsp-position
-        (- (struct-get entry form-end-line) 1)
-        (- (struct-get entry form-end-col) 1)))))
+  (let
+    [line : i64 (- (struct-get entry name-line) 1)]
+    [character : i64 (- (struct-get entry name-col) 1)]
+    (lsp-json-object
+      (lsp-json-member
+        "name"
+        (json.JsonString (struct-get entry name))
+        (lsp-json-member
+          "kind"
+          (json.JsonString (struct-get entry kind))
+          (lsp-json-member
+            "line"
+            (lsp-json-number line)
+            (lsp-json-member
+              "character"
+              (lsp-json-number character)
+              (lsp-json-member
+                "position"
+                (lsp-position line character)
+                (lsp-json-member
+                  "range"
+                  (lsp-json-object2
+                    "start"
+                    (lsp-position
+                      (- (struct-get entry form-start-line) 1)
+                      (- (struct-get entry form-start-col) 1))
+                    "end"
+                    (lsp-position
+                      (- (struct-get entry form-end-line) 1)
+                      (- (struct-get entry form-end-col) 1)))
+                  json.JsonMemberListNil)))))))))
 
 (define (lsp-decls-to-find-list
   [decls : LspDeclList]
   [idx : i64]
   [exact-name : String]
-  [query : String]
+  [contains-filter : String]
+  [prefix : String]
   [kind : String]) : json.JsonList
   (if (>= idx (lsp-decl-list-len (& decls)))
     json.JsonListNil
@@ -3945,9 +3962,15 @@
       [entry : LspDeclEntry
         (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
       [rest : json.JsonList
-        (lsp-decls-to-find-list decls (+ idx 1) exact-name query kind)]
+        (lsp-decls-to-find-list
+          decls
+          (+ idx 1)
+          exact-name
+          contains-filter
+          prefix
+          kind)]
       (if (and
-        (lsp-decl-query-name-ok? entry exact-name query)
+        (lsp-decl-query-name-ok? entry exact-name contains-filter prefix)
         (lsp-decl-query-kind-ok? entry kind))
         (lsp-json-list-cons (lsp-decl-find-entry-json entry) rest)
         rest))))
@@ -4017,7 +4040,8 @@
         (lsp-write-error id -32600 "Document not found")
         (LspHandleResult.Continue docs))]))
 
-;; tl/find - Find top-level declarations by exact name, substring query, and kind.
+;; tl/find - Find top-level declarations by exact name, substring/prefix, and
+;; kind. Empty string filters are treated like missing filters.
 (define (lsp-handle-tl-find
   [id : json.Json]
   [params : json.Json]
@@ -4026,14 +4050,24 @@
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
         [exact-name : String (lsp-json-string-field-default params "name" "")]
-        [query : String
+        [contains-filter : String
           (lsp-json-string-field-default
             params
-            "query"
-            (lsp-json-string-field-default params "pattern" ""))]
+            "contains"
+            (lsp-json-string-field-default
+              params
+              "query"
+              (lsp-json-string-field-default params "pattern" "")))]
+        [prefix : String (lsp-json-string-field-default params "prefix" "")]
         [kind : String (lsp-json-string-field-default params "kind" "")]
         [items : json.JsonList
-          (lsp-decls-to-find-list decls 0 exact-name query kind)]
+          (lsp-decls-to-find-list
+            decls
+            0
+            exact-name
+            contains-filter
+            prefix
+            kind)]
         (begin
           (lsp-write-response id (lsp-json-array items))
           (LspHandleResult.Continue docs)))]
@@ -8035,15 +8069,27 @@
 
 (define (lsp-find-decls-query-smoke-ok?) : bool
   (let
-    [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
+    [text : String
+      "(define (foo) : i64 1)\n(define (bar) : i64 2)\n(define (baz) : i64 3)"]
     [decls : LspDeclList (lsp-test-scan-decls text)]
     [rendered : String
       (json.stringify
-        (lsp-json-array (lsp-decls-to-find-list decls 0 "" "ba" "function")))]
+        (lsp-json-array (lsp-decls-to-find-list decls 0 "" "ba" "" "function")))]
+    [prefix-rendered : String
+      (json.stringify
+        (lsp-json-array (lsp-decls-to-find-list decls 0 "" "" "ba" "function")))]
     [bar-name : String "bar"]
+    [baz-name : String "baz"]
     [foo-name : String "foo"]
+    [line-field : String "\"line\":"]
+    [character-field : String "\"character\":"]
     (and
       (string.contains (& rendered) (& bar-name))
+      (string.contains (& rendered) (& baz-name))
+      (string.contains (& rendered) (& line-field))
+      (string.contains (& rendered) (& character-field))
+      (string.contains (& prefix-rendered) (& bar-name))
+      (string.contains (& prefix-rendered) (& baz-name))
       (not (string.contains (& rendered) (& foo-name))))))
 
 (define (lsp-structural-replace-by-name-smoke-ok?) : bool

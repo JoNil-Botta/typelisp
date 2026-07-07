@@ -1,8 +1,14 @@
 [
   {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
-  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 (+ x 1))\n(defstruct MyStruct (field i64))\n"}}},
-  {"jsonrpc":"2.0","id":2,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"query":"ba","kind":"function"}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 (+ x 1))\n(define (baz [x : i64]) : i64 (+ x 2))\n(defstruct MyStruct (field i64))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"}}},
   {"jsonrpc":"2.0","id":3,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"kind":"struct"}},
-  {"jsonrpc":"2.0","id":4,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","id":4,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"contains":"ba","kind":"function"}},
+  {"jsonrpc":"2.0","id":5,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"prefix":"ba","kind":"function"}},
+  {"jsonrpc":"2.0","id":6,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"name":"foo","kind":"function"}},
+  {"jsonrpc":"2.0","id":7,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"prefix":"qu"}},
+  {"jsonrpc":"2.0","id":8,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"query":"ar","kind":"function"}},
+  {"jsonrpc":"2.0","id":9,"method":"tl/find","params":{"textDocument":{"uri":"${{TMP_URI}}/custom-methods.tl"},"pattern":"az","kind":"function"}},
+  {"jsonrpc":"2.0","id":10,"method":"shutdown","params":null},
   {"jsonrpc":"2.0","method":"exit"}
 ]

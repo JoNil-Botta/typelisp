@@ -16179,8 +16179,7 @@
 (define (compiler-backend-emit-addr-of
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
-  [src : i64]
-  [vars : i64]) : ResultCompilerBackend
+  [src : i64]) : ResultCompilerBackend
   (if (>= (compiler-backend-forwarded-addr-of-src dst) 0)
     (ResultCompilerBackend.Ok "")
     (let
@@ -26822,7 +26821,7 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Alloc _ _) (ResultCompilerBackend.Ok "")]
       [(CompilerIrInstr.AddrOf dst src)
-        (match (compiler-backend-emit-addr-of assignments dst src vars)
+        (match (compiler-backend-emit-addr-of assignments dst src)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err

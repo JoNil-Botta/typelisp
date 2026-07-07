@@ -18570,9 +18570,8 @@
           (if (and
             (compiler-reg-remat-mov-value? value allow-invariant-loads)
             (>= dst 0)
-            (and
-              (< dst (array-length candidates))
-              (not (= (array-ref candidates dst) 2))))
+            (< dst (array-length candidates))
+            (not (= (array-ref candidates dst) 2)))
             (begin
               (array-set! candidates dst 1)
               (array-set! kinds dst (compiler-reg-remat-kind-mov))
@@ -18584,9 +18583,8 @@
           (if (and
             (compiler-reg-remat-gep? base offset)
             (>= dst 0)
-            (and
-              (< dst (array-length candidates))
-              (not (= (array-ref candidates dst) 2))))
+            (< dst (array-length candidates))
+            (not (= (array-ref candidates dst) 2)))
             (begin
               (array-set! candidates dst 1)
               (array-set! kinds dst (compiler-reg-remat-kind-gep))
@@ -18599,9 +18597,8 @@
           (if (and
             (compiler-reg-remat-load? src allow-invariant-loads)
             (>= dst 0)
-            (and
-              (< dst (array-length candidates))
-              (not (= (array-ref candidates dst) 2))))
+            (< dst (array-length candidates))
+            (not (= (array-ref candidates dst) 2)))
             (begin
               (array-set! candidates dst 1)
               (array-set! kinds dst (compiler-reg-remat-kind-load))

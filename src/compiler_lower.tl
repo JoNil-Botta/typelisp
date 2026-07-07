@@ -13,6 +13,8 @@
 (import "compiler_ctfe.tl")
 (import "compiler_float.tl")
 (import stdlib.hashmap)
+(import (hashmap String i64) as lower_string_i64_map)
+(import (hashmap i64 i64) as lower_i64_i64_map)
 (import stdlib.string)
 (import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
@@ -41,7 +43,7 @@
   (Global))
 
 (defstruct LowerNameCache
-  (ids hashmap.I64I64Map)
+  (ids lower_i64_i64_map.Map)
   (values (Array String))
   (parent LowerNameParent))
 
@@ -50,13 +52,13 @@
 ;; name env; per-module overlays fall through here.
 (define lower-active-global-name-cache : LowerNameCache
   (LowerNameCache
-    (hashmap.i64-i64-map-with-capacity 8)
+    (lower_i64_i64_map.with-capacity 8)
     (make-array String 0)
     (LowerNameParent.None)))
 
 (define (lower-empty-global-name-cache) : LowerNameCache
   (LowerNameCache
-    (hashmap.i64-i64-map-with-capacity 8)
+    (lower_i64_i64_map.with-capacity 8)
     (make-array String 0)
     (LowerNameParent.None)))
 
@@ -77,7 +79,7 @@
 
 (defenum LowerTypeCache
   (No)
-  (Some hashmap.I64I64Map (Array AstType) i64 LowerTypeParent))
+  (Some lower_i64_i64_map.Map (Array AstType) i64 LowerTypeParent))
 
 ;; The shared global decl-lowering type cache (built once per lower-decls
 ;; from top-env). Per-module overlay caches (LowerTypeParent.Global) fall through
@@ -90,8 +92,8 @@
 ;; (`return` or `try`) are not yet guaranteed to write that forwarded slot on
 ;; every path; those older paths may still return a heap aggregate pointer. This
 ;; set is rebuilt once per lower-decls run and lets the RVO guard stay cheap.
-(define lower-rvo-early-return-functions : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 8))
+(define lower-rvo-early-return-functions : lower_string_i64_map.Map
+  (lower_string_i64_map.with-capacity 8))
 
 (defenum LowerStringSet
   (Nil)
@@ -113,10 +115,10 @@
 ;; output. The worklist still carries the name string so lower-reach-process can
 ;; resolve a popped function through the (string-keyed) body index unchanged.
 (defenum LowerReachState
-  (State hashmap.I64I64Map LowerStringSet))
+  (State lower_i64_i64_map.Map LowerStringSet))
 
 (defenum LowerUsedTypePathSeed
-  (Seed hashmap.I64I64Map bool))
+  (Seed lower_i64_i64_map.Map bool))
 
 (defenum LowerMaybeFunctionBody
   (No)
@@ -125,20 +127,18 @@
 ;; Reset once per prune reach walk; lower-reach-process records each reachable
 ;; function body's source path so type-decl DCE can keep local support types
 ;; without rescanning every declaration to rediscover those paths.
-(define lower-reach-active-runtime-paths : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 8))
-(define lower-reach-active-body-used-types : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 8))
+(define lower-reach-active-runtime-paths : lower_i64_i64_map.Map
+  (lower_i64_i64_map.with-capacity 8))
+(define lower-reach-active-body-used-types : lower_i64_i64_map.Map
+  (lower_i64_i64_map.with-capacity 8))
 
 (define (lower-reach-scratch-globals-reset!) : unit
   (begin
     (set! lower-active-global-name-cache (lower-empty-global-name-cache))
-    (set!
-      lower-reach-active-runtime-paths
-      (hashmap.i64-i64-map-with-capacity 8))
+    (set! lower-reach-active-runtime-paths (lower_i64_i64_map.with-capacity 8))
     (set!
       lower-reach-active-body-used-types
-      (hashmap.i64-i64-map-with-capacity 8))
+      (lower_i64_i64_map.with-capacity 8))
     unit))
 
 (defenum LowerSpmdInlineHelper
@@ -149,7 +149,7 @@
   (Env CloneNameList TcTypeEnv))
 
 (defstruct LowerFunctionBodyIndex
-  (ids hashmap.StringI64Map)
+  (ids lower_string_i64_map.Map)
   (bodies (Array LowerMaybeFunctionBody))
   (next i64))
 
@@ -1028,21 +1028,19 @@
   [source-id : i64]
   [logical-name : String]) : LowerNameCache
   (let
-    [ids : hashmap.I64I64Map (struct-get cache ids)]
+    [ids : lower_i64_i64_map.Map (struct-get cache ids)]
     [values : (Array String) (struct-get cache values)]
     (if (< source-id 0)
       cache
-      (match (hashmap.i64-i64-map-get ids source-id)
-        [(hashmap.I64I64MapFound _) cache]
-        [(hashmap.I64I64MapMissing)
+      (match (lower_i64_i64_map.get (& ids) source-id)
+        [(lower_i64_i64_map.LookupFound _) cache]
+        [(lower_i64_i64_map.LookupMissing)
           (let
-            [next : i64 (hashmap.i64-i64-map-len ids)]
+            [next : i64 (lower_i64_i64_map.len (& ids))]
             (begin
               (array-set! values next logical-name)
-              (LowerNameCache
-                (hashmap.i64-i64-map-put ids source-id next)
-                values
-                (struct-get cache parent))))]))))
+              (lower_i64_i64_map.insert (&mut ids) source-id next)
+              (LowerNameCache ids values (struct-get cache parent))))]))))
 
 (define (lower-name-cache-add
   [cache : LowerNameCache]
@@ -1077,7 +1075,7 @@
     (lower-name-cache-from-env-into
       names
       (LowerNameCache
-        (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
+        (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
         (make-array String count)
         (LowerNameParent.None)))))
 
@@ -1090,15 +1088,15 @@
     (lower-name-cache-from-env-into
       names
       (LowerNameCache
-        (hashmap.i64-i64-map-with-capacity (lower-name-cache-capacity count))
+        (lower_i64_i64_map.with-capacity (lower-name-cache-capacity count))
         (make-array String count)
         (LowerNameParent.Global)))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
-  (match (hashmap.i64-i64-map-get (struct-get cache ids) source-id)
-    [(hashmap.I64I64MapFound index)
+  (match (lower_i64_i64_map.get (& (struct-get cache ids)) source-id)
+    [(lower_i64_i64_map.LookupFound index)
       (TcMaybeString.Some (array-ref (struct-get cache values) index))]
-    [(hashmap.I64I64MapMissing)
+    [(lower_i64_i64_map.LookupMissing)
       (match (struct-get cache parent)
         [(LowerNameParent.None) (TcMaybeString.No)]
         [(LowerNameParent.Global)
@@ -1109,9 +1107,9 @@
   [source-id : i64]) : bool
   (if (< source-id 0)
     false
-    (match (hashmap.i64-i64-map-get (struct-get cache ids) source-id)
-      [(hashmap.I64I64MapFound _) true]
-      [(hashmap.I64I64MapMissing) false])))
+    (match (lower_i64_i64_map.get (& (struct-get cache ids)) source-id)
+      [(lower_i64_i64_map.LookupFound _) true]
+      [(lower_i64_i64_map.LookupMissing) false])))
 
 (define (lower-name-cache-resolve
   [cache : LowerNameCache]
@@ -1203,16 +1201,13 @@
   (match cache
     [(LowerTypeCache.No) cache]
     [(LowerTypeCache.Some ids values next parent)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound _) cache]
-        [(hashmap.I64I64MapMissing)
+      (match (lower_i64_i64_map.get (& ids) name-id)
+        [(lower_i64_i64_map.LookupFound _) cache]
+        [(lower_i64_i64_map.LookupMissing)
           (begin
             (array-set! values next ty)
-            (LowerTypeCache.Some
-              (hashmap.i64-i64-map-put ids name-id next)
-              values
-              (+ next 1)
-              parent))])]))
+            (lower_i64_i64_map.insert (&mut ids) name-id next)
+            (LowerTypeCache.Some ids values (+ next 1) parent))])]))
 
 (define (lower-type-cache-from-env-into
   [env : TcTypeEnv]
@@ -1232,7 +1227,7 @@
     (lower-type-cache-from-env-into
       env
       (LowerTypeCache.Some
-        (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
+        (lower_i64_i64_map.with-capacity (lower-type-cache-capacity count))
         (make-array AstType count)
         0
         (LowerTypeParent.None)))))
@@ -1246,7 +1241,7 @@
     (lower-type-cache-from-env-into
       env
       (LowerTypeCache.Some
-        (hashmap.i64-i64-map-with-capacity (lower-type-cache-capacity count))
+        (lower_i64_i64_map.with-capacity (lower-type-cache-capacity count))
         (make-array AstType count)
         0
         (LowerTypeParent.Global)))))
@@ -1259,10 +1254,10 @@
     [(LowerTypeCache.No)
       (ResultTcType.Err (string.append "typecheck: unbound name " display-name))]
     [(LowerTypeCache.Some ids values _ parent)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index)
+      (match (lower_i64_i64_map.get (& ids) name-id)
+        [(lower_i64_i64_map.LookupFound index)
           (ResultTcType.Ok (array-ref values index))]
-        [(hashmap.I64I64MapMissing)
+        [(lower_i64_i64_map.LookupMissing)
           (match parent
             [(LowerTypeParent.None)
               (ResultTcType.Err
@@ -1488,8 +1483,8 @@
 ;; re-entrant overlay builds), so an O(1) hashmap presence check can stand in for
 ;; the O(n) LowerNameEnv scan that lower-name-env-add-alias-if-free-id otherwise
 ;; runs for every added alias -- previously O(aliases^2) per module. Only
-;; presence matters here, so a bare I64I64Map (which grows) is used rather than a
-;; fixed-capacity LowerNameCache.
+;; presence matters here, so a bare generated i64 -> i64 map (which grows) is
+;; used rather than a fixed-capacity LowerNameCache.
 ;;
 ;; `valid` guards the fast path. Every alias bound through this overlay carries
 ;; an interned (>=0) source id, so the set stays a complete mirror; but should a
@@ -1497,25 +1492,23 @@
 ;; resolves through its string-compare gate rather than the id gate -- we drop
 ;; back to the exact scan for the remainder of the overlay so the Some/No result
 ;; stays byte-identical to the pure linear scan.
-(define lower-alias-overlay-ids : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 16))
+(define lower-alias-overlay-ids : lower_i64_i64_map.Map
+  (lower_i64_i64_map.with-capacity 16))
 (define lower-alias-overlay-valid : bool
   true)
 
 (define (lower-alias-overlay-reset!) : unit
   (begin
-    (set! lower-alias-overlay-ids (hashmap.i64-i64-map-with-capacity 16))
+    (set! lower-alias-overlay-ids (lower_i64_i64_map.with-capacity 16))
     (set! lower-alias-overlay-valid true)))
 
 (define (lower-alias-overlay-contains? [source-id : i64]) : bool
-  (match (hashmap.i64-i64-map-get lower-alias-overlay-ids source-id)
-    [(hashmap.I64I64MapFound _) true]
-    [(hashmap.I64I64MapMissing) false]))
+  (match (lower_i64_i64_map.get (& lower-alias-overlay-ids) source-id)
+    [(lower_i64_i64_map.LookupFound _) true]
+    [(lower_i64_i64_map.LookupMissing) false]))
 
 (define (lower-alias-overlay-record! [source-id : i64]) : unit
-  (set!
-    lower-alias-overlay-ids
-    (hashmap.i64-i64-map-put lower-alias-overlay-ids source-id 1)))
+  (lower_i64_i64_map.insert (&mut lower-alias-overlay-ids) source-id 1))
 
 ;; Seed the overlay membership set from an existing base env (the non-cache
 ;; import-alias path threads aliases directly onto a full name env rather than a
@@ -1525,7 +1518,7 @@
 ;; add decision stays byte-identical to the linear scan.
 (define (lower-alias-overlay-seed-from-env! [names : LowerNameEnv]) : unit
   (begin
-    (set! lower-alias-overlay-ids (hashmap.i64-i64-map-with-capacity 256))
+    (set! lower-alias-overlay-ids (lower_i64_i64_map.with-capacity 256))
     (set! lower-alias-overlay-valid true)
     (let
       [cur : LowerNameEnv names]
@@ -1538,9 +1531,10 @@
             (begin
               (if (< bind-id 0)
                 (set! lower-alias-overlay-valid false)
-                (set!
-                  lower-alias-overlay-ids
-                  (hashmap.i64-i64-map-put lower-alias-overlay-ids bind-id 1)))
+                (lower_i64_i64_map.insert
+                  (&mut lower-alias-overlay-ids)
+                  bind-id
+                  1))
               (set! cur (box-get rest)))])))))
 
 (define (lower-name-env-add-alias-if-free
@@ -2658,8 +2652,8 @@
   -1)
 (define lower-module-decl-index-decl-offset : i64
   -1)
-(define lower-module-decl-index-modules : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 16))
+(define lower-module-decl-index-modules : lower_i64_i64_map.Map
+  (lower_i64_i64_map.with-capacity 16))
 (define lower-module-decl-index-starts : (Array i64)
   (make-array i64 0))
 (define lower-module-decl-index-ends : (Array i64)
@@ -2707,7 +2701,7 @@
       [_switch : unit
         (unsafe
           (arena.tl_arena_set lower-module-decl-index-arena))]
-      [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+      [modules : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
       [counts : (Array i64) (make-array i64 (+ count 1))]
       [starts : (Array i64) (make-array i64 (+ count 1))]
@@ -2725,18 +2719,16 @@
               [_
                 (let
                   [slot : i64
-                    (match (hashmap.i64-i64-map-get modules cur-module-id)
-                      [(hashmap.I64I64MapFound found-slot) found-slot]
-                      [(hashmap.I64I64MapMissing)
+                    (match (lower_i64_i64_map.get (& modules) cur-module-id)
+                      [(lower_i64_i64_map.LookupFound found-slot) found-slot]
+                      [(lower_i64_i64_map.LookupMissing)
                         (let
                           [new-slot : i64 module-count]
                           (begin
-                            (set!
-                              modules
-                              (hashmap.i64-i64-map-put
-                                modules
-                                cur-module-id
-                                new-slot))
+                            (lower_i64_i64_map.insert
+                              (&mut modules)
+                              cur-module-id
+                              new-slot)
                             (set! module-count (+ module-count 1))
                             new-slot))])]
                   (array-set! counts slot (+ (array-ref counts slot) 1)))])
@@ -2757,14 +2749,14 @@
             (match (array-ref decl-slots (+ decl-offset i))
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_
-                (match (hashmap.i64-i64-map-get modules cur-module-id)
-                  [(hashmap.I64I64MapFound slot)
+                (match (lower_i64_i64_map.get (& modules) cur-module-id)
+                  [(lower_i64_i64_map.LookupFound slot)
                     (let
                       [cursor : i64 (array-ref ends slot)]
                       (begin
                         (array-set! positions cursor i)
                         (array-set! ends slot (+ cursor 1))))]
-                  [(hashmap.I64I64MapMissing) unit])])
+                  [(lower_i64_i64_map.LookupMissing) unit])])
             (set! i (+ i 1))))
         (set! lower-module-decl-index-modules modules)
         (set! lower-module-decl-index-starts starts)
@@ -2781,9 +2773,9 @@
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (lower-module-decl-index-slot [module-id : i64]) : i64
-  (match (hashmap.i64-i64-map-get lower-module-decl-index-modules module-id)
-    [(hashmap.I64I64MapFound slot) slot]
-    [(hashmap.I64I64MapMissing) -1]))
+  (match (lower_i64_i64_map.get (& lower-module-decl-index-modules) module-id)
+    [(lower_i64_i64_map.LookupFound slot) slot]
+    [(lower_i64_i64_map.LookupMissing) -1]))
 
 (define (lower-name-env-add-module-aliases-cache
   [decls : AstDeclList]
@@ -4270,12 +4262,12 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-module : String module]
-    [cur-out : hashmap.StringI64Map out]
+    [cur-out : lower_string_i64_map.Map out]
     (begin
       (while (< index count)
         (let
@@ -4290,40 +4282,40 @@
               [(AstDecl.Module next-module)
                 (set! cur-module (intern-str next-module))]
               [_
-                (set!
-                  cur-out
-                  (match (lower-function-logical-name-from-decl
-                    entry-path
-                    decl-path
-                    cur-module
-                    decl)
-                    ;; Assign each distinct function name a dense slot
-                    ;; (0..N-1, its insertion order) instead of a constant 1, so
-                    ;; prune reachability `reachable` can key on that i64 slot.
-                    ;; Skip names already present so the slot stays a bijection.
-                    [(TcMaybeString.Some logical-name)
-                      (if (hashmap.string-i64-map-contains?
-                        cur-out
-                        logical-name)
-                        cur-out
-                        (hashmap.string-i64-map-put
-                          cur-out
+                (match (lower-function-logical-name-from-decl
+                  entry-path
+                  decl-path
+                  cur-module
+                  decl)
+                  ;; Assign each distinct function name a dense slot
+                  ;; (0..N-1, its insertion order) instead of a constant 1, so
+                  ;; prune reachability `reachable` can key on that i64 slot.
+                  ;; Skip names already present so the slot stays a bijection.
+                  [(TcMaybeString.Some logical-name)
+                    (if (lower_string_i64_map.contains?
+                      (& cur-out)
+                      logical-name)
+                      unit
+                      (let
+                        [slot : i64 (lower_string_i64_map.len (& cur-out))]
+                        (lower_string_i64_map.insert
+                          (&mut cur-out)
                           logical-name
-                          (hashmap.string-i64-map-len cur-out)))]
-                    [(TcMaybeString.No) cur-out]))])
+                          slot)))]
+                  [(TcMaybeString.No) unit])])
             (set! index (+ index 1)))))
       cur-out)))
 
 (define (lower-function-set-from-decls
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [entry-path : String]) : hashmap.StringI64Map
+  [entry-path : String]) : lower_string_i64_map.Map
   (lower-function-set-from-decls-in-module
     decls
     paths
     entry-path
     ""
-    (hashmap.string-i64-map-with-capacity 8192)))
+    (lower_string_i64_map.with-capacity 8192)))
 
 (define (lower-clone-root-add-type-list
   [ctx : TcContext]
@@ -4576,19 +4568,23 @@
 ;; that i64 slot -- no per-reference string_eq on the reachable set. The worklist
 ;; still carries the name so lower-reach-process can resolve the body by name.
 (define (lower-reach-add-logical
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [state : LowerReachState]
   [logical-name : String]) : LowerReachState
-  (match (hashmap.string-i64-map-get all-functions logical-name)
-    [(hashmap.StringI64MapMissing) state]
-    [(hashmap.StringI64MapFound slot)
+  (match (lower_string_i64_map.get (& all-functions) logical-name)
+    [(lower_string_i64_map.LookupMissing) state]
+    [(lower_string_i64_map.LookupFound slot)
       (match state
         [(LowerReachState.State reachable worklist)
-          (if (hashmap.i64-i64-map-contains? reachable slot)
+          (if (lower_i64_i64_map.contains? (& reachable) slot)
             state
-            (LowerReachState.State
-              (hashmap.i64-i64-map-put reachable slot 1)
-              (LowerStringSet.Cons logical-name (box worklist))))])]))
+            (let
+              [next-reachable : lower_i64_i64_map.Map reachable]
+              (begin
+                (lower_i64_i64_map.insert (&mut next-reachable) slot 1)
+                (LowerReachState.State
+                  next-reachable
+                  (LowerStringSet.Cons logical-name (box worklist))))))])]))
 
 (define (lower-runtime-prelude-string-helper-name [source-name : String]) : String
   (let
@@ -4631,7 +4627,7 @@
       [else ""])))
 
 (define (lower-reach-add-runtime-prelude-string-helper
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
   (let
@@ -4656,7 +4652,7 @@
           (string.append "stdlib\\runtime.tl::" module-helper))))))
 
 (define (lower-reach-add-string-snapshot-runtime
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
   ;; Clone-out/capture snapshot lowering copies owned String buffers through the
@@ -4670,7 +4666,7 @@
     "tl_substring"))
 
 (define (lower-reach-add-runtime-prelude-string-helper-resolved
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
@@ -4702,7 +4698,7 @@
       (string.eq name "string-slice"))))
 
 (define (lower-reach-add-source
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
@@ -4735,7 +4731,7 @@
     (string.eq base "string->int")))
 
 (define (lower-reach-add-stdlib-string-public-helper
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [source-name : String]) : LowerReachState
@@ -4793,7 +4789,7 @@
 
 (define (lower-reach-expr-list
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : AstExprList]) : LowerReachState
@@ -4801,7 +4797,7 @@
 
 (define (lower-reach-expr-list-at
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [exprs : (& exprs AstExprList)]
@@ -4821,7 +4817,7 @@
 
 (define (lower-reach-let-bindings
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstLetBindingList]) : LowerReachState
@@ -4829,7 +4825,7 @@
 
 (define (lower-reach-let-bindings-at
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : (& bindings AstLetBindingList)]
@@ -4850,7 +4846,7 @@
 
 (define (lower-reach-match-arms
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [arms : AstMatchArmList]) : LowerReachState
@@ -4858,7 +4854,7 @@
 
 (define (lower-reach-match-arms-at
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [arms : (& arms AstMatchArmList)]
@@ -4881,7 +4877,7 @@
 
 (define (lower-reach-resource-bindings
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : AstResourceBindingList]) : LowerReachState
@@ -4895,7 +4891,7 @@
 
 (define (lower-reach-resource-bindings-at
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [bindings : (& bindings AstResourceBindingList)]
@@ -5970,7 +5966,7 @@
 
 (define (lower-reach-call-callee
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [callee : AstExpr]) : LowerReachState
@@ -5981,7 +5977,7 @@
 
 (define (lower-reach-expr
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [expr : AstExpr]) : LowerReachState
@@ -6511,7 +6507,7 @@
 
 (define (lower-reach-global-decl
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [decl : AstDecl]) : LowerReachState
@@ -6533,7 +6529,7 @@
 
 (define (lower-reach-global-decls
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]
   [decls : AstDeclList]) : LowerReachState
@@ -6566,7 +6562,7 @@
           [_ (lower-reach-global-decls pools all-functions names state rest)]))]))
 
 (define (lower-reach-struct-field-cleanup-roots
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [entry-path : String]
   [decl-path : String]
   [module : String]
@@ -6584,7 +6580,7 @@
     0))
 
 (define (lower-reach-struct-field-cleanup-roots-at
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [entry-path : String]
   [decl-path : String]
   [module : String]
@@ -6623,7 +6619,7 @@
         (+ index 1)))))
 
 (define (lower-reach-cleanup-metadata-roots-in-module
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
@@ -6718,7 +6714,7 @@
 
 (define (lower-function-body-index-empty [count : i64]) : LowerFunctionBodyIndex
   (LowerFunctionBodyIndex
-    (hashmap.string-i64-map-with-capacity 8192)
+    (lower_string_i64_map.with-capacity 8192)
     (make-array LowerMaybeFunctionBody count)
     0))
 
@@ -6833,7 +6829,7 @@
   [body : AstExpr]
   [decl-path : String]) : LowerFunctionBodyIndex
   (let
-    [ids : hashmap.StringI64Map (struct-get index ids)]
+    [ids : lower_string_i64_map.Map (struct-get index ids)]
     [bodies : (Array LowerMaybeFunctionBody) (struct-get index bodies)]
     [next : i64 (struct-get index next)]
     (begin
@@ -6841,18 +6837,16 @@
         bodies
         next
         (LowerMaybeFunctionBody.Some body names decl-path))
-      (LowerFunctionBodyIndex
-        (hashmap.string-i64-map-put ids logical-name next)
-        bodies
-        (+ next 1)))))
+      (lower_string_i64_map.insert (&mut ids) logical-name next)
+      (LowerFunctionBodyIndex ids bodies (+ next 1)))))
 
 (define (lower-function-body-index-find
   [index : LowerFunctionBodyIndex]
   [target : String]) : LowerMaybeFunctionBody
-  (match (hashmap.string-i64-map-get (struct-get index ids) target)
-    [(hashmap.StringI64MapFound body-index)
+  (match (lower_string_i64_map.get (& (struct-get index ids)) target)
+    [(lower_string_i64_map.LookupFound body-index)
       (array-ref (struct-get index bodies) body-index)]
-    [(hashmap.StringI64MapMissing) (LowerMaybeFunctionBody.No)]))
+    [(lower_string_i64_map.LookupMissing) (LowerMaybeFunctionBody.No)]))
 
 (define (lower-function-body-index-from-decls-in-module
   [pools : AstNodePoolContext]
@@ -6966,7 +6960,7 @@
 
 (define (lower-reach-process
   [pools : AstNodePoolContext]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [body-index : LowerFunctionBodyIndex]
   [state : LowerReachState]) : LowerReachState
@@ -6983,10 +6977,15 @@
                 (begin
                   (set!
                     lower-reach-active-runtime-paths
-                    (hashmap.i64-i64-map-put
-                      lower-reach-active-runtime-paths
-                      (intern body-path)
-                      1))
+                    (let
+                      [paths : lower_i64_i64_map.Map
+                        lower-reach-active-runtime-paths]
+                      (begin
+                        (lower_i64_i64_map.insert
+                          (&mut paths)
+                          (intern body-path)
+                          1)
+                        paths)))
                   (lower-reach-process
                     pools
                     all-functions
@@ -7019,7 +7018,7 @@
   [index : i64]
   [module : String]
   [names : LowerNameCache]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (if (>= index (struct-get variants len))
     out
     (match (ast-dispatch-variant-list-get
@@ -7032,23 +7031,27 @@
           (+ index 1)
           module
           names
-          (hashmap.string-i64-map-put
-            out
-            (lower-dispatch-variant-logical-name module names variant-name)
-            1))])))
+          (let
+            [next-out : lower_string_i64_map.Map out]
+            (begin
+              (lower_string_i64_map.insert
+                (&mut next-out)
+                (lower-dispatch-variant-logical-name module names variant-name)
+                1)
+              next-out)))])))
 
 (define (lower-dispatch-variant-set-add-list
   [variants : AstDispatchVariantList]
   [module : String]
   [names : LowerNameCache]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (lower-dispatch-variant-set-add-list-from (& variants) 0 module names out))
 
 (define (lower-dispatch-variant-set-add-decl
   [decl : AstDecl]
   [module : String]
   [names : LowerNameCache]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (match decl
     [(AstDecl.DefDispatch _ variants)
       (lower-dispatch-variant-set-add-list variants module names out)]
@@ -7068,12 +7071,12 @@
   [_entry-path : String]
   [module : String]
   [names : LowerNameCache]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-module : String module]
-    [cur-out : hashmap.StringI64Map out]
+    [cur-out : lower_string_i64_map.Map out]
     (begin
       (while (< index count)
         (let
@@ -7100,17 +7103,17 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
-  [names : LowerNameCache]) : hashmap.StringI64Map
+  [names : LowerNameCache]) : lower_string_i64_map.Map
   (lower-dispatch-variant-set-from-decls-in-module
     decls
     paths
     entry-path
     ""
     names
-    (hashmap.string-i64-map-with-capacity 1024)))
+    (lower_string_i64_map.with-capacity 1024)))
 
 (define (lower-reach-add-dispatch-variant-list-from
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [module : String]
   [names : LowerNameCache]
   [variants : (& variants AstDispatchVariantList)]
@@ -7135,7 +7138,7 @@
             (lower-dispatch-variant-logical-name module names variant-name)))])))
 
 (define (lower-reach-add-dispatch-variant-list
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [module : String]
   [names : LowerNameCache]
   [variants : AstDispatchVariantList]
@@ -7149,7 +7152,7 @@
     state))
 
 (define (lower-reach-add-dispatch-variant-decl
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [module : String]
   [names : LowerNameCache]
   [decl : AstDecl]
@@ -7183,7 +7186,7 @@
     [_ state]))
 
 (define (lower-reach-add-dispatch-variant-roots-in-module
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [decls : AstDeclList]
   [module : String]
   [names : LowerNameCache]
@@ -7215,7 +7218,7 @@
                 state))]))]))
 
 (define (lower-reach-add-dispatch-variant-roots
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [decls : AstDeclList]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
@@ -7229,22 +7232,22 @@
 ;; `reachable` is keyed by dense `all-functions` slot; resolve a name's
 ;; slot through the same map the reach walk used and test membership by i64.
 (define (lower-reach-slot-set-contains-name?
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
   [logical-name : String]) : bool
-  (match (hashmap.string-i64-map-get all-functions logical-name)
-    [(hashmap.StringI64MapMissing) false]
-    [(hashmap.StringI64MapFound slot)
-      (hashmap.i64-i64-map-contains? reachable slot)]))
+  (match (lower_string_i64_map.get (& all-functions) logical-name)
+    [(lower_string_i64_map.LookupMissing) false]
+    [(lower_string_i64_map.LookupFound slot)
+      (lower_i64_i64_map.contains? (& reachable) slot)]))
 
 (define (lower-function-kept-by-reach-or-dispatch?
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
+  [dispatch-variants : lower_string_i64_map.Map]
   [logical-name : String]) : bool
   (or
     (lower-reach-slot-set-contains-name? all-functions reachable logical-name)
-    (hashmap.string-i64-map-contains? dispatch-variants logical-name)))
+    (lower_string_i64_map.contains? (& dispatch-variants) logical-name)))
 
 (define (lower-used-type-name-leaf [name : String]) : String
   (let
@@ -7267,27 +7270,31 @@
         source))))
 
 (define (lower-used-type-name-add
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [_module : String]
-  [name : i64]) : hashmap.I64I64Map
+  [name : i64]) : lower_i64_i64_map.Map
   (let
     [source : String (intern-str name)]
-    [with-source : hashmap.I64I64Map (hashmap.i64-i64-map-put used name 1)]
+    [with-source : lower_i64_i64_map.Map used]
     ;; `name` is already the interned id of `source`, so read the id-keyed
     ;; metadata slots directly instead of re-hashing `source`. Refs #4427.
-    (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
-      (let
-        [leaf : String (lower-used-type-name-leaf source)]
-        (if (string.eq leaf source)
-          with-source
-          (hashmap.i64-i64-map-put with-source (intern leaf) 1)))
-      with-source)))
+    (begin
+      (lower_i64_i64_map.insert (&mut with-source) name 1)
+      (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
+        (let
+          [leaf : String (lower-used-type-name-leaf source)]
+          (begin
+            (if (string.eq leaf source)
+              unit
+              (lower_i64_i64_map.insert (&mut with-source) (intern leaf) 1))
+            with-source))
+        with-source))))
 
 (define (lower-used-type-name-contains?
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [_module : String]
   [name : i64]) : bool
-  (if (hashmap.i64-i64-map-contains? used name)
+  (if (lower_i64_i64_map.contains? (& used) name)
     true
     (let
       [source : String (intern-str name)]
@@ -7297,20 +7304,24 @@
           [leaf : String (lower-used-type-name-leaf source)]
           (if (string.eq leaf source)
             false
-            (hashmap.i64-i64-map-contains? used (intern leaf))))
+            (lower_i64_i64_map.contains? (& used) (intern leaf))))
         false))))
 
-(define (lower-used-types-precise-empty) : hashmap.I64I64Map
-  (hashmap.i64-i64-map-put
-    (hashmap.i64-i64-map-with-capacity 8192)
-    (intern "$lower.precise-type-dce")
-    1))
+(define (lower-used-types-precise-empty) : lower_i64_i64_map.Map
+  (let
+    [used : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 8192)]
+    (begin
+      (lower_i64_i64_map.insert
+        (&mut used)
+        (intern "$lower.precise-type-dce")
+        1)
+      used)))
 
 (define (lower-used-types-add-type-id
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [ty-id : i64]) : hashmap.I64I64Map
+  [ty-id : i64]) : lower_i64_i64_map.Map
   (lower-used-types-add-type
     pools
     used
@@ -7319,17 +7330,17 @@
 
 (define (lower-used-types-add-type-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [types : AstTypeList]) : hashmap.I64I64Map
+  [types : AstTypeList]) : lower_i64_i64_map.Map
   (lower-used-types-add-type-list-at pools used module (& types) 0))
 
 (define (lower-used-types-add-type-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [types : (& types AstTypeList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (ast-type-list-len types))
     used
     (lower-used-types-add-type-list-at
@@ -7345,9 +7356,9 @@
 
 (define (lower-used-types-add-type
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [ty : AstType]) : hashmap.I64I64Map
+  [ty : AstType]) : lower_i64_i64_map.Map
   (match ty
     [(AstType.Func args ret)
       (lower-used-types-add-type-id
@@ -7381,26 +7392,26 @@
 
 (define (lower-used-types-add-maybe-type
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [maybe-ty : AstMaybeType]) : hashmap.I64I64Map
+  [maybe-ty : AstMaybeType]) : lower_i64_i64_map.Map
   (match maybe-ty
     [(AstMaybeType.No) used]
     [(AstMaybeType.Some ty) (lower-used-types-add-type pools used module ty)]))
 
 (define (lower-used-types-add-param-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [params : AstParamList]) : hashmap.I64I64Map
+  [params : AstParamList]) : lower_i64_i64_map.Map
   (lower-used-types-add-param-list-at pools used module (& params) 0))
 
 (define (lower-used-types-add-param-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [params : (& params AstParamList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (ast-param-list-len params))
     used
     (match (ast-param-list-get params index (ast-param-fallback))
@@ -7414,17 +7425,17 @@
 
 (define (lower-used-types-add-macro-param-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [params : AstMacroParamList]) : hashmap.I64I64Map
+  [params : AstMacroParamList]) : lower_i64_i64_map.Map
   (lower-used-types-add-macro-param-list-at pools used module (& params) 0))
 
 (define (lower-used-types-add-macro-param-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [params : (& params AstMacroParamList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (ast-macro-param-list-len params))
     used
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
@@ -7438,9 +7449,9 @@
 
 (define (lower-used-types-add-expr-id
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [expr-id : i64]) : hashmap.I64I64Map
+  [expr-id : i64]) : lower_i64_i64_map.Map
   (lower-used-types-add-expr
     pools
     used
@@ -7449,17 +7460,17 @@
 
 (define (lower-used-types-add-expr-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [exprs : AstExprList]) : hashmap.I64I64Map
+  [exprs : AstExprList]) : lower_i64_i64_map.Map
   (lower-used-types-add-expr-list-at pools used module (& exprs) 0))
 
 (define (lower-used-types-add-expr-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [exprs : (& exprs AstExprList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (struct-get exprs len))
     used
     (lower-used-types-add-expr-list-at
@@ -7475,9 +7486,9 @@
 
 (define (lower-used-types-add-pattern
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [pattern : AstPattern]) : hashmap.I64I64Map
+  [pattern : AstPattern]) : lower_i64_i64_map.Map
   (match pattern
     [(AstPattern.Var _ maybe-ty)
       (lower-used-types-add-maybe-type pools used module maybe-ty)]
@@ -7493,7 +7504,7 @@
       (let
         ;; `name` is already the interned id; read the id-keyed metadata slots
         ;; directly instead of re-hashing `(intern-str name)` twice.
-        [with-head : hashmap.I64I64Map
+        [with-head : lower_i64_i64_map.Map
           (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
             (lower-used-type-name-add used module name)
             used)]
@@ -7506,17 +7517,17 @@
 
 (define (lower-used-types-add-pattern-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [patterns : AstPatternList]) : hashmap.I64I64Map
+  [patterns : AstPatternList]) : lower_i64_i64_map.Map
   (lower-used-types-add-pattern-list-at pools used module (& patterns) 0))
 
 (define (lower-used-types-add-pattern-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [patterns : (& patterns AstPatternList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (struct-get patterns len))
     used
     (lower-used-types-add-pattern-list-at
@@ -7532,17 +7543,17 @@
 
 (define (lower-used-types-add-let-bindings
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [bindings : AstLetBindingList]) : hashmap.I64I64Map
+  [bindings : AstLetBindingList]) : lower_i64_i64_map.Map
   (lower-used-types-add-let-bindings-at pools used module (& bindings) 0))
 
 (define (lower-used-types-add-let-bindings-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [bindings : (& bindings AstLetBindingList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (ast-let-binding-list-len bindings))
     used
     (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
@@ -7560,17 +7571,17 @@
 
 (define (lower-used-types-add-match-arms
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [arms : AstMatchArmList]) : hashmap.I64I64Map
+  [arms : AstMatchArmList]) : lower_i64_i64_map.Map
   (lower-used-types-add-match-arms-at pools used module (& arms) 0))
 
 (define (lower-used-types-add-match-arms-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [arms : (& arms AstMatchArmList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (struct-get arms len))
     used
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
@@ -7588,17 +7599,17 @@
 
 (define (lower-used-types-add-resource-bindings
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [bindings : AstResourceBindingList]) : hashmap.I64I64Map
+  [bindings : AstResourceBindingList]) : lower_i64_i64_map.Map
   (lower-used-types-add-resource-bindings-at pools used module (& bindings) 0))
 
 (define (lower-used-types-add-resource-bindings-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [bindings : (& bindings AstResourceBindingList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (ast-resource-binding-list-len bindings))
     used
     (match (ast-resource-binding-list-get
@@ -7619,9 +7630,9 @@
 
 (define (lower-used-types-add-expr
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [expr : AstExpr]) : hashmap.I64I64Map
+  [expr : AstExpr]) : lower_i64_i64_map.Map
   (match expr
     [(AstExpr.Spanned inner-box _)
       (lower-used-types-add-expr-id pools used module inner-box)]
@@ -7983,17 +7994,17 @@
 
 (define (lower-used-types-add-field-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [fields : AstFieldDefList]) : hashmap.I64I64Map
+  [fields : AstFieldDefList]) : lower_i64_i64_map.Map
   (lower-used-types-add-field-list-at pools used module (& fields) 0))
 
 (define (lower-used-types-add-field-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [fields : (& fields AstFieldDefList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (struct-get fields len))
     used
     (match (ast-field-def-list-get fields index (ast-field-def-fallback))
@@ -8007,17 +8018,17 @@
 
 (define (lower-used-types-add-variant-list
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [variants : AstVariantDefList]) : hashmap.I64I64Map
+  [variants : AstVariantDefList]) : lower_i64_i64_map.Map
   (lower-used-types-add-variant-list-at pools used module (& variants) 0))
 
 (define (lower-used-types-add-variant-list-at
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
   [variants : (& variants AstVariantDefList)]
-  [index : i64]) : hashmap.I64I64Map
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (struct-get variants len))
     used
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
@@ -8041,11 +8052,11 @@
 
 (define (lower-type-decl-used?
   [module : String]
-  [used-types : hashmap.I64I64Map]
+  [used-types : lower_i64_i64_map.Map]
   [decl : AstDecl]) : bool
   ;; Empty is the fast-path marker for "all type declaration paths are already
   ;; reachable"; precise DCE starts from lower-used-types-precise-empty instead.
-  (if (= (hashmap.i64-i64-map-len used-types) 0)
+  (if (= (lower_i64_i64_map.len (& used-types)) 0)
     true
     (match decl
       [(AstDecl.DefEnum name _ variants)
@@ -8064,9 +8075,9 @@
 
 (define (lower-used-types-add-kept-runtime-decl
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [decl : AstDecl]) : hashmap.I64I64Map
+  [decl : AstDecl]) : lower_i64_i64_map.Map
   (match decl
     [(AstDecl.Def _ maybe-ty _)
       (lower-used-types-add-maybe-type pools used module maybe-ty)]
@@ -8122,9 +8133,9 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
+  [dispatch-variants : lower_string_i64_map.Map]
   [decl : AstDecl]) : bool
   (if (lower-decl-is-clone-helper? decl)
     ;; P4/C4.2: clone-augment (see lower-compiler-expanded-program-...) emits
@@ -8145,9 +8156,9 @@
 
 (define (lower-used-types-add-type-decl-name
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [decl : AstDecl]) : hashmap.I64I64Map
+  [decl : AstDecl]) : lower_i64_i64_map.Map
   (match decl
     [(AstDecl.DefEnum name _ _) (lower-used-type-name-add used module name)]
     [(AstDecl.DefEnumLifetimes name _ _ _)
@@ -8175,8 +8186,8 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [reachable-paths : hashmap.I64I64Map]
-  [used : hashmap.I64I64Map]
+  [reachable-paths : lower_i64_i64_map.Map]
+  [used : lower_i64_i64_map.Map]
   [covered : bool]) : LowerUsedTypePathSeed
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) (LowerUsedTypePathSeed.Seed used covered)]
@@ -8206,8 +8217,8 @@
             (let
               [is-type-decl : bool (lower-type-decl? decl)]
               [path-covered : bool
-                (hashmap.i64-i64-map-contains?
-                  reachable-paths
+                (lower_i64_i64_map.contains?
+                  (& reachable-paths)
                   (intern decl-path))]
               (lower-used-types-path-seed-in-module
                 pools
@@ -8227,10 +8238,10 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]
-  [used : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
+  [dispatch-variants : lower_string_i64_map.Map]
+  [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) used]
     [(AstDeclListStep.Cons decl rest)
@@ -8279,9 +8290,9 @@
 
 (define (lower-used-types-add-stdlib-arena-support-deps
   [_pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [name : i64]) : hashmap.I64I64Map
+  [name : i64]) : lower_i64_i64_map.Map
   ;; `in-arena` and allocation lowering use the arena mark support type even
   ;; when source signatures only mention the public Arena wrapper.
   (if (and
@@ -8292,9 +8303,9 @@
 
 (define (lower-used-types-add-type-decl-deps
   [pools : AstNodePoolContext]
-  [used : hashmap.I64I64Map]
+  [used : lower_i64_i64_map.Map]
   [module : String]
-  [decl : AstDecl]) : hashmap.I64I64Map
+  [decl : AstDecl]) : lower_i64_i64_map.Map
   (match decl
     [(AstDecl.DefEnum _ _ variants)
       (lower-used-types-add-variant-list pools used module variants)]
@@ -8326,7 +8337,7 @@
   [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [module : String]
-  [used : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) used]
     [(AstDeclListStep.Cons decl rest)
@@ -8355,16 +8366,16 @@
 (define (lower-used-types-expand-fixed
   [pools : AstNodePoolContext]
   [decls : AstDeclList]
-  [used : hashmap.I64I64Map]) : hashmap.I64I64Map
+  [used : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
-    [current : hashmap.I64I64Map used]
+    [current : lower_i64_i64_map.Map used]
     [iterations : i64 0]
     [done : bool false]
     (begin
       (while (not done)
         (let
-          [before : i64 (hashmap.i64-i64-map-len current)]
-          [next : hashmap.I64I64Map
+          [before : i64 (lower_i64_i64_map.len (& current))]
+          [next : lower_i64_i64_map.Map
             (lower-used-types-add-type-decl-deps-in-module
               pools
               decls
@@ -8374,7 +8385,7 @@
             (set! current next)
             (set! iterations (+ iterations 1))
             (if (or
-              (= before (hashmap.i64-i64-map-len current))
+              (= before (lower_i64_i64_map.len (& current)))
               (>= iterations 8))
               (set! done true)
               unit))))
@@ -8507,10 +8518,10 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]
-  [used-types : hashmap.I64I64Map]
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
+  [dispatch-variants : lower_string_i64_map.Map]
+  [used-types : lower_i64_i64_map.Map]
   [decl : AstDecl]) : bool
   (if (lower-type-decl? decl)
     (or
@@ -8530,10 +8541,10 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]
-  [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
+  [dispatch-variants : lower_string_i64_map.Map]
+  [used-types : lower_i64_i64_map.Map]) : LowerFilteredReachable
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil)
       (LowerFilteredReachable.Filtered
@@ -8599,10 +8610,10 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
-  [all-functions : hashmap.StringI64Map]
-  [reachable : hashmap.I64I64Map]
-  [dispatch-variants : hashmap.StringI64Map]
-  [used-types : hashmap.I64I64Map]) : LowerFilteredReachable
+  [all-functions : lower_string_i64_map.Map]
+  [reachable : lower_i64_i64_map.Map]
+  [dispatch-variants : lower_string_i64_map.Map]
+  [used-types : lower_i64_i64_map.Map]) : LowerFilteredReachable
   (lower-filter-reachable-in-module
     decls
     paths
@@ -8617,7 +8628,7 @@
 ;; `(clone x)` forms only after lowering. Seed exactly the helpers needed by
 ;; clone calls found in already-reachable source functions.
 (define (lower-reach-add-clone-root-helpers
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [roots : CloneNameList]
   [state : LowerReachState]) : LowerReachState
@@ -8643,7 +8654,7 @@
   [entry-path : String]
   [decl-path : String]
   [module : String]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [state : LowerReachState]
   [decl : AstDecl]) : LowerReachState
   (match decl
@@ -8692,7 +8703,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [module : String]
-  [all-functions : hashmap.StringI64Map]
+  [all-functions : lower_string_i64_map.Map]
   [state : LowerReachState]) : LowerReachState
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) state]
@@ -8774,7 +8785,7 @@
             (arena.tl_arena_set scratch))
           (let
             [mark : i64 (arena.tl_region_mark)]
-            [all-functions : hashmap.StringI64Map
+            [all-functions : lower_string_i64_map.Map
               (lower-function-set-from-decls decls paths entry-path)]
             [body-index : LowerFunctionBodyIndex
               (lower-function-body-index-from-decls
@@ -8785,18 +8796,18 @@
                 names
                 (lower-function-decl-count decls))]
             [name-cache : LowerNameCache (lower-name-cache-from-env names)]
-            [dispatch-variants : hashmap.StringI64Map
+            [dispatch-variants : lower_string_i64_map.Map
               (lower-dispatch-variant-set-from-decls
                 decls
                 paths
                 entry-path
                 name-cache)]
             [result : LowerPrunedProgram
-              (if (hashmap.string-i64-map-contains? all-functions "main")
+              (if (lower_string_i64_map.contains? (& all-functions) "main")
                 (begin
                   (set!
                     lower-reach-active-runtime-paths
-                    (hashmap.i64-i64-map-with-capacity 1024))
+                    (lower_i64_i64_map.with-capacity 1024))
                   (set!
                     lower-reach-active-body-used-types
                     (lower-used-types-precise-empty))
@@ -8805,7 +8816,7 @@
                       (lower-reach-add-logical
                         all-functions
                         (LowerReachState.State
-                          (hashmap.i64-i64-map-with-capacity 8192)
+                          (lower_i64_i64_map.with-capacity 8192)
                           LowerStringSet.Nil)
                         "main")]
                     [export-state : LowerReachState
@@ -8854,7 +8865,7 @@
                     (match reached-state
                       [(LowerReachState.State reachable _)
                         (let
-                          [reachable-runtime-paths : hashmap.I64I64Map
+                          [reachable-runtime-paths : lower_i64_i64_map.Map
                             lower-reach-active-runtime-paths]
                           [type-path-seed : LowerUsedTypePathSeed
                             (lower-used-types-path-seed-in-module
@@ -8866,13 +8877,13 @@
                               reachable-runtime-paths
                               lower-reach-active-body-used-types
                               true)]
-                          [used-types : hashmap.I64I64Map
+                          [used-types : lower_i64_i64_map.Map
                             (match type-path-seed
                               [(LowerUsedTypePathSeed.Seed
                                   reachable-path-type-names
                                   type-paths-covered)
                                 (if type-paths-covered
-                                  (hashmap.i64-i64-map-with-capacity 8)
+                                  (lower_i64_i64_map.with-capacity 8)
                                   (lower-used-types-expand-fixed
                                     pools
                                     decls
@@ -30851,8 +30862,18 @@
     [(AstUnOp.Not) true]
     [_ false]))
 
-(define (lower-masked-vector-empty-lane-locals) : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 16))
+(define (lower-masked-vector-empty-lane-locals) : lower_string_i64_map.Map
+  (lower_string_i64_map.with-capacity 16))
+
+(define (lower-masked-vector-lane-locals-bind-if-varying
+  [lane-locals : lower_string_i64_map.Map]
+  [name : i64]
+  [lanes : i64]) : lower_string_i64_map.Map
+  (if (> lanes 0)
+    (begin
+      (lower_string_i64_map.insert (&mut lane-locals) (intern-str name) lanes)
+      lane-locals)
+    lane-locals))
 
 (define (lower-masked-vector-expr-list-lanes-with-locals
   [ctx : TcContext]
@@ -30860,7 +30881,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : AstExprList]) : i64
   (lower-masked-vector-expr-list-lanes-with-locals-at
     ctx
@@ -30878,7 +30899,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : i64
   (if (>= expr-index (struct-get exprs len))
@@ -30911,8 +30932,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
-  [bindings : AstLetBindingList]) : hashmap.StringI64Map
+  [lane-locals : lower_string_i64_map.Map]
+  [bindings : AstLetBindingList]) : lower_string_i64_map.Map
   (lower-masked-vector-let-bindings-locals-at
     ctx
     mode
@@ -30929,9 +30950,9 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
-  [binding-index : i64]) : hashmap.StringI64Map
+  [binding-index : i64]) : lower_string_i64_map.Map
   (if (>= binding-index (ast-let-binding-list-len bindings))
     lane-locals
     (match (ast-let-binding-list-get
@@ -30950,13 +30971,11 @@
               index
               lane-locals
               init)]
-          [next-locals : hashmap.StringI64Map
-            (if (> init-lanes 0)
-              (hashmap.string-i64-map-put
-                lane-locals
-                (intern-str name)
-                init-lanes)
-              lane-locals)]
+          [next-locals : lower_string_i64_map.Map
+            (lower-masked-vector-lane-locals-bind-if-varying
+              lane-locals
+              name
+              init-lanes)]
           (lower-masked-vector-let-bindings-locals-at
             ctx
             mode
@@ -30973,7 +30992,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : AstLetBindingList]) : i64
   (lower-masked-vector-let-bindings-lanes-with-locals-at
     ctx
@@ -30991,7 +31010,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : i64
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -31012,13 +31031,11 @@
               index
               lane-locals
               init)]
-          [next-locals : hashmap.StringI64Map
-            (if (> init-lanes 0)
-              (hashmap.string-i64-map-put
-                lane-locals
-                (intern-str name)
-                init-lanes)
-              lane-locals)]
+          [next-locals : lower_string_i64_map.Map
+            (lower-masked-vector-lane-locals-bind-if-varying
+              lane-locals
+              name
+              init-lanes)]
           (lower-masked-vector-lanes-merge
             init-lanes
             (lower-masked-vector-let-bindings-lanes-with-locals-at
@@ -31034,18 +31051,24 @@
 (define (lower-masked-vector-pattern-locals
   [pattern : AstPattern]
   [scrut-lanes : i64]
-  [lane-locals : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [lane-locals : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (if (> scrut-lanes 0)
     (match pattern
       [(AstPattern.Var name _)
-        (hashmap.string-i64-map-put lane-locals (intern-str name) scrut-lanes)]
+        (lower-masked-vector-lane-locals-bind-if-varying
+          lane-locals
+          name
+          scrut-lanes)]
       [(AstPattern.Tuple patterns-box)
         (lower-masked-vector-pattern-list-locals
           (box-get patterns-box)
           scrut-lanes
           lane-locals)]
       [(AstPattern.Binding name)
-        (hashmap.string-i64-map-put lane-locals (intern-str name) scrut-lanes)]
+        (lower-masked-vector-lane-locals-bind-if-varying
+          lane-locals
+          name
+          scrut-lanes)]
       [(AstPattern.Variant _ patterns-box)
         (lower-masked-vector-pattern-list-locals
           (box-get patterns-box)
@@ -31057,7 +31080,7 @@
 (define (lower-masked-vector-pattern-list-locals
   [patterns : AstPatternList]
   [scrut-lanes : i64]
-  [lane-locals : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [lane-locals : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (lower-masked-vector-pattern-list-locals-at
     (& patterns)
     scrut-lanes
@@ -31067,8 +31090,8 @@
 (define (lower-masked-vector-pattern-list-locals-at
   [patterns : (& patterns AstPatternList)]
   [scrut-lanes : i64]
-  [lane-locals : hashmap.StringI64Map]
-  [index : i64]) : hashmap.StringI64Map
+  [lane-locals : lower_string_i64_map.Map]
+  [index : i64]) : lower_string_i64_map.Map
   (if (>= index (struct-get patterns len))
     lane-locals
     (lower-masked-vector-pattern-list-locals-at
@@ -31086,7 +31109,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [scrut-lanes : i64]
   [arms : AstMatchArmList]) : i64
   (lower-masked-vector-match-arms-lanes-with-locals-at
@@ -31106,7 +31129,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [scrut-lanes : i64]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : i64
@@ -31116,7 +31139,7 @@
       [(AstMatchArm.Arm pattern body-box)
         (let
           [body : AstExpr (lower-context-expr-get ctx body-box)]
-          [body-locals : hashmap.StringI64Map
+          [body-locals : lower_string_i64_map.Map
             (lower-masked-vector-pattern-locals pattern scrut-lanes lane-locals)]
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
@@ -31144,7 +31167,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [expr : AstExpr]) : i64
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -31184,9 +31207,9 @@
     [(AstExpr.Var name)
       (let
         [name-text : String (intern-str name)]
-        (match (hashmap.string-i64-map-get lane-locals name-text)
-          [(hashmap.StringI64MapFound lanes) lanes]
-          [(hashmap.StringI64MapMissing)
+        (match (lower_string_i64_map.get (& lane-locals) name-text)
+          [(lower_string_i64_map.LookupFound lanes) lanes]
+          [(lower_string_i64_map.LookupMissing)
             (if (string.eq name-text index)
               (lower-simd-lanes-for-elem mode (AstType.I64))
               0)]))]
@@ -31231,7 +31254,7 @@
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : hashmap.StringI64Map
+            [body-locals : lower_string_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
                 mode
@@ -31468,7 +31491,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -31542,7 +31565,7 @@
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : hashmap.StringI64Map
+            [body-locals : lower_string_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
                 mode
@@ -31689,7 +31712,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
     ctx
@@ -31707,7 +31730,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
   (if (>= expr-index (struct-get exprs len))
@@ -31737,7 +31760,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
     ctx
@@ -31755,7 +31778,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -31776,13 +31799,11 @@
               index
               lane-locals
               init)]
-          [next-locals : hashmap.StringI64Map
-            (if (> init-lanes 0)
-              (hashmap.string-i64-map-put
-                lane-locals
-                (intern-str name)
-                init-lanes)
-              lane-locals)]
+          [next-locals : lower_string_i64_map.Map
+            (lower-masked-vector-lane-locals-bind-if-varying
+              lane-locals
+              name
+              init-lanes)]
           (or
             (lower-masked-vector-body-has-varying-if-with-locals?
               ctx
@@ -31856,7 +31877,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -31948,7 +31969,7 @@
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : hashmap.StringI64Map
+            [body-locals : lower_string_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
                 mode
@@ -32080,7 +32101,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
     ctx
@@ -32098,7 +32119,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
   (if (>= expr-index (struct-get exprs len))
@@ -32128,7 +32149,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
     ctx
@@ -32146,7 +32167,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -32167,13 +32188,11 @@
               index
               lane-locals
               init)]
-          [next-locals : hashmap.StringI64Map
-            (if (> init-lanes 0)
-              (hashmap.string-i64-map-put
-                lane-locals
-                (intern-str name)
-                init-lanes)
-              lane-locals)]
+          [next-locals : lower_string_i64_map.Map
+            (lower-masked-vector-lane-locals-bind-if-varying
+              lane-locals
+              name
+              init-lanes)]
           (or
             (lower-masked-vector-body-has-varying-while-with-locals?
               ctx
@@ -32215,7 +32234,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -32429,7 +32448,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
     ctx
@@ -32447,7 +32466,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
   (if (>= expr-index (struct-get exprs len))
@@ -32477,7 +32496,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
     ctx
@@ -32495,7 +32514,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -32516,13 +32535,11 @@
               index
               lane-locals
               init)]
-          [next-locals : hashmap.StringI64Map
-            (if (> init-lanes 0)
-              (hashmap.string-i64-map-put
-                lane-locals
-                (intern-str name)
-                init-lanes)
-              lane-locals)]
+          [next-locals : lower_string_i64_map.Map
+            (lower-masked-vector-lane-locals-bind-if-varying
+              lane-locals
+              name
+              init-lanes)]
           (or
             (lower-masked-vector-body-has-varying-match-with-locals?
               ctx
@@ -32548,7 +32565,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [scrut-lanes : i64]
   [arms : AstMatchArmList]) : bool
   (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
@@ -32568,7 +32585,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : hashmap.StringI64Map]
+  [lane-locals : lower_string_i64_map.Map]
   [scrut-lanes : i64]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : bool
@@ -41177,7 +41194,7 @@
 ;; aggregate-place-update pattern -- HARD CONSTRAINT #4). If a callee then reads
 ;; such an argument and writes its result in place through the (aliased) sret --
 ;; e.g. it returns an enum/struct WRAPPING one of its parameters, like
-;; `string-i64-map-remove-borrowed` returning `(RemoveOk map)` -- the
+;; a generated String -> i64 map remove returning `(RemoveOk map)` -- the
 ;; materialize-into-fresh-temp step of the value path is what makes that safe.
 ;; Forwarding the sret removes that buffer, so we only forward when NO argument
 ;; can alias the sret. An argument cannot alias the caller-owned result slot when
@@ -41224,7 +41241,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
-  (hashmap.string-i64-map-contains?
+  (lower_string_i64_map.contains?
     lower-rvo-early-return-functions
     (lower-resolve-call-name state env name)))
 
@@ -44222,12 +44239,12 @@
   [decls : AstDeclList]
   [names : LowerNameEnv]
   [module : String]
-  [out : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-module : String module]
-    [cur-out : hashmap.StringI64Map out]
+    [cur-out : lower_string_i64_map.Map out]
     (begin
       (while (< index count)
         (let
@@ -44241,15 +44258,13 @@
                 (set! cur-module (intern-str next-module))]
               [(AstDecl.DefFn name _ _ body-box _)
                 (if (lower-rvo-node-has-early-return? ctx body-box)
-                  (set!
-                    cur-out
-                    (hashmap.string-i64-map-put
-                      cur-out
-                      (lower-current-decl-logical-name
-                        names
-                        cur-module
-                        (intern-str name))
-                      1))
+                  (lower_string_i64_map.insert
+                    (&mut cur-out)
+                    (lower-current-decl-logical-name
+                      names
+                      cur-module
+                      (intern-str name))
+                    1)
                   unit)]
               [_ unit])
             (set! index (+ index 1)))))
@@ -44258,13 +44273,13 @@
 (define (lower-rvo-early-return-functions-from-decls
   [ctx : TcContext]
   [decls : AstDeclList]
-  [names : LowerNameEnv]) : hashmap.StringI64Map
+  [names : LowerNameEnv]) : lower_string_i64_map.Map
   (lower-rvo-early-return-functions-from-decls-in-module
     ctx
     decls
     names
     ""
-    (hashmap.string-i64-map-with-capacity 8192)))
+    (lower_string_i64_map.with-capacity 8192)))
 
 (define (lower-decls
   [ctx : TcContext]
@@ -44278,7 +44293,7 @@
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (let
     [dispatch-name-cache : LowerNameCache (lower-name-cache-from-env names)]
-    [dispatch-variants : hashmap.StringI64Map
+    [dispatch-variants : lower_string_i64_map.Map
       (lower-dispatch-variant-set-from-decls
         decls
         (ast-decl-path-list-new)
@@ -44344,7 +44359,7 @@
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [type-cache : LowerTypeCache]
-  [dispatch-variants : hashmap.StringI64Map]
+  [dispatch-variants : lower_string_i64_map.Map]
   [mode : CompilerLowerMode]
   [module : String]) : ResultLowerDecls
   (let
@@ -44507,7 +44522,7 @@
                         cur-name-cache
                         cur-module
                         (intern-str name))]
-                    (if (hashmap.string-i64-map-contains?
+                    (if (lower_string_i64_map.contains?
                       dispatch-variants
                       logical-name)
                       (set! cur-decls rest)

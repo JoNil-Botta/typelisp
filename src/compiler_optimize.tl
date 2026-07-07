@@ -1418,7 +1418,21 @@
         [(IrSpmdCallArg _ value _)
           (opt-collect-spmd-call-args-uses
             (opt-collect-value-uses set value)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [out : opt_i64_i64_map.Map set]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (set! out (opt-collect-value-uses out value))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (opt-collect-phi-uses
   [set : opt_i64_i64_map.Map]
@@ -1867,7 +1881,18 @@
         [(IrSpmdCallArg _ value _)
           (begin
             (opt-collect-value-uses-array items value)
-            (opt-collect-spmd-call-args-uses-array items (box-get rest)))])]))
+            (opt-collect-spmd-call-args-uses-array items (box-get rest)))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (while (< i count)
+          (begin
+            (match (array-ref slots i)
+              [(IrSpmdCallArg _ value _)
+                (opt-collect-value-uses-array items value)])
+            (set! i (+ i 1)))))]))
 
 (define (opt-collect-phi-uses-array
   [items : (Array i64)]
@@ -2695,7 +2720,23 @@
         [(IrSpmdCallArg _ value _)
           (or
             (opt-aggregate-value-has-pointer? base ptrs value)
-            (opt-aggregate-spmd-call-args-has-pointer? base ptrs (box-get rest)))])]))
+            (opt-aggregate-spmd-call-args-has-pointer? base ptrs (box-get rest)))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [found : bool false]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (and (< i count) (not found))
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (if (opt-aggregate-value-has-pointer? base ptrs value)
+                    (set! found true)
+                    unit)])
+              (set! i (+ i 1))))
+          found))]))
 
 (define (opt-aggregate-maybe-value-has-pointer?
   [base : i64]
@@ -5462,6 +5503,20 @@
     [(IrSpmdCallArg class value ty)
       (IrSpmdCallArg class (opt-copy-resolve-spmd-value env class value) ty)]))
 
+(define (opt-copy-subst-spmd-call-args-array
+  [env : OptCopyEnv]
+  [src : (Array CompilerIrSpmdCallArg)]
+  [dst : (Array CompilerIrSpmdCallArg)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (opt-copy-subst-spmd-call-arg env (array-ref src index)))
+      (opt-copy-subst-spmd-call-args-array env src dst (+ index 1)))))
+
 (define (opt-copy-subst-spmd-call-args
   [env : OptCopyEnv]
   [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
@@ -5470,7 +5525,16 @@
     [(IrSpmdCallArgCons arg rest)
       (IrSpmdCallArgCons
         (opt-copy-subst-spmd-call-arg env arg)
-        (box (opt-copy-subst-spmd-call-args env (box-get rest))))]))
+        (box (opt-copy-subst-spmd-call-args env (box-get rest))))]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [src : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        [out : (Array CompilerIrSpmdCallArg)
+          (array.make-array CompilerIrSpmdCallArg count)]
+        (begin
+          (opt-copy-subst-spmd-call-args-array env src out 0)
+          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq out count))))]))
 
 ;; Rewrite the value-use operands of an instruction through the copy env. Phi
 ;; inputs and the raw var id of `CompilerIrInstr.AddrOf` are intentionally not rewritten.
@@ -8333,7 +8397,27 @@
               doms
               (box-get rest)
               use-block
-              use-pos))])]))
+              use-pos))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [i : i64 0]
+        [result : ResultCompilerOptimizeVerify
+          (ResultCompilerOptimizeVerify.Ok)]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (match result
+              [(ResultCompilerOptimizeVerify.Err _) (set! i count)]
+              [(ResultCompilerOptimizeVerify.Ok)
+                (begin
+                  (match (array-ref slots i)
+                    [(IrSpmdCallArg _ value _)
+                      (set!
+                        result
+                        (opt-verify-value-use defs doms value use-block use-pos))])
+                  (set! i (+ i 1)))]))
+          result))]))
 
 (define (opt-verify-maybe-value-use
   [defs : (Array OptMaybeVarDef)]
@@ -9506,6 +9590,20 @@
     [(IrSpmdCallArg class value ty)
       (IrSpmdCallArg class (opt-ssa-rewrite-value env value) ty)]))
 
+(define (opt-ssa-rewrite-spmd-call-args-array
+  [env : OptSsaRenameEnv]
+  [src : (Array CompilerIrSpmdCallArg)]
+  [dst : (Array CompilerIrSpmdCallArg)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (opt-ssa-rewrite-spmd-call-arg env (array-ref src index)))
+      (opt-ssa-rewrite-spmd-call-args-array env src dst (+ index 1)))))
+
 (define (opt-ssa-rewrite-spmd-call-args
   [env : OptSsaRenameEnv]
   [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
@@ -9514,7 +9612,16 @@
     [(IrSpmdCallArgCons arg rest)
       (IrSpmdCallArgCons
         (opt-ssa-rewrite-spmd-call-arg env arg)
-        (box (opt-ssa-rewrite-spmd-call-args env (box-get rest))))]))
+        (box (opt-ssa-rewrite-spmd-call-args env (box-get rest))))]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [src : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        [out : (Array CompilerIrSpmdCallArg)
+          (array.make-array CompilerIrSpmdCallArg count)]
+        (begin
+          (opt-ssa-rewrite-spmd-call-args-array env src out 0)
+          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq out count))))]))
 
 (define (opt-ssa-rename-dst
   [facts : OptSsaFacts]
@@ -11127,6 +11234,35 @@
           value)
         ty)]))
 
+(define (opt-global-copy-subst-spmd-call-args-array
+  [facts : OptGlobalCopyFactTable]
+  [doms : OptDomInfo]
+  [use-block-id : i64]
+  [use-pos : i64]
+  [src : (Array CompilerIrSpmdCallArg)]
+  [dst : (Array CompilerIrSpmdCallArg)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (opt-global-copy-subst-spmd-call-arg
+          facts
+          doms
+          use-block-id
+          use-pos
+          (array-ref src index)))
+      (opt-global-copy-subst-spmd-call-args-array
+        facts
+        doms
+        use-block-id
+        use-pos
+        src
+        dst
+        (+ index 1)))))
+
 (define (opt-global-copy-subst-spmd-call-args
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
@@ -11149,7 +11285,23 @@
             doms
             use-block-id
             use-pos
-            (box-get rest))))]))
+            (box-get rest))))]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [src : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        [out : (Array CompilerIrSpmdCallArg)
+          (array.make-array CompilerIrSpmdCallArg count)]
+        (begin
+          (opt-global-copy-subst-spmd-call-args-array
+            facts
+            doms
+            use-block-id
+            use-pos
+            src
+            out
+            0)
+          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq out count))))]))
 
 (define (opt-global-copy-subst-instr
   [facts : OptGlobalCopyFactTable]
@@ -17586,6 +17738,20 @@
     [(IrSpmdCallArg class value ty)
       (IrSpmdCallArg class (opt-sccp-rewrite-value env value) ty)]))
 
+(define (opt-sccp-rewrite-spmd-call-args-array
+  [env : OptSccpEnv]
+  [src : (Array CompilerIrSpmdCallArg)]
+  [dst : (Array CompilerIrSpmdCallArg)]
+  [index : i64]) : unit
+  (if (>= index (array-length src))
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (opt-sccp-rewrite-spmd-call-arg env (array-ref src index)))
+      (opt-sccp-rewrite-spmd-call-args-array env src dst (+ index 1)))))
+
 (define (opt-sccp-rewrite-spmd-call-args
   [env : OptSccpEnv]
   [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
@@ -17594,7 +17760,16 @@
     [(IrSpmdCallArgCons arg rest)
       (IrSpmdCallArgCons
         (opt-sccp-rewrite-spmd-call-arg env arg)
-        (box (opt-sccp-rewrite-spmd-call-args env (box-get rest))))]))
+        (box (opt-sccp-rewrite-spmd-call-args env (box-get rest))))]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [count : i64 (struct-get seq len)]
+        [src : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        [out : (Array CompilerIrSpmdCallArg)
+          (array.make-array CompilerIrSpmdCallArg count)]
+        (begin
+          (opt-sccp-rewrite-spmd-call-args-array env src out 0)
+          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq out count))))]))
 
 (define (opt-sccp-rewrite-phi-inputs
   [env : OptSccpEnv]
@@ -27259,7 +27434,21 @@
           (opt-inline-census-spmd-args
             index
             (opt-inline-census-value index census value)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [out : OptInlineCensus census]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (set! out (opt-inline-census-value index out value))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (opt-inline-census-maybe-value
   [index : OptFunctionIndex]
@@ -31359,7 +31548,21 @@
           (opt-reach-spmd-call-args
             index
             (opt-reach-value index state value)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [out : OptReachState state]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (set! out (opt-reach-value index out value))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (opt-reach-maybe-value
   [index : OptFunctionIndex]
@@ -32421,7 +32624,21 @@
         [(IrSpmdCallArg _ value _)
           (opt-const-globals-disq-spmd-args
             (opt-const-globals-disq-value disq value)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(IrSpmdCallArgArray seq)
+      (let
+        [out : opt_string_i64_map.Map disq]
+        [i : i64 0]
+        [count : i64 (struct-get seq len)]
+        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
+        (begin
+          (while (< i count)
+            (begin
+              (match (array-ref slots i)
+                [(IrSpmdCallArg _ value _)
+                  (set! out (opt-const-globals-disq-value out value))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (opt-const-globals-disq-maybe
   [disq : opt_string_i64_map.Map]

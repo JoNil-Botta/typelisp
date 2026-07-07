@@ -214,6 +214,14 @@
       (string.eq
         (compiler-ir-instr-describe instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
+      (match instr
+        [(IrInstrSpmdCall payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrSpmdCallPayload _ _ _ _ stored-args _)
+              (match stored-args
+                [(IrSpmdCallArgArray seq) (= (struct-get seq len) 2)]
+                [_ false])])]
+        [_ false])
       (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)
       (= (compiler-ir-instr-call-arg-count instr) 2)
       (string.eq

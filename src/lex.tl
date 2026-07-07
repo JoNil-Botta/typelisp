@@ -38,8 +38,6 @@
 (import token)
 (import stdlib.text_buf)
 (import stdlib.string)
-(import stdlib.result)
-(import (result i64 String) as result_lex_i64)
 
 (defenum ResultTokens
   (Ok (Array token.Token))
@@ -48,6 +46,10 @@
 (defenum ResultSpannedTokens
   (Ok (Array token.SpannedToken))
   (Err token.SourceError))
+
+(defenum ResultLexI64
+  (Ok i64)
+  (Err String))
 
 (defenum ResultLexCheck
   (Ok i64)
@@ -216,24 +218,24 @@
       16
       2)))
 
-(define (scan-prefixed-int-end-result [src : String] [start : i64] [n : i64]) : result_lex_i64.Result
+(define (scan-prefixed-int-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
   (let
     [digits-start : i64 (number-digits-start src start)]
     [base : i64 (number-prefix-base src start)]
     [value-start : i64 (+ digits-start 2)]
     [end : i64 (scan-based-int-end src value-start n base)]
     (if (= end value-start)
-      (result_lex_i64.Err "lexer: malformed integer literal")
+      (ResultLexI64.Err "lexer: malformed integer literal")
       (if (if (< end n)
         (is-symbol-char (string.string-ref src end))
         false)
-        (result_lex_i64.Err "lexer: malformed integer literal")
-        (result_lex_i64.Ok end)))))
+        (ResultLexI64.Err "lexer: malformed integer literal")
+        (ResultLexI64.Ok end)))))
 
-(define (scan-number-end-result [src : String] [start : i64] [n : i64]) : result_lex_i64.Result
+(define (scan-number-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
   (if (number-prefixed? src start n)
     (scan-prefixed-int-end-result src start n)
-    (result_lex_i64.Ok (scan-number-end src start n))))
+    (ResultLexI64.Ok (scan-number-end src start n))))
 
 (define (parse-based-int [src : String] [start : i64] [end : i64] [base : i64]) : i64
   (let
@@ -385,7 +387,7 @@
 ;; following byte, so `\"` stays inside the string and a trailing backslash is an
 ;; unterminated string escape. Same bounds-check discipline as the other
 ;; scanners.
-(define (scan-str-end-result [src : String] [start : i64] [n : i64]) : result_lex_i64.Result
+(define (scan-str-end-result [src : String] [start : i64] [n : i64]) : ResultLexI64
   (let
     [j : i64 start]
     [keep : bool true]
@@ -408,13 +410,13 @@
             (set! message "lexer: unterminated string literal")
             (set! keep false))))
       (if (lex-ok? message)
-        (result_lex_i64.Ok j)
-        (result_lex_i64.Err message)))))
+        (ResultLexI64.Ok j)
+        (ResultLexI64.Err message)))))
 
 (define (scan-str-end [src : String] [start : i64] [n : i64]) : i64
   (match (scan-str-end-result src start n)
-    [(result_lex_i64.Ok end) end]
-    [(result_lex_i64.Err message) (io.panic message)]))
+    [(ResultLexI64.Ok end) end]
+    [(ResultLexI64.Err message) (io.panic message)]))
 
 (define (string-escape-piece [src : String] [idx : i64]) : String
   (let
@@ -518,36 +520,36 @@
             (ResultMaybeLexCharLiteral.No))]))
     (ResultMaybeLexCharLiteral.No)))
 
-(define (lex-check-step [src : String] [i : i64] [n : i64]) : result_lex_i64.Result
+(define (lex-check-step [src : String] [i : i64] [n : i64]) : ResultLexI64
   (let
     [c : char (string.string-ref src i)]
     (cond
-      [(is-space c) (result_lex_i64.Ok (+ i 1))]
-      [(or (= c '(') (= c '[')) (result_lex_i64.Ok (+ i 1))]
-      [(or (= c ')') (= c ']')) (result_lex_i64.Ok (+ i 1))]
+      [(is-space c) (ResultLexI64.Ok (+ i 1))]
+      [(or (= c '(') (= c '[')) (ResultLexI64.Ok (+ i 1))]
+      [(or (= c ')') (= c ']')) (ResultLexI64.Ok (+ i 1))]
       [(= c '\'')
         (match (apostrophe-char-literal-result src i n)
-          [(ResultMaybeLexCharLiteral.Ok _ end) (result_lex_i64.Ok end)]
-          [(ResultMaybeLexCharLiteral.Err message) (result_lex_i64.Err message)]
-          [(ResultMaybeLexCharLiteral.No) (result_lex_i64.Ok (+ i 1))])]
-      [(= c '`') (result_lex_i64.Ok (+ i 1))]
+          [(ResultMaybeLexCharLiteral.Ok _ end) (ResultLexI64.Ok end)]
+          [(ResultMaybeLexCharLiteral.Err message) (ResultLexI64.Err message)]
+          [(ResultMaybeLexCharLiteral.No) (ResultLexI64.Ok (+ i 1))])]
+      [(= c '`') (ResultLexI64.Ok (+ i 1))]
       [(= c ',')
         (if (< (+ i 1) n)
           (if (= (string.string-ref src (+ i 1)) '@')
-            (result_lex_i64.Ok (+ i 2))
-            (result_lex_i64.Ok (+ i 1)))
-          (result_lex_i64.Ok (+ i 1)))]
+            (ResultLexI64.Ok (+ i 2))
+            (ResultLexI64.Ok (+ i 1)))
+          (ResultLexI64.Ok (+ i 1)))]
       [(= c '"')
         (let
           [start : i64 (+ i 1)]
           (match (scan-str-end-result src start n)
-            [(result_lex_i64.Ok end) (result_lex_i64.Ok (+ end 1))]
-            [(result_lex_i64.Err message) (result_lex_i64.Err message)]))]
-      [(= c ';') (result_lex_i64.Ok (scan-comment-end src (+ i 1) n))]
+            [(ResultLexI64.Ok end) (ResultLexI64.Ok (+ end 1))]
+            [(ResultLexI64.Err message) (ResultLexI64.Err message)]))]
+      [(= c ';') (ResultLexI64.Ok (scan-comment-end src (+ i 1) n))]
       [(or (is-digit c) (negative-number-start? src i n))
         (scan-number-end-result src i n)]
-      [(is-symbol-char c) (result_lex_i64.Ok (scan-symbol-end src i n))]
-      [else (result_lex_i64.Err "lexer: unexpected character")])))
+      [(is-symbol-char c) (ResultLexI64.Ok (scan-symbol-end src i n))]
+      [else (ResultLexI64.Err "lexer: unexpected character")])))
 
 (define (lex-check-spanned [src : String]) : ResultLexCheck
   (let
@@ -558,8 +560,8 @@
     (begin
       (while (and (< i n) (lex-ok? message))
         (match (lex-check-step src i n)
-          [(result_lex_i64.Ok next) (set! i next)]
-          [(result_lex_i64.Err err)
+          [(ResultLexI64.Ok next) (set! i next)]
+          [(ResultLexI64.Err err)
             (begin
               (set! message err)
               (set! err-pos i)
@@ -568,11 +570,11 @@
         (ResultLexCheck.Ok i)
         (ResultLexCheck.Err (source-error-at src err-pos message))))))
 
-(define (lex-check [src : String]) : result_lex_i64.Result
+(define (lex-check [src : String]) : ResultLexI64
   (match (lex-check-spanned src)
-    [(ResultLexCheck.Ok end) (result_lex_i64.Ok end)]
+    [(ResultLexCheck.Ok end) (ResultLexI64.Ok end)]
     [(ResultLexCheck.Err err)
-      (result_lex_i64.Err (token.source-error-message err))]))
+      (ResultLexI64.Err (token.source-error-message err))]))
 
 ;; Lex `src`, recording each emitted `token.Token` value into `toks` (which must be
 ;; large enough to hold every token plus the `token.Token.End` sentinel) and returning the
@@ -671,7 +673,7 @@
               (let
                 [start : i64 (+ i 1)]
                 (match (scan-str-end-result src start n)
-                  [(result_lex_i64.Ok end)
+                  [(ResultLexI64.Ok end)
                     (begin
                       (array-set! starts count i)
                       (array-set!
@@ -681,7 +683,7 @@
                           (unescape-string-literal src start end)))
                       (set! count (+ count 1))
                       (set! i (+ end 1)))]
-                  [(result_lex_i64.Err err)
+                  [(ResultLexI64.Err err)
                     (begin
                       (set! ok false)
                       (set! message err)
@@ -689,7 +691,7 @@
             [(= c ';') (set! i (scan-comment-end src (+ i 1) n))]
             [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
-                [(result_lex_i64.Ok end)
+                [(ResultLexI64.Ok end)
                   (begin
                     (array-set! starts count i)
                     (if (number-float? src i n)
@@ -705,7 +707,7 @@
                           (number-int-source-text src i end n))))
                     (set! count (+ count 1))
                     (set! i end))]
-                [(result_lex_i64.Err err)
+                [(ResultLexI64.Err err)
                   (begin
                     (set! ok false)
                     (set! message err)
@@ -915,7 +917,7 @@
                 [token-line : i64 line]
                 [token-col : i64 col]
                 (match (scan-str-end-result src start n)
-                  [(result_lex_i64.Ok end)
+                  [(ResultLexI64.Ok end)
                     (begin
                       (array-set!
                         stoks
@@ -932,7 +934,7 @@
                             (set! line next-line)
                             (set! col next-col))])
                       (set! i (+ end 1)))]
-                  [(result_lex_i64.Err err)
+                  [(ResultLexI64.Err err)
                     (begin
                       (set! ok false)
                       (set! message err)
@@ -945,7 +947,7 @@
                   (set! i end)))]
             [(or (is-digit c) (negative-number-start? src i n))
               (match (scan-number-end-result src i n)
-                [(result_lex_i64.Ok end)
+                [(ResultLexI64.Ok end)
                   (let
                     [token-line : i64 line]
                     [token-col : i64 col]
@@ -971,7 +973,7 @@
                       (set! count (+ count 1))
                       (set! col (+ col (- end i)))
                       (set! i end)))]
-                [(result_lex_i64.Err err)
+                [(ResultLexI64.Err err)
                   (begin
                     (set! ok false)
                     (set! message err)
@@ -1394,13 +1396,13 @@
 
 (define (lex-check-prefixed-int-ok?) : bool
   (match (lex-check "(0x2a -0b101010)")
-    [(result_lex_i64.Ok _) true]
-    [(result_lex_i64.Err _) false]))
+    [(ResultLexI64.Ok _) true]
+    [(ResultLexI64.Err _) false]))
 
 (define (lex-check-prefixed-int-error-ok?) : bool
   (match (lex-check "0b102")
-    [(result_lex_i64.Ok _) false]
-    [(result_lex_i64.Err message)
+    [(ResultLexI64.Ok _) false]
+    [(ResultLexI64.Err message)
       (string.eq message "lexer: malformed integer literal")]))
 
 (define (lex-string-source [inner : String]) : String

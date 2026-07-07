@@ -44598,7 +44598,6 @@
         (while (< i macro-generated-module-memo-capacity)
           (begin
             (array-set! macro-generated-module-memo-keys i 0)
-            (array-set! macro-generated-module-memo-full-bodies i false)
             (array-set!
               macro-generated-module-memo-summaries
               i
@@ -44613,9 +44612,7 @@
     (* identity-id 2654435761)
     (- macro-generated-module-memo-capacity 1)))
 
-(define (macro-generated-module-memo-get
-  [identity : String]
-  [requires-full-body? : bool]) : CompilerMaybeString
+(define (macro-generated-module-memo-get [identity : String]) : CompilerMaybeString
   (let
     [identity-id : i64 (intern identity)]
     (begin
@@ -44635,20 +44632,13 @@
               (if (= slot 0)
                 (set! done true)
                 (if (= slot key)
-                  (if (and
-                    requires-full-body?
-                    (not
-                      (array-ref macro-generated-module-memo-full-bodies cursor)))
-                    (set! done true)
-                    (begin
-                      (set!
-                        out
-                        (CompilerSomeString
-                          (intern-str
-                            (array-ref
-                              macro-generated-module-memo-targets
-                              cursor))))
-                      (set! done true)))
+                  (begin
+                    (set!
+                      out
+                      (CompilerSomeString
+                        (intern-str
+                          (array-ref macro-generated-module-memo-targets cursor))))
+                    (set! done true))
                   (begin
                     (set!
                       cursor
@@ -44777,6 +44767,45 @@
                     (set! steps (+ steps 1)))))))
           out)))))
 
+(define (macro-generated-module-memo-full-body? [identity : String]) : bool
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-module-memo-ensure!)
+      (let
+        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : bool false]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps macro-generated-module-memo-capacity))
+            (let
+              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set!
+                      out
+                      (array-ref macro-generated-module-memo-full-bodies cursor))
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- macro-generated-module-memo-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (macro-generated-module-memo-get-full [identity : String]) : CompilerMaybeString
+  (if (macro-generated-module-memo-full-body? identity)
+    (macro-generated-module-memo-get identity)
+    CompilerNoString))
+
 (define (macro-generated-module-memo-full-body-gate-ok?) : bool
   (let
     [_reset : unit (macro-generated-module-memo-reset!)]
@@ -44787,11 +44816,11 @@
         (ast-decl-list-new)
         false)]
     [enum-hit : bool
-      (match (macro-generated-module-memo-get "test.generated.result" false)
+      (match (macro-generated-module-memo-get "test.generated.result")
         [(CompilerSomeString target) (string.eq target "test.generated.target")]
         [(CompilerNoString) false])]
     [full-miss : bool
-      (match (macro-generated-module-memo-get "test.generated.result" true)
+      (match (macro-generated-module-memo-get-full "test.generated.result")
         [(CompilerSomeString _) false]
         [(CompilerNoString) true])]
     [_full : unit
@@ -44801,7 +44830,7 @@
         (ast-decl-list-new)
         true)]
     [full-hit : bool
-      (match (macro-generated-module-memo-get "test.generated.result" true)
+      (match (macro-generated-module-memo-get-full "test.generated.result")
         [(CompilerSomeString target) (string.eq target "test.generated.target")]
         [(CompilerNoString) false])]
     [_ignored-downgrade : unit
@@ -44811,7 +44840,7 @@
         (ast-decl-list-new)
         false)]
     [still-full : bool
-      (match (macro-generated-module-memo-get "test.generated.result" true)
+      (match (macro-generated-module-memo-get-full "test.generated.result")
         [(CompilerSomeString target) (string.eq target "test.generated.target")]
         [(CompilerNoString) false])]
     (and enum-hit full-miss full-hit still-full)))
@@ -50619,18 +50648,30 @@
         [idx : i64 start]
         [found : bool false]
         [helper : bool false]
+        [done : bool false]
         (begin
-          (while (and (not helper) (<= (+ idx alias-len) n))
-            (if (and
-              (= (string.string-ref source idx) alias-first)
-              (compiler-load-source-qualified-alias-token-at? source alias idx))
-              (begin
-                (set! found true)
-                (if (macro-generated-result-source-helper-at? source alias idx)
-                  (set! helper true)
-                  unit))
-              unit)
-            (set! idx (+ idx 1)))
+          (while (and (not helper) (not done))
+            (begin
+              (set!
+                idx
+                (string.index-of-byte (& source) idx (cast alias-first : u8)))
+              (if (or (< idx 0) (> (+ idx alias-len) n))
+                (set! done true)
+                (begin
+                  (if (compiler-load-source-qualified-alias-token-at?
+                    source
+                    alias
+                    idx)
+                    (begin
+                      (set! found true)
+                      (if (macro-generated-result-source-helper-at?
+                        source
+                        alias
+                        idx)
+                        (set! helper true)
+                        unit))
+                    unit)
+                  (set! idx (+ idx 1))))))
           (and found (not helper)))))))
 
 (define (macro-generated-result-source-enum-only?
@@ -52866,9 +52907,12 @@
                                     call-ctx
                                     definition-module
                                     params)
-                                    (macro-generated-module-memo-get
-                                      identity
+                                    (if (and
+                                      result-macro?
                                       (not result-enum-only?))
+                                      (macro-generated-module-memo-get-full
+                                        identity)
+                                      (macro-generated-module-memo-get identity))
                                     CompilerNoString)]
                                 (match shortcut-target
                                   [(CompilerSomeString target-module)

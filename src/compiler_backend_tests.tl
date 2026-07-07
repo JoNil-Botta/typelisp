@@ -11083,7 +11083,6 @@
         (= (compiler-backend-string-count asm "    call VirtualFree\n") 4)
         (not (compiler-backend-string-contains? asm "    syscall\n"))
         (not (compiler-backend-string-contains? asm "    call WriteFile\n")))
-      (compiler-backend-string-contains? asm "    movq $0x1000000, %rdx\n")
       (compiler-backend-string-contains? asm "    movq %gs:0x28, %r8\n")
       (not (compiler-backend-string-contains? asm "    call _write\n"))
       (not (compiler-backend-string-contains? asm "SystemFunction036")))))

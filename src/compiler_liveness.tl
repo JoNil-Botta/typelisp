@@ -9,6 +9,7 @@
 (import stdlib.string)
 (import "compiler_ir_types.tl")
 (import stdlib.hashmap)
+(import (hashmap String i64) as live_label_map)
 
 (defstruct CompilerLiveI64Set
   (words (Array i64)))
@@ -38,12 +39,12 @@
   (Cons CompilerLiveBlock (Box CompilerLiveBlockList)))
 
 (defstruct CompilerLiveBlockGraph
-  (ids hashmap.StringI64Map)
+  (ids live_label_map.Map)
   (blocks (Array CompilerLiveBlock))
   (successors (Array CompilerLiveIndexVec)))
 
 (defenum CompilerFunctionLiveness
-  (Liveness hashmap.StringI64Map (Array CompilerLiveBlock)))
+  (Liveness live_label_map.Map (Array CompilerLiveBlock)))
 
 (defenum CompilerLiveMaybeBlock
   (No)
@@ -913,25 +914,32 @@
     [(CompilerLiveBlockList.Cons _ rest)
       (+ 1 (compiler-live-block-count (box-get rest)))]))
 
+(define (compiler-live-label-id-map-get
+  [ids : (& ids live_label_map.Map)]
+  [label : String]) : i64
+  (match (live_label_map.get-borrowed ids (& label))
+    [(live_label_map.LookupFound slot) slot]
+    [(live_label_map.LookupMissing) -1]))
+
 (define (compiler-live-block-graph-fill!
   [blocks : CompilerLiveBlockList]
-  [ids : hashmap.StringI64Map]
+  [ids : (&mut ids live_label_map.Map)]
   [values : (Array CompilerLiveBlock)]
-  [index : i64]) : hashmap.StringI64Map
+  [index : i64]) : unit
   (match blocks
-    [(CompilerLiveBlockList.Nil) ids]
+    [(CompilerLiveBlockList.Nil) unit]
     [(CompilerLiveBlockList.Cons block rest)
       (match block
         [(CompilerLiveBlock.Block label _ _ _ _ _ _)
           (begin
             (array-set! values index block)
-            (if (hashmap.string-i64-map-contains? ids label)
-              (io.panic "liveness: duplicate block label")
+            (if (live_label_map.insert-if-absent? ids label index)
               (compiler-live-block-graph-fill!
                 (box-get rest)
-                (hashmap.string-i64-map-put ids label index)
+                ids
                 values
-                (+ index 1))))])]))
+                (+ index 1))
+              (io.panic "liveness: duplicate block label")))])]))
 
 (define (compiler-live-block-graph-build [blocks : CompilerLiveBlockList]) : CompilerLiveBlockGraph
   (let
@@ -939,62 +947,59 @@
     [values : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
     [successors : (Array CompilerLiveIndexVec)
       (make-array CompilerLiveIndexVec count)]
-    [ids : hashmap.StringI64Map
-      (compiler-live-block-graph-fill!
-        blocks
-        (hashmap.string-i64-map-with-capacity (+ (* count 2) 1))
-        values
-        0)]
+    [ids : live_label_map.Map (live_label_map.with-capacity (+ (* count 2) 1))]
     (begin
-      (compiler-live-block-graph-fill-successors! blocks ids successors 0)
+      (compiler-live-block-graph-fill! blocks (&mut ids) values 0)
+      (compiler-live-block-graph-fill-successors! blocks (& ids) successors 0)
       (CompilerLiveBlockGraph ids values successors))))
 
-(define (compiler-live-label-set-index-count
-  [labels : CompilerLiveLabelSet]
-  [ids : hashmap.StringI64Map]) : i64
-  (match labels
-    [(CompilerLiveLabelSet.Nil) 0]
-    [(CompilerLiveLabelSet.Cons label rest)
-      (let
-        [rest-count : i64
-          (compiler-live-label-set-index-count (box-get rest) ids)]
-        (match (hashmap.string-i64-map-get ids label)
-          [(hashmap.StringI64MapFound _) (+ rest-count 1)]
-          [(hashmap.StringI64MapMissing) rest-count]))]))
+(define (compiler-live-i64-array-prefix-copy
+  [items : (Array i64)]
+  [count : i64]) : (Array i64)
+  (if (= count (array-length items))
+    items
+    (let
+      [out : (Array i64) (make-array i64 count)]
+      [i : i64 0]
+      (begin
+        (while (< i count)
+          (begin
+            (array-set! out i (array-ref items i))
+            (set! i (+ i 1))))
+        out))))
 
 (define (compiler-live-label-set-fill-indexes!
   [labels : CompilerLiveLabelSet]
-  [ids : hashmap.StringI64Map]
+  [ids : (& ids live_label_map.Map)]
   [items : (Array i64)]
   [index : i64]) : i64
   (match labels
     [(CompilerLiveLabelSet.Nil) index]
     [(CompilerLiveLabelSet.Cons label rest)
-      (match (hashmap.string-i64-map-get ids label)
-        [(hashmap.StringI64MapFound slot)
+      (let
+        [slot : i64 (compiler-live-label-id-map-get ids label)]
+        (if (>= slot 0)
           (begin
             (array-set! items index slot)
             (compiler-live-label-set-fill-indexes!
               (box-get rest)
               ids
               items
-              (+ index 1)))]
-        [(hashmap.StringI64MapMissing)
-          (compiler-live-label-set-fill-indexes! (box-get rest) ids items index)])]))
+              (+ index 1)))
+          (compiler-live-label-set-fill-indexes! (box-get rest) ids items index)))]))
 
 (define (compiler-live-label-set-to-index-vec
   [labels : CompilerLiveLabelSet]
-  [ids : hashmap.StringI64Map]) : CompilerLiveIndexVec
+  [ids : (& ids live_label_map.Map)]) : CompilerLiveIndexVec
   (let
-    [count : i64 (compiler-live-label-set-index-count labels ids)]
-    [items : (Array i64) (make-array i64 count)]
-    (begin
-      (compiler-live-label-set-fill-indexes! labels ids items 0)
-      (CompilerLiveIndexVec items))))
+    [items : (Array i64)
+      (make-array i64 (compiler-live-label-set-count labels))]
+    [count : i64 (compiler-live-label-set-fill-indexes! labels ids items 0)]
+    (CompilerLiveIndexVec (compiler-live-i64-array-prefix-copy items count))))
 
 (define (compiler-live-block-graph-fill-successors!
   [blocks : CompilerLiveBlockList]
-  [ids : hashmap.StringI64Map]
+  [ids : (& ids live_label_map.Map)]
   [successors : (Array CompilerLiveIndexVec)]
   [index : i64]) : unit
   (match blocks
@@ -1016,10 +1021,12 @@
 (define (compiler-live-graph-find-block
   [graph : CompilerLiveBlockGraph]
   [label : String]) : CompilerLiveMaybeBlock
-  (match (hashmap.string-i64-map-get (struct-get graph ids) label)
-    [(hashmap.StringI64MapFound slot)
-      (CompilerLiveMaybeBlock.Some (array-ref (struct-get graph blocks) slot))]
-    [(hashmap.StringI64MapMissing) CompilerLiveMaybeBlock.No]))
+  (let
+    [slot : i64
+      (compiler-live-label-id-map-get (& (struct-get graph ids)) label)]
+    (if (>= slot 0)
+      (CompilerLiveMaybeBlock.Some (array-ref (struct-get graph blocks) slot))
+      CompilerLiveMaybeBlock.No)))
 
 (define (compiler-live-successor-live-out-graph-loop
   [items : (Array i64)]
@@ -1371,7 +1378,7 @@
 ;; Accumulate every phi input (V, predLabel) of one phi into phi-out[ids[predLabel]].
 (define (compiler-live-phi-out-add-inputs!
   [inputs : CompilerIrPhiInputList]
-  [ids : hashmap.StringI64Map]
+  [ids : (& ids live_label_map.Map)]
   [phi-out : (Array CompilerLiveI64Set)]) : unit
   (match inputs
     [(CompilerIrPhiInputList.Nil) unit]
@@ -1379,21 +1386,22 @@
       (begin
         (match value
           [(CompilerIrValue.Var v)
-            (match (hashmap.string-i64-map-get ids label)
-              [(hashmap.StringI64MapFound slot)
+            (let
+              [slot : i64 (compiler-live-label-id-map-get ids label)]
+              (if (>= slot 0)
                 (if (and (>= slot 0) (< slot (array-length phi-out)))
                   (array-set!
                     phi-out
                     slot
                     (compiler-live-set-insert (array-ref phi-out slot) v))
-                  unit)]
-              [(hashmap.StringI64MapMissing) unit])]
+                  unit)
+                unit))]
           [_ unit])
         (compiler-live-phi-out-add-inputs! (box-get rest) ids phi-out))]))
 
 (define (compiler-live-phi-out-add-seq!
   [instrs : CompilerIrInstrSeq]
-  [ids : hashmap.StringI64Map]
+  [ids : (& ids live_label_map.Map)]
   [phi-out : (Array CompilerLiveI64Set)]) : unit
   (let
     [count : i64 (compiler-ir-instr-seq-count instrs)]
@@ -1408,7 +1416,7 @@
 
 (define (compiler-live-phi-out-build!
   [blocks : CompilerIrBlockList]
-  [ids : hashmap.StringI64Map]
+  [ids : (& ids live_label_map.Map)]
   [phi-out : (Array CompilerLiveI64Set)]) : unit
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
@@ -1597,7 +1605,7 @@
                 (set! i (+ i 1)))))
           (compiler-live-phi-out-build!
             walk-blocks
-            (struct-get graph0 ids)
+            (& (struct-get graph0 ids))
             phi-out)
           (let
             [graph : CompilerLiveBlockGraph
@@ -1630,15 +1638,23 @@
   (match liveness
     [(CompilerFunctionLiveness.Liveness _ blocks) (array-ref blocks index)]))
 
+(define (compiler-live-function-block-index
+  [liveness : CompilerFunctionLiveness]
+  [label : String]) : i64
+  (match liveness
+    [(CompilerFunctionLiveness.Liveness ids _)
+      (compiler-live-label-id-map-get (& ids) label)]))
+
 (define (compiler-live-function-find-block
   [liveness : CompilerFunctionLiveness]
   [label : String]) : CompilerLiveMaybeBlock
   (match liveness
     [(CompilerFunctionLiveness.Liveness ids blocks)
-      (match (hashmap.string-i64-map-get ids label)
-        [(hashmap.StringI64MapFound index)
-          (CompilerLiveMaybeBlock.Some (array-ref blocks index))]
-        [(hashmap.StringI64MapMissing) CompilerLiveMaybeBlock.No])]))
+      (let
+        [index : i64 (compiler-live-label-id-map-get (& ids) label)]
+        (if (>= index 0)
+          (CompilerLiveMaybeBlock.Some (array-ref blocks index))
+          CompilerLiveMaybeBlock.No))]))
 
 (define (compiler-live-block-label [block : CompilerLiveBlock]) : String
   (match block
@@ -2072,7 +2088,7 @@
 
 (define (compiler-live-block-graph-fill-successors-from-array!
   [blocks : (Array CompilerLiveBlock)]
-  [ids : hashmap.StringI64Map]
+  [ids : (& ids live_label_map.Map)]
   [successors : (Array CompilerLiveIndexVec)]
   [index : i64]) : unit
   (if (>= index (array-length blocks))
@@ -2096,20 +2112,20 @@
     [count : i64 (array-length blocks)]
     [successors : (Array CompilerLiveIndexVec)
       (make-array CompilerLiveIndexVec count)]
-    [ids : hashmap.StringI64Map
-      (hashmap.string-i64-map-with-capacity (+ (* count 2) 1))]
+    [ids : live_label_map.Map (live_label_map.with-capacity (+ (* count 2) 1))]
     [i : i64 0]
     (begin
       (while (< i count)
         (match (array-ref blocks i)
           [(CompilerLiveBlock.Block label _ _ _ _ _ _)
-            (if (not (hashmap.string-i64-map-contains? ids label))
-              (set! ids (hashmap.string-i64-map-put ids label i))
+            (let
+              [_inserted : bool
+                (live_label_map.insert-if-absent? (&mut ids) label i)]
               unit)])
         (set! i (+ i 1)))
       (compiler-live-block-graph-fill-successors-from-array!
         blocks
-        ids
+        (& ids)
         successors
         0)
       (CompilerLiveBlockGraph ids blocks successors))))

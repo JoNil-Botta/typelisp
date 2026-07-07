@@ -52780,13 +52780,6 @@
                                   (macro-result-module-macro?
                                     macro-name
                                     definition-module)]
-                                [result-enum-only? : bool
-                                  (if result-macro?
-                                    (macro-generated-result-source-enum-only?
-                                      decl-path
-                                      alias
-                                      span)
-                                    false)]
                                 [shortcut-target : CompilerMaybeString
                                   (if (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
@@ -52814,6 +52807,11 @@
                                   [(CompilerNoString)
                                     (if result-macro?
                                       (let
+                                        [result-enum-only? : bool
+                                          (macro-generated-result-source-enum-only?
+                                            decl-path
+                                            alias
+                                            span)]
                                         [fast-result : ResultMacroParsedDecls
                                           (begin
                                             (cfg

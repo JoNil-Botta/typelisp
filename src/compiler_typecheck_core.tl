@@ -52806,10 +52806,7 @@
                                               orig-decls
                                               module
                                               expanded-args
-                                              (macro-generated-result-source-enum-only?
-                                                decl-path
-                                                alias
-                                                span)
+                                              false
                                               call-expr))]
                                         (begin
                                           (cfg

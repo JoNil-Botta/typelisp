@@ -433,6 +433,15 @@ tools\stage0\typelisp.exe run src\compiler_parse_core.tl --stdlib-root stdlib --
 tools\stage0\typelisp.exe run src\compiler_backend_tests.tl --stdlib-root stdlib --stdlib-root src
 ```
 
+### Assembly shape gates
+
+`scripts/verify-asm-shape-gates.sh` owns Linux opt2 assembly-shape assertions
+for performance-sensitive regalloc/backend fixtures. Use this layer when a
+native integration fixture can still return the right exit code while silently
+falling back to slow codegen. The script compiles each fixture with the selected
+CI compiler, extracts the intended function body, and checks for the fast shape
+and the absence of known slow markers.
+
 ### Selfhost native generated programs
 
 `scripts/verify-native-link-linux.sh` covers Linux-only cases where the selfhost

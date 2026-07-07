@@ -12674,7 +12674,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-source-expr-policy-ok ctx inner))]
-    [(AstExpr.PtrAddrOf _) ResultTcUnit.Ok]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tc-source-expr-policy-ok ctx place))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -13607,18 +13610,6 @@
               "typecheck: atomic update expects exactly two arguments"))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
-(define (tc-ptr-addr-of-cell-type-ok? [ty : AstType]) : bool
-  (if (tc-integer-type? ty)
-    true
-    (match (tc-type-strip-region ty)
-      [(AstType.F64) true]
-      [(AstType.F32) true]
-      [(AstType.Bool) true]
-      [(AstType.Char) true]
-      [(AstType.Ptr _) true]
-      [(AstType.MutPtr _) true]
-      [_ false])))
-
 (define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
   (match (tc-type-env-spine-step env)
     [(TcTypeEnvSpineStep.Done)
@@ -13633,6 +13624,79 @@
         (if (= key (tc-name-id name))
           (ResultTcType.Ok ty)
           (tc-ptr-addr-of-local-lookup rest-env name)))]))
+
+(define (tc-ptr-addr-of-place
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [place : AstExpr]) : ResultTcType
+  (match (ast-expr-unspan place)
+    [(AstExpr.Var name)
+      (match (tc-ptr-addr-of-local-lookup env (intern-str name))
+        [(ResultTcType.Ok ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx ty))
+            [(AstType.Struct struct-name)
+              (if (tc-name-register-resident? ctx (intern-str struct-name))
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
+                (ResultTcType.Ok ty))]
+            [(AstType.StructArgs struct-name _)
+              (if (tc-name-register-resident? ctx (intern-str struct-name))
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
+                (ResultTcType.Ok ty))]
+            [(AstType.Enum enum-name)
+              (if (tc-name-register-resident? ctx (intern-str enum-name))
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
+                (ResultTcType.Ok ty))]
+            [(AstType.EnumArgs enum-name _)
+              (if (tc-name-register-resident? ctx (intern-str enum-name))
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of register-resident aggregate roots are not addressable")
+                (ResultTcType.Ok ty))]
+            [_ (ResultTcType.Ok ty)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [(AstExpr.StructGet receiver-box field)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        (match (tc-ptr-addr-of-place ctx env receiver)
+          [(ResultTcType.Ok receiver-ty)
+            (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
+              [(AstType.Struct _)
+                (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
+              [(AstType.StructArgs _ _)
+                (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
+              [_
+                (ResultTcType.Err
+                  "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+    [(AstExpr.ArrayRef array-box index-box)
+      (match (tc-expr-with-expected-or-actual-id
+        ctx
+        env
+        index-box
+        (AstType.I64))
+        [(ResultTcType.Ok index-ty)
+          (if (tc-integer-type? index-ty)
+            (let
+              [array : AstExpr (ast-node-get array-box)]
+              (match (tc-ptr-addr-of-place ctx env array)
+                [(ResultTcType.Ok array-ty)
+                  (match (tc-type-strip-region (tc-resolve-type ctx array-ty))
+                    [(AstType.Array elem-ty _)
+                      (ResultTcType.Ok (ty-node-get elem-ty))]
+                    [(AstType.DynArray _)
+                      (ResultTcType.Err
+                        "typecheck: ptr-addr-of dynamic array elements are not addressable; use array-data plus ptr-offset")]
+                    [_
+                      (ResultTcType.Err
+                        "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")])]
+                [(ResultTcType.Err message) (ResultTcType.Err message)]))
+            (ResultTcType.Err "typecheck: array index must be integer"))]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+    [_
+      (ResultTcType.Err
+        "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")]))
 
 (define (tc-require-unsafe [env : TcTypeEnv] [name : String]) : ResultTcUnit
   (if (tc-in-unsafe? env)
@@ -25737,8 +25801,16 @@
                 (tc-spmd-finish expr-ty class next-spmd-env)])]
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
-    [(AstExpr.PtrAddrOf _)
-      (tc-spmd-finish expr-ty TcSpmdClass.Uniform spmd-env)]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (match (tc-spmd-expr ctx env spmd-env place)
+          [(ResultTcSpmdExprInfo.Ok info)
+            (match info
+              [(TcSpmdExprInfo _ class next-spmd-env)
+                (tc-spmd-finish expr-ty class next-spmd-env)])]
+          [(ResultTcSpmdExprInfo.Err message)
+            (ResultTcSpmdExprInfo.Err message)]))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -26410,10 +26482,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-uses-free-name? inner name bound))]
-    [(AstExpr.PtrAddrOf var-name)
-      (and
-        (string.eq (intern-str var-name) name)
-        (not (tc-string-list-contains bound name)))]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tc-expr-uses-free-name? place name bound))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -26902,7 +26974,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-expr-sets-free-name? inner name bound))]
-    [(AstExpr.PtrAddrOf _) false]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tc-expr-sets-free-name? place name bound))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -32407,17 +32482,15 @@
 (define (tc-ptr-addr-of-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name : String]) : ResultTcType
+  [place : AstExpr]) : ResultTcType
   (match (tc-require-unsafe env "ptr-addr-of")
     [(ResultTcUnit.Ok)
-      (match (tc-ptr-addr-of-local-lookup env name)
+      (match (tc-ptr-addr-of-place ctx env place)
         [(ResultTcType.Ok ty)
           (let
             [resolved : AstType (tc-resolve-type ctx ty)]
-            (if (tc-ptr-addr-of-cell-type-ok? resolved)
-              (ResultTcType.Ok (ast-ty-mut-ptr resolved))
-              (ResultTcType.Err
-                "typecheck: ptr-addr-of supports local scalar cells only")))]
+            (ResultTcType.Ok
+              (ast-ty-mut-ptr (tc-type-without-regions resolved))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
@@ -34379,7 +34452,10 @@
               (ResultTcType.Err
                 "typecheck: ptr-null? requires a raw pointer operand")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
-    [(AstExpr.PtrAddrOf name) (tc-ptr-addr-of-expr ctx env (intern-str name))]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tc-ptr-addr-of-expr ctx env place))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -35622,13 +35698,18 @@
         "ptr-null?"
         "raw pointer operation"
         inner)]
-    [(AstExpr.PtrAddrOf _)
-      (tc-comptime-purity-reject-or-template-ok
-        expr
+    [(AstExpr.PtrAddrOf place)
+      (tc-comptime-purity-reject-or-template-node
+        ctx
+        env
+        bound
         chain
+        seen
         template?
+        expr
         "ptr-addr-of"
-        "raw pointer operation")]
+        "raw pointer operation"
+        place)]
     [(AstExpr.PtrRead ptr)
       (tc-comptime-purity-reject-or-template-node
         ctx
@@ -38596,6 +38677,53 @@
   [expr-id : i64]) : TcMoveResult
   (tc-move-check-expr ctx env locals loop-carried moved (ast-node-get expr-id)))
 
+(define (tc-move-check-ptr-addr-of-place
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [loop-carried : TcMovedSet]
+  [moved : TcMovedSet]
+  [place : AstExpr]
+  [origin : AstExpr]) : TcMoveResult
+  (match (ast-expr-unspan place)
+    [(AstExpr.Var name)
+      (let
+        [name-text : String (intern-str name)]
+        (if (tc-moved-contains? moved name-text)
+          (tc-move-rich-use-conflict-result
+            (tc-moved-conflict moved name-text)
+            name-text
+            origin
+            name-text)
+          (TcMoveResult.Ok moved)))]
+    [(AstExpr.StructGet receiver-box _)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        (tc-move-check-ptr-addr-of-place
+          ctx
+          env
+          locals
+          loop-carried
+          moved
+          receiver
+          origin))]
+    [(AstExpr.ArrayRef array-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (tc-move-check-ptr-addr-of-place
+          ctx
+          env
+          locals
+          loop-carried
+          moved
+          array
+          origin)
+          [(TcMoveResult.Ok moved1)
+            (tc-move-check-expr ctx env locals loop-carried moved1 index)]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+    [_ (tc-move-check-expr ctx env locals loop-carried moved place)]))
+
 (define (tc-move-check-expr
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -39320,14 +39448,17 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-move-check-expr ctx env locals loop-carried moved inner))]
-    [(AstExpr.PtrAddrOf name)
-      (if (tc-moved-contains? moved (intern-str name))
-        (tc-move-rich-use-conflict-result
-          (tc-moved-conflict moved (intern-str name))
-          (intern-str name)
-          expr
-          (intern-str name))
-        (TcMoveResult.Ok moved))]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tc-move-check-ptr-addr-of-place
+          ctx
+          env
+          locals
+          loop-carried
+          moved
+          place
+          expr))]
     [(AstExpr.PtrRead inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -43097,7 +43228,10 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (tc-borrow-check-expr ctx env locals borrowed inner))]
-    [(AstExpr.PtrAddrOf _) (TcBorrowCheckResult.Ok borrowed)]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (tc-borrow-check-expr ctx env locals borrowed place))]
     [(AstExpr.PtrRead inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -46023,12 +46157,8 @@
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExpr.PtrNullCheck ptr-id)
       (macro-child-form1 "ptr-null?" ptr-id span origin)]
-    [(AstExpr.PtrAddrOf name)
-      (ResultMacroSexpr.Ok
-        (macro-form1
-          "ptr-addr-of"
-          (SpannedSexpr.Sym (macro-output-syntax-name (intern-str name)) span)
-          span))]
+    [(AstExpr.PtrAddrOf place-id)
+      (macro-child-form1 "ptr-addr-of" place-id span origin)]
     [(AstExpr.PtrRead ptr-id) (macro-child-form1 "ptr-read" ptr-id span origin)]
     [(AstExpr.PtrWrite ptr-id value-id)
       (macro-child-form2 "ptr-write!" ptr-id value-id span origin)]
@@ -47357,9 +47487,11 @@
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
         (ast-expr-ptr-null-check (macro-hygiene-expr ptr env macro-name depth)))]
-    [(AstExpr.PtrAddrOf name)
-      (ast-expr-ptr-addr-of
-        (macro-hygiene-rename-var env macro-name (intern-str name)))]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (ast-expr-ptr-addr-of-id
+          (macro-hygiene-expr place env macro-name depth)))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -51703,6 +51835,13 @@
             [(ResultMacroExpr.Ok ninner)
               (ResultMacroExpr.Ok (ast-expr-array-data ninner))]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+      [(AstExpr.PtrAddrOf place-box)
+        (let
+          [place : AstExpr (ast-node-get place-box)]
+          (match (macro-expand-expr ctx env decls depth place)
+            [(ResultMacroExpr.Ok nplace)
+              (ResultMacroExpr.Ok (ast-expr-ptr-addr-of-id nplace))]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExpr.BinaryData bytes)
         (ResultMacroExpr.Ok (ast-node-push (AstExpr.BinaryData bytes)))]
       [(AstExpr.SpmdProgramIndex)
@@ -53415,7 +53554,7 @@
     [(AstExpr.TypeLiteral _) false]
     [(AstExpr.Init _) false]
     [(AstExpr.PtrNull _) false]
-    [(AstExpr.PtrAddrOf _) false]
+    [(AstExpr.PtrAddrOf place) (macro-node-uses-macro? ctx decls place)]
     [(AstExpr.SpmdProgramIndex) false]
     [(AstExpr.SpmdProgramCount) false]
     [(AstExpr.ProgramArgc) false]
@@ -53465,10 +53604,12 @@
 ;;     recurse into their child expressions here as well, so ordinary
 ;;     scoped/resource/vector code without macro calls does not force the full
 ;;     macro setup path.
-;; A bare `AstExpr.Var`/`AstExpr.Set` target/`AstExpr.PtrAddrOf` is never a call ->
-;; false (matching the gate). This walk covers expr/compat macros only; the call
-;; site additionally gates on `has-expr-type-macros` being false (type macros
-;; expand from type positions the gate does not see).
+;; A bare `AstExpr.Var`/`AstExpr.Set` target is never a call -> false (matching
+;; the gate). `AstExpr.PtrAddrOf` follows its place operand because addressable
+;; places can now contain macro-expanded field/element forms. This walk covers
+;; expr/compat macros only; the call site additionally gates on
+;; `has-expr-type-macros` being false (type macros expand from type positions the
+;; gate does not see).
 (define (macro-expr-list-might-fire? [exprs : AstExprList]) : bool
   (macro-expr-list-might-fire-at? (& exprs) 0))
 
@@ -53837,7 +53978,10 @@
     [(AstExpr.TypeLiteral _) false]
     [(AstExpr.Init _) false]
     [(AstExpr.PtrNull _) false]
-    [(AstExpr.PtrAddrOf _) false]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (macro-expr-might-fire? place))]
     [(AstExpr.ProgramArgc) false]
     [(AstExpr.ProgramArgv) false]
     [(AstExpr.ProgramEnvp) false]
@@ -53924,7 +54068,7 @@
     [(AstExpr.Var _) false]
     [(AstExpr.Init _) false]
     [(AstExpr.PtrNull _) false]
-    [(AstExpr.PtrAddrOf _) false]
+    [(AstExpr.PtrAddrOf place) (ctfe-node-has-type-literal? place)]
     [(AstExpr.ProgramArgc) false]
     [(AstExpr.ProgramArgv) false]
     [(AstExpr.ProgramEnvp) false]

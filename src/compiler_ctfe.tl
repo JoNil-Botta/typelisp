@@ -8455,13 +8455,16 @@
               (AstType.Expr)
               next-fuel)]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
-    [(AstExpr.PtrAddrOf name)
-      (ResultCtfeQuoteExpr.Ok
-        (ast-expr-ptr-addr-of-id-with-pools
-          (ctfe-env-pools env)
-          (ctfe-quote-name-id env name))
-        (AstType.Expr)
-        fuel)]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ctfe-ast-get env place-box)]
+        (match (ctfe-quote-expr place env fuel quasiquote)
+          [(ResultCtfeQuoteExpr.Ok quoted _ next-fuel)
+            (ResultCtfeQuoteExpr.Ok
+              (ast-expr-ptr-addr-of-id-with-pools (ctfe-env-pools env) quoted)
+              (AstType.Expr)
+              next-fuel)]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ctfe-ast-get env ptr-box)]
@@ -9522,10 +9525,15 @@
               [b-ptr : AstExpr (ctfe-ast-get env b-ptr-box)]
               (ctfe-expr-eq-in-env env a-ptr b-ptr))]
           [_ false]))]
-    [(AstExpr.PtrAddrOf a-name)
-      (match b
-        [(AstExpr.PtrAddrOf b-name) (= a-name b-name)]
-        [_ false])]
+    [(AstExpr.PtrAddrOf a-place-box)
+      (let
+        [a-place : AstExpr (ctfe-ast-get env a-place-box)]
+        (match b
+          [(AstExpr.PtrAddrOf b-place-box)
+            (let
+              [b-place : AstExpr (ctfe-ast-get env b-place-box)]
+              (ctfe-expr-eq-in-env env a-place b-place))]
+          [_ false]))]
     [(AstExpr.PtrWrite a-ptr-box a-value-box)
       (let
         [a-ptr : AstExpr (ctfe-ast-get env a-ptr-box)]

@@ -3106,8 +3106,13 @@
           [(ResultSpecExpr.Ok rewritten state2)
             (ResultSpecExpr.Ok (ast-expr-ptr-null-check rewritten) state2)]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
-    [(AstExpr.PtrAddrOf name)
-      (ResultSpecExpr.Ok (ast-expr-ptr-addr-of-id name) state)]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (match (spec-rewrite-expr place templates state)
+          [(ResultSpecExpr.Ok rewritten state2)
+            (ResultSpecExpr.Ok (ast-expr-ptr-addr-of-id rewritten) state2)]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -3299,6 +3304,21 @@
           (ResultSpecExpr.Ok (ast-expr-bracket-clause rewritten) state2)]
         [(ResultSpecExprList.Err diag) (ResultSpecExpr.Err diag)])]
     [(AstExpr.Borrow _ _ _) (ResultSpecExpr.Ok (ast-node-push expr) state)]))
+
+(define (spec-ptr-addr-of-place-value-conflict
+  [place : AstExpr]
+  [subs : SpecValueSubst]) : SpecMaybeString
+  (match (ast-expr-unspan place)
+    [(AstExpr.Var name) (spec-value-subst-lookup subs (intern-str name))]
+    [(AstExpr.StructGet receiver-box _)
+      (let
+        [receiver : AstExpr (ast-node-get receiver-box)]
+        (spec-ptr-addr-of-place-value-conflict receiver subs))]
+    [(AstExpr.ArrayRef array-box _)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        (spec-ptr-addr-of-place-value-conflict array subs))]
+    [_ (SpecMaybeString.None)]))
 
 (define (spec-substitute-values-expr [expr : AstExpr] [subs : SpecValueSubst]) : ResultSpecSubExpr
   (match expr
@@ -3816,18 +3836,23 @@
           [(ResultSpecSubExpr.Ok rewritten)
             (ResultSpecSubExpr.Ok (ast-expr-ptr-null-check rewritten))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
-    [(AstExpr.PtrAddrOf name)
-      (match (spec-value-subst-lookup subs (intern-str name))
-        [(SpecMaybeString.Some _)
-          (ResultSpecSubExpr.Err
-            (box
-              (spec-diagnostic-at-expr
-                expr
-                (string.append
-                  "cannot take address of comptime value parameter '"
-                  (string.append (intern-str name) "'")))))]
-        [(SpecMaybeString.None)
-          (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id name))])]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (match (spec-ptr-addr-of-place-value-conflict place subs)
+          [(SpecMaybeString.Some name)
+            (ResultSpecSubExpr.Err
+              (box
+                (spec-diagnostic-at-expr
+                  expr
+                  (string.append
+                    "cannot take address of comptime value parameter '"
+                    (string.append name "'")))))]
+          [(SpecMaybeString.None)
+            (match (spec-substitute-values-expr place subs)
+              [(ResultSpecSubExpr.Ok rewritten)
+                (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id rewritten))]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -4647,20 +4672,13 @@
           [(ResultSpecSubExpr.Ok rewritten)
             (ResultSpecSubExpr.Ok (ast-expr-ptr-null-check rewritten))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
-    [(AstExpr.PtrAddrOf name)
-      (match (spec-type-subst-lookup subs (intern-str name))
-        [(SpecMaybeString.Some _)
-          (ResultSpecSubExpr.Err
-            (box
-              (spec-diagnostic-at-expr
-                expr
-                (string.append
-                  "type-valued comptime parameter '"
-                  (string.append
-                    (intern-str name)
-                    "' cannot be used as a runtime value")))))]
-        [(SpecMaybeString.None)
-          (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id name))])]
+    [(AstExpr.PtrAddrOf place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (match (spec-substitute-types-expr place subs)
+          [(ResultSpecSubExpr.Ok rewritten)
+            (ResultSpecSubExpr.Ok (ast-expr-ptr-addr-of-id rewritten))]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExpr.PtrRead ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]

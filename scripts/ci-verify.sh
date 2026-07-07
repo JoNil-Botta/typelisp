@@ -268,6 +268,15 @@ else
     echo "[ci-verify] stage2 compile->clang->lld-link->run capability confirmed"
 fi
 
+# The selfhost compile manifest is one of the highest-memory Windows gates.
+# Run it before the long format/lint/public-tool stretch; this keeps coverage
+# identical while limiting job-level memory pressure before the gate.
+# The current cli.tl emits stage1-qualified symbols, so the manifest uses the
+# stage1 expectation mode on both hosts.
+run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+# The deterministic assembly gate reuses the manifest's emitted .s as its first
+# compile for overlapping sources, so it must run after the manifest gate.
+run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
 run_with_compiler "$STAGE2_BIN" "TypeLisp source formatting" scripts/check-tl-format.sh
 run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 # The freshly bootstrapped compiler (and the programs it builds) must depend on
@@ -280,12 +289,6 @@ run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-sp
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh
-# The current cli.tl emits stage1-qualified symbols, so the manifest uses the
-# stage1 expectation mode on both hosts.
-run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
-# The deterministic assembly gate reuses the manifest's emitted .s as its first
-# compile for overlapping sources, so it must run after the manifest gate.
-run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh
 run_with_compiler "$STAGE2_BIN" "stage2 codegen target parity" scripts/check-codegen-target-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 backend target assembly parity" scripts/check-backend-target-asm-parity.sh
 run_with_compiler "$STAGE2_BIN" "stage2 PIC relocation verifier" scripts/verify-pic-relocations.sh

@@ -3973,10 +3973,11 @@
   (ast-node-push (AstExpr.PtrNullCheck ptr)))
 
 (define (ast-expr-ptr-addr-of [name : String]) : i64
-  (ast-node-push (AstExpr.PtrAddrOf (ci.intern name))))
+  (ast-node-push
+    (AstExpr.PtrAddrOf (ast-node-push (AstExpr.Var (ci.intern name))))))
 
-(define (ast-expr-ptr-addr-of-id [name : i64]) : i64
-  (ast-node-push (AstExpr.PtrAddrOf name)))
+(define (ast-expr-ptr-addr-of-id [place : i64]) : i64
+  (ast-node-push (AstExpr.PtrAddrOf place)))
 
 (define (ast-expr-ptr-read [ptr : i64]) : i64
   (ast-node-push (AstExpr.PtrRead ptr)))
@@ -4406,12 +4407,15 @@
 (define (ast-expr-ptr-addr-of-with-pools
   [pools : AstNodePoolContext]
   [name : String]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.PtrAddrOf (ci.intern name))))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.PtrAddrOf
+      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern name))))))
 
 (define (ast-expr-ptr-addr-of-id-with-pools
   [pools : AstNodePoolContext]
-  [name : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.PtrAddrOf name)))
+  [place : i64]) : i64
+  (ast-node-pool-context-expr-push pools (AstExpr.PtrAddrOf place)))
 
 (define (ast-expr-ptr-read-with-pools [pools : AstNodePoolContext] [ptr : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.PtrRead ptr)))
@@ -6078,7 +6082,8 @@
       (AstExpr.PtrNull (ast-compaction-remap-type remap ty))]
     [(AstExpr.PtrNullCheck ptr)
       (AstExpr.PtrNullCheck (ast-compaction-remap-expr-id remap ptr))]
-    [(AstExpr.PtrAddrOf name) (AstExpr.PtrAddrOf name)]
+    [(AstExpr.PtrAddrOf place)
+      (AstExpr.PtrAddrOf (ast-compaction-remap-expr-id remap place))]
     [(AstExpr.PtrRead ptr)
       (AstExpr.PtrRead (ast-compaction-remap-expr-id remap ptr))]
     [(AstExpr.PtrWrite ptr value)

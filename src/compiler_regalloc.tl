@@ -295,6 +295,9 @@
     CompilerRegEdgeCopyList
     i64))
 
+(defenum CompilerRegLoopSplitRewriteResult
+  (Result CompilerRegCallSaveRewrite String))
+
 ;; Result of the eviction-aware register pick (below): a candidate register `r`
 ;; together with the strictly-lower-weight var to evict (re-spill) so `r` becomes
 ;; free over the loop region, or None when no such register exists.
@@ -10270,9 +10273,11 @@
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
-  [plan : CompilerRegPlan]) : CompilerRegCallSaveRewrite
+  [plan : CompilerRegPlan]) : CompilerRegLoopSplitRewriteResult
   (if (not (compiler-reg-scalar-full-intervals? func))
-    (compiler-reg-loop-split-noop blocks vars)
+    (CompilerRegLoopSplitRewriteResult.Result
+      (compiler-reg-loop-split-noop blocks vars)
+      "")
     (compiler-reg-loop-split-rewrite-fueled
       abi
       func
@@ -10289,9 +10294,11 @@
   [vars : i64]
   [type-info : CompilerRegVarTypes]
   [plan : CompilerRegPlan]
-  [fuel : i64]) : CompilerRegCallSaveRewrite
+  [fuel : i64]) : CompilerRegLoopSplitRewriteResult
   (if (<= fuel 0)
-    (compiler-reg-loop-split-noop blocks vars)
+    (CompilerRegLoopSplitRewriteResult.Result
+      (compiler-reg-loop-split-noop blocks vars)
+      "")
     (let
       [liveness : CompilerFunctionLiveness
         (compiler-live-analyze-function func)]
@@ -10370,7 +10377,23 @@
                       copies
                       ev)])
                   [(CompilerRegLoopSplitCandidate.NoCandidate)
-                    (compiler-reg-loop-split-noop blocks vars)]
+                    (CompilerRegLoopSplitRewriteResult.Result
+                      (compiler-reg-loop-split-noop blocks vars)
+                      (compiler-reg-loop-split-refused-select-blocks
+                        func
+                        blocks
+                        liveness
+                        live-blocks
+                        depths
+                        0
+                        0
+                        vars
+                        type-info
+                        assignments
+                        intervals
+                        group-vars
+                        parents
+                        merged-roots))]
                   [(CompilerRegLoopSplitCandidate.Candidate
                       stack-var
                       region-label
@@ -10416,7 +10439,7 @@
                                   (compiler-reg-plan-with-call-save-rewrite
                                     plan
                                     applied)]
-                                [rest : CompilerRegCallSaveRewrite
+                                [rest : CompilerRegLoopSplitRewriteResult
                                   (compiler-reg-loop-split-rewrite-fueled
                                     abi
                                     new-func
@@ -10426,22 +10449,28 @@
                                     new-plan
                                     (- fuel 1))]
                                 (match rest
-                                  [(CompilerRegCallSaveRewrite.Rewrite
-                                      final-blocks
-                                      _
-                                      final-vars
-                                      rest-assignments
-                                      rest-types)
-                                    (CompilerRegCallSaveRewrite.Rewrite
-                                      final-blocks
-                                      vars
-                                      final-vars
-                                      (compiler-reg-assignment-list-merge
-                                        split-assignments
-                                        rest-assignments)
-                                      (compiler-reg-var-type-list-merge
-                                        split-types
-                                        rest-types))]))])]))])]))]))))
+                                  [(CompilerRegLoopSplitRewriteResult.Result
+                                      rest-rewrite
+                                      refused-header)
+                                    (match rest-rewrite
+                                      [(CompilerRegCallSaveRewrite.Rewrite
+                                          final-blocks
+                                          _
+                                          final-vars
+                                          rest-assignments
+                                          rest-types)
+                                        (CompilerRegLoopSplitRewriteResult.Result
+                                          (CompilerRegCallSaveRewrite.Rewrite
+                                            final-blocks
+                                            vars
+                                            final-vars
+                                            (compiler-reg-assignment-list-merge
+                                              split-assignments
+                                              rest-assignments)
+                                            (compiler-reg-var-type-list-merge
+                                              split-types
+                                              rest-types))
+                                          refused-header)])]))])]))])]))]))))
 
 ;; ---------------------------------------------------------------------------
 ;; Scan for a loop block whose region rescue is REFUSED only because of a
@@ -10709,59 +10738,6 @@
         parents
         merged-roots)]))
 
-;; Top-level: set up liveness/intervals/coalesce (as rewrite-fueled does) and
-;; return the label of a loop block that needs a preheader to be homeable, or "".
-(define (compiler-reg-loop-split-find-refused-header
-  [func : CompilerIrFunction]
-  [blocks : CompilerIrBlockList]
-  [vars : i64]
-  [type-info : CompilerRegVarTypes]
-  [plan : CompilerRegPlan]) : String
-  (if (not (compiler-reg-scalar-full-intervals? func))
-    ""
-    (let
-      [liveness : CompilerFunctionLiveness
-        (compiler-live-analyze-function func)]
-      [selection : CompilerRegIntervalSelection
-        (compiler-reg-live-interval-selection func liveness)]
-      [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
-      [assignments : CompilerRegAssignmentList
-        (compiler-reg-plan-assignments plan)]
-      [group-vars : CompilerLiveI64Set
-        (compiler-reg-function-group-vars func types)]
-      [depths : (Array i64) (compiler-reg-function-loop-depths blocks)]
-      (match selection
-        [(CompilerRegIntervalSelection.Selection _ intervals)
-          (let
-            [coalesce : CompilerRegCoalesceMap
-              (compiler-reg-coalesce-map-build
-                (compiler-reg-function-moves func false)
-                intervals
-                type-info
-                group-vars
-                vars
-                (array.make-array i64 0))]
-            [parents : (Array i64) (struct-get coalesce parents)]
-            [merged-roots : CompilerLiveI64Set
-              (compiler-reg-coalesce-merged-root-set coalesce)]
-            (match liveness
-              [(CompilerFunctionLiveness.Liveness _ live-blocks)
-                (compiler-reg-loop-split-refused-select-blocks
-                  func
-                  blocks
-                  liveness
-                  live-blocks
-                  depths
-                  0
-                  0
-                  vars
-                  type-info
-                  assignments
-                  intervals
-                  group-vars
-                  parents
-                  merged-roots)]))]))))
-
 (define (compiler-reg-loop-split-max-rounds-for-abi
   [abi : CompilerRegTargetAbi]) : i64
   ;; Campaign: +6 for the caller-saved rescue rounds (r8/r9/rsi/rdi plus
@@ -10805,90 +10781,84 @@
         current-vars
         round-type-info
         round-plan)
-        [(CompilerRegCallSaveRewrite.Rewrite
-            next-blocks
-            _
-            next-vars
-            next-assignments
-            next-types)
-          (if (= next-vars current-vars)
-            ;; No var homed this round. Before giving up, check whether a loop
-            ;; block is homeable EXCEPT for a critical entry edge; if so, splice
-            ;; a dedicated preheader for that one header and retry -- the next
-            ;; round homes the var into the now-non-critical edge. Only the one
-            ;; loop being homed is touched, so other loops stay byte-identical.
-            (let
-              [refused-header : String
-                (compiler-reg-loop-split-find-refused-header
-                  func
-                  blocks
-                  current-vars
-                  round-type-info
-                  round-plan)]
-              (if (string.eq refused-header "")
-                (CompilerRegCallSaveRewrite.Rewrite
-                  blocks
-                  in-vars
-                  current-vars
-                  extra-assignments
-                  extra-types)
-                (let
-                  [spliced : CompilerIrBlockList
-                    (compiler-reg-loop-split-splice-preheader
-                      blocks
-                      refused-header)]
-                  (if (>
-                    (compiler-ir-block-list-count spliced)
-                    (compiler-ir-block-list-count blocks))
-                    (match func
-                      [(CompilerIrFunction.Function name params ret-ty _ _)
-                        (compiler-reg-loop-split-rewrite-rounds
-                          abi
-                          (CompilerIrFunction.Function
-                            name
-                            params
-                            ret-ty
-                            current-vars
-                            spliced)
-                          spliced
-                          in-vars
-                          current-vars
-                          plan
-                          extra-assignments
-                          extra-types
-                          (- rounds-left 1))])
-                    (CompilerRegCallSaveRewrite.Rewrite
-                      blocks
-                      in-vars
-                      current-vars
-                      extra-assignments
-                      extra-types)))))
-            (match func
-              [(CompilerIrFunction.Function name params ret-ty _ _)
-                (let
-                  [merged-assignments : CompilerRegAssignmentList
-                    (compiler-reg-assignment-list-merge
-                      next-assignments
-                      extra-assignments)]
-                  [merged-types : CompilerRegVarTypeList
-                    (compiler-reg-var-type-list-merge next-types extra-types)]
-                  [next-func : CompilerIrFunction
-                    (CompilerIrFunction.Function
-                      name
-                      params
-                      ret-ty
-                      next-vars
-                      next-blocks)]
-                  (compiler-reg-loop-split-rewrite-rounds
-                    abi
-                    next-func
-                    next-blocks
+        [(CompilerRegLoopSplitRewriteResult.Result rewrite refused-header)
+          (match rewrite
+            [(CompilerRegCallSaveRewrite.Rewrite
+                next-blocks
+                _
+                next-vars
+                next-assignments
+                next-types)
+              (if (= next-vars current-vars)
+                ;; No var homed this round. Before giving up, use the refused
+                ;; preheader label found during the same liveness pass as the
+                ;; candidate search.
+                (if (string.eq refused-header "")
+                  (CompilerRegCallSaveRewrite.Rewrite
+                    blocks
                     in-vars
-                    next-vars
-                    plan
-                    merged-assignments
-                    merged-types
-                    (- rounds-left 1)))]))]))))
+                    current-vars
+                    extra-assignments
+                    extra-types)
+                  (let
+                    [spliced : CompilerIrBlockList
+                      (compiler-reg-loop-split-splice-preheader
+                        blocks
+                        refused-header)]
+                    (if (>
+                      (compiler-ir-block-list-count spliced)
+                      (compiler-ir-block-list-count blocks))
+                      (match func
+                        [(CompilerIrFunction.Function name params ret-ty _ _)
+                          (compiler-reg-loop-split-rewrite-rounds
+                            abi
+                            (CompilerIrFunction.Function
+                              name
+                              params
+                              ret-ty
+                              current-vars
+                              spliced)
+                            spliced
+                            in-vars
+                            current-vars
+                            plan
+                            extra-assignments
+                            extra-types
+                            (- rounds-left 1))])
+                      (CompilerRegCallSaveRewrite.Rewrite
+                        blocks
+                        in-vars
+                        current-vars
+                        extra-assignments
+                        extra-types))))
+                (match func
+                  [(CompilerIrFunction.Function name params ret-ty _ _)
+                    (let
+                      [merged-assignments : CompilerRegAssignmentList
+                        (compiler-reg-assignment-list-merge
+                          next-assignments
+                          extra-assignments)]
+                      [merged-types : CompilerRegVarTypeList
+                        (compiler-reg-var-type-list-merge
+                          next-types
+                          extra-types)]
+                      [next-func : CompilerIrFunction
+                        (CompilerIrFunction.Function
+                          name
+                          params
+                          ret-ty
+                          next-vars
+                          next-blocks)]
+                      (compiler-reg-loop-split-rewrite-rounds
+                        abi
+                        next-func
+                        next-blocks
+                        in-vars
+                        next-vars
+                        plan
+                        merged-assignments
+                        merged-types
+                        (- rounds-left 1)))]))])]))))
 
 (define (compiler-reg-loop-split-rewrite-blocks
   [func : CompilerIrFunction]

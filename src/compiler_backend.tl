@@ -25484,7 +25484,49 @@
           ptr
           ")\n")])))
 
-(define (compiler-backend-emit-atomic-helper-function
+(define (compiler-backend-volatile-call-name? [name : String]) : bool
+  (or
+    (string.eq name "tl_volatile_i64_load_ptr")
+    (string.eq name "tl_volatile_i64_store_ptr")
+    (string.eq name "tl_volatile_i32_load_ptr")
+    (string.eq name "tl_volatile_i32_store_ptr")))
+
+(define (compiler-backend-volatile-i32-call? [name : String]) : bool
+  (or
+    (string.eq name "tl_volatile_i32_load_ptr")
+    (string.eq name "tl_volatile_i32_store_ptr")))
+
+(define (compiler-backend-volatile-op-load? [name : String]) : bool
+  (or
+    (string.eq name "tl_volatile_i64_load_ptr")
+    (string.eq name "tl_volatile_i32_load_ptr")))
+
+(define (compiler-backend-volatile-inline-asm
+  [target : CompilerBackendTarget]
+  [name : String]) : String
+  (let
+    [i32? : bool (compiler-backend-volatile-i32-call? name)]
+    [ptr : String (compiler-backend-atomic-ptr-reg target)]
+    [value : String (compiler-backend-atomic-value-reg target i32?)]
+    [rax : String (compiler-backend-atomic-rax i32?)]
+    [suffix : String (compiler-backend-atomic-width-suffix i32?)]
+    (if (compiler-backend-volatile-op-load? name)
+      (str_cat.str-cat "    mov" suffix " (" ptr "), " rax "\n")
+      (str_cat.str-cat "    mov" suffix " " value ", (" ptr ")\n"))))
+
+(define (compiler-backend-inline-memory-call-name? [name : String]) : bool
+  (or
+    (compiler-backend-atomic-call-name? name)
+    (compiler-backend-volatile-call-name? name)))
+
+(define (compiler-backend-inline-memory-call-asm
+  [target : CompilerBackendTarget]
+  [name : String]) : String
+  (if (compiler-backend-atomic-call-name? name)
+    (compiler-backend-atomic-inline-asm target name)
+    (compiler-backend-volatile-inline-asm target name)))
+
+(define (compiler-backend-emit-inline-memory-helper-function
   [target : CompilerBackendTarget]
   [symbol : String]) : String
   (str_cat.str-cat
@@ -25493,10 +25535,10 @@
     "\n"
     symbol
     ":\n"
-    (compiler-backend-atomic-inline-asm target symbol)
+    (compiler-backend-inline-memory-call-asm target symbol)
     "    ret\n"))
 
-(define (compiler-backend-emit-inline-atomic-call-with-arg-assignments
+(define (compiler-backend-emit-inline-memory-call-with-arg-assignments
   [target : CompilerBackendTarget]
   [assignments : CompilerRegAssignmentList]
   [arg-assignments : CompilerRegAssignmentList]
@@ -25555,7 +25597,7 @@
                 (string.append
                   args-asm
                   (string.append
-                    (compiler-backend-atomic-inline-asm target name)
+                    (compiler-backend-inline-memory-call-asm target name)
                     (string.append
                       (compiler-backend-emit-call-space-add call-space)
                       result-store)))))]
@@ -25639,8 +25681,8 @@
           program-index
           vars
           instr-diag)]
-      [(compiler-backend-atomic-call-name? call-symbol)
-        (compiler-backend-emit-inline-atomic-call-with-arg-assignments
+      [(compiler-backend-inline-memory-call-name? call-symbol)
+        (compiler-backend-emit-inline-memory-call-with-arg-assignments
           target
           assignments
           arg-assignments
@@ -30136,14 +30178,14 @@
                   (compiler-backend-apply-instr-diagnostic
                     (box-get message)
                     instr-diag)))])
-          (if (compiler-backend-atomic-call-name? call-symbol)
+          (if (compiler-backend-inline-memory-call-name? call-symbol)
             (ResultCompilerBackend.Ok
               (string.append
                 (compiler-backend-emit-call-space-sub call-space)
                 (string.append
                   args-asm
                   (string.append
-                    (compiler-backend-atomic-inline-asm target call-symbol)
+                    (compiler-backend-inline-memory-call-asm target call-symbol)
                     (string.append
                       (compiler-backend-emit-call-space-add call-space)
                       (compiler-backend-return-tail
@@ -38739,9 +38781,9 @@
               emit-blocks-list
               assignments)
             unit)]
-        (if (compiler-backend-atomic-call-name? symbol)
+        (if (compiler-backend-inline-memory-call-name? symbol)
           (ResultCompilerBackend.Ok
-            (compiler-backend-emit-atomic-helper-function target symbol))
+            (compiler-backend-emit-inline-memory-helper-function target symbol))
           (let
             [_phi-targets : unit
               (set!

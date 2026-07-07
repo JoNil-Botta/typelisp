@@ -3700,6 +3700,40 @@
   "(define (main [p : (MutPtr u8)]) : u8
   (unsafe (atomic-load p)))")
 
+(define (compiler-typecheck-volatile-pointer-ops-source) : String
+  "(define (main
+  [r64 : (Ptr i64)]
+  [p64 : (MutPtr i64)]
+  [q64 : (MutPtr u64)]
+  [r32 : (Ptr u32)]
+  [p32 : (MutPtr i32)]
+  [q32 : (MutPtr u32)]) : i64
+  (unsafe
+    (begin
+      (volatile-load r64)
+      (volatile-store! p64 1)
+      (volatile-store! q64 (cast 1 : u64))
+      (volatile-load r32)
+      (volatile-store! p32 (cast 1 : i32))
+      (volatile-store! q32 (cast 1 : u32))
+      (volatile-load p64))))")
+
+(define (compiler-typecheck-volatile-pointer-safe-source) : String
+  "(define (main [p : (Ptr i64)]) : i64
+  (volatile-load p))")
+
+(define (compiler-typecheck-volatile-pointer-store-mismatch-source) : String
+  "(define (main [p : (MutPtr i64)]) : unit
+  (unsafe (volatile-store! p true)))")
+
+(define (compiler-typecheck-volatile-pointer-store-const-source) : String
+  "(define (main [p : (Ptr i64)]) : unit
+  (unsafe (volatile-store! p 1)))")
+
+(define (compiler-typecheck-volatile-pointer-bad-elem-source) : String
+  "(define (main [p : (Ptr u8)]) : u8
+  (unsafe (volatile-load p)))")
+
 (define (compiler-typecheck-raw-pointer-op-tests-ok?) : bool
   (and
     (compiler-typecheck-ok? (compiler-typecheck-raw-pointer-ops-source))
@@ -3713,6 +3747,7 @@
     (compiler-typecheck-ok?
       (compiler-typecheck-raw-pointer-addr-of-nested-fixed-array-element-source))
     (compiler-typecheck-ok? (compiler-typecheck-atomic-pointer-ops-source))
+    (compiler-typecheck-ok? (compiler-typecheck-volatile-pointer-ops-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-safe-read-source)
       "typecheck: ptr-read requires unsafe context")
@@ -3773,7 +3808,19 @@
       "typecheck: atomic-add! requires a MutPtr pointer operand")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-atomic-pointer-bad-elem-source)
-      "typecheck: atomic pointer element must be i32, i64, u32, or u64")))
+      "typecheck: atomic pointer element must be i32, i64, u32, or u64")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-volatile-pointer-safe-source)
+      "typecheck: volatile-load requires unsafe context")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-volatile-pointer-store-mismatch-source)
+      "typecheck: volatile value type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-volatile-pointer-store-const-source)
+      "typecheck: volatile-store! requires a MutPtr pointer operand")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-volatile-pointer-bad-elem-source)
+      "typecheck: volatile pointer element must be i32, i64, u32, or u64")))
 
 (define (compiler-typecheck-raw-pointer-tests-ok?) : bool
   (and

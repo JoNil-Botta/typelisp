@@ -11,6 +11,8 @@
 (import "compiler_ctfe.tl")
 (import "compiler_specialize.tl")
 (import "compiler_clone.tl")
+(import (hashmap i64 i64) as tc_i64_i64_map)
+(import (hashmap String i64) as tc_string_i64_map)
 (import "compiler_parse_core.tl")
 (import "read.tl")
 (import stdlib.string)
@@ -43,7 +45,7 @@
   (Nil)
   (Bind i64 AstType (Box TcTypeEnv))
   (Cache
-    hashmap.I64I64Map
+    tc_i64_i64_map.Map
     (Array AstType)
     (Array i64)
     (Array i64)
@@ -191,8 +193,8 @@
   false)
 (define tc-body-type-facts-consuming : bool
   false)
-(define tc-body-type-fact-ids : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 16))
+(define tc-body-type-fact-ids : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 16))
 (define tc-body-type-fact-types : (Array AstType)
   (array.make-array AstType 16))
 (define tc-body-type-fact-count : i64
@@ -229,7 +231,7 @@
   (begin
     (set!
       tc-body-type-fact-ids
-      (hashmap.i64-i64-map-with-capacity (tc-body-type-fact-initial-capacity)))
+      (tc_i64_i64_map.with-capacity (tc-body-type-fact-initial-capacity)))
     (set!
       tc-body-type-fact-types
       (array.make-array AstType (tc-body-type-fact-initial-capacity)))
@@ -250,9 +252,9 @@
 
 (define (tc-body-type-fact-record! [expr-id : i64] [ty : AstType]) : unit
   (if tc-body-type-facts-recording
-    (match (hashmap.i64-i64-map-get tc-body-type-fact-ids expr-id)
-      [(hashmap.I64I64MapFound _) unit]
-      [(hashmap.I64I64MapMissing)
+    (match (tc_i64_i64_map.get (& tc-body-type-fact-ids) expr-id)
+      [(tc_i64_i64_map.LookupFound _) unit]
+      [(tc_i64_i64_map.LookupMissing)
         (let
           [slot : i64 tc-body-type-fact-count]
           (begin
@@ -261,19 +263,17 @@
               unit)
             (array-set! tc-body-type-fact-types slot ty)
             (set! tc-body-type-fact-count (+ slot 1))
-            (set!
-              tc-body-type-fact-ids
-              (hashmap.i64-i64-map-put tc-body-type-fact-ids expr-id slot))))])
+            (tc_i64_i64_map.insert (&mut tc-body-type-fact-ids) expr-id slot)))])
     unit))
 
 (define (tc-body-type-fact-lookup [expr-id : i64]) : TcBodyTypeFact
   (if tc-body-type-facts-consuming
-    (match (hashmap.i64-i64-map-get tc-body-type-fact-ids expr-id)
-      [(hashmap.I64I64MapFound slot)
+    (match (tc_i64_i64_map.get (& tc-body-type-fact-ids) expr-id)
+      [(tc_i64_i64_map.LookupFound slot)
         (if (and (>= slot 0) (< slot tc-body-type-fact-count))
           (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
           (TcBodyTypeFact.Miss))]
-      [(hashmap.I64I64MapMissing) (TcBodyTypeFact.Miss)])
+      [(tc_i64_i64_map.LookupMissing) (TcBodyTypeFact.Miss)])
     (TcBodyTypeFact.Miss)))
 
 (defenum TcBorrowPlace
@@ -382,7 +382,7 @@
   (Err String))
 
 (defstruct TcImportAliasSummaryIndex
-  (modules hashmap.I64I64Map)
+  (modules tc_i64_i64_map.Map)
   (decls (Array AstDeclList))
   (count i64))
 
@@ -2750,12 +2750,12 @@
   (match env
     [(TcTypeEnv.Nil) (TcTypeEnvLookupStep.Missing)]
     [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index)
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound index)
           ;; AstType reads must stay `array-ref` because inline-by-value
           ;; AstType values are multi-word.
           (TcTypeEnvLookupStep.Found (array-ref values index))]
-        [(hashmap.I64I64MapMissing)
+        [(tc_i64_i64_map.LookupMissing)
           (if partial
             (TcTypeEnvLookupStep.Miss (box-get below))
             (TcTypeEnvLookupStep.Missing))])]
@@ -2768,8 +2768,8 @@
   (match env
     [(TcTypeEnv.Nil) (TcTypeEnvUnsafeLookupStep.Missing)]
     [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index)
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound index)
           ;; AstType read must stay `array-ref`; the unsafe flag is a
           ;; scalar i64 and keeps the previous raw read path.
           (TcTypeEnvUnsafeLookupStep.Found
@@ -2781,7 +2781,7 @@
                     (ptr-cast (array-data unsafe-flags) : (Ptr i64))
                     index)))
               1))]
-        [(hashmap.I64I64MapMissing)
+        [(tc_i64_i64_map.LookupMissing)
           (if partial
             (TcTypeEnvUnsafeLookupStep.Miss (box-get below))
             (TcTypeEnvUnsafeLookupStep.Missing))])]
@@ -4160,10 +4160,10 @@
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache ids _ _ c-abi-fnptr-flags _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index)
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound index)
           (= (array-ref c-abi-fnptr-flags index) 1)]
-        [(hashmap.I64I64MapMissing)
+        [(tc_i64_i64_map.LookupMissing)
           (if partial
             (tc-binding-c-abi-fnptr-id? (box-get below) name-id)
             false)])]
@@ -4187,9 +4187,10 @@
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache ids _ unsafe-flags _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index) (= (array-ref unsafe-flags index) 1)]
-        [(hashmap.I64I64MapMissing)
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound index)
+          (= (array-ref unsafe-flags index) 1)]
+        [(tc_i64_i64_map.LookupMissing)
           (if partial
             (tc-binding-unsafe-id? (box-get below) name-id)
             false)])]
@@ -4250,7 +4251,7 @@
 ;; name bound both above and below the boundary keeps its head-most (above)
 ;; occurrence, which matches the old any-occurrence-above map exactly.
 (define (tc-env-cache-add
-  [ids : hashmap.I64I64Map]
+  [ids : tc_i64_i64_map.Map]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
   [c-abi-fnptr-flags : (Array i64)]
@@ -4259,12 +4260,13 @@
   [ty : AstType]
   [unsafe : bool]
   [c-abi-fnptr : bool]
-  [shadow : bool]) : hashmap.I64I64Map
-  (match (hashmap.i64-i64-map-get ids name-id)
-    [(hashmap.I64I64MapFound _) ids]
-    [(hashmap.I64I64MapMissing)
+  [shadow : bool]) : tc_i64_i64_map.Map
+  (match (tc_i64_i64_map.get (& ids) name-id)
+    [(tc_i64_i64_map.LookupFound _) ids]
+    [(tc_i64_i64_map.LookupMissing)
       (let
-        [next : i64 (hashmap.i64-i64-map-len ids)]
+        [next : i64 (tc_i64_i64_map.len (& ids))]
+        [out : tc_i64_i64_map.Map ids]
         (begin
           (array-set! values next ty)
           (array-set!
@@ -4285,19 +4287,20 @@
             (if shadow
               1
               0))
-          (hashmap.i64-i64-map-put ids name-id next)))]))
+          (tc_i64_i64_map.insert (&mut out) name-id next)
+          out))]))
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
-  [ids : hashmap.I64I64Map]
+  [ids : tc_i64_i64_map.Map]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
-  [above-boundary : bool]) : hashmap.I64I64Map
+  [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
     [cur : TcTypeEnv env]
-    [cur-ids : hashmap.I64I64Map ids]
+    [cur-ids : tc_i64_i64_map.Map ids]
     [cur-above-boundary : bool above-boundary]
     [done : bool false]
     (begin
@@ -4335,16 +4338,16 @@
 (define (tc-env-cache-fill-prefix
   [env : TcTypeEnv]
   [remaining : i64]
-  [ids : hashmap.I64I64Map]
+  [ids : tc_i64_i64_map.Map]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
-  [above-boundary : bool]) : hashmap.I64I64Map
+  [above-boundary : bool]) : tc_i64_i64_map.Map
   (let
     [cur : TcTypeEnv env]
     [left : i64 remaining]
-    [cur-ids : hashmap.I64I64Map ids]
+    [cur-ids : tc_i64_i64_map.Map ids]
     [cur-above-boundary : bool above-boundary]
     [done : bool false]
     (begin
@@ -4387,10 +4390,10 @@
       [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
       [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
       [shadow-flags : (Array i64) (array.make-array i64 capacity)]
-      [ids : hashmap.I64I64Map
+      [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill
           env
-          (hashmap.i64-i64-map-with-capacity capacity)
+          (tc_i64_i64_map.with-capacity capacity)
           values
           unsafe-flags
           c-abi-fnptr-flags
@@ -4417,11 +4420,11 @@
       [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
       [c-abi-fnptr-flags : (Array i64) (array.make-array i64 capacity)]
       [shadow-flags : (Array i64) (array.make-array i64 capacity)]
-      [ids : hashmap.I64I64Map
+      [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
           env
           (tc-local-cache-threshold)
-          (hashmap.i64-i64-map-with-capacity capacity)
+          (tc_i64_i64_map.with-capacity capacity)
           values
           unsafe-flags
           c-abi-fnptr-flags
@@ -5200,10 +5203,10 @@
     [(TcTypeEnv.Nil) (AstMaybeType.No)]
     [(TcTypeEnv.Cache ids values _ _ _ scan-through partial _ below)
       (if scan-through
-        (match (hashmap.i64-i64-map-get ids name-id)
-          [(hashmap.I64I64MapFound index)
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound index)
             (AstMaybeType.Some (array-ref values index))]
-          [(hashmap.I64I64MapMissing)
+          [(tc_i64_i64_map.LookupMissing)
             (if partial
               (tc-env-marker-type-scan (box-get below) name-id)
               (AstMaybeType.No))])
@@ -7254,15 +7257,15 @@
           (match cur
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
-              (match (hashmap.i64-i64-map-get ids name-id)
+              (match (tc_i64_i64_map.get (& ids) name-id)
                 ;; MUST stay `array-ref` -- inline-by-value
                 ;; `AstType` is multi-word, and the raw ptr path mis-scales it.
-                [(hashmap.I64I64MapFound index)
+                [(tc_i64_i64_map.LookupFound index)
                   (begin
                     (set! found-ty (array-ref values index))
                     (set! found true)
                     (set! done true))]
-                [(hashmap.I64I64MapMissing)
+                [(tc_i64_i64_map.LookupMissing)
                   (if partial
                     (set! cur (box-get below))
                     (set! done true))])]
@@ -7291,12 +7294,12 @@
         (match cur
           [(TcTypeEnv.Nil) (set! done true)]
           [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-            (match (hashmap.i64-i64-map-get ids name-id)
-              [(hashmap.I64I64MapFound _)
+            (match (tc_i64_i64_map.get (& ids) name-id)
+              [(tc_i64_i64_map.LookupFound _)
                 (begin
                   (set! found true)
                   (set! done true))]
-              [(hashmap.I64I64MapMissing)
+              [(tc_i64_i64_map.LookupMissing)
                 (if partial
                   (set! cur (box-get below))
                   (set! done true))])]
@@ -7322,10 +7325,10 @@
           (match cur
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
-              (match (hashmap.i64-i64-map-get ids name-id)
+              (match (tc_i64_i64_map.get (& ids) name-id)
                 ;; AstType read MUST stay `array-ref`; the unsafe flag is
                 ;; scalar i64, so the raw ptr path remains sound for that array.
-                [(hashmap.I64I64MapFound index)
+                [(tc_i64_i64_map.LookupFound index)
                   (begin
                     (set! found-ty (array-ref values index))
                     (set!
@@ -7339,7 +7342,7 @@
                         1))
                     (set! found true)
                     (set! done true))]
-                [(hashmap.I64I64MapMissing)
+                [(tc_i64_i64_map.LookupMissing)
                   (if partial
                     (set! cur (box-get below))
                     (set! done true))])]
@@ -9148,16 +9151,17 @@
             name-id
             prefix-id)))]
     [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids prefix-id)
-        [(hashmap.I64I64MapFound prefix-index)
-          (match (hashmap.i64-i64-map-get ids name-id)
-            [(hashmap.I64I64MapFound name-index) (< prefix-index name-index)]
-            [(hashmap.I64I64MapMissing) true])]
-        [(hashmap.I64I64MapMissing)
+      (match (tc_i64_i64_map.get (& ids) prefix-id)
+        [(tc_i64_i64_map.LookupFound prefix-index)
+          (match (tc_i64_i64_map.get (& ids) name-id)
+            [(tc_i64_i64_map.LookupFound name-index)
+              (< prefix-index name-index)]
+            [(tc_i64_i64_map.LookupMissing) true])]
+        [(tc_i64_i64_map.LookupMissing)
           (if partial
-            (match (hashmap.i64-i64-map-get ids name-id)
-              [(hashmap.I64I64MapFound _) false]
-              [(hashmap.I64I64MapMissing)
+            (match (tc_i64_i64_map.get (& ids) name-id)
+              [(tc_i64_i64_map.LookupFound _) false]
+              [(tc_i64_i64_map.LookupMissing)
                 (tc-source-leading-segment-wins-over-exact-id?
                   (box-get below)
                   name-id
@@ -9741,8 +9745,8 @@
   -1)
 (define tc-module-decl-index-arena : i64
   0)
-(define tc-module-decl-index-modules : hashmap.I64I64Map
-  (hashmap.i64-i64-map-with-capacity 16))
+(define tc-module-decl-index-modules : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 16))
 (define tc-module-decl-index-starts : (Array i64)
   (array.make-array i64 0))
 (define tc-module-decl-index-ends : (Array i64)
@@ -9784,7 +9788,7 @@
       [_switch : unit
         (unsafe
           (arena.tl_arena_set tc-module-decl-index-arena))]
-      [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+      [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
       [counts : (Array i64) (array.make-array i64 (+ count 1))]
       [starts : (Array i64) (array.make-array i64 (+ count 1))]
@@ -9802,18 +9806,16 @@
               [_
                 (let
                   [slot : i64
-                    (match (hashmap.i64-i64-map-get modules cur-module-id)
-                      [(hashmap.I64I64MapFound found-slot) found-slot]
-                      [(hashmap.I64I64MapMissing)
+                    (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                      [(tc_i64_i64_map.LookupFound found-slot) found-slot]
+                      [(tc_i64_i64_map.LookupMissing)
                         (let
                           [new-slot : i64 module-count]
                           (begin
-                            (set!
-                              modules
-                              (hashmap.i64-i64-map-put
-                                modules
-                                cur-module-id
-                                new-slot))
+                            (tc_i64_i64_map.insert
+                              (&mut modules)
+                              cur-module-id
+                              new-slot)
                             (set! module-count (+ module-count 1))
                             new-slot))])]
                   (array-set! counts slot (+ (array-ref counts slot) 1)))])
@@ -9834,14 +9836,14 @@
             (match (array-ref decl-slots (+ decl-offset i))
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_
-                (match (hashmap.i64-i64-map-get modules cur-module-id)
-                  [(hashmap.I64I64MapFound slot)
+                (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                  [(tc_i64_i64_map.LookupFound slot)
                     (let
                       [cursor : i64 (array-ref ends slot)]
                       (begin
                         (array-set! positions cursor i)
                         (array-set! ends slot (+ cursor 1))))]
-                  [(hashmap.I64I64MapMissing) unit])])
+                  [(tc_i64_i64_map.LookupMissing) unit])])
             (set! i (+ i 1))))
         (set! tc-module-decl-index-modules modules)
         (set! tc-module-decl-index-starts starts)
@@ -9859,9 +9861,9 @@
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (tc-module-decl-index-slot [module-id : i64]) : i64
-  (match (hashmap.i64-i64-map-get tc-module-decl-index-modules module-id)
-    [(hashmap.I64I64MapFound slot) slot]
-    [(hashmap.I64I64MapMissing) -1]))
+  (match (tc_i64_i64_map.get (& tc-module-decl-index-modules) module-id)
+    [(tc_i64_i64_map.LookupFound slot) slot]
+    [(tc_i64_i64_map.LookupMissing) -1]))
 
 (define (tc-decl-list-module-imports-stdlib-string?
   [decls : AstDeclList]
@@ -16107,7 +16109,7 @@
   (let
     [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
     [decls : (Array AstDeclList) (array.make-array AstDeclList capacity)]
-    [modules : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity capacity)]
+    [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
     [slot-count : i64 0]
     [cur : AstDeclList all-decls]
     [cur-module-id : i64 (intern "")]
@@ -16129,20 +16131,18 @@
                     [slot : i64 0]
                     [existing : AstDeclList (ast-decl-list-new)]
                     (begin
-                      (match (hashmap.i64-i64-map-get modules cur-module-id)
-                        [(hashmap.I64I64MapFound found-slot)
+                      (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                        [(tc_i64_i64_map.LookupFound found-slot)
                           (begin
                             (set! slot found-slot)
                             (set! existing (array-ref decls slot)))]
-                        [(hashmap.I64I64MapMissing)
+                        [(tc_i64_i64_map.LookupMissing)
                           (begin
                             (set! slot slot-count)
-                            (set!
-                              modules
-                              (hashmap.i64-i64-map-put
-                                modules
-                                cur-module-id
-                                slot))
+                            (tc_i64_i64_map.insert
+                              (&mut modules)
+                              cur-module-id
+                              slot)
                             (array-set! decls slot (ast-decl-list-new))
                             (set! slot-count (+ slot-count 1)))])
                       (array-set!
@@ -16159,15 +16159,13 @@
 (define (tc-import-alias-summary-index-lookup
   [index : TcImportAliasSummaryIndex]
   [target-module : String]) : TcImportAliasSummaryLookup
-  (match (hashmap.i64-i64-map-get
-    (struct-get index modules)
-    (intern target-module))
-    [(hashmap.I64I64MapFound slot)
+  (match (tc_i64_i64_map.get (struct-get index modules) (intern target-module))
+    [(tc_i64_i64_map.LookupFound slot)
       (if (and (>= slot 0) (< slot (struct-get index count)))
         (TcImportAliasSummaryLookup.Found
           (array-ref (struct-get index decls) slot))
         (TcImportAliasSummaryLookup.Missing))]
-    [(hashmap.I64I64MapMissing) (TcImportAliasSummaryLookup.Missing)]))
+    [(tc_i64_i64_map.LookupMissing) (TcImportAliasSummaryLookup.Missing)]))
 
 (define (tc-import-alias-surface-summary-backed-in?
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -16549,10 +16547,10 @@
   [target-module : String]) : i64
   (intern (compiler-symbol-module-key alias-key target-module)))
 
-(define (tc-import-alias-materialized? [seen : hashmap.I64I64Map] [key : i64]) : bool
-  (match (hashmap.i64-i64-map-get seen key)
-    [(hashmap.I64I64MapFound _) true]
-    [(hashmap.I64I64MapMissing) false]))
+(define (tc-import-alias-materialized? [seen : tc_i64_i64_map.Map] [key : i64]) : bool
+  (match (tc_i64_i64_map.get (& seen) key)
+    [(tc_i64_i64_map.LookupFound _) true]
+    [(tc_i64_i64_map.LookupMissing) false]))
 
 (define (tc-build-top-env-aliases-list
   [ctx : TcContext]
@@ -16568,7 +16566,7 @@
     [ok : bool true]
     [summary-index : TcImportAliasSummaryIndex
       (tc-import-alias-summary-index-build all-decls)]
-    [seen-aliases : hashmap.I64I64Map (hashmap.i64-i64-map-with-capacity 512)]
+    [seen-aliases : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
     (begin
       (while ok
         (match (ast-decl-list-step cur)
@@ -16599,9 +16597,7 @@
                     (if (tc-import-alias-materialized? seen-aliases seen-key)
                       (set! cur rest)
                       (begin
-                        (set!
-                          seen-aliases
-                          (hashmap.i64-i64-map-put seen-aliases seen-key 1))
+                        (tc_i64_i64_map.insert (&mut seen-aliases) seen-key 1)
                         (if (string.eq alias "")
                           (match (tc-bind-import-alias-module-with-index
                             ctx
@@ -18030,10 +18026,10 @@
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache ids _ _ _ shadow-flags _ partial _ below)
-      (match (hashmap.i64-i64-map-get ids name-id)
-        [(hashmap.I64I64MapFound index)
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound index)
           (not (= (array-ref shadow-flags index) 1))]
-        [(hashmap.I64I64MapMissing)
+        [(tc_i64_i64_map.LookupMissing)
           (if partial
             (tc-default-builtin-unshadowed-scan-id? (box-get below) name-id)
             true)])]
@@ -18649,12 +18645,12 @@
   (if (and
     (>= key 0)
     (or tc-body-type-facts-recording tc-body-type-facts-consuming))
-    (match (hashmap.i64-i64-map-get tc-body-type-fact-ids key)
-      [(hashmap.I64I64MapFound slot)
+    (match (tc_i64_i64_map.get (& tc-body-type-fact-ids) key)
+      [(tc_i64_i64_map.LookupFound slot)
         (if (and (>= slot 0) (< slot tc-body-type-fact-count))
           (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
           (TcBodyTypeFact.Miss))]
-      [(hashmap.I64I64MapMissing) (TcBodyTypeFact.Miss)])
+      [(tc_i64_i64_map.LookupMissing) (TcBodyTypeFact.Miss)])
     (TcBodyTypeFact.Miss)))
 
 (define (tc-call-arg-expr-type
@@ -36181,7 +36177,7 @@
 ;; lands; dynamic arrays have a separate diagnostic because element ownership
 ;; cannot be made sound without an index policy.
 (defstruct TcMovedSet
-  (map hashmap.StringI64Map))
+  (map tc_string_i64_map.Map))
 
 (defenum TcMoveResult
   (Ok TcMovedSet)
@@ -36208,35 +36204,62 @@
   (Some String i64))
 
 (define (tc-moved-empty) : TcMovedSet
-  (TcMovedSet (hashmap.string-i64-map-with-capacity 8)))
+  (TcMovedSet (tc_string_i64_map.with-capacity 8)))
 
-(define (tc-moved-map [set : TcMovedSet]) : hashmap.StringI64Map
+(define (tc-moved-map [set : TcMovedSet]) : tc_string_i64_map.Map
   (struct-get set map))
 
 (define (tc-moved-len [set : TcMovedSet]) : i64
-  (hashmap.string-i64-map-len (tc-moved-map set)))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc_string_i64_map.len (& map))))
 
 (define (tc-moved-capacity [set : TcMovedSet]) : i64
-  (hashmap.string-i64-map-capacity (tc-moved-map set)))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc_string_i64_map.capacity (& map))))
+
+(define (tc-moved-clone-map [src : (& src tc_string_i64_map.Map)]) : tc_string_i64_map.Map
+  (let
+    [out : tc_string_i64_map.Map
+      (tc_string_i64_map.with-capacity (tc_string_i64_map.capacity src))]
+    [index : i64 (tc_string_i64_map.next-occupied src 0)]
+    (begin
+      (while (< index (tc_string_i64_map.capacity src))
+        (begin
+          (match (tc_string_i64_map.entry-at src index)
+            [(tc_string_i64_map.EntrySome key value)
+              (tc_string_i64_map.insert (&mut out) key value)]
+            [(tc_string_i64_map.EntryNone) unit])
+          (set! index (tc_string_i64_map.next-occupied src (+ index 1)))))
+      out)))
 
 (define (tc-moved-clone [set : TcMovedSet]) : TcMovedSet
   (let
-    [map : hashmap.StringI64Map (tc-moved-map set)]
-    (TcMovedSet
-      (hashmap.string-i64-map-resized map (hashmap.string-i64-map-capacity map)))))
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (TcMovedSet (tc-moved-clone-map (& map)))))
 
 (define (tc-moved-contains? [set : TcMovedSet] [name : String]) : bool
-  (hashmap.string-i64-map-contains? (tc-moved-map set) name))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc_string_i64_map.contains? (& map) name)))
 
 (define (tc-moved-no-origin-id) : i64
   -1)
 
 (define (tc-moved-add [set : TcMovedSet] [name : String]) : TcMovedSet
-  (TcMovedSet
-    (hashmap.string-i64-map-put (tc-moved-map set) name (tc-moved-no-origin-id))))
+  (let
+    [out : tc_string_i64_map.Map (tc-moved-map set)]
+    (begin
+      (tc_string_i64_map.insert (&mut out) name (tc-moved-no-origin-id))
+      (TcMovedSet out))))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name : String] [value : i64]) : TcMovedSet
-  (TcMovedSet (hashmap.string-i64-map-put (tc-moved-map set) name value)))
+  (let
+    [out : tc_string_i64_map.Map (tc-moved-map set)]
+    (begin
+      (tc_string_i64_map.insert (&mut out) name value)
+      (TcMovedSet out))))
 
 (define (tc-moved-add-origin
   [set : TcMovedSet]
@@ -36245,14 +36268,19 @@
   (tc-moved-add-value set name (ast-node-push origin)))
 
 (define (tc-moved-remove [set : TcMovedSet] [name : String]) : TcMovedSet
-  (match (hashmap.string-i64-map-remove (tc-moved-map set) name)
-    [(hashmap.StringI64MapRemoveOk map) (TcMovedSet map)]
-    [(hashmap.StringI64MapRemoveMissing map) (TcMovedSet map)]))
+  (let
+    [out : tc_string_i64_map.Map (tc-moved-map set)]
+    (begin
+      (tc_string_i64_map.remove (&mut out) name)
+      (TcMovedSet out))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name : String]) : TcMoveConflict
-  (match (hashmap.string-i64-map-get (tc-moved-map set) name)
-    [(hashmap.StringI64MapFound origin-id) (TcMoveConflict.Some name origin-id)]
-    [(hashmap.StringI64MapMissing) TcMoveConflict.No]))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (match (tc_string_i64_map.get (& map) name)
+      [(tc_string_i64_map.LookupFound origin-id)
+        (TcMoveConflict.Some name origin-id)]
+      [(tc_string_i64_map.LookupMissing) TcMoveConflict.No])))
 
 (define (tc-move-use-message [name : String]) : String
   (string.append (string.append "typecheck: use of moved value `" name) "`"))
@@ -36526,30 +36554,32 @@
       false)))
 
 (define (tc-moved-path-conflict-loop
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [path : String]
   [index : i64]) : TcMoveConflict
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     TcMoveConflict.No
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key value)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key value)
         (if (tc-moved-path-key-conflicts? key path)
           (TcMoveConflict.Some key value)
           (tc-moved-path-conflict-loop
             map
             path
-            (hashmap.string-i64-map-next-occupied map (+ index 1))))]
-      [(hashmap.StringI64MapEntryNone)
+            (tc_string_i64_map.next-occupied map (+ index 1))))]
+      [(tc_string_i64_map.EntryNone)
         (tc-moved-path-conflict-loop
           map
           path
-          (hashmap.string-i64-map-next-occupied map (+ index 1)))])))
+          (tc_string_i64_map.next-occupied map (+ index 1)))])))
 
 (define (tc-moved-path-conflict [set : TcMovedSet] [path : String]) : TcMoveConflict
-  (tc-moved-path-conflict-loop
-    (tc-moved-map set)
-    path
-    (hashmap.string-i64-map-next-occupied (tc-moved-map set) 0)))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc-moved-path-conflict-loop
+      (& map)
+      path
+      (tc_string_i64_map.next-occupied (& map) 0))))
 
 (define (tc-moved-path-conflict? [set : TcMovedSet] [path : String]) : bool
   (match (tc-moved-path-conflict set path)
@@ -36557,34 +36587,36 @@
     [TcMoveConflict.No false]))
 
 (define (tc-moved-remove-prefix-loop
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [prefix : String]
   [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     out
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key _)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key _)
         (let
-          [next : i64 (hashmap.string-i64-map-next-occupied map (+ index 1))]
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
           [out2 : TcMovedSet
             (if (tc-move-string-prefix? key prefix)
               (tc-moved-remove out key)
               out)]
           (tc-moved-remove-prefix-loop map prefix next out2))]
-      [(hashmap.StringI64MapEntryNone)
+      [(tc_string_i64_map.EntryNone)
         (tc-moved-remove-prefix-loop
           map
           prefix
-          (hashmap.string-i64-map-next-occupied map (+ index 1))
+          (tc_string_i64_map.next-occupied map (+ index 1))
           out)])))
 
 (define (tc-moved-remove-prefix [set : TcMovedSet] [prefix : String]) : TcMovedSet
-  (tc-moved-remove-prefix-loop
-    (tc-moved-map set)
-    prefix
-    (hashmap.string-i64-map-next-occupied (tc-moved-map set) 0)
-    set))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc-moved-remove-prefix-loop
+      (& map)
+      prefix
+      (tc_string_i64_map.next-occupied (& map) 0)
+      set)))
 
 (define (tc-moved-remove-root-state [set : TcMovedSet] [name : String]) : TcMovedSet
   (tc-moved-remove-prefix
@@ -36594,56 +36626,60 @@
     (tc-moved-path-key (string.append name "."))))
 
 (define (tc-moved-any-path-with-prefix-loop?
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [prefix : String]
   [index : i64]) : bool
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     false
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key _)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key _)
         (if (and (tc-moved-path-key? key) (tc-move-string-prefix? key prefix))
           true
           (tc-moved-any-path-with-prefix-loop?
             map
             prefix
-            (hashmap.string-i64-map-next-occupied map (+ index 1))))]
-      [(hashmap.StringI64MapEntryNone)
+            (tc_string_i64_map.next-occupied map (+ index 1))))]
+      [(tc_string_i64_map.EntryNone)
         (tc-moved-any-path-with-prefix-loop?
           map
           prefix
-          (hashmap.string-i64-map-next-occupied map (+ index 1)))])))
+          (tc_string_i64_map.next-occupied map (+ index 1)))])))
 
 (define (tc-moved-any-root-path? [set : TcMovedSet] [root : String]) : bool
-  (tc-moved-any-path-with-prefix-loop?
-    (tc-moved-map set)
-    (tc-moved-path-key (string.append root "."))
-    (hashmap.string-i64-map-next-occupied (tc-moved-map set) 0)))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc-moved-any-path-with-prefix-loop?
+      (& map)
+      (tc-moved-path-key (string.append root "."))
+      (tc_string_i64_map.next-occupied (& map) 0))))
 
 (define (tc-moved-root-path-conflict-loop
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [prefix : String]
   [index : i64]) : TcMoveConflict
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     TcMoveConflict.No
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key value)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key value)
         (if (and (tc-moved-path-key? key) (tc-move-string-prefix? key prefix))
           (TcMoveConflict.Some key value)
           (tc-moved-root-path-conflict-loop
             map
             prefix
-            (hashmap.string-i64-map-next-occupied map (+ index 1))))]
-      [(hashmap.StringI64MapEntryNone)
+            (tc_string_i64_map.next-occupied map (+ index 1))))]
+      [(tc_string_i64_map.EntryNone)
         (tc-moved-root-path-conflict-loop
           map
           prefix
-          (hashmap.string-i64-map-next-occupied map (+ index 1)))])))
+          (tc_string_i64_map.next-occupied map (+ index 1)))])))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root : String]) : TcMoveConflict
-  (tc-moved-root-path-conflict-loop
-    (tc-moved-map set)
-    (tc-moved-path-key (string.append root "."))
-    (hashmap.string-i64-map-next-occupied (tc-moved-map set) 0)))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map set)]
+    (tc-moved-root-path-conflict-loop
+      (& map)
+      (tc-moved-path-key (string.append root "."))
+      (tc_string_i64_map.next-occupied (& map) 0))))
 
 (define (tc-moved-root-conflict [set : TcMovedSet] [root : String]) : TcMoveConflict
   (match (tc-moved-conflict set root)
@@ -36665,30 +36701,29 @@
       (tc-moved-remove without-path (tc-moved-partial-key root)))))
 
 (define (tc-moved-union-loop
-  [a : hashmap.StringI64Map]
+  [a : (& a tc_string_i64_map.Map)]
   [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (if (>= index (hashmap.string-i64-map-capacity a))
+  (if (>= index (tc_string_i64_map.capacity a))
     out
-    (match (hashmap.string-i64-map-entry-at a index)
-      [(hashmap.StringI64MapEntrySome key value)
+    (match (tc_string_i64_map.entry-at a index)
+      [(tc_string_i64_map.EntrySome key value)
         (tc-moved-union-loop
           a
-          (hashmap.string-i64-map-next-occupied a (+ index 1))
+          (tc_string_i64_map.next-occupied a (+ index 1))
           (tc-moved-add-value out key value))]
-      [(hashmap.StringI64MapEntryNone)
+      [(tc_string_i64_map.EntryNone)
         (tc-moved-union-loop
           a
-          (hashmap.string-i64-map-next-occupied a (+ index 1))
+          (tc_string_i64_map.next-occupied a (+ index 1))
           out)])))
 
 ;; Union keeps the left input's value for duplicate facts. Branch merging
 ;; therefore reports the origin from the first/left arm deterministically.
 (define (tc-moved-union [a : TcMovedSet] [b : TcMovedSet]) : TcMovedSet
-  (tc-moved-union-loop
-    (tc-moved-map a)
-    (hashmap.string-i64-map-next-occupied (tc-moved-map a) 0)
-    b))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map a)]
+    (tc-moved-union-loop (& map) (tc_string_i64_map.next-occupied (& map) 0) b)))
 
 (define (tc-move-var-move-only? [env : TcTypeEnv] [name : String]) : bool
   (match (tc-lookup env name)
@@ -39650,32 +39685,34 @@
     "` remains live because a later reference use may still depend on it"))
 
 (define (tc-borrow-check-conflict-origin-loop
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [path : String]
   [index : i64]) : TcBorrowConflictOrigin
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     TcBorrowConflictOrigin.No
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key value)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key value)
         (if (tc-moved-path-key-conflicts? key path)
           (TcBorrowConflictOrigin.Some value)
           (tc-borrow-check-conflict-origin-loop
             map
             path
-            (hashmap.string-i64-map-next-occupied map (+ index 1))))]
-      [(hashmap.StringI64MapEntryNone)
+            (tc_string_i64_map.next-occupied map (+ index 1))))]
+      [(tc_string_i64_map.EntryNone)
         (tc-borrow-check-conflict-origin-loop
           map
           path
-          (hashmap.string-i64-map-next-occupied map (+ index 1)))])))
+          (tc_string_i64_map.next-occupied map (+ index 1)))])))
 
 (define (tc-borrow-check-conflict-origin
   [borrowed : TcMovedSet]
   [path : String]) : TcBorrowConflictOrigin
-  (tc-borrow-check-conflict-origin-loop
-    (tc-moved-map borrowed)
-    path
-    (hashmap.string-i64-map-next-occupied (tc-moved-map borrowed) 0)))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map borrowed)]
+    (tc-borrow-check-conflict-origin-loop
+      (& map)
+      path
+      (tc_string_i64_map.next-occupied (& map) 0))))
 
 (define (tc-borrow-check-rich-conflict-message
   [borrowed : TcMovedSet]
@@ -39889,15 +39926,15 @@
   [env : TcTypeEnv]
   [exprs : AstExprList]
   [protected : TcMovedSet]
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     out
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key _)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key _)
         (let
-          [next : i64 (hashmap.string-i64-map-next-occupied map (+ index 1))]
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
           [out2 : TcMovedSet
             (if (tc-moved-path-key? key)
               (let
@@ -39925,14 +39962,14 @@
             map
             next
             out2))]
-      [(hashmap.StringI64MapEntryNone)
+      [(tc_string_i64_map.EntryNone)
         (tc-borrow-check-prune-before-exprs-loop
           ctx
           env
           exprs
           protected
           map
-          (hashmap.string-i64-map-next-occupied map (+ index 1))
+          (tc_string_i64_map.next-occupied map (+ index 1))
           out)])))
 
 (define (tc-borrow-check-prune-before-exprs
@@ -39944,14 +39981,14 @@
   (if (or (ast-expr-list-empty? (& exprs)) (= (tc-moved-len borrowed) 0))
     borrowed
     (let
-      [map : hashmap.StringI64Map (tc-moved-map borrowed)]
+      [map : tc_string_i64_map.Map (tc-moved-map borrowed)]
       (tc-borrow-check-prune-before-exprs-loop
         ctx
         env
         exprs
         protected
-        map
-        (hashmap.string-i64-map-next-occupied map 0)
+        (& map)
+        (tc_string_i64_map.next-occupied (& map) 0)
         borrowed))))
 
 (define (tc-borrow-check-local-place-path
@@ -40800,15 +40837,15 @@
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows-loop
   [borrowed : TcMovedSet]
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [index : i64]
   [primary : AstExpr]) : TcBorrowCheckResult
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     (TcBorrowCheckResult.Ok borrowed)
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key _)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key _)
         (let
-          [next : i64 (hashmap.string-i64-map-next-occupied map (+ index 1))]
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
           (if (tc-moved-path-key? key)
             (let
               [path : String (tc-moved-conflict-display-path key)]
@@ -40841,21 +40878,23 @@
               map
               next
               primary)))]
-      [(hashmap.StringI64MapEntryNone)
+      [(tc_string_i64_map.EntryNone)
         (tc-borrow-check-activate-two-phase-mut-borrows-loop
           borrowed
           map
-          (hashmap.string-i64-map-next-occupied map (+ index 1))
+          (tc_string_i64_map.next-occupied map (+ index 1))
           primary)])))
 
 (define (tc-borrow-check-activate-two-phase-mut-borrows
   [borrowed : TcMovedSet]
   [primary : AstExpr]) : TcBorrowCheckResult
-  (tc-borrow-check-activate-two-phase-mut-borrows-loop
-    borrowed
-    (tc-moved-map borrowed)
-    (hashmap.string-i64-map-next-occupied (tc-moved-map borrowed) 0)
-    primary))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map borrowed)]
+    (tc-borrow-check-activate-two-phase-mut-borrows-loop
+      borrowed
+      (& map)
+      (tc_string_i64_map.next-occupied (& map) 0)
+      primary)))
 
 (define (tc-borrow-check-reserve-two-phase-mut-call-arg
   [ctx : TcContext]
@@ -41589,16 +41628,15 @@
   [ctx : TcContext]
   [loop-env : TcTypeEnv]
   [before : TcMovedSet]
-  [after-map : hashmap.StringI64Map]
+  [after-map : (& after-map tc_string_i64_map.Map)]
   [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (if (>= index (hashmap.string-i64-map-capacity after-map))
+  (if (>= index (tc_string_i64_map.capacity after-map))
     out
-    (match (hashmap.string-i64-map-entry-at after-map index)
-      [(hashmap.StringI64MapEntrySome key value)
+    (match (tc_string_i64_map.entry-at after-map index)
+      [(tc_string_i64_map.EntrySome key value)
         (let
-          [next : i64
-            (hashmap.string-i64-map-next-occupied after-map (+ index 1))]
+          [next : i64 (tc_string_i64_map.next-occupied after-map (+ index 1))]
           [out2 : TcMovedSet
             (if (or
               (not (tc-moved-path-key? key))
@@ -41613,13 +41651,13 @@
             after-map
             next
             out2))]
-      [(hashmap.StringI64MapEntryNone)
+      [(tc_string_i64_map.EntryNone)
         (tc-borrow-check-loop-protect-carried-facts-loop
           ctx
           loop-env
           before
           after-map
-          (hashmap.string-i64-map-next-occupied after-map (+ index 1))
+          (tc_string_i64_map.next-occupied after-map (+ index 1))
           out)])))
 
 (define (tc-borrow-check-loop-protect-carried-facts
@@ -41628,27 +41666,29 @@
   [before : TcMovedSet]
   [after : TcMovedSet]
   [protected : TcMovedSet]) : TcMovedSet
-  (tc-borrow-check-loop-protect-carried-facts-loop
-    ctx
-    loop-env
-    before
-    (tc-moved-map after)
-    (hashmap.string-i64-map-next-occupied (tc-moved-map after) 0)
-    protected))
+  (let
+    [after-map : tc_string_i64_map.Map (tc-moved-map after)]
+    (tc-borrow-check-loop-protect-carried-facts-loop
+      ctx
+      loop-env
+      before
+      (& after-map)
+      (tc_string_i64_map.next-occupied (& after-map) 0)
+      protected)))
 
 (define (tc-borrow-check-loop-protect-stored-facts-loop
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : AstExpr]
-  [map : hashmap.StringI64Map]
+  [map : (& map tc_string_i64_map.Map)]
   [index : i64]
   [out : TcMovedSet]) : TcMovedSet
-  (if (>= index (hashmap.string-i64-map-capacity map))
+  (if (>= index (tc_string_i64_map.capacity map))
     out
-    (match (hashmap.string-i64-map-entry-at map index)
-      [(hashmap.StringI64MapEntrySome key value)
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key value)
         (let
-          [next : i64 (hashmap.string-i64-map-next-occupied map (+ index 1))]
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
           [out2 : TcMovedSet
             (if (or (not (tc-moved-path-key? key)) (tc-moved-contains? out key))
               out
@@ -41669,13 +41709,13 @@
             map
             next
             out2))]
-      [(hashmap.StringI64MapEntryNone)
+      [(tc_string_i64_map.EntryNone)
         (tc-borrow-check-loop-protect-stored-facts-loop
           ctx
           env
           expr
           map
-          (hashmap.string-i64-map-next-occupied map (+ index 1))
+          (tc_string_i64_map.next-occupied map (+ index 1))
           out)])))
 
 (define (tc-borrow-check-loop-protect-stored-facts
@@ -41684,13 +41724,15 @@
   [expr : AstExpr]
   [borrowed : TcMovedSet]
   [protected : TcMovedSet]) : TcMovedSet
-  (tc-borrow-check-loop-protect-stored-facts-loop
-    ctx
-    env
-    expr
-    (tc-moved-map borrowed)
-    (hashmap.string-i64-map-next-occupied (tc-moved-map borrowed) 0)
-    protected))
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map borrowed)]
+    (tc-borrow-check-loop-protect-stored-facts-loop
+      ctx
+      env
+      expr
+      (& map)
+      (tc_string_i64_map.next-occupied (& map) 0)
+      protected)))
 
 (define (tc-borrow-check-loop-visible-body-borrows
   [ctx : TcContext]
@@ -43522,8 +43564,8 @@
 ;; cheap pre-filter in the macro-use detector so the common case (a plain
 ;; function call whose name is not a macro) avoids the allocating module-key
 ;; lookup in `macro-call-decl`. Populated once per expansion run.
-(define macro-expand-macro-name-set : hashmap.StringI64Map
-  (hashmap.string-i64-map-with-capacity 128))
+(define macro-expand-macro-name-set : tc_string_i64_map.Map
+  (tc_string_i64_map.with-capacity 128))
 
 ;; Macro names whose transformer bodies can call `expr-type`. Only those macros
 ;; need fixed `Expr` operands to carry produced type metadata.
@@ -46417,17 +46459,20 @@
 
 (define (macro-name-set-add-all
   [names : TcStringList]
-  [set : hashmap.StringI64Map]) : hashmap.StringI64Map
+  [set : (&mut set tc_string_i64_map.Map)]) : unit
   (match names
-    [(TcStringList.Nil) set]
+    [(TcStringList.Nil) unit]
     [(TcStringList.Cons name rest)
       (let
-        [_inserted : bool
-          (hashmap.string-i64-map-insert-if-absent! (&mut set) name 1)]
+        [_inserted : bool (tc_string_i64_map.insert-if-absent? set name 1)]
         (macro-name-set-add-all (box-get rest) set))]))
 
-(define (macro-name-set-from-list [names : TcStringList]) : hashmap.StringI64Map
-  (macro-name-set-add-all names (hashmap.string-i64-map-with-capacity 128)))
+(define (macro-name-set-from-list [names : TcStringList]) : tc_string_i64_map.Map
+  (let
+    [set : tc_string_i64_map.Map (tc_string_i64_map.with-capacity 128)]
+    (begin
+      (macro-name-set-add-all names (&mut set))
+      set)))
 
 (define (macro-expand-set-macro-names! [names : TcStringList]) : unit
   (set! macro-expand-macro-name-set (macro-name-set-from-list names)))
@@ -51011,6 +51056,34 @@
       (macro-core-bool-lit true)
       (macro-core-or-chain args (+ index 1)))))
 
+(define (macro-core-var-lit [name : String]) : i64
+  (ast-node-push (AstExpr.Var (intern name))))
+
+(define (macro-core-cond-else? [expr-id : i64]) : bool
+  (match (ast-expr-unspan (ast-node-get expr-id))
+    [(AstExpr.Var name) (= name (intern "else"))]
+    [_ false]))
+
+(define (macro-core-cond-chain
+  [clauses : (& clauses AstExprClauseList)]
+  [index : i64]) : i64
+  (let
+    [n : i64 (struct-get clauses len)]
+    (if (>= index n)
+      (macro-core-var-lit "core-cond-missing-else")
+      (match (ast-expr-clause-list-get clauses index (ast-expr-clause-fallback))
+        [(AstExprClause test result)
+          (if (macro-core-cond-else? test)
+            (if (= (+ index 1) n)
+              result
+              (macro-core-var-lit "core-cond-else-must-be-final"))
+            (if (= (+ index 1) n)
+              (macro-core-var-lit "core-cond-missing-else")
+              (ast-expr-if
+                test
+                result
+                (macro-core-cond-chain clauses (+ index 1)))))]))))
+
 (define (macro-core-boolean-macro?
   [macro-name : String]
   [definition-module : String]
@@ -51018,6 +51091,13 @@
   (and
     (string.eq definition-module "stdlib.core_macros")
     (tc-name-base-eq? macro-name base)))
+
+(define (macro-core-cond-macro?
+  [macro-name : String]
+  [definition-module : String]) : bool
+  (and
+    (string.eq definition-module "stdlib.core_macros")
+    (tc-name-base-eq? macro-name "cond")))
 
 (define (macro-core-boolean-signature?
   [ctx : TcContext]
@@ -51077,6 +51157,46 @@
         [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)])]
     [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)]))
 
+(define (macro-core-cond-fast-expand
+  [ctx : TcContext]
+  [type-env : TcTypeEnv]
+  [decls : AstDeclList]
+  [definition-module : String]
+  [params : AstMacroParamList]
+  [_macro-name : String]
+  [args : AstExprList]
+  [depth : i64]
+  [call-expr : AstExpr]) : ResultMacroExpr
+  (match (macro-bind-params
+    ctx
+    decls
+    definition-module
+    type-env
+    params
+    args
+    (ctfe-env-empty)
+    false
+    call-expr)
+    [(ResultMacroEnv.Ok _)
+      (match (macro-expr-clause-list-from-args args)
+        [(ResultMacroClauseList.Ok clauses)
+          (begin
+            (cfg compile-profile (compiler-tc-macro-profile-start))
+            (let
+              [expanded : i64 (macro-core-cond-chain (& clauses) 0)]
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-finish _macro-name args))
+                (macro-expand-expr
+                  ctx
+                  type-env
+                  decls
+                  (+ depth 1)
+                  (ast-node-get expanded)))))]
+        [(ResultMacroClauseList.Err diag) (ResultMacroExpr.Err diag)])]
+    [(ResultMacroEnv.Err diag) (ResultMacroExpr.Err diag)]))
+
 ;; Run an expression-position macro transformer via CTFE and re-expand its
 ;; produced form to a fixpoint.
 (define (macro-expand-call
@@ -51132,6 +51252,17 @@
             depth
             call-expr
             true)]
+        [(macro-core-cond-macro? macro-name definition-module)
+          (macro-core-cond-fast-expand
+            ctx
+            type-env
+            decls
+            definition-module
+            params
+            macro-name
+            args
+            depth
+            call-expr)]
         [else
           (match (macro-eval-transformer
             ctx
@@ -53313,7 +53444,7 @@
   (let
     [base : String (macro-call-callee-base-name name)]
     (or
-      (hashmap.string-i64-map-contains-borrowed-ref?
+      (tc_string_i64_map.contains-borrowed?
         (& macro-expand-macro-name-set)
         (& base))
       (string.eq base "when")
@@ -54272,6 +54403,12 @@
     [(MacroMaybeGeneratedNormalImport.Some _ _ _ _ _ _) true]
     [(MacroMaybeGeneratedNormalImport.No) false]))
 
+(define (macro-decls-start-with-module-import-placeholder?
+  [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons decl _) (macro-decl-module-import-placeholder? decl)]
+    [(AstDeclListStep.Nil) false]))
+
 ;; The single demand-driven expansion walk. Every macro placeholder is expanded
 ;; and its splice forced inline: the walk rebuilds the whole-program
 ;; symbols/env over the spliced view (macro-expand-rebuild-context-for-splice)
@@ -54389,6 +54526,9 @@
                                       rest
                                       rest-paths
                                       decl-path)]
+                                  [defer-refresh? : bool
+                                    (macro-decls-start-with-module-import-placeholder?
+                                      rest)]
                                   (begin
                                     (match (macro-extend-top-env-with-module-marker
                                       cur-ctx
@@ -54400,40 +54540,62 @@
                                         (begin
                                           (tc-nominal-owner-cache-reset!)
                                           (macro-alias-derived-cache-reset!)
-                                          (match (tc-build-top-env-list-in-module
-                                            next-ctx
-                                            refresh-decls
-                                            next-top-env
-                                            cur-module)
-                                            [(ResultTcEnv.Ok refreshed-top-env)
-                                              (begin
-                                                (set!
-                                                  cur-top-env
-                                                  (tc-env-with-cache
-                                                    refreshed-top-env))
-                                                (set! cur-orig-decls next-decls)
-                                                (set! cur-ctx next-ctx)
-                                                (set!
-                                                  out-rev
-                                                  (macro-decl-list-reverse-into
-                                                    expanded
-                                                    out-rev))
-                                                (set!
-                                                  out-paths-rev
-                                                  (macro-decl-path-list-reverse-into
-                                                    expanded-paths
-                                                    out-paths-rev))
-                                                (set! cur-decls rest)
-                                                (set! cur-paths rest-paths))]
-                                            [(ResultTcEnv.Err refresh-message)
-                                              (begin
-                                                (set!
-                                                  result
-                                                  (ResultMacroDeclsWithPaths.Err
-                                                    (box
-                                                      (tc-diag-at-start
-                                                        refresh-message))))
-                                                (set! done true))]))]
+                                          (if defer-refresh?
+                                            (begin
+                                              (set!
+                                                cur-top-env
+                                                (tc-env-with-cache next-top-env))
+                                              (set! cur-orig-decls next-decls)
+                                              (set! cur-ctx next-ctx)
+                                              (set!
+                                                out-rev
+                                                (macro-decl-list-reverse-into
+                                                  expanded
+                                                  out-rev))
+                                              (set!
+                                                out-paths-rev
+                                                (macro-decl-path-list-reverse-into
+                                                  expanded-paths
+                                                  out-paths-rev))
+                                              (set! cur-decls rest)
+                                              (set! cur-paths rest-paths))
+                                            (match (tc-build-top-env-list-in-module
+                                              next-ctx
+                                              refresh-decls
+                                              next-top-env
+                                              cur-module)
+                                              [(ResultTcEnv.Ok
+                                                  refreshed-top-env)
+                                                (begin
+                                                  (set!
+                                                    cur-top-env
+                                                    (tc-env-with-cache
+                                                      refreshed-top-env))
+                                                  (set!
+                                                    cur-orig-decls
+                                                    next-decls)
+                                                  (set! cur-ctx next-ctx)
+                                                  (set!
+                                                    out-rev
+                                                    (macro-decl-list-reverse-into
+                                                      expanded
+                                                      out-rev))
+                                                  (set!
+                                                    out-paths-rev
+                                                    (macro-decl-path-list-reverse-into
+                                                      expanded-paths
+                                                      out-paths-rev))
+                                                  (set! cur-decls rest)
+                                                  (set! cur-paths rest-paths))]
+                                              [(ResultTcEnv.Err refresh-message)
+                                                (begin
+                                                  (set!
+                                                    result
+                                                    (ResultMacroDeclsWithPaths.Err
+                                                      (box
+                                                        (tc-diag-at-start
+                                                          refresh-message))))
+                                                  (set! done true))])))]
                                       [(ResultTcEnv.Err message)
                                         (begin
                                           (set!

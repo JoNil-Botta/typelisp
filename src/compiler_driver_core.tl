@@ -701,6 +701,17 @@
     (lower-ir-arena-release!)
     unit))
 
+;; Once lowering has produced IR, optimizer/backend no longer consult the
+;; typecheck/macro CTFE caches. Drop them before the backend's large assembly
+;; buffers are allocated so self-compiles do not carry dead layout metadata and
+;; macro/typecheck scratch state through codegen. The lower scratch arena is also
+;; function-local: escaped IR lives outside it, so it can be released before
+;; optimize/backend instead of overlapping with backend assembly buffers.
+(define (compiler-driver-release-typecheck-caches-after-lower!) : unit
+  (begin
+    (compiler-typecheck-reset-file-state!)
+    (lower-scratch-arena-release!)))
+
 ;; Package builds may run TLci, direct-object, and doctest passes after an
 ;; assembly emit while keeping the loaded AST alive. A full file-state reset
 ;; would invalidate those loaded pools, but the lowered IR has already been
@@ -742,6 +753,7 @@
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -823,6 +835,7 @@
     (ResultCompilerDriverBuffer.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -887,6 +900,7 @@
     (ResultCompilerDriverObject.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -948,6 +962,7 @@
     (ResultCompilerDriverPic.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -2435,16 +2450,18 @@
   (if (ast-node-pool-reader-type-exhausted?)
     (ResultCompilerDriver.Err
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
-    (match (optimize-program-with-spans-and-level program spans opt-level)
-      [(CompilerOptimizedProgram.Program optimized _)
-        (begin
-          (compiler-driver-release-lowered-ir! opt-level)
-          (if (ast-node-pool-reader-type-exhausted?)
-            (ResultCompilerDriver.Err
-              (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
-            (ResultCompilerDriver.Ok
-              (compiler-driver-ir-summary-render
-                (compiler-ir-program-summary optimized)))))])))
+    (begin
+      (compiler-driver-release-typecheck-caches-after-lower!)
+      (match (optimize-program-with-spans-and-level program spans opt-level)
+        [(CompilerOptimizedProgram.Program optimized _)
+          (begin
+            (compiler-driver-release-lowered-ir! opt-level)
+            (if (ast-node-pool-reader-type-exhausted?)
+              (ResultCompilerDriver.Err
+                (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
+              (ResultCompilerDriver.Ok
+                (compiler-driver-ir-summary-render
+                  (compiler-ir-program-summary optimized)))))]))))
 
 (define (compiler-driver-emit-ir-summary-lowered-result-with-level
   [lowered : ResultCompilerDriverLowered]

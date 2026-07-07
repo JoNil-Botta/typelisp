@@ -896,18 +896,6 @@
     [(CompilerIrBlockList.Array seq)
       (compiler-live-build-blocks (compiler-ir-block-seq-to-list seq))]))
 
-(define (compiler-live-find-block
-  [blocks : CompilerLiveBlockList]
-  [label : String]) : CompilerLiveMaybeBlock
-  (match blocks
-    [(CompilerLiveBlockList.Nil) CompilerLiveMaybeBlock.No]
-    [(CompilerLiveBlockList.Cons block rest)
-      (match block
-        [(CompilerLiveBlock.Block block-label _ _ _ _ _ _)
-          (if (string.eq block-label label)
-            (CompilerLiveMaybeBlock.Some block)
-            (compiler-live-find-block (box-get rest) label))])]))
-
 (define (compiler-live-block-count [blocks : CompilerLiveBlockList]) : i64
   (match blocks
     [(CompilerLiveBlockList.Nil) 0]
@@ -1074,41 +1062,6 @@
           successors
           instr-after))]))
 
-(define (compiler-live-successor-live-out
-  [successors : CompilerLiveLabelSet]
-  [blocks : CompilerLiveBlockList]) : CompilerLiveI64Set
-  (match successors
-    [(CompilerLiveLabelSet.Nil) (compiler-live-set-empty)]
-    [(CompilerLiveLabelSet.Cons label rest)
-      (let
-        [rest-live : CompilerLiveI64Set
-          (compiler-live-successor-live-out (box-get rest) blocks)]
-        (match (compiler-live-find-block blocks label)
-          [(CompilerLiveMaybeBlock.Some block)
-            (match block
-              [(CompilerLiveBlock.Block _ _ _ live-in _ _ _)
-                (compiler-live-set-union live-in rest-live)])]
-          [(CompilerLiveMaybeBlock.No) rest-live]))]))
-
-(define (compiler-live-recompute-block
-  [block : CompilerLiveBlock]
-  [blocks : CompilerLiveBlockList]) : CompilerLiveBlock
-  (match block
-    [(CompilerLiveBlock.Block label uses defs _ _ successors instr-after)
-      (let
-        [live-out : CompilerLiveI64Set
-          (compiler-live-successor-live-out successors blocks)]
-        [live-in : CompilerLiveI64Set
-          (compiler-live-set-union uses (compiler-live-set-minus live-out defs))]
-        (CompilerLiveBlock.Block
-          label
-          uses
-          defs
-          live-in
-          live-out
-          successors
-          instr-after))]))
-
 (define (compiler-live-block-liveness-eq?
   [left : CompilerLiveBlock]
   [right : CompilerLiveBlock]) : bool
@@ -1119,24 +1072,6 @@
           (and
             (compiler-live-set-eq? left-in right-in)
             (compiler-live-set-eq? left-out right-out))])]))
-
-(define (compiler-live-update-blocks
-  [blocks : CompilerLiveBlockList]
-  [all-blocks : CompilerLiveBlockList]) : CompilerLiveBlockListStep
-  (match blocks
-    [(CompilerLiveBlockList.Nil)
-      (CompilerLiveBlockListStep.Step CompilerLiveBlockList.Nil false)]
-    [(CompilerLiveBlockList.Cons block rest)
-      (let
-        [updated : CompilerLiveBlock
-          (compiler-live-recompute-block block all-blocks)]
-        (match (compiler-live-update-blocks (box-get rest) all-blocks)
-          [(CompilerLiveBlockListStep.Step updated-rest rest-changed)
-            (CompilerLiveBlockListStep.Step
-              (compiler-live-block-cons updated updated-rest)
-              (if (compiler-live-block-liveness-eq? block updated)
-                rest-changed
-                true))]))]))
 
 (define (compiler-live-graph-update! [graph : CompilerLiveBlockGraph]) : bool
   (let
@@ -1169,23 +1104,6 @@
       blocks
       (- index 1)
       (compiler-live-block-cons (array-ref blocks index) acc))))
-
-(define (compiler-live-graph-to-list [graph : CompilerLiveBlockGraph]) : CompilerLiveBlockList
-  (let
-    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
-    (compiler-live-graph-to-list-from
-      blocks
-      (- (array-length blocks) 1)
-      CompilerLiveBlockList.Nil)))
-
-(define (compiler-live-fixpoint [blocks : CompilerLiveBlockList]) : CompilerLiveBlockGraph
-  (let
-    [graph : CompilerLiveBlockGraph (compiler-live-block-graph-build blocks)]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (set! done (not (compiler-live-graph-update! graph))))
-      graph)))
 
 (define (compiler-live-before-instr
   [live-after : CompilerLiveI64Set]

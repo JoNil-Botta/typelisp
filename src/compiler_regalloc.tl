@@ -2318,52 +2318,6 @@
           [_ unit])
         (compiler-reg-phi-touched-add-inputs! (box-get rest) mask))]))
 
-(define (compiler-reg-phi-touched-seq!
-  [instrs : CompilerIrInstrSeq]
-  [mask : (Array i64)]) : unit
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (array-ref slots index)
-            [(CompilerIrInstr.Phi dst inputs _)
-              (begin
-                (compiler-reg-mark-phi-def! mask dst)
-                (compiler-reg-phi-touched-add-inputs! inputs mask))]
-            [_ unit])
-          (set! index (+ index 1))))
-      unit)))
-
-(define (compiler-reg-phi-touched-blocks!
-  [blocks : CompilerIrBlockList]
-  [mask : (Array i64)]) : unit
-  (match blocks
-    [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (begin
-            (compiler-reg-phi-touched-seq! instrs mask)
-            (compiler-reg-phi-touched-blocks! (box-get rest) mask))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-reg-phi-touched-blocks!
-        (compiler-ir-block-seq-to-list seq)
-        mask)]))
-
-(define (compiler-reg-function-phi-touched [func : CompilerIrFunction]) : (Array
-    i64)
-  (match func
-    [(CompilerIrFunction.Function _ _ _ vars blocks)
-      (let
-        [mask : (Array i64) (array.make-array i64 vars)]
-        (begin
-          (compiler-reg-fill-i64-array mask 0)
-          (compiler-reg-phi-touched-blocks! blocks mask)
-          mask))]))
-
 ;; ---------------------------------------------------------------------------
 ;; Live-out-input phi exclusion (soundness guard on the EP coalescer).
 ;;

@@ -746,9 +746,16 @@
   (slots (Array SelfhostLintDeadDecl))
   (len i64))
 
+(defenum ResultSelfhostLintDeadSources
+  (Ok PackageSourceList)
+  (Err (Box CompilerDiagnostic)))
+
 (defstruct SelfhostLintDeadScan
   (decls SelfhostLintDeadDecls)
   (roots lint_svec.Vec))
+
+(define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
+  (compiler-cfg-enable (compiler-check-language-cfgs) "test"))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
     SelfhostLintDeadDecl)
@@ -848,7 +855,7 @@
     (struct-get scan decls)
     (selfhost-lint-dead-root-add (struct-get scan roots) name)))
 
-(define (selfhost-lint-dead-ref-add [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
+(define (selfhost-lint-dead-ref-add-raw [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
   (if (lint_svec.contains? (& refs) name)
     refs
     (let
@@ -856,6 +863,33 @@
       (begin
         (lint_svec.push (&mut next-refs) name)
         next-refs))))
+
+(define (selfhost-lint-dead-last-dot-from
+  [name : String]
+  [index : i64]
+  [last-dot : i64]) : i64
+  (if (>= index (string.string-length name))
+    last-dot
+    (selfhost-lint-dead-last-dot-from
+      name
+      (+ index 1)
+      (if (= (string.string-ref name index) '.')
+        index
+        last-dot))))
+
+(define (selfhost-lint-dead-last-dot [name : String]) : i64
+  (selfhost-lint-dead-last-dot-from name 0 (- 0 1)))
+
+(define (selfhost-lint-dead-ref-add [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
+  (let
+    [with-name : lint_svec.Vec (selfhost-lint-dead-ref-add-raw refs name)]
+    [last-dot : i64 (selfhost-lint-dead-last-dot name)]
+    [name-len : i64 (string.string-length name)]
+    (if (and (>= last-dot 0) (< (+ last-dot 1) name-len))
+      (selfhost-lint-dead-ref-add-raw
+        with-name
+        (string.substring name (+ last-dot 1) (- name-len (+ last-dot 1))))
+      with-name)))
 
 (define (selfhost-lint-dead-ref-add-id [refs : lint_svec.Vec] [name : i64]) : lint_svec.Vec
   (selfhost-lint-dead-ref-add refs (intern-str name)))
@@ -1216,12 +1250,16 @@
       (selfhost-lint-dead-expr-refs
         (ast-node-get lane)
         (selfhost-lint-dead-expr-refs (ast-node-get value) refs))]
-    [(AstExpr.StructGet receiver _)
-      (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs)]
-    [(AstExpr.StructSet receiver _ value)
+    [(AstExpr.StructGet receiver field)
+      (selfhost-lint-dead-ref-add-id
+        (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs)
+        field)]
+    [(AstExpr.StructSet receiver field value)
       (selfhost-lint-dead-expr-refs
         (ast-node-get value)
-        (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs))]
+        (selfhost-lint-dead-ref-add-id
+          (selfhost-lint-dead-expr-refs (ast-node-get receiver) refs)
+          field))]
     [(AstExpr.WithRegion _ body) (selfhost-lint-dead-expr-list-refs body refs)]
     [(AstExpr.WithEscape scratch body)
       (selfhost-lint-dead-expr-list-refs
@@ -1784,7 +1822,10 @@
   [source : String]
   [visible-root : bool]
   [reportable : bool]) : SelfhostLintDeadScan
-  (match (parse-ast-source-diagnostic path source)
+  (match (parse-ast-source-diagnostic-with-cfg
+    path
+    source
+    (selfhost-lint-package-dead-cfgs))
     [(ResultAstProgramDiagnostic.Ok program)
       (match program
         [(AstProgram.Program decls-box)
@@ -1907,6 +1948,132 @@
   (match kind
     [(CompilerPkgKindBin) (selfhost-lint-dead-scan-add-root scan "main")]
     [(CompilerPkgKindLib) scan]))
+
+(define (selfhost-lint-package-kind-entry? [kind : CompilerPkgKind]) : bool
+  (match kind
+    [(CompilerPkgKindBin) true]
+    [(CompilerPkgKindLib) false]))
+
+(define (selfhost-lint-package-entry-path
+  [manifest-dir : String]
+  [manifest : CompilerPkgManifest]) : String
+  (compiler-load-normalize-path
+    (compiler-load-join-root-path manifest-dir (struct-get manifest entry))))
+
+(define (selfhost-lint-package-source-list-contains-from
+  [sources : PackageSourceList]
+  [path : String]
+  [index : i64]) : bool
+  (if (>= index (package-source-list-len sources))
+    false
+    (if (string.eq
+      (compiler-load-normalize-path (package-source-list-get sources index ""))
+      (compiler-load-normalize-path path))
+      true
+      (selfhost-lint-package-source-list-contains-from sources path (+ index 1)))))
+
+(define (selfhost-lint-package-source-list-contains?
+  [sources : PackageSourceList]
+  [path : String]) : bool
+  (selfhost-lint-package-source-list-contains-from sources path 0))
+
+(define (selfhost-lint-package-stdlib-source?
+  [path : String]
+  [stdlib-roots : lint_svec.Vec]) : bool
+  (let
+    [normalized : String (compiler-load-normalize-path path)]
+    [stdlib-path : String
+      (if (compiler-load-stdlib-import? normalized)
+        normalized
+        (compiler-load-stdlib-owned-path-from-roots
+          normalized
+          (cli-string-vec-to-legacy (& stdlib-roots))))]
+    (compiler-load-stdlib-import? stdlib-path)))
+
+(define (selfhost-lint-package-dead-source-path?
+  [path : String]
+  [sources : PackageSourceList]
+  [stdlib-roots : lint_svec.Vec]) : bool
+  (and
+    (> (string.string-length path) 0)
+    (selfhost-lint-package-source-list-contains? sources path)
+    (not (selfhost-lint-package-stdlib-source? path stdlib-roots))))
+
+(define (selfhost-lint-package-dead-source-insert
+  [items : vector.StringVec]
+  [path : String]
+  [sources : PackageSourceList]
+  [stdlib-roots : lint_svec.Vec]) : vector.StringVec
+  (if (selfhost-lint-package-dead-source-path? path sources stdlib-roots)
+    (package-source-vec-insert items path)
+    items))
+
+(define (selfhost-lint-package-dead-paths-to-sources-from
+  [paths : AstDeclPathList]
+  [sources : PackageSourceList]
+  [stdlib-roots : lint_svec.Vec]
+  [items : vector.StringVec]) : PackageSourceList
+  (match (ast-decl-path-list-step paths)
+    [(AstDeclPathListStep.Nil) (package-source-list-from-vec items)]
+    [(AstDeclPathListStep.Cons path rest)
+      (let
+        [rest : AstDeclPathList rest]
+        [next-items : vector.StringVec
+          (selfhost-lint-package-dead-source-insert
+            items
+            path
+            sources
+            stdlib-roots)]
+        (selfhost-lint-package-dead-paths-to-sources-from
+          rest
+          sources
+          stdlib-roots
+          next-items))]))
+
+(define (selfhost-lint-package-dead-paths-to-sources
+  [entry-path : String]
+  [paths : AstDeclPathList]
+  [sources : PackageSourceList]
+  [stdlib-roots : lint_svec.Vec]) : PackageSourceList
+  (selfhost-lint-package-dead-paths-to-sources-from
+    paths
+    sources
+    stdlib-roots
+    (selfhost-lint-package-dead-source-insert
+      (vector.string-vec-new)
+      entry-path
+      sources
+      stdlib-roots)))
+
+(define (selfhost-lint-package-dead-sources
+  [source-set : PackageSourceSet]
+  [stdlib-roots : lint_svec.Vec]) : ResultSelfhostLintDeadSources
+  (let
+    [manifest : CompilerPkgManifest (struct-get source-set manifest)]
+    [kind : CompilerPkgKind (struct-get manifest kind)]
+    (if (selfhost-lint-package-kind-entry? kind)
+      (let
+        [manifest-dir : String (struct-get source-set manifest-dir)]
+        [entry-path : String
+          (selfhost-lint-package-entry-path manifest-dir manifest)]
+        [_reset-file-state : unit (selfhost-lint-reset-file-state!)]
+        (match (compiler-load-package-file-with-runtime-cfg
+          entry-path
+          (cli-string-vec-to-legacy (& stdlib-roots))
+          manifest-dir
+          (struct-get manifest deps)
+          true
+          (selfhost-lint-package-dead-cfgs))
+          [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+            (ResultSelfhostLintDeadSources.Ok
+              (selfhost-lint-package-dead-paths-to-sources
+                entry-path
+                paths
+                (struct-get source-set sources)
+                stdlib-roots))]
+          [(ResultCompilerLoadWithPaths.Err diag)
+            (ResultSelfhostLintDeadSources.Err diag)]))
+      (ResultSelfhostLintDeadSources.Ok (struct-get source-set sources)))))
 
 (define (selfhost-lint-package-dead-code
   [sources : PackageSourceList]
@@ -2364,18 +2531,27 @@
       (let
         [sources : PackageSourceList (struct-get source-set sources)]
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
-        [dead-decls : SelfhostLintDeadDecls
-          (selfhost-lint-package-dead-code sources (struct-get manifest kind))]
-        (selfhost-lint-package-files
-          sources
-          stdlib-roots
-          enforcing
-          deprecated-string-concat
-          redundant-function-name
-          prefer-dotted-field
-          dead-decls
-          (> (package-source-list-len sources) 1)
-          0))]))
+        (match (selfhost-lint-package-dead-sources source-set stdlib-roots)
+          [(ResultSelfhostLintDeadSources.Ok dead-sources)
+            (let
+              [dead-decls : SelfhostLintDeadDecls
+                (selfhost-lint-package-dead-code
+                  dead-sources
+                  (struct-get manifest kind))]
+              (selfhost-lint-package-files
+                sources
+                stdlib-roots
+                enforcing
+                deprecated-string-concat
+                redundant-function-name
+                prefer-dotted-field
+                dead-decls
+                (> (package-source-list-len sources) 1)
+                0))]
+          [(ResultSelfhostLintDeadSources.Err diag)
+            (begin
+              (io.print-error (compiler-diagnostic-render (box-get diag)))
+              1)]))]))
 
 ;; Run the `lint` command over arguments starting at `start`.
 (define (selfhost-lint-run-from [start : i64] [count : i64]) : i64
@@ -2632,7 +2808,7 @@
 (define (main) : i64 42)")
 
 (define (selfhost-lint-package-dead-source-a) : String
-  "(define (main) : i64 (public-api 1))
+  "(define (main) : i64 (pkg.public-api 1))
 (define (public-api [x : i64]) : i64 (helper x))
 (define (helper [x : i64]) : i64 (cross-file-helper x))
 (define (default-visible-helper) : i64 1)
@@ -2644,7 +2820,7 @@
     "(define (cross-file-helper [x : i64]) : i64 (+ x 1))
 (define (test-only-helper) : i64 3)
 "
-    (string.append "(te" "st \"test-only\" (test-only-helper))")))
+    (string.append "(cfg test (te" "st \"test-only\" (test-only-helper)))")))
 
 (define (selfhost-lint-unused-assignment-init-source) : String
   "(define (main) : i64

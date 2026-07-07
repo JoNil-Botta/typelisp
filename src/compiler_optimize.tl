@@ -50258,6 +50258,92 @@
         table
         (OptLoadTable.Cons (OptLoadEntry.Entry key value) (box table)))]))
 
+(define (opt-load-copy-entry-within?
+  [entry : OptLoadEntry]
+  [src-base : i64]
+  [src-off : i64]
+  [size : i64]) : bool
+  (match (opt-load-entry-key entry)
+    [(OptLoadKey.Field base off ty _)
+      (let
+        [width : i64 (opt-load-loc-type-size ty)]
+        (and
+          (= base src-base)
+          (> width 0)
+          (>= off src-off)
+          (<= (+ off width) (+ src-off size))))]
+    [_ false]))
+
+(define (opt-load-copy-transfer-entry
+  [table : OptLoadTable]
+  [entry : OptLoadEntry]
+  [gated? : bool]
+  [sources : opt_i64_i64_map.Map]
+  [src-base : i64]
+  [src-off : i64]
+  [dst-base : i64]
+  [dst-off : i64]
+  [size : i64]
+  [dst-header? : bool]) : OptLoadTable
+  (if (opt-load-copy-entry-within? entry src-base src-off size)
+    (match (opt-load-entry-key entry)
+      [(OptLoadKey.Field _ off ty _)
+        (let
+          [key : OptLoadKey
+            (OptLoadKey.Field
+              dst-base
+              (+ dst-off (- off src-off))
+              ty
+              dst-header?)]
+          [value : CompilerIrValue (opt-load-entry-value entry)]
+          [eligible? : bool
+            (if gated?
+              (and
+                (opt-load-key-gvn-stable? sources key)
+                (opt-load-value-gvn-stable? sources value))
+              true)]
+          (if eligible?
+            (opt-load-table-bind table key value)
+            table))]
+      [_ table])
+    table))
+
+(define (opt-load-table-transfer-copy-fields
+  [source : OptLoadTable]
+  [out : OptLoadTable]
+  [gated? : bool]
+  [sources : opt_i64_i64_map.Map]
+  [src-base : i64]
+  [src-off : i64]
+  [dst-base : i64]
+  [dst-off : i64]
+  [size : i64]
+  [dst-header? : bool]) : OptLoadTable
+  (match source
+    [(OptLoadTable.Nil) out]
+    [(OptLoadTable.Cons entry rest)
+      (opt-load-table-transfer-copy-fields
+        (box-get rest)
+        (opt-load-copy-transfer-entry
+          out
+          entry
+          gated?
+          sources
+          src-base
+          src-off
+          dst-base
+          dst-off
+          size
+          dst-header?)
+        gated?
+        sources
+        src-base
+        src-off
+        dst-base
+        dst-off
+        size
+        dst-header?)]))
+
 (define (opt-load-entry-mentions-var? [entry : OptLoadEntry] [var : i64]) : bool
   (or
     (opt-value-is-var? (opt-load-entry-value entry) var)
@@ -50490,25 +50576,61 @@
                 kinds))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
-;; invalidation, no forwarding.
+;; invalidation, plus conservative field-to-field forwarding when source and
+;; destination are disjoint ranges of the same tracked base.
 (define (opt-load-cse-state-copy-bytes
+  [gated? : bool]
+  [sources : opt_i64_i64_map.Map]
   [state : OptLoadCseState]
   [dst : CompilerIrValue]
+  [src : CompilerIrValue]
   [size : i64]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
     [(OptLoadCseState.State facts table kinds)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
+        [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
         [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
         (match class
           [(OptLoadStoreUnknown)
             (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
-          [_
+          [(OptLoadStoreElement)
             (OptLoadCseState.State
               facts2
               (opt-load-table-filter-store table class)
-              kinds)]))]))
+              kinds)]
+          [(OptLoadStoreField dst-base dst-off _ dst-header?)
+            (let
+              [filtered : OptLoadTable
+                (opt-load-table-filter-store table class)]
+              [copied : OptLoadTable
+                (match src-class
+                  [(OptLoadStoreField src-base src-off _ src-header?)
+                    (if (and
+                      (= src-base dst-base)
+                      (=
+                        (if src-header?
+                          1
+                          0)
+                        (if dst-header?
+                          1
+                          0))
+                      (opt-load-ranges-disjoint? src-off size dst-off size))
+                      (opt-load-table-transfer-copy-fields
+                        filtered
+                        filtered
+                        gated?
+                        sources
+                        src-base
+                        src-off
+                        dst-base
+                        dst-off
+                        size
+                        dst-header?)
+                      filtered)]
+                  [_ filtered])]
+              (OptLoadCseState.State facts2 copied kinds))]))]))
 
 (define (opt-load-cse-core-load
   [hs : OptLoadHeaderSet]
@@ -50573,9 +50695,9 @@
       (OptLoadCseResult.Result
         (opt-load-cse-state-store hs gated? sources state ptr value ty instr)
         instr)]
-    [(CompilerIrInstr.CopyBytes dst _ size)
+    [(CompilerIrInstr.CopyBytes dst src size)
       (OptLoadCseResult.Result
-        (opt-load-cse-state-copy-bytes state dst size instr)
+        (opt-load-cse-state-copy-bytes gated? sources state dst src size instr)
         instr)]
     [(CompilerIrInstr.Load dst src ty)
       (opt-load-cse-core-load hs gated? sources state dst src ty instr)]
@@ -51484,6 +51606,70 @@
             (CompilerIrInstr.Load 6 (CompilerIrValue.Var 2) (AstType.I64))
             (CompilerIrInstrList.Nil)))))))
 
+(define (opt-load-cse-copybytes-forward-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.CopyBytes
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 1)
+              8)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                4
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.I64 1)
+                (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+                (CompilerIrInstrList.Nil)))))))))
+
+(define (opt-load-cse-copybytes-overlap-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Alloc 0 (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        1
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 0)
+        (AstType.I8))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            3
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 4)
+            (AstType.I8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.CopyBytes
+              (CompilerIrValue.Var 3)
+              (CompilerIrValue.Var 1)
+              8)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                4
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.I64 4)
+                (AstType.I8))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
+                (CompilerIrInstrList.Nil)))))))))
+
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
     [positive : CompilerIrInstrList
@@ -51515,6 +51701,10 @@
     [same-base-disjoint : CompilerIrInstrList
       (opt-load-cse-run-with-array-param
         (opt-load-cse-same-base-disjoint-instrs))]
+    [copybytes-forward : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-copybytes-forward-instrs))]
+    [copybytes-overlap : CompilerIrInstrList
+      (opt-load-cse-run (opt-load-cse-copybytes-overlap-instrs))]
     [global-store : bool
       (opt-load-cse-barrier-blocked?
         (CompilerIrInstr.Store "g" (CompilerIrValue.I64 9) (AstType.I64)))]
@@ -51617,4 +51807,10 @@
         37]
       [(not (= (opt-count-load-instrs subword-unknown-var) 1)) 38]
       [(not (= (opt-count-mov-dst-instrs subword-unknown-var 2) 0)) 39]
-      [else 42])))
+      [(not (= (opt-count-load-instrs copybytes-forward) 1)) 40]
+      [(not
+          (= (opt-count-mov-dst-var-src copybytes-forward 5 2 (AstType.I64)) 1))
+        41]
+      [(not (= (opt-count-load-instrs copybytes-overlap) 2)) 42]
+      [(not (= (opt-count-mov-dst-instrs copybytes-overlap 5) 0)) 43]
+      [else 44])))

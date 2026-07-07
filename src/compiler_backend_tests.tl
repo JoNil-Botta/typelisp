@@ -19015,6 +19015,182 @@
         (compiler-backend-set-current-fn-linux!))
       (and linux-ok win64-ok))))
 
+(define (compiler-backend-scratch-vreg-call-target-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.CallIndirectC
+          2
+          (CompilerIrValue.Var 1)
+          (CompilerIrCallArgs.Nil)
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-call-target-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r13"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-tail-target-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.TailCallIndirect
+          (CompilerIrValue.Var 0)
+          (CompilerIrCallArgs.One (CompilerIrValue.Var 1))
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-tail-target-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r11"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%r12"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-call-target-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+      [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+      [prev-assignment-index : CompilerRegAssignmentIndex
+        compiler-backend-scavenge-ctx-assignment-index]
+      [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+      [prev-occupied-masks : (Array i64)
+        compiler-backend-scavenge-ctx-occupied-masks]
+      [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+      [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+      [prev-current-count : i64 compiler-backend-emit-current-count]
+      [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+      [ctx-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-call-target-test-blocks)]
+      [plan-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-call-target-test-blocks)]
+      [ctx-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-call-target-test-assignments)]
+      [plan-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-call-target-test-assignments)]
+      [ok : bool false]
+      (begin
+        (compiler-backend-set-current-fn-linux!)
+        (compiler-backend-test-scavenge-install-ctx!
+          "scratch_vreg_call_target"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          3
+          ctx-blocks
+          ctx-assignments)
+        (match (compiler-backend-scratch-vreg-build-call-target!
+          plan-blocks
+          plan-assignments)
+          [(CompilerBackendScratchVregSynth n _ regs lo hi)
+            (begin
+              (set! compiler-backend-emit-instr-post-base 1)
+              (set! compiler-backend-emit-current-count 1)
+              (set!
+                ok
+                (and
+                  (= n 1)
+                  (string.eq (array-ref regs 0) "%r12")
+                  (= (array-ref lo 0) 0)
+                  (= (array-ref hi 0) 0)
+                  (string.eq
+                    (compiler-backend-scratch-vreg-call-target-here)
+                    "%r12"))))])
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (if prev-win64
+          (compiler-backend-set-current-fn-win64!)
+          (compiler-backend-set-current-fn-linux!))
+        (compiler-backend-scratch-vreg-disable!)
+        ok))
+    true))
+
+(define (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+      [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+      [prev-assignment-index : CompilerRegAssignmentIndex
+        compiler-backend-scavenge-ctx-assignment-index]
+      [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+      [prev-occupied-masks : (Array i64)
+        compiler-backend-scavenge-ctx-occupied-masks]
+      [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+      [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+      [prev-current-count : i64 compiler-backend-emit-current-count]
+      [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+      [ctx-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-tail-target-test-blocks)]
+      [plan-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-tail-target-test-blocks)]
+      [ctx-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-tail-target-test-assignments)]
+      [plan-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-tail-target-test-assignments)]
+      [ok : bool false]
+      (begin
+        (compiler-backend-set-current-fn-linux!)
+        (compiler-backend-test-scavenge-install-ctx!
+          "scratch_vreg_tail_target"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          3
+          ctx-blocks
+          ctx-assignments)
+        (match (compiler-backend-scratch-vreg-build-call-target!
+          plan-blocks
+          plan-assignments)
+          [(CompilerBackendScratchVregSynth n _ _ _ _)
+            (begin
+              (set! compiler-backend-emit-instr-post-base 1)
+              (set! compiler-backend-emit-current-count 1)
+              (set!
+                ok
+                (and
+                  (= n 0)
+                  (string.eq
+                    (compiler-backend-scratch-vreg-call-target-here)
+                    ""))))])
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (if prev-win64
+          (compiler-backend-set-current-fn-win64!)
+          (compiler-backend-set-current-fn-linux!))
+        (compiler-backend-scratch-vreg-disable!)
+        ok))
+    true))
+
 (define (compiler-backend-scavenge-emergency-respects-exclude-ok?) : bool
   (let
     [starts : (Array i64) (make-array i64 1)]
@@ -19360,6 +19536,8 @@
         (compiler-backend-scavenge-special-reg-bit-map-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
+        (compiler-backend-scratch-vreg-call-target-plan-ok?)
+        (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)
         (compiler-backend-scavenge-loop-live-through-ok?)

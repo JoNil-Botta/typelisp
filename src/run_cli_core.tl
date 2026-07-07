@@ -268,7 +268,7 @@
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             source
-            (cli-string-vec-to-legacy (& stdlib-roots))
+            stdlib-roots
             (compiler-driver-target-cfgs
               target
               (source-tool-cfg-names-to-env cfgs))

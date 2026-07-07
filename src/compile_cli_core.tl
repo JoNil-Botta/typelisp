@@ -871,7 +871,7 @@
           (if inline-preflight
             (tltest-inline-typecheck-file-with-cfg
               input-path
-              (cli-string-vec-to-legacy (& stdlib-roots))
+              stdlib-roots
               (compiler-driver-target-cfgs
                 target
                 (compile-cli-cfg-names-to-env cfgs))
@@ -939,7 +939,7 @@
       [status : i64
         (tltest-inline-typecheck-file-with-cfg
           input-path
-          (cli-string-vec-to-legacy (& stdlib-roots))
+          stdlib-roots
           (compiler-driver-target-cfgs
             target
             (compile-cli-cfg-names-to-env cfgs))
@@ -1311,7 +1311,7 @@
             [inline-test-status : i64
               (tltest-inline-typecheck-file-with-cfg
                 input-path
-                (cli-string-vec-to-legacy (& stdlib-roots))
+                stdlib-roots
                 (compiler-check-language-cfgs)
                 "typecheck-prefix-inline-compile-check")]
             (if (= inline-test-status 0)

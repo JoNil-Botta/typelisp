@@ -152,7 +152,7 @@
         [inline-test-status : i64
           (tltest-inline-typecheck-file-with-cfg
             input-path
-            (cli-string-vec-to-legacy (& stdlib-roots))
+            stdlib-roots
             (compiler-check-language-cfgs)
             "typecheck-prefix-inline-check")]
         (if (= inline-test-status 0)
@@ -215,7 +215,7 @@
               [inline-test-status : i64
                 (tltest-inline-typecheck-package-sources-with-cfg
                   (struct-get source-set sources)
-                  (cli-string-vec-to-legacy (& stdlib-roots))
+                  stdlib-roots
                   manifest-dir
                   name
                   (struct-get manifest deps)

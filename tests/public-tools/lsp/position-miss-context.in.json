@@ -1,0 +1,9 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/position-miss-context.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64 1)\n(define (bar [x : i64]) : i64 (+ x 1))\n(defstruct MyStruct (field i64))\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/read","params":{"textDocument":{"uri":"${{TMP_URI}}/position-miss-context.tl"},"position":{"line":0,"character":22},"outer":0}},
+  {"jsonrpc":"2.0","id":3,"method":"tl/replaceBody","params":{"textDocument":{"uri":"${{TMP_URI}}/position-miss-context.tl"},"position":{"line":99,"character":0},"newBody":"42"}},
+  {"jsonrpc":"2.0","id":4,"method":"tl/replacePattern","params":{"textDocument":{"uri":"${{TMP_URI}}/position-miss-context.tl"},"position":{"line":99,"character":0},"oldPattern":"1","newPattern":"42"}},
+  {"jsonrpc":"2.0","id":5,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

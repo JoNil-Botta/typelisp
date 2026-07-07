@@ -7969,30 +7969,31 @@
     [(CompilerLiveBlock.Block label _ _ _ _ _ _) label]))
 
 (define (compiler-reg-edge-copy-increment-pred!
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [pred-counts : (Array i64)]
   [label : String]) : unit
-  (match (hashmap.string-i64-map-get ids label)
-    [(hashmap.StringI64MapFound index)
-      (array-set! pred-counts index (+ (array-ref pred-counts index) 1))]
-    [(hashmap.StringI64MapMissing) unit]))
+  (let
+    [index : i64 (compiler-live-function-block-index liveness label)]
+    (if (>= index 0)
+      (array-set! pred-counts index (+ (array-ref pred-counts index) 1))
+      unit)))
 
 (define (compiler-reg-edge-copy-count-preds-succs!
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [pred-counts : (Array i64)]
   [succs : CompilerLiveLabelSet]) : unit
   (match succs
     [(CompilerLiveLabelSet.Nil) unit]
     [(CompilerLiveLabelSet.Cons label rest)
       (begin
-        (compiler-reg-edge-copy-increment-pred! ids pred-counts label)
+        (compiler-reg-edge-copy-increment-pred! liveness pred-counts label)
         (compiler-reg-edge-copy-count-preds-succs!
-          ids
+          liveness
           pred-counts
           (box-get rest)))]))
 
 (define (compiler-reg-edge-copy-count-preds-blocks!
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [index : i64]) : unit
@@ -8000,23 +8001,23 @@
     unit
     (begin
       (compiler-reg-edge-copy-count-preds-succs!
-        ids
+        liveness
         pred-counts
         (compiler-reg-live-block-succs (array-ref blocks index)))
       (compiler-reg-edge-copy-count-preds-blocks!
-        ids
+        liveness
         blocks
         pred-counts
         (+ index 1)))))
 
 (define (compiler-reg-edge-copy-pred-counts
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]) : (Array i64)
   (let
     [pred-counts : (Array i64) (array.make-array i64 (array-length blocks))]
     (begin
       (compiler-reg-fill-i64-array pred-counts 0)
-      (compiler-reg-edge-copy-count-preds-blocks! ids blocks pred-counts 0)
+      (compiler-reg-edge-copy-count-preds-blocks! liveness blocks pred-counts 0)
       pred-counts)))
 
 (define (compiler-reg-edge-copy-refusal
@@ -8072,7 +8073,7 @@
       members)))
 
 (define (compiler-reg-edge-copy-boundary-one
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [region : hashmap.StringI64Map]
@@ -8086,8 +8087,9 @@
   [members : CompilerLiveI64Set]
   [to-label : String]
   [acc : CompilerRegEdgeCopyList]) : CompilerRegEdgeCopyPlan
-  (match (hashmap.string-i64-map-get ids to-label)
-    [(hashmap.StringI64MapFound to-index)
+  (let
+    [to-index : i64 (compiler-live-function-block-index liveness to-label)]
+    (if (>= to-index 0)
       (let
         [to-block : CompilerLiveBlock (array-ref blocks to-index)]
         [to-inside : bool (compiler-reg-region-label? region to-label)]
@@ -8138,16 +8140,15 @@
                       placement)
                     acc)))]
             [(CompilerRegEdgeCopyPlacementResult.Refused message)
-              (CompilerRegEdgeCopyPlan.Refused message)])))]
-    [(hashmap.StringI64MapMissing)
+              (CompilerRegEdgeCopyPlan.Refused message)])))
       (CompilerRegEdgeCopyPlan.Refused
         (string.concat3
           "regalloc: edge copy target block not found: "
           to-label
-          ""))]))
+          "")))))
 
 (define (compiler-reg-edge-copy-boundary-succs
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [region : hashmap.StringI64Map]
@@ -8165,7 +8166,7 @@
     [(CompilerLiveLabelSet.Nil) (CompilerRegEdgeCopyPlan.Plan acc)]
     [(CompilerLiveLabelSet.Cons to-label rest)
       (match (compiler-reg-edge-copy-boundary-one
-        ids
+        liveness
         blocks
         pred-counts
         region
@@ -8181,7 +8182,7 @@
         acc)
         [(CompilerRegEdgeCopyPlan.Plan next)
           (compiler-reg-edge-copy-boundary-succs
-            ids
+            liveness
             blocks
             pred-counts
             region
@@ -8199,7 +8200,7 @@
           (CompilerRegEdgeCopyPlan.Refused message)])]))
 
 (define (compiler-reg-edge-copy-boundary-blocks
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [blocks : (Array CompilerLiveBlock)]
   [pred-counts : (Array i64)]
   [region : hashmap.StringI64Map]
@@ -8217,7 +8218,7 @@
       [label : String (compiler-reg-edge-copy-live-block-label block)]
       [succs : CompilerLiveLabelSet (compiler-reg-live-block-succs block)]
       (match (compiler-reg-edge-copy-boundary-succs
-        ids
+        liveness
         blocks
         pred-counts
         region
@@ -8233,7 +8234,7 @@
         acc)
         [(CompilerRegEdgeCopyPlan.Plan next)
           (compiler-reg-edge-copy-boundary-blocks
-            ids
+            liveness
             blocks
             pred-counts
             region
@@ -8286,22 +8287,24 @@
   [region-var : i64]
   [ty : AstType]
   [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
-  (match (compiler-live-analyze-function func)
-    [(CompilerFunctionLiveness.Liveness ids blocks)
-      (let
-        [pred-counts : (Array i64)
-          (compiler-reg-edge-copy-pred-counts ids blocks)]
-        (compiler-reg-edge-copy-boundary-blocks
-          ids
-          blocks
-          pred-counts
-          (compiler-reg-region-label-map region-labels)
-          stack-var
-          region-var
-          ty
-          members
-          0
-          CompilerRegEdgeCopyList.Nil))]))
+  (let
+    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    (match liveness
+      [(CompilerFunctionLiveness.Liveness _ blocks)
+        (let
+          [pred-counts : (Array i64)
+            (compiler-reg-edge-copy-pred-counts liveness blocks)]
+          (compiler-reg-edge-copy-boundary-blocks
+            liveness
+            blocks
+            pred-counts
+            (compiler-reg-region-label-map region-labels)
+            stack-var
+            region-var
+            ty
+            members
+            0
+            CompilerRegEdgeCopyList.Nil))])))
 
 (define (compiler-reg-edge-copy-instr [copy : CompilerRegEdgeCopy]) : CompilerIrInstr
   (match copy
@@ -8919,25 +8922,25 @@
     (> (* mentions (compiler-reg-loop-depth-weight depth)) copy-count)))
 
 (define (compiler-reg-loop-split-succs-has-backedge?
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [source-index : i64]
   [succs : CompilerLiveLabelSet]) : bool
   (match succs
     [(CompilerLiveLabelSet.Nil) false]
     [(CompilerLiveLabelSet.Cons label rest)
-      (match (hashmap.string-i64-map-get ids label)
-        [(hashmap.StringI64MapFound target-index)
+      (let
+        [target-index : i64 (compiler-live-function-block-index liveness label)]
+        (if (>= target-index 0)
           (if (<= target-index source-index)
             true
             (compiler-reg-loop-split-succs-has-backedge?
-              ids
+              liveness
               source-index
-              (box-get rest)))]
-        [(hashmap.StringI64MapMissing)
+              (box-get rest)))
           (compiler-reg-loop-split-succs-has-backedge?
-            ids
+            liveness
             source-index
-            (box-get rest))])]))
+            (box-get rest))))]))
 
 (define (compiler-reg-loop-split-region-remap-blocks
   [blocks : CompilerIrBlockList]
@@ -9701,7 +9704,7 @@
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [live-blocks : (Array CompilerLiveBlock)]
   [depths : (Array i64)]
   [point : i64]
@@ -9740,7 +9743,7 @@
               ;; insertion carries/relabels the header's phi inputs.
               true
               (compiler-reg-loop-split-succs-has-backedge?
-                ids
+                liveness
                 block-index
                 (compiler-reg-live-block-succs
                   (array-ref live-blocks block-index))))
@@ -9768,7 +9771,7 @@
                     abi
                     func
                     (box-get rest)
-                    ids
+                    liveness
                     live-blocks
                     depths
                     next-point
@@ -9799,7 +9802,7 @@
                 abi
                 func
                 (box-get rest)
-                ids
+                liveness
                 live-blocks
                 depths
                 next-point
@@ -9817,7 +9820,7 @@
         abi
         func
         (compiler-ir-block-seq-to-list seq)
-        ids
+        liveness
         live-blocks
         depths
         point
@@ -10262,7 +10265,7 @@
 (define (compiler-reg-loop-phi-mb-select
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [live-blocks : (Array CompilerLiveBlock)]
   [depths : (Array i64)]
   [vars : i64]
@@ -10283,7 +10286,7 @@
         block-array
         (compiler-reg-loop-phi-mb-block-points block-array)
         (compiler-reg-preheader-loop-ends-seq seq count)
-        (compiler-reg-edge-copy-pred-counts ids live-blocks)
+        (compiler-reg-edge-copy-pred-counts liveness live-blocks)
         depths
         0
         vars
@@ -10359,12 +10362,12 @@
             [merged-roots : CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
             (match liveness
-              [(CompilerFunctionLiveness.Liveness ids live-blocks)
+              [(CompilerFunctionLiveness.Liveness _ live-blocks)
                 (match (match (compiler-reg-loop-split-select-blocks
                   abi
                   func
                   blocks
-                  ids
+                  liveness
                   live-blocks
                   depths
                   0
@@ -10386,7 +10389,7 @@
                     (compiler-reg-loop-phi-mb-select
                       func
                       blocks
-                      ids
+                      liveness
                       live-blocks
                       depths
                       vars
@@ -10645,7 +10648,7 @@
 (define (compiler-reg-loop-split-refused-select-blocks
   [func : CompilerIrFunction]
   [blocks : CompilerIrBlockList]
-  [ids : hashmap.StringI64Map]
+  [liveness : CompilerFunctionLiveness]
   [live-blocks : (Array CompilerLiveBlock)]
   [depths : (Array i64)]
   [point : i64]
@@ -10678,7 +10681,7 @@
               (< block-index (array-length live-blocks))
               (> depth 0)
               (compiler-reg-loop-split-succs-has-backedge?
-                ids
+                liveness
                 block-index
                 (compiler-reg-live-block-succs
                   (array-ref live-blocks block-index))))
@@ -10705,7 +10708,7 @@
                   (compiler-reg-loop-split-refused-select-blocks
                     func
                     (box-get rest)
-                    ids
+                    liveness
                     live-blocks
                     depths
                     next-point
@@ -10721,7 +10724,7 @@
               (compiler-reg-loop-split-refused-select-blocks
                 func
                 (box-get rest)
-                ids
+                liveness
                 live-blocks
                 depths
                 next-point
@@ -10737,7 +10740,7 @@
       (compiler-reg-loop-split-refused-select-blocks
         func
         (compiler-ir-block-seq-to-list seq)
-        ids
+        liveness
         live-blocks
         depths
         point
@@ -10786,11 +10789,11 @@
             [merged-roots : CompilerLiveI64Set
               (compiler-reg-coalesce-merged-root-set coalesce)]
             (match liveness
-              [(CompilerFunctionLiveness.Liveness ids live-blocks)
+              [(CompilerFunctionLiveness.Liveness _ live-blocks)
                 (compiler-reg-loop-split-refused-select-blocks
                   func
                   blocks
-                  ids
+                  liveness
                   live-blocks
                   depths
                   0

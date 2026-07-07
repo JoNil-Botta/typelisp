@@ -16086,6 +16086,43 @@
           (compiler-backend-string-contains? asm (compiler-backend-todo-marker))))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-divrem-rax-rhs-preserved-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r12"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rax"))
+          CompilerRegAssignmentList.Nil))]
+    (match (compiler-backend-emit-binop
+      (compiler-backend-divrem-binop-types (AstType.I64))
+      (CompilerBackendGlobalTypeList.Nil)
+      assignments
+      2
+      (CompilerIrBinOp.Div)
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.Var 1)
+      (AstType.I64))
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains?
+            asm
+            "    movq %rax, %r8\n    movq %r12, %rax\n")
+          (compiler-backend-string-contains? asm "    idivq %r8\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq %r12, %rax\n    movq %rax, %r8\n"))
+          (not
+            (compiler-backend-string-contains?
+              asm
+              (compiler-backend-todo-marker))))]
+      [(ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-safe-divrem-guard-elision-ok?) : bool
   (and
     (backend-and4
@@ -19489,6 +19526,7 @@
       (and
         (compiler-backend-scalar-div-mod-ok?)
         (compiler-backend-constant-divisor-strength-ok?)
+        (compiler-backend-divrem-rax-rhs-preserved-ok?)
         (compiler-backend-safe-divrem-guard-elision-ok?))
       (and
         (compiler-backend-i64-immediate-load-shape-ok?)

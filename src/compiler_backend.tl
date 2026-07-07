@@ -13928,12 +13928,27 @@
                               (compiler-backend-value-scalar-register
                                 assignments
                                 rhs)]
+                            [lhs-reg : String
+                              (compiler-backend-value-scalar-register
+                                assignments
+                                lhs)]
+                            ;; Div/mod materialise the dividend in %rax; if the
+                            ;; divisor also lives there, save it before lhs
+                            ;; overwrites %rax.
+                            [preserve-rhs-before-lhs? : bool
+                              (and
+                                (compiler-backend-divmod-op? op)
+                                (string.eq rhs-reg staging))]
                             [scav-rhs : String
                               (compiler-backend-scavenge-reg
                                 dst
-                                (compiler-backend-scavenge-exclude-regs2
-                                  staging
-                                  "")
+                                (if preserve-rhs-before-lhs?
+                                  (compiler-backend-scavenge-exclude-regs2
+                                    staging
+                                    lhs-reg)
+                                  (compiler-backend-scavenge-exclude-regs2
+                                    staging
+                                    ""))
                                 7
                                 "%r8")]
                             (match (if (if (string.eq rhs-reg "")
@@ -13963,21 +13978,37 @@
                                   scav-rhs)
                                   [(ResultCompilerBackend.Ok rhs-asm)
                                     (ResultCompilerBackend.Ok
-                                      (string.append
-                                        lhs-asm
+                                      (if preserve-rhs-before-lhs?
                                         (string.append
                                           rhs-asm
                                           (string.append
-                                            (compiler-backend-binop-asm
-                                              op
-                                              operand-ty
-                                              scav-rhs
-                                              staging)
-                                            (compiler-backend-emit-store-typed-var-with-plan
-                                              assignments
-                                              dst
-                                              staging
-                                              ty)))))]
+                                            lhs-asm
+                                            (string.append
+                                              (compiler-backend-binop-asm
+                                                op
+                                                operand-ty
+                                                scav-rhs
+                                                staging)
+                                              (compiler-backend-emit-store-typed-var-with-plan
+                                                assignments
+                                                dst
+                                                staging
+                                                ty))))
+                                        (string.append
+                                          lhs-asm
+                                          (string.append
+                                            rhs-asm
+                                            (string.append
+                                              (compiler-backend-binop-asm
+                                                op
+                                                operand-ty
+                                                scav-rhs
+                                                staging)
+                                              (compiler-backend-emit-store-typed-var-with-plan
+                                                assignments
+                                                dst
+                                                staging
+                                                ty))))))]
                                   [(ResultCompilerBackend.Err message)
                                     (ResultCompilerBackend.Err message)])]))))])])]
             [(ResultCompilerBackend.Err message)

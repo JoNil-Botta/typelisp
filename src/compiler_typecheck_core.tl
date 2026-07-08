@@ -19307,6 +19307,16 @@
         [(TcMaybeString.Some _) (tc-constructor-name? ctx name)]
         [(TcMaybeString.No) false]))))
 
+(define (tc-call-allows-region-args-id?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (if (tc-default-builtin-unshadowed-id? env name-id)
+    true
+    (match (tc-active-region env)
+      [(TcMaybeString.Some _) (tc-constructor-name-id? ctx name-id)]
+      [(TcMaybeString.No) false])))
+
 (define (tc-expr-var-name [expr : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
@@ -19443,9 +19453,11 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [func : AstExpr]) : bool
-  (match (tc-expr-var-name func)
-    [(TcMaybeString.Some name) (tc-call-allows-region-args? ctx env name)]
-    [(TcMaybeString.No) false]))
+  (let
+    [name-id : i64 (tc-expr-var-name-id func)]
+    (if (>= name-id 0)
+      (tc-call-allows-region-args-id? ctx env name-id)
+      false)))
 
 (define (tc-call-constructor-target-for-func
   [ctx : TcContext]

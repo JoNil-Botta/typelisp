@@ -69,6 +69,15 @@ if [ -s "$VERSION_ERR" ]; then
     exit 1
 fi
 
+if command -v llvm-readobj >/dev/null 2>&1 \
+    || command -v readelf >/dev/null 2>&1 \
+    || command -v objdump >/dev/null 2>&1; then
+    echo "[stage0-smoke] report stage0 binary size"
+    scripts/analyze-stage0-size.sh "$TL"
+else
+    echo "[stage0-smoke] skip stage0 binary size report; no section reader found"
+fi
+
 echo "[stage0-smoke] check examples/hello.tl with source stdlib"
 "$TL" check examples/hello.tl --stdlib-root stdlib
 

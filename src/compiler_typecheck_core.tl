@@ -7135,9 +7135,11 @@
   ;; Qualified `stdlib.comptime` helper calls are normalized to the legacy
   ;; helper key in name lookup. Keep one compatibility binding instead of
   ;; growing every macro helper environment with duplicate qualified aliases.
-  (if (tc-source-name-bound-exact? env name)
-    env
-    (tc-bind env name ty)))
+  (let
+    [name-id : i64 (tc-name-id name)]
+    (if (tc-source-name-bound-exact-id? env name-id)
+      env
+      (tc-bind-id env name-id ty))))
 
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let

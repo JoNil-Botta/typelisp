@@ -2179,8 +2179,8 @@
 
 (define (lower-entry-main-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def name _ _) (= name (intern "main"))]
-    [(AstDecl.DefFn name _ _ _ _) (= name (intern "main"))]
+    [(AstDecl.Def name _ _) (= name cbi.compiler-builtin-id-fix-main)]
+    [(AstDecl.DefFn name _ _ _ _) (= name cbi.compiler-builtin-id-fix-main)]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -2899,7 +2899,7 @@
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
       [decl-slots : (Array AstDecl) (struct-get decls slots)]
-      [empty-module-id : i64 (intern "")]
+      [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       ;; The index outlives the transient scratch arenas active during
       ;; lowering, so its backing allocations live in a dedicated arena
       ;; (same idiom as tc-hygiene-module-env-cache-arena): allocating them
@@ -3225,7 +3225,7 @@
                           target-module
                           (intern target-module)
                           alias
-                          (intern "")))]
+                          cbi.compiler-builtin-id-fix-empty))]
                     [_ unit])
                   (set! j (+ j 1)))))
             cur-names))))))
@@ -3250,7 +3250,7 @@
         base-cache
         dedup-base
         (intern module)
-        (intern ""))]
+        cbi.compiler-builtin-id-fix-empty)]
     (match names
       [(LowerNameEnv.Nil) overlay]
       [_ (lower-name-env-append overlay names)])))
@@ -3643,7 +3643,7 @@
             name-cache
             module
             (intern module)
-            (intern "")))])))
+            cbi.compiler-builtin-id-fix-empty))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -5769,7 +5769,7 @@
           base-cache
           module
           (intern module)
-          (intern ""))))))
+          cbi.compiler-builtin-id-fix-empty)))))
 
 (define (lower-function-decl-count-one [decl : AstDecl]) : i64
   (match decl
@@ -6290,7 +6290,7 @@
     (begin
       (lower_i64_i64_map.insert
         (&mut used)
-        (intern "$lower.precise-type-dce")
+        cbi.compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
         1)
       used)))
 
@@ -7285,7 +7285,7 @@
   (if (and
     (string.eq module "stdlib.arena")
     (string.eq (intern-str name) "Arena"))
-    (lower-used-type-name-add used module (intern "ArenaMark"))
+    (lower-used-type-name-add used module cbi.compiler-builtin-id-fix-ArenaMark)
     used))
 
 (define (lower-used-types-add-type-decl-deps
@@ -7420,43 +7420,43 @@
   (if (= lower-comptime-error-id-generation (intern-generation))
     unit
     (begin
-      (set! lower-comptime-error-id (intern "comptime-error"))
+      (set! lower-comptime-error-id cbi.compiler-builtin-id-fix-comptime_error)
       (set!
         lower-comptime-error-comptime-dot-id
-        (intern "comptime.comptime-error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
       (set!
         lower-comptime-error-comptime-slash-id
-        (intern "comptime/comptime-error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
       (set!
         lower-comptime-error-comptime-error-dot-id
-        (intern "comptime.error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_error)
       (set!
         lower-comptime-error-comptime-error-slash-id
-        (intern "comptime/error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-dot-dot-id
-        (intern "stdlib.comptime.comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-dot-slash-id
-        (intern "stdlib.comptime/comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-slash-dot-id
-        (intern "stdlib/comptime.comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-slash-slash-id
-        (intern "stdlib/comptime/comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-error-dot-dot-id
-        (intern "stdlib.comptime.error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-error-dot-slash-id
-        (intern "stdlib.comptime/error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-error-slash-dot-id
-        (intern "stdlib/comptime.error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-error-slash-slash-id
-        (intern "stdlib/comptime/error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set! lower-comptime-error-id-generation (intern-generation)))))
 
 (define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
@@ -45347,7 +45347,7 @@
   (match (ast-expr-unspan-with-pools
     pools
     (ast-node-pool-context-expr-get pools func-box))
-    [(AstExpr.Var name) (= name (intern "import"))]
+    [(AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-import)]
     [_ false]))
 
 (define (lower-source-expr-has-import-call?
@@ -55960,14 +55960,14 @@
       (ast-decl-def
         "callback"
         AstMaybeType.No
-        (ast-node-push (AstExpr.Var (intern "callback-target"))))
+        (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-callback_target)))
       (ast-decl-cons
         (ast-decl-def-fn
           "main"
           (ast-param-list-new)
           (AstType.I64)
           (ast-expr-call
-            (ast-node-push (AstExpr.Var (intern "helper")))
+            (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-helper))
             (ast-expr-list-new)))
         (ast-decl-cons
           (ast-decl-def-fn
@@ -56025,7 +56025,7 @@
             (ast-macro-param-list-new)
             (AstType.Expr)
             (ast-expr-call
-              (ast-node-push (AstExpr.Var (intern "macro-only-helper")))
+              (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-macro_only_helper))
               (ast-expr-list-new)))
           (ast-decl-list-new))))))
 
@@ -56186,7 +56186,7 @@
             (ast-field-def-cons
               (ast-field-def
                 "value"
-                (AstType.Enum (intern "UsedEnum"))
+                (AstType.Enum cbi.compiler-builtin-id-fix-UsedEnum)
                 AstFieldCleanup.No)
               (ast-field-def-list-new)))
           (ast-decl-cons
@@ -56201,7 +56201,7 @@
               (ast-decl-def-fn
                 "main"
                 (ast-param-list-new)
-                (AstType.Struct (intern "UsedBox"))
+                (AstType.Struct cbi.compiler-builtin-id-fix-UsedBox)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
               (ast-decl-list-new))))))))
 
@@ -56242,7 +56242,7 @@
           (ast-decl-def-fn
             "main"
             (ast-param-list-new)
-            (AstType.Enum (intern "ResultIoString"))
+            (AstType.Enum cbi.compiler-builtin-id-fix-ResultIoString)
             (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
           (ast-decl-list-new))))))
 
@@ -56291,14 +56291,14 @@
                   (ast-field-def-cons
                     (ast-field-def
                       "owner"
-                      (AstType.Struct (intern "arena.Arena"))
+                      (AstType.Struct cbi.compiler-builtin-id-fix-arena_dot_Arena)
                       AstFieldCleanup.No)
                     (ast-field-def-list-new)))
                 (ast-decl-cons
                   (ast-decl-def-fn
                     "main"
                     (ast-param-list-new)
-                    (AstType.Struct (intern "ThreadBox"))
+                    (AstType.Struct cbi.compiler-builtin-id-fix-ThreadBox)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                   (ast-decl-list-new))))))))))
 
@@ -56325,7 +56325,7 @@
         (ast-let-binding-cons
           (ast-let-binding
             "mark"
-            (AstMaybeType.Some (AstType.Struct (intern "ImportedMark")))
+            (AstMaybeType.Some (AstType.Struct cbi.compiler-builtin-id-fix-ImportedMark))
             unit-expr)
           (ast-let-binding-list-new))
         unit-expr)]
@@ -56765,8 +56765,8 @@
   (let
     [source : String (compiler-symbol-module-key "alias" "value")]
     [source-id : i64 (intern source)]
-    [alias-id : i64 (intern "alias")]
-    [value-id : i64 (intern "value")]
+    [alias-id : i64 cbi.compiler-builtin-id-fix-alias]
+    [value-id : i64 cbi.compiler-builtin-id-fix-value]
     [logical : String "logical-value"]
     [split-source : String
       (compiler-symbol-module-key
@@ -56776,8 +56776,8 @@
       (match (intern-lookup split-source)
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
-    [split-alias-id : i64 (intern "name_cache_split_alias_3940")]
-    [split-value-id : i64 (intern "name_cache_split_value_3940")]
+    [split-alias-id : i64 cbi.compiler-builtin-id-fix-name_cache_split_alias_3940]
+    [split-value-id : i64 cbi.compiler-builtin-id-fix-name_cache_split_value_3940]
     [split-logical : String "split-logical-value"]
     [names : LowerNameEnv
       (lower-name-env-bind

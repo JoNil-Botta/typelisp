@@ -33,6 +33,26 @@
 (cfg compile-profile (define tc-attrib-lookup-visible-id : i64 0))
 (cfg compile-profile (define tc-attrib-stdlib-comptime-syntax-type : i64 0))
 (cfg compile-profile (define tc-attrib-dotted-type-name-lookup-key : i64 0))
+(cfg compile-profile (define tc-attrib-lookup-visible : i64 0))
+(cfg compile-profile (define tc-attrib-lookup-hygiene-global : i64 0))
+(cfg compile-profile (define tc-attrib-lookup-hygiene-global-visible : i64 0))
+(cfg compile-profile (define tc-attrib-lookup-dotted-source-visible : i64 0))
+(cfg compile-profile (define tc-attrib-bind-alias-if-free : i64 0))
+(cfg compile-profile (define tc-attrib-binding-c-abi-fnptr : i64 0))
+(cfg compile-profile (define tc-attrib-binding-unsafe-marker-head : i64 0))
+(cfg compile-profile (define tc-attrib-cleanup-owner-active-scan : i64 0))
+(cfg compile-profile (define tc-attrib-arena-owner-active-scan : i64 0))
+(cfg compile-profile (define tc-attrib-source-name-lookup-key : i64 0))
+(cfg compile-profile (define tc-attrib-current-module-source-lookup-key : i64 0))
+(cfg compile-profile (define tc-attrib-source-dotted-full-path-key : i64 0))
+(cfg compile-profile (define tc-attrib-enum-qualified-variant-lookup-key : i64 0))
+(cfg compile-profile (define tc-attrib-leading-segment-wins : i64 0))
+(cfg compile-profile (define tc-attrib-name-bound : i64 0))
+(cfg compile-profile (define tc-attrib-default-builtin-unshadowed : i64 0))
+(cfg compile-profile (define tc-attrib-hygiene-global-binding-unsafe : i64 0))
+(cfg compile-profile (define tc-attrib-lifetime-visible : i64 0))
+(cfg compile-profile (define tc-attrib-bind-unsafe : i64 0))
+(cfg compile-profile (define tc-attrib-bind-c-abi-fnptr : i64 0))
 (cfg compile-profile (define (tc-attrib-marker-miss-value) : i64 tc-attrib-marker-miss))
 (cfg compile-profile (define (tc-attrib-source-name-bound-exact-value) : i64 tc-attrib-source-name-bound-exact))
 (cfg compile-profile (define (tc-attrib-lookup-visible-id-value) : i64 tc-attrib-lookup-visible-id))
@@ -43,6 +63,26 @@
 (cfg compile-profile (define (tc-attrib-lookup-unsafe-value) : i64 tc-attrib-lookup-unsafe))
 (cfg compile-profile (define (tc-attrib-binding-unsafe-value) : i64 tc-attrib-binding-unsafe))
 (cfg compile-profile (define (tc-attrib-name-qualified-value) : i64 tc-attrib-name-qualified))
+(cfg compile-profile (define (tc-attrib-lookup-visible-value) : i64 tc-attrib-lookup-visible))
+(cfg compile-profile (define (tc-attrib-lookup-hygiene-global-value) : i64 tc-attrib-lookup-hygiene-global))
+(cfg compile-profile (define (tc-attrib-lookup-hygiene-global-visible-value) : i64 tc-attrib-lookup-hygiene-global-visible))
+(cfg compile-profile (define (tc-attrib-lookup-dotted-source-visible-value) : i64 tc-attrib-lookup-dotted-source-visible))
+(cfg compile-profile (define (tc-attrib-bind-alias-if-free-value) : i64 tc-attrib-bind-alias-if-free))
+(cfg compile-profile (define (tc-attrib-binding-c-abi-fnptr-value) : i64 tc-attrib-binding-c-abi-fnptr))
+(cfg compile-profile (define (tc-attrib-binding-unsafe-marker-head-value) : i64 tc-attrib-binding-unsafe-marker-head))
+(cfg compile-profile (define (tc-attrib-cleanup-owner-active-scan-value) : i64 tc-attrib-cleanup-owner-active-scan))
+(cfg compile-profile (define (tc-attrib-arena-owner-active-scan-value) : i64 tc-attrib-arena-owner-active-scan))
+(cfg compile-profile (define (tc-attrib-source-name-lookup-key-value) : i64 tc-attrib-source-name-lookup-key))
+(cfg compile-profile (define (tc-attrib-current-module-source-lookup-key-value) : i64 tc-attrib-current-module-source-lookup-key))
+(cfg compile-profile (define (tc-attrib-source-dotted-full-path-key-value) : i64 tc-attrib-source-dotted-full-path-key))
+(cfg compile-profile (define (tc-attrib-enum-qualified-variant-lookup-key-value) : i64 tc-attrib-enum-qualified-variant-lookup-key))
+(cfg compile-profile (define (tc-attrib-leading-segment-wins-value) : i64 tc-attrib-leading-segment-wins))
+(cfg compile-profile (define (tc-attrib-name-bound-value) : i64 tc-attrib-name-bound))
+(cfg compile-profile (define (tc-attrib-default-builtin-unshadowed-value) : i64 tc-attrib-default-builtin-unshadowed))
+(cfg compile-profile (define (tc-attrib-hygiene-global-binding-unsafe-value) : i64 tc-attrib-hygiene-global-binding-unsafe))
+(cfg compile-profile (define (tc-attrib-lifetime-visible-value) : i64 tc-attrib-lifetime-visible))
+(cfg compile-profile (define (tc-attrib-bind-unsafe-value) : i64 tc-attrib-bind-unsafe))
+(cfg compile-profile (define (tc-attrib-bind-c-abi-fnptr-value) : i64 tc-attrib-bind-c-abi-fnptr))
 (cfg compile-profile (define tc-name-id-call-count : i64 0))
 (cfg compile-profile (define (tc-name-id-call-value) : i64 tc-name-id-call-count))
 
@@ -320,6 +360,14 @@
 
 (defenum ResultTcString
   (Ok String)
+  (Err String))
+
+;; Source name resolution result carrying the resolved lookup name alongside its
+;; already-interned id, so callers that only need the id (the common tc-expr Var
+;; path) don't re-intern the returned String. The id is the same value the
+;; String-returning variant forces every caller to (tc-name-id ...) again.
+(defenum TcNameLookup
+  (Ok String i64)
   (Err String))
 
 (defenum TcTryKind
@@ -3288,7 +3336,8 @@
             id))))))
 
 (define (tc-bind-unsafe [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-bind-unsafe-id env (tc-name-id name) ty))
+  (begin (cfg compile-profile (set! tc-attrib-bind-unsafe (+ tc-attrib-bind-unsafe 1)))
+    (tc-bind-unsafe-id env (tc-name-id name) ty)))
 
 (define (tc-bind-unsafe-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (tc-env-compact-local-if-threshold
@@ -3342,7 +3391,8 @@
       ty)))
 
 (define (tc-bind-c-abi-fnptr [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-bind-c-abi-fnptr-id env (tc-name-id name) ty))
+  (begin (cfg compile-profile (set! tc-attrib-bind-c-abi-fnptr (+ tc-attrib-bind-c-abi-fnptr 1)))
+    (tc-bind-c-abi-fnptr-id env (tc-name-id name) ty)))
 
 (define (tc-bind-unsafe-c-abi-fnptr-id
   [env : TcTypeEnv]
@@ -4473,7 +4523,8 @@
         (tc-binding-c-abi-fnptr-id? (box-get rest) name-id))]))
 
 (define (tc-binding-c-abi-fnptr? [env : TcTypeEnv] [name : String]) : bool
-  (tc-binding-c-abi-fnptr-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-binding-c-abi-fnptr (+ tc-attrib-binding-c-abi-fnptr 1)))
+    (tc-binding-c-abi-fnptr-id? env (tc-name-id name))))
 
 (define (tc-binding-unsafe-marker-head-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
@@ -4481,7 +4532,8 @@
     [_ false]))
 
 (define (tc-binding-unsafe-marker-head? [env : TcTypeEnv] [name : String]) : bool
-  (tc-binding-unsafe-marker-head-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-binding-unsafe-marker-head (+ tc-attrib-binding-unsafe-marker-head 1)))
+    (tc-binding-unsafe-marker-head-id? env (tc-name-id name))))
 
 (define (tc-binding-unsafe-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (match env
@@ -4780,9 +4832,10 @@
   (tc-env-with-partial-local-cache env))
 
 (define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (if (tc-name-bound-id? env (tc-name-id name))
-    env
-    (tc-bind env name ty)))
+  (begin (cfg compile-profile (set! tc-attrib-bind-alias-if-free (+ tc-attrib-bind-alias-if-free 1)))
+    (if (tc-name-bound-id? env (tc-name-id name))
+      env
+      (tc-bind env name ty))))
 
 (define (tc-name-bound-id-with-top-env-membership?
   [env : TcTypeEnv]
@@ -7889,7 +7942,8 @@
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
 
 (define (tc-lookup-visible [ctx : TcContext] [env : TcTypeEnv] [name : String]) : ResultTcType
-  (tc-lookup-visible-id ctx env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup-visible (+ tc-attrib-lookup-visible 1)))
+    (tc-lookup-visible-id ctx env (tc-name-id name))))
 
 (define (tc-lookup-hygiene-global-scan
   [root : TcTypeEnv]
@@ -7908,7 +7962,8 @@
   (tc-lookup-hygiene-global-scan env env name-id))
 
 (define (tc-lookup-hygiene-global [env : TcTypeEnv] [name : String]) : ResultTcType
-  (tc-lookup-hygiene-global-id env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup-hygiene-global (+ tc-attrib-lookup-hygiene-global 1)))
+    (tc-lookup-hygiene-global-id env (tc-name-id name))))
 
 (define (tc-lookup-hygiene-global-visible-id
   [_ctx : TcContext]
@@ -7922,13 +7977,20 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcType
-  (tc-lookup-hygiene-global-visible-id ctx env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup-hygiene-global-visible (+ tc-attrib-lookup-hygiene-global-visible 1)))
+    (tc-lookup-hygiene-global-visible-id ctx env (tc-name-id name))))
 
 (define (tc-lookup-dotted-source-visible
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcType
-  (let
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        tc-attrib-lookup-dotted-source-visible
+        (+ tc-attrib-lookup-dotted-source-visible 1)))
+    (let
     [name-id : i64 (tc-name-id name)]
     (match (tc-source-name-lookup-key-after-local-field-check-id
       ctx
@@ -7956,7 +8018,7 @@
                 lookup-name
                 (tc-source-lookup-display-name ctx name lookup-name)
                 (tc-source-unbound-display-message ctx name lookup-name message))]))]
-      [(ResultTcString.Err message) (ResultTcType.Err message)])))
+      [(ResultTcString.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-hygiene-definition-env [ctx : TcContext] [module : String]) : ResultTcEnv
   (if tc-hygiene-active-top-env-ready
@@ -8033,7 +8095,8 @@
   (tc-hygiene-global-binding-unsafe-scan env env name-id))
 
 (define (tc-hygiene-global-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
-  (tc-hygiene-global-binding-unsafe-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-hygiene-global-binding-unsafe (+ tc-attrib-hygiene-global-binding-unsafe 1)))
+    (tc-hygiene-global-binding-unsafe-id? env (tc-name-id name))))
 
 (define (tc-active-region-scan [env : TcTypeEnv]) : TcMaybeString
   (match env
@@ -8358,7 +8421,8 @@
         (tc-cleanup-owner-active-scan-id? (box-get rest) name name-id))]))
 
 (define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
-  (tc-cleanup-owner-active-scan-id? env name (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-cleanup-owner-active-scan (+ tc-attrib-cleanup-owner-active-scan 1)))
+    (tc-cleanup-owner-active-scan-id? env name (tc-name-id name))))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (begin
@@ -8372,7 +8436,8 @@
   [env : TcTypeEnv]
   [name : String]
   [marker-id : i64]) : bool
-  (tc-arena-owner-active-scan-id? env name (tc-name-id name) marker-id))
+  (begin (cfg compile-profile (set! tc-attrib-arena-owner-active-scan (+ tc-attrib-arena-owner-active-scan 1)))
+    (tc-arena-owner-active-scan-id? env name (tc-name-id name) marker-id)))
 
 (define (tc-arena-owner-active-scan-id?
   [env : TcTypeEnv]
@@ -8636,6 +8701,7 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (set! tc-attrib-lifetime-visible (+ tc-attrib-lifetime-visible 1)))
     (match env
       [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
         (tc-lifetime-visible-scan? (box-get rest) lifetime)]
@@ -9971,17 +10037,23 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name-id : i64]) : TcMaybeString
-  (let
-    [module : String (tc-context-module ctx)]
-    (if (and
-      (> (string.string-length module) 0)
-      (not (tc-name-qualified-id? name-id)))
-      (let
-        [module-key-id : i64 (tc-module-name-id module name-id)]
-        (if (tc-source-name-bound-exact-id? env module-key-id)
-          (TcMaybeString.Some (intern-str module-key-id))
-          (TcMaybeString.No)))
-      (TcMaybeString.No))))
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        tc-attrib-current-module-source-lookup-key
+        (+ tc-attrib-current-module-source-lookup-key 1)))
+    (let
+      [module : String (tc-context-module ctx)]
+      (if (and
+        (> (string.string-length module) 0)
+        (not (tc-name-qualified-id? name-id)))
+        (let
+          [module-key-id : i64 (tc-module-name-id module name-id)]
+          (if (tc-source-name-bound-exact-id? env module-key-id)
+            (TcMaybeString.Some (intern-str module-key-id))
+            (TcMaybeString.No)))
+        (TcMaybeString.No)))))
 
 (define (tc-current-module-source-lookup-key
   [ctx : TcContext]
@@ -10046,11 +10118,12 @@
   [env : TcTypeEnv]
   [name : String]
   [first-dot : i64]) : bool
-  (tc-source-leading-segment-wins-over-exact-from-id?
-    env
-    name
-    (tc-name-id name)
-    first-dot))
+  (begin (cfg compile-profile (set! tc-attrib-leading-segment-wins (+ tc-attrib-leading-segment-wins 1)))
+    (tc-source-leading-segment-wins-over-exact-from-id?
+      env
+      name
+      (tc-name-id name)
+      first-dot)))
 
 ;; Variant taking the already-interned `name-id` to avoid re-hashing `name` on
 ;; the hot resolution path. The prefix comes from intern metadata recorded with
@@ -11378,11 +11451,12 @@
         (TcMaybeString.Some (intern-str cached))))))
 
 (define (tc-source-dotted-full-path-key [ctx : TcContext] [name : String]) : TcMaybeString
-  (tc-source-dotted-full-path-key-from-id
-    ctx
-    name
-    (tc-name-id name)
-    (intern (tc-context-module ctx))))
+  (begin (cfg compile-profile (set! tc-attrib-source-dotted-full-path-key (+ tc-attrib-source-dotted-full-path-key 1)))
+    (tc-source-dotted-full-path-key-from-id
+      ctx
+      name
+      (tc-name-id name)
+      (intern (tc-context-module ctx)))))
 
 (define (tc-unresolved-dotted-name-message [name : String]) : String
   (str_cat.str-cat
@@ -11637,11 +11711,12 @@
     (ResultTcString.Err "")))
 
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
-  (tc-enum-qualified-variant-lookup-key-from-id
-    ctx
-    name
-    (tc-name-id name)
-    (intern (tc-context-module ctx))))
+  (begin (cfg compile-profile (set! tc-attrib-enum-qualified-variant-lookup-key (+ tc-attrib-enum-qualified-variant-lookup-key 1)))
+    (tc-enum-qualified-variant-lookup-key-from-id
+      ctx
+      name
+      (tc-name-id name)
+      (intern (tc-context-module ctx)))))
 
 (define (tc-source-name-lookup-key-with-field-check-id
   [ctx : TcContext]
@@ -11653,7 +11728,13 @@
   ;; instead of re-hashing the string. This is the hottest name-resolution
   ;; function, previously hashing each name 3-4x (slash-qualified?, first-dot,
   ;; leading-segment, bound-exact?).
-  (if (tc-source-slash-qualified-id? name name-id)
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        tc-attrib-source-name-lookup-key
+        (+ tc-attrib-source-name-lookup-key 1)))
+    (if (tc-source-slash-qualified-id? name name-id)
     (ResultTcString.Err (tc-source-slash-qualified-message name))
     (let
       [first-dot : i64 (intern-first-dot name-id)]
@@ -11705,7 +11786,7 @@
                             (if (tc-source-name-bound-exact-id? env name-id)
                               (ResultTcString.Ok name)
                               (ResultTcString.Err
-                                (tc-unresolved-dotted-name-message name)))])])]))]))))))
+                                (tc-unresolved-dotted-name-message name)))])])]))])))))))
 
 (define (tc-source-name-lookup-key-with-field-check
   [ctx : TcContext]
@@ -11725,6 +11806,74 @@
   [name : String]
   [name-id : i64]) : ResultTcString
   (tc-source-name-lookup-key-with-field-check-id ctx env name name-id true))
+;; id-returning variant of tc-source-name-lookup-key-with-field-check. Takes the
+;; already-interned name-id (the AST stores it) so it does not (tc-name-id name),
+;; and returns the resolved lookup name together with its id, so the hot tc-expr
+;; Var path gets the lookup id without re-interning the returned String. For the
+;; common bound-name case the result id is the passed name-id (zero interning);
+;; only the qualified/dotted key cases intern the key once (which the caller
+;; would otherwise intern anyway).
+(define (tc-source-name-lookup-key-with-field-check-lookup
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]
+  [check-local-field : bool]) : TcNameLookup
+  (begin
+    (cfg compile-profile (set! tc-attrib-source-name-lookup-key (+ tc-attrib-source-name-lookup-key 1)))
+    (if (tc-source-slash-qualified-id? name name-id)
+      (TcNameLookup.Err (tc-source-slash-qualified-message name))
+      (let
+        [first-dot : i64 (intern-first-dot name-id)]
+        (if (< first-dot 0)
+          (if (tc-source-name-bound-exact-id? env name-id)
+            (TcNameLookup.Ok name name-id)
+            (match (tc-current-module-source-lookup-key-id ctx env name-id)
+              [(TcMaybeString.Some key) (TcNameLookup.Ok key (tc-name-id key))]
+              [(TcMaybeString.No) (TcNameLookup.Ok name name-id)]))
+          (if (and
+            check-local-field
+            (tc-source-leading-segment-wins-over-exact-from-id?
+              env
+              name
+              name-id
+              first-dot))
+            (TcNameLookup.Ok name name-id)
+            (match (tc-comptime-helper-qualified-lookup-key
+              env
+              name
+              name-id
+              first-dot)
+              [(TcMaybeString.Some key) (TcNameLookup.Ok key (tc-name-id key))]
+              [(TcMaybeString.No)
+                (let
+                  [current-module-id : i64 (intern (tc-context-module ctx))]
+                  (match (tc-source-dotted-alias-key
+                    ctx
+                    name
+                    name-id
+                    first-dot
+                    current-module-id)
+                    [(TcMaybeString.Some key) (TcNameLookup.Ok key (tc-name-id key))]
+                    [(TcMaybeString.No)
+                      (match (tc-enum-qualified-variant-lookup-key-from-id
+                        ctx
+                        name
+                        name-id
+                        current-module-id)
+                        [(ResultTcString.Ok key) (TcNameLookup.Ok key (tc-name-id key))]
+                        [(ResultTcString.Err _)
+                          (match (tc-source-dotted-full-path-key-from-id
+                            ctx
+                            name
+                            name-id
+                            current-module-id)
+                            [(TcMaybeString.Some key) (TcNameLookup.Ok key (tc-name-id key))]
+                            [(TcMaybeString.No)
+                              (if (tc-source-name-bound-exact-id? env name-id)
+                                (TcNameLookup.Ok name name-id)
+                                (TcNameLookup.Err
+                                  (tc-unresolved-dotted-name-message name)))])])]))])))))))
 
 (define (tc-source-name-lookup-key
   [ctx : TcContext]
@@ -19202,7 +19351,8 @@
           (tc-default-builtin-unshadowed-scan-id? (box-get rest) name-id)))]))
 
 (define (tc-default-builtin-unshadowed-scan? [env : TcTypeEnv] [name : String]) : bool
-  (tc-default-builtin-unshadowed-scan-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-default-builtin-unshadowed (+ tc-attrib-default-builtin-unshadowed 1)))
+    (tc-default-builtin-unshadowed-scan-id? env (tc-name-id name))))
 
 (define (tc-name-local-bound-before-module-scan-id?
   [env : TcTypeEnv]
@@ -22368,7 +22518,8 @@
 ;; call to a shadowing user definition. Mirrors the host compiler's shadowing
 ;; check.
 (define (tc-name-bound? [env : TcTypeEnv] [name : String]) : bool
-  (tc-name-bound-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-name-bound (+ tc-attrib-name-bound 1)))
+    (tc-name-bound-id? env (tc-name-id name))))
 
 (define (tc-str-ref-type? [ty : AstType]) : bool
   (match (tc-type-strip-region ty)
@@ -22663,7 +22814,7 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
-      (= source-id (tc-name-id "eq"))
+      (= source-id cbi.compiler-builtin-id-eq)
       lookup-id
       "eq")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
@@ -22692,13 +22843,13 @@
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
-      (= source-id (tc-name-id "string-append"))
+      (= source-id cbi.compiler-builtin-id-string-append)
       lookup-id
       "string-append")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
-      (= source-id (tc-name-id "string-concat"))
+      (= source-id cbi.compiler-builtin-id-string-concat)
       lookup-id
       "string-concat")))
 
@@ -31264,14 +31415,13 @@
         [(ResultAstTypeList.Err message) (ResultTcType.Err message)])]
     [(ResultTcString.Err message) (ResultTcType.Err message)]))
 
-(define (tc-variant-constructor-type-for-lookup-or
+(define (tc-variant-constructor-type-for-lookup-or-id
   [ctx : TcContext]
   [lookup-name : String]
-  [_display-name : String]
+  [lookup-id : i64]
   [not-found-message : String]) : ResultTcType
   (let
     [registries : CompilerRegistries (tc-context-registries ctx)]
-    [lookup-id : i64 (tc-name-id lookup-name)]
     (match (compiler-registries-lookup-variant-id registries lookup-id)
       [(option_i64.Some handle)
         (tc-variant-constructor-type-for-handle ctx handle)]
@@ -31283,6 +31433,17 @@
           [(option_i64.Some handle)
             (tc-variant-constructor-type-for-handle ctx handle)]
           [(option_i64.None) (ResultTcType.Err not-found-message)])])))
+
+(define (tc-variant-constructor-type-for-lookup-or
+  [ctx : TcContext]
+  [lookup-name : String]
+  [_display-name : String]
+  [not-found-message : String]) : ResultTcType
+  (tc-variant-constructor-type-for-lookup-or-id
+    ctx
+    lookup-name
+    (tc-name-id lookup-name)
+    not-found-message))
 
 (define (tc-struct-field-type
   [ctx : TcContext]
@@ -35363,18 +35524,14 @@
                   env
                   module
                   (tc-name-id global-name))])
-            (match (tc-source-name-lookup-key-after-local-field-check-id
+            (match (tc-source-name-lookup-key-with-field-check-lookup
               ctx
               env
               name-text
-              name)
-              [(ResultTcString.Ok lookup-name)
-                (let
-                  [lookup-id : i64
-                    (if (string.eq lookup-name name-text)
-                      name
-                      (tc-name-id lookup-name))]
-                  (match (tc-lookup-unsafe-id env lookup-id)
+              name
+              false)
+              [(TcNameLookup.Ok lookup-name lookup-id)
+                (match (tc-lookup-unsafe-id env lookup-id)
                     [(ResultTcTypeUnsafe.Ok ty unsafe)
                       (if unsafe
                         (match (tc-require-unsafe
@@ -35401,19 +35558,16 @@
                           [(TcMaybeString.Some message)
                             (ResultTcType.Err message)]))]
                     [(ResultTcTypeUnsafe.Err message)
-                      (tc-variant-constructor-type-for-lookup-or
+                      (tc-variant-constructor-type-for-lookup-or-id
                         ctx
                         lookup-name
-                        (tc-source-lookup-display-name
-                          ctx
-                          name-text
-                          lookup-name)
+                        lookup-id
                         (tc-source-unbound-display-message
                           ctx
                           name-text
                           lookup-name
-                          message))]))]
-              [(ResultTcString.Err message) (ResultTcType.Err message)]))))]
+                          message))])]
+              [(TcNameLookup.Err message) (ResultTcType.Err message)]))))]
     [(AstExpr.TypeLiteral ty)
       (ResultTcType.Err
         (string.append

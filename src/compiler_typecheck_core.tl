@@ -10427,7 +10427,7 @@
                       (box-get decls-box)
                       current-module-id
                       target-id
-                      (intern ""))]
+                      cbi.compiler-builtin-id-fix-empty)]
                   (begin
                     (tc-imported-module-identity-cache-put!
                       current-module-id
@@ -10722,7 +10722,7 @@
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
       [decl-slots : (Array AstDecl) (struct-get decls slots)]
-      [empty-module-id : i64 (intern "")]
+      [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       [prev-arena : i64 (arena.tl_arena_current)]
       [_make-arena : unit
         (if (= tc-module-decl-index-arena 0)
@@ -10852,7 +10852,7 @@
           (tc-decl-list-module-imports-stdlib-string?
             (box-get decls-box)
             (intern module)
-            (intern ""))])]))
+            cbi.compiler-builtin-id-fix-empty)])]))
 
 (define (tc-stdlib-string-helper-visible-or-wrapper-id?
   [ctx : TcContext]
@@ -11452,13 +11452,13 @@
   (if (= tc-comptime-helper-prefix-cache-generation (intern-generation))
     unit
     (begin
-      (set! tc-comptime-helper-prefix-comptime-id (intern "comptime"))
+      (set! tc-comptime-helper-prefix-comptime-id cbi.compiler-builtin-id-fix-comptime)
       (set!
         tc-comptime-helper-prefix-stdlib-comptime-id
-        (intern "stdlib/comptime"))
-      (set! tc-comptime-helper-prefix-string-id (intern "string"))
-      (set! tc-comptime-helper-prefix-stdlib-string-id (intern "stdlib/string"))
-      (set! tc-comptime-helper-prefix-stdlib-id (intern "stdlib"))
+        cbi.compiler-builtin-id-fix-stdlib_slash_comptime)
+      (set! tc-comptime-helper-prefix-string-id cbi.compiler-builtin-id-fix-string)
+      (set! tc-comptime-helper-prefix-stdlib-string-id cbi.compiler-builtin-id-fix-stdlib_slash_string)
+      (set! tc-comptime-helper-prefix-stdlib-id cbi.compiler-builtin-id-fix-stdlib)
       (set! tc-comptime-helper-prefix-cache-generation (intern-generation)))))
 
 (define (tc-comptime-helper-qualified-candidate-from-id?
@@ -12496,14 +12496,14 @@
                 (tc-source-type-policy-message (intern-str name)))]
             [(AstType.Var name)
               (if (or
-                (= name (intern "ExprClause"))
-                (= name (intern "ExprClauseList"))
-                (= name (intern "ExprBindingClause"))
-                (= name (intern "ExprBindingClauseList"))
-                (= name (intern "Pattern"))
-                (= name (intern "PatternList"))
-                (= name (intern "MatchArm"))
-                (= name (intern "MatchArmList")))
+                (= name cbi.compiler-builtin-id-fix-ExprClause)
+                (= name cbi.compiler-builtin-id-fix-ExprClauseList)
+                (= name cbi.compiler-builtin-id-fix-ExprBindingClause)
+                (= name cbi.compiler-builtin-id-fix-ExprBindingClauseList)
+                (= name cbi.compiler-builtin-id-fix-Pattern)
+                (= name cbi.compiler-builtin-id-fix-PatternList)
+                (= name cbi.compiler-builtin-id-fix-MatchArm)
+                (= name cbi.compiler-builtin-id-fix-MatchArmList))
                 ResultTcUnit.Ok
                 (ResultTcUnit.Err
                   (tc-source-type-policy-message (intern-str name))))]
@@ -17216,7 +17216,7 @@
     [slot-count : i64 0]
     [count : i64 (ast-decl-list-len (& all-decls))]
     [index : i64 0]
-    [cur-module-id : i64 (intern "")]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     (begin
       (while (< index count)
         (begin
@@ -31377,27 +31377,27 @@
       (tc-comptime-sequence-field-type "ExprList" (AstType.Expr) field)]
     [(AstType.Var name)
       (cond
-        [(= name (intern "ExprClause"))
+        [(= name cbi.compiler-builtin-id-fix-ExprClause)
           (tc-comptime-expr-clause-field-type field)]
-        [(= name (intern "ExprClauseList"))
+        [(= name cbi.compiler-builtin-id-fix-ExprClauseList)
           (tc-comptime-sequence-field-type
             "ExprClauseList"
             (tc-macro-expr-clause-type)
             field)]
-        [(= name (intern "ExprBindingClause"))
+        [(= name cbi.compiler-builtin-id-fix-ExprBindingClause)
           (tc-comptime-expr-binding-clause-field-type field)]
-        [(= name (intern "ExprBindingClauseList"))
+        [(= name cbi.compiler-builtin-id-fix-ExprBindingClauseList)
           (tc-comptime-sequence-field-type
             "ExprBindingClauseList"
             (tc-macro-expr-binding-clause-type)
             field)]
-        [(= name (intern "PatternList"))
+        [(= name cbi.compiler-builtin-id-fix-PatternList)
           (tc-comptime-sequence-field-type
             "PatternList"
             (tc-macro-pattern-type)
             field)]
-        [(= name (intern "MatchArm")) (tc-comptime-match-arm-field-type field)]
-        [(= name (intern "MatchArmList"))
+        [(= name cbi.compiler-builtin-id-fix-MatchArm) (tc-comptime-match-arm-field-type field)]
+        [(= name cbi.compiler-builtin-id-fix-MatchArmList)
           (tc-comptime-sequence-field-type
             "MatchArmList"
             (tc-macro-match-arm-type)
@@ -32532,7 +32532,7 @@
             "typecheck: struct match only supports constructor-shaped, binding, or wildcard patterns")])]
     [(AstType.Expr) (tc-bind-expr-match-pattern ctx env pattern)]
     [(AstType.Var name)
-      (if (= name (intern "ExprClause"))
+      (if (= name cbi.compiler-builtin-id-fix-ExprClause)
         (tc-bind-expr-clause-match-pattern ctx env pattern)
         (tc-bind-scalar-match-pattern env scrut-ty pattern))]
     [(AstType.Box inner-ty)
@@ -33001,7 +33001,7 @@
     [_ (ResultTcEnv.Err "typecheck: unsupported Expr match pattern")]))
 
 (define (tc-expr-clause-pattern-name? [name : i64]) : bool
-  (= name (intern "ExprClause")))
+  (= name cbi.compiler-builtin-id-fix-ExprClause))
 
 (define (tc-bind-expr-clause-match-pattern
   [ctx : TcContext]
@@ -33428,7 +33428,7 @@
             (box-get args-box))]
         [_ false])]
     [(AstType.Var name)
-      (if (= name (intern "ExprClause"))
+      (if (= name cbi.compiler-builtin-id-fix-ExprClause)
         (tc-expr-clause-pattern-irrefutable? ctx pattern)
         (match pattern
           [(AstPattern.Wildcard) true]
@@ -36306,19 +36306,19 @@
         [(AstMaybeType.Some syntax-ty) syntax-ty]
         [(AstMaybeType.No)
           (cond
-            [(= name (intern "Expr")) (AstType.Expr)]
-            [(= name (intern "ExprList")) (AstType.ExprList)]
-            [(= name (intern "ExprClause")) (tc-macro-expr-clause-type)]
-            [(= name (intern "ExprClauseList"))
+            [(= name cbi.compiler-builtin-id-fix-Expr) (AstType.Expr)]
+            [(= name cbi.compiler-builtin-id-fix-ExprList) (AstType.ExprList)]
+            [(= name cbi.compiler-builtin-id-fix-ExprClause) (tc-macro-expr-clause-type)]
+            [(= name cbi.compiler-builtin-id-fix-ExprClauseList)
               (tc-macro-expr-clause-list-type)]
-            [(= name (intern "ExprBindingClause"))
+            [(= name cbi.compiler-builtin-id-fix-ExprBindingClause)
               (tc-macro-expr-binding-clause-type)]
-            [(= name (intern "ExprBindingClauseList"))
+            [(= name cbi.compiler-builtin-id-fix-ExprBindingClauseList)
               (tc-macro-expr-binding-clause-list-type)]
-            [(= name (intern "Pattern")) (tc-macro-pattern-type)]
-            [(= name (intern "PatternList")) (tc-macro-pattern-list-type)]
-            [(= name (intern "MatchArm")) (tc-macro-match-arm-type)]
-            [(= name (intern "MatchArmList")) (tc-macro-match-arm-list-type)]
+            [(= name cbi.compiler-builtin-id-fix-Pattern) (tc-macro-pattern-type)]
+            [(= name cbi.compiler-builtin-id-fix-PatternList) (tc-macro-pattern-list-type)]
+            [(= name cbi.compiler-builtin-id-fix-MatchArm) (tc-macro-match-arm-type)]
+            [(= name cbi.compiler-builtin-id-fix-MatchArmList) (tc-macro-match-arm-list-type)]
             [else ty])])]
     [(AstType.VarArgs name _)
       (match (tc-macro-signature-stdlib-comptime-type-id name)
@@ -50572,7 +50572,7 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     [decl-slots : (Array AstDecl) (struct-get decls slots)]
-    [cur-module-id : i64 (intern "")]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [truncated : bool false]
     [i : i64 0]
     (begin
@@ -50661,7 +50661,7 @@
               (macro-flat-import-targets-from-list
                 decls
                 current-module-id
-                (intern "")
+                cbi.compiler-builtin-id-fix-empty
                 (MacroFlatImportTargetList.Nil))]
             (begin
               (macro-flat-import-target-cache-put! current-module-id targets)
@@ -50777,7 +50777,7 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     [decl-slots : (Array AstDecl) (struct-get decls slots)]
-    [cur-module-id : i64 (intern "")]
+    [cur-module-id : i64 cbi.compiler-builtin-id-fix-empty]
     [truncated : bool false]
     [i : i64 0]
     (begin
@@ -50842,7 +50842,7 @@
               decls
               current-module-id
               qualifier
-              (intern ""))
+              cbi.compiler-builtin-id-fix-empty)
               [(TcMaybeString.Some target)
                 (let
                   [target-id : i64 (intern target)]
@@ -51691,7 +51691,7 @@
 
 (define (macro-expr-colon? [expr-id : i64]) : bool
   (match (ast-expr-unspan (ast-node-get expr-id))
-    [(AstExpr.Var name) (= name (intern ":"))]
+    [(AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-colon)]
     [_ false]))
 
 (define (macro-expr-binding-clause-shape-error [arg : AstExpr]) : ResultMacroBindingClause
@@ -53228,7 +53228,7 @@
         (ast-variant-def-list-new)))))
 
 (define (macro-result-result-ty) : AstType
-  (AstType.Var (intern "Result")))
+  (AstType.Var cbi.compiler-builtin-id-fix-Result))
 
 (define (macro-result-ok-decl [ok-ty : AstType]) : AstDecl
   (ast-decl-def-fn
@@ -53458,7 +53458,7 @@
 
 (define (macro-core-cond-else? [expr-id : i64]) : bool
   (match (ast-expr-unspan (ast-node-get expr-id))
-    [(AstExpr.Var name) (= name (intern "else"))]
+    [(AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-else)]
     [_ false]))
 
 (define (macro-core-cond-chain

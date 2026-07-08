@@ -12330,14 +12330,15 @@
     ;; enclosing string.append operands without a spurious mismatch.
     [mul-asm : String
       (if (compiler-backend-imm32? (cast divisor : i64))
-        (str_cat.str-cat
-          "    imulq $"
-          (string.int->string (cast divisor : i64))
-          ", "
-          quotient-reg
-          ", "
-          scratch-reg
-          "\n")
+        (string.append
+          (string.append
+            (string.append
+              (string.append
+                "    imulq $"
+                (string.int->string (cast divisor : i64)))
+              ", ")
+            quotient-reg)
+          (string.append (string.append ", " scratch-reg) "\n"))
         (string.append
           (compiler-backend-emit-load-u64-absolute divisor scratch-reg)
           (str_cat.str-cat "    imulq " quotient-reg ", " scratch-reg "\n")))]

@@ -621,8 +621,10 @@
     [(CompilerIrMaybeValue.Some inner) (compiler-live-value-vars inner)]))
 
 (define (compiler-live-phi-input-vars [inputs : CompilerIrPhiInputList]) : CompilerLiveI64Set
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (compiler-live-set-empty)]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-live-phi-input-vars (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-live-value-vars-into
         (compiler-live-phi-input-vars (box-get rest))
@@ -1310,8 +1312,13 @@
   [inputs : CompilerIrPhiInputList]
   [ids : (& ids live_label_map.Map)]
   [phi-out : (Array CompilerLiveI64Set)]) : unit
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-live-phi-out-add-inputs!
+        (compiler-ir-phi-input-seq-to-list seq)
+        ids
+        phi-out)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (begin
         (match value

@@ -108,9 +108,18 @@
   (Nil)
   (Cons CompilerIrCAbiReturnSlot (Box CompilerIrCAbiReturnSlotList)))
 
+(defstruct CompilerIrPhiInput
+  (value CompilerIrValue)
+  (label String))
+
+(defstruct CompilerIrPhiInputSeq
+  (slots (Array CompilerIrPhiInput))
+  (len i64))
+
 (defenum CompilerIrPhiInputList
   (Nil)
-  (Cons CompilerIrValue String (Box CompilerIrPhiInputList)))
+  (Cons CompilerIrValue String (Box CompilerIrPhiInputList))
+  (Array CompilerIrPhiInputSeq))
 
 (defenum CompilerIrSwitchCase
   (Case i64 String))
@@ -410,11 +419,140 @@
   [rest : CompilerIrValueList]) : CompilerIrValueList
   (CompilerIrValueList.Cons value (box rest)))
 
-(define (compiler-ir-phi-input-cons
+(define (compiler-ir-phi-input-cons-linked
   [value : CompilerIrValue]
   [label : String]
   [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (CompilerIrPhiInputList.Cons value label (box rest)))
+
+(define (compiler-ir-phi-input-cons
+  [value : CompilerIrValue]
+  [label : String]
+  [rest : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (let
+    [count : i64 (+ 1 (compiler-ir-phi-input-list-count rest))]
+    [slots : (Array CompilerIrPhiInput)
+      (array.make-array CompilerIrPhiInput count)]
+    (begin
+      (array-set! slots 0 (CompilerIrPhiInput value label))
+      (compiler-ir-phi-input-list-fill-array rest slots 1)
+      (CompilerIrPhiInputList.Array (CompilerIrPhiInputSeq slots count)))))
+
+(define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) 0]
+    [(CompilerIrPhiInputList.Cons _ _ rest)
+      (+ 1 (compiler-ir-phi-input-list-count (box-get rest)))]
+    [(CompilerIrPhiInputList.Array seq) (struct-get seq len)]))
+
+(define (compiler-ir-phi-input-list-fill-array
+  [inputs : CompilerIrPhiInputList]
+  [slots : (Array CompilerIrPhiInput)]
+  [index : i64]) : unit
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (begin
+        (array-set! slots index (CompilerIrPhiInput value label))
+        (compiler-ir-phi-input-list-fill-array (box-get rest) slots (+ index 1)))]
+    [(CompilerIrPhiInputList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [source : (Array CompilerIrPhiInput) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots (+ index read) (array-ref source read))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-phi-input-list-fill-array-reversed
+  [inputs : CompilerIrPhiInputList]
+  [slots : (Array CompilerIrPhiInput)]
+  [index : i64]) : unit
+  (match inputs
+    [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (begin
+        (array-set! slots index (CompilerIrPhiInput value label))
+        (compiler-ir-phi-input-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrPhiInputList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [write : i64 index]
+        [source : (Array CompilerIrPhiInput) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots write (array-ref source read))
+            (set! write (- write 1))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-phi-input-seq-from-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
+  (let
+    [count : i64 (compiler-ir-phi-input-list-count inputs)]
+    [slots : (Array CompilerIrPhiInput)
+      (array.make-array CompilerIrPhiInput count)]
+    (begin
+      (compiler-ir-phi-input-list-fill-array inputs slots 0)
+      (CompilerIrPhiInputSeq slots count))))
+
+(define (compiler-ir-phi-input-seq-from-reversed-list
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
+  (let
+    [count : i64 (compiler-ir-phi-input-list-count inputs)]
+    [slots : (Array CompilerIrPhiInput)
+      (array.make-array CompilerIrPhiInput count)]
+    (begin
+      (compiler-ir-phi-input-list-fill-array-reversed inputs slots (- count 1))
+      (CompilerIrPhiInputSeq slots count))))
+
+(define (compiler-ir-phi-input-seq-to-list-rev
+  [slots : (Array CompilerIrPhiInput)]
+  [index : i64]
+  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrPhiInputList acc]
+    (begin
+      (while (>= cursor 0)
+        (let
+          [input : CompilerIrPhiInput (array-ref slots cursor)]
+          (begin
+            (set!
+              out
+              (compiler-ir-phi-input-cons-linked
+                (struct-get input value)
+                (struct-get input label)
+                out))
+            (set! cursor (- cursor 1)))))
+      out)))
+
+(define (compiler-ir-phi-input-seq-to-list [seq : CompilerIrPhiInputSeq]) : CompilerIrPhiInputList
+  (compiler-ir-phi-input-seq-to-list-rev
+    (struct-get seq slots)
+    (- (struct-get seq len) 1)
+    CompilerIrPhiInputList.Nil))
+
+(define (compiler-ir-phi-input-list-force-cons
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(CompilerIrPhiInputList.Array seq) (compiler-ir-phi-input-seq-to-list seq)]
+    [_ inputs]))
+
+(define (compiler-ir-phi-input-list-compact [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match inputs
+    [(CompilerIrPhiInputList.Array _) inputs]
+    [_
+      (CompilerIrPhiInputList.Array
+        (compiler-ir-phi-input-seq-from-list inputs))]))
+
+(define (compiler-ir-phi-input-list-compact-reversed
+  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (CompilerIrPhiInputList.Array
+    (compiler-ir-phi-input-seq-from-reversed-list inputs)))
 
 (define (compiler-ir-switch-case-cons
   [tag : i64]
@@ -1199,8 +1337,12 @@
 (define (compiler-ir-clone-phi-input-list-acc
   [inputs : CompilerIrPhiInputList]
   [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) acc]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-ir-clone-phi-input-list-acc
+        (compiler-ir-phi-input-seq-to-list seq)
+        acc)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-clone-phi-input-list-acc
         (box-get rest)
@@ -1209,15 +1351,25 @@
           (clone label)
           acc))]))
 
+(define (compiler-ir-phi-input-list-reverse-onto-acc
+  [inputs : CompilerIrPhiInputList]
+  [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Nil) acc]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-ir-phi-input-list-reverse-onto-acc
+        (compiler-ir-phi-input-seq-to-list seq)
+        acc)]
+    [(CompilerIrPhiInputList.Cons value label rest)
+      (compiler-ir-phi-input-list-reverse-onto-acc
+        (box-get rest)
+        (compiler-ir-phi-input-cons value label acc))]))
+
 (define (compiler-ir-phi-input-list-reverse-onto
   [inputs : CompilerIrPhiInputList]
   [acc : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match inputs
-    [(CompilerIrPhiInputList.Nil) acc]
-    [(CompilerIrPhiInputList.Cons value label rest)
-      (compiler-ir-phi-input-list-reverse-onto
-        (box-get rest)
-        (compiler-ir-phi-input-cons value label acc))]))
+  (compiler-ir-phi-input-list-compact
+    (compiler-ir-phi-input-list-reverse-onto-acc inputs acc)))
 
 (define (compiler-ir-clone-phi-input-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
   (compiler-ir-phi-input-list-reverse-onto
@@ -3195,12 +3347,6 @@
     a
     b))
 
-(define (compiler-ir-phi-input-list-count [inputs : CompilerIrPhiInputList]) : i64
-  (match inputs
-    [(CompilerIrPhiInputList.Nil) 0]
-    [(CompilerIrPhiInputList.Cons _ _ rest)
-      (+ 1 (compiler-ir-phi-input-list-count (box-get rest)))]))
-
 (define (compiler-ir-instr-call-arg-count [instr : CompilerIrInstr]) : i64
   (match instr
     [(CompilerIrInstr.Call _ _ args _) (compiler-ir-call-args-count args)]
@@ -4917,6 +5063,61 @@
         (compiler-ir-function-list-name-at? functions 1 "second")
         (compiler-ir-function-list-name-at? functions 2 "third")))))
 
+(define (compiler-ir-phi-input-seq-entry-var-label?
+  [seq : CompilerIrPhiInputSeq]
+  [index : i64]
+  [want-var : i64]
+  [want-label : String]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (let
+      [input : CompilerIrPhiInput (array-ref (struct-get seq slots) index)]
+      (and
+        (string.eq (struct-get input label) want-label)
+        (match (struct-get input value)
+          [(CompilerIrValue.Var id) (= id want-var)]
+          [_ false])))))
+
+(define (compiler-ir-phi-input-dense-order-ok?) : bool
+  (let
+    [inputs : CompilerIrPhiInputList
+      (compiler-ir-phi-input-list-compact
+        (compiler-ir-phi-input-cons
+          (CompilerIrValue.Var 10)
+          "entry"
+          (compiler-ir-phi-input-cons
+            (CompilerIrValue.Var 20)
+            "loop"
+            CompilerIrPhiInputList.Nil)))]
+    [cloned : CompilerIrPhiInputList (compiler-ir-clone-phi-input-list inputs)]
+    [reversed : CompilerIrPhiInputList
+      (compiler-ir-phi-input-list-reverse-onto
+        inputs
+        CompilerIrPhiInputList.Nil)]
+    (and
+      (= (compiler-ir-phi-input-list-count inputs) 2)
+      (match inputs
+        [(CompilerIrPhiInputList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-phi-input-seq-entry-var-label? seq 0 10 "entry")
+            (compiler-ir-phi-input-seq-entry-var-label? seq 1 20 "loop"))]
+        [_ false])
+      (match cloned
+        [(CompilerIrPhiInputList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-phi-input-seq-entry-var-label? seq 0 10 "entry")
+            (compiler-ir-phi-input-seq-entry-var-label? seq 1 20 "loop"))]
+        [_ false])
+      (match reversed
+        [(CompilerIrPhiInputList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-phi-input-seq-entry-var-label? seq 0 20 "loop")
+            (compiler-ir-phi-input-seq-entry-var-label? seq 1 10 "entry"))]
+        [_ false]))))
+
 (define (compiler-ir-instr-seq-roundtrip-ok?) : bool
   (let
     [instrs : CompilerIrInstrList
@@ -4962,4 +5163,5 @@
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
     (unless (compiler-ir-dense-builders-order-ok?) (return 1))
+    (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
     42))

@@ -22747,10 +22747,14 @@
 (define (compiler-backend-phi-input-value
   [inputs : CompilerIrPhiInputList]
   [from-label : String]) : ResultBackendValue
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil)
       (ResultBackendValue.Err
         (string.append "backend: missing phi input from " from-label))]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-backend-phi-input-value
+        (compiler-ir-phi-input-seq-to-list seq)
+        from-label)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (if (string.eq label from-label)
         (ResultBackendValue.Ok value)
@@ -27677,8 +27681,12 @@
 (define (compiler-backend-count-phi-input-uses
   [counts : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-backend-count-phi-input-uses
+        counts
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (compiler-backend-count-value-use counts value)
@@ -40068,8 +40076,12 @@
 (define (compiler-backend-collect-phi-collections
   [collections : CompilerBackendProgramCollections]
   [inputs : CompilerIrPhiInputList]) : CompilerBackendProgramCollections
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) collections]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-backend-collect-phi-collections
+        collections
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-collect-phi-collections
         (compiler-backend-collect-value-collections collections value)
@@ -45110,8 +45122,13 @@ tl_tlci_call_image_entry:
   [parts : CompilerBackendObjectParts]
   [site : String]
   [inputs : CompilerIrPhiInputList]) : CompilerBackendObjectParts
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) parts]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-backend-object-phi-inputs
+        parts
+        site
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-object-phi-inputs
         (compiler-backend-object-value-ref parts site value)
@@ -45123,8 +45140,14 @@ tl_tlci_call_image_entry:
   [site : String]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]) : CompilerBackendObjectParts
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) parts]
+    [(CompilerIrPhiInputList.Array seq)
+      (compiler-backend-object-phi-inputs-with-type
+        parts
+        site
+        (compiler-ir-phi-input-seq-to-list seq)
+        ty)]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (compiler-backend-object-phi-inputs-with-type
         (compiler-backend-object-value-ref-with-type parts site value ty)

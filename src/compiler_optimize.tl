@@ -1456,8 +1456,10 @@
 (define (opt-collect-phi-uses
   [set : opt_i64_i64_map.Map]
   [inputs : CompilerIrPhiInputList]) : opt_i64_i64_map.Map
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) set]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-collect-phi-uses set (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (opt-collect-phi-uses (opt-collect-value-uses set value) (box-get rest))]))
 
@@ -1916,8 +1918,10 @@
 (define (opt-collect-phi-uses-array
   [items : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-collect-phi-uses-array items (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (opt-collect-value-uses-array items value)
@@ -2113,8 +2117,10 @@
 (define (opt-uncount-phi-uses-array
   [items : (Array i64)]
   [inputs : CompilerIrPhiInputList]) : unit
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) unit]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-uncount-phi-uses-array items (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (begin
         (opt-uncount-value-uses-array items value)
@@ -2770,8 +2776,13 @@
   [base : i64]
   [ptrs : OptAggregatePointerList]
   [inputs : CompilerIrPhiInputList]) : bool
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-aggregate-phi-inputs-have-pointer?
+        base
+        ptrs
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (or
         (opt-aggregate-value-has-pointer? base ptrs value)
@@ -4395,17 +4406,27 @@
 (define (opt-phi-input-list-eq
   [a : CompilerIrPhiInputList]
   [b : CompilerIrPhiInputList]) : bool
-  (match a
+  (match (compiler-ir-phi-input-list-force-cons a)
     [(CompilerIrPhiInputList.Nil)
-      (match b
+      (match (compiler-ir-phi-input-list-force-cons b)
         [(CompilerIrPhiInputList.Nil) true]
+        [(CompilerIrPhiInputList.Array seq)
+          (opt-phi-input-list-eq
+            CompilerIrPhiInputList.Nil
+            (compiler-ir-phi-input-seq-to-list seq))]
         [_ false])]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-phi-input-list-eq (compiler-ir-phi-input-seq-to-list seq) b)]
     [(CompilerIrPhiInputList.Cons av alabel at)
-      (match b
+      (match (compiler-ir-phi-input-list-force-cons b)
         [(CompilerIrPhiInputList.Cons bv blabel bt)
           (and
             (opt-phi-input-eq av alabel bv blabel)
             (opt-phi-input-list-eq (box-get at) (box-get bt)))]
+        [(CompilerIrPhiInputList.Array seq)
+          (opt-phi-input-list-eq
+            (compiler-ir-phi-input-cons-linked av alabel (box-get at))
+            (compiler-ir-phi-input-seq-to-list seq))]
         [_ false])]))
 
 (define (opt-switch-case-eq
@@ -8456,8 +8477,13 @@
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
   [inputs : CompilerIrPhiInputList]) : ResultCompilerOptimizeVerify
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (ResultCompilerOptimizeVerify.Ok)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-verify-phi-input-uses
+        defs
+        doms
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value pred-label rest)
       (match value
         [(CompilerIrValue.Var var)
@@ -8704,16 +8730,22 @@
         (ResultCompilerOptimizeVerify.Err message)])))
 
 (define (opt-phi-input-labels [inputs : CompilerIrPhiInputList]) : OptLabelSet
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (OptLabelSet.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-phi-input-labels (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons _ label rest)
       (opt-label-add (opt-phi-input-labels (box-get rest)) label)]))
 
 (define (opt-phi-input-labels-unique-from?
   [inputs : CompilerIrPhiInputList]
   [seen : OptLabelSet]) : bool
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) true]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-phi-input-labels-unique-from?
+        (compiler-ir-phi-input-seq-to-list seq)
+        seen)]
     [(CompilerIrPhiInputList.Cons _ label rest)
       (if (opt-label-contains seen label)
         false
@@ -10447,8 +10479,14 @@
   [outs : OptSsaBlockOuts]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-ssa-rewrite-preexisting-phi-inputs
+        facts
+        outs
+        (compiler-ir-phi-input-seq-to-list seq)
+        ty)]
     [(CompilerIrPhiInputList.Cons value pred rest)
       (compiler-ir-phi-input-cons
         (match value
@@ -12644,8 +12682,13 @@
   [outside : OptLabelSet]
   [inputs : CompilerIrPhiInputList]
   [seen : CompilerIrMaybeValue]) : bool
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) true]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-loop-preheaders-phi-outside-values-compatible?
+        outside
+        (compiler-ir-phi-input-seq-to-list seq)
+        seen)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (if (opt-label-contains outside label)
         (match seen
@@ -12740,13 +12783,20 @@
   [preheader : String]
   [emitted : bool]
   [acc : CompilerIrPhiInputList]) : OptLoopPreheadersPhiRewriteResult
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil)
       (OptLoopPreheadersPhiRewriteResult.Result
         (compiler-ir-phi-input-list-reverse-onto
           acc
           (CompilerIrPhiInputList.Nil))
         emitted)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-loop-preheaders-rewrite-phi-inputs-acc
+        (compiler-ir-phi-input-seq-to-list seq)
+        outside
+        preheader
+        emitted
+        acc)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (if (opt-label-contains outside label)
         (if emitted
@@ -13517,7 +13567,7 @@
         [(OptRotateSsaMaybePhiRecs.Some recs)
           (match instr
             [(CompilerIrInstr.Phi dst inputs ty)
-              (match inputs
+              (match (compiler-ir-phi-input-list-force-cons inputs)
                 [(CompilerIrPhiInputList.Cons first-value first-label rest1)
                   (match (box-get rest1)
                     [(CompilerIrPhiInputList.Cons
@@ -13898,8 +13948,12 @@
 (define (opt-rotate-ssa-subst-phi-inputs
   [env : OptCopyEnv]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-rotate-ssa-subst-phi-inputs
+        env
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         (opt-copy-resolve env value)
@@ -15714,7 +15768,7 @@
   [inputs : CompilerIrPhiInputList]
   [preheader : String]
   [latch : String]) : OptInductionPhiInputs
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Cons a-value a-label rest)
       (match (box-get rest)
         [(CompilerIrPhiInputList.Cons b-value b-label rest2)
@@ -16951,8 +17005,10 @@
 (define (opt-cfg-filter-phi-inputs
   [index : OptCfgIndex]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-cfg-filter-phi-inputs index (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value label rest)
       (if (opt-cfg-index-reachable? index label)
         (compiler-ir-phi-input-cons
@@ -16962,16 +17018,24 @@
         (opt-cfg-filter-phi-inputs index (box-get rest)))]))
 
 (define (opt-phi-input-count [inputs : CompilerIrPhiInputList]) : i64
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) 0]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-phi-input-count (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons _ _ rest)
       (+ 1 (opt-phi-input-count (box-get rest)))]))
 
 (define (opt-phi-single-value [inputs : CompilerIrPhiInputList]) : CompilerIrMaybeValue
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-phi-single-value (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
-      (match (box-get rest)
+      (match (compiler-ir-phi-input-list-force-cons (box-get rest))
         [(CompilerIrPhiInputList.Nil) (CompilerIrMaybeValue.Some value)]
+        [(CompilerIrPhiInputList.Array seq)
+          (if (= (struct-get seq len) 0)
+            (CompilerIrMaybeValue.Some value)
+            (CompilerIrMaybeValue.No))]
         [_ (CompilerIrMaybeValue.No)])]
     [_ (CompilerIrMaybeValue.No)]))
 
@@ -17373,8 +17437,10 @@
   [state : OptSccpState]
   [inputs : CompilerIrPhiInputList]
   [ty : AstType]) : OptSccpValue
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (OptSccpValue.Unknown)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-sccp-phi-value state (compiler-ir-phi-input-seq-to-list seq) ty)]
     [(CompilerIrPhiInputList.Cons value pred rest)
       (opt-sccp-join
         (opt-sccp-phi-input-value state value pred ty)
@@ -17796,8 +17862,10 @@
 (define (opt-sccp-rewrite-phi-inputs
   [env : OptSccpEnv]
   [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-sccp-rewrite-phi-inputs env (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         (opt-sccp-rewrite-value env value)
@@ -23915,7 +23983,7 @@
 (define (opt-unroll-split-phi-inputs
   [inputs : CompilerIrPhiInputList]
   [loop-label : String]) : OptUnrollPhiSplit
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Cons first-value first-label rest-box)
       (match (box-get rest-box)
         [(CompilerIrPhiInputList.Cons second-value second-label tail-box)
@@ -25615,8 +25683,13 @@
   [set : opt_i64_i64_map.Map]
   [inputs : CompilerIrPhiInputList]
   [loop-label : String]) : opt_i64_i64_map.Map
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) set]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-version-outside-phi-uses
+        set
+        (compiler-ir-phi-input-seq-to-list seq)
+        loop-label)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (opt-bce-version-outside-phi-uses
         (if (string.eq label loop-label)
@@ -25735,8 +25808,13 @@
   [inputs : CompilerIrPhiInputList]
   [pred-label : String]
   [guard-label : String]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-version-relabel-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        pred-label
+        guard-label)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         value
@@ -25778,8 +25856,14 @@
   [loop-label : String]
   [fast-label : String]
   [remap : (Array CompilerIrValue)]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) (CompilerIrPhiInputList.Nil)]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-bce-version-extend-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        loop-label
+        fast-label
+        remap)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (let
         [tail : CompilerIrPhiInputList
@@ -27485,8 +27569,13 @@
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [inputs : CompilerIrPhiInputList]) : OptInlineCensus
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) census]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-inline-census-phi-inputs
+        index
+        census
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (opt-inline-census-phi-inputs
         index
@@ -28393,8 +28482,12 @@
 (define (opt-inline-phi-input-label?
   [inputs : CompilerIrPhiInputList]
   [label : String]) : bool
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-inline-phi-input-label?
+        (compiler-ir-phi-input-seq-to-list seq)
+        label)]
     [(CompilerIrPhiInputList.Cons _ input-label rest)
       (if (string.eq input-label label)
         true
@@ -29300,8 +29393,15 @@
   [sa : CompilerIrCallArgs]
   [np : i64]
   [base : i64]) : CompilerIrPhiInputList
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) CompilerIrPhiInputList.Nil]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-inline-remap-phi-inputs
+        (compiler-ir-phi-input-seq-to-list seq)
+        prefix
+        sa
+        np
+        base)]
     [(CompilerIrPhiInputList.Cons value label rest)
       (compiler-ir-phi-input-cons
         (opt-inline-remap-value value sa np base)
@@ -29474,11 +29574,23 @@
   [dst : i64]
   [inputs : CompilerIrPhiInputList]
   [ret : AstType]) : CompilerIrInstr
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-inline-cont-result-instr
+        dst
+        (compiler-ir-phi-input-seq-to-list seq)
+        ret)]
     [(CompilerIrPhiInputList.Cons value _ rest)
-      (match (box-get rest)
+      (match (compiler-ir-phi-input-list-force-cons (box-get rest))
         [(CompilerIrPhiInputList.Nil)
           (CompilerIrInstr.Mov dst (compiler-ir-clone-value value) (clone ret))]
+        [(CompilerIrPhiInputList.Array seq)
+          (if (= (struct-get seq len) 0)
+            (CompilerIrInstr.Mov
+              dst
+              (compiler-ir-clone-value value)
+              (clone ret))
+            (CompilerIrInstr.Phi dst inputs (clone ret)))]
         [_ (CompilerIrInstr.Phi dst inputs (clone ret))])]
     [(CompilerIrPhiInputList.Nil)
       (CompilerIrInstr.Mov dst (CompilerIrValue.Unit) (clone ret))]))
@@ -31598,8 +31710,10 @@
   [index : OptFunctionIndex]
   [state : OptReachState]
   [inputs : CompilerIrPhiInputList]) : OptReachState
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) state]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-reach-phi-inputs index state (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (opt-reach-phi-inputs
         index
@@ -32673,8 +32787,10 @@
 (define (opt-const-globals-disq-phi
   [disq : opt_string_i64_map.Map]
   [inputs : CompilerIrPhiInputList]) : opt_string_i64_map.Map
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) disq]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-const-globals-disq-phi disq (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (opt-const-globals-disq-phi
         (opt-const-globals-disq-value disq value)
@@ -37446,8 +37562,10 @@
 (define (opt-phi-first-input-var
   [inputs : CompilerIrPhiInputList]
   [fallback : i64]) : i64
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) fallback]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-phi-first-input-var (compiler-ir-phi-input-seq-to-list seq) fallback)]
     [(CompilerIrPhiInputList.Cons value _ _)
       (match value
         [(CompilerIrValue.Var id) id]
@@ -46338,7 +46456,7 @@
     (CompilerIrValueList.Nil)
     (match (compiler-ir-instr-seq-ref instrs index)
       [(CompilerIrInstr.Phi _ inputs _)
-        (match inputs
+        (match (compiler-ir-phi-input-list-force-cons inputs)
           [(CompilerIrPhiInputList.Cons a _ rest)
             (match (box-get rest)
               [(CompilerIrPhiInputList.Cons b _ _)
@@ -49102,8 +49220,13 @@
   [roots : OptScratchRootList]
   [facts : OptAliasFacts]
   [inputs : CompilerIrPhiInputList]) : bool
-  (match inputs
+  (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) false]
+    [(CompilerIrPhiInputList.Array seq)
+      (opt-scratch-phi-input-derived?
+        roots
+        facts
+        (compiler-ir-phi-input-seq-to-list seq))]
     [(CompilerIrPhiInputList.Cons value _ rest)
       (or
         (opt-scratch-value-derived? roots facts value)

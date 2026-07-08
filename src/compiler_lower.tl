@@ -40698,7 +40698,7 @@
           [(ResultLowerEnv.Err message) (ResultLowerExpr.Err message)]))]))
 
 (define (lower-phi-input-list-empty? [phi-inputs : CompilerIrPhiInputList]) : bool
-  (match phi-inputs
+  (match (compiler-ir-phi-input-list-force-cons phi-inputs)
     [(CompilerIrPhiInputList.Nil) true]
     [_ false]))
 

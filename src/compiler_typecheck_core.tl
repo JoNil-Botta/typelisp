@@ -23,6 +23,26 @@
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
 (import sym_i64_env)
+(cfg compile-profile (define tc-attrib-bind-raw : i64 0))
+(cfg compile-profile (define tc-attrib-lookup : i64 0))
+(cfg compile-profile (define tc-attrib-lookup-unsafe : i64 0))
+(cfg compile-profile (define tc-attrib-binding-unsafe : i64 0))
+(cfg compile-profile (define tc-attrib-source-name-bound-exact : i64 0))
+(cfg compile-profile (define tc-attrib-name-qualified : i64 0))
+(cfg compile-profile (define tc-attrib-marker-miss : i64 0))
+(cfg compile-profile (define tc-attrib-lookup-visible-id : i64 0))
+(cfg compile-profile (define tc-attrib-stdlib-comptime-syntax-type : i64 0))
+(cfg compile-profile (define tc-attrib-dotted-type-name-lookup-key : i64 0))
+(cfg compile-profile (define (tc-attrib-marker-miss-value) : i64 tc-attrib-marker-miss))
+(cfg compile-profile (define (tc-attrib-source-name-bound-exact-value) : i64 tc-attrib-source-name-bound-exact))
+(cfg compile-profile (define (tc-attrib-lookup-visible-id-value) : i64 tc-attrib-lookup-visible-id))
+(cfg compile-profile (define (tc-attrib-stdlib-comptime-syntax-type-value) : i64 tc-attrib-stdlib-comptime-syntax-type))
+(cfg compile-profile (define (tc-attrib-dotted-type-name-lookup-key-value) : i64 tc-attrib-dotted-type-name-lookup-key))
+(cfg compile-profile (define (tc-attrib-bind-raw-value) : i64 tc-attrib-bind-raw))
+(cfg compile-profile (define (tc-attrib-lookup-value) : i64 tc-attrib-lookup))
+(cfg compile-profile (define (tc-attrib-lookup-unsafe-value) : i64 tc-attrib-lookup-unsafe))
+(cfg compile-profile (define (tc-attrib-binding-unsafe-value) : i64 tc-attrib-binding-unsafe))
+(cfg compile-profile (define (tc-attrib-name-qualified-value) : i64 tc-attrib-name-qualified))
 (cfg compile-profile (define tc-name-id-call-count : i64 0))
 (cfg compile-profile (define (tc-name-id-call-value) : i64 tc-name-id-call-count))
 
@@ -3104,7 +3124,8 @@
     (TcTypeEnv.Bind name-id ty (box env))))
 
 (define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-bind-raw-id env (tc-name-id name) ty))
+  (begin (cfg compile-profile (set! tc-attrib-bind-raw (+ tc-attrib-bind-raw 1)))
+    (tc-bind-raw-id env (tc-name-id name) ty)))
 
 (define (tc-env-uncached-prefix-reaches-cache?
   [env : TcTypeEnv]
@@ -4479,7 +4500,8 @@
         (tc-binding-unsafe-id? (box-get rest) name-id))]))
 
 (define (tc-binding-unsafe? [env : TcTypeEnv] [name : String]) : bool
-  (tc-binding-unsafe-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-binding-unsafe (+ tc-attrib-binding-unsafe 1)))
+    (tc-binding-unsafe-id? env (tc-name-id name))))
 
 (define (tc-env-cache-count [env : TcTypeEnv]) : i64
   (let
@@ -5230,6 +5252,7 @@
     (let
       [id : i64 (tc-name-id (tc-region-marker-name))]
       (begin
+        (cfg compile-profile (set! tc-attrib-marker-miss (+ tc-attrib-marker-miss 1)))
         (set! tc-region-marker-id-cache id)
         (set! tc-region-marker-id-cache-generation (intern-generation))
         id))))
@@ -7676,7 +7699,8 @@
             (string.append "typecheck: unbound name " (intern-str name-id))))))))
 
 (define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
-  (tc-lookup-id env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup (+ tc-attrib-lookup 1)))
+    (tc-lookup-id env (tc-name-id name))))
 
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
@@ -7756,7 +7780,8 @@
             (string.append "typecheck: unbound name " (intern-str name-id))))))))
 
 (define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
-  (tc-lookup-unsafe-id env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup-unsafe (+ tc-attrib-lookup-unsafe 1)))
+    (tc-lookup-unsafe-id env (tc-name-id name))))
 
 (define (tc-name-bound-before-hygiene-global-boundary-id?
   [env : TcTypeEnv]
@@ -9874,7 +9899,7 @@
   (intern-name-first-dot name))
 
 (define (tc-source-slash-qualified? [name : String]) : bool
-  (tc-source-slash-qualified-id? name (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-source-name-bound-exact (+ tc-attrib-source-name-bound-exact 1))) (tc-source-slash-qualified-id? name (tc-name-id name))))
 
 ;; Variant taking the already-interned `name-id` so the hot name-resolution
 ;; path interns each name once and reads the slash position from the id-keyed
@@ -9938,7 +9963,7 @@
   (tc-name-bound-id? env name-id))
 
 (define (tc-source-name-bound-exact? [env : TcTypeEnv] [name : String]) : bool
-  (tc-source-name-bound-exact-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup-visible-id (+ tc-attrib-lookup-visible-id 1))) (tc-source-name-bound-exact-id? env (tc-name-id name))))
 
 (define (tc-current-module-source-lookup-key-id
   [ctx : TcContext]
@@ -19192,7 +19217,7 @@
         (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]))
 
 (define (tc-name-local-bound-before-module? [env : TcTypeEnv] [name : String]) : bool
-  (tc-name-local-bound-before-module-scan-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-stdlib-comptime-syntax-type (+ tc-attrib-stdlib-comptime-syntax-type 1))) (tc-name-local-bound-before-module-scan-id? env (tc-name-id name))))
 
 (define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
@@ -19200,7 +19225,7 @@
     false))
 
 (define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (tc-default-builtin-unshadowed-id? env (tc-name-id name)))
+  (begin (cfg compile-profile (set! tc-attrib-dotted-type-name-lookup-key (+ tc-attrib-dotted-type-name-lookup-key 1))) (tc-default-builtin-unshadowed-id? env (tc-name-id name))))
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx

@@ -592,7 +592,34 @@
         (ci.intern-profile-miss-value))
       (compiler-driver-profile-intern-line
         "tc_name_id_calls"
-        (tc-name-id-call-value)))))
+        (tc-name-id-call-value))
+      (compiler-driver-profile-intern-line
+        "attrib_bind_raw"
+        (tc-attrib-bind-raw-value))
+      (compiler-driver-profile-intern-line
+        "attrib_lookup"
+        (tc-attrib-lookup-value))
+      (compiler-driver-profile-intern-line
+        "attrib_lookup_unsafe"
+        (tc-attrib-lookup-unsafe-value))
+      (compiler-driver-profile-intern-line
+        "attrib_binding_unsafe"
+        (tc-attrib-binding-unsafe-value))
+      (compiler-driver-profile-intern-line
+        "attrib_marker_miss"
+        (tc-attrib-marker-miss-value))
+      (compiler-driver-profile-intern-line
+        "attrib_slash_qualified"
+        (tc-attrib-source-name-bound-exact-value))
+      (compiler-driver-profile-intern-line
+        "attrib_name_bound_exact"
+        (tc-attrib-lookup-visible-id-value))
+      (compiler-driver-profile-intern-line
+        "attrib_local_bound_before_mod"
+        (tc-attrib-stdlib-comptime-syntax-type-value))
+      (compiler-driver-profile-intern-line
+        "attrib_default_unshadowed"
+        (tc-attrib-dotted-type-name-lookup-key-value)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

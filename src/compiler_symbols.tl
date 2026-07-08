@@ -5,6 +5,7 @@
 ;; no top-level symbol name here and do not consume an index.
 (import stdlib.io)
 (import stdlib.arena)
+(import compiler_builtin_ids as cbi)
 (import "compiler_parse_core.tl")
 (import "compiler_diagnostic.tl")
 (import sym_i64_env)
@@ -2016,7 +2017,7 @@
 (define (compiler-symbols-macro-module-set [decls : AstDeclList]) : sym_i64_env.SymI64Env
   (compiler-symbols-macro-module-set-list
     decls
-    (intern "")
+    cbi.compiler-builtin-id-fix-empty
     (sym_i64_env.sym-i64-empty)))
 
 ;; An explicit `module ... as alias` import resolves dotted uses through the
@@ -2081,7 +2082,7 @@
     [num-modules : i64 0]
     [num-entries : i64 0]
     [real-index : i64 0]
-    [cur-module : i64 (intern "")]
+    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
     [position : i64 0]
     (begin
       (while (< position decl-count)
@@ -4288,7 +4289,7 @@
                   (compiler-symbol-lookup-score
                     (compiler-symbols-lookup-value-id
                       symbols
-                      (intern "left/same"))
+                      cbi.compiler-builtin-id-fix-left_slash_same)
                     (compiler-symbol-kind-value-define)
                     0)
                   1)
@@ -4296,8 +4297,8 @@
                   (compiler-symbol-lookup-score
                     (compiler-symbols-lookup-value-in-module-id
                       symbols
-                      (intern "right")
-                      (intern "same"))
+                      cbi.compiler-builtin-id-fix-right
+                      cbi.compiler-builtin-id-fix-same)
                     (compiler-symbol-kind-value-define)
                     3)
                   1)
@@ -4305,8 +4306,8 @@
                   (compiler-symbol-lookup-score
                     (compiler-symbols-lookup-type-in-module-id
                       symbols
-                      (intern "left")
-                      (intern "Maybe"))
+                      cbi.compiler-builtin-id-fix-left
+                      cbi.compiler-builtin-id-fix-Maybe)
                     (compiler-symbol-kind-defenum)
                     1)
                   1)
@@ -4314,7 +4315,7 @@
                   (compiler-registry-lookup-score
                     (compiler-registries-lookup-variant-id
                       registries
-                      (intern "right/Some"))
+                      cbi.compiler-builtin-id-fix-right_slash_Some)
                     (compiler-symbol-kind-enum-variant)
                     4
                     1)
@@ -4323,9 +4324,9 @@
                   (compiler-registry-lookup-score
                     (compiler-registries-lookup-field-in-module-id
                       registries
-                      (intern "left")
-                      (intern "Point")
-                      (intern "x"))
+                      cbi.compiler-builtin-id-fix-left
+                      cbi.compiler-builtin-id-fix-Point
+                      cbi.compiler-builtin-id-fix-x)
                     (compiler-symbol-kind-struct-field)
                     2
                     0)
@@ -4354,8 +4355,8 @@
             (compiler-symbol-lookup-score
               (compiler-symbols-lookup-value-in-module-id
                 symbols
-                (intern "left")
-                (intern "same"))
+                cbi.compiler-builtin-id-fix-left
+                cbi.compiler-builtin-id-fix-same)
               (compiler-symbol-kind-value-define)
               17)
             1))]

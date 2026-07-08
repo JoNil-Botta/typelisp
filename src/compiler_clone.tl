@@ -13,6 +13,7 @@
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
 (import "compiler_ast_types.tl")
+(import compiler_builtin_ids as cbi)
 (import stdlib.arena)
 (import stdlib.hashmap)
 (import (hashmap String i64) as clone_name_map)
@@ -438,7 +439,7 @@
 (define (clone-call-expr [pools : AstNodePoolContext] [inner : i64]) : i64
   (ast-expr-call-with-pools
     pools
-    (clone-expr-push pools (AstExpr.Var (intern "clone")))
+    (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-clone))
     (ast-expr-cons inner (ast-expr-list-new))))
 
 ;; Binder name for the i-th field of a variant: tlc0, tlc1, ...
@@ -520,7 +521,7 @@
             pools
             (ast-expr-struct-get-id-with-pools
               pools
-              (clone-expr-push pools (AstExpr.Var (intern "x")))
+              (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-x))
               fname))
           (clone-struct-ctor-args-at pools fields (+ index 1)))])))
 
@@ -667,8 +668,8 @@
   (if boxed-tail
     (ast-expr-box-get-with-pools
       pools
-      (clone-expr-push pools (AstExpr.Var (intern "t"))))
-    (clone-expr-push pools (AstExpr.Var (intern "t")))))
+      (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-t)))
+    (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-t))))
 
 (define (clone-list-tail-acc-expr
   [pools : AstNodePoolContext]
@@ -676,8 +677,8 @@
   (if boxed-tail
     (ast-expr-box-with-pools
       pools
-      (clone-expr-push pools (AstExpr.Var (intern "acc"))))
-    (clone-expr-push pools (AstExpr.Var (intern "acc")))))
+      (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-acc)))
+    (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-acc))))
 
 ;; A two-parameter `(define (fn [x : T] [acc : T]) : T body)`.
 (define (clone-make-list-fn
@@ -737,11 +738,11 @@
   [head-expr : i64]) : i64
   (ast-expr-match-with-pools
     pools
-    (clone-expr-push pools (AstExpr.Var (intern "x")))
+    (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-x))
     (ast-match-arm-cons
       (ast-match-arm
         (ast-pat-variant nil-ctor (ast-pattern-list-new))
-        (clone-expr-push pools (AstExpr.Var (intern "acc"))))
+        (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-acc)))
       (ast-match-arm-cons
         (clone-list-step-arm pools fn-name cons-ctor boxed-tail head-expr)
         (ast-match-arm-list-new)))))
@@ -766,7 +767,7 @@
         boxed-tail
         (clone-call-expr
           pools
-          (clone-expr-push pools (AstExpr.Var (intern "h"))))))))
+          (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-h)))))))
 
 ;; clone$L$rev: tail-recursively reverse (no cloning) to restore source order.
 (define (clone-list-rev-decl
@@ -786,7 +787,7 @@
         nil-ctor
         cons-ctor
         boxed-tail
-        (clone-expr-push pools (AstExpr.Var (intern "h")))))))
+        (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-h))))))
 
 ;; clone$L: reverse(acc(x, Nil), Nil) - both folds run in O(1) stack frames.
 (define (clone-list-entry-decl
@@ -807,7 +808,7 @@
             pools
             (AstExpr.Var (intern (clone-list-acc-name type-name))))
           (ast-expr-cons
-            (clone-expr-push pools (AstExpr.Var (intern "x")))
+            (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-x))
             (ast-expr-cons (clone-nil-expr pools nil-ctor) (ast-expr-list-new))))
         (ast-expr-cons (clone-nil-expr pools nil-ctor) (ast-expr-list-new))))))
 
@@ -848,7 +849,7 @@
           name
           (ast-expr-match-with-pools
             pools
-            (clone-expr-push pools (AstExpr.Var (intern "x")))
+            (clone-expr-push pools (AstExpr.Var cbi.compiler-builtin-id-fix-x))
             (clone-variant-arms pools variants)))
         acc)]))
 
@@ -992,7 +993,7 @@
     (let
       [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
       [tail-ty : AstType
-        (ast-ty-box-with-pools pools (AstType.Var (intern "CloneShortList")))]
+        (ast-ty-box-with-pools pools (AstType.Var cbi.compiler-builtin-id-fix-CloneShortList))]
       [cons-fields : AstTypeList
         (ast-type-cons-with-pools
           pools
@@ -1000,12 +1001,12 @@
           (ast-type-cons-with-pools pools tail-ty (ast-type-list-new)))]
       (ast-variant-def-cons
         (AstVariantDef.Def
-          (intern "Nil")
+          cbi.compiler-builtin-id-fix-Nil
           (ast-type-list-new)
           (ast-variant-payload-cleanup-list-new))
         (ast-variant-def-cons
           (AstVariantDef.Def
-            (intern "Cons")
+            cbi.compiler-builtin-id-fix-Cons
             cons-fields
             (ast-variant-payload-cleanup-list-new))
           (ast-variant-def-list-new))))))

@@ -1,0 +1,7 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/replace-position-comment-string.tl","languageId":"typelisp","version":1,"text":"(define (foo) : i64\n  ;; )\n  (let [s : String \")\"]\n    (+ 1 2)))\n(define (bar) : i64 3)\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"tl/replace","params":{"textDocument":{"uri":"${{TMP_URI}}/replace-position-comment-string.tl"},"position":{"line":3,"character":6},"newText":"(define (baz) : i64 4)"}},
+  {"jsonrpc":"2.0","id":3,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

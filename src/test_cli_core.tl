@@ -1057,10 +1057,10 @@
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
   ;; so keep the TypeLisp runtime body whenever a reachable test path may
   ;; synthesize a String snapshot or source substring call.
-  (tltest-reach-mark-name names "tl-runtime-substring"))
+  (tltest-reach-mark-name names "substring"))
 
 (define (tltest-reach-mark-str-view-runtime [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (tltest-reach-mark-name names "tl-runtime-str-view"))
+  (tltest-reach-mark-name names "str-view"))
 
 (define (tltest-bytes-view-from-parts-name? [name : String]) : bool
   (or
@@ -1540,13 +1540,13 @@
 
 (define (tltest-runtime-string-helper-impl-name? [name : String]) : bool
   (or
-    (string.eq name "tl-runtime-int-to-string")
-    (string.eq name "tl-runtime-substring")
-    (string.eq name "tl-runtime-str-view")
-    (string.eq name "tl-runtime-string-concat")
-    (string.eq name "tl-runtime-string-concat3")
-    (string.eq name "tl-runtime-string-concat4")
-    (string.eq name "tl-runtime-string-concat5")
+    (string.eq name "int-to-string")
+    (string.eq name "substring")
+    (string.eq name "str-view")
+    (string.eq name "string-concat")
+    (string.eq name "string-concat3")
+    (string.eq name "string-concat4")
+    (string.eq name "string-concat5")
     (string.eq name "eq")
     (string.eq name "string-concat-all")
     (string.eq name "string-concat-all-pack-part")
@@ -2307,16 +2307,12 @@
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
       (ast-decl-def-fn
-        "tl-runtime-substring"
+        "substring"
         (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
     [str-view-decl : AstDecl
-      (ast-decl-def-fn
-        "tl-runtime-str-view"
-        (ast-param-list-new)
-        (AstType.Unit)
-        unit-expr)]
+      (ast-decl-def-fn "str-view" (ast-param-list-new) (AstType.Unit) unit-expr)]
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
@@ -2362,12 +2358,8 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.eq
-                  (tltest-decl-name-at harness-decls 0)
-                  "tl-runtime-substring")
-                (string.eq
-                  (tltest-decl-name-at harness-decls 1)
-                  "tl-runtime-str-view")
+                (string.eq (tltest-decl-name-at harness-decls 0) "substring")
+                (string.eq (tltest-decl-name-at harness-decls 1) "str-view")
                 (string.eq
                   (tltest-decl-name-at harness-decls 2)
                   "__tl_generated_runtime_helper")))])])))
@@ -2383,7 +2375,7 @@
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
       (ast-decl-def-fn
-        "tl-runtime-substring"
+        "substring"
         (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
@@ -2427,9 +2419,7 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.eq
-                  (tltest-decl-name-at harness-decls 0)
-                  "tl-runtime-substring")
+                (string.eq (tltest-decl-name-at harness-decls 0) "substring")
                 (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_generated_lambda_helper")))])])))
@@ -2445,7 +2435,7 @@
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [substring-decl : AstDecl
       (ast-decl-def-fn
-        "tl-runtime-substring"
+        "substring"
         (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
@@ -2487,9 +2477,7 @@
               [harness-decls : AstDeclList (box-get harness-decls-box)]
               (and
                 (= count 1)
-                (string.eq
-                  (tltest-decl-name-at harness-decls 0)
-                  "tl-runtime-substring")
+                (string.eq (tltest-decl-name-at harness-decls 0) "substring")
                 (string.eq
                   (tltest-decl-name-at harness-decls 1)
                   "__tl_generated_substring_helper")))])])))
@@ -2609,7 +2597,7 @@
 (define (tltest-runtime-string-helper-roots-self-test?) : bool
   (let
     [dep-name : String "__tl_runtime_helper_dep"]
-    [helper-name : String "tl-runtime-substring"]
+    [helper-name : String "substring"]
     [eq-dep-name : String "__tl_runtime_eq_dep"]
     [eq-name : String "eq"]
     [dep-decl : AstDecl

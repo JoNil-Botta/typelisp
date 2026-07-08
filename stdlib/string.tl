@@ -28,8 +28,11 @@
 
 ;: Runtime helper that builds a borrowed string view record without copying
 ;: bytes. The public wrappers below perform bounds checks before calling it.
+;: `feature-runtime-str-view-extern` keeps published stage0 compilers from
+;: declaring this extern before they understand the renamed stdlib.runtime
+;: helper as the same fixed ABI symbol.
 (cfg
-  feature-str-view
+  (all feature-str-view feature-runtime-str-view-extern)
   (unsafe
     (extern (tl_str_view [text : (& text str)] [start : i64] [len : i64]) : (&
       text
@@ -443,7 +446,7 @@
 
 ;: Return a checked borrowed substring view without copying bytes.
 (cfg
-  feature-str-view
+  (all feature-str-view feature-runtime-str-view-extern)
   (define (substring-view [text : (& text str)] [start : i64] [len : i64]) : (&
       text
       str)
@@ -454,7 +457,7 @@
 
 ;: Borrowed alias for `substring-view`.
 (cfg
-  feature-str-view
+  (all feature-str-view feature-runtime-str-view-extern)
   (define (slice-view [text : (& text str)] [start : i64] [len : i64]) : (&
       text
       str)
@@ -589,7 +592,7 @@
 
 ;: Return a borrowed view of text with leading whitespace removed.
 (cfg
-  feature-str-view
+  (all feature-str-view feature-runtime-str-view-extern)
   (define (trim-left-view [s : (& s str)]) : (& s str)
     (let
       [n : i64 (__tl_string_length s)]
@@ -617,7 +620,7 @@
 
 ;: Return a borrowed view of text with trailing whitespace removed.
 (cfg
-  feature-str-view
+  (all feature-str-view feature-runtime-str-view-extern)
   (define (trim-right-view [s : (& s str)]) : (& s str)
     (let
       [n : i64 (__tl_string_length s)]
@@ -645,7 +648,7 @@
 
 ;: Return a borrowed view of text with leading and trailing whitespace removed.
 (cfg
-  feature-str-view
+  (all feature-str-view feature-runtime-str-view-extern)
   (define (trim-view [s : (& s str)]) : (& s str)
     (let
       [n : i64 (__tl_string_length s)]
@@ -986,7 +989,7 @@
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (string-test-substring-view-eq
       [text : String]
       [start : i64]
@@ -997,7 +1000,7 @@
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (string-test-substring-view-len
       [text : String]
       [start : i64]
@@ -1007,7 +1010,7 @@
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (string-test-slice-view-eq
       [text : String]
       [start : i64]
@@ -1018,21 +1021,21 @@
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (string-test-trim-left-view-eq [s : String] [expected : String]) : bool
       (eq (trim-left-view (& s)) (& expected)))))
 
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (string-test-trim-right-view-eq [s : String] [expected : String]) : bool
       (eq (trim-right-view (& s)) (& expected)))))
 
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (string-test-trim-view-eq [s : String] [expected : String]) : bool
       (eq (trim-view (& s)) (& expected)))))
 
@@ -1200,7 +1203,7 @@
         "klmnopqrstuvwxyz0123456789ABCDEFGHIJKLMN"
         "borrowed substring copies long slice")
       (cfg
-        feature-str-view
+        (all feature-str-view feature-runtime-str-view-extern)
         (begin
           (test.assert-true
             (string-test-substring-view-eq "abcdef" 2 3 "cde")
@@ -1238,7 +1241,7 @@
         ""
         "trim handles empty strings")
       (cfg
-        feature-str-view
+        (all feature-str-view feature-runtime-str-view-extern)
         (begin
           (test.assert-true
             (string-test-trim-left-view-eq "  hello" "hello")

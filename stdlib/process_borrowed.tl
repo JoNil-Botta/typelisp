@@ -654,7 +654,7 @@
 (cfg
   test
   (cfg
-    feature-str-view
+    (all feature-str-view feature-runtime-str-view-extern)
     (define (process-borrowed-test-ordered-builders-check) : unit
       (let
         [exe : String "echo"]
@@ -743,5 +743,8 @@
   process-borrowed-api
   (begin
     (test-api-check)
-    (cfg feature-str-view (process-borrowed-test-ordered-builders-check) unit)
+    (cfg
+      (all feature-str-view feature-runtime-str-view-extern)
+      (process-borrowed-test-ordered-builders-check)
+      unit)
     (test-validation-check)))

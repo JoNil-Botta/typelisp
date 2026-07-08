@@ -7551,38 +7551,44 @@
           (set! i (+ i 1))))
       found)))
 
+(define (compiler-backend-stdlib-runtime-function-name? [name : String]) : bool
+  (or
+    (compiler-backend-string-contains? name "stdlib/runtime.tl::")
+    (compiler-backend-string-contains? name "stdlib\\runtime.tl::")
+    (compiler-backend-string-contains? name "stdlib.runtime/")))
+
+(define (compiler-backend-runtime-prelude-string-helper-symbol-for-leaf
+  [leaf : String]) : String
+  (cond
+    [(string.eq leaf "int-to-string") "tl_int_to_string"]
+    [(string.eq leaf "substring") "tl_substring"]
+    [(string.eq leaf "str-view") "tl_str_view"]
+    [(string.eq leaf "string-concat") "tl_string_concat"]
+    [(string.eq leaf "string-concat3") "tl_string_concat3"]
+    [(string.eq leaf "string-concat4") "tl_string_concat4"]
+    [(string.eq leaf "string-concat5") "tl_string_concat5"]
+    [(string.eq leaf "atomic-i64-load-ptr") "tl_atomic_i64_load_ptr"]
+    [(string.eq leaf "atomic-i64-store-ptr!") "tl_atomic_i64_store_ptr"]
+    [(string.eq leaf "atomic-i64-add-ptr!") "tl_atomic_i64_add_ptr"]
+    [(string.eq leaf "atomic-i64-fetch-add-ptr!") "tl_atomic_i64_fetch_add_ptr"]
+    [(string.eq leaf "atomic-i64-cas-ptr!") "tl_atomic_i64_cas_ptr"]
+    [(string.eq leaf "atomic-i32-load-ptr") "tl_atomic_i32_load_ptr"]
+    [(string.eq leaf "atomic-i32-store-ptr!") "tl_atomic_i32_store_ptr"]
+    [(string.eq leaf "atomic-i32-add-ptr!") "tl_atomic_i32_add_ptr"]
+    [(string.eq leaf "atomic-i32-fetch-add-ptr!") "tl_atomic_i32_fetch_add_ptr"]
+    [(string.eq leaf "atomic-i32-cas-ptr!") "tl_atomic_i32_cas_ptr"]
+    [else ""]))
+
 (define (compiler-backend-runtime-prelude-string-helper-symbol [name : String]) : String
   (let
-    [leaf : String (compiler-backend-symbol-leaf name)]
-    (cond
-      [(string.eq leaf "tl-runtime-int-to-string") "tl_int_to_string"]
-      [(string.eq leaf "tl-runtime-substring") "tl_substring"]
-      [(string.eq leaf "tl-runtime-str-view") "tl_str_view"]
-      [(string.eq leaf "tl-runtime-string-concat") "tl_string_concat"]
-      [(string.eq leaf "tl-runtime-string-concat3") "tl_string_concat3"]
-      [(string.eq leaf "tl-runtime-string-concat4") "tl_string_concat4"]
-      [(string.eq leaf "tl-runtime-string-concat5") "tl_string_concat5"]
-      [(string.eq leaf "tl-runtime-atomic-i64-load-ptr")
-        "tl_atomic_i64_load_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i64-store-ptr!")
-        "tl_atomic_i64_store_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i64-add-ptr!")
-        "tl_atomic_i64_add_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i64-fetch-add-ptr!")
-        "tl_atomic_i64_fetch_add_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i64-cas-ptr!")
-        "tl_atomic_i64_cas_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i32-load-ptr")
-        "tl_atomic_i32_load_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i32-store-ptr!")
-        "tl_atomic_i32_store_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i32-add-ptr!")
-        "tl_atomic_i32_add_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i32-fetch-add-ptr!")
-        "tl_atomic_i32_fetch_add_ptr"]
-      [(string.eq leaf "tl-runtime-atomic-i32-cas-ptr!")
-        "tl_atomic_i32_cas_ptr"]
-      [else ""])))
+    [symbol : String
+      (compiler-backend-runtime-prelude-string-helper-symbol-for-leaf
+        (compiler-backend-symbol-leaf name))]
+    (if (and
+      (not (string.eq symbol ""))
+      (compiler-backend-stdlib-runtime-function-name? name))
+      symbol
+      "")))
 
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
@@ -20244,10 +20250,7 @@
     [prelude-symbol : String
       (compiler-backend-runtime-prelude-string-helper-symbol name)]
     (and
-      (or
-        (string.eq prelude-symbol symbol)
-        (compiler-backend-string-contains? name "stdlib/runtime.tl::")
-        (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
+      (string.eq prelude-symbol symbol)
       (>= symbol-id 0)
       (or
         (cbi.compiler-builtin-backend-tl-substring-id? symbol-id)
@@ -40719,10 +40722,8 @@
   [name : String]
   [helper : String]) : bool
   (and
-    (or
-      (compiler-backend-string-contains? name "stdlib/runtime.tl::")
-      (compiler-backend-string-contains? name "stdlib\\runtime.tl::"))
-    (string.eq (compiler-backend-symbol-leaf name) helper)))
+    (string.eq (compiler-backend-symbol-leaf name) helper)
+    (compiler-backend-stdlib-runtime-function-name? name)))
 
 (define (compiler-backend-function-list-defines-runtime-prelude-helper?
   [functions : CompilerIrFunctionList]
@@ -41318,25 +41319,25 @@
     [provides-substring : bool
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         functions
-        "tl-runtime-substring")]
+        "substring")]
     [provides-str-view : bool
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         functions
-        "tl-runtime-str-view")]
+        "str-view")]
     [provides-concat : bool
       (backend-or4
         (compiler-backend-function-list-defines-runtime-prelude-helper?
           functions
-          "tl-runtime-string-concat")
+          "string-concat")
         (compiler-backend-function-list-defines-runtime-prelude-helper?
           functions
-          "tl-runtime-string-concat3")
+          "string-concat3")
         (compiler-backend-function-list-defines-runtime-prelude-helper?
           functions
-          "tl-runtime-string-concat4")
+          "string-concat4")
         (compiler-backend-function-list-defines-runtime-prelude-helper?
           functions
-          "tl-runtime-string-concat5"))]
+          "string-concat5"))]
     [_defines-string-eq : bool
       (compiler-backend-runtime-index-defines? index "tl_string_eq")]
     [_defines-string-to-int : bool
@@ -41348,7 +41349,7 @@
     [provides-int-to-string : bool
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         functions
-        "tl-runtime-int-to-string")]
+        "int-to-string")]
     [_defines-print-err : bool
       (compiler-backend-runtime-index-defines? index "tl_print_err")]
     [_defines-print-str : bool
@@ -41842,7 +41843,7 @@
               buf))])]))
 
 ;; The out-of-memory message lives in the runtime prelude (stdlib/runtime.tl as
-;; `tl-runtime-oom-abort`, exported `tl_oom_abort`); the allocator's
+;; `oom-abort`, exported `tl_oom_abort`); the allocator's
 ;; abort paths `jmp tl_oom_abort` instead of writing backend rodata, so the
 ;; allocator contributes no runtime data.
 (define (compiler-backend-runtime-alloc-data-for-target
@@ -43411,10 +43412,10 @@ tl_alloc:
 ")))
 
 ;; The Linux out-of-bounds/division/shift abort handlers live in the runtime
-;; prelude (stdlib/runtime.tl as `tl-runtime-*-abort`, exported as the fixed
+;; prelude (stdlib/runtime.tl as `*-abort`, exported as the fixed
 ;; `tl_*_abort` symbols); the backend does not emit them as asm.
 ;; `tl_abort_string` (the general panic handler) lives in the runtime prelude
-;; (stdlib/runtime.tl as `tl-runtime-abort-string`); the backend does not emit
+;; (stdlib/runtime.tl as `abort-string`); the backend does not emit
 ;; it as asm on either target.
 (define (compiler-backend-runtime-abort-functions) : String
   "")
@@ -50322,7 +50323,7 @@ tl_tlci_call_image_entry:
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "stdlib/runtime.tl::tl-runtime-str-view"
+        "stdlib/runtime.tl::str-view"
         CompilerIrParamList.Nil
         (AstType.I64)
         0

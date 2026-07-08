@@ -317,6 +317,70 @@
           (panic (compiler-diagnostic-message (box-get diag)))])]
     [(ResultAstProgram.Err _) (panic "lower: module entry main parse failed")]))
 
+(define (compiler-lower-smoke-stdlib-string-public-substring-source) : String
+  "(module stdlib.runtime)
+(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+  (unsafe (string-from-bytes (ptr-offset src start) len)))
+(module stdlib.string)
+(define (substring [text : String] [start : i64] [len : i64]) : String
+  text)
+(define (main) : String
+  (substring \"abc\" 0 1))")
+
+(define (compiler-lower-smoke-stdlib-string-public-substring-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/runtime.tl"
+    (ast-decl-path-cons
+      "stdlib/runtime.tl"
+      (ast-decl-path-cons
+        "stdlib/string.tl"
+        (ast-decl-path-cons
+          "stdlib/string.tl"
+          (ast-decl-path-cons "stdlib/string.tl" (ast-decl-path-list-new)))))))
+
+(define (compiler-lower-smoke-stdlib-runtime-substring-defined?
+  [functions : CompilerIrFunctionList]) : bool
+  (or
+    (lower-test-function-defined? functions "stdlib/runtime.tl::substring")
+    (lower-test-function-defined? functions "runtime.tl::substring")
+    (lower-test-function-defined?
+      functions
+      "stdlib/runtime.tl::stdlib.runtime/substring")
+    (lower-test-function-defined?
+      functions
+      "runtime.tl::stdlib.runtime/substring")
+    (lower-test-function-defined? functions "stdlib.runtime/substring")))
+
+(define (compiler-lower-smoke-stdlib-string-public-substring-defined?
+  [functions : CompilerIrFunctionList]) : bool
+  (or
+    (lower-test-function-defined?
+      functions
+      "stdlib/string.tl::stdlib.string/substring")
+    (lower-test-function-defined?
+      functions
+      "string.tl::stdlib.string/substring")))
+
+(define (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?) : bool
+  (match (parse-ast-source
+    (compiler-lower-smoke-stdlib-string-public-substring-source))
+    [(ResultAstProgram.Ok program)
+      (match (lower-compiler-program-with-decl-paths
+        "stdlib/string.tl"
+        program
+        (compiler-lower-smoke-stdlib-string-public-substring-paths))
+        [(ResultCompilerLower.Ok lowered _)
+          (match lowered
+            [(CompilerIrProgram.Program _ functions _)
+              (and
+                (not
+                  (compiler-lower-smoke-stdlib-runtime-substring-defined?
+                    functions))
+                (compiler-lower-smoke-stdlib-string-public-substring-defined?
+                  functions))])]
+        [(ResultCompilerLower.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
 (define (compiler-lower-smoke-self-test) : unit
   (begin
     (unless
@@ -639,7 +703,10 @@
       (panic "lower: raw pointer call value smoke mismatch"))
     (unless
       (compiler-lower-back-half-tests-ok?)
-      (panic "lower: back-half smoke mismatch"))))
+      (panic "lower: back-half smoke mismatch"))
+    (unless
+      (compiler-lower-smoke-stdlib-string-public-substring-reachable-ok?)
+      (panic "lower: stdlib string public substring reachability mismatch"))))
 
 (define (main) : i64
   (begin

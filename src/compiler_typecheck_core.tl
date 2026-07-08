@@ -3583,7 +3583,9 @@
     (let
       [next-env : TcTypeEnv (TcTypeEnv.Bind name-id ty (box env))]
       (begin
-        (tc-type-env-scoped-runtime-note-bind-id! next-env name-id ty env)
+        (if tc-type-env-scoped-runtime-active
+          (tc-type-env-scoped-runtime-note-bind-id! next-env name-id ty env)
+          unit)
         next-env))))
 
 (define (tc-env-uncached-prefix-reaches-cache?
@@ -4141,6 +4143,36 @@
     stack
     marker-kind
     (- (tc-type-env-scoped-stack-len stack) 1)))
+
+(define (tc-type-env-scoped-stack-owner-marker-before?
+  [stack : TcTypeEnvScopedStack]
+  [index : i64]
+  [name : String]
+  [marker-id : i64]) : bool
+  (if (<= index 0)
+    false
+    (let
+      [slot : TcTypeEnvScopedSlot
+        (array-ref (struct-get stack slots) (- index 1))]
+      (tc-arena-owner-marker-for?
+        marker-id
+        (struct-get slot name-id)
+        (struct-get slot ty)
+        name))))
+
+(define (tc-type-env-scoped-stack-cleanup-owner-before?
+  [stack : TcTypeEnvScopedStack]
+  [index : i64]
+  [name : String]) : bool
+  (if (<= index 0)
+    false
+    (let
+      [slot : TcTypeEnvScopedSlot
+        (array-ref (struct-get stack slots) (- index 1))]
+      (tc-cleanup-owner-marker-for?
+        (struct-get slot name-id)
+        (struct-get slot ty)
+        name))))
 
 (define (tc-type-env-scoped-marker-cursor [stack : TcTypeEnvScopedStack]) : TcTypeEnvScopedMarkerCursor
   (TcTypeEnvScopedMarkerCursor stack (- (tc-type-env-scoped-stack-len stack) 1)))
@@ -4918,10 +4950,12 @@
   [name : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-type-env-scoped-cleanup-owner-active-scan-id?
-      (tc-type-env-scoped-carrier-marker-cursor carrier)
-      name
-      (tc-name-id name))))
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get (struct-get carrier sidecar) stack)]
+      [index : i64
+        (tc-type-env-scoped-stack-find-id-index stack (tc-name-id name))]
+      (tc-type-env-scoped-stack-cleanup-owner-before? stack index name))))
 
 (define (tc-type-env-scoped-arena-owner-active-scan-id?
   [cursor : TcTypeEnvScopedMarkerCursor]
@@ -4945,11 +4979,12 @@
   [marker-id : i64]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-type-env-scoped-arena-owner-active-scan-id?
-      (tc-type-env-scoped-carrier-marker-cursor carrier)
-      name
-      (tc-name-id name)
-      marker-id)))
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get (struct-get carrier sidecar) stack)]
+      [index : i64
+        (tc-type-env-scoped-stack-find-id-index stack (tc-name-id name))]
+      (tc-type-env-scoped-stack-owner-marker-before? stack index name marker-id))))
 
 (define (tc-type-env-scoped-carrier-ordinary-arena-owner-active?
   [carrier : TcTypeEnvScopedCarrier]
@@ -5210,6 +5245,24 @@
   false)
 (define tc-type-env-scoped-runtime-carrier : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-new))
+(define tc-type-env-scoped-runtime-marker-id-generation : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-unsafe : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-return : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-loop : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-default : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-region : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-cleanup : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-ordinary-arena : i64
+  -1)
+(define tc-type-env-scoped-runtime-marker-id-atomic-arena : i64
+  -1)
 
 (define (tc-type-env-scoped-runtime-active?) : bool
   tc-type-env-scoped-runtime-active)
@@ -5247,6 +5300,7 @@
   (let
     [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
     (begin
+      (tc-type-env-scoped-runtime-marker-ids-ensure!)
       (tc-type-env-scoped-cache-clear!)
       (set! tc-type-env-scoped-runtime-carrier carrier)
       (set! tc-type-env-scoped-runtime-active true)
@@ -5260,29 +5314,89 @@
     0
     tc-type-env-scoped-flag-marker))
 
+(define (tc-type-env-scoped-runtime-marker-ids-ensure!) : unit
+  (if (= tc-type-env-scoped-runtime-marker-id-generation (intern-generation))
+    unit
+    (begin
+      (set! tc-type-env-scoped-runtime-marker-id-generation (intern-generation))
+      (set! tc-type-env-scoped-runtime-marker-id-unsafe (tc-unsafe-marker-id))
+      (set! tc-type-env-scoped-runtime-marker-id-return (tc-return-type-id))
+      (set! tc-type-env-scoped-runtime-marker-id-loop (tc-loop-target-id))
+      (set!
+        tc-type-env-scoped-runtime-marker-id-default
+        (tc-default-boundary-id))
+      (set! tc-type-env-scoped-runtime-marker-id-region (tc-region-marker-id))
+      (set!
+        tc-type-env-scoped-runtime-marker-id-cleanup
+        (tc-cleanup-owner-marker-id))
+      (set!
+        tc-type-env-scoped-runtime-marker-id-ordinary-arena
+        (tc-ordinary-arena-owner-marker-id))
+      (set!
+        tc-type-env-scoped-runtime-marker-id-atomic-arena
+        (tc-atomic-arena-owner-marker-id)))))
+
+(define (tc-type-env-scoped-runtime-visible-marker-kind
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedMarkerKind
+  (cond
+    [(= name-id tc-type-env-scoped-runtime-marker-id-unsafe)
+      TcTypeEnvScopedMarkerKind.UnsafeContext]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-return)
+      TcTypeEnvScopedMarkerKind.Other]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-loop)
+      TcTypeEnvScopedMarkerKind.Other]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-default)
+      TcTypeEnvScopedMarkerKind.DefaultBoundary]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-region)
+      TcTypeEnvScopedMarkerKind.Region]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-cleanup)
+      (match ty
+        [(AstType.Var _) TcTypeEnvScopedMarkerKind.CleanupOwner]
+        [_ TcTypeEnvScopedMarkerKind.None])]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-ordinary-arena)
+      (match ty
+        [(AstType.Var _) TcTypeEnvScopedMarkerKind.OrdinaryArenaOwner]
+        [_ TcTypeEnvScopedMarkerKind.None])]
+    [(= name-id tc-type-env-scoped-runtime-marker-id-atomic-arena)
+      (match ty
+        [(AstType.Var _) TcTypeEnvScopedMarkerKind.AtomicArenaOwner]
+        [_ TcTypeEnvScopedMarkerKind.None])]
+    [else TcTypeEnvScopedMarkerKind.None]))
+
 (define (tc-type-env-scoped-runtime-note-bind-id!
   [next-env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]
   [_rest-env : TcTypeEnv]) : unit
-  (if tc-type-env-scoped-runtime-active
-    (let
-      [carrier : TcTypeEnvScopedCarrier tc-type-env-scoped-runtime-carrier]
-      [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
-      [marker-kind : TcTypeEnvScopedMarkerKind
-        (tc-type-env-scoped-visible-marker-kind name-id ty)]
-      (begin
-        (tc-type-env-scoped-stack-push-slot!
-          (&mut (struct-get sidecar stack))
-          name-id
-          ty
-          (tc-type-env-scoped-runtime-slot-flags marker-kind)
-          marker-kind)
-        (set! (struct-get sidecar persistent) next-env)
-        (set!
-          tc-type-env-scoped-runtime-carrier
-          (TcTypeEnvScopedCarrier next-env sidecar false))))
-    unit))
+  (let
+    [marker-kind : TcTypeEnvScopedMarkerKind
+      (tc-type-env-scoped-runtime-visible-marker-kind name-id ty)]
+    (begin
+      (tc-type-env-scoped-stack-push-slot!
+        (&mut
+          (struct-get
+            (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+            stack))
+        name-id
+        ty
+        (tc-type-env-scoped-runtime-slot-flags marker-kind)
+        marker-kind)
+      (set!
+        (struct-get
+          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+          persistent)
+        next-env)
+      (set!
+        (struct-get
+          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+          materialize-start)
+        (tc-type-env-scoped-stack-len
+          (struct-get
+            (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+            stack)))
+      (set! (struct-get tc-type-env-scoped-runtime-carrier env) next-env)
+      (set! (struct-get tc-type-env-scoped-runtime-carrier dirty) false))))
 
 (define (tc-type-env-scoped-runtime-enter-env! [env : TcTypeEnv]) : TcTypeEnvScopedRuntimeSave
   (if tc-type-env-scoped-runtime-active
@@ -20239,13 +20353,49 @@
             allow-mut-by-value-borrow
             (tc-expr ctx env expr))))]))
 
+(define (tc-expr-needs-scoped-runtime-save? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (tc-expr-needs-scoped-runtime-save? (ast-node-get inner-box))]
+    [(AstExpr.Let _) true]
+    [(AstExpr.Lambda _) true]
+    [(AstExpr.Unsafe _) true]
+    [(AstExpr.While _ _) true]
+    [(AstExpr.Foreach _) true]
+    [(AstExpr.SpmdReduce _) true]
+    [(AstExpr.SpmdScan _) true]
+    [(AstExpr.Match _) true]
+    [(AstExpr.Call func-box _)
+      (match (ast-expr-unspan (ast-node-get func-box))
+        [(AstExpr.Lambda _) true]
+        [_ false])]
+    [(AstExpr.WithRegion _ _) true]
+    [(AstExpr.InArena _ _) true]
+    [(AstExpr.WithResource _) true]
+    [_ false]))
+
+(define (tc-expr-with-expected-needs-scoped-runtime-save? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (tc-expr-with-expected-needs-scoped-runtime-save?
+        (ast-node-get inner-box))]
+    [(AstExpr.Let _) true]
+    [(AstExpr.Unsafe _) true]
+    [(AstExpr.Match _) true]
+    [(AstExpr.WithRegion _ _) true]
+    [(AstExpr.InArena _ _) true]
+    [(AstExpr.WithResource _) true]
+    [_ false]))
+
 (define (tc-expr-with-expected-or-actual-core
   [ctx : TcContext]
   [env : TcTypeEnv]
   [expr : AstExpr]
   [expected : AstType]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (if (tc-type-env-scoped-runtime-active?)
+  (if (and
+    tc-type-env-scoped-runtime-active
+    (tc-expr-with-expected-needs-scoped-runtime-save? expr))
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
       [result : ResultTcType
@@ -24851,7 +25001,7 @@
   [env : TcTypeEnv]
   [params : AstParamList]
   [body : AstExpr]) : bool
-  (if (tc-type-env-scoped-runtime-active?)
+  (if tc-type-env-scoped-runtime-active
     (tc-type-env-scoped-carrier-lambda-captures-reference?
       (tc-type-env-scoped-runtime-current)
       params
@@ -30398,7 +30548,7 @@
   [bound : TcStringList]
   [body : AstExpr]
   [allow-immutable-reference-captures : bool]) : ResultTcUnit
-  (if (tc-type-env-scoped-runtime-active?)
+  (if tc-type-env-scoped-runtime-active
     (tc-type-env-scoped-carrier-check-lambda-region-captures
       (tc-type-env-scoped-runtime-current)
       bound
@@ -37759,7 +37909,9 @@
     [_ (ResultTcType.Err "typecheck: unsupported expression")]))
 
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
-  (if (tc-type-env-scoped-runtime-active?)
+  (if (and
+    tc-type-env-scoped-runtime-active
+    (tc-expr-needs-scoped-runtime-save? expr))
     (let
       [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
       [result : ResultTcType (tc-expr-inner ctx env expr)]
@@ -63097,6 +63249,7 @@
     (set! tc-loop-target-id-cache-generation -1)
     (set! tc-hygiene-global-boundary-id-cache-generation -1)
     (set! tc-unsafe-marker-id-cache-generation -1)
+    (set! tc-type-env-scoped-runtime-marker-id-generation -1)
     (set! tc-stdlib-comptime-syntax-type-cache-generation -1)
     (set! tc-comptime-helper-prefix-cache-generation -1)
     (tc-marker-name-id-arena-reset!)

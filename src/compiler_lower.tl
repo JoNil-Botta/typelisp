@@ -43127,11 +43127,15 @@
 (define (lower-param-list-append-sret
   [params : CompilerIrParamList]
   [sret-var : i64]) : CompilerIrParamList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil)
       (compiler-ir-param-cons
         (CompilerIrParam.Param "__sret" (AstType.U64) sret-var)
         CompilerIrParamList.Nil)]
+    [(CompilerIrParamList.Array seq)
+      (lower-param-list-append-sret
+        (compiler-ir-param-seq-to-list seq)
+        sret-var)]
     [(CompilerIrParamList.Cons head rest)
       (compiler-ir-param-cons
         head

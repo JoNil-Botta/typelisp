@@ -5082,6 +5082,8 @@
     [(CompilerIrParamList.Nil)
       (match b
         [(CompilerIrParamList.Nil) true]
+        [(CompilerIrParamList.Array seq)
+          (opt-param-list-eq a (compiler-ir-param-seq-to-list seq))]
         [_ false])]
     [(CompilerIrParamList.Cons ah at)
       (match b
@@ -5089,7 +5091,11 @@
           (and
             (opt-param-eq ah bh)
             (opt-param-list-eq (box-get at) (box-get bt)))]
-        [_ false])]))
+        [(CompilerIrParamList.Array seq)
+          (opt-param-list-eq a (compiler-ir-param-seq-to-list seq))]
+        [_ false])]
+    [(CompilerIrParamList.Array seq)
+      (opt-param-list-eq (compiler-ir-param-seq-to-list seq) b)]))
 
 (define (opt-function-eq [a : CompilerIrFunction] [b : CompilerIrFunction]) : bool
   (match a
@@ -8193,8 +8199,10 @@
 (define (opt-verify-param-def-set
   [params : CompilerIrParamList]
   [set : opt_i64_i64_map.Map]) : OptVarSetResult
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) (OptVarSetResult.Ok set)]
+    [(CompilerIrParamList.Array seq)
+      (opt-verify-param-def-set (compiler-ir-param-seq-to-list seq) set)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
@@ -8260,8 +8268,13 @@
   [params : CompilerIrParamList]
   [entry-label : String]
   [defs : OptVarDefList]) : OptVarDefList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) defs]
+    [(CompilerIrParamList.Array seq)
+      (opt-var-defs-from-params
+        (compiler-ir-param-seq-to-list seq)
+        entry-label
+        defs)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
@@ -9144,8 +9157,10 @@
 (define (opt-ssa-facts-add-params
   [params : CompilerIrParamList]
   [facts : OptSsaFacts]) : OptSsaFacts
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) facts]
+    [(CompilerIrParamList.Array seq)
+      (opt-ssa-facts-add-params (compiler-ir-param-seq-to-list seq) facts)]
     [(CompilerIrParamList.Cons param rest)
       (opt-ssa-facts-add-params
         (box-get rest)
@@ -9375,8 +9390,15 @@
   [label : String]
   [defs : OptSsaVarBlocks]
   [params : CompilerIrParamList]) : OptSsaVarBlocks
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) defs]
+    [(CompilerIrParamList.Array seq)
+      (opt-ssa-def-blocks-add-params
+        index
+        facts
+        label
+        defs
+        (compiler-ir-param-seq-to-list seq))]
     [(CompilerIrParamList.Cons param rest)
       (opt-ssa-def-blocks-add-params
         index
@@ -9637,8 +9659,10 @@
   [facts : OptSsaFacts]
   [params : CompilerIrParamList]
   [env : OptSsaRenameEnv]) : OptSsaRenameEnv
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) env]
+    [(CompilerIrParamList.Array seq)
+      (opt-ssa-env-from-params facts (compiler-ir-param-seq-to-list seq) env)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
@@ -14605,8 +14629,10 @@
 (define (opt-licm-type-env-add-params
   [params : CompilerIrParamList]
   [types : OptSsaVarTypes]) : OptSsaVarTypes
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) types]
+    [(CompilerIrParamList.Array seq)
+      (opt-licm-type-env-add-params (compiler-ir-param-seq-to-list seq) types)]
     [(CompilerIrParamList.Cons param rest)
       (opt-licm-type-env-add-params
         (box-get rest)
@@ -17376,8 +17402,10 @@
       (opt-sccp-max-var-blocks (compiler-ir-block-seq-to-list seq) acc)]))
 
 (define (opt-sccp-max-var-params [params : CompilerIrParamList] [acc : i64]) : i64
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Array seq)
+      (opt-sccp-max-var-params (compiler-ir-param-seq-to-list seq) acc)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
@@ -17784,8 +17812,10 @@
 (define (opt-sccp-env-from-params
   [params : CompilerIrParamList]
   [env : OptSccpEnv]) : OptSccpEnv
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) env]
+    [(CompilerIrParamList.Array seq)
+      (opt-sccp-env-from-params (compiler-ir-param-seq-to-list seq) env)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
@@ -19025,8 +19055,10 @@
 (define (opt-gvn-sources-params
   [params : CompilerIrParamList]
   [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Array seq)
+      (opt-gvn-sources-params (compiler-ir-param-seq-to-list seq) acc)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
@@ -23660,8 +23692,10 @@
 ;; unconditional passes (GVN/SCCP/copy-prop/CFG/DCE) handle the reassignments
 ;; the same way they handle ordinary loops built from `while`/`set!`.
 (define (opt-tailrec-param-count [params : CompilerIrParamList]) : i64
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) 0]
+    [(CompilerIrParamList.Array seq)
+      (opt-tailrec-param-count (compiler-ir-param-seq-to-list seq))]
     [(CompilerIrParamList.Cons _ rest)
       (+ 1 (opt-tailrec-param-count (box-get rest)))]))
 
@@ -23694,8 +23728,14 @@
   [base : i64]
   [index : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) tail]
+    [(CompilerIrParamList.Array seq)
+      (opt-tailrec-assign-movs
+        (compiler-ir-param-seq-to-list seq)
+        base
+        index
+        tail)]
     [(CompilerIrParamList.Cons param prest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
@@ -23712,8 +23752,15 @@
   [base : i64]
   [index : i64]
   [tail : CompilerIrInstrList]) : CompilerIrInstrList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) tail]
+    [(CompilerIrParamList.Array seq)
+      (opt-tailrec-stage-movs
+        (compiler-ir-param-seq-to-list seq)
+        args
+        base
+        index
+        tail)]
     [(CompilerIrParamList.Cons param prest)
       (match args
         [(CompilerIrValueList.Nil) tail]
@@ -28461,14 +28508,18 @@
   6)
 
 (define (opt-inline-param-count [params : CompilerIrParamList]) : i64
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) 0]
+    [(CompilerIrParamList.Array seq)
+      (opt-inline-param-count (compiler-ir-param-seq-to-list seq))]
     [(CompilerIrParamList.Cons _ rest)
       (+ 1 (opt-inline-param-count (box-get rest)))]))
 
 (define (opt-inline-params-sequential? [params : CompilerIrParamList] [i : i64]) : bool
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) true]
+    [(CompilerIrParamList.Array seq)
+      (opt-inline-params-sequential? (compiler-ir-param-seq-to-list seq) i)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ vid)
@@ -29179,8 +29230,14 @@
   [args : CompilerIrCallArgs]
   [base : i64]
   [index : i64]) : CompilerIrInstrList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) CompilerIrInstrList.Nil]
+    [(CompilerIrParamList.Array seq)
+      (opt-inline-stage-param-instrs
+        (compiler-ir-param-seq-to-list seq)
+        args
+        base
+        index)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty _)
@@ -50305,8 +50362,10 @@
 (define (opt-load-header-set-add-params
   [params : CompilerIrParamList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) set]
+    [(CompilerIrParamList.Array seq)
+      (opt-load-header-set-add-params (compiler-ir-param-seq-to-list seq) set)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var)

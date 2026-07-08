@@ -149,6 +149,232 @@
   -1)
 (define compiler-builtin-id-tl-tls-current-arena-store : i64
   -1)
+(define compiler-builtin-id-fix-empty : i64
+  -1)
+(define compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce : i64
+  -1)
+(define compiler-builtin-id-fix-colon : i64
+  -1)
+(define compiler-builtin-id-fix-tl_unquote_set_target : i64
+  -1)
+(define compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt : i64
+  -1)
+(define compiler-builtin-id-fix-acc : i64
+  -1)
+(define compiler-builtin-id-fix-alias : i64
+  -1)
+(define compiler-builtin-id-fix-arena_dot_Arena : i64
+  -1)
+(define compiler-builtin-id-fix-ArenaMark : i64
+  -1)
+(define compiler-builtin-id-fix-arm : i64
+  -1)
+(define compiler-builtin-id-fix-Box : i64
+  -1)
+(define compiler-builtin-id-fix-c : i64
+  -1)
+(define compiler-builtin-id-fix-callback_target : i64
+  -1)
+(define compiler-builtin-id-fix-Choice : i64
+  -1)
+(define compiler-builtin-id-fix-clone : i64
+  -1)
+(define compiler-builtin-id-fix-CloneShortList : i64
+  -1)
+(define compiler-builtin-id-fix-comptime : i64
+  -1)
+(define compiler-builtin-id-fix-comptime_dot_comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-comptime_dot_error : i64
+  -1)
+(define compiler-builtin-id-fix-comptime_slash_comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-comptime_slash_error : i64
+  -1)
+(define compiler-builtin-id-fix-comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-cond : i64
+  -1)
+(define compiler-builtin-id-fix-Cons : i64
+  -1)
+(define compiler-builtin-id-fix-count : i64
+  -1)
+(define compiler-builtin-id-fix-e : i64
+  -1)
+(define compiler-builtin-id-fix-else : i64
+  -1)
+(define compiler-builtin-id-fix-Expr : i64
+  -1)
+(define compiler-builtin-id-fix-ExprBindingClause : i64
+  -1)
+(define compiler-builtin-id-fix-ExprBindingClauseList : i64
+  -1)
+(define compiler-builtin-id-fix-ExprClause : i64
+  -1)
+(define compiler-builtin-id-fix-ExprClauseList : i64
+  -1)
+(define compiler-builtin-id-fix-ExprList : i64
+  -1)
+(define compiler-builtin-id-fix-Failed : i64
+  -1)
+(define compiler-builtin-id-fix-field : i64
+  -1)
+(define compiler-builtin-id-fix-flag : i64
+  -1)
+(define compiler-builtin-id-fix-h : i64
+  -1)
+(define compiler-builtin-id-fix-helper : i64
+  -1)
+(define compiler-builtin-id-fix-id : i64
+  -1)
+(define compiler-builtin-id-fix-import : i64
+  -1)
+(define compiler-builtin-id-fix-ImportedMark : i64
+  -1)
+(define compiler-builtin-id-fix-info : i64
+  -1)
+(define compiler-builtin-id-fix-input : i64
+  -1)
+(define compiler-builtin-id-fix-item : i64
+  -1)
+(define compiler-builtin-id-fix-items : i64
+  -1)
+(define compiler-builtin-id-fix-label : i64
+  -1)
+(define compiler-builtin-id-fix-left : i64
+  -1)
+(define compiler-builtin-id-fix-left_slash_same : i64
+  -1)
+(define compiler-builtin-id-fix-m : i64
+  -1)
+(define compiler-builtin-id-fix-macro_only_helper : i64
+  -1)
+(define compiler-builtin-id-fix-main : i64
+  -1)
+(define compiler-builtin-id-fix-MatchArm : i64
+  -1)
+(define compiler-builtin-id-fix-MatchArmList : i64
+  -1)
+(define compiler-builtin-id-fix-Maybe : i64
+  -1)
+(define compiler-builtin-id-fix-missing : i64
+  -1)
+(define compiler-builtin-id-fix-n : i64
+  -1)
+(define compiler-builtin-id-fix-name_cache_split_alias_3940 : i64
+  -1)
+(define compiler-builtin-id-fix-name_cache_split_value_3940 : i64
+  -1)
+(define compiler-builtin-id-fix-Nil : i64
+  -1)
+(define compiler-builtin-id-fix-Packet : i64
+  -1)
+(define compiler-builtin-id-fix-Pattern : i64
+  -1)
+(define compiler-builtin-id-fix-PatternList : i64
+  -1)
+(define compiler-builtin-id-fix-point : i64
+  -1)
+(define compiler-builtin-id-fix-Point : i64
+  -1)
+(define compiler-builtin-id-fix-Ready : i64
+  -1)
+(define compiler-builtin-id-fix-record : i64
+  -1)
+(define compiler-builtin-id-fix-Record : i64
+  -1)
+(define compiler-builtin-id-fix-Result : i64
+  -1)
+(define compiler-builtin-id-fix-ResultIoString : i64
+  -1)
+(define compiler-builtin-id-fix-right : i64
+  -1)
+(define compiler-builtin-id-fix-right_slash_Some : i64
+  -1)
+(define compiler-builtin-id-fix-same : i64
+  -1)
+(define compiler-builtin-id-fix-second : i64
+  -1)
+(define compiler-builtin-id-fix-Some : i64
+  -1)
+(define compiler-builtin-id-fix-Status : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_dot_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_slash_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_slash_comptime : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_slash_comptime_dot_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_slash_comptime_slash_error : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_slash_string : i64
+  -1)
+(define compiler-builtin-id-fix-string : i64
+  -1)
+(define compiler-builtin-id-fix-subject : i64
+  -1)
+(define compiler-builtin-id-fix-t : i64
+  -1)
+(define compiler-builtin-id-fix-T : i64
+  -1)
+(define compiler-builtin-id-fix-tag : i64
+  -1)
+(define compiler-builtin-id-fix-target : i64
+  -1)
+(define compiler-builtin-id-fix-ThreadBox : i64
+  -1)
+(define compiler-builtin-id-fix-type : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoArray : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoBuiltin : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoDynArray : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoEnum : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoFunction : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoStruct : i64
+  -1)
+(define compiler-builtin-id-fix-TypeInfoTuple : i64
+  -1)
+(define compiler-builtin-id-fix-U : i64
+  -1)
+(define compiler-builtin-id-fix-unquote : i64
+  -1)
+(define compiler-builtin-id-fix-UsedBox : i64
+  -1)
+(define compiler-builtin-id-fix-UsedEnum : i64
+  -1)
+(define compiler-builtin-id-fix-value : i64
+  -1)
+(define compiler-builtin-id-fix-x : i64
+  -1)
+(define compiler-builtin-id-fix-xs : i64
+  -1)
+(define compiler-builtin-id-fix-y : i64
+  -1)
 
 (defstruct CompilerBuiltinIdsState
   (generation (Array i64))
@@ -157,11 +383,11 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 73)]
+    [ids : (Array i64) (make-array i64 186)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 73)
+      (while (< i 186)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -268,7 +494,121 @@
     (state-set! state 69 compiler-builtin-id-tls-current-arena)
     (state-set! state 70 compiler-builtin-id-tls-current-arena-set-bang)
     (state-set! state 71 compiler-builtin-id-tl-tls-current-arena-load)
-    (state-set! state 72 compiler-builtin-id-tl-tls-current-arena-store)))
+    (state-set! state 72 compiler-builtin-id-tl-tls-current-arena-store)
+    (state-set! state 73 compiler-builtin-id-fix-empty)
+    (state-set! state 74 compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce)
+    (state-set! state 75 compiler-builtin-id-fix-colon)
+    (state-set! state 76 compiler-builtin-id-fix-tl_unquote_set_target)
+    (state-set! state 77 compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt)
+    (state-set! state 78 compiler-builtin-id-fix-acc)
+    (state-set! state 79 compiler-builtin-id-fix-alias)
+    (state-set! state 80 compiler-builtin-id-fix-arena_dot_Arena)
+    (state-set! state 81 compiler-builtin-id-fix-ArenaMark)
+    (state-set! state 82 compiler-builtin-id-fix-arm)
+    (state-set! state 83 compiler-builtin-id-fix-Box)
+    (state-set! state 84 compiler-builtin-id-fix-c)
+    (state-set! state 85 compiler-builtin-id-fix-callback_target)
+    (state-set! state 86 compiler-builtin-id-fix-Choice)
+    (state-set! state 87 compiler-builtin-id-fix-clone)
+    (state-set! state 88 compiler-builtin-id-fix-CloneShortList)
+    (state-set! state 89 compiler-builtin-id-fix-comptime)
+    (state-set! state 90 compiler-builtin-id-fix-comptime_dot_comptime_error)
+    (state-set! state 91 compiler-builtin-id-fix-comptime_dot_error)
+    (state-set! state 92 compiler-builtin-id-fix-comptime_slash_comptime_error)
+    (state-set! state 93 compiler-builtin-id-fix-comptime_slash_error)
+    (state-set! state 94 compiler-builtin-id-fix-comptime_error)
+    (state-set! state 95 compiler-builtin-id-fix-cond)
+    (state-set! state 96 compiler-builtin-id-fix-Cons)
+    (state-set! state 97 compiler-builtin-id-fix-count)
+    (state-set! state 98 compiler-builtin-id-fix-e)
+    (state-set! state 99 compiler-builtin-id-fix-else)
+    (state-set! state 100 compiler-builtin-id-fix-Expr)
+    (state-set! state 101 compiler-builtin-id-fix-ExprBindingClause)
+    (state-set! state 102 compiler-builtin-id-fix-ExprBindingClauseList)
+    (state-set! state 103 compiler-builtin-id-fix-ExprClause)
+    (state-set! state 104 compiler-builtin-id-fix-ExprClauseList)
+    (state-set! state 105 compiler-builtin-id-fix-ExprList)
+    (state-set! state 106 compiler-builtin-id-fix-Failed)
+    (state-set! state 107 compiler-builtin-id-fix-field)
+    (state-set! state 108 compiler-builtin-id-fix-flag)
+    (state-set! state 109 compiler-builtin-id-fix-h)
+    (state-set! state 110 compiler-builtin-id-fix-helper)
+    (state-set! state 111 compiler-builtin-id-fix-id)
+    (state-set! state 112 compiler-builtin-id-fix-import)
+    (state-set! state 113 compiler-builtin-id-fix-ImportedMark)
+    (state-set! state 114 compiler-builtin-id-fix-info)
+    (state-set! state 115 compiler-builtin-id-fix-input)
+    (state-set! state 116 compiler-builtin-id-fix-item)
+    (state-set! state 117 compiler-builtin-id-fix-items)
+    (state-set! state 118 compiler-builtin-id-fix-label)
+    (state-set! state 119 compiler-builtin-id-fix-left)
+    (state-set! state 120 compiler-builtin-id-fix-left_slash_same)
+    (state-set! state 121 compiler-builtin-id-fix-m)
+    (state-set! state 122 compiler-builtin-id-fix-macro_only_helper)
+    (state-set! state 123 compiler-builtin-id-fix-main)
+    (state-set! state 124 compiler-builtin-id-fix-MatchArm)
+    (state-set! state 125 compiler-builtin-id-fix-MatchArmList)
+    (state-set! state 126 compiler-builtin-id-fix-Maybe)
+    (state-set! state 127 compiler-builtin-id-fix-missing)
+    (state-set! state 128 compiler-builtin-id-fix-n)
+    (state-set! state 129 compiler-builtin-id-fix-name_cache_split_alias_3940)
+    (state-set! state 130 compiler-builtin-id-fix-name_cache_split_value_3940)
+    (state-set! state 131 compiler-builtin-id-fix-Nil)
+    (state-set! state 132 compiler-builtin-id-fix-Packet)
+    (state-set! state 133 compiler-builtin-id-fix-Pattern)
+    (state-set! state 134 compiler-builtin-id-fix-PatternList)
+    (state-set! state 135 compiler-builtin-id-fix-point)
+    (state-set! state 136 compiler-builtin-id-fix-Point)
+    (state-set! state 137 compiler-builtin-id-fix-Ready)
+    (state-set! state 138 compiler-builtin-id-fix-record)
+    (state-set! state 139 compiler-builtin-id-fix-Record)
+    (state-set! state 140 compiler-builtin-id-fix-Result)
+    (state-set! state 141 compiler-builtin-id-fix-ResultIoString)
+    (state-set! state 142 compiler-builtin-id-fix-right)
+    (state-set! state 143 compiler-builtin-id-fix-right_slash_Some)
+    (state-set! state 144 compiler-builtin-id-fix-same)
+    (state-set! state 145 compiler-builtin-id-fix-second)
+    (state-set! state 146 compiler-builtin-id-fix-Some)
+    (state-set! state 147 compiler-builtin-id-fix-Status)
+    (state-set! state 148 compiler-builtin-id-fix-stdlib)
+    (state-set! state 149 compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
+    (state-set! state 150 compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
+    (state-set! state 151 compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error)
+    (state-set! state 152 compiler-builtin-id-fix-stdlib_dot_comptime_slash_error)
+    (state-set! state 153 compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause)
+    (state-set! state 154 compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList)
+    (state-set! state 155 compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause)
+    (state-set! state 156 compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList)
+    (state-set! state 157 compiler-builtin-id-fix-stdlib_slash_comptime)
+    (state-set! state 158 compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error)
+    (state-set! state 159 compiler-builtin-id-fix-stdlib_slash_comptime_dot_error)
+    (state-set! state 160 compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error)
+    (state-set! state 161 compiler-builtin-id-fix-stdlib_slash_comptime_slash_error)
+    (state-set! state 162 compiler-builtin-id-fix-stdlib_slash_string)
+    (state-set! state 163 compiler-builtin-id-fix-string)
+    (state-set! state 164 compiler-builtin-id-fix-subject)
+    (state-set! state 165 compiler-builtin-id-fix-t)
+    (state-set! state 166 compiler-builtin-id-fix-T)
+    (state-set! state 167 compiler-builtin-id-fix-tag)
+    (state-set! state 168 compiler-builtin-id-fix-target)
+    (state-set! state 169 compiler-builtin-id-fix-ThreadBox)
+    (state-set! state 170 compiler-builtin-id-fix-type)
+    (state-set! state 171 compiler-builtin-id-fix-TypeInfoArray)
+    (state-set! state 172 compiler-builtin-id-fix-TypeInfoBuiltin)
+    (state-set! state 173 compiler-builtin-id-fix-TypeInfoDynArray)
+    (state-set! state 174 compiler-builtin-id-fix-TypeInfoEnum)
+    (state-set! state 175 compiler-builtin-id-fix-TypeInfoFunction)
+    (state-set! state 176 compiler-builtin-id-fix-TypeInfoStruct)
+    (state-set! state 177 compiler-builtin-id-fix-TypeInfoTuple)
+    (state-set! state 178 compiler-builtin-id-fix-U)
+    (state-set! state 179 compiler-builtin-id-fix-unquote)
+    (state-set! state 180 compiler-builtin-id-fix-UsedBox)
+    (state-set! state 181 compiler-builtin-id-fix-UsedEnum)
+    (state-set! state 182 compiler-builtin-id-fix-value)
+    (state-set! state 183 compiler-builtin-id-fix-x)
+    (state-set! state 184 compiler-builtin-id-fix-xs)
+    (state-set! state 185 compiler-builtin-id-fix-y)
+    ))
 
 (define (state-capture) : CompilerBuiltinIdsState
   (let
@@ -352,7 +692,121 @@
     (set! compiler-builtin-id-tls-current-arena (state-ref state 69))
     (set! compiler-builtin-id-tls-current-arena-set-bang (state-ref state 70))
     (set! compiler-builtin-id-tl-tls-current-arena-load (state-ref state 71))
-    (set! compiler-builtin-id-tl-tls-current-arena-store (state-ref state 72))))
+    (set! compiler-builtin-id-tl-tls-current-arena-store (state-ref state 72))
+    (set! compiler-builtin-id-fix-empty (state-ref state 73))
+    (set! compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce (state-ref state 74))
+    (set! compiler-builtin-id-fix-colon (state-ref state 75))
+    (set! compiler-builtin-id-fix-tl_unquote_set_target (state-ref state 76))
+    (set! compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt (state-ref state 77))
+    (set! compiler-builtin-id-fix-acc (state-ref state 78))
+    (set! compiler-builtin-id-fix-alias (state-ref state 79))
+    (set! compiler-builtin-id-fix-arena_dot_Arena (state-ref state 80))
+    (set! compiler-builtin-id-fix-ArenaMark (state-ref state 81))
+    (set! compiler-builtin-id-fix-arm (state-ref state 82))
+    (set! compiler-builtin-id-fix-Box (state-ref state 83))
+    (set! compiler-builtin-id-fix-c (state-ref state 84))
+    (set! compiler-builtin-id-fix-callback_target (state-ref state 85))
+    (set! compiler-builtin-id-fix-Choice (state-ref state 86))
+    (set! compiler-builtin-id-fix-clone (state-ref state 87))
+    (set! compiler-builtin-id-fix-CloneShortList (state-ref state 88))
+    (set! compiler-builtin-id-fix-comptime (state-ref state 89))
+    (set! compiler-builtin-id-fix-comptime_dot_comptime_error (state-ref state 90))
+    (set! compiler-builtin-id-fix-comptime_dot_error (state-ref state 91))
+    (set! compiler-builtin-id-fix-comptime_slash_comptime_error (state-ref state 92))
+    (set! compiler-builtin-id-fix-comptime_slash_error (state-ref state 93))
+    (set! compiler-builtin-id-fix-comptime_error (state-ref state 94))
+    (set! compiler-builtin-id-fix-cond (state-ref state 95))
+    (set! compiler-builtin-id-fix-Cons (state-ref state 96))
+    (set! compiler-builtin-id-fix-count (state-ref state 97))
+    (set! compiler-builtin-id-fix-e (state-ref state 98))
+    (set! compiler-builtin-id-fix-else (state-ref state 99))
+    (set! compiler-builtin-id-fix-Expr (state-ref state 100))
+    (set! compiler-builtin-id-fix-ExprBindingClause (state-ref state 101))
+    (set! compiler-builtin-id-fix-ExprBindingClauseList (state-ref state 102))
+    (set! compiler-builtin-id-fix-ExprClause (state-ref state 103))
+    (set! compiler-builtin-id-fix-ExprClauseList (state-ref state 104))
+    (set! compiler-builtin-id-fix-ExprList (state-ref state 105))
+    (set! compiler-builtin-id-fix-Failed (state-ref state 106))
+    (set! compiler-builtin-id-fix-field (state-ref state 107))
+    (set! compiler-builtin-id-fix-flag (state-ref state 108))
+    (set! compiler-builtin-id-fix-h (state-ref state 109))
+    (set! compiler-builtin-id-fix-helper (state-ref state 110))
+    (set! compiler-builtin-id-fix-id (state-ref state 111))
+    (set! compiler-builtin-id-fix-import (state-ref state 112))
+    (set! compiler-builtin-id-fix-ImportedMark (state-ref state 113))
+    (set! compiler-builtin-id-fix-info (state-ref state 114))
+    (set! compiler-builtin-id-fix-input (state-ref state 115))
+    (set! compiler-builtin-id-fix-item (state-ref state 116))
+    (set! compiler-builtin-id-fix-items (state-ref state 117))
+    (set! compiler-builtin-id-fix-label (state-ref state 118))
+    (set! compiler-builtin-id-fix-left (state-ref state 119))
+    (set! compiler-builtin-id-fix-left_slash_same (state-ref state 120))
+    (set! compiler-builtin-id-fix-m (state-ref state 121))
+    (set! compiler-builtin-id-fix-macro_only_helper (state-ref state 122))
+    (set! compiler-builtin-id-fix-main (state-ref state 123))
+    (set! compiler-builtin-id-fix-MatchArm (state-ref state 124))
+    (set! compiler-builtin-id-fix-MatchArmList (state-ref state 125))
+    (set! compiler-builtin-id-fix-Maybe (state-ref state 126))
+    (set! compiler-builtin-id-fix-missing (state-ref state 127))
+    (set! compiler-builtin-id-fix-n (state-ref state 128))
+    (set! compiler-builtin-id-fix-name_cache_split_alias_3940 (state-ref state 129))
+    (set! compiler-builtin-id-fix-name_cache_split_value_3940 (state-ref state 130))
+    (set! compiler-builtin-id-fix-Nil (state-ref state 131))
+    (set! compiler-builtin-id-fix-Packet (state-ref state 132))
+    (set! compiler-builtin-id-fix-Pattern (state-ref state 133))
+    (set! compiler-builtin-id-fix-PatternList (state-ref state 134))
+    (set! compiler-builtin-id-fix-point (state-ref state 135))
+    (set! compiler-builtin-id-fix-Point (state-ref state 136))
+    (set! compiler-builtin-id-fix-Ready (state-ref state 137))
+    (set! compiler-builtin-id-fix-record (state-ref state 138))
+    (set! compiler-builtin-id-fix-Record (state-ref state 139))
+    (set! compiler-builtin-id-fix-Result (state-ref state 140))
+    (set! compiler-builtin-id-fix-ResultIoString (state-ref state 141))
+    (set! compiler-builtin-id-fix-right (state-ref state 142))
+    (set! compiler-builtin-id-fix-right_slash_Some (state-ref state 143))
+    (set! compiler-builtin-id-fix-same (state-ref state 144))
+    (set! compiler-builtin-id-fix-second (state-ref state 145))
+    (set! compiler-builtin-id-fix-Some (state-ref state 146))
+    (set! compiler-builtin-id-fix-Status (state-ref state 147))
+    (set! compiler-builtin-id-fix-stdlib (state-ref state 148))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error (state-ref state 149))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_dot_error (state-ref state 150))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error (state-ref state 151))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_error (state-ref state 152))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause (state-ref state 153))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList (state-ref state 154))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause (state-ref state 155))
+    (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList (state-ref state 156))
+    (set! compiler-builtin-id-fix-stdlib_slash_comptime (state-ref state 157))
+    (set! compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error (state-ref state 158))
+    (set! compiler-builtin-id-fix-stdlib_slash_comptime_dot_error (state-ref state 159))
+    (set! compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error (state-ref state 160))
+    (set! compiler-builtin-id-fix-stdlib_slash_comptime_slash_error (state-ref state 161))
+    (set! compiler-builtin-id-fix-stdlib_slash_string (state-ref state 162))
+    (set! compiler-builtin-id-fix-string (state-ref state 163))
+    (set! compiler-builtin-id-fix-subject (state-ref state 164))
+    (set! compiler-builtin-id-fix-t (state-ref state 165))
+    (set! compiler-builtin-id-fix-T (state-ref state 166))
+    (set! compiler-builtin-id-fix-tag (state-ref state 167))
+    (set! compiler-builtin-id-fix-target (state-ref state 168))
+    (set! compiler-builtin-id-fix-ThreadBox (state-ref state 169))
+    (set! compiler-builtin-id-fix-type (state-ref state 170))
+    (set! compiler-builtin-id-fix-TypeInfoArray (state-ref state 171))
+    (set! compiler-builtin-id-fix-TypeInfoBuiltin (state-ref state 172))
+    (set! compiler-builtin-id-fix-TypeInfoDynArray (state-ref state 173))
+    (set! compiler-builtin-id-fix-TypeInfoEnum (state-ref state 174))
+    (set! compiler-builtin-id-fix-TypeInfoFunction (state-ref state 175))
+    (set! compiler-builtin-id-fix-TypeInfoStruct (state-ref state 176))
+    (set! compiler-builtin-id-fix-TypeInfoTuple (state-ref state 177))
+    (set! compiler-builtin-id-fix-U (state-ref state 178))
+    (set! compiler-builtin-id-fix-unquote (state-ref state 179))
+    (set! compiler-builtin-id-fix-UsedBox (state-ref state 180))
+    (set! compiler-builtin-id-fix-UsedEnum (state-ref state 181))
+    (set! compiler-builtin-id-fix-value (state-ref state 182))
+    (set! compiler-builtin-id-fix-x (state-ref state 183))
+    (set! compiler-builtin-id-fix-xs (state-ref state 184))
+    (set! compiler-builtin-id-fix-y (state-ref state 185))
+    ))
 
 (define (compiler-builtin-reset!) : unit
   (set! compiler-builtin-generation -1))
@@ -496,6 +950,119 @@
       (set!
         compiler-builtin-id-tl-tls-current-arena-store
         (ci.intern "tl_tls_current_arena_store"))
+      (set! compiler-builtin-id-fix-empty (ci.intern ""))
+      (set! compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce (ci.intern "$lower.precise-type-dce"))
+      (set! compiler-builtin-id-fix-colon (ci.intern ":"))
+      (set! compiler-builtin-id-fix-tl_unquote_set_target (ci.intern "__tl_unquote_set_target"))
+      (set! compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt (ci.intern "<ast-decl-list-fallback>"))
+      (set! compiler-builtin-id-fix-acc (ci.intern "acc"))
+      (set! compiler-builtin-id-fix-alias (ci.intern "alias"))
+      (set! compiler-builtin-id-fix-arena_dot_Arena (ci.intern "arena.Arena"))
+      (set! compiler-builtin-id-fix-ArenaMark (ci.intern "ArenaMark"))
+      (set! compiler-builtin-id-fix-arm (ci.intern "arm"))
+      (set! compiler-builtin-id-fix-Box (ci.intern "Box"))
+      (set! compiler-builtin-id-fix-c (ci.intern "c"))
+      (set! compiler-builtin-id-fix-callback_target (ci.intern "callback-target"))
+      (set! compiler-builtin-id-fix-Choice (ci.intern "Choice"))
+      (set! compiler-builtin-id-fix-clone (ci.intern "clone"))
+      (set! compiler-builtin-id-fix-CloneShortList (ci.intern "CloneShortList"))
+      (set! compiler-builtin-id-fix-comptime (ci.intern "comptime"))
+      (set! compiler-builtin-id-fix-comptime_dot_comptime_error (ci.intern "comptime.comptime-error"))
+      (set! compiler-builtin-id-fix-comptime_dot_error (ci.intern "comptime.error"))
+      (set! compiler-builtin-id-fix-comptime_slash_comptime_error (ci.intern "comptime/comptime-error"))
+      (set! compiler-builtin-id-fix-comptime_slash_error (ci.intern "comptime/error"))
+      (set! compiler-builtin-id-fix-comptime_error (ci.intern "comptime-error"))
+      (set! compiler-builtin-id-fix-cond (ci.intern "cond"))
+      (set! compiler-builtin-id-fix-Cons (ci.intern "Cons"))
+      (set! compiler-builtin-id-fix-count (ci.intern "count"))
+      (set! compiler-builtin-id-fix-e (ci.intern "e"))
+      (set! compiler-builtin-id-fix-else (ci.intern "else"))
+      (set! compiler-builtin-id-fix-Expr (ci.intern "Expr"))
+      (set! compiler-builtin-id-fix-ExprBindingClause (ci.intern "ExprBindingClause"))
+      (set! compiler-builtin-id-fix-ExprBindingClauseList (ci.intern "ExprBindingClauseList"))
+      (set! compiler-builtin-id-fix-ExprClause (ci.intern "ExprClause"))
+      (set! compiler-builtin-id-fix-ExprClauseList (ci.intern "ExprClauseList"))
+      (set! compiler-builtin-id-fix-ExprList (ci.intern "ExprList"))
+      (set! compiler-builtin-id-fix-Failed (ci.intern "Failed"))
+      (set! compiler-builtin-id-fix-field (ci.intern "field"))
+      (set! compiler-builtin-id-fix-flag (ci.intern "flag"))
+      (set! compiler-builtin-id-fix-h (ci.intern "h"))
+      (set! compiler-builtin-id-fix-helper (ci.intern "helper"))
+      (set! compiler-builtin-id-fix-id (ci.intern "id"))
+      (set! compiler-builtin-id-fix-import (ci.intern "import"))
+      (set! compiler-builtin-id-fix-ImportedMark (ci.intern "ImportedMark"))
+      (set! compiler-builtin-id-fix-info (ci.intern "info"))
+      (set! compiler-builtin-id-fix-input (ci.intern "input"))
+      (set! compiler-builtin-id-fix-item (ci.intern "item"))
+      (set! compiler-builtin-id-fix-items (ci.intern "items"))
+      (set! compiler-builtin-id-fix-label (ci.intern "label"))
+      (set! compiler-builtin-id-fix-left (ci.intern "left"))
+      (set! compiler-builtin-id-fix-left_slash_same (ci.intern "left/same"))
+      (set! compiler-builtin-id-fix-m (ci.intern "m"))
+      (set! compiler-builtin-id-fix-macro_only_helper (ci.intern "macro-only-helper"))
+      (set! compiler-builtin-id-fix-main (ci.intern "main"))
+      (set! compiler-builtin-id-fix-MatchArm (ci.intern "MatchArm"))
+      (set! compiler-builtin-id-fix-MatchArmList (ci.intern "MatchArmList"))
+      (set! compiler-builtin-id-fix-Maybe (ci.intern "Maybe"))
+      (set! compiler-builtin-id-fix-missing (ci.intern "missing"))
+      (set! compiler-builtin-id-fix-n (ci.intern "n"))
+      (set! compiler-builtin-id-fix-name_cache_split_alias_3940 (ci.intern "name_cache_split_alias_3940"))
+      (set! compiler-builtin-id-fix-name_cache_split_value_3940 (ci.intern "name_cache_split_value_3940"))
+      (set! compiler-builtin-id-fix-Nil (ci.intern "Nil"))
+      (set! compiler-builtin-id-fix-Packet (ci.intern "Packet"))
+      (set! compiler-builtin-id-fix-Pattern (ci.intern "Pattern"))
+      (set! compiler-builtin-id-fix-PatternList (ci.intern "PatternList"))
+      (set! compiler-builtin-id-fix-point (ci.intern "point"))
+      (set! compiler-builtin-id-fix-Point (ci.intern "Point"))
+      (set! compiler-builtin-id-fix-Ready (ci.intern "Ready"))
+      (set! compiler-builtin-id-fix-record (ci.intern "record"))
+      (set! compiler-builtin-id-fix-Record (ci.intern "Record"))
+      (set! compiler-builtin-id-fix-Result (ci.intern "Result"))
+      (set! compiler-builtin-id-fix-ResultIoString (ci.intern "ResultIoString"))
+      (set! compiler-builtin-id-fix-right (ci.intern "right"))
+      (set! compiler-builtin-id-fix-right_slash_Some (ci.intern "right/Some"))
+      (set! compiler-builtin-id-fix-same (ci.intern "same"))
+      (set! compiler-builtin-id-fix-second (ci.intern "second"))
+      (set! compiler-builtin-id-fix-Some (ci.intern "Some"))
+      (set! compiler-builtin-id-fix-Status (ci.intern "Status"))
+      (set! compiler-builtin-id-fix-stdlib (ci.intern "stdlib"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error (ci.intern "stdlib.comptime.comptime-error"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_dot_error (ci.intern "stdlib.comptime.error"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_comptime_error (ci.intern "stdlib.comptime/comptime-error"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_error (ci.intern "stdlib.comptime/error"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause (ci.intern "stdlib.comptime/ExprBindingClause"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList (ci.intern "stdlib.comptime/ExprBindingClauseList"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause (ci.intern "stdlib.comptime/ExprClause"))
+      (set! compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList (ci.intern "stdlib.comptime/ExprClauseList"))
+      (set! compiler-builtin-id-fix-stdlib_slash_comptime (ci.intern "stdlib/comptime"))
+      (set! compiler-builtin-id-fix-stdlib_slash_comptime_dot_comptime_error (ci.intern "stdlib/comptime.comptime-error"))
+      (set! compiler-builtin-id-fix-stdlib_slash_comptime_dot_error (ci.intern "stdlib/comptime.error"))
+      (set! compiler-builtin-id-fix-stdlib_slash_comptime_slash_comptime_error (ci.intern "stdlib/comptime/comptime-error"))
+      (set! compiler-builtin-id-fix-stdlib_slash_comptime_slash_error (ci.intern "stdlib/comptime/error"))
+      (set! compiler-builtin-id-fix-stdlib_slash_string (ci.intern "stdlib/string"))
+      (set! compiler-builtin-id-fix-string (ci.intern "string"))
+      (set! compiler-builtin-id-fix-subject (ci.intern "subject"))
+      (set! compiler-builtin-id-fix-t (ci.intern "t"))
+      (set! compiler-builtin-id-fix-T (ci.intern "T"))
+      (set! compiler-builtin-id-fix-tag (ci.intern "tag"))
+      (set! compiler-builtin-id-fix-target (ci.intern "target"))
+      (set! compiler-builtin-id-fix-ThreadBox (ci.intern "ThreadBox"))
+      (set! compiler-builtin-id-fix-type (ci.intern "type"))
+      (set! compiler-builtin-id-fix-TypeInfoArray (ci.intern "TypeInfoArray"))
+      (set! compiler-builtin-id-fix-TypeInfoBuiltin (ci.intern "TypeInfoBuiltin"))
+      (set! compiler-builtin-id-fix-TypeInfoDynArray (ci.intern "TypeInfoDynArray"))
+      (set! compiler-builtin-id-fix-TypeInfoEnum (ci.intern "TypeInfoEnum"))
+      (set! compiler-builtin-id-fix-TypeInfoFunction (ci.intern "TypeInfoFunction"))
+      (set! compiler-builtin-id-fix-TypeInfoStruct (ci.intern "TypeInfoStruct"))
+      (set! compiler-builtin-id-fix-TypeInfoTuple (ci.intern "TypeInfoTuple"))
+      (set! compiler-builtin-id-fix-U (ci.intern "U"))
+      (set! compiler-builtin-id-fix-unquote (ci.intern "unquote"))
+      (set! compiler-builtin-id-fix-UsedBox (ci.intern "UsedBox"))
+      (set! compiler-builtin-id-fix-UsedEnum (ci.intern "UsedEnum"))
+      (set! compiler-builtin-id-fix-value (ci.intern "value"))
+      (set! compiler-builtin-id-fix-x (ci.intern "x"))
+      (set! compiler-builtin-id-fix-xs (ci.intern "xs"))
+      (set! compiler-builtin-id-fix-y (ci.intern "y"))
       (set! compiler-builtin-generation (ci.intern-generation)))))
 
 (define (compiler-builtin-id-any2? [name-id : i64] [a : i64] [b : i64]) : bool

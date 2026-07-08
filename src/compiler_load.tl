@@ -3,6 +3,8 @@
 (import stdlib.io)
 (import "compiler_parse_core.tl")
 (import "compiler_diagnostic.tl")
+(import lex as lexer)
+(import read as reader)
 (import sym_i64_env)
 (import stdlib.env)
 (import stdlib.fs)
@@ -8530,8 +8532,8 @@
 ;: Parse a `typelisp.pkg` manifest, an S-expression of the form
 ;:   (package (name "...") (version "...") (kind "bin") (entry "...")
 ;:            (dependencies (alias "path") ...))
-;: into a structured value. Reuses the selfhost reader (`lex` + `read-result`,
-;: both already reachable here via compiler_parse_core -> read.tl) instead of a
+;: into a structured value. Reuses the selfhost reader (`lex` + `read-result`)
+;: instead of a
 ;: bespoke manifest tokenizer.
 ;: A parsed dependency: an import alias and its package-root path.
 (defstruct CompilerPkgDep
@@ -8762,13 +8764,15 @@
   (compiler-load-safe-relative? path))
 
 ;: Extract a single `"value"` from a field tail `("value")`.
-(define (compiler-load-manifest-string-value [ftail : Sexpr] [fname : String]) : ResultPkgString
+(define (compiler-load-manifest-string-value
+  [ftail : reader.Sexpr]
+  [fname : String]) : ResultPkgString
   (match ftail
-    [(Sexpr.Cons vhead vrest)
+    [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(Sexpr.Str val)
+        [(reader.Sexpr.Str val)
           (match (box-get vrest)
-            [(Sexpr.Nil) (ResultPkgString.Ok val)]
+            [(reader.Sexpr.Nil) (ResultPkgString.Ok val)]
             [_
               (ResultPkgString.Err
                 (string.append
@@ -8788,18 +8792,18 @@
 (define (compiler-load-manifest-github-pin
   [alias : String]
   [address : String]
-  [pin-form : Sexpr]) : ResultPkgString
+  [pin-form : reader.Sexpr]) : ResultPkgString
   (match pin-form
-    [(Sexpr.Cons pin-kind-node pin-tail)
+    [(reader.Sexpr.Cons pin-kind-node pin-tail)
       (match (box-get pin-kind-node)
-        [(Sexpr.Sym pin-kind)
+        [(reader.Sexpr.Sym pin-kind)
           (if (compiler-load-github-pin-kind-valid? pin-kind)
             (match (box-get pin-tail)
-              [(Sexpr.Cons pin-value-node end)
+              [(reader.Sexpr.Cons pin-value-node end)
                 (match (box-get end)
-                  [(Sexpr.Nil)
+                  [(reader.Sexpr.Nil)
                     (match (box-get pin-value-node)
-                      [(Sexpr.Str pin-value)
+                      [(reader.Sexpr.Str pin-value)
                         (if (string.eq pin-value "")
                           (ResultPkgString.Err
                             (string.append
@@ -8854,15 +8858,15 @@
 
 (define (compiler-load-manifest-github-value
   [alias : String]
-  [source-tail : Sexpr]) : ResultPkgString
+  [source-tail : reader.Sexpr]) : ResultPkgString
   (match source-tail
-    [(Sexpr.Cons address-node after-address)
+    [(reader.Sexpr.Cons address-node after-address)
       (match (box-get address-node)
-        [(Sexpr.Str address)
+        [(reader.Sexpr.Str address)
           (match (box-get after-address)
-            [(Sexpr.Cons pin-form end)
+            [(reader.Sexpr.Cons pin-form end)
               (match (box-get end)
-                [(Sexpr.Nil)
+                [(reader.Sexpr.Nil)
                   (compiler-load-manifest-github-pin
                     alias
                     address
@@ -8897,17 +8901,17 @@
             "` github source must be `(github \"owner/repo\" (rev|tag|branch \"pin\"))`")))]))
 
 (define (compiler-load-manifest-dependency-value
-  [etail : Sexpr]
+  [etail : reader.Sexpr]
   [alias : String]) : ResultPkgString
   (match etail
-    [(Sexpr.Cons vhead vrest)
+    [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vrest)
-        [(Sexpr.Nil)
+        [(reader.Sexpr.Nil)
           (match (box-get vhead)
-            [(Sexpr.Str path) (ResultPkgString.Ok path)]
-            [(Sexpr.Cons source-kind-node source-tail)
+            [(reader.Sexpr.Str path) (ResultPkgString.Ok path)]
+            [(reader.Sexpr.Cons source-kind-node source-tail)
               (match (box-get source-kind-node)
-                [(Sexpr.Sym source-kind)
+                [(reader.Sexpr.Sym source-kind)
                   (if (string.eq source-kind "github")
                     (compiler-load-manifest-github-value
                       alias
@@ -8953,14 +8957,14 @@
       (ResultCompilerPkgKind.Err
         "manifest field `kind` must be `bin`, `staticlib`, or `lib`"))))
 
-(define (compiler-load-manifest-kind-value [ftail : Sexpr]) : ResultCompilerPkgKind
+(define (compiler-load-manifest-kind-value [ftail : reader.Sexpr]) : ResultCompilerPkgKind
   (match ftail
-    [(Sexpr.Cons vhead vrest)
+    [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vrest)
-        [(Sexpr.Nil)
+        [(reader.Sexpr.Nil)
           (match (box-get vhead)
-            [(Sexpr.Str val) (compiler-load-manifest-kind-token val)]
-            [(Sexpr.Sym val) (compiler-load-manifest-kind-token val)]
+            [(reader.Sexpr.Str val) (compiler-load-manifest-kind-token val)]
+            [(reader.Sexpr.Sym val) (compiler-load-manifest-kind-token val)]
             [_
               (ResultCompilerPkgKind.Err
                 "manifest field `kind` must have a string or symbol value")])]
@@ -8974,7 +8978,7 @@
 (define (compiler-load-manifest-cons-dep
   [alias : String]
   [path : String]
-  [rest : Sexpr]) : ResultCompilerPkgDeps
+  [rest : reader.Sexpr]) : ResultCompilerPkgDeps
   (cond
     [(string.eq alias "")
       (ResultCompilerPkgDeps.Err "dependency alias must not be empty")]
@@ -8999,14 +9003,14 @@
               (compiler-pkg-deps-cons alias path tail-deps)))])]))
 
 ;: Parse the `(alias "path") ...` entries of a `(dependencies ...)` field.
-(define (compiler-load-manifest-parse-deps [entries : Sexpr]) : ResultCompilerPkgDeps
+(define (compiler-load-manifest-parse-deps [entries : reader.Sexpr]) : ResultCompilerPkgDeps
   (match entries
-    [(Sexpr.Nil) (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
-    [(Sexpr.Cons entry rest)
+    [(reader.Sexpr.Nil) (ResultCompilerPkgDeps.Ok (compiler-pkg-deps-empty))]
+    [(reader.Sexpr.Cons entry rest)
       (match (box-get entry)
-        [(Sexpr.Cons ehead etail)
+        [(reader.Sexpr.Cons ehead etail)
           (match (box-get ehead)
-            [(Sexpr.Sym alias)
+            [(reader.Sexpr.Sym alias)
               (match (compiler-load-manifest-dependency-value
                 (box-get etail)
                 alias)
@@ -9131,20 +9135,20 @@
 
 ;: Parse the one-or-more non-empty string values of one `link` sub-field.
 (define (compiler-load-manifest-link-values
-  [values : Sexpr]
+  [values : reader.Sexpr]
   [fname : String]
   [acc : fs.FsStringVector]) : ResultPkgStrVec
   (match values
-    [(Sexpr.Nil)
+    [(reader.Sexpr.Nil)
       (if (= (fs.string-vector-len (& acc)) 0)
         (ResultPkgStrVec.Err
           (string.append
             "`link` field `"
             (string.append fname "` requires at least one value")))
         (ResultPkgStrVec.Ok acc))]
-    [(Sexpr.Cons vhead vrest)
+    [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(Sexpr.Str val)
+        [(reader.Sexpr.Str val)
           (if (string.eq val "")
             (ResultPkgStrVec.Err
               (string.append
@@ -9188,15 +9192,15 @@
 
 ;: Walk the `(field "...")` entries of a `(link ...)` section.
 (define (compiler-load-manifest-parse-link-into
-  [entries : Sexpr]
+  [entries : reader.Sexpr]
   [acc : CompilerPkgLink]) : ResultCompilerPkgLink
   (match entries
-    [(Sexpr.Nil) (ResultCompilerPkgLink.Ok acc)]
-    [(Sexpr.Cons entry rest)
+    [(reader.Sexpr.Nil) (ResultCompilerPkgLink.Ok acc)]
+    [(reader.Sexpr.Cons entry rest)
       (match (box-get entry)
-        [(Sexpr.Cons ehead etail)
+        [(reader.Sexpr.Cons ehead etail)
           (match (box-get ehead)
-            [(Sexpr.Sym fname)
+            [(reader.Sexpr.Sym fname)
               (match (compiler-load-manifest-link-values
                 (box-get etail)
                 fname
@@ -9221,7 +9225,7 @@
         "`link` must be a list of `(field \"...\")` entries")]))
 
 ;: Parse a `(link ...)` manifest section into a CompilerPkgLink.
-(define (compiler-load-manifest-parse-link [entries : Sexpr]) : ResultCompilerPkgLink
+(define (compiler-load-manifest-parse-link [entries : reader.Sexpr]) : ResultCompilerPkgLink
   (compiler-load-manifest-parse-link-into entries (compiler-pkg-link-empty)))
 
 (define (compiler-load-manifest-default-entry [kind : CompilerPkgKind]) : String
@@ -9244,7 +9248,7 @@
 ;: check required fields and synthesize convention defaults for omitted kind
 ;: and entry.
 (define (compiler-load-manifest-fields
-  [fields : Sexpr]
+  [fields : reader.Sexpr]
   [name : String]
   [has-name : bool]
   [version : String]
@@ -9258,7 +9262,7 @@
   [has-link : bool]
   [link : CompilerPkgLink]) : ResultCompilerPkgManifest
   (match fields
-    [(Sexpr.Nil)
+    [(reader.Sexpr.Nil)
       (let
         [final-entry : String
           (if has-entry
@@ -9289,11 +9293,11 @@
           [else
             (ResultCompilerPkgManifest.Ok
               (CompilerPkgManifest name version kind final-entry deps link))]))]
-    [(Sexpr.Cons field rest)
+    [(reader.Sexpr.Cons field rest)
       (match (box-get field)
-        [(Sexpr.Cons fhead ftail)
+        [(reader.Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(Sexpr.Sym fname)
+            [(reader.Sexpr.Sym fname)
               (cond
                 [(string.eq fname "dependencies")
                   (if has-deps
@@ -9449,11 +9453,11 @@
         "package fields must be lists like `(name \"...\")`")]))
 
 ;: Parse the top-level `(package ...)` form.
-(define (compiler-load-manifest-from-form [form : Sexpr]) : ResultCompilerPkgManifest
+(define (compiler-load-manifest-from-form [form : reader.Sexpr]) : ResultCompilerPkgManifest
   (match form
-    [(Sexpr.Cons head rest)
+    [(reader.Sexpr.Cons head rest)
       (match (box-get head)
-        [(Sexpr.Sym s)
+        [(reader.Sexpr.Sym s)
           (if (string.eq s "package")
             (compiler-load-manifest-fields
               (box-get rest)
@@ -9477,35 +9481,37 @@
     [_
       (ResultCompilerPkgManifest.Err "manifest must be a `(package ...)` form")]))
 
-(define (compiler-load-manifest-fields-have? [fields : Sexpr] [target : String]) : bool
+(define (compiler-load-manifest-fields-have?
+  [fields : reader.Sexpr]
+  [target : String]) : bool
   (match fields
-    [(Sexpr.Nil) false]
-    [(Sexpr.Cons field rest)
+    [(reader.Sexpr.Nil) false]
+    [(reader.Sexpr.Cons field rest)
       (let
         [tail-has : bool
           (compiler-load-manifest-fields-have? (box-get rest) target)]
         (match (box-get field)
-          [(Sexpr.Cons fhead _)
+          [(reader.Sexpr.Cons fhead _)
             (match (box-get fhead)
-              [(Sexpr.Sym name) (or (string.eq name target) tail-has)]
+              [(reader.Sexpr.Sym name) (or (string.eq name target) tail-has)]
               [_ tail-has])]
           [_ tail-has]))]
     [_ false]))
 
 (define (compiler-load-manifest-form-has-field?
-  [form : Sexpr]
+  [form : reader.Sexpr]
   [target : String]) : bool
   (match form
-    [(Sexpr.Cons head rest)
+    [(reader.Sexpr.Cons head rest)
       (match (box-get head)
-        [(Sexpr.Sym s)
+        [(reader.Sexpr.Sym s)
           (if (string.eq s "package")
             (compiler-load-manifest-fields-have? (box-get rest) target)
             false)]
         [_ false])]
     [_ false]))
 
-(define (compiler-load-manifest-needs-kind-inference? [form : Sexpr]) : bool
+(define (compiler-load-manifest-needs-kind-inference? [form : reader.Sexpr]) : bool
   (and
     (not (compiler-load-manifest-form-has-field? form "kind"))
     (not (compiler-load-manifest-form-has-field? form "entry"))))
@@ -9547,16 +9553,16 @@
 
 (define (compiler-load-manifest-validation-diagnostic
   [path : String]
-  [form : SpannedSexpr]
+  [form : reader.SpannedSexpr]
   [message : String]) : CompilerDiagnostic
-  (compiler-diagnostic-from-span path (spanned-sexpr-span form) message))
+  (compiler-diagnostic-from-span path (reader.spanned-sexpr-span form) message))
 
 (define (compiler-load-manifest-apply-kind-inference
   [path : String]
-  [form : SpannedSexpr]
+  [form : reader.SpannedSexpr]
   [manifest : CompilerPkgManifest]) : ResultCompilerPkgManifestDiagnostic
   (let
-    [raw-form : Sexpr (spanned-sexpr-form form)]
+    [raw-form : reader.Sexpr (reader.spanned-sexpr-form form)]
     (if (compiler-load-manifest-needs-kind-inference? raw-form)
       (match (compiler-load-manifest-infer-kind-from-files path)
         [(ResultCompilerPkgKind.Ok kind)
@@ -9570,8 +9576,8 @@
 
 (define (compiler-load-parse-manifest-form-diagnostic
   [path : String]
-  [form : SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
-  (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
+  [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
+  (match (compiler-load-manifest-from-form (reader.spanned-sexpr-form form))
     [(ResultCompilerPkgManifest.Ok manifest)
       (ResultCompilerPkgManifestDiagnostic.Ok manifest)]
     [(ResultCompilerPkgManifest.Err message)
@@ -9580,8 +9586,8 @@
 
 (define (compiler-load-parse-manifest-form-diagnostic-infer-kind
   [path : String]
-  [form : SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
-  (match (compiler-load-manifest-from-form (spanned-sexpr-form form))
+  [form : reader.SpannedSexpr]) : ResultCompilerPkgManifestDiagnostic
+  (match (compiler-load-manifest-from-form (reader.spanned-sexpr-form form))
     [(ResultCompilerPkgManifest.Ok manifest)
       (compiler-load-manifest-apply-kind-inference path form manifest)]
     [(ResultCompilerPkgManifest.Err message)
@@ -9594,34 +9600,34 @@
   [path : String]
   [source : String]) : ResultCompilerPkgManifestDiagnostic
   (begin
-    (sp-node-pool-reset!)
-    (match (lex-spanned-result source)
-      [(ResultSpannedTokens.Err err)
+    (reader.sp-node-pool-reset!)
+    (match (lexer.lex-spanned-result source)
+      [(lexer.ResultSpannedTokens.Err err)
         (ResultCompilerPkgManifestDiagnostic.Err
           (box (compiler-load-manifest-source-error-diagnostic path err)))]
-      [(ResultSpannedTokens.Ok toks)
-        (match (read-spanned-result toks)
-          [(ResultSpannedSexpr.Err err)
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (match (reader.read-spanned-result toks)
+          [(reader.ResultSpannedSexpr.Err err)
             (ResultCompilerPkgManifestDiagnostic.Err
               (box (compiler-load-manifest-source-error-diagnostic path err)))]
-          [(ResultSpannedSexpr.Ok form)
+          [(reader.ResultSpannedSexpr.Ok form)
             (compiler-load-parse-manifest-form-diagnostic path form)])])))
 
 (define (compiler-load-parse-manifest-diagnostic-infer-kind
   [path : String]
   [source : String]) : ResultCompilerPkgManifestDiagnostic
   (begin
-    (sp-node-pool-reset!)
-    (match (lex-spanned-result source)
-      [(ResultSpannedTokens.Err err)
+    (reader.sp-node-pool-reset!)
+    (match (lexer.lex-spanned-result source)
+      [(lexer.ResultSpannedTokens.Err err)
         (ResultCompilerPkgManifestDiagnostic.Err
           (box (compiler-load-manifest-source-error-diagnostic path err)))]
-      [(ResultSpannedTokens.Ok toks)
-        (match (read-spanned-result toks)
-          [(ResultSpannedSexpr.Err err)
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (match (reader.read-spanned-result toks)
+          [(reader.ResultSpannedSexpr.Err err)
             (ResultCompilerPkgManifestDiagnostic.Err
               (box (compiler-load-manifest-source-error-diagnostic path err)))]
-          [(ResultSpannedSexpr.Ok form)
+          [(reader.ResultSpannedSexpr.Ok form)
             (compiler-load-parse-manifest-form-diagnostic-infer-kind path form)])])))
 
 ;: Parse a manifest source string into a structured manifest. This compatibility

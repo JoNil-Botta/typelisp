@@ -20,22 +20,19 @@
 ;;
 ;; The fix is this `main`-less module: it holds the reader's cursor helpers, the
 ;; mutually recursive `read-form` / `read-list`, the public `read` entry, AND the
-;; `Sexpr` AST definition, `(import)`s the shared `main`-less `lex.tl` and the
-;; `token` module for token types, and declares NO `main`.
+;; `Sexpr` AST definition. Callers that need to turn source text into tokens
+;; import `lex.tl` alongside this reader module. This module imports the `token`
+;; module for token types and declares NO `main`.
 ;; Command drivers and compiler modules can import it and still produce a
 ;; concatenated program with exactly one `main`. `reader.tl` stays as the
 ;; reader's standalone demo. This mirrors how `lex.tl` was factored from the
 ;; `main`-bearing `lexer.tl`: a `main`-less module is the unit of reuse, a
 ;; `main`-bearing file is a runnable demo.
-;; The shared lexer: the public `lex : (-> String (Array token.Token))`, factored into
-;; a `main`-less module. Token types, spans, accessors, and tag constants come
-;; from the explicit `(import token)` below.
-;; The lexer path import is resolved relative to this file, so it finds the
-;; co-located `lex.tl`.
+(module read)
+
 (import stdlib.io)
 (import stdlib.string)
 (import token)
-(import "lex.tl")
 
 ;; --------------------------------------------------------------------------
 ;; The Sexpr AST: cons cells, the way Lisp represents read source.

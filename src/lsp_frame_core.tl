@@ -10,6 +10,8 @@
 (import stdlib.json)
 (import stdlib.vector)
 (import (vector String) as lsp_svec)
+(import lex as lexer)
+(import read as reader)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "format_rules.tl")
@@ -2793,15 +2795,15 @@
 ;; Validate forms using real parser. Returns ValidLspForms on success,
 ;; or InvalidLspForms with line, col, message, and context on failure.
 (define (lsp-validate-forms-result [text : String]) : LspValidationResult
-  (match (lex-spanned-result text)
-    [(ResultSpannedTokens.Err err)
+  (match (lexer.lex-spanned-result text)
+    [(lexer.ResultSpannedTokens.Err err)
       (let
         [span : token.SourceSpan (token.source-error-span err)]
         [line : i64 (token.span-start-line span)]
         [col : i64 (token.span-start-col span)]
         [msg : String (token.source-error-message err)]
         (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
-    [(ResultSpannedTokens.Ok toks)
+    [(lexer.ResultSpannedTokens.Ok toks)
       (let
         [cur : (Array i64) (make-array i64 1)]
         [dispatch : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
@@ -2811,9 +2813,9 @@
           (array-set! cur 0 0)
           (while (and
             (not done)
-            (not (= (peek-spanned-tag toks cur) (token.tag-end))))
-            (match (read-form-spanned-result toks cur)
-              [(ResultSpannedSexpr.Err err)
+            (not (= (reader.peek-spanned-tag toks cur) (token.tag-end))))
+            (match (reader.read-form-spanned-result toks cur)
+              [(reader.ResultSpannedSexpr.Err err)
                 (let
                   [span : token.SourceSpan (token.source-error-span err)]
                   [line : i64 (token.span-start-line span)]
@@ -2828,13 +2830,14 @@
                         msg
                         (lsp-line-at text line)))
                     (set! done true)))]
-              [(ResultSpannedSexpr.Ok sexpr)
+              [(reader.ResultSpannedSexpr.Ok sexpr)
                 (match (parse-ast-decl-maybe dispatch sexpr)
                   [(ResultAstMaybeDecl.Err msg)
                     (match (parse-ast-expr dispatch sexpr)
                       [(ResultAstExpr.Err _)
                         (let
-                          [span : token.SourceSpan (spanned-sexpr-span sexpr)]
+                          [span : token.SourceSpan
+                            (reader.spanned-sexpr-span sexpr)]
                           [line : i64 (token.span-start-line span)]
                           [col : i64 (token.span-start-col span)]
                           (begin
@@ -2851,7 +2854,8 @@
                     (match (parse-ast-expr dispatch sexpr)
                       [(ResultAstExpr.Err msg)
                         (let
-                          [span : token.SourceSpan (spanned-sexpr-span sexpr)]
+                          [span : token.SourceSpan
+                            (reader.spanned-sexpr-span sexpr)]
                           [line : i64 (token.span-start-line span)]
                           [col : i64 (token.span-start-col span)]
                           (begin

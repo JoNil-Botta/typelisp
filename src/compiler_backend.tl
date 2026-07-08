@@ -12006,11 +12006,25 @@
   [regs : (Array String)]
   [lo : (Array i64)]
   [hi : (Array i64)]
+  [call-target-points : (Array i64)]
+  [call-target-regs : (Array String)]
+  [switch-points : (Array i64)]
+  [switch-index-regs : (Array String)]
+  [switch-table-regs : (Array String)]
   [cap : i64]
   [count : i64]
+  [call-target-count : i64]
+  [switch-count : i64]
+  [switch-slot-count : i64]
+  [switch-var-base : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
   (if (>= index (compiler-ir-block-seq-count blocks))
-    (CompilerBackendScratchVregScan point count)
+    (CompilerBackendScratchVregScan
+      point
+      count
+      call-target-count
+      switch-count
+      switch-slot-count)
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block _ instrs)
         (match (compiler-backend-scratch-vreg-scan-seq!
@@ -12020,10 +12034,24 @@
           regs
           lo
           hi
+          call-target-points
+          call-target-regs
+          switch-points
+          switch-index-regs
+          switch-table-regs
           cap
           count
+          call-target-count
+          switch-count
+          switch-slot-count
+          switch-var-base
           assignments)
-          [(CompilerBackendScratchVregScan next-point next-count)
+          [(CompilerBackendScratchVregScan
+              next-point
+              next-count
+              next-call-target-count
+              next-switch-count
+              next-switch-slot-count)
             (compiler-backend-scratch-vreg-scan-block-seq!
               blocks
               (+ index 1)
@@ -12032,8 +12060,17 @@
               regs
               lo
               hi
+              call-target-points
+              call-target-regs
+              switch-points
+              switch-index-regs
+              switch-table-regs
               cap
               next-count
+              next-call-target-count
+              next-switch-count
+              next-switch-slot-count
+              switch-var-base
               assignments)])])))
 
 (define (compiler-backend-scratch-vreg-copy-i64-range

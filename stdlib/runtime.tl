@@ -2,7 +2,7 @@
 ;#
 ;# This module holds the pieces of the runtime that call into the OS but that
 ;# the backend used to hand-write as assembly: the fault/abort handlers
-;# (`tl-runtime-{oob,div,shift}-abort`, emitted by bounds/division/shift checks)
+;# (`{oob,div,shift}-abort`, emitted by bounds/division/shift checks)
 ;# and the low-level OS write/exit primitives they need.
 ;#
 ;# It is implicitly imported into every executable (the compile driver injects
@@ -69,64 +69,70 @@
   (extern (runtime-arena-set [arg0 : i64]) : unit (:symbol "tl_arena_set")))
 
 ;: Sequentially consistent atomic load of one raw `i64` pointer.
-(define (tl-runtime-atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
+(define (atomic-i64-load-ptr [ptr : (Ptr i64)])
+  (:export-symbol "tl_atomic_i64_load_ptr") : i64
   (unsafe
     (atomic-load ptr)))
 
 ;: Sequentially consistent atomic store of one raw `i64` pointer.
-(define (tl-runtime-atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64]) : unit
+(define (atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
+  (:export-symbol "tl_atomic_i64_store_ptr") : unit
   (unsafe
     (atomic-store! ptr value)))
 
 ;: Sequentially consistent atomic add of one raw `i64` pointer.
-(define (tl-runtime-atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64]) : unit
+(define (atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+  (:export-symbol "tl_atomic_i64_add_ptr") : unit
   (unsafe
     (atomic-add! ptr delta)))
 
 ;: Sequentially consistent atomic fetch-add of one raw `i64` pointer.
-(define (tl-runtime-atomic-i64-fetch-add-ptr!
-  [ptr : (MutPtr i64)]
-  [delta : i64]) : i64
+(define (atomic-i64-fetch-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+  (:export-symbol "tl_atomic_i64_fetch_add_ptr") : i64
   (unsafe
     (atomic-fetch-add! ptr delta)))
 
 ;: Sequentially consistent compare-exchange of one raw `i64` pointer. Returns
 ;: the previous value observed at `ptr`.
-(define (tl-runtime-atomic-i64-cas-ptr!
+(define (atomic-i64-cas-ptr!
   [ptr : (MutPtr i64)]
   [expected : i64]
-  [new-value : i64]) : i64
+  [new-value : i64])
+  (:export-symbol "tl_atomic_i64_cas_ptr") : i64
   (unsafe
     (atomic-cas! ptr expected new-value)))
 
 ;: Sequentially consistent atomic load of one raw `i32` pointer.
-(define (tl-runtime-atomic-i32-load-ptr [ptr : (Ptr i32)]) : i32
+(define (atomic-i32-load-ptr [ptr : (Ptr i32)])
+  (:export-symbol "tl_atomic_i32_load_ptr") : i32
   (unsafe
     (atomic-load ptr)))
 
 ;: Sequentially consistent atomic store of one raw `i32` pointer.
-(define (tl-runtime-atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32]) : unit
+(define (atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
+  (:export-symbol "tl_atomic_i32_store_ptr") : unit
   (unsafe
     (atomic-store! ptr value)))
 
 ;: Sequentially consistent atomic add of one raw `i32` pointer.
-(define (tl-runtime-atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32]) : unit
+(define (atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+  (:export-symbol "tl_atomic_i32_add_ptr") : unit
   (unsafe
     (atomic-add! ptr delta)))
 
 ;: Sequentially consistent atomic fetch-add of one raw `i32` pointer.
-(define (tl-runtime-atomic-i32-fetch-add-ptr!
-  [ptr : (MutPtr i32)]
-  [delta : i32]) : i32
+(define (atomic-i32-fetch-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+  (:export-symbol "tl_atomic_i32_fetch_add_ptr") : i32
   (unsafe
     (atomic-fetch-add! ptr delta)))
 
 ;: Sequentially consistent compare-exchange of one raw `i32` pointer. Returns
 ;: the previous value observed at `ptr`.
-(define (tl-runtime-atomic-i32-cas-ptr!
+(define (atomic-i32-cas-ptr!
   [ptr : (MutPtr i32)]
   [expected : i32]
-  [new-value : i32]) : i32
+  [new-value : i32])
+  (:export-symbol "tl_atomic_i32_cas_ptr") : i32
   (unsafe
     (atomic-cas! ptr expected new-value)))
 
@@ -210,21 +216,21 @@
 
 ;: Fault handler for an out-of-bounds index. Exported as the fixed `tl_oob_abort`
 ;: symbol so the backend's emitted bounds checks call it unchanged.
-(define (tl-runtime-oob-abort)
+(define (oob-abort)
   (:export-symbol "tl_oob_abort") : never
   (begin
     (abort-write "tl: array index out of bounds\n")
     (os-exit 134)))
 
 ;: Fault handler for division (or remainder) by zero, exported as `tl_div_abort`.
-(define (tl-runtime-div-abort)
+(define (div-abort)
   (:export-symbol "tl_div_abort") : never
   (begin
     (abort-write "tl: integer division or remainder error\n")
     (os-exit 135)))
 
 ;: Fault handler for an out-of-range shift amount, exported as `tl_shift_abort`.
-(define (tl-runtime-shift-abort)
+(define (shift-abort)
   (:export-symbol "tl_shift_abort") : never
   (begin
     (abort-write "tl: shift count out of range\n")
@@ -234,14 +240,15 @@
 ;: Exported as the fixed `tl_abort_string` symbol so `(panic …)` call sites and
 ;: the runtime's own error paths reach it unchanged (replaces the former
 ;: hand-written Linux/Windows `tl_abort_string` asm).
-(define (tl-runtime-abort-string [message : String])
+(define (abort-string [message : String])
   (:export-symbol "tl_abort_string") : never
   (begin
     (abort-write message)
     (os-exit 134)))
 
 ;: Render an integer into a fresh active-arena decimal string.
-(define (tl-runtime-int-to-string [value : i64]) : String
+(define (int-to-string [value : i64])
+  (:export-symbol "tl_int_to_string") : String
   (let
     [negative : bool (< value 0)]
     [magnitude : i64
@@ -286,7 +293,8 @@
             (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))))
 
 ;: Copy a byte slice into a fresh active-arena string.
-(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+(define (substring [src : (Ptr u8)] [start : i64] [len : i64])
+  (:export-symbol "tl_substring") : String
   (let
     [dst : (MutPtr u8) (runtime-alloc len)]
     (begin
@@ -310,7 +318,8 @@
 ;: Build a borrowed `str` view record. `String` has the same two-word runtime
 ;: layout as a borrowed str record; callers see this fixed symbol through an
 ;: extern returning `(& text str)`.
-(define (tl-runtime-str-view [text : (& text str)] [start : i64] [len : i64]) : String
+(define (str-view [text : (& text str)] [start : i64] [len : i64])
+  (:export-symbol "tl_str_view") : String
   (let
     [src : (Ptr u8)
       (unsafe
@@ -330,11 +339,12 @@
           view)))))
 
 ;: Concatenate two byte ranges into a fresh active-arena string.
-(define (tl-runtime-string-concat
+(define (string-concat
   [a : (Ptr u8)]
   [a-len : i64]
   [b : (Ptr u8)]
-  [b-len : i64]) : String
+  [b-len : i64])
+  (:export-symbol "tl_string_concat") : String
   (let
     [total : i64 (+ a-len b-len)]
     [dst : (MutPtr u8) (runtime-alloc total)]
@@ -347,13 +357,14 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
 ;: Concatenate three byte ranges into a fresh active-arena string.
-(define (tl-runtime-string-concat3
+(define (string-concat3
   [a : (Ptr u8)]
   [a-len : i64]
   [b : (Ptr u8)]
   [b-len : i64]
   [c : (Ptr u8)]
-  [c-len : i64]) : String
+  [c-len : i64])
+  (:export-symbol "tl_string_concat3") : String
   (let
     [total : i64 (+ a-len (+ b-len c-len))]
     [dst : (MutPtr u8) (runtime-alloc total)]
@@ -370,7 +381,7 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
 ;: Concatenate four byte ranges into a fresh active-arena string.
-(define (tl-runtime-string-concat4
+(define (string-concat4
   [a : (Ptr u8)]
   [a-len : i64]
   [b : (Ptr u8)]
@@ -378,7 +389,8 @@
   [c : (Ptr u8)]
   [c-len : i64]
   [d : (Ptr u8)]
-  [d-len : i64]) : String
+  [d-len : i64])
+  (:export-symbol "tl_string_concat4") : String
   (let
     [total : i64 (+ a-len (+ b-len (+ c-len d-len)))]
     [dst : (MutPtr u8) (runtime-alloc total)]
@@ -398,7 +410,7 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
 ;: Concatenate five byte ranges into a fresh active-arena string.
-(define (tl-runtime-string-concat5
+(define (string-concat5
   [a : (Ptr u8)]
   [a-len : i64]
   [b : (Ptr u8)]
@@ -408,7 +420,8 @@
   [d : (Ptr u8)]
   [d-len : i64]
   [e : (Ptr u8)]
-  [e-len : i64]) : String
+  [e-len : i64])
+  (:export-symbol "tl_string_concat5") : String
   (let
     [total : i64 (+ a-len (+ b-len (+ c-len (+ d-len e-len))))]
     [dst : (MutPtr u8) (runtime-alloc total)]
@@ -431,7 +444,7 @@
         (string-from-bytes (ptr-cast dst : (Ptr u8)) total)))))
 
 ;: Fill `len` pointer-sized array slots with `value`.
-(define (tl-runtime-array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
+(define (array-fill8 [buf : (MutPtr u8)] [len : i64] [value : u64])
   (:export-symbol "tl_array_fill8") : unit
   (let
     [slots : (MutPtr u64)
@@ -451,7 +464,7 @@
 ;: previous byte-at-a-time loop was the single largest zeroing cost in the
 ;: self-compile (every `array.make-array` zero-fills its backing storage); writing
 ;: whole words cuts the loop trip count ~8x.
-(define (tl-runtime-array-zero [buf : (MutPtr u8)] [byte-count : i64])
+(define (array-zero [buf : (MutPtr u8)] [byte-count : i64])
   (:export-symbol "tl_array_zero") : unit
   (let
     [word-count : i64 (/ byte-count 8)]
@@ -477,7 +490,7 @@
 ;: Abort handler for an invalid arena/region mark, exported as `tl_region_abort`.
 ;: Reached from the allocator's region-reset validation (not the out-of-memory
 ;: path), so the allocating write is safe here.
-(define (tl-runtime-region-abort)
+(define (region-abort)
   (:export-symbol "tl_region_abort") : never
   (begin
     (abort-write "tl: invalid region mark\n")
@@ -490,7 +503,7 @@
 ;: `os-write` passes WriteFile a stack-backed byte-count cell.
 ;: Replaces the former hand-written `.L_tl_alloc_abort` asm (and its Windows
 ;: `.L_tl_win_write_abort` helper) on both targets.
-(define (tl-runtime-oom-abort)
+(define (oom-abort)
   (:export-symbol "tl_oom_abort") : never
   (begin
     (abort-write "tl: allocation failed\n")

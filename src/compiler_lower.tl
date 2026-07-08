@@ -4612,41 +4612,38 @@
   (let
     [base : String (tc-qualified-name-base source-name)]
     (cond
-      [(string.eq base "tl_int_to_string") "tl-runtime-int-to-string"]
-      [(string.eq base "tl_substring") "tl-runtime-substring"]
-      [(string.eq base "tl_str_view") "tl-runtime-str-view"]
-      [(string.eq base "tl_bytes_view_from_str_parts") "tl-runtime-str-view"]
-      [(string.eq base "tl_bytes_view_from_buf_parts") "tl-runtime-str-view"]
-      [(string.eq base "tl_bytes_mut_view_from_buf_parts")
-        "tl-runtime-str-view"]
-      [(string.eq base "tl_bytes_view_from_bytes_parts") "tl-runtime-str-view"]
-      [(string.eq base "tl_bytes_mut_view_from_bytes_parts")
-        "tl-runtime-str-view"]
-      [(string.eq base "tl_string_concat") "tl-runtime-string-concat"]
-      [(string.eq base "tl_string_concat3") "tl-runtime-string-concat3"]
-      [(string.eq base "tl_string_concat4") "tl-runtime-string-concat4"]
-      [(string.eq base "tl_string_concat5") "tl-runtime-string-concat5"]
-      [(string.eq base "tl_atomic_i64_load_ptr")
-        "tl-runtime-atomic-i64-load-ptr"]
-      [(string.eq base "tl_atomic_i64_store_ptr")
-        "tl-runtime-atomic-i64-store-ptr!"]
-      [(string.eq base "tl_atomic_i64_add_ptr")
-        "tl-runtime-atomic-i64-add-ptr!"]
+      [(string.eq base "tl_int_to_string") "int-to-string"]
+      [(string.eq base "tl_substring") "substring"]
+      [(string.eq base "tl_str_view") "str-view"]
+      [(string.eq base "tl_bytes_view_from_str_parts") "str-view"]
+      [(string.eq base "tl_bytes_view_from_buf_parts") "str-view"]
+      [(string.eq base "tl_bytes_mut_view_from_buf_parts") "str-view"]
+      [(string.eq base "tl_bytes_view_from_bytes_parts") "str-view"]
+      [(string.eq base "tl_bytes_mut_view_from_bytes_parts") "str-view"]
+      [(string.eq base "tl_string_concat") "string-concat"]
+      [(string.eq base "tl_string_concat3") "string-concat3"]
+      [(string.eq base "tl_string_concat4") "string-concat4"]
+      [(string.eq base "tl_string_concat5") "string-concat5"]
+      [(string.eq base "tl_atomic_i64_load_ptr") "atomic-i64-load-ptr"]
+      [(string.eq base "tl_atomic_i64_store_ptr") "atomic-i64-store-ptr!"]
+      [(string.eq base "tl_atomic_i64_add_ptr") "atomic-i64-add-ptr!"]
       [(string.eq base "tl_atomic_i64_fetch_add_ptr")
-        "tl-runtime-atomic-i64-fetch-add-ptr!"]
-      [(string.eq base "tl_atomic_i64_cas_ptr")
-        "tl-runtime-atomic-i64-cas-ptr!"]
-      [(string.eq base "tl_atomic_i32_load_ptr")
-        "tl-runtime-atomic-i32-load-ptr"]
-      [(string.eq base "tl_atomic_i32_store_ptr")
-        "tl-runtime-atomic-i32-store-ptr!"]
-      [(string.eq base "tl_atomic_i32_add_ptr")
-        "tl-runtime-atomic-i32-add-ptr!"]
+        "atomic-i64-fetch-add-ptr!"]
+      [(string.eq base "tl_atomic_i64_cas_ptr") "atomic-i64-cas-ptr!"]
+      [(string.eq base "tl_atomic_i32_load_ptr") "atomic-i32-load-ptr"]
+      [(string.eq base "tl_atomic_i32_store_ptr") "atomic-i32-store-ptr!"]
+      [(string.eq base "tl_atomic_i32_add_ptr") "atomic-i32-add-ptr!"]
       [(string.eq base "tl_atomic_i32_fetch_add_ptr")
-        "tl-runtime-atomic-i32-fetch-add-ptr!"]
-      [(string.eq base "tl_atomic_i32_cas_ptr")
-        "tl-runtime-atomic-i32-cas-ptr!"]
+        "atomic-i32-fetch-add-ptr!"]
+      [(string.eq base "tl_atomic_i32_cas_ptr") "atomic-i32-cas-ptr!"]
       [else ""])))
+
+(define (lower-runtime-prelude-selective-export?
+  [module : String]
+  [symbol : String]) : bool
+  (and
+    (string.eq module "stdlib.runtime")
+    (not (string.eq (lower-runtime-prelude-string-helper-name symbol) ""))))
 
 (define (lower-reach-add-runtime-prelude-string-helper
   [all-functions : lower_string_i64_map.Map]
@@ -8684,11 +8681,15 @@
       (let
         [name-str : String (intern-str name)]
         (match export
-          [(AstFnExport.Export _)
-            (lower-reach-add-logical
-              all-functions
+          [(AstFnExport.Export symbol)
+            (if (lower-runtime-prelude-selective-export?
+              module
+              (intern-str symbol))
               state
-              (lower-decl-logical-name entry-path decl-path module name-str))]
+              (lower-reach-add-logical
+                all-functions
+                state
+                (lower-decl-logical-name entry-path decl-path module name-str)))]
           [(AstFnExport.No) state]))]
     [(AstDecl.Extern _ kind metadata _)
       (match kind
@@ -53931,7 +53932,7 @@
 
 (define (compiler-lower-runtime-substring-scratch-source) : String
   (string.append
-    "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+    "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 "
     (compiler-lower-with-scratch-string-source)))
@@ -53941,7 +53942,7 @@
 
 (define (compiler-lower-runtime-substring-call-source) : String
   (string.append
-    "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+    "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 (unsafe
   (extern (tl_substring [src : (Ptr u8)] [start : i64] [len : i64]) : String))
@@ -53953,7 +53954,7 @@
 
 (define (compiler-lower-runtime-substring-capturing-lambda-source) : String
   (string.append
-    "(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
+    "(define (substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (unsafe (string-from-bytes (ptr-offset src start) len)))
 "
     "(define (main) : String
@@ -54056,7 +54057,7 @@
               (and
                 (lower-test-function-defined?
                   functions
-                  "stdlib/runtime.tl::tl-runtime-substring")
+                  "stdlib/runtime.tl::substring")
                 (>
                   (lower-test-function-call-count
                     functions
@@ -54079,7 +54080,7 @@
               (and
                 (lower-test-function-defined?
                   functions
-                  "stdlib/runtime.tl::tl-runtime-substring")
+                  "stdlib/runtime.tl::substring")
                 (>
                   (lower-test-function-call-count
                     functions
@@ -54103,7 +54104,7 @@
               (and
                 (lower-test-function-defined?
                   functions
-                  "stdlib/runtime.tl::tl-runtime-substring")
+                  "stdlib/runtime.tl::substring")
                 (>
                   (lower-test-function-call-count
                     functions

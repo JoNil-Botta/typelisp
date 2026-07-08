@@ -764,78 +764,80 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-runtime-atomic-wrapper-source) : String
-  "(define (tl-runtime-atomic-i64-load-ptr [ptr : (Ptr i64)])
+  "(module stdlib.runtime)
+
+(define (atomic-i64-load-ptr [ptr : (Ptr i64)])
   : i64
   (unsafe (atomic-load ptr)))
 
-(define (tl-runtime-atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
+(define (atomic-i64-store-ptr! [ptr : (MutPtr i64)] [value : i64])
   : unit
   (unsafe (atomic-store! ptr value)))
 
-(define (tl-runtime-atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
+(define (atomic-i64-add-ptr! [ptr : (MutPtr i64)] [delta : i64])
   : unit
   (unsafe (atomic-add! ptr delta)))
 
-(define (tl-runtime-atomic-i64-fetch-add-ptr!
+(define (atomic-i64-fetch-add-ptr!
   [ptr : (MutPtr i64)]
   [delta : i64])
   : i64
   (unsafe (atomic-fetch-add! ptr delta)))
 
-(define (tl-runtime-atomic-i64-cas-ptr!
+(define (atomic-i64-cas-ptr!
   [ptr : (MutPtr i64)]
   [expected : i64]
   [new-value : i64])
   : i64
   (unsafe (atomic-cas! ptr expected new-value)))
 
-(define (tl-runtime-atomic-i32-load-ptr [ptr : (Ptr i32)])
+(define (atomic-i32-load-ptr [ptr : (Ptr i32)])
   : i32
   (unsafe (atomic-load ptr)))
 
-(define (tl-runtime-atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
+(define (atomic-i32-store-ptr! [ptr : (MutPtr i32)] [value : i32])
   : unit
   (unsafe (atomic-store! ptr value)))
 
-(define (tl-runtime-atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
+(define (atomic-i32-add-ptr! [ptr : (MutPtr i32)] [delta : i32])
   : unit
   (unsafe (atomic-add! ptr delta)))
 
-(define (tl-runtime-atomic-i32-fetch-add-ptr!
+(define (atomic-i32-fetch-add-ptr!
   [ptr : (MutPtr i32)]
   [delta : i32])
   : i32
   (unsafe (atomic-fetch-add! ptr delta)))
 
-(define (tl-runtime-atomic-i32-cas-ptr!
+(define (atomic-i32-cas-ptr!
   [ptr : (MutPtr i32)]
   [expected : i32]
   [new-value : i32])
   : i32
   (unsafe (atomic-cas! ptr expected new-value)))
 
-(define (tl-runtime-atomic-wrapper-root
+(define (atomic-wrapper-root
   [p64 : (MutPtr i64)]
   [p32 : (MutPtr i32)])
   : i64
   (begin
-    (tl-runtime-atomic-i64-load-ptr (unsafe (ptr-cast p64 : (Ptr i64))))
-    (tl-runtime-atomic-i64-store-ptr! p64 0)
-    (tl-runtime-atomic-i64-add-ptr! p64 1)
-    (tl-runtime-atomic-i64-fetch-add-ptr! p64 1)
-    (tl-runtime-atomic-i64-cas-ptr! p64 1 2)
-    (tl-runtime-atomic-i32-load-ptr (unsafe (ptr-cast p32 : (Ptr i32))))
-    (tl-runtime-atomic-i32-store-ptr! p32 (cast 0 : i32))
-    (tl-runtime-atomic-i32-add-ptr! p32 (cast 1 : i32))
-    (tl-runtime-atomic-i32-fetch-add-ptr! p32 (cast 1 : i32))
-    (tl-runtime-atomic-i32-cas-ptr! p32 (cast 1 : i32) (cast 2 : i32))
+    (atomic-i64-load-ptr (unsafe (ptr-cast p64 : (Ptr i64))))
+    (atomic-i64-store-ptr! p64 0)
+    (atomic-i64-add-ptr! p64 1)
+    (atomic-i64-fetch-add-ptr! p64 1)
+    (atomic-i64-cas-ptr! p64 1 2)
+    (atomic-i32-load-ptr (unsafe (ptr-cast p32 : (Ptr i32))))
+    (atomic-i32-store-ptr! p32 (cast 0 : i32))
+    (atomic-i32-add-ptr! p32 (cast 1 : i32))
+    (atomic-i32-fetch-add-ptr! p32 (cast 1 : i32))
+    (atomic-i32-cas-ptr! p32 (cast 1 : i32) (cast 2 : i32))
     42))
 
 (define (main) : i64
   (let
     [items64 : (Array i64) (make-array i64 1)]
     [items32 : (Array i32) (make-array i32 1)]
-    (tl-runtime-atomic-wrapper-root
+    (atomic-wrapper-root
       (unsafe (array-data items64))
       (unsafe (array-data items32)))))")
 
@@ -17946,7 +17948,7 @@
 
 (define (compiler-backend-export-symbol-fixed-fault-source) : String
   "(extern (tl_oob_abort) : never)
-(define (tl-runtime-oob-abort) (:export-symbol \"tl_oob_abort\") : never
+(define (oob-abort) (:export-symbol \"tl_oob_abort\") : never
   (tl_oob_abort))
 (define (main) : i64 0)")
 
@@ -18584,6 +18586,28 @@
     (compiler-backend-user-symbol-cache-scratch-source))
     [(ResultCompilerBackend.Ok _) true]
     [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-runtime-leaf-user-symbol-ok?) : bool
+  (let
+    [fn-name : String "pkg/substring"]
+    [index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        (compiler-ir-function-cons
+          (CompilerIrFunction.Function
+            fn-name
+            CompilerIrParamList.Nil
+            (AstType.I64)
+            0
+            CompilerIrBlockList.Nil)
+          CompilerIrFunctionList.Nil)
+        CompilerIrExternList.Nil)]
+    (and
+      (string.eq
+        (compiler-backend-runtime-prelude-string-helper-symbol fn-name)
+        "")
+      (string.eq
+        (compiler-backend-function-symbol-index index fn-name)
+        "_tl_pkg_substring"))))
 
 (define (compiler-backend-program-index-id-maps-ok?) : bool
   (let
@@ -19881,6 +19905,7 @@
         (compiler-backend-dispatch-variant-mode-ok?)
         (compiler-backend-user-symbol-cache-ok?)
         (compiler-backend-user-symbol-cache-scratch-ok?)
+        (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
         (compiler-backend-program-index-interns-bound-names-ok?))))
     42

@@ -31466,19 +31466,17 @@
       ""
       (cond
         [(opt-symbol-leaf-matches? source-name "tl_int_to_string")
-          "tl-runtime-int-to-string"]
-        [(opt-symbol-leaf-matches? source-name "tl_substring")
-          "tl-runtime-substring"]
-        [(opt-symbol-leaf-matches? source-name "tl_str_view")
-          "tl-runtime-str-view"]
+          "int-to-string"]
+        [(opt-symbol-leaf-matches? source-name "tl_substring") "substring"]
+        [(opt-symbol-leaf-matches? source-name "tl_str_view") "str-view"]
         [(opt-symbol-leaf-matches? source-name "tl_string_concat")
-          "tl-runtime-string-concat"]
+          "string-concat"]
         [(opt-symbol-leaf-matches? source-name "tl_string_concat3")
-          "tl-runtime-string-concat3"]
+          "string-concat3"]
         [(opt-symbol-leaf-matches? source-name "tl_string_concat4")
-          "tl-runtime-string-concat4"]
+          "string-concat4"]
         [(opt-symbol-leaf-matches? source-name "tl_string_concat5")
-          "tl-runtime-string-concat5"]
+          "string-concat5"]
         [else ""]))))
 
 (define (opt-reach-add-runtime-prelude-string-helper
@@ -39184,11 +39182,11 @@
               (opt-global-dce-return-instrs 11))
             (compiler-ir-function-cons
               (opt-test-function-named
-                "C:/repo/stdlib/runtime.tl::tl-runtime-substring"
+                "C:/repo/stdlib/runtime.tl::substring"
                 (opt-global-dce-return-instrs 13))
               (compiler-ir-function-cons
                 (opt-test-function-named
-                  "C:/repo/stdlib/runtime.tl::tl-runtime-int-to-string"
+                  "C:/repo/stdlib/runtime.tl::int-to-string"
                   (opt-global-dce-return-instrs 17))
                 (CompilerIrFunctionList.Nil)))))))
     (CompilerIrExternList.Nil)))
@@ -39227,11 +39225,11 @@
       (opt-function-list-defines? level1-functions "callback-target")
       (opt-function-list-defines?
         level1-functions
-        "C:/repo/stdlib/runtime.tl::tl-runtime-substring")
+        "C:/repo/stdlib/runtime.tl::substring")
       (not
         (opt-function-list-defines?
           level1-functions
-          "C:/repo/stdlib/runtime.tl::tl-runtime-int-to-string"))
+          "C:/repo/stdlib/runtime.tl::int-to-string"))
       (not (opt-function-list-defines? level1-functions "dead"))
       (opt-global-list-defines? level1-globals "used-global")
       (opt-global-list-defines? level1-globals "stored-global")

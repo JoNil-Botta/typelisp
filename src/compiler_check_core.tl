@@ -48,8 +48,12 @@
           (compiler-cfg-enable
             (compiler-cfg-enable
               (compiler-cfg-enable
-                (compiler-cfg-enable (compiler-cfg-empty) "feature-ptr-addr-of")
-                "feature-str-view")
+                (compiler-cfg-enable
+                  (compiler-cfg-enable
+                    (compiler-cfg-empty)
+                    "feature-ptr-addr-of")
+                  "feature-str-view")
+                "feature-runtime-str-view-extern")
               "feature-private-string-intrinsics")
             "feature-compiler-private-string-intrinsics")
           "array-helper-intrinsics")

@@ -18177,6 +18177,500 @@
             shadows
             split-plan)])]))
 
+(define (compiler-reg-plan-var-count-intervals
+  [intervals : CompilerRegIntervalList]
+  [best : i64]) : i64
+  (match intervals
+    [(CompilerRegIntervalList.Nil) best]
+    [(CompilerRegIntervalList.Cons interval rest)
+      (match interval
+        [(CompilerRegInterval.Interval var _ _)
+          (compiler-reg-plan-var-count-intervals
+            (box-get rest)
+            (if (>= var best)
+              (+ var 1)
+              best))])]))
+
+(define (compiler-reg-plan-var-count-assignments
+  [assignments : CompilerRegAssignmentList]
+  [best : i64]) : i64
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) best]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (match item
+        [(CompilerRegAssignment.Assignment var _)
+          (compiler-reg-plan-var-count-assignments
+            (box-get rest)
+            (if (>= var best)
+              (+ var 1)
+              best))])]))
+
+(define (compiler-reg-plan-var-count-types
+  [types : CompilerRegVarTypeList]
+  [best : i64]) : i64
+  (match types
+    [(CompilerRegVarTypeList.Nil) best]
+    [(CompilerRegVarTypeList.Cons item rest)
+      (match item
+        [(CompilerRegVarType.Type var _)
+          (compiler-reg-plan-var-count-types
+            (box-get rest)
+            (if (>= var best)
+              (+ var 1)
+              best))])]))
+
+(define (compiler-reg-plan-var-count [plan : CompilerRegPlan] [min-vars : i64]) : i64
+  (match plan
+    [(CompilerRegPlan.Plan assignments _ intervals types _ _)
+      (compiler-reg-plan-var-count-types
+        types
+        (compiler-reg-plan-var-count-assignments
+          assignments
+          (compiler-reg-plan-var-count-intervals intervals min-vars)))]))
+
+(define (compiler-reg-scratch-vreg-switch-slots [_instr : CompilerIrInstr]) : i64
+  (cfg
+    scratch-vreg
+    (match _instr
+      ;; Keep two deterministic pseudo slots per switch: index scratch first,
+      ;; table scratch second. The index slot may be unused for base-0 switches
+      ;; whose index already has a register home, but fixed-width slots make the
+      ;; backend lookup stable across fallback decisions.
+      [(CompilerIrInstr.Switch _ _ _ _) 2]
+      [_ 0])
+    0))
+
+(define (compiler-reg-scratch-vreg-count-seq
+  [instrs : CompilerIrInstrSeq]
+  [count : i64]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (struct-get instrs len)]
+    [i : i64 0]
+    [out : i64 count]
+    (begin
+      (while (< i len)
+        (begin
+          (set!
+            out
+            (+ out (compiler-reg-scratch-vreg-switch-slots (array-ref slots i))))
+          (set! i (+ i 1))))
+      out)))
+
+(define (compiler-reg-scratch-vreg-count-blocks
+  [blocks : CompilerIrBlockList]
+  [count : i64]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) count]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-scratch-vreg-count-blocks
+            (box-get rest)
+            (compiler-reg-scratch-vreg-count-seq instrs count))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-scratch-vreg-count-blocks
+        (compiler-ir-block-seq-to-list seq)
+        count)]))
+
+(define (compiler-reg-copy-i64-array!
+  [dst : (Array i64)]
+  [src : (Array i64)]
+  [i : i64]) : unit
+  (if (>= i (array-length src))
+    unit
+    (begin
+      (if (< i (array-length dst))
+        (array-set! dst i (array-ref src i))
+        unit)
+      (compiler-reg-copy-i64-array! dst src (+ i 1)))))
+
+(define (compiler-reg-copy-ast-type-array!
+  [dst : (Array AstType)]
+  [src : (Array AstType)]
+  [i : i64]) : unit
+  (if (>= i (array-length src))
+    unit
+    (begin
+      (if (< i (array-length dst))
+        (array-set! dst i (array-ref src i))
+        unit)
+      (compiler-reg-copy-ast-type-array! dst src (+ i 1)))))
+
+(define (compiler-reg-copy-interval-list-array!
+  [dst : (Array CompilerRegIntervalList)]
+  [src : (Array CompilerRegIntervalList)]
+  [i : i64]) : unit
+  (if (>= i (array-length src))
+    unit
+    (begin
+      (if (< i (array-length dst))
+        (array-set! dst i (array-ref src i))
+        unit)
+      (compiler-reg-copy-interval-list-array! dst src (+ i 1)))))
+
+(define (compiler-reg-fill-interval-list-array!
+  [items : (Array CompilerRegIntervalList)]
+  [i : i64]) : unit
+  (if (>= i (array-length items))
+    unit
+    (begin
+      (array-set! items i CompilerRegIntervalList.Nil)
+      (compiler-reg-fill-interval-list-array! items (+ i 1)))))
+
+(define (compiler-reg-types-from-list-fill!
+  [types : CompilerRegVarTypeList]
+  [present : (Array i64)]
+  [items : (Array AstType)]) : unit
+  (match types
+    [(CompilerRegVarTypeList.Nil) unit]
+    [(CompilerRegVarTypeList.Cons item rest)
+      (begin
+        (match item
+          [(CompilerRegVarType.Type var ty)
+            (compiler-reg-var-type-array-set! present items var ty)])
+        (compiler-reg-types-from-list-fill! (box-get rest) present items))]))
+
+(define (compiler-reg-var-types-from-list
+  [types : CompilerRegVarTypeList]
+  [vars : i64]) : CompilerRegVarTypes
+  (let
+    [present : (Array i64) (array.make-array i64 vars)]
+    [items : (Array AstType) (array.make-array AstType vars)]
+    (begin
+      (compiler-reg-fill-i64-array present 0)
+      (compiler-reg-types-from-list-fill! types present items)
+      (CompilerRegVarTypes
+        (compiler-reg-var-type-arrays-to-list
+          present
+          items
+          (- vars 1)
+          CompilerRegVarTypeList.Nil)
+        present
+        items))))
+
+(define (compiler-reg-scratch-vreg-mark-one!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [present : (Array i64)]
+  [types : (Array AstType)]
+  [var : i64]
+  [point : i64]) : unit
+  (if (or (< var 0) (>= var (array-length starts)))
+    unit
+    (begin
+      (array-set! starts var point)
+      (array-set! ends var (+ point 1))
+      (array-set!
+        segments
+        var
+        (compiler-reg-interval-cons
+          (CompilerRegInterval.Interval var point (+ point 1))
+          CompilerRegIntervalList.Nil))
+      (array-set! present var 1)
+      (array-set! types var (AstType.I64)))))
+
+(define (compiler-reg-scratch-vreg-fill-seq!
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [next-var : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [len : i64 (struct-get instrs len)]
+    [i : i64 0]
+    [p : i64 point]
+    [v : i64 next-var]
+    (begin
+      (while (< i len)
+        (let
+          [scratch-slots : i64
+            (compiler-reg-scratch-vreg-switch-slots (array-ref slots i))]
+          (begin
+            (if (= scratch-slots 2)
+              (begin
+                (compiler-reg-scratch-vreg-mark-one!
+                  starts
+                  ends
+                  segments
+                  present
+                  types
+                  v
+                  p)
+                (compiler-reg-scratch-vreg-mark-one!
+                  starts
+                  ends
+                  segments
+                  present
+                  types
+                  (+ v 1)
+                  p)
+                (set! v (+ v 2)))
+              unit)
+            (set! p (+ p 2))
+            (set! i (+ i 1)))))
+      v)))
+
+(define (compiler-reg-scratch-vreg-fill-blocks!
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [next-var : i64]
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [present : (Array i64)]
+  [types : (Array AstType)]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) next-var]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [next-point : i64 (+ point (* 2 (struct-get instrs len)))]
+            [after-vars : i64
+              (compiler-reg-scratch-vreg-fill-seq!
+                instrs
+                point
+                next-var
+                starts
+                ends
+                segments
+                present
+                types)]
+            (compiler-reg-scratch-vreg-fill-blocks!
+              (box-get rest)
+              next-point
+              after-vars
+              starts
+              ends
+              segments
+              present
+              types))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-scratch-vreg-fill-blocks!
+        (compiler-ir-block-seq-to-list seq)
+        point
+        next-var
+        starts
+        ends
+        segments
+        present
+        types)]))
+
+(define (compiler-reg-scratch-vreg-boost-ref-counts!
+  [counts : (Array i64)]
+  [start : i64]
+  [count : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (if (and (>= (+ start i) 0) (< (+ start i) (array-length counts)))
+          (array-set! counts (+ start i) (- (compiler-reg-greedy-evict-inf) 1))
+          unit)
+        (set! i (+ i 1))))))
+
+(define (compiler-reg-scratch-vreg-ref-counts
+  [base : (Array i64)]
+  [out-vars : i64]
+  [scratch-start : i64]
+  [scratch-count : i64]) : (Array i64)
+  (let
+    [out : (Array i64) (array.make-array i64 out-vars)]
+    (begin
+      (compiler-reg-fill-i64-array out 0)
+      (compiler-reg-copy-i64-array! out base 0)
+      (compiler-reg-scratch-vreg-boost-ref-counts!
+        out
+        scratch-start
+        scratch-count)
+      out)))
+
+(define (compiler-reg-scratch-vreg-block-real-vars
+  [limit : i64]
+  [set : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (if (<= limit 0)
+    set
+    (compiler-reg-scratch-vreg-block-real-vars
+      (- limit 1)
+      (compiler-live-set-insert set (- limit 1)))))
+
+(define (compiler-reg-assignment-table-fill!
+  [table : CompilerRegAssignmentTable]
+  [assignments : CompilerRegAssignmentList]) : unit
+  (match assignments
+    [(CompilerRegAssignmentList.Nil) unit]
+    [(CompilerRegAssignmentList.Cons item rest)
+      (begin
+        (match item
+          [(CompilerRegAssignment.Assignment var location)
+            (compiler-reg-assignment-table-insert table var location)])
+        (compiler-reg-assignment-table-fill! table (box-get rest)))]))
+
+(define (compiler-reg-assignment-table-from-list
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]) : CompilerRegAssignmentTable
+  (let
+    [table : CompilerRegAssignmentTable
+      (compiler-reg-assignment-table-make vars)]
+    (begin
+      (compiler-reg-assignment-table-fill! table assignments)
+      table)))
+
+(define (compiler-reg-plan-with-switch-scratch-vregs
+  [_abi : CompilerRegTargetAbi]
+  [_func : CompilerIrFunction]
+  [plan : CompilerRegPlan]
+  [_vars : i64]) : CompilerRegPlan
+  (cfg
+    scratch-vreg
+    (match _func
+      [(CompilerIrFunction.Function _ _ _ _ blocks)
+        (let
+          [scratch-count : i64
+            (compiler-reg-scratch-vreg-count-blocks blocks 0)]
+          (if (= scratch-count 0)
+            plan
+            (let
+              [out-vars : i64 (+ _vars scratch-count)]
+              [base-types : CompilerRegVarTypeList
+                (compiler-reg-plan-types plan)]
+              [base-type-info : CompilerRegVarTypes
+                (compiler-reg-var-types-from-list base-types _vars)]
+              [base-interval-selection : CompilerRegIntervalSelection
+                (compiler-reg-live-interval-selection
+                  _func
+                  (compiler-live-analyze-function _func))]
+              (match base-interval-selection
+                [(CompilerRegIntervalSelection.Selection _ base-index)
+                  (let
+                    [base-starts : (Array i64) (struct-get base-index starts)]
+                    [base-ends : (Array i64) (struct-get base-index ends)]
+                    [base-segments : (Array CompilerRegIntervalList)
+                      (struct-get base-index segments)]
+                    [starts : (Array i64) (array.make-array i64 out-vars)]
+                    [ends : (Array i64) (array.make-array i64 out-vars)]
+                    [segments : (Array CompilerRegIntervalList)
+                      (array.make-array CompilerRegIntervalList out-vars)]
+                    [present : (Array i64) (array.make-array i64 out-vars)]
+                    [types : (Array AstType)
+                      (array.make-array AstType out-vars)]
+                    (begin
+                      (compiler-reg-fill-i64-array starts -1)
+                      (compiler-reg-fill-i64-array ends -1)
+                      (compiler-reg-fill-i64-array present 0)
+                      (compiler-reg-fill-interval-list-array! segments 0)
+                      (compiler-reg-copy-i64-array! starts base-starts 0)
+                      (compiler-reg-copy-i64-array! ends base-ends 0)
+                      (compiler-reg-copy-interval-list-array!
+                        segments
+                        base-segments
+                        0)
+                      (compiler-reg-copy-i64-array!
+                        present
+                        (struct-get base-type-info present)
+                        0)
+                      (compiler-reg-copy-ast-type-array!
+                        types
+                        (struct-get base-type-info items)
+                        0)
+                      (compiler-reg-scratch-vreg-fill-blocks!
+                        blocks
+                        0
+                        _vars
+                        starts
+                        ends
+                        segments
+                        present
+                        types)
+                      (let
+                        [type-info : CompilerRegVarTypes
+                          (CompilerRegVarTypes
+                            (compiler-reg-var-type-arrays-to-list
+                              present
+                              types
+                              (- out-vars 1)
+                              CompilerRegVarTypeList.Nil)
+                            present
+                            types)]
+                        [interval-index : CompilerRegIntervalIndex
+                          (CompilerRegIntervalIndex starts ends segments)]
+                        [intervals : CompilerRegIntervalList
+                          (compiler-reg-interval-arrays-to-list
+                            starts
+                            ends
+                            (- out-vars 1)
+                            CompilerRegIntervalList.Nil)]
+                        [assignments : CompilerRegAssignmentTable
+                          (compiler-reg-assignment-table-from-list
+                            (compiler-reg-plan-assignments plan)
+                            out-vars)]
+                        [coalesce : CompilerRegCoalesceMap
+                          (CompilerRegCoalesceMap (array.make-array i64 0))]
+                        [base-ref-counts : (Array i64)
+                          (compiler-reg-greedy-combine-spill-weights
+                            (compiler-reg-function-spill-weights-remat
+                              _func
+                              coalesce)
+                            (compiler-reg-function-spill-weights _func))]
+                        [ref-counts : (Array i64)
+                          (compiler-reg-scratch-vreg-ref-counts
+                            base-ref-counts
+                            out-vars
+                            _vars
+                            scratch-count)]
+                        [scratch-only-candidates : CompilerRegIntervalList
+                          (compiler-reg-candidates
+                            (compiler-reg-interval-arrays-to-list
+                              starts
+                              ends
+                              (- out-vars 1)
+                              CompilerRegIntervalList.Nil)
+                            type-info
+                            (compiler-reg-scratch-vreg-block-real-vars
+                              _vars
+                              (compiler-live-set-empty))
+                            false)]
+                        [state : CompilerRegAssignState
+                          (compiler-reg-greedy-state
+                            scratch-only-candidates
+                            (compiler-reg-greedy-integer-pool-for-abi _abi)
+                            assignments
+                            interval-index
+                            (compiler-reg-function-group-vars
+                              _func
+                              (struct-get type-info entries))
+                            (compiler-live-set-empty)
+                            ref-counts
+                            (array.make-array i64 0)
+                            (array.make-array i64 0)
+                            (compiler-reg-clobber-kind-points _func 0)
+                            (compiler-reg-clobber-kind-points _func 1)
+                            (compiler-reg-clobber-kind-points _func 2)
+                            (compiler-reg-callee-saved-integer-registers-for-abi
+                              _abi)
+                            (compiler-reg-greedy-caller-saved-count-for-abi
+                              _abi))]
+                        (match state
+                          [(CompilerRegAssignState.State _ out-assignments)
+                            (CompilerRegPlan.Plan
+                              (compiler-reg-assignment-table-to-list
+                                out-assignments)
+                              (compiler-reg-plan-ineligible plan)
+                              intervals
+                              (struct-get type-info entries)
+                              (CompilerRegCallSplit
+                                (compiler-live-set-empty)
+                                (array.make-array String 0)
+                                CompilerRegCallRegionNil)
+                              (compiler-reg-split-plan-empty))]))))]))))])
+    plan))
+
 (define (compiler-reg-caller-save-remap-fill!
   [remap : (Array i64)]
   [index : i64]) : unit
@@ -19320,6 +19814,77 @@
         [(CompilerRegLocation.RegisterPair _ _) true]
         [_ false])]
     [_ false]))
+
+(define (compiler-reg-switch-scratch-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Switch
+          (CompilerIrValue.Var 0)
+          1
+          (compiler-ir-switch-case-cons 1 "one" CompilerIrSwitchCaseList.Nil)
+          "other")
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-reg-switch-scratch-test-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "switch_scratch_vregs"
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    1
+    (compiler-reg-switch-scratch-test-blocks)))
+
+(define (compiler-reg-switch-scratch-test-plan) : CompilerRegPlan
+  (CompilerRegPlan.Plan
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+      CompilerRegAssignmentList.Nil)
+    (compiler-live-set-empty)
+    (compiler-reg-interval-cons
+      (CompilerRegInterval.Interval 0 0 1)
+      CompilerRegIntervalList.Nil)
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType.Type 0 (AstType.I64))
+      CompilerRegVarTypeList.Nil)
+    (compiler-reg-call-split-empty)
+    (compiler-reg-split-plan-empty)))
+
+(define (compiler-reg-assignment-primary-register
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : String
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.Some location)
+      (compiler-reg-location-primary-register location)]
+    [(CompilerRegMaybeLocation.No) ""]))
+
+(define (compiler-reg-switch-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [func : CompilerIrFunction (compiler-reg-switch-scratch-test-function)]
+      [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
+      [out : CompilerRegPlan
+        (compiler-reg-plan-with-switch-scratch-vregs
+          (CompilerRegTargetAbi.Linux)
+          func
+          plan
+          1)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-plan-assignments out)]
+      [index-reg : String
+        (compiler-reg-assignment-primary-register assignments 1)]
+      [table-reg : String
+        (compiler-reg-assignment-primary-register assignments 2)]
+      (and
+        (= (compiler-reg-plan-var-count out 1) 3)
+        (not (string.eq index-reg ""))
+        (not (string.eq table-reg ""))
+        (not (string.eq index-reg table-reg))
+        (not (string.eq index-reg "%r9"))
+        (not (string.eq table-reg "%r9"))))
+    true))
 
 (define (compiler-reg-i64-ty) : AstType
   (AstType.I64))
@@ -25622,6 +26187,7 @@
     (cfg test (compiler-reg-loop-spill-weight-eviction-ok?) true)
     (cfg test (compiler-reg-call-span-counts-ok?) true)
     (cfg test (compiler-reg-call-span-census-ok?) true)
+    (compiler-reg-switch-scratch-vregs-ok?)
     (compiler-reg-indexed-lookups-ok?)
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)

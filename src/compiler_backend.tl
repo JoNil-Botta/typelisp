@@ -11115,25 +11115,26 @@
   (let
     [empty : CompilerBackendConstHoistSynth
       (compiler-backend-const-hoist-disable!)]
-    [cons-blocks : CompilerIrBlockList
-      (compiler-ir-block-list-force-cons blocks)]
-    [count : i64 (compiler-ir-block-list-count cons-blocks)]
+    [dense-blocks : CompilerIrBlockList (compiler-ir-block-list-compact blocks)]
+    [count : i64 (compiler-ir-block-list-count dense-blocks)]
     (if (<= count 1)
       empty
       (let
         [orig : (Array CompilerIrBlock)
-          (struct-get (compiler-ir-block-seq-from-list cons-blocks) slots)]
+          (match dense-blocks
+            [(CompilerIrBlockList.Array seq) (struct-get seq slots)]
+            [_ (array.make-array CompilerIrBlock 0)])]
         (if (not (compiler-backend-const-hoist-any-magic? orig))
           empty
           (let
             [ids : backend_string_i64_map.Map
               (compiler-reg-loop-depth-block-ids
-                cons-blocks
+                dense-blocks
                 (backend_string_i64_map.with-capacity
                   (compiler-reg-bits-map-capacity count))
                 0)]
             [loop-ends : (Array i64)
-              (compiler-reg-preheader-loop-ends cons-blocks count)]
+              (compiler-reg-preheader-loop-ends dense-blocks count)]
             [points : (Array i64) (compiler-reg-loop-phi-mb-block-points orig)]
             [interval-index : CompilerRegIntervalIndex
               (compiler-reg-interval-index-build intervals vars)]
@@ -11976,8 +11977,9 @@
                 switch-var-base
                 assignments)])])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-scratch-vreg-scan-blocks!
-        (compiler-ir-block-seq-to-list seq)
+      (compiler-backend-scratch-vreg-scan-block-seq!
+        seq
+        0
         point
         points
         regs
@@ -11995,6 +11997,44 @@
         switch-slot-count
         switch-var-base
         assignments)]))
+
+(define (compiler-backend-scratch-vreg-scan-block-seq!
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [point : i64]
+  [points : (Array i64)]
+  [regs : (Array String)]
+  [lo : (Array i64)]
+  [hi : (Array i64)]
+  [cap : i64]
+  [count : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (CompilerBackendScratchVregScan point count)
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (match (compiler-backend-scratch-vreg-scan-seq!
+          instrs
+          point
+          points
+          regs
+          lo
+          hi
+          cap
+          count
+          assignments)
+          [(CompilerBackendScratchVregScan next-point next-count)
+            (compiler-backend-scratch-vreg-scan-block-seq!
+              blocks
+              (+ index 1)
+              next-point
+              points
+              regs
+              lo
+              hi
+              cap
+              next-count
+              assignments)])])))
 
 (define (compiler-backend-scratch-vreg-copy-i64-range
   [dst : (&mut dst (Array i64))]
@@ -19787,9 +19827,19 @@
             (compiler-backend-param-type-list params)
             (compiler-backend-function-param-types (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-param-types
-        (compiler-ir-function-seq-to-list seq)
-        name)]))
+      (compiler-backend-function-param-types-seq seq name 0)]))
+
+(define (compiler-backend-function-param-types-seq
+  [functions : CompilerIrFunctionSeq]
+  [name : String]
+  [index : i64]) : AstTypeList
+  (if (>= index (compiler-ir-function-seq-count functions))
+    (ast-type-list-new)
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function fname params _ _ _)
+        (if (string.eq fname name)
+          (compiler-backend-param-type-list params)
+          (compiler-backend-function-param-types-seq functions name (+ index 1)))])))
 
 (define (compiler-backend-extern-param-types
   [externs : CompilerIrExternList]
@@ -19819,9 +19869,21 @@
               ret-ty)
             (compiler-backend-function-signature (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-signature
-        (compiler-ir-function-seq-to-list seq)
-        name)]))
+      (compiler-backend-function-signature-seq seq name 0)]))
+
+(define (compiler-backend-function-signature-seq
+  [functions : CompilerIrFunctionSeq]
+  [name : String]
+  [index : i64]) : CompilerBackendMaybeSignature
+  (if (>= index (compiler-ir-function-seq-count functions))
+    (CompilerBackendMaybeSignature.No)
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function fname params ret-ty _ _)
+        (if (string.eq fname name)
+          (CompilerBackendMaybeSignature.Some
+            (compiler-backend-param-type-list params)
+            ret-ty)
+          (compiler-backend-function-signature-seq functions name (+ index 1)))])))
 
 (define (compiler-backend-extern-signature
   [externs : CompilerIrExternList]
@@ -19897,12 +19959,40 @@
               signatures
               (+ index 1)))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-program-index-functions-into
-        (compiler-ir-function-seq-to-list seq)
+      (compiler-backend-program-index-function-seq-into
+        seq
         ids
         names
         signatures
-        index)]))
+        index
+        0)]))
+
+(define (compiler-backend-program-index-function-seq-into
+  [functions : CompilerIrFunctionSeq]
+  [ids : backend_i64_i64_map.Map]
+  [names : (Array String)]
+  [signatures : (Array CompilerBackendMaybeSignature)]
+  [out-index : i64]
+  [seq-index : i64]) : backend_i64_i64_map.Map
+  (if (>= seq-index (compiler-ir-function-seq-count functions))
+    ids
+    (match (compiler-ir-function-seq-ref functions seq-index)
+      [(CompilerIrFunction.Function name params ret-ty _ _)
+        (begin
+          (array-set! names out-index name)
+          (array-set!
+            signatures
+            out-index
+            (CompilerBackendMaybeSignature.Some
+              (compiler-backend-param-type-list params)
+              ret-ty))
+          (compiler-backend-program-index-function-seq-into
+            functions
+            (compiler-backend-program-index-bind-name ids name out-index)
+            names
+            signatures
+            (+ out-index 1)
+            (+ seq-index 1)))])))
 
 (define (compiler-backend-program-index-extern-signature [ty : AstType]) : CompilerBackendMaybeSignature
   (match ty
@@ -20378,10 +20468,22 @@
             (box-get rest)
             (compiler-backend-addressable-group-vars-seq groups out instrs))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-addressable-group-vars-blocks
-        groups
-        (compiler-ir-block-seq-to-list seq)
-        out)]))
+      (compiler-backend-addressable-group-vars-block-seq groups seq out 0)]))
+
+(define (compiler-backend-addressable-group-vars-block-seq
+  [groups : CompilerLiveI64Set]
+  [blocks : CompilerIrBlockSeq]
+  [out : CompilerLiveI64Set]
+  [index : i64]) : CompilerLiveI64Set
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    out
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (compiler-backend-addressable-group-vars-block-seq
+          groups
+          blocks
+          (compiler-backend-addressable-group-vars-seq groups out instrs)
+          (+ index 1))])))
 
 (define (compiler-backend-remap-group-vars
   [groups : CompilerLiveI64Set]
@@ -20668,11 +20770,63 @@
                     index
                     seen))]))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-validate-function-symbols-into
-        (compiler-ir-function-seq-to-list seq)
+      (compiler-backend-validate-function-symbol-seq-into
+        seq
         _plan
         index
-        seen)]))
+        seen
+        0)]))
+
+(define (compiler-backend-validate-function-symbol-seq-into
+  [functions : CompilerIrFunctionSeq]
+  [_plan : CompilerBackendRuntimePlan]
+  [index : CompilerBackendProgramIndex]
+  [seen : backend_string_i64_map.Map]
+  [seq-index : i64]) : ResultCompilerBackendSymbolValidation
+  (if (>= seq-index (compiler-ir-function-seq-count functions))
+    (ResultCompilerBackendSymbolValidation.Ok seen)
+    (match (compiler-ir-function-seq-ref functions seq-index)
+      [(CompilerIrFunction.Function name _ _ _ _)
+        (let
+          [symbol : String (compiler-backend-function-symbol-index index name)]
+          (cond
+            [(and
+                (string.eq name "main")
+                (compiler-backend-index-extern-provided? index name))
+              (compiler-backend-symbol-validation-error
+                "backend: main cannot use :export-symbol")]
+            [(backend_string_i64_map.contains? (& seen) symbol)
+              (compiler-backend-symbol-validation-error
+                (string.append
+                  "backend: duplicate emitted function symbol "
+                  symbol))]
+            [(and
+                (compiler-backend-index-extern-provided? index name)
+                (not (compiler-backend-valid-export-symbol? symbol)))
+              (compiler-backend-symbol-validation-error
+                (string.append
+                  "backend: invalid exported function symbol "
+                  symbol))]
+            [(and
+                (compiler-backend-index-extern-provided? index name)
+                (compiler-backend-runtime-helper-known? symbol)
+                (not
+                  (compiler-backend-runtime-prelude-string-helper-export?
+                    name
+                    symbol)))
+              (compiler-backend-symbol-validation-error
+                (string.append
+                  "backend: exported function symbol collides with runtime symbol "
+                  symbol))]
+            [else
+              (begin
+                (backend_string_i64_map.insert (&mut seen) symbol 1)
+                (compiler-backend-validate-function-symbol-seq-into
+                  functions
+                  _plan
+                  index
+                  seen
+                  (+ seq-index 1)))]))])))
 
 (define (compiler-backend-validate-extern-symbols-into
   [externs : CompilerIrExternList]
@@ -21868,8 +22022,18 @@
             true
             (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-blocks-need-outgoing-space?
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-block-seq-needs-outgoing-space? seq 0)]))
+
+(define (compiler-backend-block-seq-needs-outgoing-space?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
+          true
+          (compiler-backend-block-seq-needs-outgoing-space? blocks (+ index 1)))])))
 
 (define (compiler-backend-instr-outgoing-stack-space
   [target : CompilerBackendTarget]
@@ -22007,11 +22171,33 @@
               program-index)
             program-index)])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-blocks-outgoing-stack-space
+      (compiler-backend-block-seq-outgoing-stack-space
         target
-        (compiler-ir-block-seq-to-list seq)
+        seq
+        0
         max-space
         program-index)]))
+
+(define (compiler-backend-block-seq-outgoing-stack-space
+  [target : CompilerBackendTarget]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [max-space : i64]
+  [program-index : CompilerBackendProgramIndex]) : i64
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    max-space
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (compiler-backend-block-seq-outgoing-stack-space
+          target
+          blocks
+          (+ index 1)
+          (compiler-backend-instr-seq-outgoing-stack-space
+            target
+            instrs
+            max-space
+            program-index)
+          program-index)])))
 
 (define (compiler-backend-outgoing-frame-space
   [target : CompilerBackendTarget]
@@ -24448,13 +24634,46 @@
               program-index
               vars))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-phi-edge-copies-scan
+      (compiler-backend-emit-phi-edge-copies-scan-seq
         assignments
-        (compiler-ir-block-seq-to-list seq)
+        seq
+        0
         target-label
         from-label
         program-index
         vars)]))
+
+(define (compiler-backend-emit-phi-edge-copies-scan-seq
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [target-label : String]
+  [from-label : String]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (ResultCompilerBackend.Err
+      (box
+        (compiler-diagnostic-at-start
+          ""
+          (string.append "backend: unknown block " target-label))))
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block block-label instrs)
+        (if (string.eq block-label target-label)
+          (compiler-backend-emit-leading-phi-copies
+            assignments
+            instrs
+            from-label
+            program-index
+            vars)
+          (compiler-backend-emit-phi-edge-copies-scan-seq
+            assignments
+            blocks
+            (+ index 1)
+            target-label
+            from-label
+            program-index
+            vars))])))
 
 (define (compiler-backend-emit-mov-phi-copy-edge
   [assignments : CompilerRegAssignmentList]
@@ -24531,15 +24750,69 @@
               program-index
               vars))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-mov-phi-copy-edge-scan
+      (compiler-backend-emit-mov-phi-copy-edge-scan-seq
         assignments
-        (compiler-ir-block-seq-to-list seq)
+        seq
+        0
         target-label
         from-label
         moved-dst
         moved-src
         program-index
         vars)]))
+
+(define (compiler-backend-emit-mov-phi-copy-edge-scan-seq
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [target-label : String]
+  [from-label : String]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]
+  [vars : i64]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (ResultCompilerBackend.Err
+      (box
+        (compiler-diagnostic-at-start
+          ""
+          (string.append "backend: unknown block " target-label))))
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block block-label instrs)
+        (if (string.eq block-label target-label)
+          (match (compiler-backend-leading-phi-copies-seq
+            assignments
+            instrs
+            from-label)
+            [(ResultBackendPhiCopies.Ok copies)
+              (if (compiler-backend-phi-copy-list-has-source-var?
+                copies
+                moved-dst)
+                (compiler-backend-emit-phi-copy-list
+                  assignments
+                  (compiler-backend-phi-copy-list-drop-same-home
+                    assignments
+                    (compiler-backend-phi-copy-list-replace-source-var
+                      copies
+                      moved-dst
+                      moved-src))
+                  program-index
+                  vars
+                  false)
+                (ResultCompilerBackend.Ok ""))]
+            [(ResultBackendPhiCopies.Err message)
+              (ResultCompilerBackend.Err
+                (box (compiler-diagnostic-at-start "" message)))])
+          (compiler-backend-emit-mov-phi-copy-edge-scan-seq
+            assignments
+            blocks
+            (+ index 1)
+            target-label
+            from-label
+            moved-dst
+            moved-src
+            program-index
+            vars))])))
 
 (define (compiler-backend-instr-seq-starts-with-phi?
   [instrs : CompilerIrInstrSeq]) : bool
@@ -24567,9 +24840,26 @@
                 (compiler-backend-string-cons label out))
               out))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-phi-target-labels
-        (compiler-ir-block-seq-to-list seq)
-        out)]))
+      (compiler-backend-phi-target-labels-seq seq 0 out)]))
+
+(define (compiler-backend-phi-target-labels-seq
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [out : BackendStringList]) : BackendStringList
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    out
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label instrs)
+        (compiler-backend-phi-target-labels-seq
+          blocks
+          (+ index 1)
+          (if (compiler-backend-instr-seq-starts-with-phi? instrs)
+            (begin
+              (set!
+                compiler-backend-current-phi-target-count
+                (+ compiler-backend-current-phi-target-count 1))
+              (compiler-backend-string-cons label out))
+            out))])))
 
 (define (compiler-backend-phi-target-labels-for-blocks
   [blocks : CompilerIrBlockList]) : BackendStringList
@@ -25046,28 +25336,54 @@
             (compiler-backend-instr-seq-return-count instrs)
             (compiler-backend-block-list-return-count (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-block-list-return-count
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-block-seq-return-count seq 0)]))
+
+(define (compiler-backend-block-seq-return-count
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    0
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (+
+          (compiler-backend-instr-seq-return-count instrs)
+          (compiler-backend-block-seq-return-count blocks (+ index 1)))])))
 
 (define (compiler-backend-use-shared-return?
   [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]) : bool
-  (and
-    (compiler-backend-plan-uses-callee-regs? assignments)
-    (> (compiler-backend-block-list-return-count blocks) 1)))
+  (compiler-backend-use-shared-return-count?
+    assignments
+    (compiler-backend-block-list-return-count blocks)))
 
-(define (compiler-backend-return-tail
+(define (compiler-backend-use-shared-return-count?
+  [assignments : CompilerRegAssignmentList]
+  [return-count : i64]) : bool
+  (and (compiler-backend-plan-uses-callee-regs? assignments) (> return-count 1)))
+
+(define (compiler-backend-return-tail-for-return-count
   [source-function : String]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
-  [blocks : CompilerIrBlockList]) : String
-  (if (compiler-backend-use-shared-return? assignments blocks)
+  [return-count : i64]) : String
+  (if (compiler-backend-use-shared-return-count? assignments return-count)
     (str_cat.str-cat
       "    jmp "
       (compiler-backend-return-label source-function)
       "\n"
       "")
     (compiler-backend-inline-return-tail assignments vars)))
+
+(define (compiler-backend-return-tail
+  [source-function : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [blocks : CompilerIrBlockList]) : String
+  (compiler-backend-return-tail-for-return-count
+    source-function
+    assignments
+    vars
+    (compiler-backend-block-list-return-count blocks)))
 
 (define (compiler-backend-return-epilogue
   [source-function : String]
@@ -25082,9 +25398,9 @@
       "")
     ""))
 
-(define (compiler-backend-emit-return
+(define (compiler-backend-emit-return-with-return-count
   [source-function : String]
-  [blocks : CompilerIrBlockList]
+  [return-count : i64]
   [value : CompilerIrMaybeValue]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
@@ -25097,11 +25413,11 @@
           (if (string.eq source-function "main")
             "    xorl %eax, %eax\n"
             "")
-          (compiler-backend-return-tail
+          (compiler-backend-return-tail-for-return-count
             (string.copy source-function)
             assignments
             vars
-            blocks)))]
+            return-count)))]
     [(CompilerIrMaybeValue.Some v)
       ;; A register-group return goes in %rax:%rdx (word0:word1).
       (if (compiler-backend-group-type? program-index ret-ty)
@@ -25117,11 +25433,11 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load
-                (compiler-backend-return-tail
+                (compiler-backend-return-tail-for-return-count
                   source-function
                   assignments
                   vars
-                  blocks)))]
+                  return-count)))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])
         (match (compiler-backend-emit-load-typed-value-with-plan
@@ -25133,13 +25449,30 @@
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
                 load
-                (compiler-backend-return-tail
+                (compiler-backend-return-tail-for-return-count
                   source-function
                   assignments
                   vars
-                  blocks)))]
+                  return-count)))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]))
+
+(define (compiler-backend-emit-return
+  [source-function : String]
+  [blocks : CompilerIrBlockList]
+  [value : CompilerIrMaybeValue]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (compiler-backend-emit-return-with-return-count
+    source-function
+    (compiler-backend-block-list-return-count blocks)
+    value
+    assignments
+    vars
+    ret-ty
+    program-index))
 
 (define (compiler-backend-emit-tail-call
   [target : CompilerBackendTarget]
@@ -25308,7 +25641,7 @@
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
   [source-function : String]
-  [blocks : CompilerIrBlockList]
+  [return-count : i64]
   [instrs : CompilerIrInstrSeq]
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
@@ -25340,9 +25673,9 @@
                           ;; an empty index makes the register-group return check
                           ;; always false, so a 16-byte group return would load
                           ;; only word0 (word1-drop miscompile).
-                          (compiler-backend-emit-return
+                          (compiler-backend-emit-return-with-return-count
                             source-function
-                            blocks
+                            return-count
                             (CompilerIrMaybeValue.Some incoming)
                             assignments
                             vars
@@ -25374,7 +25707,7 @@
           (if (string.eq block-label target-label)
             (compiler-backend-emit-trivial-phi-return-edge-instrs
               source-function
-              blocks
+              (compiler-backend-block-list-return-count blocks)
               instrs
               from-label
               assignments
@@ -25391,9 +25724,10 @@
               ret-ty
               program-index))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-trivial-phi-return-edge
+      (compiler-backend-emit-trivial-phi-return-edge-seq
         source-function
-        (compiler-ir-block-seq-to-list seq)
+        seq
+        0
         target-label
         from-label
         assignments
@@ -25401,9 +25735,44 @@
         ret-ty
         program-index)]))
 
+(define (compiler-backend-emit-trivial-phi-return-edge-seq
+  [source-function : String]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [target-label : String]
+  [from-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (ResultCompilerBackend.Ok "")
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block block-label instrs)
+        (if (string.eq block-label target-label)
+          (compiler-backend-emit-trivial-phi-return-edge-instrs
+            source-function
+            (compiler-backend-block-seq-return-count blocks index)
+            instrs
+            from-label
+            assignments
+            vars
+            ret-ty
+            program-index)
+          (compiler-backend-emit-trivial-phi-return-edge-seq
+            source-function
+            blocks
+            (+ index 1)
+            target-label
+            from-label
+            assignments
+            vars
+            ret-ty
+            program-index))])))
+
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
   [source-function : String]
-  [blocks : CompilerIrBlockList]
+  [return-count : i64]
   [instrs : CompilerIrInstrSeq]
   [from-label : String]
   [assignments : CompilerRegAssignmentList]
@@ -25439,9 +25808,9 @@
                             ;; Same word1-drop hazard as the plain trivial
                             ;; phi return edge: emit-return needs the real
                             ;; program-index to spot register-group returns.
-                            (compiler-backend-emit-return
+                            (compiler-backend-emit-return-with-return-count
                               source-function
-                              blocks
+                              return-count
                               (CompilerIrMaybeValue.Some moved-src)
                               assignments
                               vars
@@ -25476,7 +25845,7 @@
           (if (string.eq block-label target-label)
             (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
               source-function
-              blocks
+              (compiler-backend-block-list-return-count blocks)
               instrs
               from-label
               assignments
@@ -25497,9 +25866,10 @@
               moved-src
               program-index))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-mov-trivial-phi-return-edge
+      (compiler-backend-emit-mov-trivial-phi-return-edge-seq
         source-function
-        (compiler-ir-block-seq-to-list seq)
+        seq
+        0
         target-label
         from-label
         assignments
@@ -25508,6 +25878,47 @@
         moved-dst
         moved-src
         program-index)]))
+
+(define (compiler-backend-emit-mov-trivial-phi-return-edge-seq
+  [source-function : String]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [target-label : String]
+  [from-label : String]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [ret-ty : AstType]
+  [moved-dst : i64]
+  [moved-src : CompilerIrValue]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (ResultCompilerBackend.Ok "")
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block block-label instrs)
+        (if (string.eq block-label target-label)
+          (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
+            source-function
+            (compiler-backend-block-seq-return-count blocks index)
+            instrs
+            from-label
+            assignments
+            vars
+            ret-ty
+            moved-dst
+            moved-src
+            program-index)
+          (compiler-backend-emit-mov-trivial-phi-return-edge-seq
+            source-function
+            blocks
+            (+ index 1)
+            target-label
+            from-label
+            assignments
+            vars
+            ret-ty
+            moved-dst
+            moved-src
+            program-index))])))
 
 ;; The destination's home register, or "" if it is spilled / has no home. Used to
 ;; load a move's source directly into the destination register (1 instr) instead
@@ -26956,13 +27367,45 @@
                 [_
                   (compiler-backend-emit-switch-tables-blocks-into
                     (compiler-backend-function-label-scope program-index name)
-                    (compiler-ir-block-list-force-cons blocks)
+                    blocks
                     buf)])))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-switch-tables-functions-into
-        (compiler-ir-function-seq-to-list seq)
+      (compiler-backend-emit-switch-tables-function-seq-into
+        seq
         program-index
+        0
         buf)]))
+
+(define (compiler-backend-emit-switch-tables-function-seq-into
+  [functions : CompilerIrFunctionSeq]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]
+  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (if (>= index (compiler-ir-function-seq-count functions))
+    buf
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function name _ _ _ blocks)
+        (let
+          [_phi-targets : unit
+            (set!
+              compiler-backend-current-phi-targets
+              (compiler-backend-phi-target-labels-for-blocks blocks))]
+          (compiler-backend-emit-switch-tables-function-seq-into
+            functions
+            program-index
+            (+ index 1)
+            (match blocks
+              [(CompilerIrBlockList.Array seq)
+                (compiler-backend-emit-switch-tables-seq-into
+                  (compiler-backend-function-label-scope program-index name)
+                  seq
+                  0
+                  buf)]
+              [_
+                (compiler-backend-emit-switch-tables-blocks-into
+                  (compiler-backend-function-label-scope program-index name)
+                  blocks
+                  buf)])))])))
 
 ;; Sound emergency-scavenge dispatch (GAP2b-v2). When the register pool is
 ;; saturated at a switch dispatch, one or both of the index / jump-table-base
@@ -27281,8 +27724,20 @@
             [(CompilerBackendSwitchValidation.Err message)
               (CompilerBackendSwitchValidation.Err message)])])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-switch-validate-blocks
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-switch-validate-block-seq seq 0)]))
+
+(define (compiler-backend-switch-validate-block-seq
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : CompilerBackendSwitchValidation
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (CompilerBackendSwitchValidation.Ok)
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (match (compiler-backend-switch-validate-instr-seq instrs 0)
+          [(CompilerBackendSwitchValidation.Ok)
+            (compiler-backend-switch-validate-block-seq blocks (+ index 1))]
+          [(CompilerBackendSwitchValidation.Err message)
+            (CompilerBackendSwitchValidation.Err message)])])))
 
 (define (compiler-backend-switch-validate-functions
   [functions : CompilerIrFunctionList]) : CompilerBackendSwitchValidation
@@ -27302,8 +27757,27 @@
               [(CompilerBackendSwitchValidation.Err message)
                 (CompilerBackendSwitchValidation.Err message)]))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-switch-validate-functions
-        (compiler-ir-function-seq-to-list seq))]))
+      (compiler-backend-switch-validate-function-seq seq 0)]))
+
+(define (compiler-backend-switch-validate-function-seq
+  [functions : CompilerIrFunctionSeq]
+  [index : i64]) : CompilerBackendSwitchValidation
+  (if (>= index (compiler-ir-function-seq-count functions))
+    (CompilerBackendSwitchValidation.Ok)
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function _ _ _ _ blocks)
+        (let
+          [_phi-targets : unit
+            (set!
+              compiler-backend-current-phi-targets
+              (compiler-backend-phi-target-labels-for-blocks blocks))]
+          (match (compiler-backend-switch-validate-blocks blocks)
+            [(CompilerBackendSwitchValidation.Ok)
+              (compiler-backend-switch-validate-function-seq
+                functions
+                (+ index 1))]
+            [(CompilerBackendSwitchValidation.Err message)
+              (CompilerBackendSwitchValidation.Err message)]))])))
 
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
@@ -28311,9 +28785,22 @@
             (compiler-backend-count-instr-seq-uses counts instrs)
             (compiler-backend-count-block-uses counts (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-count-block-uses
-        counts
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-count-block-seq-uses counts seq)]))
+
+(define (compiler-backend-count-block-seq-uses
+  [counts : (Array i64)]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block _ instrs)
+              (compiler-backend-count-instr-seq-uses counts instrs)])
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-backend-function-use-counts
   [vars : i64]
@@ -28413,9 +28900,22 @@
             (compiler-backend-fuse-free-seq free instrs)])
         (compiler-backend-fuse-free-blocks free (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-fuse-free-blocks
-        free
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-fuse-free-block-seq free seq)]))
+
+(define (compiler-backend-fuse-free-block-seq
+  [free : (Array i64)]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block _ instrs)
+              (compiler-backend-fuse-free-seq free instrs)])
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-backend-fuse-need-enable!
   [vars : i64]
@@ -28511,10 +29011,29 @@
               use-counts
               (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-addr-of-forwarding-record-blocks!
+      (compiler-backend-addr-of-forwarding-record-block-seq!
         items
         use-counts
-        (compiler-ir-block-seq-to-list seq))]))
+        seq)]))
+
+(define (compiler-backend-addr-of-forwarding-record-block-seq!
+  [items : (Array i64)]
+  [use-counts : (Array i64)]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block _ instrs)
+              (compiler-backend-addr-of-forwarding-record-seq!
+                items
+                use-counts
+                instrs)])
+          (set! index (+ index 1))))
+      unit)))
 
 (define (compiler-backend-addr-of-forwarding-enable!
   [vars : i64]
@@ -34415,7 +34934,88 @@
       (match block
         [(CompilerIrBlock.Block label _) (CompilerBackendMaybeLabel.Some label)])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-next-block-label (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-next-block-label-seq seq 0)]))
+
+(define (compiler-backend-next-block-label-seq
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : CompilerBackendMaybeLabel
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (CompilerBackendMaybeLabel.No)
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label _) (CompilerBackendMaybeLabel.Some label)])))
+
+(define (compiler-backend-emit-block-seq-into
+  [target : CompilerBackendTarget]
+  [function : String]
+  [source-function : String]
+  [all-blocks : CompilerIrBlockList]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [types : CompilerRegVarTypeList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [ret-ty : AstType]
+  [plan : CompilerBackendRuntimePlan]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [func-diag : CompilerDiagnostic]
+  [use-counts : (Array i64)]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    (ResultCompilerBackend.Ok (text_buf.render buf))
+    (let
+      [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (set!
+              compiler-backend-emit-instr-post-base
+              (+ compiler-backend-emit-instr-post-base (struct-get instrs len)))])
+        (match (compiler-backend-emit-block
+          target
+          function
+          source-function
+          all-blocks
+          block
+          (compiler-backend-next-block-label-seq blocks (+ index 1))
+          assignments
+          vars
+          types
+          global-types
+          ret-ty
+          plan
+          functions
+          externs
+          program-index
+          spans
+          func-diag
+          use-counts)
+          [(ResultCompilerBackend.Ok head)
+            (compiler-backend-emit-block-seq-into
+              target
+              function
+              source-function
+              all-blocks
+              blocks
+              (+ index 1)
+              assignments
+              vars
+              types
+              global-types
+              ret-ty
+              plan
+              functions
+              externs
+              program-index
+              spans
+              func-diag
+              use-counts
+              (text_buf.append buf (compiler-backend-emergency-wrap head)))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])))))
 
 (define (compiler-backend-emit-blocks-into
   [target : CompilerBackendTarget]
@@ -34487,12 +35087,13 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-emit-blocks-into
+      (compiler-backend-emit-block-seq-into
         target
         function
         source-function
         all-blocks
-        (compiler-ir-block-seq-to-list seq)
+        seq
+        0
         assignments
         vars
         types
@@ -35511,6 +36112,8 @@
                   starts
                   ends)))])]
       [(CompilerIrBlockList.Array seq)
+        ;; cfg-gated self-check only; normal emission installs scavenge state
+        ;; from interval arrays and stays on the dense block path.
         (compiler-backend-scavenge-seed-block-liveins
           (compiler-ir-block-seq-to-list seq)
           liveness
@@ -36469,6 +37072,8 @@
                 (compiler-reg-live-intervals-find-afters liveness label)
                 point))])]
       [(CompilerIrBlockList.Array seq)
+        ;; cfg-gated self-check only; normal emission installs scavenge state
+        ;; from interval arrays and stays on the dense block path.
         (compiler-backend-scavenge-check-blocks
           starts
           ends
@@ -36560,9 +37165,7 @@
   (match blocks
     [(CompilerIrBlockList.Nil) counts]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-predcount-build
-        (compiler-ir-block-seq-to-list seq)
-        counts)]
+      (compiler-backend-peephole-predcount-build-seq seq 0 counts)]
     [(CompilerIrBlockList.Cons block rest)
       (compiler-backend-peephole-predcount-build
         (box-get rest)
@@ -36571,6 +37174,29 @@
           (opt-cfg-block-successors-with-next
             block
             (opt-cfg-entry-label (box-get rest)))))]))
+
+(define (compiler-backend-block-seq-label-or-empty
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : String
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    ""
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label _) label])))
+
+(define (compiler-backend-peephole-predcount-build-seq
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]
+  [counts : backend_string_i64_map.Map]) : backend_string_i64_map.Map
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    counts
+    (compiler-backend-peephole-predcount-build-seq
+      blocks
+      (+ index 1)
+      (compiler-backend-peephole-predcount-bump
+        counts
+        (opt-cfg-block-successors-with-next
+          (compiler-ir-block-seq-ref blocks index)
+          (compiler-backend-block-seq-label-or-empty blocks (+ index 1)))))))
 
 ;; True iff `block`'s terminator is a conditional branch that NEEDS phi-copy edge
 ;; blocks. SOUNDNESS-CRITICAL: such a branch does NOT lower to a clean
@@ -36625,12 +37251,13 @@
   (match blocks
     [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-peephole-carry-safe-scan
+      (compiler-backend-peephole-carry-safe-scan-seq
         label-scope
         entry-label
         predcount
         prev
-        (compiler-ir-block-seq-to-list seq))]
+        seq
+        0)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block cur-label _)
@@ -36656,6 +37283,42 @@
               block
               (box-get rest)))])]))
 
+(define (compiler-backend-peephole-carry-safe-scan-seq
+  [label-scope : String]
+  [entry-label : String]
+  [predcount : backend_string_i64_map.Map]
+  [prev : CompilerIrBlock]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : unit
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    unit
+    (let
+      [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+      (match block
+        [(CompilerIrBlock.Block cur-label _)
+          (begin
+            (if (and
+              (not (string.eq cur-label entry-label))
+              (not (compiler-backend-peephole-prev-splits-edge? prev))
+              (=
+                1
+                (match (backend_string_i64_map.get (& predcount) cur-label)
+                  [(backend_string_i64_map.LookupFound v) v]
+                  [(backend_string_i64_map.LookupMissing) 0]))
+              (opt-label-contains
+                (opt-cfg-block-successors-with-next prev cur-label)
+                cur-label))
+              (compiler-backend-peephole-carry-safe-insert!
+                (compiler-backend-asm-label label-scope cur-label))
+              unit)
+            (compiler-backend-peephole-carry-safe-scan-seq
+              label-scope
+              entry-label
+              predcount
+              block
+              blocks
+              (+ index 1)))]))))
+
 ;; Accumulate carry-safe block labels for one function's FINAL emitted blocks
 ;; into the global peephole carry-safe set. `label-scope` MUST be the same value
 ;; emit-blocks passes to compiler-backend-asm-label, so the keys match the
@@ -36664,9 +37327,25 @@
 (define (compiler-backend-peephole-collect-carry-safe!
   [label-scope : String]
   [blocks : CompilerIrBlockList]) : unit
-  (match (compiler-ir-block-list-force-cons blocks)
+  (match blocks
     [(CompilerIrBlockList.Nil) unit]
-    [(CompilerIrBlockList.Array _) unit]
+    [(CompilerIrBlockList.Array seq)
+      (if (= (compiler-ir-block-seq-count seq) 0)
+        unit
+        (let
+          [entry : CompilerIrBlock (compiler-ir-block-seq-ref seq 0)]
+          (match entry
+            [(CompilerIrBlock.Block entry-label _)
+              (compiler-backend-peephole-carry-safe-scan-seq
+                label-scope
+                entry-label
+                (compiler-backend-peephole-predcount-build-seq
+                  seq
+                  0
+                  (backend_string_i64_map.with-capacity 64))
+                entry
+                seq
+                1)])))]
     [(CompilerIrBlockList.Cons entry rest)
       (match entry
         [(CompilerIrBlock.Block entry-label _)
@@ -38494,22 +39173,35 @@
 ;; by ordinal.
 (define (compiler-backend-gep-fold-block-array [blocks : CompilerIrBlockList]) : (Array
     CompilerIrBlock)
-  (let
-    [flat : CompilerIrBlockList (compiler-ir-block-list-force-cons blocks)]
-    [count : i64 (compiler-ir-block-list-count-cons flat)]
-    [out : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
-    [cursor : CompilerIrBlockList flat]
-    [j : i64 0]
-    (begin
-      (while (< j count)
-        (match cursor
-          [(CompilerIrBlockList.Cons block rest)
+  (match blocks
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [out : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+        [j : i64 0]
+        (begin
+          (while (< j count)
             (begin
-              (array-set! out j block)
-              (set! cursor (box-get rest))
-              (set! j (+ j 1)))]
-          [_ (set! j count)]))
-      out)))
+              (array-set! out j (compiler-ir-block-seq-ref seq j))
+              (set! j (+ j 1))))
+          out))]
+    [_
+      (let
+        [flat : CompilerIrBlockList blocks]
+        [count : i64 (compiler-ir-block-list-count-cons flat)]
+        [out : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+        [cursor : CompilerIrBlockList flat]
+        [j : i64 0]
+        (begin
+          (while (< j count)
+            (match cursor
+              [(CompilerIrBlockList.Cons block rest)
+                (begin
+                  (array-set! out j block)
+                  (set! cursor (box-get rest))
+                  (set! j (+ j 1)))]
+              [_ (set! j count)]))
+          out))]))
 
 (define (compiler-backend-gep-fold-count-geps [barr : (Array CompilerIrBlock)]) : i64
   (let
@@ -38930,8 +39622,35 @@
             true
             (compiler-backend-gep-fold-blocks-have-candidate? (box-get rest)))))]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-gep-fold-blocks-have-candidate?
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-gep-fold-block-seq-has-candidate? seq)]))
+
+(define (compiler-backend-gep-fold-block-seq-has-candidate?
+  [blocks : CompilerIrBlockSeq]) : bool
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [b : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< b count) (not found))
+        (begin
+          (let
+            [instrs : CompilerIrInstrSeq
+              (compiler-backend-gep-fold-block-instrs
+                (compiler-ir-block-seq-ref blocks b))]
+            [n : i64 (struct-get instrs len)]
+            [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+            [j : i64 0]
+            (while (and (< j n) (not found))
+              (begin
+                (match (array-ref slots j)
+                  [(CompilerIrInstr.Gep _ _ offset _)
+                    (match offset
+                      [(CompilerIrValue.Var _) (set! found true)]
+                      [_ unit])]
+                  [_ unit])
+                (set! j (+ j 1)))))
+          (set! b (+ b 1))))
+      found)))
 
 ;; Entry: returns the (possibly rewritten) blocks and installs the
 ;; per-function displacement table; when nothing folds the input list is
@@ -39038,9 +39757,7 @@
         ;; BEFORE the register plan, so liveness sees the folded program (the
         ;; shared counter stays live; the offset adds vanish).
         [blocks : CompilerIrBlockList
-          (compiler-backend-gep-fold-blocks
-            vars
-            (compiler-ir-block-list-force-cons raw-blocks))]
+          (compiler-backend-gep-fold-blocks vars raw-blocks)]
         [walk-func : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic
@@ -39945,10 +40662,11 @@
         [(ResultCompilerBackend.Err message)
           (ResultCompilerBackend.Err message)])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-functions-into
+      (compiler-backend-emit-function-seq-into
         target
         mode
-        (compiler-ir-function-seq-to-list seq)
+        seq
+        0
         all-functions
         globals
         global-types
@@ -39960,6 +40678,60 @@
         emit-entry
         crt-entry
         buf)]))
+
+(define (compiler-backend-emit-function-seq-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionSeq]
+  [index : i64]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackend
+  (if (>= index (compiler-ir-function-seq-count functions))
+    (ResultCompilerBackend.Ok (text_buf.render buf))
+    (let
+      [func : CompilerIrFunction (compiler-ir-function-seq-ref functions index)]
+      (match (compiler-backend-emit-function-escaping
+        target
+        (compiler-backend-effective-function-mode mode func)
+        func
+        all-functions
+        globals
+        global-types
+        externs
+        plan
+        program-index
+        spans
+        span-index
+        emit-entry
+        crt-entry)
+        [(ResultCompilerBackend.Ok head)
+          (compiler-backend-emit-function-seq-into
+            target
+            mode
+            functions
+            (+ index 1)
+            all-functions
+            globals
+            global-types
+            externs
+            plan
+            program-index
+            spans
+            span-index
+            emit-entry
+            crt-entry
+            (text_buf.append buf (compiler-backend-emergency-wrap head)))]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)]))))
 
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
   (CompilerIrFunction.Function
@@ -40053,10 +40825,11 @@
                   (compiler-backend-profile-function-name func)))
               (ResultCompilerBackendBuffer.Err message))]))]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-functions-buffer-into
+      (compiler-backend-emit-function-seq-buffer-into
         target
         mode
-        (compiler-ir-function-seq-to-list seq)
+        seq
+        0
         all-functions
         globals
         global-types
@@ -40068,6 +40841,74 @@
         emit-entry
         crt-entry
         buf)]))
+
+(define (compiler-backend-emit-function-seq-buffer-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionSeq]
+  [index : i64]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
+  (if (>= index (compiler-ir-function-seq-count functions))
+    (ResultCompilerBackendBuffer.Ok buf)
+    (let
+      [func : CompilerIrFunction (compiler-ir-function-seq-ref functions index)]
+      (begin
+        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (match (compiler-backend-emit-function-escaping
+          target
+          (compiler-backend-effective-function-mode mode func)
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry)
+          [(ResultCompilerBackend.Ok head)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (compiler-backend-emit-function-seq-buffer-into
+                target
+                mode
+                functions
+                (+ index 1)
+                all-functions
+                globals
+                global-types
+                externs
+                plan
+                program-index
+                spans
+                span-index
+                emit-entry
+                crt-entry
+                (text_buf.append buf (compiler-backend-emergency-wrap head))))]
+          [(ResultCompilerBackend.Err message)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (ResultCompilerBackendBuffer.Err message))])))))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (str_cat.str-cat
@@ -41154,9 +41995,19 @@
             true
             (compiler-backend-function-list-defines? (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-list-defines?
-        (compiler-ir-function-seq-to-list seq)
-        name)]))
+      (compiler-backend-function-seq-defines? seq name 0)]))
+
+(define (compiler-backend-function-seq-defines?
+  [functions : CompilerIrFunctionSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-function-seq-count functions))
+    false
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function func-name _ _ _ _)
+        (if (string.eq func-name name)
+          true
+          (compiler-backend-function-seq-defines? functions name (+ index 1)))])))
 
 (define (compiler-backend-runtime-prelude-helper-function?
   [name : String]
@@ -41179,9 +42030,25 @@
               (box-get rest)
               helper))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-list-defines-runtime-prelude-helper?
-        (compiler-ir-function-seq-to-list seq)
-        helper)]))
+      (compiler-backend-function-seq-defines-runtime-prelude-helper?
+        seq
+        helper
+        0)]))
+
+(define (compiler-backend-function-seq-defines-runtime-prelude-helper?
+  [functions : CompilerIrFunctionSeq]
+  [helper : String]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-function-seq-count functions))
+    false
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function name _ _ _ _)
+        (if (compiler-backend-runtime-prelude-helper-function? name helper)
+          true
+          (compiler-backend-function-seq-defines-runtime-prelude-helper?
+            functions
+            helper
+            (+ index 1)))])))
 
 (define (compiler-backend-extern-list-references?
   [externs : CompilerIrExternList]
@@ -41408,9 +42275,20 @@
             (compiler-backend-runtime-index-instr-seq index instrs)
             (box-get rest))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-runtime-index-blocks
-        index
-        (compiler-ir-block-seq-to-list seq))]))
+      (compiler-backend-runtime-index-block-seq index seq 0)]))
+
+(define (compiler-backend-runtime-index-block-seq
+  [index : CompilerBackendRuntimeIndex]
+  [blocks : CompilerIrBlockSeq]
+  [seq-index : i64]) : CompilerBackendRuntimeIndex
+  (if (>= seq-index (compiler-ir-block-seq-count blocks))
+    index
+    (match (compiler-ir-block-seq-ref blocks seq-index)
+      [(CompilerIrBlock.Block _ instrs)
+        (compiler-backend-runtime-index-block-seq
+          (compiler-backend-runtime-index-instr-seq index instrs)
+          blocks
+          (+ seq-index 1))])))
 
 (define (compiler-backend-runtime-index-functions
   [index : CompilerBackendRuntimeIndex]
@@ -41426,9 +42304,22 @@
               blocks)
             (box-get rest))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-runtime-index-functions
-        index
-        (compiler-ir-function-seq-to-list seq))]))
+      (compiler-backend-runtime-index-function-seq index seq 0)]))
+
+(define (compiler-backend-runtime-index-function-seq
+  [index : CompilerBackendRuntimeIndex]
+  [functions : CompilerIrFunctionSeq]
+  [seq-index : i64]) : CompilerBackendRuntimeIndex
+  (if (>= seq-index (compiler-ir-function-seq-count functions))
+    index
+    (match (compiler-ir-function-seq-ref functions seq-index)
+      [(CompilerIrFunction.Function name _ _ _ blocks)
+        (compiler-backend-runtime-index-function-seq
+          (compiler-backend-runtime-index-blocks
+            (compiler-backend-runtime-index-add-define index name)
+            blocks)
+          functions
+          (+ seq-index 1))])))
 
 (define (compiler-backend-runtime-index-externs
   [index : CompilerBackendRuntimeIndex]
@@ -46778,14 +47669,55 @@ tl_tlci_call_image_entry:
               plan
               program-index))])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-object-blocks
+      (compiler-backend-object-block-seq
         parts
         target
         function-symbol
         label-scope
-        (compiler-ir-block-seq-to-list seq)
+        seq
         plan
-        program-index)]))
+        program-index
+        0)]))
+
+(define (compiler-backend-object-block-seq
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [function-symbol : String]
+  [label-scope : String]
+  [blocks : CompilerIrBlockSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    parts
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label instrs)
+        (let
+          [block-label : String (compiler-backend-asm-label label-scope label)]
+          (compiler-backend-object-block-seq
+            (compiler-backend-object-instr-seq
+              (compiler-backend-object-add-text
+                (compiler-backend-object-symbol-local-section
+                  parts
+                  block-label
+                  (CompilerObjectSectionKind.Text)
+                  (CompilerObjectSymbolKind.Function))
+                (CompilerObjectX64Instr.Label block-label))
+              target
+              function-symbol
+              label-scope
+              label
+              instrs
+              plan
+              program-index
+              0)
+            target
+            function-symbol
+            label-scope
+            blocks
+            plan
+            program-index
+            (+ index 1)))])))
 
 (define (compiler-backend-object-functions
   [parts : CompilerBackendObjectParts]
@@ -46830,12 +47762,57 @@ tl_tlci_call_image_entry:
               plan
               program-index))])]
     [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-object-functions
+      (compiler-backend-object-function-seq
         parts
         target
-        (compiler-ir-function-seq-to-list seq)
+        seq
         plan
-        program-index)]))
+        program-index
+        0)]))
+
+(define (compiler-backend-object-function-seq
+  [parts : CompilerBackendObjectParts]
+  [target : CompilerBackendTarget]
+  [functions : CompilerIrFunctionSeq]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [index : i64]) : CompilerBackendObjectParts
+  (if (>= index (compiler-ir-function-seq-count functions))
+    parts
+    (match (compiler-ir-function-seq-ref functions index)
+      [(CompilerIrFunction.Function name params _ vars blocks)
+        (let
+          [symbol : String
+            (compiler-backend-function-symbol-index program-index name)]
+          [label-scope : String
+            (compiler-backend-function-label-scope program-index name)]
+          (compiler-backend-object-function-seq
+            (compiler-backend-object-blocks
+              (compiler-backend-object-param-spills
+                (compiler-backend-object-add-nonempty-bytes
+                  (compiler-backend-object-add-text
+                    (compiler-backend-object-symbol-export-section
+                      parts
+                      symbol
+                      (CompilerObjectSectionKind.Text)
+                      (CompilerObjectSymbolKind.Function))
+                    (CompilerObjectX64Instr.Label symbol))
+                  (compiler-backend-object-prologue-bytes
+                    (compiler-backend-frame-size vars)))
+                target
+                params
+                0)
+              target
+              symbol
+              label-scope
+              blocks
+              plan
+              program-index)
+            target
+            functions
+            plan
+            program-index
+            (+ index 1)))])))
 
 (define (compiler-backend-object-global-value
   [parts : CompilerBackendObjectParts]

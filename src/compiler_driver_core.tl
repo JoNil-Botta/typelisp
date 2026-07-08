@@ -589,7 +589,10 @@
         (ci.intern-profile-hit-diff-obj-value))
       (compiler-driver-profile-intern-line
         "miss"
-        (ci.intern-profile-miss-value)))))
+        (ci.intern-profile-miss-value))
+      (compiler-driver-profile-intern-line
+        "tc_name_id_calls"
+        (tc-name-id-call-value)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

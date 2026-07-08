@@ -23,6 +23,8 @@
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
 (import sym_i64_env)
+(cfg compile-profile (define tc-name-id-call-count : i64 0))
+(cfg compile-profile (define (tc-name-id-call-value) : i64 tc-name-id-call-count))
 
 ;; TcTypeEnv.Cache fields: ids map, values, unsafe flags, raw C fnptr flags,
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
@@ -2940,7 +2942,10 @@
   8)
 
 (define (tc-name-id [name : String]) : i64
-  (intern name))
+  (begin
+    (cfg compile-profile
+      (set! tc-name-id-call-count (+ tc-name-id-call-count 1)))
+    (intern name)))
 
 (define tc-marker-name-id-arena : i64
   0)

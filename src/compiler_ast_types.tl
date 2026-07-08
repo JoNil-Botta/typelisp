@@ -6,6 +6,7 @@
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import stdlib.array)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
@@ -3920,7 +3921,7 @@
   (ast-node-push (AstExpr.StructSet target field value)))
 
 (define (ast-expr-unquote-set-target-field-id) : i64
-  (ci.intern "__tl_unquote_set_target"))
+  cbi.compiler-builtin-id-fix-tl_unquote_set_target)
 
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExpr.WithEscape escape body)))
@@ -4588,7 +4589,7 @@
         (set! (struct-get v len) (+ index 1))))))
 
 (define (ast-decl-fallback) : AstDecl
-  (AstDecl.Module (ci.intern "<ast-decl-list-fallback>")))
+  (AstDecl.Module cbi.compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt))
 
 ;; Synthetic declaration helpers may still need a neutral source-span value;
 ;; this does not imply storage alongside every AstDeclList element.
@@ -6968,7 +6969,7 @@
       (let
         [args : AstPatternList (box-get args-box)]
         (and
-          (= name (ci.intern "Some"))
+          (= name cbi.compiler-builtin-id-fix-Some)
           (= (struct-get (& args) len) 1)
           (match (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))
             [(AstPattern.Tuple items-box)
@@ -6981,7 +6982,7 @@
                     0
                     (ast-pattern-fallback))
                     [(AstPattern.Binding bind-name)
-                      (= bind-name (ci.intern "item"))]
+                      (= bind-name cbi.compiler-builtin-id-fix-item)]
                     [_ false])
                   (match (ast-pattern-list-get
                     (& items)
@@ -7021,7 +7022,7 @@
                   (let
                     [init : AstExpr (ast-node-get init-box)]
                     (and
-                      (= name (ci.intern "x"))
+                      (= name cbi.compiler-builtin-id-fix-x)
                       (compiler-ast-begin-expr? init)))]
                 [_ false])
               (match body
@@ -7078,12 +7079,12 @@
         (ast-match-arm variant-pattern begin-expr)
         (ast-match-arm-list-new))]
     [match-expr : i64
-      (ast-expr-match (ast-node-push (AstExpr.Var (ci.intern "input"))) arms)]
+      (ast-expr-match (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-input)) arms)]
     [nested : i64
       (ast-expr-let
         bindings
         (ast-expr-if
-          (ast-node-push (AstExpr.Var (ci.intern "cond")))
+          (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-cond))
           match-expr
           begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))

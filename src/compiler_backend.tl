@@ -5,6 +5,7 @@
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_optimize.tl")
+(import "compiler_abi.tl")
 (import "compiler_regalloc.tl")
 (import compiler_parallel_move as pmove)
 (import stdlib.text_buf)
@@ -124,6 +125,11 @@
 (defenum ResultBackendReg
   (Ok String)
   (Err String))
+
+(define (compiler-backend-result-reg [reg : String] [message : String]) : ResultBackendReg
+  (if (string.eq reg "")
+    (ResultBackendReg.Err message)
+    (ResultBackendReg.Ok reg)))
 
 (defenum ResultBackendValue
   (Ok CompilerIrValue)
@@ -424,10 +430,13 @@
   (Linux)
   (Windows))
 
-(define (compiler-backend-regalloc-abi [target : CompilerBackendTarget]) : CompilerRegTargetAbi
+(define (compiler-backend-target-abi [target : CompilerBackendTarget]) : CompilerRegTargetAbi
   (match target
     [(CompilerBackendTarget.Linux) CompilerRegTargetAbi.Linux]
     [(CompilerBackendTarget.Windows) CompilerRegTargetAbi.Windows]))
+
+(define (compiler-backend-regalloc-abi [target : CompilerBackendTarget]) : CompilerRegTargetAbi
+  (compiler-backend-target-abi target))
 
 (defenum CompilerBackendMode
   (Scalar)
@@ -472,11 +481,7 @@
   false)
 
 (define (compiler-backend-set-current-fn-abi! [abi : CompilerRegTargetAbi]) : unit
-  (set!
-    compiler-backend-current-fn-win64
-    (match abi
-      [(CompilerRegTargetAbi.Windows) true]
-      [_ false])))
+  (set! compiler-backend-current-fn-win64 (compiler-abi-windows? abi)))
 
 (define (compiler-backend-set-current-fn-linux!) : unit
   (set! compiler-backend-current-fn-win64 false))
@@ -6435,26 +6440,14 @@
   (str_cat.str-cat ".L" (compiler-backend-asm-safe-symbol function) "_" label))
 
 (define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
-  (cond
-    [(= idx 0) (ResultBackendReg.Ok "%rdi")]
-    [(= idx 1) (ResultBackendReg.Ok "%rsi")]
-    [(= idx 2) (ResultBackendReg.Ok "%rdx")]
-    [(= idx 3) (ResultBackendReg.Ok "%rcx")]
-    [(= idx 4) (ResultBackendReg.Ok "%r8")]
-    [(= idx 5) (ResultBackendReg.Ok "%r9")]
-    [else (ResultBackendReg.Err "backend: too many call args")]))
+  (compiler-backend-result-reg
+    (compiler-abi-gp-arg-register CompilerRegTargetAbi.Linux idx)
+    "backend: too many call args"))
 
 (define (compiler-backend-float-arg-reg [idx : i64]) : ResultBackendReg
-  (cond
-    [(= idx 0) (ResultBackendReg.Ok "%xmm0")]
-    [(= idx 1) (ResultBackendReg.Ok "%xmm1")]
-    [(= idx 2) (ResultBackendReg.Ok "%xmm2")]
-    [(= idx 3) (ResultBackendReg.Ok "%xmm3")]
-    [(= idx 4) (ResultBackendReg.Ok "%xmm4")]
-    [(= idx 5) (ResultBackendReg.Ok "%xmm5")]
-    [(= idx 6) (ResultBackendReg.Ok "%xmm6")]
-    [(= idx 7) (ResultBackendReg.Ok "%xmm7")]
-    [else (ResultBackendReg.Err "backend: too many call args")]))
+  (compiler-backend-result-reg
+    (compiler-abi-float-arg-register CompilerRegTargetAbi.Linux idx)
+    "backend: too many call args"))
 
 (define (compiler-backend-emit-stack-sub
   [target : CompilerBackendTarget]
@@ -9832,16 +9825,8 @@
   [float-idx : i64]
   [position : i64]) : ResultBackendReg
   (if sse?
-    (compiler-backend-target-float-arg-reg
-      target
-      (if (compiler-backend-target-windows? target)
-        position
-        float-idx))
-    (compiler-backend-target-arg-reg
-      target
-      (if (compiler-backend-target-windows? target)
-        position
-        int-idx))))
+    (compiler-backend-target-float-arg-reg-for-banks target float-idx position)
+    (compiler-backend-target-arg-reg-for-banks target int-idx position)))
 
 (define (compiler-backend-emit-group-word-stack-arg
   [target : CompilerBackendTarget]
@@ -19821,17 +19806,13 @@
                   ":\n")))))))))
 
 (define (compiler-backend-call-register-count [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Linux) 6]
-    [(CompilerBackendTarget.Windows) 4]))
+  (compiler-abi-gp-arg-register-count (compiler-backend-target-abi target)))
 
 ;; Number of f64 argument registers. System V uses xmm0..xmm7 (8) and
 ;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
 (define (compiler-backend-call-float-register-count
   [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Linux) 8]
-    [(CompilerBackendTarget.Windows) 4]))
+  (compiler-abi-float-arg-register-count (compiler-backend-target-abi target)))
 
 (define (compiler-backend-emit-call-space-sub [space : i64]) : String
   (if (= space 0)
@@ -19853,13 +19834,12 @@
   [int-idx : i64]
   [float-idx : i64]
   [position : i64]) : bool
-  (match target
-    [(CompilerBackendTarget.Windows)
-      (>= position (compiler-backend-call-register-count target))]
-    [(CompilerBackendTarget.Linux)
-      (if is-float
-        (>= float-idx (compiler-backend-call-float-register-count target))
-        (>= int-idx (compiler-backend-call-register-count target)))]))
+  (compiler-abi-stack-call-arg-for-banks?
+    (compiler-backend-target-abi target)
+    is-float
+    int-idx
+    float-idx
+    position))
 
 (define (compiler-backend-param-type-list [params : CompilerIrParamList]) : AstTypeList
   (match (compiler-ir-param-list-force-cons params)
@@ -21164,7 +21144,11 @@
           (+ float-idx 1)
           float-idx)]
       [next-count : i64
-        (if (and is-float (< float-idx 8))
+        (if (and
+          is-float
+          (<
+            float-idx
+            (compiler-abi-float-arg-register-count CompilerRegTargetAbi.Linux)))
           (+ count 1)
           count)]
       (compiler-backend-varargs-linux-vector-count-at
@@ -21174,12 +21158,7 @@
         next-count))))
 
 (define (compiler-backend-windows-vararg-int-reg [position : i64]) : String
-  (cond
-    [(= position 0) "%rcx"]
-    [(= position 1) "%rdx"]
-    [(= position 2) "%r8"]
-    [(= position 3) "%r9"]
-    [else ""]))
+  (compiler-abi-gp-arg-register CompilerRegTargetAbi.Windows position))
 
 (define (compiler-backend-windows-vararg-dup-asm
   [types : AstTypeList]
@@ -21205,7 +21184,9 @@
       [reg : String (compiler-backend-windows-vararg-int-reg position)]
       (if (and
         (>= position fixed-count)
-        (< position 4)
+        (<
+          position
+          (compiler-abi-gp-arg-register-count CompilerRegTargetAbi.Windows))
         (compiler-backend-float-type? ty))
         (str_cat.str-cat
           "    movq %xmm"
@@ -22172,7 +22153,9 @@
           (+ arg-index 1)
           (+ position 2)
           ;; both halves fit in the 4 Windows int arg registers (rcx,rdx,r8,r9)?
-          (if (<= (+ position 2) 4)
+          (if (<=
+            (+ position 2)
+            (compiler-abi-gp-arg-register-count CompilerRegTargetAbi.Windows))
             stack-words
             (+ stack-words 2))
           program-index)
@@ -22181,7 +22164,9 @@
           types
           (+ arg-index 1)
           (+ position 1)
-          (if (< position 4)
+          (if (<
+            position
+            (compiler-abi-gp-arg-register-count CompilerRegTargetAbi.Windows))
             stack-words
             (+ stack-words 1))
           program-index)))))
@@ -23005,10 +22990,7 @@
   [program-index : CompilerBackendProgramIndex]) : bool
   (let
     [count : i64 (compiler-backend-call-args-count args)]
-    [limit : i64
-      (if (compiler-backend-target-windows? target)
-        4
-        6)]
+    [limit : i64 (compiler-backend-call-register-count target)]
     (and
       (> count 0)
       (<= count limit)
@@ -23213,16 +23195,11 @@
               (ResultCompilerBackend.Err message)])]
         [else
           (match (if is-float
-            (compiler-backend-target-float-arg-reg
+            (compiler-backend-target-float-arg-reg-for-banks
               target
-              (if (compiler-backend-target-windows? target)
-                position
-                float-idx))
-            (compiler-backend-target-arg-reg
-              target
-              (if (compiler-backend-target-windows? target)
-                position
-                int-idx)))
+              float-idx
+              position)
+            (compiler-backend-target-arg-reg-for-banks target int-idx position))
             [(ResultBackendReg.Ok reg)
               (match (if is-float
                 (compiler-backend-emit-load-float-value-with-plan
@@ -23476,16 +23453,11 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])
         (match (if is-float
-          (compiler-backend-target-float-arg-reg
+          (compiler-backend-target-float-arg-reg-for-banks
             target
-            (if (compiler-backend-target-windows? target)
-              position
-              float-idx))
-          (compiler-backend-target-arg-reg
-            target
-            (if (compiler-backend-target-windows? target)
-              position
-              int-idx)))
+            float-idx
+            position)
+          (compiler-backend-target-arg-reg-for-banks target int-idx position))
           [(ResultBackendReg.Ok reg)
             (match (if is-float
               (compiler-backend-emit-load-float-value-with-plan
@@ -35609,16 +35581,14 @@
                   [(ResultCompilerBackend.Err message)
                     (ResultCompilerBackend.Err message)])
                 (match (if is-float
-                  (compiler-backend-target-float-arg-reg
+                  (compiler-backend-target-float-arg-reg-for-banks
                     target
-                    (if (compiler-backend-target-windows? target)
-                      position
-                      float-idx))
-                  (compiler-backend-target-arg-reg
+                    float-idx
+                    position)
+                  (compiler-backend-target-arg-reg-for-banks
                     target
-                    (if (compiler-backend-target-windows? target)
-                      position
-                      int-idx)))
+                    int-idx
+                    position))
                   [(ResultBackendReg.Ok reg)
                     (match (compiler-backend-emit-param-spills-from
                       target
@@ -45733,44 +45703,52 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-target-arg-reg
   [target : CompilerBackendTarget]
   [idx : i64]) : ResultBackendReg
-  (match target
-    [(CompilerBackendTarget.Linux) (compiler-backend-arg-reg idx)]
-    [(CompilerBackendTarget.Windows)
-      (cond
-        [(= idx 0) (ResultBackendReg.Ok "%rcx")]
-        [(= idx 1) (ResultBackendReg.Ok "%rdx")]
-        [(= idx 2) (ResultBackendReg.Ok "%r8")]
-        [(= idx 3) (ResultBackendReg.Ok "%r9")]
-        [else (ResultBackendReg.Err "backend: too many call args")])]))
+  (compiler-backend-result-reg
+    (compiler-abi-gp-arg-register (compiler-backend-target-abi target) idx)
+    "backend: too many call args"))
 
 (define (compiler-backend-target-float-arg-reg
   [target : CompilerBackendTarget]
   [idx : i64]) : ResultBackendReg
-  (match target
-    [(CompilerBackendTarget.Linux) (compiler-backend-float-arg-reg idx)]
-    [(CompilerBackendTarget.Windows)
-      (cond
-        [(= idx 0) (ResultBackendReg.Ok "%xmm0")]
-        [(= idx 1) (ResultBackendReg.Ok "%xmm1")]
-        [(= idx 2) (ResultBackendReg.Ok "%xmm2")]
-        [(= idx 3) (ResultBackendReg.Ok "%xmm3")]
-        [else (ResultBackendReg.Err "backend: too many call args")])]))
+  (compiler-backend-result-reg
+    (compiler-abi-float-arg-register (compiler-backend-target-abi target) idx)
+    "backend: too many call args"))
+
+(define (compiler-backend-call-bank-index
+  [target : CompilerBackendTarget]
+  [bank-idx : i64]
+  [position : i64]) : i64
+  (if (compiler-abi-arg-banks-independent? (compiler-backend-target-abi target))
+    bank-idx
+    position))
+
+(define (compiler-backend-target-arg-reg-for-banks
+  [target : CompilerBackendTarget]
+  [int-idx : i64]
+  [position : i64]) : ResultBackendReg
+  (compiler-backend-target-arg-reg
+    target
+    (compiler-backend-call-bank-index target int-idx position)))
+
+(define (compiler-backend-target-float-arg-reg-for-banks
+  [target : CompilerBackendTarget]
+  [float-idx : i64]
+  [position : i64]) : ResultBackendReg
+  (compiler-backend-target-float-arg-reg
+    target
+    (compiler-backend-call-bank-index target float-idx position)))
 
 ;; Caller-reserved outgoing shadow space in bytes: none on System V, 32 on
 ;; Windows x64.
 (define (compiler-backend-outgoing-shadow-space
   [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Linux) 0]
-    [(CompilerBackendTarget.Windows) 32]))
+  (compiler-abi-outgoing-shadow-space (compiler-backend-target-abi target)))
 
 ;; Program entry section and global symbol. Freestanding Linux links the
 ;; backend-owned `_tl_start`; CRT entry mode links `main` through the C runtime.
 ;; Windows links `main` through the CRT.
 (define (compiler-backend-target-linux? [target : CompilerBackendTarget]) : bool
-  (match target
-    [(CompilerBackendTarget.Linux) true]
-    [(CompilerBackendTarget.Windows) false]))
+  (compiler-abi-linux? (compiler-backend-target-abi target)))
 
 (define (compiler-backend-target-entry-text-with-crt
   [target : CompilerBackendTarget]
@@ -45871,9 +45849,7 @@ tl_tlci_call_image_entry:
     [(CompilerBackendTarget.Windows) ""]))
 
 (define (compiler-backend-target-windows? [target : CompilerBackendTarget]) : bool
-  (match target
-    [(CompilerBackendTarget.Linux) false]
-    [(CompilerBackendTarget.Windows) true]))
+  (compiler-abi-windows? (compiler-backend-target-abi target)))
 
 ;; All runtime helpers the backend can be asked to emit now have a Windows
 ;; variant (region mark/reset and the env-var/env-path helpers were the last
@@ -47486,9 +47462,7 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-object-call-reg-count
   [target : CompilerBackendTarget]) : i64
-  (match target
-    [(CompilerBackendTarget.Linux) 6]
-    [(CompilerBackendTarget.Windows) 4]))
+  (compiler-backend-call-register-count target))
 
 (define (compiler-backend-object-call-stack-word-count
   [target : CompilerBackendTarget]

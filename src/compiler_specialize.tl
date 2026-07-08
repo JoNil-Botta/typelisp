@@ -8,6 +8,7 @@
 (import stdlib.hashmap)
 (import (hashmap String i64) as spec_string_i64_map)
 (import (hashmap String String) as spec_string_string_map)
+(import compiler_builtin_ids as cbi)
 
 (defstruct GenRegistry
   (index spec_string_i64_map.Map)
@@ -234,9 +235,11 @@
           result)))))
 
 (define (spec-type-kind? [ty : AstType]) : bool
-  (match ty
-    [(AstType.Var name) (= name (intern "type"))]
-    [_ false]))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (match ty
+      [(AstType.Var name) (= name cbi.compiler-builtin-id-fix-type)]
+      [_ false])))
 
 (define (spec-param-list-has-comptime? [params : AstParamList]) : bool
   (spec-param-list-has-comptime-at? (& params) 0))
@@ -1634,7 +1637,9 @@
 (define (spec-value-runtime-type-matches?
   [value : CompilerCtfeValue]
   [ty : AstType]) : bool
-  (match value
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (match value
     [(CompilerCtfeValue.I64 _) (ctfe-type-eq ty (AstType.I64))]
     [(CompilerCtfeValue.F64 _) (ctfe-type-eq ty (AstType.F64))]
     [(CompilerCtfeValue.F32 _) (ctfe-type-eq ty (AstType.F32))]
@@ -1646,21 +1651,21 @@
     [(CompilerCtfeValue.Expr _ _) (ctfe-type-eq ty (AstType.Expr))]
     [(CompilerCtfeValue.ExprList _) (ctfe-type-eq ty (AstType.ExprList))]
     [(CompilerCtfeValue.ExprClause _)
-      (ctfe-type-eq ty (AstType.Var (intern "ExprClause")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-ExprClause))]
     [(CompilerCtfeValue.ExprClauseList _)
-      (ctfe-type-eq ty (AstType.Var (intern "ExprClauseList")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-ExprClauseList))]
     [(CompilerCtfeValue.ExprBindingClause _)
-      (ctfe-type-eq ty (AstType.Var (intern "ExprBindingClause")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClause))]
     [(CompilerCtfeValue.ExprBindingClauseList _)
-      (ctfe-type-eq ty (AstType.Var (intern "ExprBindingClauseList")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))]
     [(CompilerCtfeValue.Pattern _)
-      (ctfe-type-eq ty (AstType.Var (intern "Pattern")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-Pattern))]
     [(CompilerCtfeValue.PatternList _)
-      (ctfe-type-eq ty (AstType.Var (intern "PatternList")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-PatternList))]
     [(CompilerCtfeValue.MatchArm _)
-      (ctfe-type-eq ty (AstType.Var (intern "MatchArm")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-MatchArm))]
     [(CompilerCtfeValue.MatchArmList _)
-      (ctfe-type-eq ty (AstType.Var (intern "MatchArmList")))]
+      (ctfe-type-eq ty (AstType.Var cbi.compiler-builtin-id-fix-MatchArmList))]
     [(CompilerCtfeValue.TypeInfo _) false]
     [(CompilerCtfeValue.TypeInfoBox _) false]
     [(CompilerCtfeValue.TypeInfoList _) false]
@@ -1669,7 +1674,7 @@
     [(CompilerCtfeValue.TypeVariantPayload _) false]
     [(CompilerCtfeValue.TypeVariantPayloadList _) false]
     [(CompilerCtfeValue.TypeVariant _ _) false]
-    [(CompilerCtfeValue.TypeVariantList _) false]))
+    [(CompilerCtfeValue.TypeVariantList _) false])))
 
 (define (spec-value-type-label [value : CompilerCtfeValue]) : String
   (match value

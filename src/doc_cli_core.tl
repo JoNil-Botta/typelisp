@@ -14,7 +14,6 @@
 (import "doc_html.tl")
 (import "doc_test.tl")
 (import "doc_expand.tl")
-(import "doc_string_vec_bridge.tl")
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import stdlib.string)
@@ -178,7 +177,7 @@
   (match (compiler-load-file-with-paths-and-roots
     input-path
     (sym_i64_env.sym-i64-empty)
-    (doc-string-vec-to-legacy (& stdlib-roots)))
+    stdlib-roots)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (doc-generated-modules-from-source-paths
         (ast-decl-path-cons input-path paths)

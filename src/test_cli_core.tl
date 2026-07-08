@@ -13,7 +13,6 @@
 (import (hashmap String i64) as tltest_name_map)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
-(import "cli_string_vec_bridge.tl")
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
 (import "compiler_load.tl")
@@ -79,9 +78,6 @@
 
 (define (tltest-invalid-opt-level [value : String]) : String
   (str_cat.str-cat "test: invalid --opt-level " value "; expected 0, 1, or 2"))
-
-(define (tltest-roots-to-legacy [roots : (& roots cli_svec.Vec)]) : vector.StringVec
-  (cli-string-vec-to-legacy roots))
 
 (define (tltest-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -1935,8 +1931,7 @@
             tests)
             [(InlineRuntimeDecls.Decls pruned-decls pruned-paths)
               (let
-                [legacy-roots : vector.StringVec
-                  (tltest-roots-to-legacy (& roots))]
+                [legacy-roots : cli_svec.Vec roots]
                 (match (typecheck-compiler-program-with-paths-cache
                   (tltest-inline-typecheck-program pruned-decls tests)
                   (tltest-inline-typecheck-paths pruned-paths tests)
@@ -1961,9 +1956,7 @@
     [stdlib-path : String
       (if (compiler-load-stdlib-import? normalized)
         normalized
-        (compiler-load-stdlib-owned-path-from-roots
-          normalized
-          (tltest-roots-to-legacy (& roots))))]
+        (compiler-load-stdlib-owned-path-from-roots normalized roots))]
     (compiler-load-stdlib-import? stdlib-path)))
 
 (define (tltest-inline-clear-load-only-caches!) : unit
@@ -1994,13 +1987,13 @@
   [cfgs : sym_i64_env.SymI64Env]
   [cache-scope-prefix : String]) : i64
   (if (or
-    (tltest-inline-stdlib-source? source roots)
+    (tltest-inline-stdlib-source? source (clone roots))
     (not (io.file-exists? source))
     (not (tltest-source-has-inline-tests? source)))
     0
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
-      [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+      [legacy-roots : cli_svec.Vec (clone roots)]
       (begin
         (tltest-inline-reset-load-state!)
         (match (compiler-driver-load-file-with-runtime
@@ -2033,7 +2026,7 @@
   (if (tltest-source-has-inline-tests? source)
     (let
       [test-cfgs : sym_i64_env.SymI64Env (tltest-inline-typecheck-cfgs cfgs)]
-      [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+      [legacy-roots : cli_svec.Vec (clone roots)]
       (match (compiler-driver-load-package-file-with-runtime-owned-cfg
         source
         legacy-roots
@@ -2934,7 +2927,7 @@
   [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : bool
   (let
-    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    [legacy-roots : cli_svec.Vec (clone roots)]
     (match (typecheck-compiler-program-with-paths-cache
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target harness-paths)
@@ -2972,7 +2965,7 @@
   [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : bool
   (let
-    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    [legacy-roots : cli_svec.Vec (clone roots)]
     (match (lower-compiler-program-with-decl-paths-mode-cache
       source
       (tltest-program-with-print-runtime program target)
@@ -3034,7 +3027,7 @@
           (io.write-file source (tltest-nested-module-macro-vector-source))
           (match (compiler-driver-load-file-with-runtime
             source
-            (tltest-roots-to-legacy (& roots))
+            roots
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err _) false]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -3110,7 +3103,7 @@
           (io.write-file source (tltest-nested-generated-result-helper-source))
           (match (compiler-driver-load-file-with-runtime
             source
-            (tltest-roots-to-legacy (& roots))
+            roots
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err _) false]
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -3154,7 +3147,7 @@
         (begin
           (io.write-file source "(cfg test (test package-cfg-inline unit))\n")
           (let
-            [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+            [legacy-roots : cli_svec.Vec (clone roots)]
             (match (compiler-driver-load-package-file-with-runtime-owned-cfg
               source
               legacy-roots
@@ -3202,7 +3195,7 @@
 ")
           (match (compiler-driver-load-file-with-runtime
             source
-            (tltest-roots-to-legacy (& roots))
+            roots
             (tltest-cfgs target))
             [(ResultCompilerLoadWithPaths.Err diag)
               (begin
@@ -3214,7 +3207,7 @@
                 (ast-program decls)
                 paths
                 (CompilerLowerMode.Scalar)
-                (tltest-roots-to-legacy (& roots))
+                roots
                 (tltest-typecheck-cache-scope roots target))
                 [(ResultCompilerLower.Ok _ _) true]
                 [(ResultCompilerLower.Err diag)
@@ -3236,7 +3229,7 @@
   [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]) : String
   (let
-    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    [legacy-roots : cli_svec.Vec (clone roots)]
     (compiler-typecheck-prefix-cache-scope
       "typecheck-prefix-test-cli"
       legacy-roots
@@ -3249,7 +3242,7 @@
   [target : CompilerBackendTarget]
   [roots : cli_svec.Vec]) : i64
   (let
-    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    [legacy-roots : cli_svec.Vec (clone roots)]
     (match (typecheck-compiler-program-with-paths-cache
       (tltest-program-with-print-runtime program target)
       (tltest-paths-with-print-runtime target paths)
@@ -3413,7 +3406,7 @@
     [asm-path : String (source-tool-asm-path temp-dir source)]
     [obj-path : String (source-tool-obj-path temp-dir source target)]
     [bin-path : String (source-tool-temp-bin-path temp-dir source target)]
-    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    [legacy-roots : cli_svec.Vec (clone roots)]
     (match (lower-compiler-program-with-decl-paths-mode-cache
       entry-path
       program
@@ -3536,7 +3529,7 @@
   [roots : cli_svec.Vec]
   [target : CompilerBackendTarget]) : i64
   (let
-    [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+    [legacy-roots : cli_svec.Vec (clone roots)]
     (match (typecheck-compiler-program-with-paths-cache
       (ast-program decls)
       paths
@@ -3890,7 +3883,7 @@
     (io.print-string (tltest-package-integration-line source))
     (if (tltest-decls-have-main? decls)
       (let
-        [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+        [legacy-roots : cli_svec.Vec (clone roots)]
         (match (typecheck-compiler-program-with-paths-cache
           (ast-program decls)
           paths
@@ -3947,7 +3940,7 @@
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (match (compiler-driver-load-package-file-with-runtime-owned-cfg
     source
-    (tltest-roots-to-legacy (& roots))
+    roots
     manifest-dir
     package-owner
     deps
@@ -4015,7 +4008,7 @@
   [deps : CompilerPkgDeps]) : ResultTestPackageTotals
   (if (tltest-source-has-inline-tests? source)
     (let
-      [legacy-roots : vector.StringVec (tltest-roots-to-legacy (& roots))]
+      [legacy-roots : cli_svec.Vec (clone roots)]
       (match (compiler-driver-load-package-file-with-runtime-owned-cfg
         source
         legacy-roots
@@ -4359,7 +4352,7 @@
   [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
   (match (compiler-driver-load-file-with-runtime
     source
-    (tltest-roots-to-legacy (& roots))
+    roots
     (tltest-cfgs backend-target))
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (tltest-check-file-loaded source decls paths backend-target roots)]
@@ -4478,7 +4471,7 @@
         [(ResultSourceToolTarget.Ok backend-target)
           (match (compiler-driver-load-file-with-runtime
             source
-            (tltest-roots-to-legacy (& roots))
+            roots
             (tltest-cfgs backend-target))
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (match (tltest-build-harness source decls paths)

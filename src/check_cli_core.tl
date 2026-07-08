@@ -12,7 +12,6 @@
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import "test_cli_core.tl")
-(import "cli_string_vec_bridge.tl")
 (import stdlib.string)
 
 (defenum SelfhostCheckConfig
@@ -144,9 +143,7 @@
 (define (selfhost-check-file
   [input-path : String]
   [stdlib-roots : cli_svec.Vec]) : i64
-  (match (compiler-check-file-with-roots
-    input-path
-    (cli-string-vec-to-legacy (& stdlib-roots)))
+  (match (compiler-check-file-with-roots input-path stdlib-roots)
     [(ResultCompilerCheck.Ok _)
       (let
         [inline-test-status : i64
@@ -200,7 +197,7 @@
         [_reset-file-state : unit (compiler-driver-reset-file-state!)]
         (match (compiler-check-package-entry-file-with-roots
           entry-path
-          (cli-string-vec-to-legacy (& stdlib-roots))
+          stdlib-roots
           manifest-dir
           (struct-get manifest deps)
           emit-entry)

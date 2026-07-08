@@ -9,7 +9,6 @@
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as lint_svec)
-(import "cli_string_vec_bridge.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "lint_core.tl")
@@ -651,10 +650,7 @@
   (if (lint-program-has-unused-unsafe-candidate? program)
     (begin
       (tc-unused-unsafe-tracking-reset! path)
-      (match (compiler-check-source-with-roots
-        path
-        source
-        (cli-string-vec-to-legacy (& stdlib-roots)))
+      (match (compiler-check-source-with-roots path source stdlib-roots)
         [(ResultCompilerCheck.Ok _)
           (let
             [findings : LintFindings
@@ -1985,9 +1981,7 @@
     [stdlib-path : String
       (if (compiler-load-stdlib-import? normalized)
         normalized
-        (compiler-load-stdlib-owned-path-from-roots
-          normalized
-          (cli-string-vec-to-legacy (& stdlib-roots))))]
+        (compiler-load-stdlib-owned-path-from-roots normalized stdlib-roots))]
     (compiler-load-stdlib-import? stdlib-path)))
 
 (define (selfhost-lint-package-dead-source-path?
@@ -2000,10 +1994,10 @@
     (not (selfhost-lint-package-stdlib-source? path stdlib-roots))))
 
 (define (selfhost-lint-package-dead-source-insert
-  [items : vector.StringVec]
+  [items : lint_svec.Vec]
   [path : String]
   [sources : PackageSourceList]
-  [stdlib-roots : lint_svec.Vec]) : vector.StringVec
+  [stdlib-roots : lint_svec.Vec]) : lint_svec.Vec
   (if (selfhost-lint-package-dead-source-path? path sources stdlib-roots)
     (package-source-vec-insert items path)
     items))
@@ -2012,13 +2006,13 @@
   [paths : AstDeclPathList]
   [sources : PackageSourceList]
   [stdlib-roots : lint_svec.Vec]
-  [items : vector.StringVec]) : PackageSourceList
+  [items : lint_svec.Vec]) : PackageSourceList
   (match (ast-decl-path-list-step paths)
     [(AstDeclPathListStep.Nil) (package-source-list-from-vec items)]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
-        [next-items : vector.StringVec
+        [next-items : lint_svec.Vec
           (selfhost-lint-package-dead-source-insert
             items
             path
@@ -2040,7 +2034,7 @@
     sources
     stdlib-roots
     (selfhost-lint-package-dead-source-insert
-      (vector.string-vec-new)
+      (lint_svec.new)
       entry-path
       sources
       stdlib-roots)))
@@ -2059,7 +2053,7 @@
         [_reset-file-state : unit (selfhost-lint-reset-file-state!)]
         (match (compiler-load-package-file-with-runtime-cfg
           entry-path
-          (cli-string-vec-to-legacy (& stdlib-roots))
+          stdlib-roots
           manifest-dir
           (struct-get manifest deps)
           true

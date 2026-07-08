@@ -14,7 +14,6 @@
 (import "compiler_load.tl")
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
-(import "cli_string_vec_bridge.tl")
 (import "lsp_vector_families.tl")
 (import stdlib.string)
 (import token)
@@ -1315,10 +1314,7 @@
       (let
         [lint-diags : json.JsonList
           (lsp-lint-diagnostics path text stdlib-roots)]
-        (match (compiler-check-source-with-roots
-          path
-          text
-          (cli-string-vec-to-legacy (& stdlib-roots)))
+        (match (compiler-check-source-with-roots path text stdlib-roots)
           [(ResultCompilerCheck.Ok _)
             (begin
               (lsp-publish-diagnostics uri lint-diags)
@@ -1888,7 +1884,7 @@
     path
     (compiler-load-dirname path)
     module-name
-    (cli-string-vec-to-legacy (& stdlib-roots)))
+    stdlib-roots)
     [(ResultPkgResolve.Ok resolved) (compiler-load-normalize-path resolved)]
     [(ResultPkgResolve.Err _) module-name]))
 
@@ -1919,7 +1915,7 @@
                   (compiler-load-resolve-import-with-roots
                     path
                     spec
-                    (cli-string-vec-to-legacy (& stdlib-roots))))]
+                    stdlib-roots))]
               (LspImportTarget.Found resolved content-start content-end))]
           [(lsp-ident-char? c)
             (let
@@ -2098,7 +2094,7 @@
           (compiler-load-resolve-import-with-roots
             start-path
             "stdlib/core_macros.tl"
-            (cli-string-vec-to-legacy (& stdlib-roots)))))]
+            stdlib-roots)))]
     [set : LspModuleSet
       (lsp-module-set-add-imports start-path start-text stdlib-roots seeded)]
     [i : i64 0]
@@ -2551,10 +2547,7 @@
         [end-line : i64 (lsp-inlay-range-line range "end" 1000000000)]
         (begin
           (tc-inlay-hints-enable!)
-          (match (compiler-check-source-with-roots
-            path
-            text
-            (cli-string-vec-to-legacy (& stdlib-roots)))
+          (match (compiler-check-source-with-roots path text stdlib-roots)
             [(ResultCompilerCheck.Ok _) unit]
             [(ResultCompilerCheck.Err _) unit])
           (let
@@ -4948,10 +4941,7 @@
   [stdlib-roots : lsp_svec.Vec]) : LspCheckCache
   (match (lsp-validate-forms-result text)
     [(LspValidationResult.Valid)
-      (match (compiler-check-source-with-roots
-        path
-        text
-        (cli-string-vec-to-legacy (& stdlib-roots)))
+      (match (compiler-check-source-with-roots path text stdlib-roots)
         [(ResultCompilerCheck.Ok _) LspCheckCacheOk]
         [(ResultCompilerCheck.Err diag)
           (LspCheckCacheErr (compiler-diagnostic-message (box-get diag)))])]
@@ -5089,10 +5079,7 @@
               [col1 : i64 (+ char0 1)]
               (begin
                 (tc-inlay-hints-enable!)
-                (match (compiler-check-source-with-roots
-                  path
-                  text
-                  (cli-string-vec-to-legacy (& stdlib-roots)))
+                (match (compiler-check-source-with-roots path text stdlib-roots)
                   [(ResultCompilerCheck.Ok _) unit]
                   [(ResultCompilerCheck.Err _) unit])
                 (let

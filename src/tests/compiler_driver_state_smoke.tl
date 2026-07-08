@@ -1,6 +1,7 @@
 (import stdlib.string)
 (import stdlib.io)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector String) as svec)
 (import "../compiler_driver_core.tl")
 (import "../compiler_lower.tl")
 (import "../compiler_clone.tl")
@@ -911,7 +912,7 @@
           (match (typecheck-compiler-program-with-paths-cache-and-pools
             program
             (ast-decl-path-list-new)
-            (svec.string-vec-new)
+            (svec.new)
             (tc-prefix-default-cache-scope)
             pools)
             [(ResultCompilerTypecheck.Ok _)
@@ -2048,11 +2049,11 @@
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new-for-compile)]
     [state-b : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items "stdlib"))
+          (svec.push (&mut items) "stdlib")
           items))]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -2107,7 +2108,7 @@
 (define (compiler-driver-state-smoke-compile-entry
   [state : CompilerDriverState]
   [input-path : String]
-  [stdlib-roots : svec.StringVec]) : bool
+  [stdlib-roots : svec.Vec]) : bool
   (let
     [decoy-state : CompilerDriverState (compiler-driver-state-new)]
     (begin
@@ -2136,11 +2137,11 @@
     [state : CompilerDriverState
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-new-for-compile))]
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items "stdlib"))
+          (svec.push (&mut items) "stdlib")
           items))]
     (begin
       (compiler-load-session-cache-disable-for-test!)
@@ -2184,11 +2185,11 @@
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-session-cache-enable
           (compiler-driver-state-new-for-compile)))]
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items "stdlib"))
+          (svec.push (&mut items) "stdlib")
           items))]
     [ok : bool true]
     (begin
@@ -2213,11 +2214,11 @@
     [state : CompilerDriverState
       (compiler-driver-state-session-program-cache-disable
         (compiler-driver-state-new-for-compile))]
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items "stdlib"))
+          (svec.push (&mut items) "stdlib")
           items))]
     [ok : bool true]
     (begin
@@ -2275,11 +2276,11 @@
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items "stdlib"))
+          (svec.push (&mut items) "stdlib")
           items))]
     [input-path : String
       (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
@@ -2317,7 +2318,7 @@
 
 (define (compiler-driver-state-smoke-lower-loaded-with-pools
   [input-path : String]
-  [roots : svec.StringVec]
+  [roots : svec.Vec]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultCompilerLower
@@ -2332,7 +2333,7 @@
 
 (define (compiler-driver-state-smoke-lower-expanded-loaded-with-pools
   [input-path : String]
-  [roots : svec.StringVec]
+  [roots : svec.Vec]
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]) : ResultCompilerLower
@@ -2347,11 +2348,11 @@
 
 (define (compiler-driver-state-smoke-lower-loaded-twice-status) : i64
   (let
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items "stdlib"))
+          (svec.push (&mut items) "stdlib")
           items))]
     [input-path : String
       (compiler-driver-state-smoke-double-lower-fixture-path)]

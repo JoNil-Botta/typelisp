@@ -25,7 +25,6 @@
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
-(import "cli_string_vec_bridge.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
@@ -890,7 +889,7 @@
                       state
                       input-path
                       target
-                      (cli-string-vec-to-legacy (& stdlib-roots))
+                      stdlib-roots
                       opt-level
                       backend-mode
                       emit-cfgs)
@@ -902,7 +901,7 @@
                         input-path
                         target
                         true
-                        (cli-string-vec-to-legacy (& stdlib-roots))
+                        stdlib-roots
                         opt-level
                         backend-mode
                         emit-cfgs)
@@ -913,7 +912,7 @@
                         input-path
                         target
                         true
-                        (cli-string-vec-to-legacy (& stdlib-roots))
+                        stdlib-roots
                         opt-level
                         backend-mode
                         emit-cfgs)
@@ -1303,9 +1302,7 @@
             true)])]
     [(CompileCliAction.Batch config) (compile-cli-run-batch config)]
     [(CompileCliAction.Check input-path stdlib-roots)
-      (match (compiler-check-file-with-roots
-        input-path
-        (cli-string-vec-to-legacy (& stdlib-roots)))
+      (match (compiler-check-file-with-roots input-path stdlib-roots)
         [(ResultCompilerCheck.Ok _)
           (let
             [inline-test-status : i64

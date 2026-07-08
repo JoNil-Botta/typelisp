@@ -38486,7 +38486,7 @@
           text)))))
 
 ;; ============================================================================
-;; GAP5: post-emission dead frame-store sweep (Linux FPO text path).
+;; GAP5: post-emission dead frame-store sweep.
 ;;
 ;; M-B elided IR-dead call-result stores, but a store whose every READ was
 ;; register-forwarded by the owner-map peephole (or that was asm-dead all
@@ -38494,10 +38494,12 @@
 ;; elided self-move) is invisible at IR level. This pass runs on the FINAL
 ;; program text (after the peephole fixpoint) and deletes
 ;; `movq %rX|$imm, N(%rsp)` stores to LOCAL VAR-REGION frame slots that are
-;; never read anywhere in the function body.
+;; never read anywhere in the function body. It participates for Linux FPO
+;; functions and for Win64 rbp-framed functions whose negative frame slots were
+;; successfully rebased to rsp-relative text.
 ;;
 ;; Soundness ledger (conservative-by-class; when in doubt the store stays):
-;;  * Only functions that passed the FPO rsp-rebase audit participate.
+;;  * Only functions that passed an rsp-rebase audit participate.
 ;;    emit-function records (symbol, lo, hi, disp) into POINTER-FREE global
 ;;    tables (an `(Array String)` global dangles by peephole time -- the
 ;;    carry-safe lesson) where [lo, hi] is the VAR-REGION slot-start span in
@@ -38522,18 +38524,25 @@
 ;;    covering two slots protects both. Presence-of-a-read ANYWHERE keeps all
 ;;    stores to the slot: no text-level flow analysis, so loops, shared
 ;;    epilogues and jump-table arms are covered by the whole-function scan.
+;;  * Win64 keeps the rbp frame for SEH unwind (`pushq %rbp; movq %rsp,%rbp;
+;;    subq $frame,%rsp`, `.seh_*` directives, `leave`). The unwind metadata
+;;    describes prologue actions only; it does not expose local var slots to
+;;    the runtime. For Win64 records the scanner therefore admits the rbp-set
+;;    prologue line, terminal CSR pop-run `leaq K(%rsp),%rsp` where K is below
+;;    the var span, and `leave`. Any non-terminal untracked rsp mutation still
+;;    disables the function.
 ;;  * Address-taken slots: `leaq N(%rsp)` poisons every slot at canonical
 ;;    >= N-delta (an object pointer only ever indexes upward: gep field and
 ;;    element offsets are non-negative). Indexed rsp addressing "(%rsp,",
 ;;    popq with a frame operand (post-increment addressing), bare %rsp
-;;    outside a tracked subq/addq dst (address escape), any untracked rsp
-;;    write, "(%rbp" and `leave` each disable the WHOLE function.
+;;    outside a tracked subq/addq dst or the proven Win64 prologue/epilogue
+;;    shapes, and any other untracked rsp write each disable the WHOLE function.
 ;;  * Only whole `movq SRC, N(%rsp)` lines are removed, SRC a single %reg
 ;;    (not %rsp) or $imm token: a pure 8-byte store to a private, never-read,
 ;;    never-address-taken local slot has no observable effect (the runtime
 ;;    has no GC stack walk -- the M-B argument).
 ;; Driven from compiler-backend-peephole-asm (all text-emission paths); with
-;; an empty metadata table (Windows, unit tests on hand-written text) the
+;; an empty metadata table (hand-written text or raw peephole callers) the
 ;; pass returns its input unchanged.
 (define compiler-backend-sweep-capacity : i64
   131072)
@@ -38548,6 +38557,8 @@
 (define compiler-backend-sweep-hi-arr : (Array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
 (define compiler-backend-sweep-disp-arr : (Array i64)
+  (array.make-array i64 compiler-backend-sweep-capacity))
+(define compiler-backend-sweep-win64-arr : (Array i64)
   (array.make-array i64 compiler-backend-sweep-capacity))
 
 ;; Emergency-slot window [em-lo, em-hi] in the same canonical delta-0
@@ -38597,7 +38608,8 @@
   [hi : i64]
   [disp : i64]
   [em-lo : i64]
-  [em-hi : i64]) : unit
+  [em-hi : i64]
+  [win64 : bool]) : unit
   (let
     [len : i64 (string.string-length symbol)]
     [sdata : (Ptr u8)
@@ -38637,6 +38649,12 @@
           (array-set! compiler-backend-sweep-lo-arr idx lo)
           (array-set! compiler-backend-sweep-hi-arr idx hi)
           (array-set! compiler-backend-sweep-disp-arr idx disp)
+          (array-set!
+            compiler-backend-sweep-win64-arr
+            idx
+            (if win64
+              1
+              0))
           (array-set! compiler-backend-sweep-em-lo-arr idx em-lo)
           (array-set! compiler-backend-sweep-em-hi-arr idx em-hi)
           (set! compiler-backend-sweep-sym-bytes-count (+ start len))
@@ -38688,7 +38706,37 @@
       (- bias-neg 8)
       disp
       em-lo
-      em-hi)))
+      em-hi
+      false)))
+
+;; Compute [lo, hi] and disp for one Win64 rbp-framed function whose negative
+;; rbp frame refs were successfully rebased to rsp-relative text. The body sees
+;; rsp at rbp-frame, while the scanner starts before the prologue:
+;; pushq %rbp (+8) plus subq $frame means disp = frame + 8.
+(define (compiler-backend-sweep-record-win64!
+  [symbol : String]
+  [frame : i64]
+  [slot-vars : i64]
+  [em-slot-offset : i64]
+  [em-used-count : i64]
+  [outgoing : i64]) : unit
+  (let
+    [em-hi : i64
+      (if (and (> em-used-count 0) (= outgoing 0))
+        (+ frame em-slot-offset)
+        0)]
+    [em-lo : i64
+      (if (and (> em-used-count 0) (= outgoing 0))
+        (- em-hi (* 8 (- em-used-count 1)))
+        8)]
+    (compiler-backend-sweep-record!
+      symbol
+      (- frame (* 8 slot-vars))
+      (- frame 8)
+      (+ frame 8)
+      em-lo
+      em-hi
+      true)))
 
 ;; Append `v` at `count` into a growable i64 scratch array; returns the
 ;; (possibly reallocated) array. The caller advances its own count.
@@ -38898,6 +38946,50 @@
                                       de)
                                     delta))))))))))))))))))
 
+;; If line [m,end) is exactly `leaq N(%rsp), %rsp`, return the canonical N-delta.
+;; Win64 uses this only for terminal CSR pop-run epilogues; callers still check
+;; that the target is outside the local var span before admitting it.
+(define (compiler-backend-sweep-rsp-leaq-to-rsp-c
+  [data : (Ptr u8)]
+  [m : i64]
+  [te : i64]
+  [end : i64]
+  [delta : i64]) : i64
+  (let
+    [none : i64 compiler-backend-sweep-no-candidate]
+    ;; lint-allow: nested-if-ladder
+    (if (not (compiler-backend-peephole-range-eq? data m te "leaq"))
+      none
+      (if (or (>= (+ te 1) end) (< (- end te) 14))
+        none
+        (if (not
+          (compiler-backend-peephole-range-eq? data (- end 6) end ", %rsp"))
+          none
+          (let
+            [c : i64 (- end 6)]
+            (if (or
+              (< c (+ te 7))
+              (not (= (compiler-backend-peephole-byte-at data (- c 1)) 41))
+              (not
+                (compiler-backend-peephole-range-eq?
+                  data
+                  (- c 6)
+                  (- c 1)
+                  "(%rsp")))
+              none
+              (let
+                [ds : i64 (+ te 1)]
+                [de : i64 (- c 6)]
+                (if (>= ds de)
+                  none
+                  (let
+                    [ks : i64 (compiler-backend-rsp-rebase-int-start data m de)]
+                    (if (not (= ks ds))
+                      none
+                      (-
+                        (compiler-backend-rsp-rebase-parse-int data ks de)
+                        delta))))))))))))
+
 ;; Sweep one function region [rstart,rend): collect reads/candidates/poison
 ;; state in pass 1, then append the region with dead candidate stores dropped.
 (define (compiler-backend-sweep-region
@@ -38910,11 +39002,13 @@
   [hi : i64]
   [disp : i64]
   [em-lo : i64]
-  [em-hi : i64]) : text_buf.TextBuf
+  [em-hi : i64]
+  [win64 : bool]) : text_buf.TextBuf
   (let
     [buf : text_buf.TextBuf out]
     [delta : i64 (- 0 disp)]
     [sweepable : bool true]
+    [win64-tail : bool false]
     [watermark : i64 4611686018427387904]
     [none : i64 compiler-backend-sweep-no-candidate]
     [reads-lo : (Array i64) (make-array i64 64)]
@@ -38939,7 +39033,9 @@
               unit
               (if (= (compiler-backend-peephole-byte-at data (- end 1)) 58)
                 ;; label: only reachable at delta 0 (the audit proved it).
-                (set! delta 0)
+                (if win64-tail
+                  (set! sweepable false)
+                  (set! delta 0))
                 (let
                   [b0 : i64 (compiler-backend-peephole-byte-at data m)]
                   (if (or (= b0 46) (= b0 35))
@@ -38962,6 +39058,12 @@
                           (compiler-backend-peephole-range-eq? data m te "pop"))]
                       [leaq? : bool
                         (compiler-backend-peephole-range-eq? data m te "leaq")]
+                      [leave? : bool
+                        (compiler-backend-peephole-range-eq? data m te "leave")]
+                      [ret? : bool
+                        (compiler-backend-peephole-range-eq? data m te "ret")]
+                      [jmp? : bool
+                        (compiler-backend-peephole-range-eq? data m te "jmp")]
                       [subq? : bool
                         (compiler-backend-peephole-range-eq? data m te "subq")]
                       [addq? : bool
@@ -38982,14 +39084,36 @@
                             36))]
                       [tracked-rsp-write? : bool
                         (and rsp-dst? (or subq? addq?) imm?)]
+                      [win64-rbp-set? : bool
+                        (and
+                          win64
+                          (compiler-backend-peephole-range-eq?
+                            data
+                            m
+                            end
+                            "movq %rsp, %rbp"))]
+                      [win64-epilogue-c : i64
+                        (if win64
+                          (compiler-backend-sweep-rsp-leaq-to-rsp-c
+                            data
+                            m
+                            te
+                            end
+                            delta)
+                          none)]
+                      [win64-epilogue-leaq? : bool
+                        (and
+                          win64
+                          (not (= win64-epilogue-c none))
+                          (< win64-epilogue-c lo))]
+                      [win64-tail-ok? : bool (or pop? leave? ret? jmp?)]
                       [cand : i64
                         (compiler-backend-sweep-candidate-c data m te end delta)]
                       (begin
-                        (if (compiler-backend-peephole-range-eq?
-                          data
-                          m
-                          te
-                          "leave")
+                        (if (and win64-tail (not win64-tail-ok?))
+                          (set! sweepable false)
+                          unit)
+                        (if (and leave? (not win64))
                           (set! sweepable false)
                           unit)
                         (if (not (= cand none))
@@ -39072,9 +39196,11 @@
                                             [c : i64 (- noff delta)]
                                             (if leaq?
                                               ;; address taken: poison upward
-                                              (if (< c watermark)
-                                                (set! watermark c)
-                                                unit)
+                                              (if win64-epilogue-leaq?
+                                                unit
+                                                (if (< c watermark)
+                                                  (set! watermark c)
+                                                  unit))
                                               (begin
                                                 (set!
                                                   reads-lo
@@ -39092,10 +39218,14 @@
                                                   read-count
                                                   (+ read-count 1)))))))
                                       ;; bare %rsp: only the tracked
-                                      ;; subq/addq $imm dst is allowed.
-                                      (if (and
-                                        tracked-rsp-write?
-                                        (= q (- end 4)))
+                                      ;; subq/addq $imm dst and proven Win64
+                                      ;; prologue/epilogue shapes are allowed.
+                                      (if (or
+                                        win64-rbp-set?
+                                        (and
+                                          win64-epilogue-leaq?
+                                          (= q (- end 4)))
+                                        (and tracked-rsp-write? (= q (- end 4))))
                                         unit
                                         (set! sweepable false)))
                                     (set! q (+ q 4)))
@@ -39103,25 +39233,29 @@
                               unit)))
                         ;; rsp motion
                         (if (and rsp-dst? (not pop?))
-                          (if tracked-rsp-write?
-                            (if subq?
-                              (set!
-                                delta
-                                (+
+                          (if win64-epilogue-leaq?
+                            (begin
+                              (set! delta (- 0 win64-epilogue-c))
+                              (set! win64-tail true))
+                            (if tracked-rsp-write?
+                              (if subq?
+                                (set!
                                   delta
-                                  (compiler-backend-rsp-rebase-parse-int
-                                    data
-                                    (+ te 2)
-                                    (- end 6))))
-                              (set!
-                                delta
-                                (-
+                                  (+
+                                    delta
+                                    (compiler-backend-rsp-rebase-parse-int
+                                      data
+                                      (+ te 2)
+                                      (- end 6))))
+                                (set!
                                   delta
-                                  (compiler-backend-rsp-rebase-parse-int
-                                    data
-                                    (+ te 2)
-                                    (- end 6)))))
-                            (set! sweepable false))
+                                  (-
+                                    delta
+                                    (compiler-backend-rsp-rebase-parse-int
+                                      data
+                                      (+ te 2)
+                                      (- end 6)))))
+                              (set! sweepable false)))
                           unit)
                         (if push?
                           (set! delta (+ delta 8))
@@ -39257,7 +39391,10 @@
                         (array-ref compiler-backend-sweep-hi-arr cursor)
                         (array-ref compiler-backend-sweep-disp-arr cursor)
                         (array-ref compiler-backend-sweep-em-lo-arr cursor)
-                        (array-ref compiler-backend-sweep-em-hi-arr cursor)))
+                        (array-ref compiler-backend-sweep-em-hi-arr cursor)
+                        (=
+                          (array-ref compiler-backend-sweep-win64-arr cursor)
+                          1)))
                     (set! flush rend)
                     (set! cursor (+ cursor 1))
                     (set! i rend)))
@@ -39282,18 +39419,23 @@
               (string.int->string compiler-backend-sweep-dropped-bytes-cap)
               "\n"
               "")))
-        (if (not matched)
-          asm
+        (let
+          [result : String
+            (if (not matched)
+              asm
+              (begin
+                (set!
+                  out
+                  (compiler-backend-peephole-append-line-range
+                    out
+                    asm
+                    flush
+                    n
+                    false))
+                (text_buf.render out)))]
           (begin
-            (set!
-              out
-              (compiler-backend-peephole-append-line-range
-                out
-                asm
-                flush
-                n
-                false))
-            (text_buf.render out)))))))
+            (compiler-backend-sweep-reset!)
+            result))))))
 
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
@@ -40506,6 +40648,11 @@
                                 compiler-backend-emergency-used)
                               (compiler-backend-emergency-frame-extra
                                 compiler-backend-emergency-used-count))]
+                          [outgoing-frame-space : i64
+                            (compiler-backend-outgoing-frame-space
+                              target
+                              emit-blocks-list
+                              program-index)]
                           [frame : i64
                             (+
                               (+
@@ -40523,10 +40670,7 @@
                                       slot-vars
                                       assignments
                                       has-group-vars)))
-                                (compiler-backend-outgoing-frame-space
-                                  target
-                                  emit-blocks-list
-                                  program-index))
+                                outgoing-frame-space)
                               dynamic-frame-extra)]
                           [_addr-forward-done : unit
                             (begin
@@ -40602,10 +40746,8 @@
                               push-regs
                               push-count
                               slot-vars)]
-                          [fpo-ok : bool
-                            (and
-                              fpo-attempt
-                              compiler-backend-rsp-rebase-last-ok)]
+                          [rebase-ok : bool compiler-backend-rsp-rebase-last-ok]
+                          [fpo-ok : bool (and fpo-attempt rebase-ok)]
                           (if (and
                             fpo-attempt
                             (not fpo-ok)
@@ -40671,11 +40813,18 @@
                                       slot-vars
                                       compiler-backend-emergency-slot-offset
                                       compiler-backend-emergency-used-count
-                                      (compiler-backend-outgoing-frame-space
-                                        target
-                                        emit-blocks-list
-                                        program-index)))
-                                  unit)]
+                                      outgoing-frame-space))
+                                  (if (and
+                                    (compiler-backend-target-windows? target)
+                                    rebase-ok)
+                                    (compiler-backend-sweep-record-win64!
+                                      symbol
+                                      frame
+                                      slot-vars
+                                      compiler-backend-emergency-slot-offset
+                                      compiler-backend-emergency-used-count
+                                      outgoing-frame-space)
+                                    unit))]
                               (ResultCompilerBackend.Ok
                                 (str_cat.str-cat
                                   (compiler-backend-function-symbol-map-comment

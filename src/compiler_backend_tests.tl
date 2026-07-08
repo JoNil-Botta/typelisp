@@ -5050,6 +5050,166 @@
     [got : String (compiler-backend-peephole-asm input)]
     (and (string.eq direct "    movq %r8, %r10") (string.eq got want))))
 
+(define (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    .seh_pushreg %rbp
+    movq %rsp, %rbp
+    .seh_setframe %rbp, 0
+    subq $48, %rsp
+    .seh_stackalloc 48
+    .seh_endprologue
+    movq %r9, 40(%rsp)
+    leave
+    ret
+    .seh_endproc
+"]
+    [want : String
+      "main:
+    pushq %rbp
+    .seh_pushreg %rbp
+    movq %rsp, %rbp
+    .seh_setframe %rbp, 0
+    subq $48, %rsp
+    .seh_stackalloc 48
+    .seh_endprologue
+    leave
+    ret
+    .seh_endproc
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got want)))
+
+(define (compiler-backend-deadstore-sweep-win64-csr-stays-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq %r12, 32(%rsp)
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got input)))
+
+(define (compiler-backend-deadstore-sweep-win64-address-stays-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq %r9, 40(%rsp)
+    leaq 40(%rsp), %rax
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got input)))
+
+(define (compiler-backend-deadstore-sweep-win64-pop-tail-ok?) : bool
+  (let
+    [input : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq %r9, 40(%rsp)
+    leaq 24(%rsp), %rsp
+    popq %r13
+    popq %r12
+    leave
+    ret
+"]
+    [want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    leaq 24(%rsp), %rsp
+    popq %r13
+    popq %r12
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got want)))
+
+(define (compiler-backend-deadstore-sweep-linux-leave-poisons-ok?) : bool
+  (let
+    [input : String
+      "main:
+    subq $56, %rsp
+    movq %r9, 40(%rsp)
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-fpo! "main" 48 0 1 0 0 0)]
+    [got : String (compiler-backend-peephole-asm input)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (string.eq got input)))
+
+(define (compiler-backend-deadstore-sweep-metadata-consumed-ok?) : bool
+  (let
+    [first : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq %r9, 40(%rsp)
+    leave
+    ret
+"]
+    [first-want : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    leave
+    ret
+"]
+    [second : String
+      "main:
+    pushq %rbp
+    movq %rsp, %rbp
+    subq $48, %rsp
+    movq %r9, 40(%rsp)
+    leave
+    ret
+"]
+    [_reset : unit (compiler-backend-sweep-reset!)]
+    [_record : unit (compiler-backend-sweep-record-win64! "main" 48 1 0 0 0)]
+    [first-got : String (compiler-backend-peephole-asm first)]
+    [second-got : String (compiler-backend-peephole-asm second)]
+    [_reset-after : unit (compiler-backend-sweep-reset!)]
+    (and (string.eq first-got first-want) (string.eq second-got second))))
+
+(define (compiler-backend-deadstore-sweep-win64-ok?) : bool
+  (and
+    (compiler-backend-deadstore-sweep-win64-rbp-frame-ok?)
+    (compiler-backend-deadstore-sweep-win64-csr-stays-ok?)
+    (compiler-backend-deadstore-sweep-win64-address-stays-ok?)
+    (compiler-backend-deadstore-sweep-win64-pop-tail-ok?)
+    (compiler-backend-deadstore-sweep-linux-leave-poisons-ok?)
+    (compiler-backend-deadstore-sweep-metadata-consumed-ok?)))
+
 (define (compiler-backend-r10-dead-scan-long-gap-ok?) : bool
   (let
     [asm : String
@@ -5643,6 +5803,7 @@
     (compiler-backend-win64-bounds-index-scratch-ok?)
     (compiler-backend-win64-compare-rhs-rax-ok?)
     (compiler-backend-post-regalloc-peephole-ok?)
+    (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-call-arg-rax-forwarding-ok?)

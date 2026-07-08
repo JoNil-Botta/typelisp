@@ -4,6 +4,7 @@
 ;; directly, checking their return values. Does NOT test JSON-RPC handlers
 ;; (those write to stdout and are harder to verify in a self-hosted test).
 (import stdlib.string)
+(import stdlib.json)
 (import "../lsp_frame_core.tl")
 
 ;; --------------------------------------------------------------------------
@@ -114,6 +115,25 @@
         (string.eq moved expected))
       false)))
 
+(define (lsp-position-decl-range-skips-comment-string-parens-ok?) : bool
+  (let
+    [text : String
+      "(define (foo) : i64\n  ;; )\n  (let [s : String \")\"]\n    (+ 1 2)))\n(define (bar) : i64 3)"]
+    [decls : LspDeclList (lsp-scan-decls text)]
+    [params : json.Json (lsp-json-object1 "position" (lsp-position 3 6))]
+    [name : String (lsp-structural-move-name-with-decls params text decls)]
+    (match (lsp-replace-form-at-position-with-decls
+      text
+      decls
+      3
+      6
+      "(define (baz) : i64 4)")
+      [(LspEditResult.Ok replaced)
+        (and
+          (string.eq name "foo")
+          (string.eq replaced "(define (baz) : i64 4)\n(define (bar) : i64 3)"))]
+      [(LspEditResult.Err _) false])))
+
 (define (main) : i64
   (begin
     (unless (lsp-find-form-at-offset-ok?) (return 1))
@@ -128,4 +148,7 @@
     (unless (lsp-extract-define-name-nondefine-ok?) (return 10))
     (unless (lsp-find-and-extract-name-ok?) (return 11))
     (unless (lsp-structural-move-destination-ok?) (return 12))
+    (unless
+      (lsp-position-decl-range-skips-comment-string-parens-ok?)
+      (return 13))
     42))

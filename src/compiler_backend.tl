@@ -9402,8 +9402,28 @@
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (match words
+    [(CompilerIrValueList.Array seq)
+      (compiler-backend-emit-pack
+        assignments
+        dst
+        (compiler-ir-value-seq-to-list seq)
+        ty
+        vars
+        program-index
+        instr-diag)]
     [(CompilerIrValueList.Cons w0 rest0)
       (match (box-get rest0)
+        [(CompilerIrValueList.Array seq)
+          (compiler-backend-emit-pack
+            assignments
+            dst
+            (compiler-ir-value-cons-linked
+              w0
+              (compiler-ir-value-seq-to-list seq))
+            ty
+            vars
+            program-index
+            instr-diag)]
         [(CompilerIrValueList.Cons w1 _)
           (let
             [w0-sse : bool
@@ -19523,6 +19543,7 @@
 (define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
   (match args
     [(CompilerIrValueList.Nil) 0]
+    [(CompilerIrValueList.Array seq) (struct-get seq len)]
     [(CompilerIrValueList.Cons _ rest)
       (+ 1 (compiler-backend-ir-value-list-count (box-get rest)))]))
 
@@ -20049,6 +20070,12 @@
   [mask : i64]) : i64
   (match words
     [(CompilerIrValueList.Nil) mask]
+    [(CompilerIrValueList.Array seq)
+      (compiler-backend-pack-word-class-mask
+        type-info
+        (compiler-ir-value-seq-to-list seq)
+        index
+        mask)]
     [(CompilerIrValueList.Cons word rest)
       (compiler-backend-pack-word-class-mask
         type-info
@@ -28038,6 +28065,10 @@
   [values : CompilerIrValueList]) : unit
   (match values
     [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Array seq)
+      (compiler-backend-count-value-list-uses
+        counts
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (begin
         (compiler-backend-count-value-use counts value)
@@ -40441,6 +40472,10 @@
   [values : CompilerIrValueList]) : CompilerBackendProgramCollections
   (match values
     [(CompilerIrValueList.Nil) collections]
+    [(CompilerIrValueList.Array seq)
+      (compiler-backend-collect-value-list-collections
+        collections
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-backend-collect-value-list-collections
         (compiler-backend-collect-value-collections collections value)
@@ -45558,6 +45593,11 @@ tl_tlci_call_image_entry:
   [values : CompilerIrValueList]) : CompilerBackendObjectParts
   (match values
     [(CompilerIrValueList.Nil) parts]
+    [(CompilerIrValueList.Array seq)
+      (compiler-backend-object-value-list-ref
+        parts
+        site
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-backend-object-value-list-ref
         (compiler-backend-object-value-ref parts site value)

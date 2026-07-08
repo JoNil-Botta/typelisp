@@ -16335,8 +16335,13 @@
   [roots : (Array i64)]
   [values : CompilerIrValueList]
   [acc : i64]) : i64
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Array seq)
+      (compiler-reg-color-value-list-root
+        roots
+        (compiler-ir-value-seq-to-list seq)
+        acc)]
     [(CompilerIrValueList.Cons value rest)
       (let
         [next : i64
@@ -16556,8 +16561,13 @@
   [roots : (Array i64)]
   [invalid : (Array bool)]
   [values : CompilerIrValueList]) : unit
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Array seq)
+      (compiler-reg-color-invalidate-value-list!
+        roots
+        invalid
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid value)
@@ -17664,12 +17674,14 @@
 (define (compiler-reg-remap-value-list
   [remap : (Array i64)]
   [values : CompilerIrValueList]) : CompilerIrValueList
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrValueList.Array seq)
+      (compiler-reg-remap-value-list remap (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons head rest)
-      (CompilerIrValueList.Cons
+      (compiler-ir-value-cons
         (compiler-reg-remap-value remap head)
-        (box (compiler-reg-remap-value-list remap (box-get rest))))]))
+        (compiler-reg-remap-value-list remap (box-get rest)))]))
 
 (define (compiler-reg-remap-call-args
   [remap : (Array i64)]

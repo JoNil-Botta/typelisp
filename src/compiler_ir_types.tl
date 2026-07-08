@@ -65,9 +65,14 @@
   (No)
   (Some CompilerIrValue))
 
+(defstruct CompilerIrValueSeq
+  (slots (Array CompilerIrValue))
+  (len i64))
+
 (defenum CompilerIrValueList
   (Nil)
-  (Cons CompilerIrValue (Box CompilerIrValueList)))
+  (Cons CompilerIrValue (Box CompilerIrValueList))
+  (Array CompilerIrValueSeq))
 
 (defenum CompilerIrCallArgs
   (Nil)
@@ -419,10 +424,90 @@
 (defenum CompilerIrProgram
   (Program CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
 
-(define (compiler-ir-value-cons
+(define (compiler-ir-value-cons-linked
   [value : CompilerIrValue]
   [rest : CompilerIrValueList]) : CompilerIrValueList
   (CompilerIrValueList.Cons value (box rest)))
+
+(define (compiler-ir-value-cons
+  [value : CompilerIrValue]
+  [rest : CompilerIrValueList]) : CompilerIrValueList
+  (let
+    [count : i64 (+ 1 (compiler-ir-value-list-count rest))]
+    [slots : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
+    (begin
+      (array-set! slots 0 value)
+      (compiler-ir-value-list-fill-array rest slots 1)
+      (CompilerIrValueList.Array (CompilerIrValueSeq slots count)))))
+
+(define (compiler-ir-value-list-fill-array-reversed
+  [values : CompilerIrValueList]
+  [out : (Array CompilerIrValue)]
+  [index : i64]) : unit
+  (match values
+    [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Cons value rest)
+      (begin
+        (array-set! out index value)
+        (compiler-ir-value-list-fill-array-reversed
+          (box-get rest)
+          out
+          (- index 1)))]
+    [(CompilerIrValueList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [write : i64 index]
+        [source : (Array CompilerIrValue) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! out write (array-ref source read))
+            (set! write (- write 1))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-value-seq-from-reversed-list
+  [values : CompilerIrValueList]) : CompilerIrValueSeq
+  (let
+    [count : i64 (compiler-ir-value-list-count values)]
+    [slots : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
+    (begin
+      (compiler-ir-value-list-fill-array-reversed values slots (- count 1))
+      (CompilerIrValueSeq slots count))))
+
+(define (compiler-ir-value-list-compact [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(CompilerIrValueList.Array _) values]
+    [_ (CompilerIrValueList.Array (compiler-ir-value-seq-from-list values))]))
+
+(define (compiler-ir-value-list-compact-reversed [values : CompilerIrValueList]) : CompilerIrValueList
+  (CompilerIrValueList.Array (compiler-ir-value-seq-from-reversed-list values)))
+
+(define (compiler-ir-value-seq-to-list-rev
+  [slots : (Array CompilerIrValue)]
+  [index : i64]
+  [acc : CompilerIrValueList]) : CompilerIrValueList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrValueList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set!
+            out
+            (compiler-ir-value-cons-linked (array-ref slots cursor) out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-value-seq-to-list [seq : CompilerIrValueSeq]) : CompilerIrValueList
+  (compiler-ir-value-seq-to-list-rev
+    (struct-get seq slots)
+    (- (struct-get seq len) 1)
+    CompilerIrValueList.Nil))
+
+(define (compiler-ir-value-list-force-cons [values : CompilerIrValueList]) : CompilerIrValueList
+  (match values
+    [(CompilerIrValueList.Array seq) (compiler-ir-value-seq-to-list seq)]
+    [_ values]))
 
 (define (compiler-ir-c-abi-return-slot-cons-linked
   [slot : CompilerIrCAbiReturnSlot]
@@ -1309,8 +1394,10 @@
 (define (compiler-ir-clone-value-list-acc
   [values : CompilerIrValueList]
   [acc : CompilerIrValueList]) : CompilerIrValueList
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Array seq)
+      (compiler-ir-clone-value-list-acc (compiler-ir-value-seq-to-list seq) acc)]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-clone-value-list-acc
         (box-get rest)
@@ -1319,10 +1406,20 @@
 (define (compiler-ir-value-list-reverse-onto
   [values : CompilerIrValueList]
   [acc : CompilerIrValueList]) : CompilerIrValueList
-  (match values
+  (compiler-ir-value-list-compact
+    (compiler-ir-value-list-reverse-onto-acc values acc)))
+
+(define (compiler-ir-value-list-reverse-onto-acc
+  [values : CompilerIrValueList]
+  [acc : CompilerIrValueList]) : CompilerIrValueList
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) acc]
+    [(CompilerIrValueList.Array seq)
+      (compiler-ir-value-list-reverse-onto-acc
+        (compiler-ir-value-seq-to-list seq)
+        acc)]
     [(CompilerIrValueList.Cons value rest)
-      (compiler-ir-value-list-reverse-onto
+      (compiler-ir-value-list-reverse-onto-acc
         (box-get rest)
         (compiler-ir-value-cons value acc))]))
 
@@ -2294,13 +2391,20 @@
     [(CompilerIrValue.Unit) "unit"]))
 
 (define (compiler-ir-value-list-render [values : CompilerIrValueList]) : String
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) ""]
+    [(CompilerIrValueList.Array seq)
+      (compiler-ir-value-list-render (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (str_cat.str-cat
         (compiler-ir-value-render value)
-        (match (box-get rest)
+        (match (compiler-ir-value-list-force-cons (box-get rest))
           [(CompilerIrValueList.Nil) ""]
+          [(CompilerIrValueList.Array seq)
+            (str_cat.str-cat
+              ", "
+              (compiler-ir-value-list-render
+                (compiler-ir-value-seq-to-list seq)))]
           [_
             (str_cat.str-cat
               ", "
@@ -2328,7 +2432,8 @@
   (match values
     [(CompilerIrValueList.Nil) 0]
     [(CompilerIrValueList.Cons _ rest)
-      (+ 1 (compiler-ir-value-list-count (box-get rest)))]))
+      (+ 1 (compiler-ir-value-list-count (box-get rest)))]
+    [(CompilerIrValueList.Array seq) (struct-get seq len)]))
 
 (define (compiler-ir-value-list-fill-array
   [values : CompilerIrValueList]
@@ -2339,7 +2444,24 @@
     [(CompilerIrValueList.Cons value rest)
       (begin
         (array-set! out index value)
-        (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]))
+        (compiler-ir-value-list-fill-array (box-get rest) out (+ index 1)))]
+    [(CompilerIrValueList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [source : (Array CompilerIrValue) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! out (+ index read) (array-ref source read))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-value-seq-from-list [values : CompilerIrValueList]) : CompilerIrValueSeq
+  (let
+    [count : i64 (compiler-ir-value-list-count values)]
+    [slots : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
+    (begin
+      (compiler-ir-value-list-fill-array values slots 0)
+      (CompilerIrValueSeq slots count))))
 
 (define (compiler-ir-call-args-array [values : CompilerIrValueList]) : CompilerIrCallArgs
   (let
@@ -2350,14 +2472,22 @@
       (CompilerIrCallArgs.Array out))))
 
 (define (compiler-ir-call-args-from-list [values : CompilerIrValueList]) : CompilerIrCallArgs
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Nil)]
+    [(CompilerIrValueList.Array seq)
+      (compiler-ir-call-args-from-list (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons a rest)
-      (match (box-get rest)
+      (match (compiler-ir-value-list-force-cons (box-get rest))
         [(CompilerIrValueList.Nil) (CompilerIrCallArgs.One a)]
+        [(CompilerIrValueList.Array seq)
+          (compiler-ir-call-args-from-list
+            (compiler-ir-value-cons-linked
+              a
+              (compiler-ir-value-seq-to-list seq)))]
         [(CompilerIrValueList.Cons b tail)
-          (match (box-get tail)
+          (match (compiler-ir-value-list-force-cons (box-get tail))
             [(CompilerIrValueList.Nil) (CompilerIrCallArgs.Two a b)]
+            [(CompilerIrValueList.Array _) (compiler-ir-call-args-array values)]
             [_ (compiler-ir-call-args-array values)])])]))
 
 (define (compiler-ir-call-args-array-render
@@ -4059,11 +4189,19 @@
     [(CompilerIrValue.Unit) "unit"]))
 
 (define (compiler-ir-value-list-describe [values : CompilerIrValueList]) : String
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) ""]
+    [(CompilerIrValueList.Array seq)
+      (compiler-ir-value-list-describe (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons head tail)
-      (match (box-get tail)
+      (match (compiler-ir-value-list-force-cons (box-get tail))
         [(CompilerIrValueList.Nil) (compiler-ir-value-describe head)]
+        [(CompilerIrValueList.Array seq)
+          (str_cat.str-cat
+            (compiler-ir-value-describe head)
+            ", "
+            (compiler-ir-value-list-describe
+              (compiler-ir-value-seq-to-list seq)))]
         [_
           (str_cat.str-cat
             (compiler-ir-value-describe head)
@@ -5232,6 +5370,48 @@
             (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
         [_ false]))))
 
+(define (compiler-ir-value-seq-entry-var?
+  [seq : CompilerIrValueSeq]
+  [index : i64]
+  [want : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (match (array-ref (struct-get seq slots) index)
+      [(CompilerIrValue.Var id) (= id want)]
+      [_ false])))
+
+(define (compiler-ir-pack-value-list-dense-order-ok?) : bool
+  (let
+    [words : CompilerIrValueList
+      (compiler-ir-value-cons
+        (CompilerIrValue.Var 10)
+        (compiler-ir-value-cons
+          (CompilerIrValue.Var 20)
+          CompilerIrValueList.Nil))]
+    [cloned : CompilerIrValueList (compiler-ir-clone-value-list words)]
+    [instr : CompilerIrInstr
+      (CompilerIrInstr.Pack 30 words (AstType.Struct (intern "Pair")))]
+    (and
+      (match instr
+        [(CompilerIrInstr.Pack _ packed _)
+          (match packed
+            [(CompilerIrValueList.Array seq)
+              (and
+                (= (struct-get seq len) 2)
+                (compiler-ir-value-seq-entry-var? seq 0 10)
+                (compiler-ir-value-seq-entry-var? seq 1 20))]
+            [_ false])]
+        [_ false])
+      (match cloned
+        [(CompilerIrValueList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-value-seq-entry-var? seq 0 10)
+            (compiler-ir-value-seq-entry-var? seq 1 20))]
+        [_ false])
+      (string.eq (compiler-ir-value-list-render words) "%10, %20")
+      (string.eq (compiler-ir-value-list-describe words) "%10, %20"))))
+
 (define (compiler-ir-phi-input-seq-entry-var-label?
   [seq : CompilerIrPhiInputSeq]
   [index : i64]
@@ -5333,5 +5513,6 @@
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
     (unless (compiler-ir-dense-builders-order-ok?) (return 1))
     (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
+    (unless (compiler-ir-pack-value-list-dense-order-ok?) (return 1))
     (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
     42))

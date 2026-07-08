@@ -10403,12 +10403,22 @@
   [fields : (& fields AstFieldDefList)]
   [field-index : i64]
   [layout : TcInlineAggregateLayout]) : ResultLowerExpr
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil)
       (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
         (ResultLowerExpr.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(CompilerIrValueList.Array seq)
+      (lower-pack-inline-struct-values-at
+        ctx
+        state
+        acc
+        acc-ty
+        (compiler-ir-value-seq-to-list seq)
+        fields
+        field-index
+        layout)]
     [(CompilerIrValueList.Cons value rest-values)
       (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Err
@@ -10638,9 +10648,9 @@
         [(LowerExpr.Expr s1 w1 _)
           (lower-emit-pack
             s1
-            (CompilerIrValueList.Cons
+            (compiler-ir-value-cons
               w0
-              (box (CompilerIrValueList.Cons w1 (box CompilerIrValueList.Nil))))
+              (compiler-ir-value-cons w1 CompilerIrValueList.Nil))
             ty)])]))
 
 (define (lower-load-register-resident-from-ptr
@@ -10693,12 +10703,23 @@
   [field-index : i64]
   [layout : TcInlineAggregateLayout]
   [word-index : i64]) : ResultLowerExpr
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil)
       (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))
         (ResultLowerExpr.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(CompilerIrValueList.Array seq)
+      (lower-pack-inline-struct-word-at
+        ctx
+        state
+        acc
+        acc-ty
+        (compiler-ir-value-seq-to-list seq)
+        fields
+        field-index
+        layout
+        word-index)]
     [(CompilerIrValueList.Cons value rest-values)
       (if (>= field-index (struct-get fields len))
         (ResultLowerExpr.Err
@@ -10793,12 +10814,9 @@
                 [(LowerExpr.Expr w1-state word1 _)
                   (match (lower-emit-pack
                     w1-state
-                    (CompilerIrValueList.Cons
+                    (compiler-ir-value-cons
                       word0
-                      (box
-                        (CompilerIrValueList.Cons
-                          word1
-                          (box CompilerIrValueList.Nil))))
+                      (compiler-ir-value-cons word1 CompilerIrValueList.Nil))
                     struct-ty)
                     [(LowerExpr.Expr ps pv _)
                       (ResultLowerExpr.Ok (LowerExpr.Expr ps pv struct-ty))])])]
@@ -10816,9 +10834,18 @@
   [cursor : i64]
   [values : CompilerIrValueList]
   [fields : AstTypeList]) : ResultLowerExpr
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil)
       (ResultLowerExpr.Ok (LowerExpr.Expr state acc acc-ty))]
+    [(CompilerIrValueList.Array seq)
+      (lower-pack-enum-payload-word
+        ctx
+        state
+        acc
+        acc-ty
+        cursor
+        (compiler-ir-value-seq-to-list seq)
+        fields)]
     [(CompilerIrValueList.Cons value rest-values)
       (if (ast-type-list-empty? (& fields))
         (ResultLowerExpr.Err
@@ -10866,11 +10893,10 @@
         [(LowerExpr.Expr w1-state word1 _)
           (match (lower-emit-pack
             w1-state
-            (CompilerIrValueList.Cons
+            (compiler-ir-value-cons
               (CompilerIrValue.I64
                 (compiler-registry-handle-child-index handle))
-              (box
-                (CompilerIrValueList.Cons word1 (box CompilerIrValueList.Nil))))
+              (compiler-ir-value-cons word1 CompilerIrValueList.Nil))
             enum-ty)
             [(LowerExpr.Expr ps pv _)
               (ResultLowerExpr.Ok (LowerExpr.Expr ps pv enum-ty))])])]
@@ -10955,10 +10981,9 @@
             [(LowerExpr.Expr s1 w1 _)
               (lower-emit-pack
                 s1
-                (CompilerIrValueList.Cons
+                (compiler-ir-value-cons
                   w0
-                  (box
-                    (CompilerIrValueList.Cons w1 (box CompilerIrValueList.Nil))))
+                  (compiler-ir-value-cons w1 CompilerIrValueList.Nil))
                 ty)])])]
     [(lower-type-register-resident? ctx ty)
       (match (lower-load-at-offset
@@ -12352,6 +12377,15 @@
         (ResultLowerState.Ok state)
         (ResultLowerState.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(CompilerIrValueList.Array seq)
+      (lower-store-values-at
+        ctx
+        state
+        base
+        (compiler-ir-value-seq-to-list seq)
+        types
+        type-index
+        cursor)]
     [(CompilerIrValueList.Cons value rest-values)
       (if (>= type-index (ast-type-list-len types))
         (ResultLowerState.Err
@@ -12385,6 +12419,13 @@
         [_
           (ResultLowerState.Err
             (box (lower-diagnostic "lower: constructor arity mismatch")))])]
+    [(CompilerIrValueList.Array seq)
+      (lower-store-repr-c-values
+        ctx
+        state
+        base
+        (compiler-ir-value-seq-to-list seq)
+        fields)]
     [(CompilerIrValueList.Cons value rest-values)
       (match fields
         [(TcReprCFieldLayoutList.Cons field rest-fields)
@@ -12441,6 +12482,15 @@
         (ResultLowerState.Ok state)
         (ResultLowerState.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(CompilerIrValueList.Array seq)
+      (lower-store-inline-struct-values-at
+        ctx
+        state
+        base
+        (compiler-ir-value-seq-to-list seq)
+        fields
+        field-index
+        layout)]
     [(CompilerIrValueList.Cons value rest-values)
       (if (>= field-index (struct-get fields len))
         (ResultLowerState.Err
@@ -12521,6 +12571,16 @@
         (ResultLowerState.Ok state)
         (ResultLowerState.Err
           (box (lower-diagnostic "lower: constructor arity mismatch"))))]
+    [(CompilerIrValueList.Array seq)
+      (lower-store-inline-payload-values-at
+        ctx
+        state
+        base
+        (compiler-ir-value-seq-to-list seq)
+        types
+        layout
+        variant-name
+        index)]
     [(CompilerIrValueList.Cons value rest-values)
       (if (>= index (ast-type-list-len types))
         (ResultLowerState.Err
@@ -23125,6 +23185,8 @@
   [tail : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Nil) tail]
+    [(CompilerIrValueList.Array seq)
+      (lower-value-list-append (compiler-ir-value-seq-to-list seq) tail)]
     [(CompilerIrValueList.Cons head rest)
       (compiler-ir-value-cons
         head
@@ -23590,6 +23652,8 @@
   (match values
     [(CompilerIrValueList.Nil)
       (compiler-ir-value-cons extra CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Array seq)
+      (lower-value-list-append-one (compiler-ir-value-seq-to-list seq) extra)]
     [(CompilerIrValueList.Cons head rest)
       (compiler-ir-value-cons
         head
@@ -23693,7 +23757,13 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match args-result
     [(ResultLowerArgs.Ok args-state values)
-      (match values
+      (match (compiler-ir-value-list-force-cons values)
+        [(CompilerIrValueList.Array seq)
+          (lower-bytes-view-from-parts-values
+            ctx
+            (ResultLowerArgs.Ok args-state (compiler-ir-value-seq-to-list seq))
+            result-ty
+            origin)]
         [(CompilerIrValueList.Cons data-value rest0)
           (match (box-get rest0)
             [(CompilerIrValueList.Cons len-value rest1)
@@ -48326,6 +48396,10 @@
   [name : String]) : i64
   (match values
     [(CompilerIrValueList.Nil) 0]
+    [(CompilerIrValueList.Array seq)
+      (lower-test-value-list-function-count
+        (compiler-ir-value-seq-to-list seq)
+        name)]
     [(CompilerIrValueList.Cons value rest)
       (+
         (lower-test-value-function-count value name)

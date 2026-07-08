@@ -1653,7 +1653,7 @@
         name)
         [(ResultTcString.Ok lookup-name)
           (if (sym_i64_env.sym-i64-contains env lookup-name)
-            (tc-lookup type-env lookup-name)
+            (tc-lookup-id type-env (tc-name-id lookup-name))
             ;; `type-cache` is the complete global type environment plus the
             ;; current module overlay. Nonlocals therefore resolve here in
             ;; O(1); walking `type-env` first repeated a linear global-env scan
@@ -3340,8 +3340,8 @@
   [env : TcTypeEnv]
   [module : String]
   [name : String]) : ResultTcEnv
-  (match (tc-lookup top-env (compiler-symbol-module-key module name))
-    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind env name ty))]
+  (match (tc-lookup-id top-env (tc-name-id (compiler-symbol-module-key module name)))
+    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-id env (tc-name-id name) ty))]
     [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
 (define (lower-module-local-type-env-bind-qualified-if-free
@@ -3349,7 +3349,7 @@
   [env : TcTypeEnv]
   [module : String]
   [name : String]) : ResultTcEnv
-  (match (tc-lookup top-env (compiler-symbol-module-key module name))
+  (match (tc-lookup-id top-env (tc-name-id (compiler-symbol-module-key module name)))
     [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-alias-if-free env name ty))]
     [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
@@ -10895,7 +10895,7 @@
   [name : String]
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (tc-lookup type-env name)
+  (match (tc-lookup-id type-env (tc-name-id name))
     [(ResultTcType.Ok place-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx place-ty))
         [(AstType.Ref _ _)
@@ -14010,7 +14010,7 @@
             cursor
             captures
             origin)
-          (match (tc-lookup type-env name)
+          (match (tc-lookup-id type-env name-id)
             [(ResultTcType.Err message)
               (ResultLowerCapturePlan.Err
                 (box (lower-diagnostic-at-expr origin message)))]
@@ -14213,7 +14213,7 @@
                     items
                     (- index 1)
                     (sym_i64_env.sym-i64-bind env name loaded-var)
-                    (tc-bind type-env name capture-ty))]
+                    (tc-bind-id type-env (tc-name-id name) capture-ty))]
                 [_
                   (ResultLowerEnv.Err
                     (box
@@ -16332,7 +16332,7 @@
   [effective-arg : AstExpr]
   [arg-ty : AstType]
   [name : String]) : ResultLowerCallArg
-  (match (tc-lookup type-env name)
+  (match (tc-lookup-id type-env (tc-name-id name))
     [(ResultTcType.Ok place-ty)
       (let
         [referent-ty : AstType (tc-borrow-referent-type place-ty)]
@@ -24496,7 +24496,7 @@
                 (intern-str raw-name)
                 (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? local-id)
-              (match (tc-lookup type-env (intern-str raw-name))
+              (match (tc-lookup-id type-env raw-name)
                 [(ResultTcType.Ok fn-ty)
                   (if (lower-function-type? fn-ty)
                     (if (tc-binding-c-abi-fnptr-id? type-env raw-name)
@@ -25418,9 +25418,10 @@
           (if (tc-hygiene-global-name? raw-text)
             (tc-hygiene-global-call-name raw-text)
             raw-text)]
+        [name-id : i64 (tc-name-id name)]
         (and
           (lower-atomic-pointer-name? name)
-          (not (tc-name-bound? type-env name))))]
+          (not (tc-name-bound-id? type-env name-id))))]
     [_ false]))
 
 (define (lower-atomic-pointer-load-name? [name : String]) : bool
@@ -27778,7 +27779,7 @@
             root
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? local-id)
-          (match (tc-lookup type-env root)
+          (match (tc-lookup-id type-env (tc-name-id root))
             [(ResultTcType.Ok root-ty)
               (let
                 [resolved : AstType
@@ -29820,7 +29821,7 @@
   [end : AstExpr]
   [init : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (match (tc-expr ctx (tc-bind type-env index index-ty) value)
+  (match (tc-expr ctx (tc-bind-id type-env (tc-name-id index) index-ty) value)
     [(ResultTcType.Ok value-ty)
       (let
         [acc-ty : AstType (tc-type-without-regions value-ty)]
@@ -30323,7 +30324,7 @@
             name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
-          (match (tc-lookup type-env (intern-str name))
+          (match (tc-lookup-id type-env name)
             [(ResultTcType.Ok ty)
               (match (tc-type-strip-region ty)
                 [(AstType.DynArray elem-ty)
@@ -30401,7 +30402,7 @@
             name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
-          (match (tc-lookup type-env (intern-str name))
+          (match (tc-lookup-id type-env name)
             [(ResultTcType.Ok ty)
               (if (tc-type-eq (tc-type-without-regions ty) (AstType.I64))
                 (LowerMaybeIrValue.Some (CompilerIrValue.Var var-id))
@@ -34108,7 +34109,7 @@
                 name
                 (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? var-id)
-              (match (tc-lookup type-env lookup-name)
+              (match (tc-lookup-id type-env name)
                 [(ResultTcType.Ok ty)
                   (let
                     [scalar-ty : AstType (tc-type-without-regions ty)]
@@ -36297,7 +36298,7 @@
           name
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? var-id)
-        (match (tc-lookup type-env name)
+        (match (tc-lookup-id type-env (tc-name-id name))
           [(ResultTcType.Ok ty)
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -36317,7 +36318,7 @@
             name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
-          (match (tc-lookup type-env name)
+          (match (tc-lookup-id type-env (tc-name-id name))
             [(ResultTcType.Ok ty)
               (let
                 [lane-ty : AstType (tc-type-without-regions ty)]
@@ -38042,7 +38043,7 @@
     ctx
     state
     (sym_i64_env.sym-i64-bind env index index-var)
-    (tc-bind type-env index index-ty)
+    (tc-bind-id type-env (tc-name-id index) index-ty)
     LowerStringSet.Nil
     index
     index-var
@@ -38072,7 +38073,7 @@
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
             [body-env : sym_i64_env.SymI64Env
               (sym_i64_env.sym-i64-bind env index index-var)]
-            [body-type-env : TcTypeEnv (tc-bind type-env index index-ty)]
+            [body-type-env : TcTypeEnv (tc-bind-id type-env (tc-name-id index) index-ty)]
             [arrays : LowerArrayVarSet
               (lower-masked-vector-array-vars
                 ctx
@@ -38358,7 +38359,7 @@
                               exit-label))
                           body-label)
                         (sym_i64_env.sym-i64-bind env index index-var)
-                        (tc-bind type-env index index-ty)
+                        (tc-bind-id type-env (tc-name-id index) index-ty)
                         body)
                         [(ResultLowerExpr.Ok body-lowered)
                           (match body-lowered
@@ -38585,7 +38586,7 @@
                   ctx
                   s
                   (sym_i64_env.sym-i64-bind env index index-var)
-                  (tc-bind type-env index index-ty)
+                  (tc-bind-id type-env (tc-name-id index) index-ty)
                   body)
                   [(ResultLowerExpr.Ok body-lowered)
                     (match body-lowered
@@ -43982,7 +43983,7 @@
     [decl-ctx : TcContext (tc-context-with-module ctx module)]
     [logical-name : String
       (lower-current-decl-logical-name-cache name-cache module name)]
-    (match (tc-lookup local-top-env name)
+    (match (tc-lookup-id local-top-env (tc-name-id name))
       [(ResultTcType.Ok dispatch-ty)
         (let
           [fn-ty : AstType

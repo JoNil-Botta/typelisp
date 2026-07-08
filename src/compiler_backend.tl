@@ -495,6 +495,8 @@
   false)
 (define compiler-backend-group-vars : CompilerLiveI64Set
   (compiler-live-set-empty))
+(define compiler-backend-addressable-group-vars : CompilerLiveI64Set
+  (compiler-live-set-empty))
 (define compiler-backend-current-slot-vars : i64
   0)
 
@@ -9337,11 +9339,23 @@
               [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]
           [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)]))]))
 
-;; Stack-slot offsets for a group var's two words when it has no register
-;; home. The pair lives in a dedicated contiguous region below the ordinary
-;; var/callee-save region so `AddrOf group-var` plus `Gep 8` reaches word1.
-;; `frame-slots` depends only on the allocator plan, so this base is stable
-;; across body emission.
+;; Legacy stack-slot offsets for an ordinary group var with no register home:
+;; word0 reuses the var's ordinary slot, and word1 lives in the second group
+;; region below the callee-save area.
+(define (compiler-backend-group-legacy-word0-slot [var : i64]) : i64
+  (- 0 (* 8 (+ var 1))))
+
+(define (compiler-backend-group-legacy-word1-slot
+  [var : i64]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]) : i64
+  (- 0 (* 8 (+ (compiler-backend-frame-slots vars assignments) (+ var 1)))))
+
+;; Stack-slot offsets for an address-exposed group var's two words when it has
+;; no register home. The pair lives in a dedicated contiguous region below the
+;; ordinary var/callee-save region so `AddrOf group-var` plus `Gep 8` reaches
+;; word1. `frame-slots` depends only on the allocator plan, so this base is
+;; stable across body emission.
 (define (compiler-backend-group-word0-slot
   [var : i64]
   [vars : i64]
@@ -9359,7 +9373,7 @@
 (define (compiler-backend-addr-of-source-slot
   [assignments : CompilerRegAssignmentList]
   [src : i64]) : String
-  (if (compiler-backend-group-var? src)
+  (if (compiler-backend-addressable-group-var? src)
     (compiler-backend-frame-offset
       (compiler-backend-group-word0-slot
         src
@@ -9422,17 +9436,30 @@
                           "backend: CompilerIrInstr.Pack dst is not a register-group location")))])]
               [(CompilerRegMaybeLocation.No)
                 ;; stack-only: the group var lives in two stack slots.
-                (compiler-backend-emit-pack-words
+                (match (compiler-backend-group-word-operand
                   assignments
-                  w0
-                  w1
-                  (compiler-backend-frame-offset
-                    (compiler-backend-group-word0-slot dst vars assignments))
-                  (compiler-backend-frame-offset
-                    (compiler-backend-group-word1-slot dst vars assignments))
-                  w0-sse
-                  w1-sse
-                  instr-diag)]))]
+                  dst
+                  0
+                  vars)
+                  [(ResultCompilerBackend.Ok dst0)
+                    (match (compiler-backend-group-word-operand
+                      assignments
+                      dst
+                      1
+                      vars)
+                      [(ResultCompilerBackend.Ok dst1)
+                        (compiler-backend-emit-pack-words
+                          assignments
+                          w0
+                          w1
+                          dst0
+                          dst1
+                          w0-sse
+                          w1-sse
+                          instr-diag)]
+                      [(ResultCompilerBackend.Err m)
+                        (ResultCompilerBackend.Err m)])]
+                  [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])]))]
         [(CompilerIrValueList.Nil)
           (ResultCompilerBackend.Err
             (box
@@ -9568,9 +9595,16 @@
         (ResultCompilerBackend.Ok
           (if (compiler-backend-group-var? var)
             (compiler-backend-frame-offset
-              (if (= index 0)
-                (compiler-backend-group-word0-slot var vars assignments)
-                (compiler-backend-group-word1-slot var vars assignments)))
+              (if (compiler-backend-addressable-group-var? var)
+                (if (= index 0)
+                  (compiler-backend-group-word0-slot var vars assignments)
+                  (compiler-backend-group-word1-slot var vars assignments))
+                (if (= index 0)
+                  (compiler-backend-group-legacy-word0-slot var)
+                  (compiler-backend-group-legacy-word1-slot
+                    var
+                    vars
+                    assignments))))
             (compiler-backend-slot (+ var index))))])))
 
 ;; Load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
@@ -19907,14 +19941,19 @@
   [ty : AstType]) : bool
   (> (compiler-backend-group-word-count index ty) 1))
 
-(define (compiler-backend-group-vars-enable! [vars : CompilerLiveI64Set]) : unit
+(define (compiler-backend-group-vars-enable!
+  [vars : CompilerLiveI64Set]
+  [addressable : CompilerLiveI64Set]) : unit
   (begin
     (set! compiler-backend-group-vars vars)
+    (set! compiler-backend-addressable-group-vars addressable)
     (set! compiler-backend-group-vars-enabled true)))
 
 (define (compiler-backend-group-vars-disable!) : unit
   (begin
     (set! compiler-backend-group-vars-enabled false)
+    (set! compiler-backend-group-vars (compiler-live-set-empty))
+    (set! compiler-backend-addressable-group-vars (compiler-live-set-empty))
     (set! compiler-backend-current-slot-vars 0)))
 
 (define (compiler-backend-current-slot-vars-set! [vars : i64]) : unit
@@ -19924,6 +19963,81 @@
   (and
     compiler-backend-group-vars-enabled
     (compiler-live-set-contains? compiler-backend-group-vars var)))
+
+(define (compiler-backend-addressable-group-var? [var : i64]) : bool
+  (and
+    compiler-backend-group-vars-enabled
+    (compiler-live-set-contains? compiler-backend-addressable-group-vars var)))
+
+(define (compiler-backend-addressable-group-vars-instr
+  [groups : CompilerLiveI64Set]
+  [out : CompilerLiveI64Set]
+  [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (match instr
+    [(CompilerIrInstr.AddrOf _ src)
+      (if (compiler-live-set-contains? groups src)
+        (compiler-live-set-insert out src)
+        out)]
+    [_ out]))
+
+(define (compiler-backend-addressable-group-vars-seq
+  [groups : CompilerLiveI64Set]
+  [out : CompilerLiveI64Set]
+  [instrs : CompilerIrInstrSeq]) : CompilerLiveI64Set
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [next : CompilerLiveI64Set out]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            next
+            (compiler-backend-addressable-group-vars-instr
+              groups
+              next
+              (array-ref slots index)))
+          (set! index (+ index 1))))
+      next)))
+
+(define (compiler-backend-addressable-group-vars-blocks
+  [groups : CompilerLiveI64Set]
+  [blocks : CompilerIrBlockList]
+  [out : CompilerLiveI64Set]) : CompilerLiveI64Set
+  (match blocks
+    [(CompilerIrBlockList.Nil) out]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-backend-addressable-group-vars-blocks
+            groups
+            (box-get rest)
+            (compiler-backend-addressable-group-vars-seq groups out instrs))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-backend-addressable-group-vars-blocks
+        groups
+        (compiler-ir-block-seq-to-list seq)
+        out)]))
+
+(define (compiler-backend-remap-group-vars
+  [groups : CompilerLiveI64Set]
+  [remap : (Array i64)]) : CompilerLiveI64Set
+  (let
+    [index : i64 0]
+    [out : CompilerLiveI64Set (compiler-live-set-empty)]
+    (begin
+      (while (< index (array-length remap))
+        (begin
+          (if (compiler-live-set-contains? groups index)
+            (let
+              [mapped : i64 (compiler-reg-remap-id remap index)]
+              (if (>= mapped 0)
+                (set! out (compiler-live-set-insert out mapped))
+                unit))
+            unit)
+          (set! index (+ index 1))))
+      out)))
 
 (define (compiler-backend-group-word-class-mask
   [index : CompilerBackendProgramIndex]
@@ -38751,18 +38865,24 @@
             [(CompilerRegColoring.None) plan-types]
             [(CompilerRegColoring.Remap remap _)
               (compiler-reg-color-rebuild-types remap remat-vars plan-types)])]
+        [emit-group-vars : CompilerLiveI64Set
+          (match coloring
+            [(CompilerRegColoring.None) fn-group-vars]
+            [(CompilerRegColoring.Remap remap _)
+              (compiler-backend-remap-group-vars fn-group-vars remap)])]
+        [addressable-group-vars : CompilerLiveI64Set
+          (if (> (compiler-live-set-count emit-group-vars) 0)
+            (compiler-backend-addressable-group-vars-blocks
+              emit-group-vars
+              emit-blocks-list
+              (compiler-live-set-empty))
+            (compiler-live-set-empty))]
         [_group-var-flags : unit
           (begin
             (compiler-backend-current-slot-vars-set! slot-vars)
             (compiler-backend-group-vars-enable!
-              (compiler-reg-function-group-vars
-                (CompilerIrFunction.Function
-                  name
-                  params
-                  ret-ty
-                  slot-vars
-                  emit-blocks-list)
-                types)))]
+              emit-group-vars
+              addressable-group-vars))]
         [symbol : String
           (compiler-backend-function-symbol-index program-index name)]
         [use-counts : (Array i64)

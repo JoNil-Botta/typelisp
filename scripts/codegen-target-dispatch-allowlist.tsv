@@ -26,7 +26,7 @@ src/compiler_lower.tl	compiler-lower-linux-error-ok?	test-only	CompilerLowerMode
 src/compiler_lower.tl	compiler-lower-windows-error-ok?	test-only	CompilerLowerMode.WindowsScalar	1	Inline lowerer diagnostic helper exercises Win64 C ABI failures.
 src/compiler_lower.tl	compiler-lower-middle-tests-ok?	test-only	linux-x86_64|windows-x86_64	1	Inline lowerer tests check target-specific diagnostic text.
 src/compiler_backend.tl	enum:CompilerBackendTarget	backend-mode	CompilerBackendTarget[.](Linux|Windows)	2	Backend target enum names the supported native codegen targets.
-src/compiler_backend.tl	compiler-backend-regalloc-abi	abi	CompilerBackendTarget[.](Linux|Windows)	2	Scalar regalloc maps backend targets onto the matching incoming argument ABI model.
+src/compiler_backend.tl	compiler-backend-target-abi	abi	CompilerBackendTarget[.](Linux|Windows)	2	Central backend-target to shared ABI mapping feeds regalloc, call lowering, and ABI table helpers.
 src/compiler_backend.tl	compiler-backend-emit-stack-sub	abi	CompilerBackendTarget[.](Linux|Windows)	2	Windows stack probing and Linux direct stack adjustment intentionally differ.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-proc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure directives.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-push-rbp	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH saved-register directives.
@@ -34,34 +34,24 @@ src/compiler_backend.tl	compiler-backend-emit-windows-seh-set-rbp	object-format	
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-stackalloc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH stack allocation directives.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endprologue	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH prologue terminators.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endproc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure terminators.
-src/compiler_backend.tl	compiler-backend-call-register-count	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 expose different integer argument register counts.
-src/compiler_backend.tl	compiler-backend-call-float-register-count	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 expose different float argument register counts.
-src/compiler_backend.tl	compiler-backend-stack-call-arg-for-banks?	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V has separate banks while Win64 has positional argument slots.
 src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.
 src/compiler_backend.tl	compiler-backend-outgoing-frame-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Frame outgoing space includes Win64 shadow and stack-argument reservations.
-src/compiler_backend.tl	compiler-backend-outgoing-shadow-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Win64 requires caller shadow space and System V does not.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
-src/compiler_backend.tl	compiler-backend-emit-call-args-with-assignments	abi	compiler-backend-target-windows[?]	2	Win64 call argument slot and stack layout differs from System V.
-src/compiler_backend.tl	compiler-backend-group-word-arg-reg	abi	compiler-backend-target-windows[?]	2	Register-group argument homes follow Win64 register slots on Windows.
 src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.
 src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's second integer argument register.
 src/compiler_backend.tl	compiler-backend-atomic-new-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer CAS consumes the target ABI's third integer argument register.
 src/compiler_backend.tl	compiler-backend-closure-adapter-outgoing-frame-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Closure adapter outgoing space follows target calling convention rules.
-src/compiler_backend.tl	compiler-backend-emit-direct-tail-call-args-from	abi	compiler-backend-target-windows[?]	2	Direct tail-call argument moves account for Win64 stack and shadow-space rules.
 src/compiler_backend.tl	compiler-backend-c-memory-aggregate-type?	abi	compiler-backend-target-linux[?]	1	System V memory aggregate classification is Linux-target specific.
 src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-target-windows[?]|linux-x86_64	2	Raw syscall emission is only valid for Linux x86_64.
 src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	1	Windows register choices differ in the inline allocator fast path.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	compiler-backend-target-linux[?]	1	Linux CRT passes argc, argv, and envp in System V registers.
 src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	5	Function emission adds target entry argument capture and object-format suffixes.
-src/compiler_backend.tl	compiler-backend-target-arg-reg	abi	CompilerBackendTarget[.](Linux|Windows)	2	Integer argument register selection is target ABI specific.
-src/compiler_backend.tl	compiler-backend-target-float-arg-reg	abi	CompilerBackendTarget[.](Linux|Windows)	2	Float argument register selection is target ABI specific.
-src/compiler_backend.tl	compiler-backend-object-call-reg-count	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object call lowering follows target ABI argument register counts.
 src/compiler_backend.tl	compiler-backend-object-call-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object call lowering reserves target ABI shadow and stack argument space.
 src/compiler_backend.tl	compiler-backend-object-call-arg-moves	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object stack argument moves differ between System V and Win64.
 src/compiler_backend.tl	compiler-backend-object-param-spills	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object callee parameter spills differ for target stack arguments.
-src/compiler_backend.tl	compiler-backend-target-linux?	backend-mode	CompilerBackendTarget[.](Linux|Windows)|compiler-backend-target-linux[?]	3	Backend target predicate centralizes Linux target checks.
-src/compiler_backend.tl	compiler-backend-target-windows?	backend-mode	CompilerBackendTarget[.](Linux|Windows)|compiler-backend-target-windows[?]	3	Backend target predicate centralizes Windows target checks.
+src/compiler_backend.tl	compiler-backend-target-linux?	backend-mode	CompilerBackendTarget[.](Linux|Windows)|compiler-backend-target-linux[?]	1	Backend target predicate centralizes Linux target checks through the shared ABI mapping.
+src/compiler_backend.tl	compiler-backend-target-windows?	backend-mode	CompilerBackendTarget[.](Linux|Windows)|compiler-backend-target-windows[?]	1	Backend target predicate centralizes Windows target checks through the shared ABI mapping.
 src/compiler_backend.tl	compiler-backend-target-entry-text-with-crt	entry	CompilerBackendTarget[.](Linux|Windows)	2	Entry symbol text differs between freestanding Linux and CRT targets.
 src/compiler_backend.tl	compiler-backend-entry-for-target-with-crt	entry	CompilerBackendTarget[.](Linux|Windows)	2	Freestanding Linux emits backend-owned entry code; Windows and CRT targets do not.
 src/compiler_backend.tl	compiler-backend-emit-runtime-global	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime globals are emitted in target-specific assembly form.
@@ -93,6 +83,4 @@ src/compiler_backend.tl	compiler-backend-target-cfgs	target-cfg	CompilerBackendT
 src/compiler_backend.tl	compiler-backend-lower-mode-for-target	backend-mode	CompilerBackendTarget[.](Linux|Windows)|CompilerLowerMode[.](Linux|Windows)(Scalar|Avx2|Avx512)	12	Backend target and ISA mode choose the corresponding lowerer mode.
 src/compiler_backend.tl	compiler-backend-extern-metadata-symbol-ok?	test-only	CompilerBackendTarget[.](Linux|Windows)	2	Inline backend test checks extern metadata symbols on both targets.
 src/compiler_backend.tl	compiler-backend-windows-driver-runtime-ok?	test-only	CompilerBackendTarget[.]Windows	1	Inline backend test checks Windows runtime acceptance.
-src/compiler_backend.tl	compiler-backend-emit-param-spills-from	abi	compiler-backend-target-windows[?]	2	Parameter spill homes follow Win64 register slots on Windows.
-src/compiler_backend.tl	compiler-backend-call-args-gp-parallel?	abi	compiler-backend-target-windows[?]	1	Parallel GP call-argument moves follow Win64 register slots on Windows.
 src/compiler_backend.tl	compiler-backend-instr-outgoing-stack-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-instruction outgoing stack space follows target calling convention rules.

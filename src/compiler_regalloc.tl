@@ -10,6 +10,7 @@
 (import stdlib.string)
 (import stdlib.hashmap)
 (import (hashmap String i64) as reg_string_i64_map)
+(import "compiler_abi.tl")
 (import "compiler_liveness.tl")
 (import compiler_parallel_move as pmove)
 (cfg test (import stdlib.test))
@@ -40,10 +41,6 @@
 (defenum CompilerRegMaybeString
   (No)
   (Some String))
-
-(defenum CompilerRegTargetAbi
-  (Linux)
-  (Windows))
 
 (defenum CompilerRegAssignment
   (Assignment i64 CompilerRegLocation))
@@ -438,65 +435,43 @@
       "%rcx"
       (compiler-reg-string-cons "%rdx" CompilerRegStringList.Nil))))
 
-(define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%rax"
+(define (compiler-reg-caller-saved-integer-registers-from-abi
+  [abi : CompilerRegTargetAbi]
+  [idx : i64]) : CompilerRegStringList
+  (if (>= idx (compiler-abi-caller-saved-gp-register-count abi))
+    CompilerRegStringList.Nil
     (compiler-reg-string-cons
-      "%rcx"
-      (compiler-reg-string-cons
-        "%rdx"
-        (compiler-reg-string-cons
-          "%rsi"
-          (compiler-reg-string-cons
-            "%rdi"
-            (compiler-reg-string-cons
-              "%r8"
-              (compiler-reg-string-cons
-                "%r9"
-                (compiler-reg-string-cons
-                  "%r10"
-                  (compiler-reg-string-cons "%r11" CompilerRegStringList.Nil))))))))))
+      (compiler-abi-caller-saved-gp-register abi idx)
+      (compiler-reg-caller-saved-integer-registers-from-abi abi (+ idx 1)))))
+
+(define (compiler-reg-callee-saved-integer-registers-from-abi
+  [abi : CompilerRegTargetAbi]
+  [idx : i64]) : CompilerRegStringList
+  (if (>= idx (compiler-abi-callee-saved-gp-register-count abi))
+    CompilerRegStringList.Nil
+    (compiler-reg-string-cons
+      (compiler-abi-callee-saved-gp-register abi idx)
+      (compiler-reg-callee-saved-integer-registers-from-abi abi (+ idx 1)))))
+
+(define (compiler-reg-sysv-caller-saved-integer-registers) : CompilerRegStringList
+  (compiler-reg-caller-saved-integer-registers-from-abi
+    CompilerRegTargetAbi.Linux
+    0))
 
 (define (compiler-reg-sysv-callee-saved-integer-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%rbx"
-    (compiler-reg-string-cons
-      "%r12"
-      (compiler-reg-string-cons
-        "%r13"
-        (compiler-reg-string-cons
-          "%r14"
-          (compiler-reg-string-cons "%r15" CompilerRegStringList.Nil))))))
+  (compiler-reg-callee-saved-integer-registers-from-abi
+    CompilerRegTargetAbi.Linux
+    0))
 
 (define (compiler-reg-win64-caller-saved-integer-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%r9"
-    (compiler-reg-string-cons
-      "%rcx"
-      (compiler-reg-string-cons
-        "%rdx"
-        (compiler-reg-string-cons
-          "%rax"
-          (compiler-reg-string-cons
-            "%r8"
-            (compiler-reg-string-cons
-              "%r10"
-              (compiler-reg-string-cons "%r11" CompilerRegStringList.Nil))))))))
+  (compiler-reg-caller-saved-integer-registers-from-abi
+    CompilerRegTargetAbi.Windows
+    0))
 
 (define (compiler-reg-win64-callee-saved-integer-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%rbx"
-    (compiler-reg-string-cons
-      "%rsi"
-      (compiler-reg-string-cons
-        "%rdi"
-        (compiler-reg-string-cons
-          "%r12"
-          (compiler-reg-string-cons
-            "%r13"
-            (compiler-reg-string-cons
-              "%r14"
-              (compiler-reg-string-cons "%r15" CompilerRegStringList.Nil))))))))
+  (compiler-reg-callee-saved-integer-registers-from-abi
+    CompilerRegTargetAbi.Windows
+    0))
 
 (define (compiler-reg-string-list-append
   [left : CompilerRegStringList]
@@ -563,79 +538,43 @@
             "%k5"
             (compiler-reg-string-cons "%k6" CompilerRegStringList.Nil)))))))
 
-(define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%xmm0"
+(define (compiler-reg-caller-saved-xmm-registers-from-abi
+  [abi : CompilerRegTargetAbi]
+  [idx : i64]) : CompilerRegStringList
+  (if (>= idx (compiler-abi-caller-saved-xmm-register-count abi))
+    CompilerRegStringList.Nil
     (compiler-reg-string-cons
-      "%xmm1"
-      (compiler-reg-string-cons
-        "%xmm2"
-        (compiler-reg-string-cons
-          "%xmm3"
-          (compiler-reg-string-cons
-            "%xmm4"
-            (compiler-reg-string-cons
-              "%xmm5"
-              (compiler-reg-string-cons
-                "%xmm6"
-                (compiler-reg-string-cons
-                  "%xmm7"
-                  (compiler-reg-string-cons
-                    "%xmm8"
-                    (compiler-reg-string-cons
-                      "%xmm9"
-                      (compiler-reg-string-cons
-                        "%xmm10"
-                        (compiler-reg-string-cons
-                          "%xmm11"
-                          (compiler-reg-string-cons
-                            "%xmm12"
-                            (compiler-reg-string-cons
-                              "%xmm13"
-                              (compiler-reg-string-cons
-                                "%xmm14"
-                                (compiler-reg-string-cons
-                                  "%xmm15"
-                                  CompilerRegStringList.Nil)))))))))))))))))
+      (compiler-abi-caller-saved-xmm-register abi idx)
+      (compiler-reg-caller-saved-xmm-registers-from-abi abi (+ idx 1)))))
+
+(define (compiler-reg-callee-saved-xmm-registers-from-abi
+  [abi : CompilerRegTargetAbi]
+  [idx : i64]) : CompilerRegStringList
+  (if (>= idx (compiler-abi-callee-saved-xmm-register-count abi))
+    CompilerRegStringList.Nil
+    (compiler-reg-string-cons
+      (compiler-abi-callee-saved-xmm-register abi idx)
+      (compiler-reg-callee-saved-xmm-registers-from-abi abi (+ idx 1)))))
+
+(define (compiler-reg-sysv-caller-saved-xmm-registers) : CompilerRegStringList
+  (compiler-reg-caller-saved-xmm-registers-from-abi
+    CompilerRegTargetAbi.Linux
+    0))
 
 (define (compiler-reg-sysv-callee-saved-xmm-registers) : CompilerRegStringList
-  CompilerRegStringList.Nil)
+  (compiler-reg-callee-saved-xmm-registers-from-abi
+    CompilerRegTargetAbi.Linux
+    0))
 
 (define (compiler-reg-win64-caller-saved-xmm-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%xmm0"
-    (compiler-reg-string-cons
-      "%xmm1"
-      (compiler-reg-string-cons
-        "%xmm2"
-        (compiler-reg-string-cons
-          "%xmm3"
-          (compiler-reg-string-cons
-            "%xmm4"
-            (compiler-reg-string-cons "%xmm5" CompilerRegStringList.Nil)))))))
+  (compiler-reg-caller-saved-xmm-registers-from-abi
+    CompilerRegTargetAbi.Windows
+    0))
 
 (define (compiler-reg-win64-callee-saved-xmm-registers) : CompilerRegStringList
-  (compiler-reg-string-cons
-    "%xmm6"
-    (compiler-reg-string-cons
-      "%xmm7"
-      (compiler-reg-string-cons
-        "%xmm8"
-        (compiler-reg-string-cons
-          "%xmm9"
-          (compiler-reg-string-cons
-            "%xmm10"
-            (compiler-reg-string-cons
-              "%xmm11"
-              (compiler-reg-string-cons
-                "%xmm12"
-                (compiler-reg-string-cons
-                  "%xmm13"
-                  (compiler-reg-string-cons
-                    "%xmm14"
-                    (compiler-reg-string-cons
-                      "%xmm15"
-                      CompilerRegStringList.Nil)))))))))))
+  (compiler-reg-callee-saved-xmm-registers-from-abi
+    CompilerRegTargetAbi.Windows
+    0))
 
 (define (compiler-reg-string-list-count [regs : CompilerRegStringList]) : i64
   (match regs
@@ -3019,28 +2958,14 @@
   [position : i64]) : CompilerRegMaybeString
   (let
     [idx : i64
-      (match abi
-        [(CompilerRegTargetAbi.Linux) int-idx]
-        [(CompilerRegTargetAbi.Windows) position])]
-    (match abi
-      [(CompilerRegTargetAbi.Linux)
-        (cond
-          [(= idx 0) (CompilerRegMaybeString.Some "%rdi")]
-          [(= idx 1) (CompilerRegMaybeString.Some "%rsi")]
-          [(= idx 2) (CompilerRegMaybeString.Some "%rdx")]
-          [(= idx 3) (CompilerRegMaybeString.Some "%rcx")]
-          ;; %r8 is the backend's integer scratch register. %r9 is safe for
-          ;; clobber-free leaf ranges and the zero-call extension now checks
-          ;; preassigned conflicts before reusing it.
-          [(= idx 5) (CompilerRegMaybeString.Some "%r9")]
-          [else CompilerRegMaybeString.No])]
-      [(CompilerRegTargetAbi.Windows)
-        (cond
-          [(= idx 0) (CompilerRegMaybeString.Some "%rcx")]
-          [(= idx 1) (CompilerRegMaybeString.Some "%rdx")]
-          ;; Windows arg2 is %r8, the backend's integer scratch register.
-          [(= idx 3) (CompilerRegMaybeString.Some "%r9")]
-          [else CompilerRegMaybeString.No])])))
+      (if (compiler-abi-arg-banks-independent? abi)
+        int-idx
+        position)]
+    [reg : String (compiler-abi-gp-arg-register abi idx)]
+    ;; %r8 is the backend's integer scratch register on both ABIs.
+    (if (or (string.eq reg "") (string.eq reg "%r8"))
+      CompilerRegMaybeString.No
+      (CompilerRegMaybeString.Some reg))))
 
 ;; GAP3c: inclusive-START point-range spanning test for the pin gate. A param
 ;; is defined by the PROLOGUE (before point 0) and its interval is
@@ -3607,9 +3532,7 @@
 ;; threshold, so a 5..6-arg SysV conflict is never naive-marshalled). Mirrored in the
 ;; backend at compiler-backend-call-args-gp-parallel? -- keep the two in sync.
 (define (compiler-reg-arg-reg-limit-for-abi [abi : CompilerRegTargetAbi]) : i64
-  (match abi
-    [(CompilerRegTargetAbi.Linux) 6]
-    [(CompilerRegTargetAbi.Windows) 4]))
+  (compiler-abi-gp-arg-register-count abi))
 
 ;; A call arg is passed in a SINGLE general-purpose arg register on both ABIs iff it
 ;; is neither a float nor a register-group value. Handle values (string/box/array/
@@ -6756,7 +6679,7 @@
 ;; via spans-shift). This rhs/type-aware test mirrors the backend's own
 ;; emission predicate compiler-backend-binop-valid-immediate-shift?; the shift
 ;; width is replicated locally (integer byte-size * 8) because regalloc must not
-;; depend on the backend (cf. compiler-reg-sysv-arg-reg). scavcheck
+;; depend on the backend (cf. compiler-abi-gp-arg-register). scavcheck
 ;; SELFCHECK_CLEAN is the soundness net: a misclassified count that actually uses
 ;; %cl would surface as a %rcx clobber of a live value.
 (define (compiler-reg-clobber-shift-width [ty : AstType]) : i64
@@ -13974,32 +13897,10 @@
         (array-ref ends var))
       true)))
 
-;; Integer call-argument registers by position (mirrors compiler-backend-arg-reg
-;; in compiler_backend.tl; duplicated here because regalloc must not depend on
-;; the backend). "" past the ABI register args (the rest are stack-passed and get
-;; no physical preference).
-(define (compiler-reg-sysv-arg-reg [pos : i64]) : String
-  (cond
-    [(= pos 0) "%rdi"]
-    [(= pos 1) "%rsi"]
-    [(= pos 2) "%rdx"]
-    [(= pos 3) "%rcx"]
-    [(= pos 4) "%r8"]
-    [(= pos 5) "%r9"]
-    [else ""]))
-
-(define (compiler-reg-win64-arg-reg [pos : i64]) : String
-  (cond
-    [(= pos 0) "%rcx"]
-    [(= pos 1) "%rdx"]
-    [(= pos 2) "%r8"]
-    [(= pos 3) "%r9"]
-    [else ""]))
-
+;; Integer call-argument registers by position. "" past the ABI register args
+;; (the rest are stack-passed and get no physical preference).
 (define (compiler-reg-abi-arg-reg [abi : CompilerRegTargetAbi] [pos : i64]) : String
-  (match abi
-    [(CompilerRegTargetAbi.Linux) (compiler-reg-sysv-arg-reg pos)]
-    [(CompilerRegTargetAbi.Windows) (compiler-reg-win64-arg-reg pos)]))
+  (compiler-abi-gp-arg-register abi pos))
 
 (define (compiler-reg-string-list-index-of
   [regs : CompilerRegStringList]

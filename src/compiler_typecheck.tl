@@ -4384,6 +4384,33 @@
           (= (compiler-diagnostic-col (box-get diag)) 7))]
       [(ResultCompilerTypecheck.Ok _) false])))
 
+(define (compiler-typecheck-nested-expression-diagnostic-span-ok?) : bool
+  (let
+    [span : AstSourceSpan (ast-source-span 7 5 7 12)]
+    [inner : i64 (ast-node-push (AstExpr.Var (intern "missing")))]
+    [spanned-inner : i64 (ast-expr-spanned inner span)]
+    [wrapped : i64 (ast-expr-ann spanned-inner (AstType.I64))]
+    [diag : CompilerDiagnostic
+      (tc-expr-diag
+        (ast-node-get wrapped)
+        "typecheck: nested expression diagnostic")]
+    [located : String
+      (tc-locate-error-at-expr
+        (ast-node-get (ast-expr-return spanned-inner))
+        "typecheck: nested located error")]
+    [located-diag : CompilerDiagnostic (tc-located-error-diag located)]
+    (and
+      (string.eq
+        (compiler-diagnostic-message diag)
+        "typecheck: nested expression diagnostic")
+      (= (compiler-diagnostic-line diag) 7)
+      (= (compiler-diagnostic-col diag) 5)
+      (string.eq
+        (compiler-diagnostic-message located-diag)
+        "typecheck: nested located error")
+      (= (compiler-diagnostic-line located-diag) 7)
+      (= (compiler-diagnostic-col located-diag) 5))))
+
 ;; Statement and control-flow type rules: if/while conditions, the
 ;; while-body unit rule, set!/let annotation mismatches, and `ann` mismatch,
 ;; plus an accepting program exercising the same forms. Migrated from
@@ -9546,6 +9573,9 @@
     (if (compiler-typecheck-escape-diagnostic-tests-ok?)
       unit
       (io.panic "typecheck: escape diagnostic tests failed"))
+    (if (compiler-typecheck-nested-expression-diagnostic-span-ok?)
+      unit
+      (io.panic "typecheck: nested expression diagnostic span test failed"))
     (if (compiler-typecheck-pool-exhaustion-diagnostic-ok?)
       unit
       (io.panic "typecheck: pool exhaustion diagnostic test failed"))

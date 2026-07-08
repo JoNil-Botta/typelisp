@@ -773,23 +773,56 @@
         0
         1))))
 
-(define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
-  (match expr
-    [(AstExpr.Spanned _ span)
-      (compiler-diagnostic-from-ast-span "" span message)]
-    [_ (lower-diagnostic message)]))
+(define (lower-expr-id-span [expr-id : i64]) : CompilerMaybeSourceSpan
+  (lower-ast-expr-span (ast-node-get expr-id)))
 
-;; Best-available source span for an expression: the outermost `AstExpr.Spanned`
-;;
-;; wrapper the parser attached. Used to populate the lowering provenance
-;;
-;; side table from a function's body. Returns `CompilerMaybeSourceSpan.No` for an
-;;
-;; unspanned expression (synthesized IR has no source location).
-(define (lower-ast-expr-span [expr : AstExpr]) : CompilerMaybeSourceSpan
+(define (lower-ast-expr-direct-span [expr : AstExpr]) : CompilerMaybeSourceSpan
   (match expr
     [(AstExpr.Spanned _ span) (CompilerMaybeSourceSpan.Some span)]
     [_ (CompilerMaybeSourceSpan.No)]))
+
+;; Best-available diagnostic source span for an expression. Prefer the parser's
+;; outer `AstExpr.Spanned` wrapper, then fall back to the first source-carrying
+;; child of common transformed/generated expression nodes.
+(define (lower-ast-expr-span [expr : AstExpr]) : CompilerMaybeSourceSpan
+  (match expr
+    [(AstExpr.Spanned _ span) (CompilerMaybeSourceSpan.Some span)]
+    [(AstExpr.Unary _ inner) (lower-expr-id-span inner)]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda _ _ body) (lower-expr-id-span body)])]
+    [(AstExpr.TupleRef target _) (lower-expr-id-span target)]
+    [(AstExpr.MakeArray _ size) (lower-expr-id-span size)]
+    [(AstExpr.Set _ value) (lower-expr-id-span value)]
+    [(AstExpr.Ann inner _) (lower-expr-id-span inner)]
+    [(AstExpr.Cast inner _) (lower-expr-id-span inner)]
+    [(AstExpr.Borrow _ _ inner) (lower-expr-id-span inner)]
+    [(AstExpr.Box value) (lower-expr-id-span value)]
+    [(AstExpr.BoxGet value) (lower-expr-id-span value)]
+    [(AstExpr.BoxTake value) (lower-expr-id-span value)]
+    [(AstExpr.Comptime inner) (lower-expr-id-span inner)]
+    [(AstExpr.Quote inner) (lower-expr-id-span inner)]
+    [(AstExpr.Quasiquote inner) (lower-expr-id-span inner)]
+    [(AstExpr.Unquote inner) (lower-expr-id-span inner)]
+    [(AstExpr.UnquoteSplicing inner) (lower-expr-id-span inner)]
+    [(AstExpr.Try inner) (lower-expr-id-span inner)]
+    [(AstExpr.Return inner) (lower-expr-id-span inner)]
+    [(AstExpr.PtrNullCheck inner) (lower-expr-id-span inner)]
+    [(AstExpr.PtrAddrOf inner) (lower-expr-id-span inner)]
+    [(AstExpr.PtrRead inner) (lower-expr-id-span inner)]
+    [(AstExpr.PtrCast inner _) (lower-expr-id-span inner)]
+    [(AstExpr.PtrToInt inner) (lower-expr-id-span inner)]
+    [(AstExpr.IntToPtr inner _) (lower-expr-id-span inner)]
+    [(AstExpr.StringData inner) (lower-expr-id-span inner)]
+    [(AstExpr.ArrayData inner) (lower-expr-id-span inner)]
+    [(AstExpr.Xgetbv inner) (lower-expr-id-span inner)]
+    [_ (CompilerMaybeSourceSpan.No)]))
+
+(define (lower-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
+  (match (lower-ast-expr-span expr)
+    [(CompilerMaybeSourceSpan.Some span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [(CompilerMaybeSourceSpan.No) (lower-diagnostic message)]))
 
 (define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-path diag path))
@@ -43406,7 +43439,7 @@
   [spans : CompilerSourceSpans]
   [name : String]
   [body : AstExpr]) : CompilerSourceSpans
-  (match (lower-ast-expr-span body)
+  (match (lower-ast-expr-direct-span body)
     [(CompilerMaybeSourceSpan.Some span)
       (compiler-source-spans-insert spans name span)]
     [(CompilerMaybeSourceSpan.No) spans]))
@@ -46560,6 +46593,34 @@
     [(ResultCompilerLower.Err diag)
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerLower.Ok _ _) false]))
+
+(define (compiler-lower-nested-expression-diagnostic-span-ok?) : bool
+  (let
+    [span : AstSourceSpan (ast-source-span 11 3 11 9)]
+    [inner : i64 (ast-node-push (AstExpr.Var (intern "value")))]
+    [spanned-inner : i64 (ast-expr-spanned inner span)]
+    [wrapped : i64 (ast-expr-cast spanned-inner (AstType.I64))]
+    [diag : CompilerDiagnostic
+      (lower-diagnostic-at-expr
+        (ast-node-get wrapped)
+        "lower: nested expression diagnostic")]
+    [found-span : CompilerMaybeSourceSpan
+      (lower-ast-expr-span (ast-node-get (ast-expr-return spanned-inner)))]
+    [diag-ok : bool
+      (and
+        (string.eq
+          (compiler-diagnostic-message diag)
+          "lower: nested expression diagnostic")
+        (= (compiler-diagnostic-line diag) 11)
+        (= (compiler-diagnostic-col diag) 3))]
+    [span-ok : bool
+      (match found-span
+        [(CompilerMaybeSourceSpan.Some found)
+          (and
+            (= (ast-source-span-start-line found) 11)
+            (= (ast-source-span-start-col found) 3))]
+        [(CompilerMaybeSourceSpan.No) false])]
+    (and diag-ok span-ok)))
 
 (define (compiler-lower-mode-error-ok?
   [src : String]
@@ -55929,6 +55990,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-entry-moduled-main-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-nested-expression-diagnostic-span-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))

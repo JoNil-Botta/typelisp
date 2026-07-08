@@ -214,7 +214,7 @@ contains|_tl_doc_render_markdown:
 contains|_tl_doc_html_render_module_page:
 contains|_tl_doc_html_render_module_graph:
 contains|_tl_doc_extract_source:
-contains|_tl_format_lex:
+contains|_tl_format_lex_result:
 contains|_tl_doc_stdlib_roots:
 contains|_tl_arg_count:
 contains|_tl_arg:
@@ -537,9 +537,6 @@ contains|_tl_doc_extract_source:
 contains|_tl_doc_extract_smoke:
 contains|_tl_doc_decl_info:
 contains|_tl_doc_scan_form_end:
-contains|_tl_format_lex:
-contains|_tl_format_token_tag:
-contains|_tl_format_token_text:
 contains|doc-extract: module doc smoke mismatch
 contains|doc-extract: item count smoke mismatch
 contains|doc-extract: item doc smoke mismatch
@@ -570,7 +567,6 @@ contains|_tl_doc_html_render_source:
 contains|_tl_doc_html_escape:
 contains|_tl_doc_render_anchor:
 contains|_tl_doc_extract_source:
-contains|_tl_format_lex:
 contains|<!doctype html>
 contains|typelisp-docs.css
 contains|tl-doc-module-nav

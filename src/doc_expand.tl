@@ -3,7 +3,8 @@
 (import stdlib.string)
 (import sym_i64_env)
 (import (vector.vector String) as doc_svec)
-(import "doc_render.tl")
+(import doc_render)
+(import doc_extract)
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
 
@@ -35,7 +36,7 @@
 
 (defenum DocMaybeItem
   (No)
-  (Some DocItem))
+  (Some doc_extract.DocItem))
 
 (defstruct DocImportFormList
   (slots (Array String))
@@ -62,7 +63,7 @@
   (len i64))
 
 (defenum ResultDocExpandedModules
-  (Ok DocModuleList)
+  (Ok doc_render.DocModuleList)
   (Err String))
 
 (define (doc-import-form-list-slots [forms : (& forms DocImportFormList)]) : (&
@@ -901,43 +902,43 @@
   (match decl
     [(AstDecl.Def name maybe-ty _)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.Define)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.Define)
           (intern-str name)
           ""
           (doc-ast-define-signature name maybe-ty)))]
     [(AstDecl.DefFn name params ret _ _)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.Function)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.Function)
           (intern-str name)
           ""
           (doc-ast-function-signature name params ret)))]
     [(AstDecl.DefMacro name params ret _)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.DefMacro)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.DefMacro)
           (intern-str name)
           ""
           (doc-ast-macro-signature name params ret)))]
     [(AstDecl.Extern name _ _ ty)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.Extern)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.Extern)
           (intern-str name)
           ""
           (doc-ast-extern-signature name ty)))]
     [(AstDecl.DefEnum name _ variants)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.DefEnum)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.DefEnum)
           (intern-str name)
           ""
           (doc-ast-enum-signature name "" variants)))]
     [(AstDecl.DefEnumLifetimes name lifetimes _ variants)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.DefEnum)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.DefEnum)
           (intern-str name)
           ""
           (doc-ast-enum-signature
@@ -946,15 +947,15 @@
             variants)))]
     [(AstDecl.DefStruct name _ _ fields)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.DefStruct)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.DefStruct)
           (intern-str name)
           ""
           (doc-ast-struct-signature name "" fields)))]
     [(AstDecl.DefStructLifetimes name lifetimes _ _ fields)
       (DocMaybeItem.Some
-        (DocItem.Item
-          (DocItemKind.DefStruct)
+        (doc_extract.DocItem.Item
+          (doc_extract.DocItemKind.DefStruct)
           (intern-str name)
           ""
           (doc-ast-struct-signature
@@ -977,63 +978,70 @@
       (doc-ast-generated-decl-item (box-get inner-box))]
     [_ (DocMaybeItem.No)]))
 
-(define (doc-generated-import-item [form : String]) : DocItem
-  (DocItem.Item
-    (DocItemKind.GeneratedImport)
+(define (doc-generated-import-item [form : String]) : doc_extract.DocItem
+  (doc_extract.DocItem.Item
+    (doc_extract.DocItemKind.GeneratedImport)
     "import"
     "Concrete generated-module import that produced this API."
     form))
 
 (define (doc-generated-copy-items
-  [out : (&mut out DocItemList)]
-  [items : DocItemList]
+  [out : (&mut out doc_extract.DocItemList)]
+  [items : doc_extract.DocItemList]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
     unit
     (begin
-      (doc-item-list-push out (doc-item-list-ref items index))
+      (doc_extract.doc-item-list-push
+        out
+        (doc_extract.doc-item-list-ref items index))
       (doc-generated-copy-items out items (+ index 1) count))))
 
-(define (doc-generated-module-items [form : String] [items : DocItemList]) : DocItemList
+(define (doc-generated-module-items
+  [form : String]
+  [items : doc_extract.DocItemList]) : doc_extract.DocItemList
   (let
-    [count : i64 (doc-item-list-count items)]
-    [out : DocItemList (doc-item-list-with-capacity (+ count 1))]
+    [count : i64 (doc_extract.doc-item-list-count items)]
+    [out : doc_extract.DocItemList
+      (doc_extract.doc-item-list-with-capacity (+ count 1))]
     (begin
-      (doc-item-list-push (&mut out) (doc-generated-import-item form))
+      (doc_extract.doc-item-list-push
+        (&mut out)
+        (doc-generated-import-item form))
       (doc-generated-copy-items (&mut out) items 0 count)
       out)))
 
 (define (doc-generated-flush-module!
   [module-name : String]
-  [items : DocItemList]
+  [items : doc_extract.DocItemList]
   [has-generated : bool]
   [targets : DocGeneratedTargetExampleList]
-  [modules : (&mut modules DocModuleList)]) : unit
+  [modules : (&mut modules doc_render.DocModuleList)]) : unit
   (let
     [form : String (doc-generated-target-example-find (& targets) module-name)]
     (if (and
       has-generated
       (> (string.string-length module-name) 0)
       (> (string.string-length form) 0))
-      (doc-module-list-push
+      (doc_render.doc-module-list-push
         modules
-        (DocModule.Module
+        (doc_render.DocModule.Module
           module-name
-          (DocExtraction.Extraction
+          (doc_extract.DocExtraction.Extraction
             "Generated module API."
             (doc-generated-module-items form items))))
       unit)))
 
 (define (doc-generated-modules-from-expanded-decls
   [decls : AstDeclList]
-  [targets : DocGeneratedTargetExampleList]) : DocModuleList
+  [targets : DocGeneratedTargetExampleList]) : doc_render.DocModuleList
   (let
     [cursor : AstDeclList decls]
     [current-module : String ""]
-    [items : DocItemList (doc-item-list-new)]
+    [items : doc_extract.DocItemList (doc_extract.doc-item-list-new)]
     [has-generated : bool false]
-    [modules : DocModuleList (doc-module-list-new)]
+    [modules : doc_render.DocModuleList (doc_render.doc-module-list-new)]
     [done : bool false]
     (begin
       (while (not done)
@@ -1059,13 +1067,13 @@
                       targets
                       (&mut modules))
                     (set! current-module (intern-str next-module))
-                    (set! items (doc-item-list-new))
+                    (set! items (doc_extract.doc-item-list-new))
                     (set! has-generated false))]
                 [_
                   (match (doc-ast-generated-decl-item decl)
                     [(DocMaybeItem.Some item)
                       (begin
-                        (doc-item-list-push (&mut items) item)
+                        (doc_extract.doc-item-list-push (&mut items) item)
                         (set! has-generated true))]
                     [(DocMaybeItem.No) unit])])
               (set! cursor rest))]))
@@ -1107,7 +1115,7 @@
     (begin
       (while (and (< i n) (= found n))
         (begin
-          (if (doc-string-prefix-at? text prefix i)
+          (if (doc_extract.doc-string-prefix-at? text prefix i)
             (set! found i)
             unit)
           (set! i (+ i 1))))
@@ -1118,8 +1126,8 @@
   [line-start : i64]
   [line-end : i64]) : i64
   (let
-    [first : i64 (doc-first-nonspace text line-start line-end)]
-    (if (doc-string-prefix-at? text "```" first)
+    [first : i64 (doc_extract.doc-first-nonspace text line-start line-end)]
+    (if (doc_extract.doc-string-prefix-at? text "```" first)
       first
       line-end)))
 
@@ -1130,7 +1138,7 @@
   (let
     [fence : i64 (doc-expand-fence-line-start text line-start line-end)]
     (if (< fence line-end)
-      (doc-string-contains?
+      (doc_extract.doc-string-contains?
         (string.substring text fence (- line-end fence))
         "test=ignore")
       false)))
@@ -1142,28 +1150,28 @@
     (begin
       (while (and (< pos n) (= found n))
         (let
-          [line-end : i64 (doc-line-end text pos n)]
+          [line-end : i64 (doc_extract.doc-line-end text pos n)]
           (begin
             (if (doc-expand-ignored-fence-line? text pos line-end)
               (set! found pos)
               unit)
-            (set! pos (doc-next-line-start text line-end n)))))
+            (set! pos (doc_extract.doc-next-line-start text line-end n)))))
       found)))
 
 (define (doc-expand-skip-fence [text : String] [cursor : i64] [n : i64]) : i64
   (let
-    [open-end : i64 (doc-line-end text cursor n)]
-    [pos : i64 (doc-next-line-start text open-end n)]
+    [open-end : i64 (doc_extract.doc-line-end text cursor n)]
+    [pos : i64 (doc_extract.doc-next-line-start text open-end n)]
     [done : bool false]
     (begin
       (while (and (< pos n) (not done))
         (let
-          [line-end : i64 (doc-line-end text pos n)]
+          [line-end : i64 (doc_extract.doc-line-end text pos n)]
           (if (< (doc-expand-fence-line-start text pos line-end) line-end)
             (begin
-              (set! pos (doc-next-line-start text line-end n))
+              (set! pos (doc_extract.doc-next-line-start text line-end n))
               (set! done true))
-            (set! pos (doc-next-line-start text line-end n)))))
+            (set! pos (doc_extract.doc-next-line-start text line-end n)))))
       pos)))
 
 (define (doc-import-forms-from-doc-text [doc-text : String]) : DocImportFormScan
@@ -1182,11 +1190,14 @@
             (set! cursor (doc-expand-skip-fence doc-text ignored-fence n))
             (if (< start n)
               (let
-                [end : i64 (doc-scan-form-end doc-text start n)]
+                [end : i64 (doc_extract.doc-scan-form-end doc-text start n)]
                 [form : String (string.substring doc-text start (- end start))]
                 (begin
                   (doc-import-form-list-push-unique! (&mut forms) form)
-                  (if (doc-string-prefix-at? doc-text "(import (" start)
+                  (if (doc_extract.doc-string-prefix-at?
+                    doc-text
+                    "(import ("
+                    start)
                     (set! has-macro true)
                     unit)
                   (set! cursor end)))
@@ -1200,14 +1211,14 @@
 
 (define (doc-expanded-generated-modules-from-source-docs
   [source-path : String]
-  [docs : DocExtraction]
+  [docs : doc_extract.DocExtraction]
   [stdlib-roots : doc_svec.Vec]) : ResultDocExpandedModules
   (match docs
-    [(DocExtraction.Extraction module-doc _)
+    [(doc_extract.DocExtraction.Extraction module-doc _)
       (let
         [scan : DocImportFormScan (doc-import-forms-from-doc-text module-doc)]
         (if (not (struct-get scan has-macro))
-          (ResultDocExpandedModules.Ok (doc-module-list-new))
+          (ResultDocExpandedModules.Ok (doc_render.doc-module-list-new))
           (match (compiler-load-source-with-paths-and-roots
             (doc-cat2 source-path ".doc-examples.tl")
             (doc-expanded-example-source (struct-get scan forms))
@@ -1224,7 +1235,7 @@
 
 (define (doc-expanded-generated-modules-from-source-docs-default
   [source-path : String]
-  [docs : DocExtraction]) : ResultDocExpandedModules
+  [docs : doc_extract.DocExtraction]) : ResultDocExpandedModules
   (doc-expanded-generated-modules-from-source-docs
     source-path
     docs
@@ -1267,15 +1278,18 @@
           roots)
           [(ResultDocExpandedModules.Ok modules)
             (let
-              [rendered : String (doc-render-module-graph-markdown modules)]
+              [rendered : String
+                (doc_render.doc-render-module-graph-markdown modules)]
               (if (and
-                (doc-string-contains?
+                (doc_extract.doc-string-contains?
                   rendered
                   "doc.generated.fixture.box\\_i64")
-                (doc-string-contains? rendered "(import (boxmod i64) as ibox)")
-                (doc-string-contains? rendered "### Box")
-                (doc-string-contains? rendered "### Status")
-                (doc-string-contains? rendered "### new"))
+                (doc_extract.doc-string-contains?
+                  rendered
+                  "(import (boxmod i64) as ibox)")
+                (doc_extract.doc-string-contains? rendered "### Box")
+                (doc_extract.doc-string-contains? rendered "### Status")
+                (doc_extract.doc-string-contains? rendered "### new"))
                 42
                 (io.panic "doc-expand: generated module docs smoke mismatch")))]
           [(ResultDocExpandedModules.Err message)

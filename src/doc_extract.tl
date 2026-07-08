@@ -11,8 +11,9 @@
 ;; item docs. Pending item docs at EOF are ignored. Declaration identities are read
 ;; from the captured top-level form with the formatter token lexer so original
 ;; source text remains available as the item signature.
+(module doc_extract)
+
 (import stdlib.io)
-(import "format_tokens.tl")
 (import stdlib.string)
 
 (defenum DocItemKind
@@ -33,6 +34,9 @@
 
 (defenum DocExtraction
   (Extraction String DocItemList))
+
+(define (doc-extraction-empty) : DocExtraction
+  (DocExtraction.Extraction "" (doc-item-list-new)))
 
 (defenum DocMaybeDeclInfo
   (No)
@@ -378,134 +382,197 @@
           (set! keep false)))
       i)))
 
-(define (doc-next-code-token-index [stream : FormatTokenStream] [idx : i64]) : i64
+(define (doc-decl-symbol-char? [c : char]) : bool
+  (or
+    (and (>= c 'A') (<= c 'Z'))
+    (and (>= c 'a') (<= c 'z'))
+    (and (>= c '0') (<= c '9'))
+    (=
+      (if (or
+        (= c '-')
+        (= c '+')
+        (= c '*')
+        (= c '/')
+        (= c '?')
+        (= c '!')
+        (= c '>')
+        (= c '<')
+        (= c '=')
+        (= c '_')
+        (= c '$')
+        (= c '.')
+        (= c '%')
+        (= c '&'))
+        1
+        0)
+      1)))
+
+(define (doc-decl-symbol-start? [src : String] [idx : i64] [n : i64]) : bool
+  (if (< idx n)
+    (let
+      [c : char (string.string-ref src idx)]
+      (and
+        (doc-decl-symbol-char? c)
+        (not
+          (or
+            (and (>= c '0') (<= c '9'))
+            (and
+              (= c '-')
+              (if (< (+ idx 1) n)
+                (let
+                  [next : char (string.string-ref src (+ idx 1))]
+                  (and (>= next '0') (<= next '9')))
+                false))))))
+    false))
+
+(define (doc-decl-next-token [src : String] [idx : i64] [n : i64]) : i64
   (let
     [i : i64 idx]
     [keep : bool true]
     (begin
       (while keep
-        (let
-          [tag : i64 (format-token-tag (format-token-at stream i))]
-          (if (= tag (fmt-tag-comment))
-            (set! i (+ i 1))
-            (set! keep false))))
+        (if (< i n)
+          (let
+            [c : char (string.string-ref src i)]
+            (cond
+              [(or (doc-inline-space? c) (doc-newline? c)) (set! i (+ i 1))]
+              [(= c ';')
+                (set! i (doc-next-line-start src (doc-line-end src i n) n))]
+              [else (set! keep false)]))
+          (set! keep false)))
       i)))
 
-(define (doc-token-symbol? [stream : FormatTokenStream] [idx : i64]) : bool
-  (= (format-token-tag (format-token-at stream idx)) (fmt-tag-symbol)))
-
-(define (doc-symbol-text [stream : FormatTokenStream] [idx : i64]) : String
-  (format-token-text (format-token-at stream idx)))
-
-(define (doc-skip-delimited [stream : FormatTokenStream] [idx : i64]) : i64
+(define (doc-decl-symbol-end [src : String] [idx : i64] [n : i64]) : i64
   (let
     [i : i64 idx]
-    [depth : i64 0]
-    [done : bool false]
+    [keep : bool true]
     (begin
-      (while (not done)
-        (let
-          [tag : i64 (format-token-tag (format-token-at stream i))]
-          (begin
-            (cond
-              [(or (= tag (fmt-tag-lparen)) (= tag (fmt-tag-lbracket)))
-                (set! depth (+ depth 1))]
-              [(or (= tag (fmt-tag-rparen)) (= tag (fmt-tag-rbracket)))
-                (begin
-                  (set! depth (- depth 1))
-                  (if (= depth 0)
-                    (set! done true)
-                    unit))]
-              [(= tag (fmt-tag-end)) (set! done true)]
-              [else unit])
-            (set! i (+ i 1)))))
+      (while keep
+        (if (< i n)
+          (if (doc-decl-symbol-char? (string.string-ref src i))
+            (set! i (+ i 1))
+            (set! keep false))
+          (set! keep false)))
       i)))
 
-(define (doc-generated-metadata-form? [stream : FormatTokenStream] [idx : i64]) : bool
-  (if (= (format-token-tag (format-token-at stream idx)) (fmt-tag-lparen))
+(define (doc-generated-metadata-form? [src : String] [idx : i64] [n : i64]) : bool
+  (if (if (< idx n)
+    (= (string.string-ref src idx) '(')
+    false)
     (let
-      [first : i64 (doc-next-code-token-index stream (+ idx 1))]
-      (if (= (format-token-tag (format-token-at stream first)) (fmt-tag-colon))
+      [first : i64 (doc-decl-next-token src (+ idx 1) n)]
+      (if (if (< first n)
+        (= (string.string-ref src first) ':')
+        false)
         (let
-          [name-idx : i64 (doc-next-code-token-index stream (+ first 1))]
+          [name-idx : i64 (doc-decl-next-token src (+ first 1) n)]
           (and
-            (doc-token-symbol? stream name-idx)
-            (string.eq (doc-symbol-text stream name-idx) "generated")))
+            (doc-decl-symbol-start? src name-idx n)
+            (string.eq
+              (string.substring
+                src
+                name-idx
+                (- (doc-decl-symbol-end src name-idx n) name-idx))
+              "generated")))
         (and
-          (doc-token-symbol? stream first)
-          (string.eq (doc-symbol-text stream first) ":generated"))))
+          (doc-decl-symbol-start? src first n)
+          (string.eq
+            (string.substring
+              src
+              first
+              (- (doc-decl-symbol-end src first n) first))
+            ":generated"))))
     false))
 
-(define (doc-info-after-name
-  [kind : DocItemKind]
-  [stream : FormatTokenStream]
-  [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-name [kind : DocItemKind] [src : String] [idx : i64]) : DocMaybeDeclInfo
   (let
-    [name-idx : i64 (doc-next-code-token-index stream idx)]
-    (if (doc-token-symbol? stream name-idx)
-      (DocDeclInfo kind (doc-symbol-text stream name-idx))
+    [n : i64 (string.string-length src)]
+    [name-idx : i64 (doc-decl-next-token src idx n)]
+    (if (doc-decl-symbol-start? src name-idx n)
+      (DocDeclInfo
+        kind
+        (string.substring
+          src
+          name-idx
+          (- (doc-decl-symbol-end src name-idx n) name-idx)))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-info-after-define [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-define [src : String] [idx : i64]) : DocMaybeDeclInfo
   (let
-    [next : i64 (doc-next-code-token-index stream idx)]
-    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
-      (doc-info-after-name (DocItemKind.Function) stream (+ next 1))
-      (doc-info-after-name (DocItemKind.Define) stream next))))
+    [n : i64 (string.string-length src)]
+    [next : i64 (doc-decl-next-token src idx n)]
+    (if (if (< next n)
+      (= (string.string-ref src next) '(')
+      false)
+      (doc-info-after-name (DocItemKind.Function) src (+ next 1))
+      (doc-info-after-name (DocItemKind.Define) src next))))
 
-(define (doc-info-after-extern [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-extern [src : String] [idx : i64]) : DocMaybeDeclInfo
   (let
-    [next : i64 (doc-next-code-token-index stream idx)]
-    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
-      (doc-info-after-name (DocItemKind.Extern) stream (+ next 1))
-      (doc-info-after-name (DocItemKind.Extern) stream next))))
+    [n : i64 (string.string-length src)]
+    [next : i64 (doc-decl-next-token src idx n)]
+    (if (if (< next n)
+      (= (string.string-ref src next) '(')
+      false)
+      (doc-info-after-name (DocItemKind.Extern) src (+ next 1))
+      (doc-info-after-name (DocItemKind.Extern) src next))))
 
-(define (doc-info-after-defmacro [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-info-after-defmacro [src : String] [idx : i64]) : DocMaybeDeclInfo
   (let
-    [next : i64 (doc-next-code-token-index stream idx)]
-    (if (= (format-token-tag (format-token-at stream next)) (fmt-tag-lparen))
-      (doc-info-after-name (DocItemKind.DefMacro) stream (+ next 1))
+    [n : i64 (string.string-length src)]
+    [next : i64 (doc-decl-next-token src idx n)]
+    (if (if (< next n)
+      (= (string.string-ref src next) '(')
+      false)
+      (doc-info-after-name (DocItemKind.DefMacro) src (+ next 1))
       (DocMaybeDeclInfo.No))))
 
-(define (doc-decl-info-at-list [stream : FormatTokenStream] [open-idx : i64]) : DocMaybeDeclInfo
-  (if (= (format-token-tag (format-token-at stream open-idx)) (fmt-tag-lparen))
-    (let
-      [head-idx : i64 (doc-next-code-token-index stream (+ open-idx 1))]
-      (if (doc-token-symbol? stream head-idx)
-        (let
-          [head : String (doc-symbol-text stream head-idx)]
-          [after-head : i64 (+ head-idx 1)]
-          (cond
-            [(string.eq head "define")
-              (doc-info-after-define stream after-head)]
-            [(string.eq head "extern")
-              (doc-info-after-extern stream after-head)]
-            [(string.eq head "defenum")
-              (doc-info-after-name (DocItemKind.DefEnum) stream after-head)]
-            [(string.eq head "defstruct")
-              (doc-info-after-name (DocItemKind.DefStruct) stream after-head)]
-            [(string.eq head "defmacro")
-              (doc-info-after-defmacro stream after-head)]
-            [(string.eq head "comptime-decl")
-              (doc-info-after-comptime-decl stream after-head)]
-            [else (DocMaybeDeclInfo.No)]))
-        (DocMaybeDeclInfo.No)))
-    (DocMaybeDeclInfo.No)))
-
-(define (doc-info-after-comptime-decl [stream : FormatTokenStream] [idx : i64]) : DocMaybeDeclInfo
+(define (doc-decl-info-at-list [src : String] [open-idx : i64]) : DocMaybeDeclInfo
   (let
-    [first : i64 (doc-next-code-token-index stream idx)]
+    [n : i64 (string.string-length src)]
+    (if (if (< open-idx n)
+      (= (string.string-ref src open-idx) '(')
+      false)
+      (let
+        [head-idx : i64 (doc-decl-next-token src (+ open-idx 1) n)]
+        (if (doc-decl-symbol-start? src head-idx n)
+          (let
+            [head : String
+              (string.substring
+                src
+                head-idx
+                (- (doc-decl-symbol-end src head-idx n) head-idx))]
+            [after-head : i64 (doc-decl-symbol-end src head-idx n)]
+            (cond
+              [(string.eq head "define") (doc-info-after-define src after-head)]
+              [(string.eq head "extern") (doc-info-after-extern src after-head)]
+              [(string.eq head "defenum")
+                (doc-info-after-name (DocItemKind.DefEnum) src after-head)]
+              [(string.eq head "defstruct")
+                (doc-info-after-name (DocItemKind.DefStruct) src after-head)]
+              [(string.eq head "defmacro")
+                (doc-info-after-defmacro src after-head)]
+              [(string.eq head "comptime-decl")
+                (doc-info-after-comptime-decl src after-head)]
+              [else (DocMaybeDeclInfo.No)]))
+          (DocMaybeDeclInfo.No)))
+      (DocMaybeDeclInfo.No))))
+
+(define (doc-info-after-comptime-decl [src : String] [idx : i64]) : DocMaybeDeclInfo
+  (let
+    [n : i64 (string.string-length src)]
+    [first : i64 (doc-decl-next-token src idx n)]
     [payload : i64
-      (if (doc-generated-metadata-form? stream first)
-        (doc-next-code-token-index stream (doc-skip-delimited stream first))
+      (if (doc-generated-metadata-form? src first n)
+        (doc-decl-next-token src (doc-scan-form-end src first n) n)
         first)]
-    (doc-decl-info-at-list stream payload)))
+    (doc-decl-info-at-list src payload)))
 
 (define (doc-decl-info [signature : String]) : DocMaybeDeclInfo
   (let
-    [stream : FormatTokenStream (format-lex signature)]
-    [open-idx : i64 (doc-next-code-token-index stream 0)]
-    (doc-decl-info-at-list stream open-idx)))
+    [n : i64 (string.string-length signature)]
+    [open-idx : i64 (doc-decl-next-token signature 0 n)]
+    (doc-decl-info-at-list signature open-idx)))
 
 (define (doc-extract-source [src : String]) : DocExtraction
   (let

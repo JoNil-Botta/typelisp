@@ -172,6 +172,12 @@
   false)
 (define intern-reset-generation : i64
   0)
+(define intern-name-cache-name : String
+  "")
+(define intern-name-cache-id : i64
+  -1)
+(define intern-name-cache-ready : bool
+  false)
 (define intern-slice-cache0-name : String
   "")
 (define intern-slice-cache0-id : i64
@@ -280,6 +286,7 @@
     (set!
       intern-reset-generation
       (array-ref (struct-get state reset-generation) 0))
+    (set! intern-name-cache-ready false)
     (set! intern-slice-cache0-ready false)
     (set! intern-slice-cache1-ready false)
     (set! intern-slice-cache2-ready false)
@@ -652,8 +659,18 @@
       (array-set! intern-map-slots index (InternEmpty))
       (intern-fill-empty (+ index 1) count))))
 
+(define (intern-reset-name-cache!) : unit
+  (set! intern-name-cache-ready false))
+
+(define (intern-name-cache-record [name : String] [id : i64]) : unit
+  (begin
+    (set! intern-name-cache-name name)
+    (set! intern-name-cache-id id)
+    (set! intern-name-cache-ready true)))
+
 (define (intern-reset-slice-cache!) : unit
   (begin
+    (intern-reset-name-cache!)
     (set! intern-slice-cache0-ready false)
     (set! intern-slice-cache1-ready false)
     (set! intern-slice-cache2-ready false)
@@ -768,6 +785,11 @@
     (if intern-map-ready
       unit
       (intern-reset!))
+    (when
+      (and
+        intern-name-cache-ready
+        (intern-private-string-eq-places intern-name-cache-name name))
+      (return intern-name-cache-id))
     (cfg compile-profile (intern-profile-note-intern))
     (let
       [capacity : i64 (array-length intern-map-slots)]
@@ -796,6 +818,7 @@
                     (InternUsed persistent-name id hash))
                   (set! intern-pool-count (+ id 1))
                   (intern-record-qualified-metadata id persistent-name)
+                  (intern-name-cache-record persistent-name id)
                   (set! out id)
                   (set! done true)))]
             [(InternUsed slot-key slot-id slot-hash)
@@ -803,6 +826,7 @@
                 (intern-private-string-eq-places slot-key name)
                 false)
                 (begin
+                  (intern-name-cache-record slot-key slot-id)
                   (set! out slot-id)
                   (set! done true))
                 (begin

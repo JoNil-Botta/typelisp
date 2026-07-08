@@ -4674,10 +4674,12 @@
   [all-functions : lower_string_i64_map.Map]
   [names : LowerNameCache]
   [state : LowerReachState]) : LowerReachState
-  ;; Clone-out/capture snapshot lowering copies owned String buffers through the
-  ;; fixed `tl_substring` ABI helper. Source `substring`/`string-slice` calls
-  ;; lower there too, so keep its TypeLisp runtime body when a reachable source
-  ;; form can synthesize that call after this prune pass.
+  ;; Clone-out/capture snapshot lowering copies owned String buffers through
+  ;; the fixed `tl_substring` ABI helper, so keep its TypeLisp runtime body
+  ;; when a reachable source form can synthesize that call after this prune
+  ;; pass. Public stdlib string substring helpers are normal source functions;
+  ;; explicit `tl_substring` extern references are rooted through the runtime
+  ;; prelude helper path instead.
   (lower-reach-add-runtime-prelude-string-helper-resolved
     all-functions
     names
@@ -4711,10 +4713,7 @@
   (let
     [name : String (tc-hygiene-global-call-name (intern-str name-id))]
     [lookup-id : i64 (intern name)]
-    (or
-      (cbi.compiler-builtin-lower-clone-id? lookup-id)
-      (string.eq name "substring")
-      (string.eq name "string-slice"))))
+    (cbi.compiler-builtin-lower-clone-id? lookup-id)))
 
 (define (lower-reach-add-source
   [all-functions : lower_string_i64_map.Map]

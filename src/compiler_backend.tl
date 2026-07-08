@@ -7557,32 +7557,38 @@
     (compiler-backend-string-contains? name "stdlib\\runtime.tl::")
     (compiler-backend-string-contains? name "stdlib.runtime/")))
 
+(define (compiler-backend-runtime-prelude-string-helper-symbol-for-leaf
+  [leaf : String]) : String
+  (cond
+    [(string.eq leaf "int-to-string") "tl_int_to_string"]
+    [(string.eq leaf "substring") "tl_substring"]
+    [(string.eq leaf "str-view") "tl_str_view"]
+    [(string.eq leaf "string-concat") "tl_string_concat"]
+    [(string.eq leaf "string-concat3") "tl_string_concat3"]
+    [(string.eq leaf "string-concat4") "tl_string_concat4"]
+    [(string.eq leaf "string-concat5") "tl_string_concat5"]
+    [(string.eq leaf "atomic-i64-load-ptr") "tl_atomic_i64_load_ptr"]
+    [(string.eq leaf "atomic-i64-store-ptr!") "tl_atomic_i64_store_ptr"]
+    [(string.eq leaf "atomic-i64-add-ptr!") "tl_atomic_i64_add_ptr"]
+    [(string.eq leaf "atomic-i64-fetch-add-ptr!") "tl_atomic_i64_fetch_add_ptr"]
+    [(string.eq leaf "atomic-i64-cas-ptr!") "tl_atomic_i64_cas_ptr"]
+    [(string.eq leaf "atomic-i32-load-ptr") "tl_atomic_i32_load_ptr"]
+    [(string.eq leaf "atomic-i32-store-ptr!") "tl_atomic_i32_store_ptr"]
+    [(string.eq leaf "atomic-i32-add-ptr!") "tl_atomic_i32_add_ptr"]
+    [(string.eq leaf "atomic-i32-fetch-add-ptr!") "tl_atomic_i32_fetch_add_ptr"]
+    [(string.eq leaf "atomic-i32-cas-ptr!") "tl_atomic_i32_cas_ptr"]
+    [else ""]))
+
 (define (compiler-backend-runtime-prelude-string-helper-symbol [name : String]) : String
-  (if (compiler-backend-stdlib-runtime-function-name? name)
-    (let
-      [leaf : String (compiler-backend-symbol-leaf name)]
-      (cond
-        [(string.eq leaf "int-to-string") "tl_int_to_string"]
-        [(string.eq leaf "substring") "tl_substring"]
-        [(string.eq leaf "str-view") "tl_str_view"]
-        [(string.eq leaf "string-concat") "tl_string_concat"]
-        [(string.eq leaf "string-concat3") "tl_string_concat3"]
-        [(string.eq leaf "string-concat4") "tl_string_concat4"]
-        [(string.eq leaf "string-concat5") "tl_string_concat5"]
-        [(string.eq leaf "atomic-i64-load-ptr") "tl_atomic_i64_load_ptr"]
-        [(string.eq leaf "atomic-i64-store-ptr!") "tl_atomic_i64_store_ptr"]
-        [(string.eq leaf "atomic-i64-add-ptr!") "tl_atomic_i64_add_ptr"]
-        [(string.eq leaf "atomic-i64-fetch-add-ptr!")
-          "tl_atomic_i64_fetch_add_ptr"]
-        [(string.eq leaf "atomic-i64-cas-ptr!") "tl_atomic_i64_cas_ptr"]
-        [(string.eq leaf "atomic-i32-load-ptr") "tl_atomic_i32_load_ptr"]
-        [(string.eq leaf "atomic-i32-store-ptr!") "tl_atomic_i32_store_ptr"]
-        [(string.eq leaf "atomic-i32-add-ptr!") "tl_atomic_i32_add_ptr"]
-        [(string.eq leaf "atomic-i32-fetch-add-ptr!")
-          "tl_atomic_i32_fetch_add_ptr"]
-        [(string.eq leaf "atomic-i32-cas-ptr!") "tl_atomic_i32_cas_ptr"]
-        [else ""]))
-    ""))
+  (let
+    [symbol : String
+      (compiler-backend-runtime-prelude-string-helper-symbol-for-leaf
+        (compiler-backend-symbol-leaf name))]
+    (if (and
+      (not (string.eq symbol ""))
+      (compiler-backend-stdlib-runtime-function-name? name))
+      symbol
+      "")))
 
 (define (compiler-backend-compact-function-symbol? [name : String]) : bool
   (and
@@ -20244,9 +20250,7 @@
     [prelude-symbol : String
       (compiler-backend-runtime-prelude-string-helper-symbol name)]
     (and
-      (or
-        (string.eq prelude-symbol symbol)
-        (compiler-backend-stdlib-runtime-function-name? name))
+      (string.eq prelude-symbol symbol)
       (>= symbol-id 0)
       (or
         (cbi.compiler-builtin-backend-tl-substring-id? symbol-id)
@@ -40718,8 +40722,8 @@
   [name : String]
   [helper : String]) : bool
   (and
-    (compiler-backend-stdlib-runtime-function-name? name)
-    (string.eq (compiler-backend-symbol-leaf name) helper)))
+    (string.eq (compiler-backend-symbol-leaf name) helper)
+    (compiler-backend-stdlib-runtime-function-name? name)))
 
 (define (compiler-backend-function-list-defines-runtime-prelude-helper?
   [functions : CompilerIrFunctionList]

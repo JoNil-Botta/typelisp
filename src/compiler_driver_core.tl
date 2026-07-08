@@ -679,7 +679,25 @@
         (tc-attrib-bind-unsafe-value))
       (compiler-driver-profile-intern-line
         "attrib_bind_c_abi_fnptr"
-        (tc-attrib-bind-c-abi-fnptr-value)))))
+        (tc-attrib-bind-c-abi-fnptr-value))
+      (compiler-driver-profile-intern-line
+        "attrib_bind_comptime_helper_aliases"
+        (tc-attrib-bind-comptime-helper-aliases-value))
+      (compiler-driver-profile-intern-line
+        "attrib_arena_phase_token_region"
+        (tc-attrib-arena-phase-token-region-value))
+      (compiler-driver-profile-intern-line
+        "attrib_arena_phase_token_owner"
+        (tc-attrib-arena-phase-token-owner-value))
+      (compiler-driver-profile-intern-line
+        "attrib_source_type_name_lookup_key"
+        (tc-attrib-source-type-name-lookup-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_borrow_check_body"
+        (tc-attrib-borrow-check-body-value))
+      (compiler-driver-profile-intern-line
+        "attrib_env_binding_matches_lifetime"
+        (tc-attrib-env-binding-matches-lifetime-value)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

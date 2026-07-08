@@ -53,6 +53,12 @@
 (cfg compile-profile (define tc-attrib-lifetime-visible : i64 0))
 (cfg compile-profile (define tc-attrib-bind-unsafe : i64 0))
 (cfg compile-profile (define tc-attrib-bind-c-abi-fnptr : i64 0))
+(cfg compile-profile (define tc-attrib-bind-comptime-helper-aliases : i64 0))
+(cfg compile-profile (define tc-attrib-arena-phase-token-region : i64 0))
+(cfg compile-profile (define tc-attrib-arena-phase-token-owner : i64 0))
+(cfg compile-profile (define tc-attrib-source-type-name-lookup-key : i64 0))
+(cfg compile-profile (define tc-attrib-borrow-check-body : i64 0))
+(cfg compile-profile (define tc-attrib-env-binding-matches-lifetime : i64 0))
 (cfg compile-profile (define (tc-attrib-marker-miss-value) : i64 tc-attrib-marker-miss))
 (cfg compile-profile (define (tc-attrib-source-name-bound-exact-value) : i64 tc-attrib-source-name-bound-exact))
 (cfg compile-profile (define (tc-attrib-lookup-visible-id-value) : i64 tc-attrib-lookup-visible-id))
@@ -83,6 +89,12 @@
 (cfg compile-profile (define (tc-attrib-lifetime-visible-value) : i64 tc-attrib-lifetime-visible))
 (cfg compile-profile (define (tc-attrib-bind-unsafe-value) : i64 tc-attrib-bind-unsafe))
 (cfg compile-profile (define (tc-attrib-bind-c-abi-fnptr-value) : i64 tc-attrib-bind-c-abi-fnptr))
+(cfg compile-profile (define (tc-attrib-bind-comptime-helper-aliases-value) : i64 tc-attrib-bind-comptime-helper-aliases))
+(cfg compile-profile (define (tc-attrib-arena-phase-token-region-value) : i64 tc-attrib-arena-phase-token-region))
+(cfg compile-profile (define (tc-attrib-arena-phase-token-owner-value) : i64 tc-attrib-arena-phase-token-owner))
+(cfg compile-profile (define (tc-attrib-source-type-name-lookup-key-value) : i64 tc-attrib-source-type-name-lookup-key))
+(cfg compile-profile (define (tc-attrib-borrow-check-body-value) : i64 tc-attrib-borrow-check-body))
+(cfg compile-profile (define (tc-attrib-env-binding-matches-lifetime-value) : i64 tc-attrib-env-binding-matches-lifetime))
 (cfg compile-profile (define tc-name-id-call-count : i64 0))
 (cfg compile-profile (define (tc-name-id-call-value) : i64 tc-name-id-call-count))
 
@@ -7188,11 +7200,13 @@
   ;; Qualified `stdlib.comptime` helper calls are normalized to the legacy
   ;; helper key in name lookup. Keep one compatibility binding instead of
   ;; growing every macro helper environment with duplicate qualified aliases.
-  (let
+  (begin
+    (cfg compile-profile (set! tc-attrib-bind-comptime-helper-aliases (+ tc-attrib-bind-comptime-helper-aliases 1)))
+    (let
     [name-id : i64 (tc-name-id name)]
     (if (tc-source-name-bound-exact-id? env name-id)
       env
-      (tc-bind-id env name-id ty))))
+      (tc-bind-id env name-id ty)))))
 
 (define (tc-macro-helper-env [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -8265,6 +8279,7 @@
 (define (tc-arena-phase-token-region-active [env : TcTypeEnv] [token : String]) : TcMaybeString
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (set! tc-attrib-arena-phase-token-region (+ tc-attrib-arena-phase-token-region 1)))
     (let
       [token-id : i64 (tc-name-id token)]
       [region-marker-id : i64
@@ -8311,6 +8326,7 @@
 (define (tc-arena-phase-token-owner-active [env : TcTypeEnv] [token : String]) : TcMaybeString
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+    (cfg compile-profile (set! tc-attrib-arena-phase-token-owner (+ tc-attrib-arena-phase-token-owner 1)))
     (let
       [token-id : i64 (tc-name-id token)]
       [owner-marker-id : i64
@@ -11602,11 +11618,12 @@
                 (ResultTcString.Err (tc-unresolved-dotted-name-message name))])])))))
 
 (define (tc-source-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
-  (let
+  (begin (cfg compile-profile (set! tc-attrib-source-type-name-lookup-key (+ tc-attrib-source-type-name-lookup-key 1)))
+    (let
     [name-id : i64 (tc-name-id name)]
     (if (tc-source-slash-qualified-id? name name-id)
       (ResultTcString.Err (tc-source-slash-qualified-message name))
-      (tc-dotted-type-name-lookup-key-from-id ctx name name-id))))
+      (tc-dotted-type-name-lookup-key-from-id ctx name name-id)))))
 
 (define (tc-enum-qualified-variant-lookup-name? [name : String]) : bool
   (>= (tc-name-first-dot (tc-qualified-name-base name)) 0))

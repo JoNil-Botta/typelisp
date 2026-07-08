@@ -844,15 +844,10 @@
 (define (lower-global-list-reverse-onto
   [globals : CompilerIrGlobalList]
   [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (match globals
-    [(CompilerIrGlobalList.Nil) acc]
-    [(CompilerIrGlobalList.Cons head rest)
-      (lower-global-list-reverse-onto
-        (box-get rest)
-        (compiler-ir-global-cons head acc))]))
+  (compiler-ir-global-list-reverse-onto globals acc))
 
 (define (lower-global-list-reverse [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (lower-global-list-reverse-onto globals CompilerIrGlobalList.Nil))
+  (compiler-ir-global-list-compact-reversed globals))
 
 (define (lower-function-list-append
   [left : CompilerIrFunctionList]
@@ -869,15 +864,10 @@
 (define (lower-extern-list-reverse-onto
   [externs : CompilerIrExternList]
   [acc : CompilerIrExternList]) : CompilerIrExternList
-  (match externs
-    [(CompilerIrExternList.Nil) acc]
-    [(CompilerIrExternList.Cons head rest)
-      (lower-extern-list-reverse-onto
-        (box-get rest)
-        (compiler-ir-extern-cons head acc))]))
+  (compiler-ir-extern-list-reverse-onto externs acc))
 
 (define (lower-extern-list-reverse [externs : CompilerIrExternList]) : CompilerIrExternList
-  (lower-extern-list-reverse-onto externs CompilerIrExternList.Nil))
+  (compiler-ir-extern-list-compact-reversed externs))
 
 (define (lower-name-env-lookup-with-id
   [names : LowerNameEnv]
@@ -44727,10 +44717,10 @@
                 (ResultLowerDecls.Ok
                   (box
                     (LowerDeclsSuccess
-                      (lower-global-list-reverse cur-globals)
+                      (compiler-ir-global-list-compact-reversed cur-globals)
                       (compiler-ir-function-builder-snapshot-list
                         (& cur-functions))
-                      (lower-extern-list-reverse cur-externs)
+                      (compiler-ir-extern-list-compact-reversed cur-externs)
                       cur-spans))))
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
@@ -50849,7 +50839,11 @@
         [(CompilerIrGlobal.Global global-name _ _)
           (if (string.eq global-name name)
             true
-            (lower-test-global-list-has-name? (box-get rest) name))])]))
+            (lower-test-global-list-has-name? (box-get rest) name))])]
+    [(CompilerIrGlobalList.Array seq)
+      (lower-test-global-list-has-name?
+        (compiler-ir-global-seq-to-list seq)
+        name)]))
 
 (define (compiler-lower-defdispatch-thunk-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-defdispatch-source))
@@ -51553,7 +51547,10 @@
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ _ externs)
-          (match externs
+          (match (match externs
+            [(CompilerIrExternList.Array seq)
+              (compiler-ir-extern-seq-to-list seq)]
+            [_ externs])
             [(CompilerIrExternList.Cons
                 (CompilerIrExtern.Extern name _ abi symbol link-inputs _)
                 CompilerIrExternList.Nil)
@@ -51757,6 +51754,16 @@
           (let
             [ok : bool true]
             (begin
+              (if (match globals
+                [(CompilerIrGlobalList.Array _) true]
+                [_ false])
+                unit
+                (set! ok false))
+              (if (match externs
+                [(CompilerIrExternList.Array _) true]
+                [_ false])
+                unit
+                (set! ok false))
               (if (lower-test-global-list-has-name? globals "answer")
                 unit
                 (set! ok false))
@@ -51766,9 +51773,7 @@
               (if (lower-test-global-list-has-name? globals "widened")
                 unit
                 (set! ok false))
-              (if (match externs
-                [(CompilerIrExternList.Cons _ CompilerIrExternList.Nil) true]
-                [_ false])
+              (if (= (compiler-ir-extern-list-count externs) 1)
                 unit
                 (set! ok false))
               (if (>

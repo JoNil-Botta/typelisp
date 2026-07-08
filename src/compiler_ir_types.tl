@@ -420,16 +420,26 @@
 (defenum CompilerIrGlobal
   (Global String AstType CompilerIrValue))
 
+(defstruct CompilerIrGlobalSeq
+  (slots (Array CompilerIrGlobal))
+  (len i64))
+
 (defenum CompilerIrGlobalList
   (Nil)
-  (Cons CompilerIrGlobal (Box CompilerIrGlobalList)))
+  (Cons CompilerIrGlobal (Box CompilerIrGlobalList))
+  (Array CompilerIrGlobalSeq))
 
 (defenum CompilerIrExtern
   (Extern String AstType AstExternAbi String AstExternLinkInputList bool))
 
+(defstruct CompilerIrExternSeq
+  (slots (Array CompilerIrExtern))
+  (len i64))
+
 (defenum CompilerIrExternList
   (Nil)
-  (Cons CompilerIrExtern (Box CompilerIrExternList)))
+  (Cons CompilerIrExtern (Box CompilerIrExternList))
+  (Array CompilerIrExternSeq))
 
 (defenum CompilerIrProgram
   (Program CompilerIrGlobalList CompilerIrFunctionList CompilerIrExternList))
@@ -1622,6 +1632,114 @@
   [rest : CompilerIrExternList]) : CompilerIrExternList
   (CompilerIrExternList.Cons extern (box rest)))
 
+(define (compiler-ir-global-list-fill-array-reversed
+  [globals : CompilerIrGlobalList]
+  [slots : (Array CompilerIrGlobal)]
+  [index : i64]) : unit
+  (match globals
+    [(CompilerIrGlobalList.Nil) unit]
+    [(CompilerIrGlobalList.Cons global rest)
+      (begin
+        (array-set! slots index global)
+        (compiler-ir-global-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrGlobalList.Array seq)
+      (let
+        [i : i64 0]
+        [n : i64 (struct-get seq len)]
+        [write : i64 index]
+        [src : (Array CompilerIrGlobal) (struct-get seq slots)]
+        (while (< i n)
+          (begin
+            (array-set! slots write (array-ref src i))
+            (set! write (- write 1))
+            (set! i (+ i 1)))))]))
+
+(define (compiler-ir-global-seq-to-list [globals : CompilerIrGlobalSeq]) : CompilerIrGlobalList
+  (let
+    [slots : (Array CompilerIrGlobal) (struct-get globals slots)]
+    [cursor : i64 (- (struct-get globals len) 1)]
+    [out : CompilerIrGlobalList CompilerIrGlobalList.Nil]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set! out (compiler-ir-global-cons (array-ref slots cursor) out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-global-seq-count [globals : CompilerIrGlobalSeq]) : i64
+  (struct-get globals len))
+
+(define (compiler-ir-global-seq-ref
+  [globals : CompilerIrGlobalSeq]
+  [index : i64]) : CompilerIrGlobal
+  (array-ref (struct-get globals slots) index))
+
+(define (compiler-ir-global-list-compact-reversed
+  [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
+  (let
+    [count : i64 (compiler-ir-global-list-count globals)]
+    [slots : (Array CompilerIrGlobal) (array.make-array CompilerIrGlobal count)]
+    (begin
+      (compiler-ir-global-list-fill-array-reversed globals slots (- count 1))
+      (CompilerIrGlobalList.Array (CompilerIrGlobalSeq slots count)))))
+
+(define (compiler-ir-extern-list-fill-array-reversed
+  [externs : CompilerIrExternList]
+  [slots : (Array CompilerIrExtern)]
+  [index : i64]) : unit
+  (match externs
+    [(CompilerIrExternList.Nil) unit]
+    [(CompilerIrExternList.Cons extern rest)
+      (begin
+        (array-set! slots index extern)
+        (compiler-ir-extern-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrExternList.Array seq)
+      (let
+        [i : i64 0]
+        [n : i64 (struct-get seq len)]
+        [write : i64 index]
+        [src : (Array CompilerIrExtern) (struct-get seq slots)]
+        (while (< i n)
+          (begin
+            (array-set! slots write (array-ref src i))
+            (set! write (- write 1))
+            (set! i (+ i 1)))))]))
+
+(define (compiler-ir-extern-seq-to-list [externs : CompilerIrExternSeq]) : CompilerIrExternList
+  (let
+    [slots : (Array CompilerIrExtern) (struct-get externs slots)]
+    [cursor : i64 (- (struct-get externs len) 1)]
+    [out : CompilerIrExternList CompilerIrExternList.Nil]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set! out (compiler-ir-extern-cons (array-ref slots cursor) out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-extern-seq-count [externs : CompilerIrExternSeq]) : i64
+  (struct-get externs len))
+
+(define (compiler-ir-extern-seq-ref
+  [externs : CompilerIrExternSeq]
+  [index : i64]) : CompilerIrExtern
+  (array-ref (struct-get externs slots) index))
+
+(define (compiler-ir-extern-list-compact-reversed
+  [externs : CompilerIrExternList]) : CompilerIrExternList
+  (let
+    [count : i64 (compiler-ir-extern-list-count externs)]
+    [slots : (Array CompilerIrExtern) (array.make-array CompilerIrExtern count)]
+    (begin
+      (compiler-ir-extern-list-fill-array-reversed externs slots (- count 1))
+      (CompilerIrExternList.Array (CompilerIrExternSeq slots count)))))
+
 (define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
   (CompilerIrExtern.Extern
     name
@@ -2452,7 +2570,11 @@
     [(CompilerIrGlobalList.Cons global rest)
       (compiler-ir-clone-global-list-acc
         (box-get rest)
-        (compiler-ir-global-cons (compiler-ir-clone-global global) acc))]))
+        (compiler-ir-global-cons (compiler-ir-clone-global global) acc))]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-ir-clone-global-list-acc
+        (compiler-ir-global-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-global-list-reverse-onto
   [globals : CompilerIrGlobalList]
@@ -2462,7 +2584,11 @@
     [(CompilerIrGlobalList.Cons global rest)
       (compiler-ir-global-list-reverse-onto
         (box-get rest)
-        (compiler-ir-global-cons global acc))]))
+        (compiler-ir-global-cons global acc))]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-ir-global-list-reverse-onto
+        (compiler-ir-global-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-clone-global-list [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
   (compiler-ir-global-list-reverse-onto
@@ -2488,7 +2614,11 @@
     [(CompilerIrExternList.Cons extern rest)
       (compiler-ir-clone-extern-list-acc
         (box-get rest)
-        (compiler-ir-extern-cons (compiler-ir-clone-extern extern) acc))]))
+        (compiler-ir-extern-cons (compiler-ir-clone-extern extern) acc))]
+    [(CompilerIrExternList.Array seq)
+      (compiler-ir-clone-extern-list-acc
+        (compiler-ir-extern-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-extern-list-reverse-onto
   [externs : CompilerIrExternList]
@@ -2498,7 +2628,11 @@
     [(CompilerIrExternList.Cons extern rest)
       (compiler-ir-extern-list-reverse-onto
         (box-get rest)
-        (compiler-ir-extern-cons extern acc))]))
+        (compiler-ir-extern-cons extern acc))]
+    [(CompilerIrExternList.Array seq)
+      (compiler-ir-extern-list-reverse-onto
+        (compiler-ir-extern-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-clone-extern-list [externs : CompilerIrExternList]) : CompilerIrExternList
   (compiler-ir-extern-list-reverse-onto
@@ -3875,13 +4009,15 @@
   (match globals
     [(CompilerIrGlobalList.Nil) 0]
     [(CompilerIrGlobalList.Cons _ rest)
-      (+ 1 (compiler-ir-global-list-count (box-get rest)))]))
+      (+ 1 (compiler-ir-global-list-count (box-get rest)))]
+    [(CompilerIrGlobalList.Array seq) (compiler-ir-global-seq-count seq)]))
 
 (define (compiler-ir-extern-list-count [externs : CompilerIrExternList]) : i64
   (match externs
     [(CompilerIrExternList.Nil) 0]
     [(CompilerIrExternList.Cons _ rest)
-      (+ 1 (compiler-ir-extern-list-count (box-get rest)))]))
+      (+ 1 (compiler-ir-extern-list-count (box-get rest)))]
+    [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
 (define (compiler-ir-max-i64 [a : i64] [b : i64]) : i64
   (if (> a b)

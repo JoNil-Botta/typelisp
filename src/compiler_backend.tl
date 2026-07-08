@@ -10165,7 +10165,8 @@
   (match globals
     [(CompilerIrGlobalList.Nil) 0]
     [(CompilerIrGlobalList.Cons _ rest)
-      (+ 1 (compiler-backend-global-type-count (box-get rest)))]))
+      (+ 1 (compiler-backend-global-type-count (box-get rest)))]
+    [(CompilerIrGlobalList.Array seq) (compiler-ir-global-seq-count seq)]))
 
 (define (compiler-backend-global-types-fill
   [globals : CompilerIrGlobalList]
@@ -10184,7 +10185,13 @@
               (box-get rest)
               ids
               values
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-backend-global-types-fill
+        (compiler-ir-global-seq-to-list seq)
+        ids
+        values
+        index)]))
 
 (define (compiler-backend-global-types [globals : CompilerIrGlobalList]) : CompilerBackendGlobalTypeList
   (let
@@ -19928,7 +19935,23 @@
             (match ty
               [(AstType.Func args _) (box-get args)]
               [_ (ast-type-list-new)])
-            (compiler-backend-extern-param-types (box-get rest) name))])]))
+            (compiler-backend-extern-param-types (box-get rest) name))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-extern-param-types-seq seq name 0)]))
+
+(define (compiler-backend-extern-param-types-seq
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : AstTypeList
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    (ast-type-list-new)
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+        (if (string.eq extern-name name)
+          (match ty
+            [(AstType.Func args _) (box-get args)]
+            [_ (ast-type-list-new)])
+          (compiler-backend-extern-param-types-seq externs name (+ index 1)))])))
 
 (define (compiler-backend-function-signature
   [functions : CompilerIrFunctionList]
@@ -19975,7 +19998,26 @@
                   (box-get args)
                   (ast-node-pool-reader-type-get ret-ty))]
               [_ (CompilerBackendMaybeSignature.No)])
-            (compiler-backend-extern-signature (box-get rest) name))])]))
+            (compiler-backend-extern-signature (box-get rest) name))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-extern-signature-seq seq name 0)]))
+
+(define (compiler-backend-extern-signature-seq
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : CompilerBackendMaybeSignature
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    (CompilerBackendMaybeSignature.No)
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+        (if (string.eq extern-name name)
+          (match ty
+            [(AstType.Func args ret-ty)
+              (CompilerBackendMaybeSignature.Some
+                (box-get args)
+                (ast-node-pool-reader-type-get ret-ty))]
+            [_ (CompilerBackendMaybeSignature.No)])
+          (compiler-backend-extern-signature-seq externs name (+ index 1)))])))
 
 (define (compiler-backend-function-list-count
   [functions : CompilerIrFunctionList]) : i64
@@ -19989,7 +20031,8 @@
   (match externs
     [(CompilerIrExternList.Nil) 0]
     [(CompilerIrExternList.Cons _ rest)
-      (+ 1 (compiler-backend-extern-list-count (box-get rest)))]))
+      (+ 1 (compiler-backend-extern-list-count (box-get rest)))]
+    [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
 ;; Intern the name (instead of intern-lookup) so EVERY indexed entry is
 ;; reachable through the id map. The lookup-only form silently skipped names
@@ -20102,7 +20145,14 @@
                 index)
               names
               signatures
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-program-index-extern-signatures-into
+        (compiler-ir-extern-seq-to-list seq)
+        signature-ids
+        names
+        signatures
+        index)]))
 
 ;; First pass: fill the side arrays and bind the LINK SYMBOLS only.
 (define (compiler-backend-program-index-extern-references-into
@@ -20127,7 +20177,14 @@
                 index)
               link-symbols
               provideds
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-program-index-extern-references-into
+        (compiler-ir-extern-seq-to-list seq)
+        reference-ids
+        link-symbols
+        provideds
+        index)]))
 
 ;; Second pass: bind the extern NAMES after every link symbol, so a name
 ;; binding always overwrites a link-symbol binding for the same spelling.
@@ -20148,7 +20205,12 @@
               reference-ids
               extern-name
               index)
-            (+ index 1))])]))
+            (+ index 1))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-program-index-extern-reference-names-into
+        (compiler-ir-extern-seq-to-list seq)
+        reference-ids
+        index)]))
 
 ;; The aggregate type name a register-group value carries (for the
 ;; type-name -> word-count map). Empty for non-aggregate types.
@@ -20780,7 +20842,11 @@
                 (backend_string_i64_map.insert (&mut seen) symbol 1)
                 (compiler-backend-validate-global-symbols-into
                   (box-get rest)
-                  seen))))])]))
+                  seen))))])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-backend-validate-global-symbols-into
+        (compiler-ir-global-seq-to-list seq)
+        seen)]))
 
 (define (compiler-backend-runtime-prelude-string-helper-export?
   [name : String]
@@ -20937,7 +21003,12 @@
             (compiler-backend-validate-extern-symbols-into
               (box-get rest)
               plan
-              seen))])]))
+              seen))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-validate-extern-symbols-into
+        (compiler-ir-extern-seq-to-list seq)
+        plan
+        seen)]))
 
 (define (compiler-backend-validate-function-symbols
   [globals : CompilerIrGlobalList]
@@ -21020,7 +21091,26 @@
               -1)
             (compiler-backend-extern-varargs-fixed-param-count
               (box-get rest)
-              name))])]))
+              name))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-extern-varargs-fixed-param-count-seq seq name 0)]))
+
+(define (compiler-backend-extern-varargs-fixed-param-count-seq
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : i64
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    -1
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
+        (if (or (string.eq name extern-name) (string.eq name link-symbol))
+          (if (ast-extern-abi-c-varargs? abi)
+            (compiler-backend-extern-fixed-param-count ty)
+            -1)
+          (compiler-backend-extern-varargs-fixed-param-count-seq
+            externs
+            name
+            (+ index 1)))])))
 
 (define (compiler-backend-varargs-linux-vector-count
   [types : AstTypeList]
@@ -21398,7 +21488,29 @@
                   (compiler-backend-type-list-has-aggregate? (box-get args))]
                 [_ false])
               false)
-            (compiler-backend-c-aggregate-extern-call? (box-get rest) name))])]))
+            (compiler-backend-c-aggregate-extern-call? (box-get rest) name))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-c-aggregate-extern-call-seq? seq name 0)]))
+
+(define (compiler-backend-c-aggregate-extern-call-seq?
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    false
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
+        (if (or (string.eq name extern-name) (string.eq name link-symbol))
+          (if (ast-extern-abi-c? abi)
+            (match ty
+              [(AstType.Func args _)
+                (compiler-backend-type-list-has-aggregate? (box-get args))]
+              [_ false])
+            false)
+          (compiler-backend-c-aggregate-extern-call-seq?
+            externs
+            name
+            (+ index 1)))])))
 
 (define (compiler-backend-call-param-types-for-call
   [name : String]
@@ -41735,7 +41847,11 @@
         [(CompilerIrGlobal.Global _ _ value)
           (compiler-backend-collect-global-collections
             (compiler-backend-collect-value-collections collections value)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-backend-collect-global-collections
+        collections
+        (compiler-ir-global-seq-to-list seq))]))
 
 (define (compiler-backend-collect-program-collections
   [program : CompilerIrProgram]) : CompilerBackendProgramCollections
@@ -42085,7 +42201,13 @@
             (text_buf.append buf (compiler-backend-emergency-wrap head))
             program-index)]
         [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackendBuffer.Err message)])]))
+          (ResultCompilerBackendBuffer.Err message)])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-backend-emit-globals-buffer-into
+        target
+        (compiler-ir-global-seq-to-list seq)
+        buf
+        program-index)]))
 
 (define (compiler-backend-global-init-name [global-name : String]) : String
   (string.append "__global_init_" global-name))
@@ -42134,7 +42256,11 @@
             (if (compiler-backend-runtime-global? ty value)
               (compiler-backend-global-init-call name ty program-index)
               "")
-            (compiler-backend-global-initializers (box-get rest) program-index))])]))
+            (compiler-backend-global-initializers (box-get rest) program-index))])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-backend-global-initializers
+        (compiler-ir-global-seq-to-list seq)
+        program-index)]))
 
 (define (compiler-backend-function-list-defines?
   [functions : CompilerIrFunctionList]
@@ -42215,7 +42341,23 @@
             true
             (if (string.eq link-symbol name)
               true
-              (compiler-backend-extern-list-references? (box-get rest) name)))])]))
+              (compiler-backend-extern-list-references? (box-get rest) name)))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-extern-seq-references? seq name 0)]))
+
+(define (compiler-backend-extern-seq-references?
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    false
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
+        (if (string.eq extern-name name)
+          true
+          (if (string.eq link-symbol name)
+            true
+            (compiler-backend-extern-seq-references? externs name (+ index 1))))])))
 
 (define (compiler-backend-extern-list-link-symbol
   [externs : CompilerIrExternList]
@@ -42227,7 +42369,21 @@
         [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
           (if (string.eq extern-name name)
             link-symbol
-            (compiler-backend-extern-list-link-symbol (box-get rest) name))])]))
+            (compiler-backend-extern-list-link-symbol (box-get rest) name))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-extern-seq-link-symbol seq name 0)]))
+
+(define (compiler-backend-extern-seq-link-symbol
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : String
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    name
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
+        (if (string.eq extern-name name)
+          link-symbol
+          (compiler-backend-extern-seq-link-symbol externs name (+ index 1)))])))
 
 (define (compiler-backend-binop-needs-div-abort?
   [op : CompilerIrBinOp]
@@ -42490,7 +42646,11 @@
                   index
                   extern-name)
                 link-symbol)
-              (box-get rest)))])]))
+              (box-get rest)))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-runtime-index-externs
+        index
+        (compiler-ir-extern-seq-to-list seq))]))
 
 (define (compiler-backend-runtime-index
   [functions : CompilerIrFunctionList]
@@ -43324,7 +43484,14 @@
               plan
               runtime-index
               referenced-functions
-              buf))])]))
+              buf))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-emit-externs-into
+        (compiler-ir-extern-seq-to-list seq)
+        plan
+        runtime-index
+        referenced-functions
+        buf)]))
 
 ;; The out-of-memory message lives in the runtime prelude (stdlib/runtime.tl as
 ;; `oom-abort`, exported `tl_oom_abort`); the allocator's
@@ -48096,7 +48263,12 @@ tl_tlci_call_image_entry:
                   ty
                   value))
               target
-              (box-get rest)))])]))
+              (box-get rest)))])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-backend-object-globals
+        parts
+        target
+        (compiler-ir-global-seq-to-list seq))]))
 
 (define (compiler-backend-object-strings
   [parts : CompilerBackendObjectParts]
@@ -48295,7 +48467,14 @@ tl_tlci_call_image_entry:
             (box-get rest)
             plan
             runtime-index
-            referenced-functions)])]))
+            referenced-functions)])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-object-externs
+        parts
+        (compiler-ir-extern-seq-to-list seq)
+        plan
+        runtime-index
+        referenced-functions)]))
 
 (define (compiler-backend-object-runtime-symbols-list) : BackendStringList
   (let

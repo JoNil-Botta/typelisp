@@ -4463,6 +4463,30 @@
         [(CompilerIrCAbiReturnSlot.Slot bty boffset)
           (and (= aoffset boffset) (opt-type-eq aty bty))])]))
 
+(define (opt-c-abi-return-slot-seq-eq-from
+  [a : (Array CompilerIrCAbiReturnSlot)]
+  [b : (Array CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [count : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (opt-c-abi-return-slot-eq (array-ref a index) (array-ref b index))
+      (opt-c-abi-return-slot-seq-eq-from a b (+ index 1) count))))
+
+(define (opt-c-abi-return-slot-seq-eq
+  [a : CompilerIrCAbiReturnSlotSeq]
+  [b : CompilerIrCAbiReturnSlotSeq]) : bool
+  (let
+    [count : i64 (struct-get a len)]
+    (and
+      (= count (struct-get b len))
+      (opt-c-abi-return-slot-seq-eq-from
+        (struct-get a slots)
+        (struct-get b slots)
+        0
+        count))))
+
 (define (opt-c-abi-return-slot-list-eq
   [a : CompilerIrCAbiReturnSlotList]
   [b : CompilerIrCAbiReturnSlotList]) : bool
@@ -4470,6 +4494,7 @@
     [(CompilerIrCAbiReturnSlotList.Nil)
       (match b
         [(CompilerIrCAbiReturnSlotList.Nil) true]
+        [(CompilerIrCAbiReturnSlotList.Array seq) (= (struct-get seq len) 0)]
         [_ false])]
     [(CompilerIrCAbiReturnSlotList.Cons aslot arest)
       (match b
@@ -4477,7 +4502,19 @@
           (and
             (opt-c-abi-return-slot-eq aslot bslot)
             (opt-c-abi-return-slot-list-eq (box-get arest) (box-get brest)))]
-        [_ false])]))
+        [(CompilerIrCAbiReturnSlotList.Array seq)
+          (opt-c-abi-return-slot-list-eq
+            (compiler-ir-c-abi-return-slot-cons-linked aslot (box-get arest))
+            (compiler-ir-c-abi-return-slot-seq-to-list seq))]
+        [_ false])]
+    [(CompilerIrCAbiReturnSlotList.Array aseq)
+      (match b
+        [(CompilerIrCAbiReturnSlotList.Array bseq)
+          (opt-c-abi-return-slot-seq-eq aseq bseq)]
+        [_
+          (opt-c-abi-return-slot-list-eq
+            (compiler-ir-c-abi-return-slot-seq-to-list aseq)
+            b)])]))
 
 (define (opt-instr-eq [a : CompilerIrInstr] [b : CompilerIrInstr]) : bool
   (match a

@@ -26007,7 +26007,48 @@
                   (+ int-idx 1))
                 (if sse?
                   (+ sse-idx 1)
-                  sse-idx))))])]))
+                  sse-idx))))])]
+    [(CompilerIrCAbiReturnSlotList.Array seq)
+      (compiler-backend-emit-c-abi-return-slot-stores-array
+        base-reg
+        (struct-get seq slots)
+        0
+        (struct-get seq len)
+        int-idx
+        sse-idx)]))
+
+(define (compiler-backend-emit-c-abi-return-slot-stores-array
+  [base-reg : String]
+  [slots : (Array CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [count : i64]
+  [int-idx : i64]
+  [sse-idx : i64]) : String
+  (if (>= index count)
+    ""
+    (let
+      [slot : CompilerIrCAbiReturnSlot (array-ref slots index)]
+      (match slot
+        [(CompilerIrCAbiReturnSlot.Slot ty _)
+          (let
+            [sse? : bool (compiler-backend-float-type? ty)]
+            (string.append
+              (compiler-backend-emit-c-abi-return-slot-store
+                base-reg
+                slot
+                int-idx
+                sse-idx)
+              (compiler-backend-emit-c-abi-return-slot-stores-array
+                base-reg
+                slots
+                (+ index 1)
+                count
+                (if sse?
+                  int-idx
+                  (+ int-idx 1))
+                (if sse?
+                  (+ sse-idx 1)
+                  sse-idx))))]))))
 
 (define (compiler-backend-emit-c-abi-return-base-save
   [assignments : CompilerRegAssignmentList]

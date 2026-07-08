@@ -104,9 +104,14 @@
 (defenum CompilerIrCAbiReturnSlot
   (Slot AstType i64))
 
+(defstruct CompilerIrCAbiReturnSlotSeq
+  (slots (Array CompilerIrCAbiReturnSlot))
+  (len i64))
+
 (defenum CompilerIrCAbiReturnSlotList
   (Nil)
-  (Cons CompilerIrCAbiReturnSlot (Box CompilerIrCAbiReturnSlotList)))
+  (Cons CompilerIrCAbiReturnSlot (Box CompilerIrCAbiReturnSlotList))
+  (Array CompilerIrCAbiReturnSlotSeq))
 
 (defstruct CompilerIrPhiInput
   (value CompilerIrValue)
@@ -418,6 +423,87 @@
   [value : CompilerIrValue]
   [rest : CompilerIrValueList]) : CompilerIrValueList
   (CompilerIrValueList.Cons value (box rest)))
+
+(define (compiler-ir-c-abi-return-slot-cons-linked
+  [slot : CompilerIrCAbiReturnSlot]
+  [rest : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
+  (CompilerIrCAbiReturnSlotList.Cons slot (box rest)))
+
+(define (compiler-ir-c-abi-return-slot-cons
+  [slot : CompilerIrCAbiReturnSlot]
+  [rest : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
+  (let
+    [count : i64 (+ 1 (compiler-ir-c-abi-return-slot-list-count rest))]
+    [slots : (Array CompilerIrCAbiReturnSlot)
+      (array.make-array CompilerIrCAbiReturnSlot count)]
+    (begin
+      (array-set! slots 0 slot)
+      (compiler-ir-c-abi-return-slot-list-fill-array rest slots 1)
+      (CompilerIrCAbiReturnSlotList.Array
+        (CompilerIrCAbiReturnSlotSeq slots count)))))
+
+(define (compiler-ir-c-abi-return-slot-list-count
+  [slots : CompilerIrCAbiReturnSlotList]) : i64
+  (match slots
+    [(CompilerIrCAbiReturnSlotList.Nil) 0]
+    [(CompilerIrCAbiReturnSlotList.Cons _ rest)
+      (+ 1 (compiler-ir-c-abi-return-slot-list-count (box-get rest)))]
+    [(CompilerIrCAbiReturnSlotList.Array seq) (struct-get seq len)]))
+
+(define (compiler-ir-c-abi-return-slot-list-fill-array
+  [items : CompilerIrCAbiReturnSlotList]
+  [slots : (Array CompilerIrCAbiReturnSlot)]
+  [index : i64]) : unit
+  (match items
+    [(CompilerIrCAbiReturnSlotList.Nil) unit]
+    [(CompilerIrCAbiReturnSlotList.Cons slot rest)
+      (begin
+        (array-set! slots index slot)
+        (compiler-ir-c-abi-return-slot-list-fill-array
+          (box-get rest)
+          slots
+          (+ index 1)))]
+    [(CompilerIrCAbiReturnSlotList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [source : (Array CompilerIrCAbiReturnSlot) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots (+ index read) (array-ref source read))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-c-abi-return-slot-seq-to-list-rev
+  [slots : (Array CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [acc : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrCAbiReturnSlotList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set!
+            out
+            (compiler-ir-c-abi-return-slot-cons-linked
+              (array-ref slots cursor)
+              out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-c-abi-return-slot-seq-to-list
+  [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotList
+  (compiler-ir-c-abi-return-slot-seq-to-list-rev
+    (struct-get seq slots)
+    (- (struct-get seq len) 1)
+    CompilerIrCAbiReturnSlotList.Nil))
+
+(define (compiler-ir-c-abi-return-slot-list-force-cons
+  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
+  (match slots
+    [(CompilerIrCAbiReturnSlotList.Array seq)
+      (compiler-ir-c-abi-return-slot-seq-to-list seq)]
+    [_ slots]))
 
 (define (compiler-ir-phi-input-cons-linked
   [value : CompilerIrValue]
@@ -1325,14 +1411,42 @@
     [(CompilerIrCAbiReturnSlot.Slot ty offset)
       (CompilerIrCAbiReturnSlot.Slot (compiler-ir-clone-type ty) offset)]))
 
+(define (compiler-ir-clone-c-abi-return-slot-seq-fill
+  [src : (Array CompilerIrCAbiReturnSlot)]
+  [dst : (Array CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set!
+        dst
+        index
+        (compiler-ir-clone-c-abi-return-slot (array-ref src index)))
+      (compiler-ir-clone-c-abi-return-slot-seq-fill src dst (+ index 1) count))))
+
+(define (compiler-ir-clone-c-abi-return-slot-seq
+  [seq : CompilerIrCAbiReturnSlotSeq]) : CompilerIrCAbiReturnSlotSeq
+  (let
+    [count : i64 (struct-get seq len)]
+    [src : (Array CompilerIrCAbiReturnSlot) (struct-get seq slots)]
+    [dst : (Array CompilerIrCAbiReturnSlot)
+      (array.make-array CompilerIrCAbiReturnSlot count)]
+    (begin
+      (compiler-ir-clone-c-abi-return-slot-seq-fill src dst 0 count)
+      (CompilerIrCAbiReturnSlotSeq dst count))))
+
 (define (compiler-ir-clone-c-abi-return-slots
   [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
   (match slots
     [(CompilerIrCAbiReturnSlotList.Nil) (CompilerIrCAbiReturnSlotList.Nil)]
     [(CompilerIrCAbiReturnSlotList.Cons slot rest)
-      (CompilerIrCAbiReturnSlotList.Cons
+      (compiler-ir-c-abi-return-slot-cons
         (compiler-ir-clone-c-abi-return-slot slot)
-        (box (compiler-ir-clone-c-abi-return-slots (box-get rest))))]))
+        (compiler-ir-clone-c-abi-return-slots (box-get rest)))]
+    [(CompilerIrCAbiReturnSlotList.Array seq)
+      (CompilerIrCAbiReturnSlotList.Array
+        (compiler-ir-clone-c-abi-return-slot-seq seq))]))
 
 (define (compiler-ir-clone-phi-input-list-acc
   [inputs : CompilerIrPhiInputList]
@@ -5063,6 +5177,61 @@
         (compiler-ir-function-list-name-at? functions 1 "second")
         (compiler-ir-function-list-name-at? functions 2 "third")))))
 
+(define (compiler-ir-c-abi-return-slot-seq-entry-i64-offset?
+  [seq : CompilerIrCAbiReturnSlotSeq]
+  [index : i64]
+  [want-offset : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (match (array-ref (struct-get seq slots) index)
+      [(CompilerIrCAbiReturnSlot.Slot ty offset)
+        (and
+          (= offset want-offset)
+          (match ty
+            [(AstType.I64) true]
+            [_ false]))])))
+
+(define (compiler-ir-c-abi-return-slot-seq-entry-f64-offset?
+  [seq : CompilerIrCAbiReturnSlotSeq]
+  [index : i64]
+  [want-offset : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (match (array-ref (struct-get seq slots) index)
+      [(CompilerIrCAbiReturnSlot.Slot ty offset)
+        (and
+          (= offset want-offset)
+          (match ty
+            [(AstType.F64) true]
+            [_ false]))])))
+
+(define (compiler-ir-c-abi-return-slot-dense-order-ok?) : bool
+  (let
+    [slots : CompilerIrCAbiReturnSlotList
+      (compiler-ir-c-abi-return-slot-cons
+        (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 0)
+        (compiler-ir-c-abi-return-slot-cons
+          (CompilerIrCAbiReturnSlot.Slot (AstType.F64) 8)
+          CompilerIrCAbiReturnSlotList.Nil))]
+    [cloned : CompilerIrCAbiReturnSlotList
+      (compiler-ir-clone-c-abi-return-slots slots)]
+    (and
+      (= (compiler-ir-c-abi-return-slot-list-count slots) 2)
+      (match slots
+        [(CompilerIrCAbiReturnSlotList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? seq 0 0)
+            (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
+        [_ false])
+      (match cloned
+        [(CompilerIrCAbiReturnSlotList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-c-abi-return-slot-seq-entry-i64-offset? seq 0 0)
+            (compiler-ir-c-abi-return-slot-seq-entry-f64-offset? seq 1 8))]
+        [_ false]))))
+
 (define (compiler-ir-phi-input-seq-entry-var-label?
   [seq : CompilerIrPhiInputSeq]
   [index : i64]
@@ -5163,5 +5332,6 @@
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
     (unless (compiler-ir-dense-builders-order-ok?) (return 1))
+    (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
     (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
     42))

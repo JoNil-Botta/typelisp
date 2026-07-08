@@ -7,6 +7,7 @@
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
 (import sym_i64_env)
+(import (hashmap i64 i64) as lower_i64_i64_map)
 
 (define (compiler-driver-state-smoke-expr-push
   [pool : AstExprNodePoolState]
@@ -287,7 +288,7 @@
 
 (define (compiler-driver-state-smoke-lower-state-instrs [state : LowerState]) : CompilerIrInstrList
   (match state
-    [(LowerState.State _ _ _ _ instrs _ _ _ _ _ _ _ _ _)
+    [(LowerState.State _ _ _ _ instrs _ _ _ _ _ _ _ _ _ _)
       (compiler-ir-instr-builder-to-list instrs)]))
 
 (define (compiler-driver-state-smoke-instr-i64-mov?
@@ -1374,6 +1375,7 @@
                       (lower-empty-global-name-cache)
                       (lower-type-cache-from-env (TcTypeEnv.Nil))
                       (CompilerLowerMode.Scalar)
+                      (lower_i64_i64_map.with-capacity 8)
                       0
                       0)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
@@ -1504,6 +1506,7 @@
                       (lower-empty-global-name-cache)
                       (lower-type-cache-from-env (TcTypeEnv.Nil))
                       (CompilerLowerMode.Scalar)
+                      (lower_i64_i64_map.with-capacity 8)
                       0
                       0)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
@@ -1776,6 +1779,7 @@
                       (lower-empty-global-name-cache)
                       (lower-type-cache-from-env (TcTypeEnv.Nil))
                       (CompilerLowerMode.Avx512)
+                      (lower_i64_i64_map.with-capacity 8)
                       0
                       0)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]

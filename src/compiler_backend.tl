@@ -491,6 +491,8 @@
   false)
 (define compiler-backend-addr-of-forwarding-src : (Array i64)
   (array.make-array i64 0))
+(define compiler-backend-group-vars-enabled : bool
+  false)
 (define compiler-backend-group-vars : CompilerLiveI64Set
   (compiler-live-set-empty))
 (define compiler-backend-current-slot-vars : i64
@@ -9564,10 +9566,12 @@
                   "backend: register-group var rematerialised")))])]
       [(CompilerRegMaybeLocation.No)
         (ResultCompilerBackend.Ok
-          (compiler-backend-frame-offset
-            (if (= index 0)
-              (compiler-backend-group-word0-slot var vars assignments)
-              (compiler-backend-group-word1-slot var vars assignments))))])))
+          (if (compiler-backend-group-var? var)
+            (compiler-backend-frame-offset
+              (if (= index 0)
+                (compiler-backend-group-word0-slot var vars assignments)
+                (compiler-backend-group-word1-slot var vars assignments)))
+            (compiler-backend-slot (+ var index))))])))
 
 ;; Load a group value's two words into `reg0`/`reg1` (for return -> rax:rdx
 ;; or an argument register pair). The value must be a group var.
@@ -19904,13 +19908,22 @@
   (> (compiler-backend-group-word-count index ty) 1))
 
 (define (compiler-backend-group-vars-enable! [vars : CompilerLiveI64Set]) : unit
-  (set! compiler-backend-group-vars vars))
+  (begin
+    (set! compiler-backend-group-vars vars)
+    (set! compiler-backend-group-vars-enabled true)))
+
+(define (compiler-backend-group-vars-disable!) : unit
+  (begin
+    (set! compiler-backend-group-vars-enabled false)
+    (set! compiler-backend-current-slot-vars 0)))
 
 (define (compiler-backend-current-slot-vars-set! [vars : i64]) : unit
   (set! compiler-backend-current-slot-vars vars))
 
 (define (compiler-backend-group-var? [var : i64]) : bool
-  (compiler-live-set-contains? compiler-backend-group-vars var))
+  (and
+    compiler-backend-group-vars-enabled
+    (compiler-live-set-contains? compiler-backend-group-vars var)))
 
 (define (compiler-backend-group-word-class-mask
   [index : CompilerBackendProgramIndex]
@@ -38985,6 +38998,7 @@
                                 compiler-backend-identity-tail-forwarder-active
                                 false)
                               (compiler-backend-addr-of-forwarding-disable!)
+                              (compiler-backend-group-vars-disable!)
                               (compiler-backend-fuse-need-disable!)
                               (compiler-backend-gep-fold-disable!))]
                           [post-prologue : String
@@ -39173,6 +39187,7 @@
                               compiler-backend-identity-tail-forwarder-active
                               false)
                             (compiler-backend-addr-of-forwarding-disable!)
+                            (compiler-backend-group-vars-disable!)
                             (compiler-backend-fuse-need-disable!)
                             (compiler-backend-gep-fold-disable!))]
                         (ResultCompilerBackend.Err message))]))]
@@ -39195,6 +39210,7 @@
       CompilerRegAssignmentList.Nil
       0)
     (compiler-backend-addr-of-forwarding-disable!)
+    (compiler-backend-group-vars-disable!)
     (compiler-backend-fuse-need-disable!)
     (compiler-backend-gep-fold-disable!)
     (set! compiler-backend-current-phi-targets BackendStringList.Nil)

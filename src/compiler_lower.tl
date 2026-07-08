@@ -23132,17 +23132,29 @@
 
 (define (lower-c-abi-ir-return-slots-from
   [slots : LowerCAbiSlotList]
-  [index : i64]) : CompilerIrCAbiReturnSlotList
-  (if (>= index (lower-c-abi-slot-list-count slots))
-    (CompilerIrCAbiReturnSlotList.Nil)
+  [out : (Array CompilerIrCAbiReturnSlot)]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
     (match (lower-c-abi-slot-list-ref slots index)
       [(LowerCAbiSlot.Slot scalar-ty offset)
-        (CompilerIrCAbiReturnSlotList.Cons
-          (CompilerIrCAbiReturnSlot.Slot scalar-ty offset)
-          (box (lower-c-abi-ir-return-slots-from slots (+ index 1))))])))
+        (begin
+          (array-set!
+            out
+            index
+            (CompilerIrCAbiReturnSlot.Slot scalar-ty offset))
+          (lower-c-abi-ir-return-slots-from slots out (+ index 1) count))])))
 
 (define (lower-c-abi-ir-return-slots [slots : LowerCAbiSlotList]) : CompilerIrCAbiReturnSlotList
-  (lower-c-abi-ir-return-slots-from slots 0))
+  (let
+    [count : i64 (lower-c-abi-slot-list-count slots)]
+    [out : (Array CompilerIrCAbiReturnSlot)
+      (array.make-array CompilerIrCAbiReturnSlot count)]
+    (begin
+      (lower-c-abi-ir-return-slots-from slots out 0 count)
+      (CompilerIrCAbiReturnSlotList.Array
+        (CompilerIrCAbiReturnSlotSeq out count)))))
 
 (define (lower-c-abi-materialize-stored-register-result
   [ctx : TcContext]

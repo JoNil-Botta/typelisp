@@ -2953,9 +2953,9 @@
     [prev-post-base : i64 compiler-backend-emit-instr-post-base]
     [prev-current-count : i64 compiler-backend-emit-current-count]
     [slots : CompilerIrCAbiReturnSlotList
-      (CompilerIrCAbiReturnSlotList.Cons
+      (compiler-ir-c-abi-return-slot-cons
         (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 0)
-        (box (CompilerIrCAbiReturnSlotList.Nil)))]
+        CompilerIrCAbiReturnSlotList.Nil)]
     [assignments : CompilerRegAssignmentList
       (compiler-reg-assignment-cons
         (CompilerRegAssignment.Assignment
@@ -3038,12 +3038,11 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-return-store-two-int-slots) : CompilerIrCAbiReturnSlotList
-  (CompilerIrCAbiReturnSlotList.Cons
+  (compiler-ir-c-abi-return-slot-cons
     (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 0)
-    (box
-      (CompilerIrCAbiReturnSlotList.Cons
-        (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 8)
-        (box (CompilerIrCAbiReturnSlotList.Nil))))))
+    (compiler-ir-c-abi-return-slot-cons
+      (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 8)
+      CompilerIrCAbiReturnSlotList.Nil)))
 
 (define (compiler-backend-c-abi-return-stores-r11-occupied-ok?) : bool
   (let

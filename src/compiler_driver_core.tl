@@ -574,7 +574,16 @@
         (ci.intern-profile-slice-value))
       (compiler-driver-profile-intern-line
         "lookup_calls"
-        (ci.intern-profile-lookup-value)))))
+        (ci.intern-profile-lookup-value))
+      (compiler-driver-profile-intern-line
+        "hit_same_obj"
+        (ci.intern-profile-hit-same-obj-value))
+      (compiler-driver-profile-intern-line
+        "hit_diff_obj"
+        (ci.intern-profile-hit-diff-obj-value))
+      (compiler-driver-profile-intern-line
+        "miss"
+        (ci.intern-profile-miss-value)))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

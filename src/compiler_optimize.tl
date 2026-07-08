@@ -5146,6 +5146,10 @@
     [(CompilerIrGlobalList.Nil)
       (match b
         [(CompilerIrGlobalList.Nil) true]
+        [(CompilerIrGlobalList.Array bseq)
+          (opt-global-list-eq
+            CompilerIrGlobalList.Nil
+            (compiler-ir-global-seq-to-list bseq))]
         [_ false])]
     [(CompilerIrGlobalList.Cons ah at)
       (match b
@@ -5153,7 +5157,11 @@
           (and
             (opt-global-eq ah bh)
             (opt-global-list-eq (box-get at) (box-get bt)))]
-        [_ false])]))
+        [(CompilerIrGlobalList.Array bseq)
+          (opt-global-list-eq a (compiler-ir-global-seq-to-list bseq))]
+        [_ false])]
+    [(CompilerIrGlobalList.Array aseq)
+      (opt-global-list-eq (compiler-ir-global-seq-to-list aseq) b)]))
 
 (define (opt-extern-eq [a : CompilerIrExtern] [b : CompilerIrExtern]) : bool
   (match a
@@ -5175,6 +5183,10 @@
     [(CompilerIrExternList.Nil)
       (match b
         [(CompilerIrExternList.Nil) true]
+        [(CompilerIrExternList.Array bseq)
+          (opt-extern-list-eq
+            CompilerIrExternList.Nil
+            (compiler-ir-extern-seq-to-list bseq))]
         [_ false])]
     [(CompilerIrExternList.Cons ah at)
       (match b
@@ -5182,7 +5194,11 @@
           (and
             (opt-extern-eq ah bh)
             (opt-extern-list-eq (box-get at) (box-get bt)))]
-        [_ false])]))
+        [(CompilerIrExternList.Array bseq)
+          (opt-extern-list-eq a (compiler-ir-extern-seq-to-list bseq))]
+        [_ false])]
+    [(CompilerIrExternList.Array aseq)
+      (opt-extern-list-eq (compiler-ir-extern-seq-to-list aseq) b)]))
 
 (define (opt-program-eq [a : CompilerIrProgram] [b : CompilerIrProgram]) : bool
   (match a
@@ -32216,7 +32232,24 @@
       (opt-reach-globals
         index
         (opt-reach-global index state global)
-        (box-get rest))]))
+        (box-get rest))]
+    [(CompilerIrGlobalList.Array seq) (opt-reach-global-seq index state seq 0)]))
+
+(define (opt-reach-global-seq
+  [index : OptFunctionIndex]
+  [state : OptReachState]
+  [globals : CompilerIrGlobalSeq]
+  [seq-index : i64]) : OptReachState
+  (if (>= seq-index (compiler-ir-global-seq-count globals))
+    state
+    (opt-reach-global-seq
+      index
+      (opt-reach-global
+        index
+        state
+        (compiler-ir-global-seq-ref globals seq-index))
+      globals
+      (+ seq-index 1))))
 
 ;; `reachable` is keyed by dense index slot; resolve each function's slot through
 ;; the index (the same name->slot map the reach walk used) and test membership.
@@ -32272,7 +32305,14 @@
             (compiler-ir-global-cons
               global
               (opt-filter-reachable-globals (box-get rest) reachable))
-            (opt-filter-reachable-globals (box-get rest) reachable))])]))
+            (opt-filter-reachable-globals (box-get rest) reachable))])]
+    [(CompilerIrGlobalList.Array seq)
+      (compiler-ir-global-list-compact-reversed
+        (compiler-ir-global-list-reverse-onto
+          (opt-filter-reachable-globals
+            (compiler-ir-global-seq-to-list seq)
+            reachable)
+          CompilerIrGlobalList.Nil))]))
 
 ;; Exported functions are lowered to a `provided` CompilerIrExtern.Extern whose name
 ;; is the function's logical name. Such functions may be called only from outside
@@ -32292,7 +32332,26 @@
             (box-get rest)
             (if provided
               (opt-reach-add-function index state name)
-              state))])]))
+              state))])]
+    [(CompilerIrExternList.Array seq)
+      (opt-reach-add-provided-extern-seq index seq state 0)]))
+
+(define (opt-reach-add-provided-extern-seq
+  [index : OptFunctionIndex]
+  [externs : CompilerIrExternSeq]
+  [state : OptReachState]
+  [seq-index : i64]) : OptReachState
+  (if (>= seq-index (compiler-ir-extern-seq-count externs))
+    state
+    (match (compiler-ir-extern-seq-ref externs seq-index)
+      [(CompilerIrExtern.Extern name _ _ _ _ provided)
+        (opt-reach-add-provided-extern-seq
+          index
+          externs
+          (if provided
+            (opt-reach-add-function index state name)
+            state)
+          (+ seq-index 1))])))
 
 ;; Return the byte offset just past the last '/' or ':' separator in `name`
 ;; (0 when there is none). Scanning backward from the end stops at the final
@@ -33291,7 +33350,34 @@
                   (begin
                     (opt_string_i64_map.insert (&mut map) name n)
                     map))]
-              [_ map])]))]))
+              [_ map])]))]
+    [(CompilerIrGlobalList.Array seq)
+      (opt-const-globals-from-global-seq seq 0 disq map)]))
+
+(define (opt-const-globals-from-global-seq
+  [globals : CompilerIrGlobalSeq]
+  [index : i64]
+  [disq : opt_string_i64_map.Map]
+  [map : opt_string_i64_map.Map]) : opt_string_i64_map.Map
+  (if (>= index (compiler-ir-global-seq-count globals))
+    map
+    (opt-const-globals-from-global-seq
+      globals
+      (+ index 1)
+      disq
+      (match (compiler-ir-global-seq-ref globals index)
+        [(CompilerIrGlobal.Global name _ value)
+          (match value
+            [(CompilerIrValue.I64 n)
+              (if (or
+                (= n 0)
+                (not (opt-const-globals-imm32-fits? n))
+                (opt_string_i64_map.contains? (& disq) name))
+                map
+                (begin
+                  (opt_string_i64_map.insert (&mut map) name n)
+                  map))]
+            [_ map])]))))
 
 (define (opt-const-divisors-build
   [globals : CompilerIrGlobalList]
@@ -39385,7 +39471,20 @@
         [(CompilerIrGlobal.Global global-name _ _)
           (if (string.eq global-name name)
             true
-            (opt-global-list-defines? (box-get rest) name))])]))
+            (opt-global-list-defines? (box-get rest) name))])]
+    [(CompilerIrGlobalList.Array seq) (opt-global-seq-defines? seq name 0)]))
+
+(define (opt-global-seq-defines?
+  [globals : CompilerIrGlobalSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-global-seq-count globals))
+    false
+    (match (compiler-ir-global-seq-ref globals index)
+      [(CompilerIrGlobal.Global global-name _ _)
+        (if (string.eq global-name name)
+          true
+          (opt-global-seq-defines? globals name (+ index 1)))])))
 
 (define (opt-level-parse-ok? [value : String] [expected : i64]) : bool
   (match (compiler-optimize-parse-level value)

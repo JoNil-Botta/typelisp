@@ -116,6 +116,115 @@
       (= (compiler-ir-function-seq-count seq) 2)]
     [_ false]))
 
+(define (compiler-ir-smoke-global-list-array-count?
+  [globals : CompilerIrGlobalList]
+  [want : i64]) : bool
+  (match globals
+    [(CompilerIrGlobalList.Array seq)
+      (= (compiler-ir-global-seq-count seq) want)]
+    [_ false]))
+
+(define (compiler-ir-smoke-extern-list-array-count?
+  [externs : CompilerIrExternList]
+  [want : i64]) : bool
+  (match externs
+    [(CompilerIrExternList.Array seq)
+      (= (compiler-ir-extern-seq-count seq) want)]
+    [_ false]))
+
+(define (compiler-ir-smoke-global-list-name-at?
+  [globals : CompilerIrGlobalList]
+  [index : i64]
+  [want : String]) : bool
+  (match (match globals
+    [(CompilerIrGlobalList.Array seq) (compiler-ir-global-seq-to-list seq)]
+    [_ globals])
+    [(CompilerIrGlobalList.Cons global rest)
+      (if (= index 0)
+        (match global
+          [(CompilerIrGlobal.Global name _ _) (string.eq name want)])
+        (compiler-ir-smoke-global-list-name-at? (box-get rest) (- index 1) want))]
+    [(CompilerIrGlobalList.Nil) false]
+    [(CompilerIrGlobalList.Array _) false]))
+
+(define (compiler-ir-smoke-extern-list-name-at?
+  [externs : CompilerIrExternList]
+  [index : i64]
+  [want : String]) : bool
+  (match (match externs
+    [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-to-list seq)]
+    [_ externs])
+    [(CompilerIrExternList.Cons extern rest)
+      (if (= index 0)
+        (match extern
+          [(CompilerIrExtern.Extern name _ _ _ _ _) (string.eq name want)])
+        (compiler-ir-smoke-extern-list-name-at? (box-get rest) (- index 1) want))]
+    [(CompilerIrExternList.Nil) false]
+    [(CompilerIrExternList.Array _) false]))
+
+(define (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) : bool
+  (let
+    [first-global : CompilerIrGlobal
+      (CompilerIrGlobal.Global
+        "first-global"
+        (AstType.I64)
+        (CompilerIrValue.I64 1))]
+    [second-global : CompilerIrGlobal
+      (CompilerIrGlobal.Global
+        "second-global"
+        (AstType.Bool)
+        (CompilerIrValue.Bool true))]
+    [reversed-globals : CompilerIrGlobalList
+      (compiler-ir-global-cons
+        second-global
+        (compiler-ir-global-cons first-global CompilerIrGlobalList.Nil))]
+    [compact-globals : CompilerIrGlobalList
+      (compiler-ir-global-list-compact-reversed reversed-globals)]
+    [array-reversed-globals : CompilerIrGlobalList
+      (compiler-ir-global-list-compact-reversed compact-globals)]
+    [cloned-globals : CompilerIrGlobalList
+      (compiler-ir-clone-global-list compact-globals)]
+    [first-extern : CompilerIrExtern
+      (compiler-ir-extern-default "first-extern" (AstType.I64))]
+    [second-extern : CompilerIrExtern
+      (compiler-ir-extern-default "second-extern" (AstType.Bool))]
+    [reversed-externs : CompilerIrExternList
+      (compiler-ir-extern-cons
+        second-extern
+        (compiler-ir-extern-cons first-extern CompilerIrExternList.Nil))]
+    [compact-externs : CompilerIrExternList
+      (compiler-ir-extern-list-compact-reversed reversed-externs)]
+    [array-reversed-externs : CompilerIrExternList
+      (compiler-ir-extern-list-compact-reversed compact-externs)]
+    [cloned-externs : CompilerIrExternList
+      (compiler-ir-clone-extern-list compact-externs)]
+    [summary : CompilerIrSummary
+      (compiler-ir-program-summary
+        (CompilerIrProgram.Program
+          compact-globals
+          CompilerIrFunctionList.Nil
+          compact-externs))]
+    (and
+      (compiler-ir-smoke-global-list-array-count? compact-globals 2)
+      (compiler-ir-smoke-global-list-name-at? compact-globals 0 "first-global")
+      (compiler-ir-smoke-global-list-name-at? compact-globals 1 "second-global")
+      (compiler-ir-smoke-global-list-name-at?
+        array-reversed-globals
+        0
+        "second-global")
+      (compiler-ir-smoke-global-list-name-at? cloned-globals 0 "first-global")
+      (compiler-ir-smoke-extern-list-array-count? compact-externs 2)
+      (compiler-ir-smoke-extern-list-name-at? compact-externs 0 "first-extern")
+      (compiler-ir-smoke-extern-list-name-at? compact-externs 1 "second-extern")
+      (compiler-ir-smoke-extern-list-name-at?
+        array-reversed-externs
+        0
+        "second-extern")
+      (compiler-ir-smoke-extern-list-name-at? cloned-externs 0 "first-extern")
+      (= (compiler-ir-summary-globals summary) 2)
+      (= (compiler-ir-summary-functions summary) 0)
+      (= (compiler-ir-summary-externs summary) 2))))
+
 (define (compiler-ir-smoke-function-seq-roundtrip-ok?) : bool
   (let
     [entry-instrs : CompilerIrInstrList
@@ -308,4 +417,5 @@
     (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
     (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
     (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
+    (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
     (compiler-ir-effect-self-test)))

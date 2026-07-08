@@ -13203,10 +13203,15 @@
                         (match ctx
                           [(TcContext _ symbols registries _ _)
                             (let
+                              [nested-lookup-name : String
+                                (lower-variant-lookup-name-for-scrut
+                                  ctx
+                                  resolved
+                                  nested-name-str)]
                               [handle : i64
-                                (compiler-registries-lookup-variant-id-or
+                                (compiler-registries-lookup-variant-or
                                   registries
-                                  nested-name
+                                  nested-lookup-name
                                   (compiler-symbols-missing-handle))]
                               (if (not (compiler-symbols-handle-found? handle))
                                 (ResultLowerEnv.Err
@@ -13511,10 +13516,15 @@
                   (match ctx
                     [(TcContext _ symbols registries _ _)
                       (let
+                        [nested-lookup-name : String
+                          (lower-variant-lookup-name-for-scrut
+                            ctx
+                            resolved
+                            nested-name-str)]
                         [handle : i64
-                          (compiler-registries-lookup-variant-id-or
+                          (compiler-registries-lookup-variant-or
                             registries
-                            nested-name
+                            nested-lookup-name
                             (compiler-symbols-missing-handle))]
                         (if (not (compiler-symbols-handle-found? handle))
                           (ResultLowerEnv.Err

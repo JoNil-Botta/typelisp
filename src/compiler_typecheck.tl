@@ -1,6 +1,5 @@
 ;; compiler_typecheck.tl - Self-tests for the compiler typechecker API.
 (import stdlib.io)
-(import stdlib.vector as svec)
 (import "compiler_typecheck_api.tl")
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")

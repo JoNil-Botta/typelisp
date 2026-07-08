@@ -1,10 +1,8 @@
 ;; compiler_typecheck_api.tl - Public typechecker API used by compiler tools.
-(import stdlib.io)
 (import stdlib.vector as svec)
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")
-(import stdlib.string)
 (import sym_i64_env)
 
 (define (compiler-typecheck-prefix-cache-scope

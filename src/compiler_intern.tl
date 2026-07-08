@@ -401,7 +401,10 @@
       (set! intern-profile-hash-words-count 0)
       (set! intern-profile-intern-count 0)
       (set! intern-profile-slice-count 0)
-      (set! intern-profile-lookup-count 0))))
+      (set! intern-profile-lookup-count 0)
+      (set! intern-profile-hit-same-obj-count 0)
+      (set! intern-profile-hit-diff-obj-count 0)
+      (set! intern-profile-miss-count 0))))
 
 (cfg
   compile-profile
@@ -425,6 +428,19 @@
 
 (cfg
   compile-profile
+  (define (intern-profile-hit-same-obj-value) : i64
+    intern-profile-hit-same-obj-count))
+(cfg
+  compile-profile
+  (define (intern-profile-hit-diff-obj-value) : i64
+    intern-profile-hit-diff-obj-count))
+(cfg
+  compile-profile
+  (define (intern-profile-miss-value) : i64
+    intern-profile-miss-count))
+
+(cfg
+  compile-profile
   (define (intern-profile-note-intern) : unit
     (set! intern-profile-intern-count (+ intern-profile-intern-count 1))))
 
@@ -437,6 +453,22 @@
   compile-profile
   (define (intern-profile-note-lookup) : unit
     (set! intern-profile-lookup-count (+ intern-profile-lookup-count 1))))
+
+;; --- compile-profile interning instrumentation: hit classification ---
+;; `hit_same_obj` counts intern() hits where the input String is the same object
+;; the pool already stores (pointer-identical) -- the case id-threading
+;; eliminates (no re-intern at all). `hit_diff_obj` counts hits on a freshly-built
+;; object with the same content (mangled-name rebuilds) -- the per-id memo
+;; target. `miss` counts genuine first-time insertions. These cfg-gated counters
+;; drive the systematic id-threading work: the goal is to drive intern_calls
+;; (and these hits) toward only the genuine first-time `miss` count.
+(cfg compile-profile (define intern-profile-hit-same-obj-count : i64 0))
+(cfg compile-profile (define intern-profile-hit-diff-obj-count : i64 0))
+(cfg compile-profile (define intern-profile-miss-count : i64 0))
+(cfg
+  compile-profile
+  (define (intern-profile-string-data-ptr [s : String]) : i64
+    (cast (unsafe (ptr->int (string-data (& s)))) : i64)))
 
 (define (intern-hash-words [src : (Ptr u8)] [start : i64] [len : i64]) : i64
   (let
@@ -809,6 +841,11 @@
                     name)]
                 [id : i64 intern-pool-count]
                 (begin
+                  (cfg
+                    compile-profile
+                    (set!
+                      intern-profile-miss-count
+                      (+ intern-profile-miss-count 1)))
                   (array-set! intern-pool-slots id persistent-name)
                   (array-set!
                     intern-map-slots
@@ -825,6 +862,16 @@
                 false)
                 (begin
                   (intern-name-cache-record slot-key slot-id)
+                  (cfg
+                    compile-profile
+                    (if (= (intern-profile-string-data-ptr name)
+                          (intern-profile-string-data-ptr slot-key))
+                      (set!
+                        intern-profile-hit-same-obj-count
+                        (+ intern-profile-hit-same-obj-count 1))
+                      (set!
+                        intern-profile-hit-diff-obj-count
+                        (+ intern-profile-hit-diff-obj-count 1))))
                   (set! out slot-id)
                   (set! done true))
                 (begin

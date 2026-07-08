@@ -38,10 +38,11 @@
 ;; markers they look for can be buried more than a compaction window up
 ;; (with-arena escape checking was once silently disabled past 32 local
 ;; binds). Explicit top-env/module caches keep scan-through false so those
-;; scans still terminate without walking the global env spine. Full caches are
-;; authoritative on miss. Partial local caches cover only the compaction prefix;
-;; their `rest` keeps the full spine for marker scans, while `below` skips the
-;; covered prefix for lookup miss fall-through.
+;; scans still terminate without walking the global env spine. Full explicit
+;; caches are authoritative on miss; explicit layered caches are partial for
+;; lookup fall-through but still stop marker scans. Partial local caches cover
+;; only the compaction prefix; their `rest` keeps the full spine for marker
+;; scans, while `below` skips the covered prefix for lookup miss fall-through.
 (defenum TcTypeEnv
   (Nil)
   (Bind i64 AstType (Box TcTypeEnv))
@@ -1790,6 +1791,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-env-profile-cache-entries : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-env-profile-marker-scans : i64
     0))
 (cfg
@@ -1832,6 +1837,13 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-env-profile-note-cache-entry) : unit
+    (set!
+      compiler-tc-env-profile-cache-entries
+      (+ compiler-tc-env-profile-cache-entries 1))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-env-profile-note-marker-scan) : unit
     (set!
       compiler-tc-env-profile-marker-scans
@@ -1850,6 +1862,18 @@
     (set!
       compiler-tc-env-profile-module-local-misses
       (+ compiler-tc-env-profile-module-local-misses 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-reset) : unit
+    (begin
+      (set! compiler-tc-env-profile-binds 0)
+      (set! compiler-tc-env-profile-lookups 0)
+      (set! compiler-tc-env-profile-cache-builds 0)
+      (set! compiler-tc-env-profile-cache-entries 0)
+      (set! compiler-tc-env-profile-marker-scans 0)
+      (set! compiler-tc-env-profile-module-local-hits 0)
+      (set! compiler-tc-env-profile-module-local-misses 0))))
 
 (cfg
   compile-profile
@@ -1973,12 +1997,7 @@
       (set! compiler-tc-decl-profile-macro-count 0)
       (set! compiler-tc-decl-profile-extern-count 0)
       (set! compiler-tc-decl-profile-other-count 0)
-      (set! compiler-tc-env-profile-binds 0)
-      (set! compiler-tc-env-profile-lookups 0)
-      (set! compiler-tc-env-profile-cache-builds 0)
-      (set! compiler-tc-env-profile-marker-scans 0)
-      (set! compiler-tc-env-profile-module-local-hits 0)
-      (set! compiler-tc-env-profile-module-local-misses 0)
+      (compiler-tc-env-profile-reset)
       (compiler-tc-reinfer-profile-reset)
       (compiler-tc-body-fact-profile-reset)
       (tc-lp-reset 0))))
@@ -2269,6 +2288,32 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-env-profile-emit-prefix [prefix : String]) : unit
+    (begin
+      (compiler-tc-env-profile-line
+        (string.append prefix "binds")
+        compiler-tc-env-profile-binds)
+      (compiler-tc-env-profile-line
+        (string.append prefix "lookups")
+        compiler-tc-env-profile-lookups)
+      (compiler-tc-env-profile-line
+        (string.append prefix "cache_builds")
+        compiler-tc-env-profile-cache-builds)
+      (compiler-tc-env-profile-line
+        (string.append prefix "cache_entries")
+        compiler-tc-env-profile-cache-entries)
+      (compiler-tc-env-profile-line
+        (string.append prefix "marker_scans")
+        compiler-tc-env-profile-marker-scans)
+      (compiler-tc-env-profile-line
+        (string.append prefix "module_local_hits")
+        compiler-tc-env-profile-module-local-hits)
+      (compiler-tc-env-profile-line
+        (string.append prefix "module_local_misses")
+        compiler-tc-env-profile-module-local-misses))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-macro-counter-profile-line
     [phase : String]
     [value : i64]) : unit
@@ -2371,6 +2416,9 @@
       (compiler-tc-env-profile-line
         "cache_builds"
         compiler-tc-env-profile-cache-builds)
+      (compiler-tc-env-profile-line
+        "cache_entries"
+        compiler-tc-env-profile-cache-entries)
       (compiler-tc-env-profile-line
         "marker_scans"
         compiler-tc-env-profile-marker-scans)
@@ -2876,9 +2924,10 @@
 ;;
 ;; The bound-slots twin is the EXACT complement for the guard's other verdict:
 ;; it is stamped only by binds that provably join the accumulated top-env spine
-;; (the seeded base env and tc-bind-alias-id-if-free's own binds -- never the
-;; transient inference binds that make the bloom conservative). A stamped id is
-;; therefore definitely bound, so the guard can skip without the O(spine) scan.
+;; (the seeded base env, tc-bind-alias-id-if-free's own binds, and top-env alias
+;; fanout binds -- never the transient inference binds that make the bloom
+;; conservative). A stamped id is therefore definitely bound, so the guard can
+;; skip without the O(spine) scan.
 ;; Self-compiles repeat enum-variant names (Ok/Err/None/Nil/...) across
 ;; hundreds of enums; every repeat after the first used to rescan the whole
 ;; spine from the head down to the first binding. Ids that are bloom-marked but
@@ -2891,6 +2940,8 @@
 (define tc-topenv-membership-gen : i64
   0)
 (define tc-topenv-membership-active : bool
+  false)
+(define tc-topenv-alias-fanout-active : bool
   false)
 
 (define (tc-topenv-membership-mark! [name-id : i64]) : unit
@@ -2948,6 +2999,9 @@
     (if tc-topenv-membership-active
       (tc-topenv-membership-mark! name-id)
       unit)
+    (if tc-topenv-alias-fanout-active
+      (tc-topenv-membership-mark-bound! name-id)
+      unit)
     (TcTypeEnv.Bind name-id ty (box env))))
 
 (define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
@@ -2981,19 +3035,52 @@
         0)]
     [_ 0]))
 
+(cfg
+  test
+  (define (tc-env-cache-explicit-head? [env : TcTypeEnv]) : bool
+    (match env
+      [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+      [_ false])))
+
+(define (tc-env-uncached-prefix-to-explicit-cache-count [env : TcTypeEnv]) : i64
+  (let
+    [cur : TcTypeEnv env]
+    [count : i64 0]
+    [found : bool false]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cur
+          [(TcTypeEnv.Bind _ _ rest)
+            (begin
+              (set! count (+ count 1))
+              (set! cur (box-get rest)))]
+          [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _)
+            (begin
+              (if scan-through
+                unit
+                (set! found true))
+              (set! done true))]
+          [(TcTypeEnv.Nil) (set! done true)]))
+      (if found
+        count
+        -1))))
+
 (define (tc-env-compact-local-if-threshold [env : TcTypeEnv]) : TcTypeEnv
-  (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
-    (let
-      [below : TcTypeEnv (tc-env-after-prefix env (tc-local-cache-threshold))]
-      (if (>=
-        (tc-env-partial-layer-depth below)
-        (tc-local-cache-partial-layer-cap))
-        (tc-env-with-full-local-cache env)
-        (tc-env-with-local-cache env)))
-    env))
+  (if tc-topenv-alias-fanout-active
+    env
+    (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
+      (let
+        [below : TcTypeEnv (tc-env-after-prefix env (tc-local-cache-threshold))]
+        (if (>=
+          (tc-env-partial-layer-depth below)
+          (tc-local-cache-partial-layer-cap))
+          (tc-env-with-full-local-cache env)
+          (tc-env-with-local-cache env)))
+      env)))
 
 (define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-env-compact-local-if-threshold (tc-bind-raw env name ty)))
+  (tc-bind-id env (tc-name-id name) ty))
 
 (define (tc-bind-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (tc-env-compact-local-if-threshold (tc-bind-raw-id env name-id ty)))
@@ -4269,6 +4356,7 @@
         [next : i64 (tc_i64_i64_map.len (& ids))]
         [out : tc_i64_i64_map.Map ids]
         (begin
+          (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
           (array-set! values next ty)
           (array-set!
             unsafe-flags
@@ -4412,10 +4500,20 @@
         (box env)))))
 
 (define (tc-env-with-partial-local-cache [env : TcTypeEnv]) : TcTypeEnv
+  (tc-env-with-cache-prefix-layer
+    env
+    (tc-env-cache-count-prefix env (tc-local-cache-threshold))
+    true
+    (tc-env-after-prefix env (tc-local-cache-threshold))))
+
+(define (tc-env-with-cache-prefix-layer
+  [env : TcTypeEnv]
+  [count : i64]
+  [scan-through : bool]
+  [below : TcTypeEnv]) : TcTypeEnv
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-cache-build))
     (let
-      [count : i64 (tc-env-cache-count-prefix env (tc-local-cache-threshold))]
       [capacity : i64 (tc-env-cache-capacity count)]
       [values : (Array AstType) (array.make-array AstType capacity)]
       [unsafe-flags : (Array i64) (array.make-array i64 capacity)]
@@ -4424,7 +4522,7 @@
       [ids : tc_i64_i64_map.Map
         (tc-env-cache-fill-prefix
           env
-          (tc-local-cache-threshold)
+          count
           (tc_i64_i64_map.with-capacity capacity)
           values
           unsafe-flags
@@ -4437,10 +4535,23 @@
         unsafe-flags
         c-abi-fnptr-flags
         shadow-flags
-        true
+        scan-through
         true
         (box env)
-        (box (tc-env-after-prefix env (tc-local-cache-threshold)))))))
+        (box below)))))
+
+(define (tc-env-with-cache-layer-over-explicit [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [prefix-count : i64 (tc-env-uncached-prefix-to-explicit-cache-count env)]
+    (cond
+      [(= prefix-count 0) env]
+      [(> prefix-count 0)
+        (tc-env-with-cache-prefix-layer
+          env
+          prefix-count
+          false
+          (tc-env-after-prefix env prefix-count))]
+      [else (tc-env-with-cache-mode env false)])))
 
 ;; Explicit top-env/module caches: marker scans terminate here.
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
@@ -4459,6 +4570,18 @@
   (if (tc-name-bound-id? env (tc-name-id name))
     env
     (tc-bind env name ty)))
+
+(define (tc-name-bound-id-with-top-env-membership?
+  [env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (cond
+    [(and
+        tc-topenv-membership-active
+        (not (tc-topenv-membership-maybe? name-id)))
+      false]
+    [(and tc-topenv-membership-active (tc-topenv-membership-bound? name-id))
+      true]
+    [else (tc-name-bound-id? env name-id)]))
 
 (define (tc-bind-alias-id-if-free
   [env : TcTypeEnv]
@@ -4616,7 +4739,7 @@
                   tc-unqualified-import-ambiguous-second-modules
                   key-id
                   source-id)))))
-        (if (tc-name-bound-id? env binding-id)
+        (if (tc-name-bound-id-with-top-env-membership? env binding-id)
           unit
           (set!
             tc-unqualified-import-owner-modules
@@ -14503,6 +14626,74 @@
         [(ResultTcTypeUnsafe.Ok (AstType.Func _ _) unsafe) unsafe]
         [_ false]))))
 
+(cfg
+  test
+  (define (tc-type-env-explicit-cache-layering-lookup-smoke?) : bool
+    (let
+      [base : TcTypeEnv
+        (tc-env-with-cache (tc-bind (tc-empty-env) "base" (AstType.I64)))]
+      [older : TcTypeEnv (tc-bind base "dup" (AstType.I64))]
+      [newer : TcTypeEnv (tc-bind older "dup" (AstType.Bool))]
+      [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit newer)]
+      (and
+        (= (tc-env-uncached-prefix-to-explicit-cache-count newer) 2)
+        (tc-env-cache-explicit-head? layer)
+        (tc-type-env-cache-partial-head? layer)
+        (match (tc-lookup layer "dup")
+          [(ResultTcType.Ok (AstType.Bool)) true]
+          [_ false])
+        (match (tc-lookup layer "base")
+          [(ResultTcType.Ok (AstType.I64)) true]
+          [_ false])
+        (match (tc-lookup layer "missing")
+          [(ResultTcType.Err message)
+            (string.eq message "typecheck: unbound name missing")]
+          [_ false])))))
+
+(cfg
+  test
+  (define (tc-type-env-explicit-cache-layering-flags-smoke?) : bool
+    (let
+      [callback-ty : AstType (tc-fn0 (AstType.I64))]
+      [base : TcTypeEnv
+        (tc-env-with-cache
+          (tc-bind-c-abi-fnptr (tc-empty-env) "base-callback" callback-ty))]
+      [layer-source : TcTypeEnv
+        (tc-bind-unsafe-c-abi-fnptr-id
+          base
+          (tc-name-id "danger-callback")
+          callback-ty)]
+      [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit layer-source)]
+      (and
+        (tc-env-cache-explicit-head? layer)
+        (tc-type-env-cache-partial-head? layer)
+        (tc-binding-c-abi-fnptr? layer "base-callback")
+        (not (tc-binding-unsafe? layer "base-callback"))
+        (tc-binding-c-abi-fnptr? layer "danger-callback")
+        (tc-binding-unsafe? layer "danger-callback")
+        (match (tc-lookup-unsafe layer "danger-callback")
+          [(ResultTcTypeUnsafe.Ok (AstType.Func _ _) unsafe) unsafe]
+          [_ false])))))
+
+(cfg
+  test
+  (define (tc-type-env-explicit-cache-layering-marker-smoke?) : bool
+    (let
+      [base : TcTypeEnv
+        (tc-env-with-cache (tc-push-region (tc-default-env) "hidden"))]
+      [shadowed : TcTypeEnv
+        (tc-bind base "__tl_string_length" (tc-fn1 (AstType.I64) (AstType.I64)))]
+      [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit shadowed)]
+      (and
+        (tc-env-cache-explicit-head? layer)
+        (tc-type-env-cache-partial-head? layer)
+        (tc-default-builtin-unshadowed? base "__tl_string_length")
+        (not (tc-default-builtin-unshadowed? layer "__tl_string_length"))
+        (match (tc-active-region layer)
+          [(TcMaybeString.No) true]
+          [_ false])
+        (not (tc-lifetime-visible? layer "hidden"))))))
+
 (define (tc-type-env-local-cache-lambda-capture-smoke?) : bool
   (let
     [body : AstExpr (AstExpr.Var (tc-name-id "captured"))]
@@ -15078,6 +15269,15 @@
     (tc-type-env-local-cache-lambda-capture-smoke?)
     (tc-type-env-scoped-stack-smoke?)
     (tc-type-env-walker-api-smoke?)))
+
+(test
+  tc-type-env-explicit-cache-layering
+  (if (and
+    (tc-type-env-explicit-cache-layering-lookup-smoke?)
+    (tc-type-env-explicit-cache-layering-flags-smoke?)
+    (tc-type-env-explicit-cache-layering-marker-smoke?))
+    unit
+    (io.panic "typecheck: explicit env cache layering smoke failed")))
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let
@@ -16657,8 +16857,9 @@
           (match (tc-build-top-env-list ctx decls base-env)
             [(ResultTcEnv.Ok env)
               (let
-                [_membership-end : unit (tc-topenv-membership-end!)]
                 [cached-env : TcTypeEnv (tc-env-with-cache env)]
+                [_alias-fanout-begin : unit
+                  (set! tc-topenv-alias-fanout-active true)]
                 ;; Alias fanout copies canonical entries by lookup; cache the
                 ;; source env before adding aliases so that copy is O(1).
                 (match (tc-build-top-env-aliases-list
@@ -16668,10 +16869,18 @@
                   cached-env
                   "")
                   [(ResultTcEnv.Ok aliases)
-                    (let
-                      [out : TcTypeEnv (tc-env-with-cache aliases)]
-                      (ResultTcEnv.Ok out))]
-                  [(ResultTcEnv.Err message) (ResultTcEnv.Err message)]))]
+                    (begin
+                      (set! tc-topenv-alias-fanout-active false)
+                      (tc-topenv-membership-end!)
+                      (let
+                        [out : TcTypeEnv
+                          (tc-env-with-cache-layer-over-explicit aliases)]
+                        (ResultTcEnv.Ok out)))]
+                  [(ResultTcEnv.Err message)
+                    (begin
+                      (set! tc-topenv-alias-fanout-active false)
+                      (tc-topenv-membership-end!)
+                      (ResultTcEnv.Err message))]))]
             [(ResultTcEnv.Err message)
               (begin
                 (tc-topenv-membership-end!)
@@ -16696,7 +16905,7 @@
     [(AstDeclListStep.Cons _ _)
       (match (tc-build-top-env-list-in-module ctx summary top-env "")
         [(ResultTcEnv.Ok next-env)
-          (ResultTcEnv.Ok (tc-env-with-cache next-env))]
+          (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit next-env))]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
 
 (define (tc-bind-enum-variants-local
@@ -54845,7 +55054,8 @@
                                             (begin
                                               (set!
                                                 cur-top-env
-                                                (tc-env-with-cache next-top-env))
+                                                (tc-env-with-cache-layer-over-explicit
+                                                  next-top-env))
                                               (set! cur-orig-decls next-decls)
                                               (set! cur-ctx next-ctx)
                                               (set!
@@ -54870,7 +55080,7 @@
                                                 (begin
                                                   (set!
                                                     cur-top-env
-                                                    (tc-env-with-cache
+                                                    (tc-env-with-cache-layer-over-explicit
                                                       refreshed-top-env))
                                                   (set!
                                                     cur-orig-decls
@@ -55287,6 +55497,7 @@
             ;; macro-expand-ctfe-env-build-once! below, then reused (rebased onto
             ;; the active pools) across every in-pass splice rebuild.
             (cfg compile-profile (compiler-tc-macro-profile-reset))
+            (cfg compile-profile (compiler-tc-env-profile-reset))
             ;; Same per-compile reset for the clone-able type set cache.
             (tc-clone-able-cache-reset!)
             ;; Type-name misses are keyed only by lookup text; in-pass splice
@@ -55369,6 +55580,10 @@
                                               "macro_walk"))
                                           (cfg
                                             compile-profile
+                                            (compiler-tc-env-profile-emit-prefix
+                                              "macro_"))
+                                          (cfg
+                                            compile-profile
                                             (compiler-tc-macro-profile-emit))
                                           (ResultMacroExpand.Ok
                                             (ast-program ndecls)
@@ -55380,6 +55595,10 @@
                                             compile-profile
                                             (compiler-tc-profile-finish
                                               "macro_walk"))
+                                          (cfg
+                                            compile-profile
+                                            (compiler-tc-env-profile-emit-prefix
+                                              "macro_"))
                                           (cfg
                                             compile-profile
                                             (compiler-tc-macro-profile-emit))

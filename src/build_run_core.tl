@@ -4,7 +4,6 @@
 (import "compiler_driver_core.tl")
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
-(import "cli_string_vec_bridge.tl")
 (import stdlib.env)
 (import stdlib.fs)
 (import stdlib.io)
@@ -546,7 +545,7 @@
   (match (compiler-load-file-with-paths-and-roots-cfg
     source
     (sym_i64_env.sym-i64-empty)
-    (cli-string-vec-to-legacy (& stdlib-roots))
+    stdlib-roots
     cfgs)
     [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
       (ResultSourceToolLinkInputs.Ok
@@ -785,7 +784,7 @@
         source
         target
         true
-        (cli-string-vec-to-legacy (& stdlib-roots))
+        stdlib-roots
         opt-level
         mode
         cfgs
@@ -873,7 +872,7 @@
             source
             target
             true
-            (cli-string-vec-to-legacy (& stdlib-roots))
+            stdlib-roots
             opt-level
             mode
             cfgs
@@ -1038,7 +1037,7 @@
             source
             target
             true
-            (cli-string-vec-to-legacy (& stdlib-roots))
+            stdlib-roots
             opt-level
             mode
             cfgs

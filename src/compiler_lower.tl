@@ -4,7 +4,8 @@
 ;; CompilerIrProgram.
 (import stdlib.io)
 (import stdlib.arena)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector String) as svec)
 (import "compiler_typecheck_api.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
@@ -1799,16 +1800,14 @@
 ;; version copied the whole accumulated prefix on every segment (quadratic in
 ;; rendered length) and ran once per normalized path, making it the largest
 ;; string.append caller in the lowering phase of a self-compile.
-(define (lower-path-segment-vec-render [segments : svec.StringVec]) : String
+(define (lower-path-segment-vec-render [segments : svec.Vec]) : String
   (let
-    [count : i64 (svec.string-vec-len (& segments))]
+    [count : i64 (svec.len (& segments))]
     (if (<= count 1)
-      (svec.string-vec-get (& segments) 0 "")
+      (svec.get (& segments) 0 "")
       (let
         [buf : text_buf.TextBuf
-          (text_buf.append
-            (text_buf.empty)
-            (svec.string-vec-get (& segments) 0 ""))]
+          (text_buf.append (text_buf.empty) (svec.get (& segments) 0 ""))]
         [i : i64 1]
         (begin
           (while (< i count)
@@ -1817,45 +1816,47 @@
                 buf
                 (text_buf.append
                   (text_buf.append buf "/")
-                  (svec.string-vec-get (& segments) i "")))
+                  (svec.get (& segments) i "")))
               (set! i (+ i 1))))
           (text_buf.render buf))))))
 
 (define (lower-path-normalize-segment
   [segment : String]
-  [segments : svec.StringVec]
-  [rooted : bool]) : svec.StringVec
+  [segments : svec.Vec]
+  [rooted : bool]) : svec.Vec
   (cond
     [(string.eq segment "") segments]
     [(string.eq segment ".") segments]
     [(not (string.eq segment ".."))
       (let
-        [next-segments : svec.StringVec segments]
+        [next-segments : svec.Vec segments]
         (begin
-          (set! next-segments (svec.string-vec-push next-segments segment))
+          (svec.push (&mut next-segments) segment)
           next-segments))]
-    [(<= (svec.string-vec-len (& segments)) 0)
+    [(<= (svec.len (& segments)) 0)
       (if rooted
         segments
         (let
-          [next-segments : svec.StringVec segments]
+          [next-segments : svec.Vec segments]
           (begin
-            (set! next-segments (svec.string-vec-push next-segments segment))
+            (svec.push (&mut next-segments) segment)
             next-segments)))]
     [else
       (let
-        [top : String (svec.string-vec-last (& segments) "")]
+        [top : String (svec.last (& segments) "")]
         (if (string.eq top "..")
           (let
-            [next-segments : svec.StringVec segments]
+            [next-segments : svec.Vec segments]
             (begin
-              (set! next-segments (svec.string-vec-push next-segments segment))
+              (svec.push (&mut next-segments) segment)
               next-segments))
           (let
-            [next-segments : svec.StringVec segments]
-            (match (svec.string-vec-pop next-segments)
-              [(svec.StringVecPopOk _ rest) rest]
-              [(svec.StringVecPopEmpty) next-segments]))))]))
+            [next-segments : svec.Vec segments]
+            (begin
+              (match (svec.pop (&mut next-segments))
+                [(svec.Pop.Ok _) unit]
+                [svec.Pop.Empty unit])
+              next-segments))))]))
 
 (define (lower-normalize-path [path : String]) : String
   (let
@@ -1879,7 +1880,7 @@
           1
           0))]
     [segment-start : i64 i]
-    [segments : svec.StringVec (svec.string-vec-new)]
+    [segments : svec.Vec (svec.new)]
     (begin
       (while (< i n)
         (begin
@@ -45167,7 +45168,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
@@ -45435,7 +45436,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerLower
   (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
     entry-path
@@ -45451,7 +45452,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerLower
   (let
     [prev-active : bool lower-entry-main-module-active]
@@ -45480,7 +45481,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (let
@@ -45514,7 +45515,7 @@
     program
     paths
     mode
-    (svec.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
@@ -45522,7 +45523,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerLower
   (lower-compiler-program-with-decl-paths-mode-cache-and-pools
     entry-path
@@ -45538,7 +45539,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [mode : CompilerLowerMode]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
   (begin
@@ -45647,7 +45648,7 @@
     program
     paths
     mode
-    (svec.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (lower-compiler-program-with-decl-paths
@@ -46068,7 +46069,7 @@
       [(ResultAstProgram.Ok program)
         (if (lower-source-program-needs-loader? program)
           (let
-            [stdlib-roots : svec.StringVec (svec.string-vec-new)]
+            [stdlib-roots : svec.Vec (svec.new)]
             [cfgs : sym_i64_env.SymI64Env
               (typecheck-compiler-source-language-cfgs)]
             (match (typecheck-compiler-source-load src)

@@ -15,7 +15,6 @@
 (import stdlib.io)
 (import stdlib.process)
 (import (vector.vector String) as doc_svec)
-(import "doc_string_vec_bridge.tl")
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
 (import "build_run_core.tl")
@@ -1363,7 +1362,7 @@
         (match (compiler-driver-load-source-with-runtime-with-pools
           virtual-path
           code
-          (doc-string-vec-to-legacy (& stdlib-roots))
+          stdlib-roots
           cfgs
           pools)
           [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
@@ -1372,7 +1371,7 @@
               (ast-program decls)
               paths
               (CompilerLowerMode.Scalar)
-              (doc-string-vec-to-legacy (& stdlib-roots))
+              stdlib-roots
               (tc-prefix-default-cache-scope)
               pools)
               [(ResultCompilerLower.Ok program spans)
@@ -1596,7 +1595,7 @@
     (match (compiler-check-source-with-roots
       (doc-test-example-virtual-path path index)
       code
-      (doc-string-vec-to-legacy (& stdlib-roots)))
+      stdlib-roots)
       [(ResultCompilerCheck.Ok _)
         (if expect-error
           (DocTestMaybeFailure.Some
@@ -1631,7 +1630,7 @@
     (match (compiler-check-package-source-with-roots
       (doc-test-example-virtual-path path index)
       code
-      (doc-string-vec-to-legacy (& stdlib-roots))
+      stdlib-roots
       manifest-dir
       deps)
       [(ResultCompilerCheck.Ok _)
@@ -1958,9 +1957,7 @@
         [stdlib-path : String
           (if (compiler-load-stdlib-import? normalized)
             normalized
-            (compiler-load-stdlib-owned-path-from-roots
-              rooted
-              (doc-string-vec-to-legacy (& stdlib-roots))))]
+            (compiler-load-stdlib-owned-path-from-roots rooted stdlib-roots))]
         [manifest-stdlib-root : String
           (compiler-load-normalize-path
             (compiler-load-join-root-path manifest-dir "stdlib"))]

@@ -1,5 +1,6 @@
 ;; compiler_typecheck_api.tl - Public typechecker API used by compiler tools.
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector String) as svec)
 (import "compiler_typecheck_core.tl")
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")
@@ -7,7 +8,7 @@
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : String
   (compiler-load-prelude-cache-key kind stdlib-roots cfgs))
 
@@ -20,7 +21,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   (typecheck-compiler-specialized-program-with-paths-cache-with-pools
@@ -33,7 +34,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
@@ -46,7 +47,7 @@
 (define (typecheck-compiler-program-with-paths-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   ;; Generate declaration families (e.g. hashmap) before macro expansion. Macro
@@ -136,7 +137,7 @@
 (define (typecheck-compiler-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (typecheck-compiler-program-with-paths-cache-and-pools
     program
@@ -151,7 +152,7 @@
   (typecheck-compiler-program-with-paths-cache
     program
     paths
-    (svec.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (defenum ResultCompilerDocExpand
@@ -161,7 +162,7 @@
 (define (typecheck-compiler-doc-expand-program-with-paths-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [pools : AstNodePoolContext]) : ResultCompilerDocExpand
   (begin
     (tc-spmd-inline-helper-stack-reset!)
@@ -189,7 +190,7 @@
 (define (typecheck-compiler-doc-expand-program-with-paths
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]) : ResultCompilerDocExpand
+  [stdlib-roots : svec.Vec]) : ResultCompilerDocExpand
   (typecheck-compiler-doc-expand-program-with-paths-and-pools
     program
     paths
@@ -199,7 +200,7 @@
 (define (typecheck-compiler-program-with-paths-checked-cache-and-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (begin
@@ -284,7 +285,7 @@
 (define (typecheck-compiler-program-with-paths-checked-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-program-with-paths-checked-cache-and-pools
     program
@@ -299,7 +300,7 @@
   (typecheck-compiler-program-with-paths-checked-cache
     program
     paths
-    (svec.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-program [program : AstProgram]) : ResultCompilerTypecheck
@@ -324,7 +325,7 @@
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let
-    [stdlib-roots : svec.StringVec (svec.string-vec-new)]
+    [stdlib-roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (typecheck-compiler-source-language-cfgs)]
     (match (compiler-load-core-macro-prelude-with-roots-cfg
       (sym_i64_env.sym-i64-empty)

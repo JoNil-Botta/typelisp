@@ -18,7 +18,6 @@
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
-(import "cli_string_vec_bridge.tl")
 (import "package_source_core.tl")
 (import "package_cache_core.tl")
 (import "package_lock_core.tl")
@@ -3258,7 +3257,7 @@
   (match (compiler-driver-load-package-file-with-runtime
     entry-path
     target
-    (cli-string-vec-to-legacy (& stdlib-roots))
+    stdlib-roots
     manifest-dir
     deps
     emit-entry)
@@ -3379,7 +3378,7 @@
               (match (compiler-driver-load-package-file-with-runtime
                 entry-path
                 target
-                (cli-string-vec-to-legacy (& stdlib-roots))
+                stdlib-roots
                 manifest-dir
                 (struct-get manifest deps)
                 emit-entry)
@@ -3393,7 +3392,7 @@
                       (compiler-load-package-owned-paths-for-decls
                         name
                         manifest-dir
-                        (cli-string-vec-to-legacy (& stdlib-roots))
+                        stdlib-roots
                         entry-path
                         decls
                         paths)]

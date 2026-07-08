@@ -1,6 +1,7 @@
 ;; compiler_typecheck_smoke.tl - Runnable smoke for compiler_typecheck.tl.
 (import stdlib.io)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector String) as svec)
 (import "../compiler_typecheck.tl")
 (import stdlib.string)
 (import sym_i64_env)
@@ -1819,11 +1820,11 @@
     (compiler-load-join-root-path root "tc_prefix_shared.tl")
     (ast-decl-path-cons entry-path (ast-decl-path-list-new))))
 
-(define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : svec.StringVec
+(define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : svec.Vec
   (let
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     (begin
-      (set! roots (svec.string-vec-push roots root))
+      (svec.push (&mut roots) root)
       roots)))
 
 (define (compiler-typecheck-smoke-paths-contain?
@@ -1842,7 +1843,7 @@
   [src : String]
   [entry-path : String]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (parse-ast-source-diagnostic-with-cfg entry-path src cfgs)
     [(ResultAstProgramDiagnostic.Ok program)
@@ -1864,10 +1865,8 @@
     [root-b : String "target/tc_prefix_root_b"]
     [entry-a : String "target/tc_prefix_root_entry_a.tl"]
     [entry-b : String "target/tc_prefix_root_entry_b.tl"]
-    [roots-a : svec.StringVec
-      (compiler-typecheck-smoke-prefix-cache-roots root-a)]
-    [roots-b : svec.StringVec
-      (compiler-typecheck-smoke-prefix-cache-roots root-b)]
+    [roots-a : svec.Vec (compiler-typecheck-smoke-prefix-cache-roots root-a)]
+    [roots-b : svec.Vec (compiler-typecheck-smoke-prefix-cache-roots root-b)]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-enable!)
@@ -1918,7 +1917,7 @@
     [root : String "target/tc_prefix_cfg_root"]
     [entry-empty : String "target/tc_prefix_cfg_entry_empty.tl"]
     [entry-feature : String "target/tc_prefix_cfg_entry_feature.tl"]
-    [roots : svec.StringVec (compiler-typecheck-smoke-prefix-cache-roots root)]
+    [roots : svec.Vec (compiler-typecheck-smoke-prefix-cache-roots root)]
     [ok : bool true]
     (begin
       (compiler-load-session-cache-enable!)
@@ -1966,7 +1965,7 @@
 
 (define (compiler-typecheck-smoke-prefix-cache-file-check
   [entry-path : String]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : bool
   (match (compiler-load-file-with-paths-and-roots-cfg
     entry-path
@@ -1991,7 +1990,7 @@
     [dep : String "target/tc_prefix_local_dep.tl"]
     [entry-a : String "target/tc_prefix_local_entry_a.tl"]
     [entry-b : String "target/tc_prefix_local_entry_b.tl"]
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
@@ -2031,7 +2030,7 @@
     [dep : String "target/tc_prefix_flat_dep.tl"]
     [entry-a : String "target/tc_prefix_flat_entry_a.tl"]
     [entry-b : String "target/tc_prefix_flat_entry_b.tl"]
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
@@ -2069,7 +2068,7 @@
     [named-provider : String "target/tc_4004_named_provider.tl"]
     [root-then-named : String "target/tc_4004_root_then_named.tl"]
     [named-then-root : String "target/tc_4004_named_then_root.tl"]
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     [ok : bool true]
     (begin
@@ -2124,11 +2123,11 @@
     [stdlib-root : String (compiler-load-join-root-path base "stdlib")]
     [dep : String (compiler-load-join-root-path stdlib-root "some_name.tl")]
     [entry : String (compiler-load-join-root-path base "entry.tl")]
-    [roots : svec.StringVec
+    [roots : svec.Vec
       (let
-        [items : svec.StringVec (svec.string-vec-new)]
+        [items : svec.Vec (svec.new)]
         (begin
-          (set! items (svec.string-vec-push items stdlib-root))
+          (svec.push (&mut items) stdlib-root)
           items))]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
@@ -2147,7 +2146,7 @@
     [dir : String "target/tc_specialized_import_path"]
     [dep : String (compiler-load-join-root-path dir "dep.tl")]
     [entry : String (compiler-load-join-root-path dir "entry.tl")]
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (compiler-load-test-mkdir dir)
@@ -2199,7 +2198,7 @@
     [helper : String "target/tc_macro_context_helper.tl"]
     [provider : String "target/tc_macro_context_provider.tl"]
     [entry : String "target/tc_macro_context_entry.tl"]
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (io.write-file
@@ -2227,7 +2226,7 @@
   (let
     [provider : String "target/tc_surface_macro_provider.tl"]
     [entry : String "target/tc_surface_macro_entry.tl"]
-    [roots : svec.StringVec (svec.string-vec-new)]
+    [roots : svec.Vec (svec.new)]
     [cfgs : sym_i64_env.SymI64Env (compiler-cfg-empty)]
     (begin
       (io.write-file

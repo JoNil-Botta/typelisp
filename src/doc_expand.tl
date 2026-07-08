@@ -4,7 +4,6 @@
 (import sym_i64_env)
 (import (vector.vector String) as doc_svec)
 (import "doc_render.tl")
-(import "doc_string_vec_bridge.tl")
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
 
@@ -1082,7 +1081,7 @@
     (match (typecheck-compiler-doc-expand-program-with-paths
       (ast-program decls)
       paths
-      (doc-string-vec-to-legacy (& stdlib-roots)))
+      stdlib-roots)
       [(ResultCompilerDocExpand.Ok expanded _)
         (match expanded
           [(AstProgram.Program expanded-box)
@@ -1213,7 +1212,7 @@
             (doc-cat2 source-path ".doc-examples.tl")
             (doc-expanded-example-source (struct-get scan forms))
             (sym_i64_env.sym-i64-empty)
-            (doc-string-vec-to-legacy (& stdlib-roots)))
+            stdlib-roots)
             [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
               (doc-expanded-generated-modules-from-loaded-decls
                 decls
@@ -1260,7 +1259,7 @@
       "doc_expand_smoke.tl"
       (doc-expand-smoke-source)
       (sym_i64_env.sym-i64-empty)
-      (doc-string-vec-to-legacy (& roots)))
+      roots)
       [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (match (doc-expanded-generated-modules-from-loaded-decls
           decls

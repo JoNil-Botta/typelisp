@@ -9,7 +9,6 @@
 (import "build_run_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
-(import "cli_string_vec_bridge.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 

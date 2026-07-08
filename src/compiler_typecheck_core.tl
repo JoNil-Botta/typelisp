@@ -17,7 +17,8 @@
 (import "read.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector String) as svec)
 (import token)
 (cfg compile-profile (import stdlib.profile))
 (cfg test (import stdlib.test))
@@ -48960,7 +48961,7 @@
     (begin
       (compiler-load-stdlib-result-surface-summary-refresh-with-pools
         "stdlib/result.tl"
-        (svec.string-vec-new)
+        (svec.new)
         (AstMaybeModuleName.Some "stdlib.result")
         "stdlib"
         (compiler-cfg-empty)
@@ -54725,7 +54726,7 @@
   [paths : AstDeclPathList]
   [module : String]
   [can-share : bool]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
   (let
     [cur-decls : AstDeclList decls]
@@ -55252,7 +55253,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
     (tc-install-pools! pools)
@@ -55487,7 +55488,7 @@
   [decl-path : String]
   [module : String]
   [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultMacroMaterializeImport
   (match (macro-generated-normal-import decl)
@@ -55574,7 +55575,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
@@ -55630,7 +55631,7 @@
   [program : AstProgram]
   [paths : AstDeclPathList]
   [pools : AstNodePoolContext]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (macro-expand-program-with-paths-and-pools-roots-cfg
     program
@@ -55647,7 +55648,7 @@
     program
     paths
     pools
-    (svec.string-vec-new)
+    (svec.new)
     (compiler-cfg-empty)))
 
 (define (macro-expand-program-with-paths
@@ -56563,9 +56564,7 @@
 (define (tc-prefix-default-cache-scope) : String
   "direct")
 
-(define (tc-prefix-cache-stdlib-path?
-  [path : String]
-  [stdlib-roots : svec.StringVec]) : bool
+(define (tc-prefix-cache-stdlib-path? [path : String] [stdlib-roots : svec.Vec]) : bool
   (if (compiler-load-stdlib-import? path)
     true
     (let
@@ -56576,7 +56575,7 @@
           normalized
           stdlib-roots
           0
-          (svec.string-vec-len (& stdlib-roots)))))))
+          (svec.len (& stdlib-roots)))))))
 
 (define (tc-prefix-cache-module-marker? [decl : AstDecl]) : bool
   (match decl
@@ -56586,7 +56585,7 @@
 (define (tc-prefix-cache-decl-safe?
   [decl-path : String]
   [decl : AstDecl]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [same-path-module-safe : bool]) : bool
   (if (tc-prefix-cache-stdlib-path? decl-path stdlib-roots)
     true
@@ -56595,7 +56594,7 @@
 (define (tc-prefix-candidate-from
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [entry-path : String]
   [count : i64]
   [module : String]
@@ -56656,12 +56655,11 @@
 (define (tc-prefix-candidate
   [decls : AstDeclList]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : TcPrefixCandidate
   (let
     [entry-path : String (tc-decl-path-list-last paths "")]
-    [effective-roots : svec.StringVec
-      (compiler-load-roots-with-env stdlib-roots)]
+    [effective-roots : svec.Vec (compiler-load-roots-with-env stdlib-roots)]
     (if (string.eq entry-path "")
       (TcPrefixCandidate.No)
       (tc-prefix-candidate-from
@@ -56811,7 +56809,7 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [summary : CompilerTypecheckSummary]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (if (tc-prefix-snapshot-cache-active?)
     (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
@@ -57069,7 +57067,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (begin
@@ -57131,7 +57129,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
     program
@@ -57143,7 +57141,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheckChecked
   (tc-typecheck-checked-result-with-pool-check
     (typecheck-compiler-specialized-program-with-paths-checked-inner
@@ -57155,7 +57153,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheckChecked
   (tc-typecheck-checked-result-with-pool-check
@@ -57172,13 +57170,13 @@
   (typecheck-compiler-specialized-program-with-paths-checked-cache
     program
     paths
-    (svec.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (typecheck-compiler-specialized-program-with-paths-cache
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache
     program
@@ -57193,7 +57191,7 @@
 (define (typecheck-compiler-specialized-program-with-paths-cache-with-pools
   [program : AstProgram]
   [paths : AstDeclPathList]
-  [stdlib-roots : svec.StringVec]
+  [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerTypecheck
   (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
@@ -57213,7 +57211,7 @@
   (typecheck-compiler-specialized-program-with-paths-cache
     program
     paths
-    (svec.string-vec-new)
+    (svec.new)
     (tc-prefix-default-cache-scope)))
 
 (define (compiler-typecheck-clear-macro-expanded-source-caches!) : unit

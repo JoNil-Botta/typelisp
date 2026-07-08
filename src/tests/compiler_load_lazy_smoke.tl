@@ -1,6 +1,7 @@
 ;; compiler_load_lazy_smoke.tl - Lazy dotted import loader smokes.
 (import stdlib.io)
-(import stdlib.vector as svec)
+(import stdlib.vector)
+(import (vector String) as svec)
 (import "../compiler_load.tl")
 (import sym_i64_env)
 
@@ -158,7 +159,7 @@
     (match (compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_lazy_dotted/entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (svec.string-vec-new)
+      (svec.new)
       "target/cl_pkg_lazy_dotted"
       (compiler-pkg-deps-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
@@ -186,7 +187,7 @@
     (match (compiler-load-package-file-with-paths-and-roots
       "target/cl_pkg_lazy_dotted_used/entry.tl"
       (sym_i64_env.sym-i64-empty)
-      (svec.string-vec-new)
+      (svec.new)
       "target/cl_pkg_lazy_dotted_used"
       (compiler-pkg-deps-empty))
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)

@@ -1,7 +1,6 @@
 ;; compiler_ast_types_smoke.tl - Runnable AST data-shape smoke.
 (import compiler_ast_types as ast)
 (import compiler_intern as ci)
-(import stdlib.array)
 (import stdlib.string)
 
 (define (compiler-ast-state-expr-int-lit?

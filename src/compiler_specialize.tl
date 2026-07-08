@@ -5509,7 +5509,7 @@
         (spec-type-key (ast-ty-mut-ptr (ast-ty-ptr (AstType.U8))))
         "mutptr_ptr_u8")
       (ctfe-type-eq
-        (spec-substitute-type (ast-ty-mut-ptr (AstType.Var (intern "T"))) subs)
+        (spec-substitute-type (ast-ty-mut-ptr (AstType.Var cbi.compiler-builtin-id-fix-T)) subs)
         (ast-ty-mut-ptr (AstType.I64))))))
 
 ;: Deterministic specialized name + stable specialization key (mirrors
@@ -5661,28 +5661,28 @@
       (spec-type-subst-cons "T" (AstType.I64) SpecTypeSubst.Nil)]
     (and
       (string.eq
-        (spec-type-key (spec-substitute-type (AstType.Var (intern "T")) subs))
+        (spec-type-key (spec-substitute-type (AstType.Var cbi.compiler-builtin-id-fix-T) subs))
         "i64")
       (string.eq
         (spec-type-key
-          (spec-substitute-type (ast-ty-ptr (AstType.Var (intern "T"))) subs))
+          (spec-substitute-type (ast-ty-ptr (AstType.Var cbi.compiler-builtin-id-fix-T)) subs))
         "ptr_i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
-            (ast-ty-dyn-array (AstType.Var (intern "T")))
+            (ast-ty-dyn-array (AstType.Var cbi.compiler-builtin-id-fix-T))
             subs))
         "dynarray_i64")
       (string.eq
         (spec-type-key
           (spec-substitute-type
             (ast-ty-func
-              (ast-type-cons (AstType.Var (intern "T")) (ast-type-list-new))
-              (AstType.Var (intern "T")))
+              (ast-type-cons (AstType.Var cbi.compiler-builtin-id-fix-T) (ast-type-list-new))
+              (AstType.Var cbi.compiler-builtin-id-fix-T))
             subs))
         "fn_i64_nil_to_i64")
       (string.eq
-        (spec-type-key (spec-substitute-type (AstType.Var (intern "U")) subs))
+        (spec-type-key (spec-substitute-type (AstType.Var cbi.compiler-builtin-id-fix-U) subs))
         "var_U"))))
 
 ;: Value (comptime-argument) substitution (mirrors src/specialize.rs
@@ -5695,7 +5695,7 @@
       (spec-value-subst-cons "x" (CompilerCtfeValue.I64 5) SpecValueSubst.Nil)]
     (and
       ;; mapped variable x -> integer literal 5
-      (match (spec-substitute-values-expr (AstExpr.Var (intern "x")) subs)
+      (match (spec-substitute-values-expr (AstExpr.Var cbi.compiler-builtin-id-fix-x) subs)
         [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)
             [(AstExpr.Literal lit)
@@ -5705,7 +5705,7 @@
             [_ false])]
         [(ResultSpecSubExpr.Err _) false])
       ;; unmapped variable y -> unchanged
-      (match (spec-substitute-values-expr (AstExpr.Var (intern "y")) subs)
+      (match (spec-substitute-values-expr (AstExpr.Var cbi.compiler-builtin-id-fix-y) subs)
         [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)
             [(AstExpr.Var name) (string.eq (intern-str name) "y")]
@@ -5714,9 +5714,9 @@
       ;; recursion through `if`: x in the condition becomes 5, unmapped y stays
       (match (spec-substitute-values-expr
         (AstExpr.If
-          (ast-node-push (AstExpr.Var (intern "x")))
+          (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-x))
           (ast-node-push (AstExpr.Literal (ast-lit-int 1)))
-          (ast-node-push (AstExpr.Var (intern "y"))))
+          (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-y)))
         subs)
         [(ResultSpecSubExpr.Ok e)
           (match (ast-node-get e)

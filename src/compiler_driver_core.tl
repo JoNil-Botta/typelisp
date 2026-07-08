@@ -253,7 +253,13 @@
     (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
+  (begin
+    (cbi.state-install! (array-ref (struct-get state builtin-ids) 0))
+    ;; Force the generation-guarded refresh so every compiler-builtin-id-* global
+    ;; is valid before any phase (lex/parse/load/typecheck) reads one. state-install
+    ;; restored the prior compile's ids and generation, but a reset intern table
+    ;; makes those stale until refresh re-interns against the current table.
+    (cbi.compiler-builtin-refresh!)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit

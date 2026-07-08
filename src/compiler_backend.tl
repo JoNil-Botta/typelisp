@@ -11491,8 +11491,9 @@
 ;; slice models indirect-call target scratch as per-instruction pseudo-vars:
 ;; the planner records a point -> register home before emission, reserves that
 ;; home in the scavenge context as a synthetic live interval, and the emitter
-;; uses the planned register when --cfg scratch-vreg is enabled. Missing or
-;; constrained sites fall back to the existing scavenger.
+;; uses the planned register when --cfg scratch-vreg is enabled. C ABI
+;; aggregate-return calls reuse the same point scratch for base save/store
+;; staging. Missing or constrained sites fall back to the existing scavenger.
 (defenum CompilerBackendScratchVregSynth
   (CompilerBackendScratchVregSynth
     i64
@@ -11634,6 +11635,7 @@
   (match instr
     [(CompilerIrInstr.CallIndirect _ _ _ _) true]
     [(CompilerIrInstr.CallIndirectC _ _ _ _) true]
+    [(CompilerIrInstr.CallCAbiStoreResult _) true]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))
@@ -26919,16 +26921,22 @@
                   (+ sse-idx 1)
                   sse-idx))))]))))
 
+(define (compiler-backend-scavenge-c-abi-return-base-save-reg) : String
+  (let
+    [planned : String (compiler-backend-scratch-vreg-call-target-here)]
+    (if (string.eq planned "")
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-c-abi-stage-exclude-with "%r11")
+        compiler-backend-c-abi-stage-exclude-count
+        "%r10")
+      planned)))
+
 (define (compiler-backend-emit-c-abi-return-base-save
   [assignments : CompilerRegAssignmentList]
   [base : CompilerIrValue]
   [save-offset : i64]) : ResultCompilerBackend
   (let
-    [base-reg : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-c-abi-stage-exclude-with "%r11")
-        compiler-backend-c-abi-stage-exclude-count
-        "%r10")]
+    [base-reg : String (compiler-backend-scavenge-c-abi-return-base-save-reg)]
     (match (compiler-backend-emit-load-value-with-plan
       assignments
       base
@@ -26954,10 +26962,14 @@
       a)))
 
 (define (compiler-backend-scavenge-c-abi-return-store-base-reg) : String
-  (compiler-backend-scavenge-reg-here
-    (compiler-backend-c-abi-return-store-base-exclude)
-    2
-    "%r11"))
+  (let
+    [planned : String (compiler-backend-scratch-vreg-call-target-here)]
+    (if (string.eq planned "")
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-c-abi-return-store-base-exclude)
+        2
+        "%r11")
+      planned)))
 
 (define (compiler-backend-emit-c-abi-return-stores
   [save-offset : i64]

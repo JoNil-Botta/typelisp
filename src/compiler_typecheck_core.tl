@@ -13432,13 +13432,15 @@
     (string.eq name "atomic-store!")
     (string.eq name "atomic-add!")
     (string.eq name "atomic-fetch-add!")
-    (string.eq name "atomic-cas!")))
+    (string.eq name "atomic-cas!")
+    (string.eq name "volatile-load")
+    (string.eq name "volatile-store!")))
 
 (define (tc-atomic-load-name? [name : String]) : bool
-  (string.eq name "atomic-load"))
+  (or (string.eq name "atomic-load") (string.eq name "volatile-load")))
 
 (define (tc-atomic-store-name? [name : String]) : bool
-  (string.eq name "atomic-store!"))
+  (or (string.eq name "atomic-store!") (string.eq name "volatile-store!")))
 
 (define (tc-atomic-cas-name? [name : String]) : bool
   (string.eq name "atomic-cas!"))
@@ -13451,13 +13453,18 @@
     [(AstType.U32) true]
     [_ false]))
 
-(define (tc-atomic-check-elem [elem : AstType]) : ResultTcType
+(define (tc-atomic-kind-volatile? [name : String]) : bool
+  (or (string.eq name "volatile-load") (string.eq name "volatile-store!")))
+
+(define (tc-atomic-check-elem [name : String] [elem : AstType]) : ResultTcType
   (let
     [resolved : AstType (tc-type-strip-region elem)]
     (if (tc-atomic-elem-type? resolved)
       (ResultTcType.Ok resolved)
       (ResultTcType.Err
-        "typecheck: atomic pointer element must be i32, i64, u32, or u64"))))
+        (if (tc-atomic-kind-volatile? name)
+          "typecheck: volatile pointer element must be i32, i64, u32, or u64"
+          "typecheck: atomic pointer element must be i32, i64, u32, or u64")))))
 
 (define (tc-atomic-pointer-elem
   [ctx : TcContext]
@@ -13466,16 +13473,35 @@
   (if (tc-atomic-load-name? name)
     (match (tc-raw-pointer-elem
       (tc-resolve-type ctx ptr-ty)
-      "typecheck: atomic-load requires a raw pointer operand")
-      [(ResultTcType.Ok elem) (tc-atomic-check-elem (tc-resolve-type ctx elem))]
+      (string.append
+        "typecheck: "
+        (string.append name " requires a raw pointer operand")))
+      [(ResultTcType.Ok elem)
+        (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
     (match (tc-mut-pointer-elem
       (tc-resolve-type ctx ptr-ty)
       (string.append
         "typecheck: "
         (string.append name " requires a MutPtr pointer operand")))
-      [(ResultTcType.Ok elem) (tc-atomic-check-elem (tc-resolve-type ctx elem))]
+      [(ResultTcType.Ok elem)
+        (tc-atomic-check-elem name (tc-resolve-type ctx elem))]
       [(ResultTcType.Err message) (ResultTcType.Err message)])))
+
+(define (tc-atomic-value-mismatch-message [name : String]) : String
+  (if (tc-atomic-kind-volatile? name)
+    "typecheck: volatile value type mismatch"
+    "typecheck: atomic value type mismatch"))
+
+(define (tc-atomic-load-arity-message [name : String]) : String
+  (string.append
+    "typecheck: "
+    (string.append name " expects exactly one argument")))
+
+(define (tc-atomic-update-arity-message [name : String]) : String
+  (if (tc-atomic-kind-volatile? name)
+    "typecheck: volatile-store! expects exactly two arguments"
+    "typecheck: atomic update expects exactly two arguments"))
 
 (define (tc-atomic-check-value
   [ctx : TcContext]
@@ -13500,7 +13526,7 @@
           [(ResultTcType.Ok elem) (ResultTcType.Ok elem)]
           [(ResultTcType.Err message) (ResultTcType.Err message)])]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
-    (ResultTcType.Err "typecheck: atomic-load expects exactly one argument")))
+    (ResultTcType.Err (tc-atomic-load-arity-message name))))
 
 (define (tc-atomic-two-arg-call
   [ctx : TcContext]
@@ -13519,7 +13545,7 @@
               env
               value
               elem
-              "typecheck: atomic value type mismatch")
+              (tc-atomic-value-mismatch-message name))
               [(ResultTcUnit.Ok)
                 (if (tc-atomic-store-name? name)
                   (ResultTcType.Ok (AstType.Unit))
@@ -13529,7 +13555,7 @@
               [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)])]
       [(ResultTcType.Err message) (ResultTcType.Err message)])
-    (ResultTcType.Err "typecheck: atomic update expects exactly two arguments")))
+    (ResultTcType.Err (tc-atomic-update-arity-message name))))
 
 (define (tc-atomic-cas-call
   [ctx : TcContext]
@@ -13588,7 +13614,7 @@
     (ResultTcType.Err
       (if (tc-atomic-cas-name? name)
         "typecheck: atomic-cas! expects exactly three arguments"
-        "typecheck: atomic update expects exactly two arguments"))))
+        (tc-atomic-update-arity-message name)))))
 
 (define (tc-atomic-pointer-call
   [ctx : TcContext]
@@ -13606,10 +13632,10 @@
             (tc-atomic-nonload-call ctx env name ptr tail0)))
         (ResultTcType.Err
           (if (tc-atomic-load-name? name)
-            "typecheck: atomic-load expects exactly one argument"
+            (tc-atomic-load-arity-message name)
             (if (tc-atomic-cas-name? name)
               "typecheck: atomic-cas! expects exactly three arguments"
-              "typecheck: atomic update expects exactly two arguments"))))]
+              (tc-atomic-update-arity-message name)))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name : String]) : ResultTcType

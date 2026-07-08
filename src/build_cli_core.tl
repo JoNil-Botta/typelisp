@@ -25,7 +25,7 @@
 (import "compiler_diagnostic.tl")
 (import "compiler_parse_core.tl")
 (import "compiler_driver_core.tl")
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 (import "tlci_core.tl")
 (import sym_i64_env)
 

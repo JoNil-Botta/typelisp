@@ -677,6 +677,92 @@
         [(ResultCompilerBackend.Err _) false])]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-volatile-intrinsic-source) : String
+  "(define (load64 [p : (Ptr i64)]) : i64
+  (unsafe
+    (begin
+      (volatile-load p)
+      (volatile-load p))))
+
+(define (store64 [p : (MutPtr i64)] [value : i64]) : unit
+  (unsafe (volatile-store! p value)))
+
+(define (load32 [p : (Ptr u32)]) : u32
+  (unsafe
+    (begin
+      (volatile-load p)
+      (volatile-load p))))
+
+(define (store32 [p : (MutPtr u32)] [value : u32]) : unit
+  (unsafe (volatile-store! p value)))
+
+(define (main) : i64
+  (let
+    [cell64 : i64 0]
+    [cell32 : u32 (cast 0 : u32)]
+    [p64 : (MutPtr i64) (unsafe (ptr-addr-of cell64))]
+    [p32 : (MutPtr u32) (unsafe (ptr-addr-of cell32))]
+    (begin
+      (store64 p64 1)
+      (load64 (unsafe (ptr-cast p64 : (Ptr i64))))
+      (store32 p32 (cast 1 : u32))
+      (load32 (unsafe (ptr-cast p32 : (Ptr u32))))
+      0)))")
+
+(define (compiler-backend-volatile-no-helper-calls? [asm : String]) : bool
+  (and
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_volatile_i64_load_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_volatile_i64_store_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_volatile_i32_load_ptr\n"))
+    (not
+      (compiler-backend-string-contains?
+        asm
+        "    call tl_volatile_i32_store_ptr\n"))))
+
+(define (compiler-backend-volatile-intrinsic-linux-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-volatile-no-helper-calls? asm)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rdi), %rax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movq %rsi, (%rdi)\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rdi), %eax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movl %esi, (%rdi)\n" 1)
+    (not (compiler-backend-string-contains? asm "    xchgq "))
+    (not (compiler-backend-string-contains? asm "    xchgl "))))
+
+(define (compiler-backend-volatile-intrinsic-windows-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-volatile-no-helper-calls? asm)
+    (compiler-backend-atomic-count-at-least? asm "    movq (%rcx), %rax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movq %rdx, (%rcx)\n" 1)
+    (compiler-backend-atomic-count-at-least? asm "    movl (%rcx), %eax\n" 2)
+    (compiler-backend-atomic-count-at-least? asm "    movl %edx, (%rcx)\n" 1)
+    (not (compiler-backend-string-contains? asm "    xchgq "))
+    (not (compiler-backend-string-contains? asm "    xchgl "))))
+
+(define (compiler-backend-volatile-intrinsic-shape-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-volatile-intrinsic-source)
+    (CompilerBackendTarget.Linux))
+    [(ResultCompilerBackend.Ok linux-asm)
+      (match (compiler-backend-emit-source-for-target
+        (compiler-backend-volatile-intrinsic-source)
+        (CompilerBackendTarget.Windows))
+        [(ResultCompilerBackend.Ok windows-asm)
+          (and
+            (compiler-backend-volatile-intrinsic-linux-asm-ok? linux-asm)
+            (compiler-backend-volatile-intrinsic-windows-asm-ok? windows-asm))]
+        [(ResultCompilerBackend.Err _) false])]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-runtime-atomic-wrapper-source) : String
   "(define (tl-runtime-atomic-i64-load-ptr [ptr : (Ptr i64)])
   : i64
@@ -19749,7 +19835,8 @@
       (and
         (compiler-backend-fixed-array-literal-shape-ok?)
         (compiler-backend-raw-pointer-fixture-shape-ok?)
-        (compiler-backend-atomic-intrinsic-shape-ok?))
+        (compiler-backend-atomic-intrinsic-shape-ok?)
+        (compiler-backend-volatile-intrinsic-shape-ok?))
       (and
         (compiler-backend-box-ok?)
         (compiler-backend-fast-alloc-next-load-ok?)

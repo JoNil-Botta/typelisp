@@ -19,7 +19,7 @@
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import "compiler_optimize.tl")
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)

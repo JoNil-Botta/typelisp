@@ -4407,6 +4407,12 @@
       (compiler-ir-direct-call-effect ".L_tl_arg_count")
       CompilerIrEffect.Unknown)
     (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect "tl_volatile_i64_load_ptr")
+      CompilerIrEffect.Unknown)
+    (compiler-ir-effect-eq?
+      (compiler-ir-direct-call-effect "tl_volatile_i64_store_ptr")
+      CompilerIrEffect.Unknown)
+    (compiler-ir-effect-eq?
       (compiler-ir-direct-call-effect "user_or_extern_call")
       CompilerIrEffect.Unknown)))
 

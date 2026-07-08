@@ -5,7 +5,7 @@
 (import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector as svec)
-(import "compiler_typecheck.tl")
+(import "compiler_typecheck_api.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "compiler_ir_types.tl")
@@ -26043,7 +26043,9 @@
     (string.eq name "atomic-store!")
     (string.eq name "atomic-add!")
     (string.eq name "atomic-fetch-add!")
-    (string.eq name "atomic-cas!")))
+    (string.eq name "atomic-cas!")
+    (string.eq name "volatile-load")
+    (string.eq name "volatile-store!")))
 
 (define (lower-atomic-pointer-func? [type-env : TcTypeEnv] [func : AstExpr]) : bool
   (match (ast-expr-unspan func)
@@ -26060,16 +26062,28 @@
     [_ false]))
 
 (define (lower-atomic-pointer-load-name? [name : String]) : bool
-  (string.eq name "atomic-load"))
+  (or (string.eq name "atomic-load") (string.eq name "volatile-load")))
 
 (define (lower-atomic-pointer-cas-name? [name : String]) : bool
   (string.eq name "atomic-cas!"))
 
-(define (lower-atomic-pointer-width-prefix [elem-ty : AstType]) : String
+(define (lower-atomic-pointer-volatile-name? [name : String]) : bool
+  (or (string.eq name "volatile-load") (string.eq name "volatile-store!")))
+
+(define (lower-atomic-pointer-width-prefix [name : String] [elem-ty : AstType]) : String
   (match (tc-type-strip-region elem-ty)
-    [(AstType.I32) "tl_atomic_i32_"]
-    [(AstType.U32) "tl_atomic_i32_"]
-    [_ "tl_atomic_i64_"]))
+    [(AstType.I32)
+      (if (lower-atomic-pointer-volatile-name? name)
+        "tl_volatile_i32_"
+        "tl_atomic_i32_")]
+    [(AstType.U32)
+      (if (lower-atomic-pointer-volatile-name? name)
+        "tl_volatile_i32_"
+        "tl_atomic_i32_")]
+    [_
+      (if (lower-atomic-pointer-volatile-name? name)
+        "tl_volatile_i64_"
+        "tl_atomic_i64_")]))
 
 (define (lower-atomic-pointer-op-suffix [name : String]) : String
   (cond
@@ -26077,11 +26091,13 @@
     [(string.eq name "atomic-store!") "store_ptr"]
     [(string.eq name "atomic-add!") "add_ptr"]
     [(string.eq name "atomic-fetch-add!") "fetch_add_ptr"]
+    [(string.eq name "volatile-load") "load_ptr"]
+    [(string.eq name "volatile-store!") "store_ptr"]
     [else "cas_ptr"]))
 
 (define (lower-atomic-pointer-raw-symbol [name : String] [elem-ty : AstType]) : String
   (str_cat.str-cat
-    (lower-atomic-pointer-width-prefix elem-ty)
+    (lower-atomic-pointer-width-prefix name elem-ty)
     (lower-atomic-pointer-op-suffix name)
     ""
     ""))
@@ -26091,6 +26107,14 @@
   [name : String]
   [ptr-ty : AstType]) : ResultTcType
   (tc-atomic-pointer-elem ctx name ptr-ty))
+
+(define (lower-atomic-pointer-load-arity-message [name : String]) : String
+  (string.append "lower: " (string.append name " expects exactly one argument")))
+
+(define (lower-atomic-pointer-update-arity-message [name : String]) : String
+  (if (lower-atomic-pointer-volatile-name? name)
+    "lower: volatile-store! expects exactly two arguments"
+    "lower: atomic update expects exactly two arguments"))
 
 (define (lower-atomic-pointer-emit-load
   [ctx : TcContext]
@@ -26190,8 +26214,7 @@
       result-ty
       origin)
     (ResultLowerExpr.Err
-      (box
-        (lower-diagnostic "lower: atomic update expects exactly two arguments")))))
+      (box (lower-diagnostic (lower-atomic-pointer-update-arity-message name))))))
 
 (define (lower-atomic-pointer-cas-tail
   [ctx : TcContext]
@@ -26284,7 +26307,7 @@
         (lower-diagnostic
           (if (lower-atomic-pointer-cas-name? name)
             "lower: atomic-cas! expects exactly three arguments"
-            "lower: atomic update expects exactly two arguments"))))))
+            (lower-atomic-pointer-update-arity-message name)))))))
 
 (define (lower-atomic-pointer-call-with-elem
   [ctx : TcContext]
@@ -26315,7 +26338,7 @@
               (ResultLowerExpr.Err
                 (box
                   (lower-diagnostic
-                    "lower: atomic-load expects exactly one argument"))))
+                    (lower-atomic-pointer-load-arity-message name)))))
             (lower-atomic-pointer-nonload-call
               ctx
               ptr-state
@@ -26367,10 +26390,10 @@
       (box
         (lower-diagnostic
           (if (lower-atomic-pointer-load-name? name)
-            "lower: atomic-load expects exactly one argument"
+            (lower-atomic-pointer-load-arity-message name)
             (if (lower-atomic-pointer-cas-name? name)
               "lower: atomic-cas! expects exactly three arguments"
-              "lower: atomic update expects exactly two arguments")))))))
+              (lower-atomic-pointer-update-arity-message name))))))))
 
 (define (lower-atomic-load-symbol? [symbol : String]) : bool
   (or
@@ -56902,6 +56925,10 @@
         [(InternLookupFound _) false]
         [(InternLookupMissing) true]))))
 
+(define (compiler-lower-branch-mismatch-source) : String
+  "(define (main [flag : bool]) : i64
+  (if flag 1 false))")
+
 (define (compiler-lower-back-half-tests-ok?) : bool
   (let
     [ok : bool true]
@@ -56946,7 +56973,7 @@
         unit
         (set! ok false))
       (if (compiler-lower-error-ok?
-        (compiler-typecheck-branch-mismatch-source)
+        (compiler-lower-branch-mismatch-source)
         "typecheck: if branches must match")
         unit
         (set! ok false))

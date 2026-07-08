@@ -604,8 +604,9 @@ Implemented: the full pipeline (lexer, parser, type checker, IR lowering,
 optimizer, Linux/Windows x86_64 backends); integers, floats, bool/char/unit,
 strings, enums + `match`, structs with in-place field mutation, fixed and
 compatibility dynamic arrays, tuples, closures, tail calls, `extern`/FFI
-with raw pointers and atomics, move/borrow checking with conservative
-non-lexical lifetime shortening, arenas with checker-proven invalidation,
+with raw pointers, atomics, and volatile raw pointer access, move/borrow
+checking with conservative non-lexical lifetime shortening, arenas with
+checker-proven invalidation,
 safe task threading, SPMD `foreach`/`spmd-reduce`/`spmd-scan` with
 scalar/AVX2/AVX-512 backends and runtime dispatch, comptime macros with type
 reflection, packages with lockfiles, inline tests, doctests, fmt, lint, doc

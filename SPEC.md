@@ -83,7 +83,7 @@ this table.
 | SPMD safe-code data-race freedom | Static reject | Safe `foreach`/SPMD code rejects varying calls, unsupported varying control flow, unsafe shared mutation, and reduction shapes that cannot be proven race-free. See section 5.15. |
 | Task-thread data-race freedom | Static reject | Safe task-threading APIs reject captured, sent, returned, or shared values whose arena owner does not prove storage lifetime across the participating threads, or whose structural classification does not prove race-free access. See section 6.5. |
 | Invalid enum/struct states | Static reject | Safe code constructs enums and structs only through their checked constructors and pattern forms. Arbitrary bit construction, invalid variants, invalid field layouts, and recursive-by-value aggregate states are rejected. See sections 3.5, 4.7, and 5.13. |
-| Raw pointers, syscalls, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values, but dereference, write, offset, pointer/integer casts, direct syscall invocation, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.20, 7.3, and 7.4. |
+| Raw pointers, syscalls, foreign ABI assumptions, and manual arena reset | Static reject | Safe code may pass, return, compare, and null-test raw pointer values, but dereference, write, offset, pointer/integer casts, volatile access, direct syscall invocation, foreign ABI invariants beyond the declared signature, and invalidating manual arena operations require `(unsafe ...)`. See sections 3.4, 5.20, 7.3, and 7.4. |
 | Invalid comptime-to-runtime values | Static reject | Comptime generation and reflection cannot smuggle invalid runtime values, invalid types, or unstable compiler-internal identities into safe runtime code; runtime observation of comptime-only metadata is rejected. See sections 3.7 and 5.17. |
 | Valid comptime-generated runtime values | Defined result | Accepted generated declarations and values have ordinary valid runtime representations and follow the same safe-code contract as hand-written declarations. See sections 3.7 and 5.17. |
 
@@ -4793,6 +4793,7 @@ The unsafe operation set:
 | `(ptr->int p)` | Unsafe | raw pointer -> `u64` | Exposes the target address representation. |
 | `(int->ptr n : (Ptr T))` / `(int->ptr n : (MutPtr T))` | Unsafe | integer -> requested raw pointer type | Address validity is entirely outside the typechecker. |
 | `(atomic-load p)`, `(atomic-store! p v)`, `(atomic-add! p d)`, `(atomic-fetch-add! p d)`, `(atomic-cas! p expected new)` | Unsafe | raw pointer atomics for `T` in `i32`, `i64`, `u32`, or `u64`; update forms require `(MutPtr T)` and matching values | Sequentially consistent x86-64 memory operations. Load returns `T`; store/add return `unit`; fetch-add and CAS return the previous value observed at `p`. |
+| `(volatile-load p)`, `(volatile-store! p v)` | Unsafe | raw pointer volatile access for `T` in `i32`, `i64`, `u32`, or `u64`; stores require `(MutPtr T)` and matching values | Emits exactly one load or store memory access for each source operation and prevents elision, reordering, common-subexpression elimination, loop-invariant hoisting, and folding of that operation. Volatile does not provide inter-thread memory ordering; use atomics for synchronization. |
 | `(syscall number arg0 ... arg5)` | Unsafe | integer operands -> `i64` | Issues a raw Linux x86_64 host syscall. The number plus up to six arguments are passed directly to the kernel ABI; argument validity, pointer lifetimes, platform availability, and side effects are caller obligations. |
 
 `stdlib.ffi` provides caller-owned C string marshalling helpers on top of
@@ -4837,7 +4838,7 @@ element-size address derivation.
 
 Outside the raw-pointer surface: address-of globals, temporaries, enum payload
 projection, tuple projection, box projection, compatibility dynamic-array
-element sugar, slice views, volatile access, provenance tracking, pointer
+element sugar, slice views, provenance tracking, pointer
 comparisons beyond `ptr-null?`, pointer-to-function casts, and any
 borrow-checked reference surface. Pointer-to-aggregate-field or
 pointer-to-array-element support does not imply by-value aggregate extern ABI
@@ -5328,7 +5329,7 @@ message outlive its arena owner.
 Safe atomic operations exist only where the language or stdlib explicitly
 accepts an atomic type/helper with a specified width, alignment, ownership,
 and memory-ordering contract. Outside those helpers, raw CPU atomics,
-volatile-looking raw pointer operations, and FFI atomic intrinsics remain
+volatile raw pointer operations, and FFI atomic intrinsics remain
 unsafe-only escape hatches.
 
 The minimal v1 policy is conservative: safe atomics are synchronization
@@ -5786,8 +5787,9 @@ mutable, or valid for the requested type.
 - Pointer equality, ordering, provenance, and bounds are otherwise
   unspecified. Only null testing is part of the safe surface.
 - `ptr-read`, `ptr-write!`, `ptr-offset`, `ptr-cast`, `ptr->int`,
-  `int->ptr`, and raw pointer atomics require `(unsafe ...)` because the
-  typechecker cannot prove their memory or ABI preconditions.
+  `int->ptr`, raw pointer atomics, and volatile raw pointer access require
+  `(unsafe ...)` because the typechecker cannot prove their memory or ABI
+  preconditions.
 - A raw pointer into memory reclaimed by `with-arena`/`tl_region_reset`
   becomes invalid when that region is reset. The typechecker does not track
   this for raw pointers.
@@ -5885,8 +5887,8 @@ in documentation passes.
   indirect function-value tail calls emitted as jumps.
 - FFI: `extern` with exact-symbol binding, C varargs, unsafe declarations,
   raw pointers with unsafe dereference/write/offset/cast, local scalar
-  address-of scratch pointers for out-params, and sequentially consistent
-  32/64-bit raw-pointer atomics.
+  address-of scratch pointers for out-params, sequentially consistent
+  32/64-bit raw-pointer atomics, and 32/64-bit volatile raw pointer access.
 - Safe task threading with structural transfer/share checking, generated
   thread/mutex/channel modules, and atomic arenas.
 - SPMD: scalar reference lowering for `foreach`, `spmd-reduce`,
@@ -5915,7 +5917,7 @@ in documentation passes.
 | Public vector/mask/varying source value types | Deferred by design. |
 | Out-of-line ABI for non-inlined varying helper calls | Designed; not implemented. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
-| Aggregate `ptr-addr-of` implementation; volatile access | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464; volatile access remains deferred. |
+| Aggregate `ptr-addr-of` implementation | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464. |
 | Cleanup-owning enums | Reserved. |
 | Complete source locations for all semantic errors | Partial. |
 | Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures and remaining #4035 source/smoke migration work before #2454 removes the syntax. |

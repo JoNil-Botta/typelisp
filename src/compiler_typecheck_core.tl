@@ -19226,6 +19226,45 @@
             variant-found)
           variant-found))]))
 
+;; id-taking variant: mirrors tc-constructor-name? but threads the interned id.
+;; The type-handle flat lookup keys by the real intern id (so it misses non-root
+;; names exactly as the String variant does -- the add path binds those under a
+;; pair-key only the in-module probes reach). The variant registry keys by
+;; name-id-key(intern "module/name") = composite-pair-key-id module-id name-id
+;; for a non-root bare name; we compute that pair-key directly from the ids
+;; instead of building and interning the qualified string.
+(define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
+  (match ctx
+    [(TcContext _ symbols registries module _)
+      (let
+        [module-id : i64 (if (> (string.string-length module) 0) (intern module) -1)]
+        [non-root-bare? : bool
+          (and (> (string.string-length module) 0) (not (tc-name-qualified-id? name-id)))]
+        [variant-key : i64
+          (if non-root-bare?
+            (compiler-composite-pair-key-id module-id name-id)
+            name-id)]
+        [handle : i64
+          (compiler-symbols-lookup-type-id-or symbols name-id (compiler-symbols-missing-handle))]
+        [variant-found : bool
+          (compiler-symbols-handle-found?
+            (if non-root-bare?
+              (compiler-registries-lookup-variant-key-id-or
+                registries
+                variant-key
+                (compiler-symbols-missing-handle))
+              (compiler-registries-lookup-variant-id-or
+                registries
+                variant-key
+                (compiler-symbols-missing-handle))))]
+        (if (compiler-symbols-handle-found? handle)
+          (if (=
+            (compiler-symbol-handle-kind handle)
+            (compiler-symbol-kind-defstruct))
+            true
+            variant-found)
+          variant-found))]))
+
 (define (tc-call-allows-region-args?
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -19242,6 +19281,13 @@
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
     [_ (TcMaybeString.No)]))
+
+;; id-returning variant: AstExpr.Var already carries the interned i64 name id,
+;; so callers that only need the id avoid the id->String (intern-str) round trip.
+(define (tc-expr-var-name-id [expr : AstExpr]) : i64
+  (match (ast-expr-unspan expr)
+    [(AstExpr.Var name) name]
+    [_ -1]))
 
 (define (tc-call-arity-message-prefix) : String
   "typecheck: call arity mismatch: ")
@@ -19377,12 +19423,13 @@
   [func : AstExpr]
   [params : AstTypeList]
   [ret : AstType]) : AstMaybeType
-  (match (tc-expr-var-name func)
-    [(TcMaybeString.Some name)
-      (if (tc-constructor-name? ctx name)
+  (let
+    [name-id : i64 (tc-expr-var-name-id func)]
+    (if (>= name-id 0)
+      (if (tc-constructor-name-id? ctx name-id)
         (AstMaybeType.Some (tc-constructor-target-type env params ret))
-        (AstMaybeType.No))]
-    [(TcMaybeString.No) (AstMaybeType.No)]))
+        (AstMaybeType.No))
+      (AstMaybeType.No))))
 
 (define (tc-lifetime-constructor-ret? [ret : AstType]) : bool
   (match ret
@@ -19397,9 +19444,11 @@
   [func : AstExpr]
   [ret : AstType]) : bool
   (if (tc-lifetime-constructor-ret? ret)
-    (match (tc-expr-var-name func)
-      [(TcMaybeString.Some name) (tc-constructor-name? ctx name)]
-      [(TcMaybeString.No) false])
+    (let
+      [name-id : i64 (tc-expr-var-name-id func)]
+      (if (>= name-id 0)
+        (tc-constructor-name-id? ctx name-id)
+        false))
     false))
 
 (define (tc-lifetime-subst-type-list

@@ -19256,11 +19256,16 @@
         (compiler-backend-binop-scavenge-exclude-build)
         5
         "%r8")]
+    [next-exclude : (Array String)
+      (compiler-backend-scavenge-exclude-append
+        (compiler-backend-one-exclude scav)
+        1
+        "%rax")]
     [next-reg : String
       (compiler-backend-scavenge-reg
         dst
-        (compiler-backend-one-exclude scav)
-        1
+        next-exclude
+        2
         (if (compiler-backend-target-windows? target)
           "%r10"
           "%rcx"))]
@@ -19301,10 +19306,11 @@
               scav
               ")\n")
             (string.append
-              (compiler-backend-runtime-profile-alloc-account
+              (compiler-backend-runtime-profile-alloc-account-with-scratch
                 (string.append "$" size-text)
                 profile-label
-                profile)
+                profile
+                next-reg)
               (string.append
                 (str_cat.str-cat "    jmp " done-label "\n" slow-label ":\n")
                 (str_cat.str-cat
@@ -42015,10 +42021,11 @@ tl_profile_alloc_peak_bytes:
         (compiler-backend-runtime-argv-data)
         (compiler-backend-runtime-env-data target (or env-var-exists var-value)))]))
 
-(define (compiler-backend-runtime-profile-alloc-account
+(define (compiler-backend-runtime-profile-alloc-account-with-scratch
   [size-reg : String]
   [done-label : String]
-  [profile : bool]) : String
+  [profile : bool]
+  [scratch-reg : String]) : String
   (if profile
     (string.append
       (str_cat.str-cat
@@ -42028,12 +42035,28 @@ tl_profile_alloc_peak_bytes:
         size-reg
         ", tl_profile_alloc_live_bytes(%rip)\n")
       (str_cat.str-cat
-        "    movq tl_profile_alloc_live_bytes(%rip), %r10\n    cmpq tl_profile_alloc_peak_bytes(%rip), %r10\n    jbe "
+        "    movq tl_profile_alloc_live_bytes(%rip), "
+        scratch-reg
+        "\n    cmpq tl_profile_alloc_peak_bytes(%rip), "
+        scratch-reg
+        "\n    jbe "
         done-label
-        "\n    movq %r10, tl_profile_alloc_peak_bytes(%rip)\n"
+        "\n    movq "
+        scratch-reg
+        ", tl_profile_alloc_peak_bytes(%rip)\n"
         done-label
         ":\n"))
     ""))
+
+(define (compiler-backend-runtime-profile-alloc-account
+  [size-reg : String]
+  [done-label : String]
+  [profile : bool]) : String
+  (compiler-backend-runtime-profile-alloc-account-with-scratch
+    size-reg
+    done-label
+    profile
+    "%r10"))
 
 (define (compiler-backend-runtime-profile-live-sub
   [arena-reg : String]

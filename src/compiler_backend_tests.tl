@@ -18256,6 +18256,189 @@
     (compiler-backend-inline-fast-alloc-multi-size-target-ok?
       (CompilerBackendTarget.Windows))))
 
+(define compiler-backend-inline-fast-alloc-emergency-live-count : i64
+  13)
+
+(define (compiler-backend-inline-fast-alloc-emergency-regs) : (Array String)
+  (let
+    [regs : (Array String)
+      (make-array
+        String
+        compiler-backend-inline-fast-alloc-emergency-live-count)]
+    (begin
+      (array-set! regs 0 "%r9")
+      (array-set! regs 1 "%rcx")
+      (array-set! regs 2 "%rdx")
+      (array-set! regs 3 "%r10")
+      (array-set! regs 4 "%r11")
+      (array-set! regs 5 "%r8")
+      (array-set! regs 6 "%r12")
+      (array-set! regs 7 "%r13")
+      (array-set! regs 8 "%r14")
+      (array-set! regs 9 "%r15")
+      (array-set! regs 10 "%rbx")
+      (array-set! regs 11 "%rsi")
+      (array-set! regs 12 "%rdi")
+      regs)))
+
+(define (compiler-backend-inline-fast-alloc-emergency-assignments-from
+  [regs : (Array String)]
+  [index : i64]) : CompilerRegAssignmentList
+  (if (>= index (array-length regs))
+    CompilerRegAssignmentList.Nil
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        index
+        (CompilerRegLocation.Register (array-ref regs index)))
+      (compiler-backend-inline-fast-alloc-emergency-assignments-from
+        regs
+        (+ index 1)))))
+
+(define (compiler-backend-inline-fast-alloc-emergency-assignments) : CompilerRegAssignmentList
+  (compiler-backend-inline-fast-alloc-emergency-assignments-from
+    (compiler-backend-inline-fast-alloc-emergency-regs)
+    0))
+
+(define (compiler-backend-inline-fast-alloc-emergency-instrs) : CompilerIrInstrList
+  (let
+    [instrs : CompilerIrInstrList CompilerIrInstrList.Nil]
+    [v : i64 (- compiler-backend-inline-fast-alloc-emergency-live-count 1)]
+    (begin
+      (while (>= v 0)
+        (begin
+          (set!
+            instrs
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov
+                (+ 30 v)
+                (CompilerIrValue.Var v)
+                (AstType.I64))
+              instrs))
+          (set! v (- v 1))))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Call
+          20
+          "tl_alloc"
+          (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
+          (AstType.U64))
+        instrs))))
+
+(define (compiler-backend-inline-fast-alloc-emergency-asm) : ResultCompilerBackend
+  (let
+    [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+    [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+    [prev-assignment-index : CompilerRegAssignmentIndex
+      compiler-backend-scavenge-ctx-assignment-index]
+    [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+    [prev-occupied-masks : (Array i64)
+      compiler-backend-scavenge-ctx-occupied-masks]
+    [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+    [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+    [prev-current-count : i64 compiler-backend-emit-current-count]
+    [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+    [prev-emergency-pending : bool compiler-backend-emergency-pending]
+    [prev-emergency-reg : String compiler-backend-emergency-reg]
+    [prev-emergency-used : bool compiler-backend-emergency-used]
+    [prev-emergency-pending-count : i64
+      compiler-backend-emergency-pending-count]
+    [prev-emergency-used-count : i64 compiler-backend-emergency-used-count]
+    [prev-emergency-slot-offset : i64 compiler-backend-emergency-slot-offset]
+    [prev-emergency-restore-suppressed : bool
+      compiler-backend-emergency-restore-suppressed]
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-inline-fast-alloc-emergency-assignments)]
+    [instrs : CompilerIrInstrList
+      (compiler-backend-inline-fast-alloc-emergency-instrs)]
+    [count : i64 (compiler-ir-instr-list-count instrs)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block "entry" instrs)
+        CompilerIrBlockList.Nil)]
+    [_ctx : unit
+      (begin
+        (compiler-backend-set-current-fn-linux!)
+        (compiler-backend-test-scavenge-install-ctx!
+          "inline_fast_alloc_emergency"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          50
+          blocks
+          assignments)
+        (set! compiler-backend-emit-instr-post-base count)
+        (set! compiler-backend-emit-current-count count)
+        (set! compiler-backend-emergency-pending false)
+        (set! compiler-backend-emergency-reg "")
+        (set! compiler-backend-emergency-used false)
+        (set! compiler-backend-emergency-pending-count 0)
+        (set! compiler-backend-emergency-used-count 0)
+        (set! compiler-backend-emergency-slot-offset -512)
+        (set! compiler-backend-emergency-restore-suppressed false))]
+    [result : ResultCompilerBackend
+      (compiler-backend-emit-test-instrs instrs assignments 50)]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (if prev-win64
+          (compiler-backend-set-current-fn-win64!)
+          (compiler-backend-set-current-fn-linux!))
+        (set! compiler-backend-emergency-pending prev-emergency-pending)
+        (set! compiler-backend-emergency-reg prev-emergency-reg)
+        (set! compiler-backend-emergency-used prev-emergency-used)
+        (set!
+          compiler-backend-emergency-pending-count
+          prev-emergency-pending-count)
+        (set! compiler-backend-emergency-used-count prev-emergency-used-count)
+        (set! compiler-backend-emergency-slot-offset prev-emergency-slot-offset)
+        (set!
+          compiler-backend-emergency-restore-suppressed
+          prev-emergency-restore-suppressed))]
+    result))
+
+(define (compiler-backend-inline-fast-alloc-emergency-preserved-ok?) : bool
+  (match (compiler-backend-inline-fast-alloc-emergency-asm)
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (backend-and8
+          (compiler-backend-string-contains? asm "    movq %r9, -512(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq -512(%rbp), %r9\n")
+          (compiler-backend-string-contains? asm "    movq %rcx, -520(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq -520(%rbp), %rcx\n")
+          (compiler-backend-string-contains?
+            asm
+            "    movq %fs:tl_current_arena@tpoff, %r9\n")
+          (compiler-backend-string-contains? asm "    leaq 8(%rax), %rcx\n")
+          (compiler-backend-string-contains? asm "    movq %rcx, 16(%r9)\n")
+          (compiler-backend-string-contains? asm "    call .L_tl_alloc8\n"))
+        (compiler-backend-string-contains?
+          asm
+          "    movq tl_profile_alloc_live_bytes(%rip), %rcx\n")
+        (compiler-backend-string-contains?
+          asm
+          "    cmpq tl_profile_alloc_peak_bytes(%rip), %rcx\n")
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "tl_profile_alloc_live_bytes(%rip), %r10"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "%r10, tl_profile_alloc_peak_bytes(%rip)"))
+        (not
+          (compiler-backend-string-contains?
+            asm
+            "    movq %fs:tl_current_arena@tpoff, %r8\n"))
+        (not (compiler-backend-string-contains? asm "    leaq 8(%rax), %r8\n"))
+        (not (compiler-backend-string-contains? asm "    leaq 8(%rax), %rax\n")))]
+    [(ResultCompilerBackend.Err _) false]))
+
 ;; Backend emit-shape coverage for local tuple construction/ref.
 ;; `(tuple true 42)` allocates the tuple payload, materializes/stores the bool
 ;; byte and i64 at their offsets, and `(tuple-ref t 1)` loads the i64 slot back.
@@ -19867,6 +20050,7 @@
         (compiler-backend-fast-alloc-gate-ok?)
         (compiler-backend-inline-fast-alloc-result-ok?)
         (compiler-backend-inline-fast-alloc-multi-size-ok?)
+        (compiler-backend-inline-fast-alloc-emergency-preserved-ok?)
         (compiler-backend-inline-aggregate-storage-ok?)))
     (compiler-backend-tuple-ok?)
     (compiler-backend-export-symbol-tests-ok?)

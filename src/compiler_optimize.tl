@@ -4462,18 +4462,27 @@
 (define (opt-switch-case-list-eq
   [a : CompilerIrSwitchCaseList]
   [b : CompilerIrSwitchCaseList]) : bool
-  (match a
+  (match (compiler-ir-switch-case-list-force-cons a)
     [(CompilerIrSwitchCaseList.Nil)
-      (match b
+      (match (compiler-ir-switch-case-list-force-cons b)
         [(CompilerIrSwitchCaseList.Nil) true]
+        [(CompilerIrSwitchCaseList.Array seq) (= (struct-get seq len) 0)]
         [_ false])]
     [(CompilerIrSwitchCaseList.Cons acase at)
-      (match b
+      (match (compiler-ir-switch-case-list-force-cons b)
         [(CompilerIrSwitchCaseList.Cons bcase bt)
           (and
             (opt-switch-case-eq acase bcase)
             (opt-switch-case-list-eq (box-get at) (box-get bt)))]
-        [_ false])]))
+        [(CompilerIrSwitchCaseList.Array seq)
+          (match acase
+            [(CompilerIrSwitchCase.Case tag label)
+              (opt-switch-case-list-eq
+                (compiler-ir-switch-case-cons-linked tag label (box-get at))
+                (compiler-ir-switch-case-seq-to-list seq))])]
+        [_ false])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-switch-case-list-eq (compiler-ir-switch-case-seq-to-list seq) b)]))
 
 (define (opt-c-abi-return-slot-eq
   [a : CompilerIrCAbiReturnSlot]
@@ -12155,7 +12164,11 @@
         [(CompilerIrSwitchCase.Case _ label)
           (opt-cfg-switch-case-successors
             (opt-label-add set label)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-cfg-switch-case-successors
+        set
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 (define (opt-cfg-instr-seq-successors
   [set : OptLabelSet]
@@ -12955,24 +12968,41 @@
     preheader
     label))
 
+(define (opt-loop-preheaders-retarget-switch-cases-acc
+  [cases : CompilerIrSwitchCaseList]
+  [header : String]
+  [preheader : String]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Nil) acc]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (match case
+        [(CompilerIrSwitchCase.Case tag label)
+          (opt-loop-preheaders-retarget-switch-cases-acc
+            (box-get rest)
+            header
+            preheader
+            (compiler-ir-switch-case-cons-linked
+              tag
+              (opt-loop-preheaders-retarget-label label header preheader)
+              acc))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-loop-preheaders-retarget-switch-cases-acc
+        (compiler-ir-switch-case-seq-to-list seq)
+        header
+        preheader
+        acc)]))
+
 (define (opt-loop-preheaders-retarget-switch-cases
   [cases : CompilerIrSwitchCaseList]
   [header : String]
   [preheader : String]) : CompilerIrSwitchCaseList
-  (match cases
-    [(CompilerIrSwitchCaseList.Nil) CompilerIrSwitchCaseList.Nil]
-    [(CompilerIrSwitchCaseList.Cons case rest)
-      (match case
-        [(CompilerIrSwitchCase.Case tag label)
-          (CompilerIrSwitchCaseList.Cons
-            (CompilerIrSwitchCase.Case
-              tag
-              (opt-loop-preheaders-retarget-label label header preheader))
-            (box
-              (opt-loop-preheaders-retarget-switch-cases
-                (box-get rest)
-                header
-                preheader)))])]))
+  (compiler-ir-switch-case-list-compact-reversed
+    (opt-loop-preheaders-retarget-switch-cases-acc
+      cases
+      header
+      preheader
+      CompilerIrSwitchCaseList.Nil)))
 
 (define (opt-loop-preheaders-retarget-instr
   [instr : CompilerIrInstr]
@@ -15376,7 +15406,11 @@
         [(CompilerIrSwitchCase.Case _ label)
           (if (not (opt-label-contains body label))
             true
-            (opt-licm-switch-case-outside? body (box-get rest)))])]))
+            (opt-licm-switch-case-outside? body (box-get rest)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-licm-switch-case-outside?
+        body
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 ;; Pure register staging that a return path may perform without counting as
 ;; "more work": scalar copies/arithmetic and the group packing a multi-word
@@ -15516,7 +15550,12 @@
         [(CompilerIrSwitchCase.Case _ label)
           (and
             (opt-licm-branch-exit-return-shaped? blocks body label)
-            (opt-licm-switch-cases-return-shaped? blocks body (box-get rest)))])]))
+            (opt-licm-switch-cases-return-shaped? blocks body (box-get rest)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-licm-switch-cases-return-shaped?
+        blocks
+        body
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 ;; Suppression kind for the whole loop: max over the non-header body blocks'
 ;; terminator classifications.
@@ -17564,7 +17603,11 @@
         [(CompilerIrSwitchCase.Case _ label)
           (opt-sccp-mark-switch-targets
             (opt-sccp-state-mark-executable state label)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (opt-sccp-mark-switch-targets
+        state
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 (define (opt-sccp-process-instr
   [state : OptSccpState]
@@ -18491,18 +18534,19 @@
           items
           (- tag 1)
           min-tag
-          (compiler-ir-switch-case-cons tag label acc))]
+          (compiler-ir-switch-case-cons-linked tag label acc))]
       [(OptSwitchMaybeLabel.NoLabel) acc])))
 
 (define (opt-switch-build-cases
   [items : OptSwitchCandidateList]
   [min-tag : i64]
   [max-tag : i64]) : CompilerIrSwitchCaseList
-  (opt-switch-build-cases-desc
-    items
-    max-tag
-    min-tag
-    CompilerIrSwitchCaseList.Nil))
+  (compiler-ir-switch-case-list-compact
+    (opt-switch-build-cases-desc
+      items
+      max-tag
+      min-tag
+      CompilerIrSwitchCaseList.Nil)))
 
 (define (opt-switch-block-starts-with-phi?
   [blocks : CompilerIrBlockList]

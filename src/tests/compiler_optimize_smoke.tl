@@ -58,7 +58,8 @@
   (match cases
     [(CompilerIrSwitchCaseList.Nil) 0]
     [(CompilerIrSwitchCaseList.Cons _ rest)
-      (+ 1 (opt-switch-case-list-count (box-get rest)))]))
+      (+ 1 (opt-switch-case-list-count (box-get rest)))]
+    [(CompilerIrSwitchCaseList.Array seq) (struct-get seq len)]))
 
 (define (opt-switch-entry-base [blocks : CompilerIrBlockList]) : i64
   (match (opt-cfg-find-block blocks "entry")

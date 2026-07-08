@@ -134,9 +134,14 @@
 (defenum CompilerIrSwitchCase
   (Case i64 String))
 
+(defstruct CompilerIrSwitchCaseSeq
+  (slots (Array CompilerIrSwitchCase))
+  (len i64))
+
 (defenum CompilerIrSwitchCaseList
   (Nil)
-  (Cons CompilerIrSwitchCase (Box CompilerIrSwitchCaseList)))
+  (Cons CompilerIrSwitchCase (Box CompilerIrSwitchCaseList))
+  (Array CompilerIrSwitchCaseSeq))
 
 (defenum CompilerIrInstrVectorBinOpPayload
   (Payload i64 CompilerIrBinOp CompilerIrValue CompilerIrValue i64 AstType))
@@ -725,13 +730,143 @@
   (CompilerIrPhiInputList.Array
     (compiler-ir-phi-input-seq-from-reversed-list inputs)))
 
-(define (compiler-ir-switch-case-cons
+(define (compiler-ir-switch-case-cons-linked
   [tag : i64]
   [label : String]
   [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (CompilerIrSwitchCaseList.Cons
     (CompilerIrSwitchCase.Case tag label)
     (box rest)))
+
+(define (compiler-ir-switch-case-cons
+  [tag : i64]
+  [label : String]
+  [rest : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (let
+    [count : i64 (+ 1 (compiler-ir-switch-case-list-count rest))]
+    [slots : (Array CompilerIrSwitchCase)
+      (array.make-array CompilerIrSwitchCase count)]
+    (begin
+      (array-set! slots 0 (CompilerIrSwitchCase.Case tag label))
+      (compiler-ir-switch-case-list-fill-array rest slots 1)
+      (CompilerIrSwitchCaseList.Array (CompilerIrSwitchCaseSeq slots count)))))
+
+(define (compiler-ir-switch-case-list-count [cases : CompilerIrSwitchCaseList]) : i64
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) 0]
+    [(CompilerIrSwitchCaseList.Cons _ rest)
+      (+ 1 (compiler-ir-switch-case-list-count (box-get rest)))]
+    [(CompilerIrSwitchCaseList.Array seq) (struct-get seq len)]))
+
+(define (compiler-ir-switch-case-list-fill-array
+  [cases : CompilerIrSwitchCaseList]
+  [slots : (Array CompilerIrSwitchCase)]
+  [index : i64]) : unit
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) unit]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (begin
+        (array-set! slots index case)
+        (compiler-ir-switch-case-list-fill-array
+          (box-get rest)
+          slots
+          (+ index 1)))]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [source : (Array CompilerIrSwitchCase) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots (+ index read) (array-ref source read))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-switch-case-list-fill-array-reversed
+  [cases : CompilerIrSwitchCaseList]
+  [slots : (Array CompilerIrSwitchCase)]
+  [index : i64]) : unit
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) unit]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (begin
+        (array-set! slots index case)
+        (compiler-ir-switch-case-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [write : i64 index]
+        [source : (Array CompilerIrSwitchCase) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots write (array-ref source read))
+            (set! write (- write 1))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-switch-case-seq-from-list
+  [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseSeq
+  (let
+    [count : i64 (compiler-ir-switch-case-list-count cases)]
+    [slots : (Array CompilerIrSwitchCase)
+      (array.make-array CompilerIrSwitchCase count)]
+    (begin
+      (compiler-ir-switch-case-list-fill-array cases slots 0)
+      (CompilerIrSwitchCaseSeq slots count))))
+
+(define (compiler-ir-switch-case-seq-from-reversed-list
+  [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseSeq
+  (let
+    [count : i64 (compiler-ir-switch-case-list-count cases)]
+    [slots : (Array CompilerIrSwitchCase)
+      (array.make-array CompilerIrSwitchCase count)]
+    (begin
+      (compiler-ir-switch-case-list-fill-array-reversed cases slots (- count 1))
+      (CompilerIrSwitchCaseSeq slots count))))
+
+(define (compiler-ir-switch-case-seq-to-list-rev
+  [slots : (Array CompilerIrSwitchCase)]
+  [index : i64]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrSwitchCaseList acc]
+    (begin
+      (while (>= cursor 0)
+        (match (array-ref slots cursor)
+          [(CompilerIrSwitchCase.Case tag label)
+            (begin
+              (set! out (compiler-ir-switch-case-cons-linked tag label out))
+              (set! cursor (- cursor 1)))]))
+      out)))
+
+(define (compiler-ir-switch-case-seq-to-list [seq : CompilerIrSwitchCaseSeq]) : CompilerIrSwitchCaseList
+  (compiler-ir-switch-case-seq-to-list-rev
+    (struct-get seq slots)
+    (- (struct-get seq len) 1)
+    CompilerIrSwitchCaseList.Nil))
+
+(define (compiler-ir-switch-case-list-force-cons
+  [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match cases
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-ir-switch-case-seq-to-list seq)]
+    [_ cases]))
+
+(define (compiler-ir-switch-case-list-compact
+  [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match cases
+    [(CompilerIrSwitchCaseList.Array _) cases]
+    [_
+      (CompilerIrSwitchCaseList.Array
+        (compiler-ir-switch-case-seq-from-list cases))]))
+
+(define (compiler-ir-switch-case-list-compact-reversed
+  [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (CompilerIrSwitchCaseList.Array
+    (compiler-ir-switch-case-seq-from-reversed-list cases)))
 
 (define (compiler-ir-instr-cons
   [instr : CompilerIrInstr]
@@ -1595,24 +1730,40 @@
 (define (compiler-ir-clone-switch-case-list-acc
   [cases : CompilerIrSwitchCaseList]
   [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
-  (match cases
+  (match (compiler-ir-switch-case-list-force-cons cases)
     [(CompilerIrSwitchCaseList.Nil) acc]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (compiler-ir-clone-switch-case-list-acc
         (box-get rest)
-        (CompilerIrSwitchCaseList.Cons
-          (compiler-ir-clone-switch-case case)
-          (box acc)))]))
+        (match (compiler-ir-clone-switch-case case)
+          [(CompilerIrSwitchCase.Case tag label)
+            (compiler-ir-switch-case-cons-linked tag label acc)]))]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-ir-clone-switch-case-list-acc
+        (compiler-ir-switch-case-seq-to-list seq)
+        acc)]))
+
+(define (compiler-ir-switch-case-list-reverse-onto-acc
+  [cases : CompilerIrSwitchCaseList]
+  [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
+  (match (compiler-ir-switch-case-list-force-cons cases)
+    [(CompilerIrSwitchCaseList.Nil) acc]
+    [(CompilerIrSwitchCaseList.Cons case rest)
+      (compiler-ir-switch-case-list-reverse-onto-acc
+        (box-get rest)
+        (match case
+          [(CompilerIrSwitchCase.Case tag label)
+            (compiler-ir-switch-case-cons-linked tag label acc)]))]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-ir-switch-case-list-reverse-onto-acc
+        (compiler-ir-switch-case-seq-to-list seq)
+        acc)]))
 
 (define (compiler-ir-switch-case-list-reverse-onto
   [cases : CompilerIrSwitchCaseList]
   [acc : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
-  (match cases
-    [(CompilerIrSwitchCaseList.Nil) acc]
-    [(CompilerIrSwitchCaseList.Cons case rest)
-      (compiler-ir-switch-case-list-reverse-onto
-        (box-get rest)
-        (CompilerIrSwitchCaseList.Cons case (box acc)))]))
+  (compiler-ir-switch-case-list-compact
+    (compiler-ir-switch-case-list-reverse-onto-acc cases acc)))
 
 (define (compiler-ir-clone-switch-case-list [cases : CompilerIrSwitchCaseList]) : CompilerIrSwitchCaseList
   (compiler-ir-switch-case-list-reverse-onto
@@ -2415,18 +2566,26 @@
     [(CompilerIrSwitchCase.Case tag label)
       (str_cat.str-cat (string.int->string tag) ":" label)]))
 
+(define (compiler-ir-switch-case-list-render-tail
+  [cases : CompilerIrSwitchCaseList]) : String
+  (match cases
+    [(CompilerIrSwitchCaseList.Nil) ""]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (if (= (struct-get seq len) 0)
+        ""
+        (str_cat.str-cat ", " (compiler-ir-switch-case-list-render cases)))]
+    [_ (str_cat.str-cat ", " (compiler-ir-switch-case-list-render cases))]))
+
 (define (compiler-ir-switch-case-list-render [cases : CompilerIrSwitchCaseList]) : String
   (match cases
     [(CompilerIrSwitchCaseList.Nil) ""]
     [(CompilerIrSwitchCaseList.Cons case rest)
       (str_cat.str-cat
         (compiler-ir-switch-case-render case)
-        (match (box-get rest)
-          [(CompilerIrSwitchCaseList.Nil) ""]
-          [_
-            (str_cat.str-cat
-              ", "
-              (compiler-ir-switch-case-list-render (box-get rest)))]))]))
+        (compiler-ir-switch-case-list-render-tail (box-get rest)))]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-ir-switch-case-list-render
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 (define (compiler-ir-value-list-count [values : CompilerIrValueList]) : i64
   (match values
@@ -5467,6 +5626,56 @@
             (compiler-ir-phi-input-seq-entry-var-label? seq 1 10 "entry"))]
         [_ false]))))
 
+(define (compiler-ir-switch-case-seq-entry-tag-label?
+  [seq : CompilerIrSwitchCaseSeq]
+  [index : i64]
+  [want-tag : i64]
+  [want-label : String]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (match (array-ref (struct-get seq slots) index)
+      [(CompilerIrSwitchCase.Case tag label)
+        (and (= tag want-tag) (string.eq label want-label))])))
+
+(define (compiler-ir-switch-case-dense-order-ok?) : bool
+  (let
+    [cases : CompilerIrSwitchCaseList
+      (compiler-ir-switch-case-list-compact
+        (compiler-ir-switch-case-cons
+          4
+          "four"
+          (compiler-ir-switch-case-cons 5 "five" CompilerIrSwitchCaseList.Nil)))]
+    [cloned : CompilerIrSwitchCaseList
+      (compiler-ir-clone-switch-case-list cases)]
+    [reversed : CompilerIrSwitchCaseList
+      (compiler-ir-switch-case-list-reverse-onto
+        cases
+        CompilerIrSwitchCaseList.Nil)]
+    (and
+      (= (compiler-ir-switch-case-list-count cases) 2)
+      (string.eq (compiler-ir-switch-case-list-render cases) "4:four, 5:five")
+      (match cases
+        [(CompilerIrSwitchCaseList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-switch-case-seq-entry-tag-label? seq 0 4 "four")
+            (compiler-ir-switch-case-seq-entry-tag-label? seq 1 5 "five"))]
+        [_ false])
+      (match cloned
+        [(CompilerIrSwitchCaseList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-switch-case-seq-entry-tag-label? seq 0 4 "four")
+            (compiler-ir-switch-case-seq-entry-tag-label? seq 1 5 "five"))]
+        [_ false])
+      (match reversed
+        [(CompilerIrSwitchCaseList.Array seq)
+          (and
+            (= (struct-get seq len) 2)
+            (compiler-ir-switch-case-seq-entry-tag-label? seq 0 5 "five")
+            (compiler-ir-switch-case-seq-entry-tag-label? seq 1 4 "four"))]
+        [_ false]))))
+
 (define (compiler-ir-instr-seq-roundtrip-ok?) : bool
   (let
     [instrs : CompilerIrInstrList
@@ -5515,4 +5724,5 @@
     (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
     (unless (compiler-ir-pack-value-list-dense-order-ok?) (return 1))
     (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
+    (unless (compiler-ir-switch-case-dense-order-ok?) (return 1))
     42))

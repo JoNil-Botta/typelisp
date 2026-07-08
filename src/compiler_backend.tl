@@ -26713,10 +26713,7 @@
   "backend: CompilerIrInstr.Switch requires non-empty contiguous ordered cases")
 
 (define (compiler-backend-switch-case-count [cases : CompilerIrSwitchCaseList]) : i64
-  (match cases
-    [(CompilerIrSwitchCaseList.Nil) 0]
-    [(CompilerIrSwitchCaseList.Cons _ rest)
-      (+ 1 (compiler-backend-switch-case-count (box-get rest)))]))
+  (compiler-ir-switch-case-list-count cases))
 
 (define (compiler-backend-switch-cases-contiguous-from?
   [cases : CompilerIrSwitchCaseList]
@@ -26730,7 +26727,11 @@
             (= tag expected)
             (compiler-backend-switch-cases-contiguous-from?
               (box-get rest)
-              (+ expected 1)))])]))
+              (+ expected 1)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-backend-switch-cases-contiguous-from?
+        (compiler-ir-switch-case-seq-to-list seq)
+        expected)]))
 
 (define (compiler-backend-switch-cases-target-phi?
   [cases : CompilerIrSwitchCaseList]) : bool
@@ -26743,7 +26744,10 @@
             (compiler-backend-string-list-contains?
               compiler-backend-current-phi-targets
               label)
-            (compiler-backend-switch-cases-target-phi? (box-get rest)))])]))
+            (compiler-backend-switch-cases-target-phi? (box-get rest)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-backend-switch-cases-target-phi?
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 (define (compiler-backend-switch-target-phi?
   [cases : CompilerIrSwitchCaseList]
@@ -26833,7 +26837,16 @@
               assignments
               blocks
               program-index
-              vars))])]))
+              vars))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-backend-emit-switch-case-edge-blocks
+        function
+        current-label
+        (compiler-ir-switch-case-seq-to-list seq)
+        assignments
+        blocks
+        program-index
+        vars)]))
 
 (define (compiler-backend-switch-table-label
   [function : String]
@@ -26870,7 +26883,14 @@
                       label))
                     (compiler-backend-switch-case-edge-label current-label tag)
                     label)))
-              "\n"))])]))
+              "\n"))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-backend-emit-switch-table-cases-into
+        function
+        current-label
+        retarget-phi-edges
+        (compiler-ir-switch-case-seq-to-list seq)
+        buf)]))
 
 (define (compiler-backend-emit-switch-table
   [function : String]
@@ -46115,7 +46135,14 @@ tl_tlci_call_image_entry:
               label-scope
               table-label
               (box-get rest)
-              (+ index 1)))])]))
+              (+ index 1)))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-backend-object-switch-table-cases
+        parts
+        label-scope
+        table-label
+        (compiler-ir-switch-case-seq-to-list seq)
+        index)]))
 
 (define (compiler-backend-object-switch-table
   [parts : CompilerBackendObjectParts]

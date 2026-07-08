@@ -12,8 +12,6 @@
 ;#     (test.assert-true true "expected true")
 ;#     42))
 ;# ```
-(module stdlib.test)
-
 (import stdlib.io)
 (import stdlib.string)
 

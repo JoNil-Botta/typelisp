@@ -3,8 +3,6 @@
 ;# This module stays separate from `string.tl` while the compatibility wrapper
 ;# keeps the owned `String` API. It exposes helpers that may return
 ;# caller-provided text without copying.
-(module stdlib.string_caller_result)
-
 (import stdlib.string)
 
 ;: Result for lifetime-preserving string replacement.

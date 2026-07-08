@@ -44,8 +44,6 @@
 ;#         42)]
 ;#     (hashmap.string-i64-map-len m)))
 ;# ```
-(module stdlib.hashmap)
-
 (import stdlib.array)
 (import stdlib.hash as hash_mod)
 

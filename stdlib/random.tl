@@ -22,8 +22,6 @@
 ;# `(vector i64)` weighted-index helpers scan caller-owned storage directly. The
 ;# generator is MINSTD/Park-Miller with Schrage constants, so it avoids signed
 ;# `i64` overflow and remains portable across current TypeLisp targets.
-(module stdlib.random)
-
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)

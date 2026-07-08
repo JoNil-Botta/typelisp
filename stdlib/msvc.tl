@@ -15,8 +15,6 @@
 ;# (define resolved : msvc.ResultMsvcTool
 ;#   (msvc.find-tool (& target) (& tool)))
 ;# ```
-(module stdlib.msvc)
-
 (import stdlib.env)
 (import stdlib.io)
 (import stdlib.fs)

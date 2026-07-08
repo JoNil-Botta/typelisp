@@ -27,8 +27,6 @@
 ;#       (isort.sort! (&mut v))
 ;#       (+ (ivec.get (& v) 0 0) (ivec.get (& v) 2 0)))))
 ;# ```
-(module stdlib.sort)
-
 (import stdlib.comptime)
 
 ;; lint-allow: unused-import

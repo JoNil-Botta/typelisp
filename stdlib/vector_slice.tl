@@ -4,8 +4,6 @@
 ;# helpers over the matching `(vector T)` module's `Vec`. A slice is a non-owning
 ;# view over a vector live prefix or an explicit `(Array T)` live prefix. The
 ;# borrowed backing-array reference carries the source owner lifetime.
-(module stdlib.vector_slice)
-
 (import stdlib.comptime)
 (import stdlib.vector)
 

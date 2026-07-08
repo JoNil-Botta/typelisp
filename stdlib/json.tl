@@ -16,8 +16,6 @@
 ;# (import stdlib.json)
 ;# (define sample : String (json.stringify (json.JsonBool true)))
 ;# ```
-(module stdlib.json)
-
 (import stdlib.comptime)
 (import stdlib.string)
 (import stdlib.io)

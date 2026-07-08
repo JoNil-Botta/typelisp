@@ -11,8 +11,6 @@
 ;# compiler provenance. Simple `Expr`/`ExprClause` inspectors and dense sequence
 ;# accessors below are ordinary source bodies so macro code can migrate toward
 ;# public field and array access without growing the bridge surface.
-(module stdlib.comptime)
-
 ;: Syntax value passed to and returned from expression macros.
 (defenum Expr
   (ExprBool bool)

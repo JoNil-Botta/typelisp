@@ -2,8 +2,6 @@
 ;#
 ;# Import with `(import stdlib.result)`, then instantiate a concrete module
 ;# with `(import (result i64 String) as result_i64_string)`.
-(module stdlib.result)
-
 ;: Emit a generated recoverable-error result module for success type `T` and
 ;: error type `E`.
 (defmacro (result [T : type] [E : type]) : Module

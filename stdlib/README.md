@@ -646,12 +646,11 @@ contracts, and intentional panic/exit-status checks.
 
 ## Adding a Module
 
-1. Add the module under `stdlib/`, using a stable canonical identity such as
-   `stdlib.name`.
+1. Add the module under `stdlib/`; a file such as `stdlib/name.tl` infers the
+   canonical identity `stdlib.name`.
 2. Keep the module self-contained except for explicit dotted import
    dependencies.
-3. Include a short header comment with its purpose, required primitives, and
-   module identity.
+3. Include a short header comment with its purpose and required primitives.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
 5. Add new top-level stdlib `.tl` files to `src/compiler_embedded_stdlib.tl`

@@ -3,8 +3,6 @@
 ;# Provides allocation counters and a coarse monotonic millisecond timestamp.
 ;# Time is implemented here over platform FFI/syscalls; allocation counters remain
 ;# allocator-runtime hooks. Import explicitly with `(import stdlib.profile)`.
-(module stdlib.profile)
-
 (import stdlib.array)
 
 ;: Shared scratch for the time helper's OS out-parameters. Allocated once at

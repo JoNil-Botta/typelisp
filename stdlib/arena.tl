@@ -86,8 +86,6 @@
 ;# `Arena` and `ArenaMark` are nominal wrappers over raw runtime handles. The
 ;# raw `tl_*` hooks remain exported for compiler/runtime internals and FFI-like
 ;# low-level code; ordinary user code should use the typed helpers below.
-(module stdlib.arena)
-
 ;: First-class arena handle. The runtime representation is a raw `i64` handle,
 ;: but the source type is nominal so raw integers cannot satisfy arena APIs.
 (defstruct Arena

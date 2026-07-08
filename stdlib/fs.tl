@@ -19,8 +19,6 @@
 ;#     [right : String "tool-output.s"]
 ;#     (fs.path-join (& left) (& right))))
 ;# ```
-(module stdlib.fs)
-
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)

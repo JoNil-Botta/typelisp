@@ -51,8 +51,6 @@
 ;# should produce a value expression of the requested field type. Sequence decode
 ;# hooks report the source length and individual encoded elements; the generated
 ;# module allocates and fills the fixed or dynamic output array.
-(module stdlib.serialize)
-
 (import stdlib.comptime)
 (import stdlib.string)
 

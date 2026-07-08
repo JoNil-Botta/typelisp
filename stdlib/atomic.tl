@@ -16,8 +16,6 @@
 ;#     ([i : i64 0 n])
 ;#     (atomic.atomic-i64-add! out (array-ref ix i) 1)))
 ;# ```
-(module stdlib.atomic)
-
 ;: Sequentially consistent atomic load of one `i64` array element.
 (extern (atomic-i64-load [items : (Array i64)] [index : i64]) : i64 (:symbol "tl_atomic_i64_load"))
 

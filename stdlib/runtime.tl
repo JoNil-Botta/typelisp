@@ -20,8 +20,6 @@
 ;# and its own externs. Keeping it import-free also avoids a shared-module
 ;# double-load when the entry program is given by an absolute path (its stdlib
 ;# imports would resolve to different path keys than a relative prelude load).
-(module stdlib.runtime)
-
 ;: Windows kernel32 `GetStdHandle` binding for mapping fds 0/1/2 to handles.
 (define (string-length [text : String]) : i64
   (cfg

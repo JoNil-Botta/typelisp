@@ -4,8 +4,6 @@
 ;# while this module owns the generated declaration bodies for both families.
 ;# The public modules import this file and splice the appropriate family through
 ;# `: Decls`, keeping the owned and borrowed surfaces generated from one source.
-(module stdlib.text_buf_family)
-
 ;: Emit the owned `TextBuf` family declarations for `stdlib.text_buf`.
 (defmacro (owned) : Decls
   `(begin

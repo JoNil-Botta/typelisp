@@ -3,8 +3,6 @@
 ;# This module stays separate from `io.tl` while the compatibility wrapper keeps
 ;# the owned `String` API. It exposes helpers that may return caller-provided
 ;# fallback text without copying.
-(module stdlib.io_caller_result)
-
 (import stdlib.io)
 (import stdlib.string)
 

@@ -21,8 +21,6 @@
 ;#       1
 ;#       0)))
 ;# ```
-(module stdlib.ffi)
-
 (import stdlib.array)
 (import stdlib.byte_buf)
 

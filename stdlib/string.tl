@@ -18,8 +18,6 @@
 ;#     [needle : String "ph"]
 ;#     (string.contains (& haystack) (& needle))))
 ;# ```
-(module stdlib.string)
-
 (import stdlib.array)
 (import stdlib.comptime)
 

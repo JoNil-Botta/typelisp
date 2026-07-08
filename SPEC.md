@@ -2165,11 +2165,14 @@ loaded it. The canonical identity is a dotted identifier path such as
 `stdlib.string`, `compiler.lower`, or `math.vector`. It is stable across
 platform path separators and package-root spellings.
 
-If a source file contains an explicit `(module ident)` declaration, that
-identity is the canonical module identity for the following declarations until
-another `(module ident)` declaration appears. A file without an explicit module
-declaration takes its canonical identity from the loader's normalized source
-identity. Different spellings that normalize to the same source file load one
+If a source file is imported by dotted identity, that identity is the canonical
+module identity for files without an explicit module declaration. Package and
+stdlib path imports also infer a stable dotted identity from the normalized
+source path without its `.tl` suffix. Legacy local relative-path imports without
+an expected module preserve their historical flat importer context. An explicit
+`(module ident)` declaration is a legacy module-boundary marker that overrides
+the inferred identity for following declarations until another module boundary
+appears. Different spellings that normalize to the same source file load one
 module instance.
 
 Identity resolution maps a dotted identity to a source file:
@@ -2212,9 +2215,8 @@ namespace mismatch such as using a value-qualified name where a type is
 required, is still a source-located error; there is no separate
 private/exported check. An `(export ...)` form is not a recognized declaration.
 
-```lisp test=ignore name=module-default-visibility reason="module declaration example"
-(module geometry)
-
+```lisp test=ignore name=module-default-visibility reason="module identity example"
+;; geometry.tl, imported with `(import geometry)`.
 (defstruct Point
   (x i64)
   (y i64))
@@ -2259,12 +2261,10 @@ Example with colliding local names:
 
 ```lisp test=ignore name=qualified-colliding-modules reason="multi-file example"
 ;; left.tl
-(module left)
 (define same : i64 20)
 (define (get) : i64 same)
 
 ;; right.tl
-(module right)
 (define same : i64 22)
 (define (get) : i64 same)
 
@@ -2322,8 +2322,7 @@ Required diagnostics:
 Cross-module macro use:
 
 ```lisp test=ignore name=module-imported-macro-use reason="multi-file example"
-;; bool_macros.tl
-(module bool-macros)
+;; bool-macros.tl
 (defmacro (and2 [lhs : bool] [rhs : bool]) : bool
   (expr-if lhs rhs (expr-bool false)))
 

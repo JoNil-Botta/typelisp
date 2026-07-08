@@ -56772,6 +56772,15 @@
     (tc-prefix-decl-key decl)
     ";"))
 
+(define (tc-prefix-key-add-entry-module-marker [key : String] [module : String]) : String
+  (str_cat.str-cat
+    key
+    "entry-module:"
+    (string.int->string (string.string-length module))
+    ":"
+    module
+    ";"))
+
 (define (tc-prefix-key-start [scope : String]) : String
   (str_cat.str-cat
     "tc-prefix-v3;"
@@ -56844,6 +56853,25 @@
         [decl-module-safe : bool
           (or same-path-module-safe (tc-prefix-cache-module-marker? decl))]
         (cond
+          [(and
+              (string.eq decl-path entry-path)
+              (= count 0)
+              (tc-prefix-cache-module-marker? decl))
+            (let
+              [next-module : String
+                (match decl
+                  [(AstDecl.Module next-module) (intern-str next-module)]
+                  [_ module])]
+              (tc-prefix-candidate-from
+                rest
+                rest-paths
+                stdlib-roots
+                entry-path
+                (+ count 1)
+                next-module
+                decl-path
+                true
+                (tc-prefix-key-add-entry-module-marker key next-module)))]
           [(string.eq decl-path entry-path)
             (if (> count 0)
               (TcPrefixCandidate.Some key count module)

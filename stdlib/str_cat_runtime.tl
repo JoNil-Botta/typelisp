@@ -4,8 +4,6 @@
 ;# that still emits the legacy `stdlib.string/string-concat*` helper names while
 ;# compiling `(test ...)` harnesses. This module intentionally uses a different
 ;# module name so internal selfhost tests run the checked-in macro body below.
-(module stdlib.str_cat_runtime)
-
 (import stdlib.comptime)
 (import stdlib.array)
 (import stdlib.string)

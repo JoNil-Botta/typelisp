@@ -6,8 +6,6 @@
 ;# intrinsics.
 ;#
 ;# Usage: `(import "stdlib/array.tl")`
-(module stdlib.array)
-
 (import stdlib.comptime)
 
 ;: Allocate a dynamic array with `count` live elements initialized under ZII.

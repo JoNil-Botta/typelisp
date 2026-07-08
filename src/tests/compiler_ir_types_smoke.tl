@@ -41,6 +41,74 @@
     [(CompilerIrBlockList.Nil) false]
     [(CompilerIrBlockList.Array _) false]))
 
+(define (compiler-ir-smoke-param-seq-entry-i64?
+  [seq : CompilerIrParamSeq]
+  [index : i64]
+  [want-name : String]
+  [want-var : i64]) : bool
+  (if (or (< index 0) (>= index (compiler-ir-param-seq-count seq)))
+    false
+    (match (compiler-ir-param-seq-ref seq index)
+      [(CompilerIrParam.Param name ty var)
+        (and
+          (string.eq name want-name)
+          (= var want-var)
+          (match ty
+            [(AstType.I64) true]
+            [_ false]))])))
+
+(define (compiler-ir-smoke-param-seq-entry-bool?
+  [seq : CompilerIrParamSeq]
+  [index : i64]
+  [want-name : String]
+  [want-var : i64]) : bool
+  (if (or (< index 0) (>= index (compiler-ir-param-seq-count seq)))
+    false
+    (match (compiler-ir-param-seq-ref seq index)
+      [(CompilerIrParam.Param name ty var)
+        (and
+          (string.eq name want-name)
+          (= var want-var)
+          (match ty
+            [(AstType.Bool) true]
+            [_ false]))])))
+
+(define (compiler-ir-smoke-dense-function-params-ok?) : bool
+  (let
+    [params : CompilerIrParamList
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "value" (AstType.I64) 2)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "flag" (AstType.Bool) 5)
+          CompilerIrParamList.Nil))]
+    [func : CompilerIrFunction
+      (CompilerIrFunction.Function
+        "with_params"
+        params
+        (AstType.Unit)
+        6
+        CompilerIrBlockList.Nil)]
+    [cloned : CompilerIrFunction (compiler-ir-clone-function func)]
+    (and
+      (match func
+        [(CompilerIrFunction.Function _ stored _ _ _)
+          (match stored
+            [(CompilerIrParamList.Array seq)
+              (and
+                (= (compiler-ir-param-seq-count seq) 2)
+                (compiler-ir-smoke-param-seq-entry-i64? seq 0 "value" 2)
+                (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
+            [_ false])])
+      (match cloned
+        [(CompilerIrFunction.Function _ stored _ _ _)
+          (match stored
+            [(CompilerIrParamList.Array seq)
+              (and
+                (= (compiler-ir-param-seq-count seq) 2)
+                (compiler-ir-smoke-param-seq-entry-i64? seq 0 "value" 2)
+                (compiler-ir-smoke-param-seq-entry-bool? seq 1 "flag" 5))]
+            [_ false])]))))
+
 (define (compiler-ir-smoke-function-list-compact-kind?
   [functions : CompilerIrFunctionList]) : bool
   (match functions
@@ -239,4 +307,5 @@
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
     (unless (compiler-ir-smoke-reversed-compaction-ok?) (return 2))
     (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
+    (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
     (compiler-ir-effect-self-test)))

@@ -391,9 +391,14 @@
 (defenum CompilerIrParam
   (Param String AstType i64))
 
+(defstruct CompilerIrParamSeq
+  (slots (Array CompilerIrParam))
+  (len i64))
+
 (defenum CompilerIrParamList
   (Nil)
-  (Cons CompilerIrParam (Box CompilerIrParamList)))
+  (Cons CompilerIrParam (Box CompilerIrParamList))
+  (Array CompilerIrParamSeq))
 
 (defenum CompilerIrFunction
   (Function String CompilerIrParamList AstType i64 CompilerIrBlockList))
@@ -972,10 +977,131 @@
         vars
         (compiler-ir-block-list-compact blocks))]))
 
-(define (compiler-ir-param-cons
+(define (compiler-ir-param-cons-linked
   [param : CompilerIrParam]
   [rest : CompilerIrParamList]) : CompilerIrParamList
   (CompilerIrParamList.Cons param (box rest)))
+
+(define (compiler-ir-param-cons
+  [param : CompilerIrParam]
+  [rest : CompilerIrParamList]) : CompilerIrParamList
+  (let
+    [count : i64 (+ 1 (compiler-ir-param-list-count rest))]
+    [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
+    (begin
+      (array-set! slots 0 param)
+      (compiler-ir-param-list-fill-array rest slots 1)
+      (CompilerIrParamList.Array (CompilerIrParamSeq slots count)))))
+
+(define (compiler-ir-param-list-count [params : CompilerIrParamList]) : i64
+  (match params
+    [(CompilerIrParamList.Nil) 0]
+    [(CompilerIrParamList.Cons _ rest)
+      (+ 1 (compiler-ir-param-list-count (box-get rest)))]
+    [(CompilerIrParamList.Array seq) (struct-get seq len)]))
+
+(define (compiler-ir-param-list-fill-array
+  [params : CompilerIrParamList]
+  [slots : (Array CompilerIrParam)]
+  [index : i64]) : unit
+  (match params
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
+      (begin
+        (array-set! slots index param)
+        (compiler-ir-param-list-fill-array (box-get rest) slots (+ index 1)))]
+    [(CompilerIrParamList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [source : (Array CompilerIrParam) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots (+ index read) (array-ref source read))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-param-list-fill-array-reversed
+  [params : CompilerIrParamList]
+  [slots : (Array CompilerIrParam)]
+  [index : i64]) : unit
+  (match params
+    [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Cons param rest)
+      (begin
+        (array-set! slots index param)
+        (compiler-ir-param-list-fill-array-reversed
+          (box-get rest)
+          slots
+          (- index 1)))]
+    [(CompilerIrParamList.Array seq)
+      (let
+        [read : i64 0]
+        [count : i64 (struct-get seq len)]
+        [write : i64 index]
+        [source : (Array CompilerIrParam) (struct-get seq slots)]
+        (while (< read count)
+          (begin
+            (array-set! slots write (array-ref source read))
+            (set! write (- write 1))
+            (set! read (+ read 1)))))]))
+
+(define (compiler-ir-param-seq-from-list [params : CompilerIrParamList]) : CompilerIrParamSeq
+  (let
+    [count : i64 (compiler-ir-param-list-count params)]
+    [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
+    (begin
+      (compiler-ir-param-list-fill-array params slots 0)
+      (CompilerIrParamSeq slots count))))
+
+(define (compiler-ir-param-seq-from-reversed-list
+  [params : CompilerIrParamList]) : CompilerIrParamSeq
+  (let
+    [count : i64 (compiler-ir-param-list-count params)]
+    [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
+    (begin
+      (compiler-ir-param-list-fill-array-reversed params slots (- count 1))
+      (CompilerIrParamSeq slots count))))
+
+(define (compiler-ir-param-seq-to-list-rev
+  [slots : (Array CompilerIrParam)]
+  [index : i64]
+  [acc : CompilerIrParamList]) : CompilerIrParamList
+  (let
+    [cursor : i64 index]
+    [out : CompilerIrParamList acc]
+    (begin
+      (while (>= cursor 0)
+        (begin
+          (set!
+            out
+            (compiler-ir-param-cons-linked (array-ref slots cursor) out))
+          (set! cursor (- cursor 1))))
+      out)))
+
+(define (compiler-ir-param-seq-to-list [params : CompilerIrParamSeq]) : CompilerIrParamList
+  (compiler-ir-param-seq-to-list-rev
+    (struct-get params slots)
+    (- (struct-get params len) 1)
+    CompilerIrParamList.Nil))
+
+(define (compiler-ir-param-seq-count [params : CompilerIrParamSeq]) : i64
+  (struct-get params len))
+
+(define (compiler-ir-param-seq-ref [params : CompilerIrParamSeq] [index : i64]) : CompilerIrParam
+  (array-ref (struct-get params slots) index))
+
+(define (compiler-ir-param-list-force-cons [params : CompilerIrParamList]) : CompilerIrParamList
+  (match params
+    [(CompilerIrParamList.Array seq) (compiler-ir-param-seq-to-list seq)]
+    [_ params]))
+
+(define (compiler-ir-param-list-compact [params : CompilerIrParamList]) : CompilerIrParamList
+  (match params
+    [(CompilerIrParamList.Array _) params]
+    [_ (CompilerIrParamList.Array (compiler-ir-param-seq-from-list params))]))
+
+(define (compiler-ir-param-list-compact-reversed [params : CompilerIrParamList]) : CompilerIrParamList
+  (CompilerIrParamList.Array (compiler-ir-param-seq-from-reversed-list params)))
 
 (define (compiler-ir-function-cons
   [func : CompilerIrFunction]
@@ -2081,22 +2207,34 @@
 (define (compiler-ir-clone-param-list-acc
   [params : CompilerIrParamList]
   [acc : CompilerIrParamList]) : CompilerIrParamList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Array seq)
+      (compiler-ir-clone-param-list-acc (compiler-ir-param-seq-to-list seq) acc)]
     [(CompilerIrParamList.Cons param rest)
       (compiler-ir-clone-param-list-acc
         (box-get rest)
-        (compiler-ir-param-cons (compiler-ir-clone-param param) acc))]))
+        (compiler-ir-param-cons-linked (compiler-ir-clone-param param) acc))]))
 
 (define (compiler-ir-param-list-reverse-onto
   [params : CompilerIrParamList]
   [acc : CompilerIrParamList]) : CompilerIrParamList
-  (match params
+  (compiler-ir-param-list-compact
+    (compiler-ir-param-list-reverse-onto-acc params acc)))
+
+(define (compiler-ir-param-list-reverse-onto-acc
+  [params : CompilerIrParamList]
+  [acc : CompilerIrParamList]) : CompilerIrParamList
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) acc]
+    [(CompilerIrParamList.Array seq)
+      (compiler-ir-param-list-reverse-onto-acc
+        (compiler-ir-param-seq-to-list seq)
+        acc)]
     [(CompilerIrParamList.Cons param rest)
-      (compiler-ir-param-list-reverse-onto
+      (compiler-ir-param-list-reverse-onto-acc
         (box-get rest)
-        (compiler-ir-param-cons param acc))]))
+        (compiler-ir-param-cons-linked param acc))]))
 
 (define (compiler-ir-clone-param-list [params : CompilerIrParamList]) : CompilerIrParamList
   (compiler-ir-param-list-reverse-onto
@@ -5315,6 +5453,90 @@
         (compiler-ir-function-list-name-at? functions 1 "second")
         (compiler-ir-function-list-name-at? functions 2 "third")))))
 
+(define (compiler-ir-param-seq-entry-i64?
+  [seq : CompilerIrParamSeq]
+  [index : i64]
+  [want-name : String]
+  [want-var : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (match (array-ref (struct-get seq slots) index)
+      [(CompilerIrParam.Param name ty var)
+        (and
+          (string.eq name want-name)
+          (= var want-var)
+          (match ty
+            [(AstType.I64) true]
+            [_ false]))])))
+
+(define (compiler-ir-param-seq-entry-bool?
+  [seq : CompilerIrParamSeq]
+  [index : i64]
+  [want-name : String]
+  [want-var : i64]) : bool
+  (if (or (< index 0) (>= index (struct-get seq len)))
+    false
+    (match (array-ref (struct-get seq slots) index)
+      [(CompilerIrParam.Param name ty var)
+        (and
+          (string.eq name want-name)
+          (= var want-var)
+          (match ty
+            [(AstType.Bool) true]
+            [_ false]))])))
+
+(define (compiler-ir-param-list-dense-order-ok?) : bool
+  (let
+    [params : CompilerIrParamList
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "value" (AstType.I64) 3)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "flag" (AstType.Bool) 7)
+          CompilerIrParamList.Nil))]
+    [cloned : CompilerIrParamList (compiler-ir-clone-param-list params)]
+    [reversed : CompilerIrParamList
+      (compiler-ir-param-list-reverse-onto params CompilerIrParamList.Nil)]
+    [func : CompilerIrFunction
+      (CompilerIrFunction.Function
+        "dense_params"
+        params
+        (AstType.Unit)
+        8
+        CompilerIrBlockList.Nil)]
+    [cloned-func : CompilerIrFunction (compiler-ir-clone-function func)]
+    (and
+      (= (compiler-ir-param-list-count params) 2)
+      (match params
+        [(CompilerIrParamList.Array seq)
+          (and
+            (= (compiler-ir-param-seq-count seq) 2)
+            (compiler-ir-param-seq-entry-i64? seq 0 "value" 3)
+            (compiler-ir-param-seq-entry-bool? seq 1 "flag" 7))]
+        [_ false])
+      (match cloned
+        [(CompilerIrParamList.Array seq)
+          (and
+            (= (compiler-ir-param-seq-count seq) 2)
+            (compiler-ir-param-seq-entry-i64? seq 0 "value" 3)
+            (compiler-ir-param-seq-entry-bool? seq 1 "flag" 7))]
+        [_ false])
+      (match reversed
+        [(CompilerIrParamList.Array seq)
+          (and
+            (= (compiler-ir-param-seq-count seq) 2)
+            (compiler-ir-param-seq-entry-bool? seq 0 "flag" 7)
+            (compiler-ir-param-seq-entry-i64? seq 1 "value" 3))]
+        [_ false])
+      (match cloned-func
+        [(CompilerIrFunction.Function _ cloned-params _ _ _)
+          (match cloned-params
+            [(CompilerIrParamList.Array seq)
+              (and
+                (= (compiler-ir-param-seq-count seq) 2)
+                (compiler-ir-param-seq-entry-i64? seq 0 "value" 3)
+                (compiler-ir-param-seq-entry-bool? seq 1 "flag" 7))]
+            [_ false])]))))
+
 (define (compiler-ir-c-abi-return-slot-seq-entry-i64-offset?
   [seq : CompilerIrCAbiReturnSlotSeq]
   [index : i64]
@@ -5512,6 +5734,7 @@
     (unless (compiler-ir-instr-seq-mutable-rewrite-ok?) (return 1))
     (unless (compiler-ir-instr-seq-mutable-compact-ok?) (return 1))
     (unless (compiler-ir-dense-builders-order-ok?) (return 1))
+    (unless (compiler-ir-param-list-dense-order-ok?) (return 1))
     (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
     (unless (compiler-ir-pack-value-list-dense-order-ok?) (return 1))
     (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))

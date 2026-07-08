@@ -763,8 +763,10 @@
 (define (compiler-reg-param-types
   [params : CompilerIrParamList]
   [types : CompilerRegVarTypeList]) : CompilerRegVarTypeList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) types]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-param-types (compiler-ir-param-seq-to-list seq) types)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty id)
@@ -853,8 +855,13 @@
   [params : CompilerIrParamList]
   [present : (Array i64)]
   [types : (Array AstType)]) : unit
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-param-types-array!
+        (compiler-ir-param-seq-to-list seq)
+        present
+        types)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty id)
@@ -2962,8 +2969,10 @@
 (define (compiler-reg-ineligible-params
   [params : CompilerIrParamList]
   [set : CompilerLiveI64Set]) : CompilerLiveI64Set
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) set]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-ineligible-params (compiler-ir-param-seq-to-list seq) set)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
@@ -3183,9 +3192,23 @@
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]) : CompilerRegParamAssignPlan
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil)
       (CompilerRegParamAssignPlan.Plan assignments ineligible blocked)]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-param-assign-walk
+        abi
+        (compiler-ir-param-seq-to-list seq)
+        interval-index
+        assignments
+        ineligible
+        blocked
+        int-idx
+        position
+        pins-ok?
+        call-points
+        div-points
+        shift-points)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
@@ -3308,12 +3331,29 @@
   [vars : i64]) : CompilerRegParamAssignPlan
   (match func
     [(CompilerIrFunction.Function _ params _ _ _)
-      (match params
+      (match (compiler-ir-param-list-force-cons params)
         [(CompilerIrParamList.Nil)
           (CompilerRegParamAssignPlan.Plan
             (compiler-reg-assignment-table-make vars)
             base-ineligible
             base-ineligible)]
+        [(CompilerIrParamList.Array seq)
+          (let
+            [assignments : CompilerRegAssignmentTable
+              (compiler-reg-assignment-table-make vars)]
+            (compiler-reg-param-assign-walk
+              abi
+              (compiler-ir-param-seq-to-list seq)
+              interval-index
+              assignments
+              base-ineligible
+              base-ineligible
+              0
+              0
+              true
+              (compiler-reg-clobber-kind-points func 0)
+              (compiler-reg-clobber-kind-points func 1)
+              (compiler-reg-clobber-kind-points func 2)))]
         [(CompilerIrParamList.Cons _ _)
           (let
             [assignments : CompilerRegAssignmentTable
@@ -4938,8 +4978,12 @@
 (define (compiler-reg-param-count-defs!
   [params : CompilerIrParamList]
   [counts : (Array i64)]) : unit
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-param-count-defs!
+        (compiler-ir-param-seq-to-list seq)
+        counts)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ id)
@@ -14927,8 +14971,17 @@
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]) : unit
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-param-pins-demote-walk!
+        (compiler-ir-param-seq-to-list seq)
+        assignments
+        parents
+        eff-index
+        call-points
+        div-points
+        shift-points)]
     [(CompilerIrParamList.Cons param rest)
       (begin
         (match param
@@ -15588,8 +15641,12 @@
 (define (compiler-reg-param-intervals-extend-entry!
   [params : CompilerIrParamList]
   [interval-index : CompilerRegIntervalIndex]) : unit
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) unit]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-param-intervals-extend-entry!
+        (compiler-ir-param-seq-to-list seq)
+        interval-index)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
@@ -17209,8 +17266,14 @@
   [remap : (Array i64)]
   [slot-ends : (Array i64)]
   [highest : i64]) : i64
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) highest]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-color-param-pins
+        (compiler-ir-param-seq-to-list seq)
+        remap
+        slot-ends
+        highest)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var-id)

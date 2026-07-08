@@ -6373,8 +6373,10 @@
       base)))
 
 (define (compiler-backend-param-var? [params : CompilerIrParamList] [var : i64]) : bool
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) false]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-param-var? (compiler-ir-param-seq-to-list seq) var)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ param-var)
@@ -17197,8 +17199,12 @@
 (define (compiler-backend-param-register-exclude-count
   [params : CompilerIrParamList]
   [assignments : CompilerRegAssignmentList]) : i64
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) 0]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-param-register-exclude-count
+        (compiler-ir-param-seq-to-list seq)
+        assignments)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var-id)
@@ -17233,8 +17239,14 @@
   [assignments : CompilerRegAssignmentList]
   [out : (Array String)]
   [index : i64]) : i64
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) index]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-param-register-exclude-fill
+        (compiler-ir-param-seq-to-list seq)
+        assignments
+        out
+        index)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var-id)
@@ -19734,8 +19746,10 @@
         (>= int-idx (compiler-backend-call-register-count target)))]))
 
 (define (compiler-backend-param-type-list [params : CompilerIrParamList]) : AstTypeList
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) (ast-type-list-new)]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-param-type-list (compiler-ir-param-seq-to-list seq))]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty _)
@@ -21586,12 +21600,34 @@
   [position : i64]
   [program-index : CompilerBackendProgramIndex]) : bool
   (if (>= arg-index (compiler-backend-call-args-count args))
-    (match params
+    (match (compiler-ir-param-list-force-cons params)
       [(CompilerIrParamList.Nil)
         (>= arg-index (ast-type-list-len (& target-types)))]
+      [(CompilerIrParamList.Array seq)
+        (compiler-backend-identity-tail-forwarder-args?
+          target
+          (compiler-ir-param-seq-to-list seq)
+          args
+          target-types
+          arg-index
+          int-idx
+          float-idx
+          position
+          program-index)]
       [_ false])
-    (match params
+    (match (compiler-ir-param-list-force-cons params)
       [(CompilerIrParamList.Nil) false]
+      [(CompilerIrParamList.Array seq)
+        (compiler-backend-identity-tail-forwarder-args?
+          target
+          (compiler-ir-param-seq-to-list seq)
+          args
+          target-types
+          arg-index
+          int-idx
+          float-idx
+          position
+          program-index)]
       [(CompilerIrParamList.Cons param rest)
         (if (>= arg-index (ast-type-list-len (& target-types)))
           false
@@ -34592,8 +34628,20 @@
   [stack-idx : i64]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) (ResultCompilerBackend.Ok "")]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-emit-param-spills-from
+        target
+        assignments
+        all-params
+        (compiler-ir-param-seq-to-list seq)
+        int-idx
+        float-idx
+        position
+        stack-idx
+        program-index
+        vars)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)
@@ -46374,8 +46422,14 @@ tl_tlci_call_image_entry:
   [target : CompilerBackendTarget]
   [params : CompilerIrParamList]
   [int-index : i64]) : CompilerBackendObjectParts
-  (match params
+  (match (compiler-ir-param-list-force-cons params)
     [(CompilerIrParamList.Nil) parts]
+    [(CompilerIrParamList.Array seq)
+      (compiler-backend-object-param-spills
+        parts
+        target
+        (compiler-ir-param-seq-to-list seq)
+        int-index)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ ty var-id)

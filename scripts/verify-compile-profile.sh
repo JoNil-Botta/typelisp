@@ -279,6 +279,11 @@ assert_not_contains_in \
     "typecheck.macro.fixed_point_" \
     "$GEN_IMPORT_STDOUT" \
     "$GEN_IMPORT_STDERR"
+assert_contains_in \
+    "$GEN_IMPORT_STDERR" \
+    "compile-profile|typecheck.macro_scratch_release|" \
+    "$GEN_IMPORT_STDOUT" \
+    "$GEN_IMPORT_STDERR"
 
 echo "[compile-profile] check generated result import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_result_import.tl \

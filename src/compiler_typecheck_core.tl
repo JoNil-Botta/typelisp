@@ -43669,6 +43669,13 @@
     (set! macro-live-symbols-ready false)
     (set! macro-live-symbols-fallback false)))
 
+(define (macro-live-symbols-clear!) : unit
+  (begin
+    (set! macro-live-symbols-ready false)
+    (set! macro-live-symbols-fallback false)
+    (set! macro-live-symbols-value (compiler-symbols-empty))
+    (set! macro-live-registries-value (compiler-registries-empty))))
+
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
 ;; may have introduced a name the reused symbols would resolve differently, so
@@ -43680,24 +43687,34 @@
 ;; reusing the cached pair across passes unless a rebuild was requested. Errors
 ;; from a fresh build propagate as ResultCompilerSymbols.Err; the registries are
 ;; read back from macro-live-registries-value by the caller.
+(define (macro-live-symbols-build-fresh-current
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerSymbols
+  (match (build-compiler-symbols-with-paths program paths)
+    [(ResultCompilerSymbols.Ok symbols)
+      (match (build-compiler-registries-with-symbols program symbols)
+        [(ResultCompilerRegistries.Ok registries)
+          (begin
+            (set! macro-live-symbols-value symbols)
+            (set! macro-live-registries-value registries)
+            (set! macro-live-symbols-ready true)
+            (set! macro-live-symbols-fallback false)
+            (ResultCompilerSymbols.Ok macro-live-symbols-value))]
+        [(ResultCompilerRegistries.Err message)
+          (ResultCompilerSymbols.Err message)])]
+    [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)]))
+
+(define (macro-live-symbols-build-fresh
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerSymbols
+  (macro-live-symbols-build-fresh-current program paths))
+
 (define (macro-live-symbols-build-or-reuse!
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerSymbols
   (if (and macro-live-symbols-ready (not macro-live-symbols-fallback))
     (ResultCompilerSymbols.Ok macro-live-symbols-value)
-    (match (build-compiler-symbols-with-paths program paths)
-      [(ResultCompilerSymbols.Ok symbols)
-        (match (build-compiler-registries-with-symbols program symbols)
-          [(ResultCompilerRegistries.Ok registries)
-            (begin
-              (set! macro-live-symbols-value symbols)
-              (set! macro-live-registries-value registries)
-              (set! macro-live-symbols-ready true)
-              (set! macro-live-symbols-fallback false)
-              (ResultCompilerSymbols.Ok macro-live-symbols-value))]
-          [(ResultCompilerRegistries.Err message)
-            (ResultCompilerSymbols.Err message)])]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+    (macro-live-symbols-build-fresh program paths)))
 
 ;; Hoisted whole-program macro prescans. macro-program-has-defmacro?,
 ;; macro-collect-expr-type-macro-names, macro-program-needs-expansion?,
@@ -43725,42 +43742,59 @@
 (define (macro-live-prescan-reset!) : unit
   (set! macro-live-prescan-ready false))
 
+(define (macro-live-prescan-ensure-current! [decls : AstDeclList]) : unit
+  (let
+    [has-defmacro : bool (macro-program-has-defmacro? decls)]
+    [needs-expansion : bool (macro-program-needs-expansion? decls)]
+    (begin
+      (set! macro-live-prescan-has-defmacro has-defmacro)
+      (set!
+        macro-live-prescan-expr-type-names
+        (if has-defmacro
+          (macro-collect-expr-type-macro-names decls)
+          (TcStringList.Nil)))
+      (set! macro-live-prescan-needs-expansion needs-expansion)
+      (set!
+        macro-live-prescan-summary-import
+        (and
+          (not has-defmacro)
+          (not needs-expansion)
+          (macro-program-has-summary-macro-import? decls)))
+      ;; The ctfe-module-macro-export map is populated as a side effect of
+      ;; macro-collect-visible-macro-names (via ctfe-module-macro-export-add!).
+      ;; Since that walk runs once per program (cached with this prescan),
+      ;; the export map is reset here -- immediately before it is repopulated --
+      ;; and left intact while the prescan is reused across the walk.
+      ;; Resetting it more often would clear the once-collected exports and
+      ;; leave the map empty after the collection ran, breaking module-hook /
+      ;; module-export-macro?. The export set is additive-inert (generated
+      ;; splices add no new defmacros), so it is stable across the walk, exactly
+      ;; like macro-live-prescan-visible-names; recomputed together on the
+      ;; non-inert splice fallback (macro-live-symbols-fallback).
+      (ctfe-module-macro-export-reset!)
+      (set!
+        macro-live-prescan-visible-names
+        (macro-collect-visible-macro-names decls))
+      (set! macro-live-prescan-ready true))))
+
+(define (macro-live-prescan-ensure-fresh! [decls : AstDeclList]) : unit
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (macro-live-prescan-ensure-current! decls)
+        (set! macro-expand-scratch-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set enclosing))))
+    (macro-live-prescan-ensure-current! decls)))
+
 (define (macro-live-prescan-ensure! [decls : AstDeclList]) : unit
   (if (and macro-live-prescan-ready (not macro-live-symbols-fallback))
     unit
-    (let
-      [has-defmacro : bool (macro-program-has-defmacro? decls)]
-      [needs-expansion : bool (macro-program-needs-expansion? decls)]
-      (begin
-        (set! macro-live-prescan-has-defmacro has-defmacro)
-        (set!
-          macro-live-prescan-expr-type-names
-          (if has-defmacro
-            (macro-collect-expr-type-macro-names decls)
-            (TcStringList.Nil)))
-        (set! macro-live-prescan-needs-expansion needs-expansion)
-        (set!
-          macro-live-prescan-summary-import
-          (and
-            (not has-defmacro)
-            (not needs-expansion)
-            (macro-program-has-summary-macro-import? decls)))
-        ;; The ctfe-module-macro-export map is populated as a side effect of
-        ;; macro-collect-visible-macro-names (via ctfe-module-macro-export-add!).
-        ;; Since that walk runs once per program (cached with this prescan),
-        ;; the export map is reset here -- immediately before it is repopulated --
-        ;; and left intact while the prescan is reused across the walk.
-        ;; Resetting it more often would clear the once-collected exports and
-        ;; leave the map empty after the collection ran, breaking module-hook /
-        ;; module-export-macro?. The export set is additive-inert (generated
-        ;; splices add no new defmacros), so it is stable across the walk, exactly
-        ;; like macro-live-prescan-visible-names; recomputed together on the
-        ;; non-inert splice fallback (macro-live-symbols-fallback).
-        (ctfe-module-macro-export-reset!)
-        (set!
-          macro-live-prescan-visible-names
-          (macro-collect-visible-macro-names decls))
-        (set! macro-live-prescan-ready true)))))
+    (macro-live-prescan-ensure-fresh! decls)))
 
 ;; Whether the current compile needs the CTFE reflection/layout metadata at all
 ;; (i.e. the program contains a `(type T)` literal). Set per compile at the top of
@@ -43768,6 +43802,83 @@
 ;; the whole-program metadata build. Defaults true (build) for safety.
 (define ctfe-needs-metadata : bool
   true)
+
+;; Macro expansion builds whole-program symbols, registries, top-env spines,
+;; prescan lists, and splice-rebuild contexts that are dead once the final
+;; expanded program has been produced. Keep that compiler-only state in a
+;; scratch arena so it can be released at the macro/typecheck boundary while
+;; final AST nodes and the CTFE env stay in their existing owners.
+(define macro-expand-scratch-enabled : bool
+  false)
+(define macro-expand-scratch-arena : i64
+  0)
+
+(define (macro-expand-scratch-begin!) : unit
+  (set! macro-expand-scratch-enabled true))
+
+(define (macro-expand-scratch-arena-get) : i64
+  (if (= macro-expand-scratch-arena 0)
+    (let
+      [scratch : i64 (arena.tl_arena_make)]
+      (begin
+        (set! macro-expand-scratch-arena scratch)
+        scratch))
+    macro-expand-scratch-arena))
+
+(define (macro-expand-scratch-clear-owned-caches!) : unit
+  (begin
+    (set! macro-expand-active-module "")
+    (macro-expand-set-macro-names! (TcStringList.Nil))
+    (set! macro-expand-expr-type-macro-names (TcStringList.Nil))
+    (macro-live-symbols-clear!)
+    (macro-live-prescan-reset!)
+    (set! macro-live-prescan-has-defmacro false)
+    (set! macro-live-prescan-expr-type-names (TcStringList.Nil))
+    (set! macro-live-prescan-needs-expansion false)
+    (set! macro-live-prescan-summary-import false)
+    (set! macro-live-prescan-visible-names (TcStringList.Nil))
+    (ctfe-module-macro-export-reset!)
+    (macro-generated-module-memo-reset!)
+    (macro-generated-decls-memo-reset!)
+    (tc-macro-helper-env-cache-reset!)
+    (tc-nominal-owner-cache-reset!)
+    (macro-alias-derived-cache-reset!)
+    (set! tc-hygiene-active-top-env-ready false)
+    (set! tc-hygiene-active-top-env (tc-empty-type-env))
+    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+    (if (= tc-hygiene-module-env-cache-arena 0)
+      unit
+      (begin
+        (if (= (arena.tl_arena_current) tc-hygiene-module-env-cache-arena)
+          (unsafe
+            (arena.tl_arena_set node-pool-base-arena))
+          unit)
+        (unsafe
+          (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena))
+        (set! tc-hygiene-module-env-cache-arena 0)))))
+
+(define (macro-expand-scratch-release!) : unit
+  (if (= macro-expand-scratch-arena 0)
+    (set! macro-expand-scratch-enabled false)
+    (let
+      [scratch : i64 macro-expand-scratch-arena]
+      [current : i64 (arena.tl_arena_current)]
+      [home : i64
+        (if (= current scratch)
+          node-pool-base-arena
+          current)]
+      (begin
+        (cfg compile-profile (compiler-tc-profile-start))
+        (unsafe
+          (arena.tl_arena_set home))
+        (set! macro-expand-scratch-enabled false)
+        (set! macro-expand-scratch-arena 0)
+        (macro-expand-scratch-clear-owned-caches!)
+        (unsafe
+          (arena.tl_arena_destroy scratch))
+        (cfg
+          compile-profile
+          (compiler-tc-profile-finish "macro_scratch_release"))))))
 
 (define (macro-zero-source-span) : token.SourceSpan
   (token.SourceSpan 1 1 1 1))
@@ -44013,6 +44124,187 @@
       (macro-decl-path-list-append
         (macro-decl-path-list-reverse prefix-rev)
         suffix))))
+
+(define (macro-scratch-decl-list-reverse [items : AstDeclList]) : AstDeclList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclList (macro-decl-list-reverse items)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-list-reverse items)))
+
+(define (macro-scratch-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclPathList (macro-decl-path-list-reverse items)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-path-list-reverse items)))
+
+(define (macro-scratch-decl-list-append
+  [left : AstDeclList]
+  [right : AstDeclList]) : AstDeclList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclList (macro-decl-list-append left right)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-list-append left right)))
+
+(define (macro-scratch-decl-path-list-append
+  [left : AstDeclPathList]
+  [right : AstDeclPathList]) : AstDeclPathList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclPathList (macro-decl-path-list-append left right)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-path-list-append left right)))
+
+(define (macro-scratch-decl-list-current-suffix
+  [head : AstDecl]
+  [rest : AstDeclList]) : AstDeclList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclList (macro-decl-list-current-suffix head rest)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-list-current-suffix head rest)))
+
+(define (macro-scratch-decl-path-list-current-suffix
+  [head : String]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclPathList
+            (macro-decl-path-list-current-suffix head rest)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-path-list-current-suffix head rest)))
+
+(define (macro-scratch-decl-list-prefix-rev-current-suffix
+  [prefix-rev : AstDeclList]
+  [suffix : AstDeclList]) : AstDeclList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclList
+            (macro-decl-list-prefix-rev-current-suffix prefix-rev suffix)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-list-prefix-rev-current-suffix prefix-rev suffix)))
+
+(define (macro-scratch-decl-path-list-prefix-rev-current-suffix
+  [prefix-rev : AstDeclPathList]
+  [suffix : AstDeclPathList]) : AstDeclPathList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclPathList
+            (macro-decl-path-list-prefix-rev-current-suffix prefix-rev suffix)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-path-list-prefix-rev-current-suffix prefix-rev suffix)))
+
+(define (macro-scratch-decl-list-filter-path
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [wanted-path : String]) : AstDeclList
+  (if macro-expand-scratch-enabled
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (macro-expand-scratch-arena-get)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [out : AstDeclList
+            (macro-decl-list-filter-path decls paths wanted-path)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (set! macro-expand-scratch-arena scratch-head)
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            out))))
+    (macro-decl-list-filter-path decls paths wanted-path)))
 
 (define (macro-paths-for-decls [decls : AstDeclList] [path : String]) : AstDeclPathList
   (let
@@ -54532,10 +54824,12 @@
                                 (macro-module-import-marker-only? expanded))
                                 (let
                                   [marker-tail : AstDeclList
-                                    (macro-decl-list-append expanded rest)]
+                                    (macro-scratch-decl-list-append
+                                      expanded
+                                      rest)]
                                   [next-decls : AstDeclList
-                                    (macro-decl-list-append
-                                      (macro-decl-list-reverse out-rev)
+                                    (macro-scratch-decl-list-append
+                                      (macro-scratch-decl-list-reverse out-rev)
                                       marker-tail)]
                                   [next-decls-for-ctx : AstDeclList
                                     (AstDeclList
@@ -54548,7 +54842,7 @@
                                       cur-ctx
                                       (ast-program next-decls-for-ctx))]
                                   [refresh-decls : AstDeclList
-                                    (macro-decl-list-filter-path
+                                    (macro-scratch-decl-list-filter-path
                                       rest
                                       rest-paths
                                       decl-path)]
@@ -54637,18 +54931,20 @@
                                 ;; placeholders and generated file imports included).
                                 (let
                                   [spliced-tail : AstDeclList
-                                    (macro-decl-list-append expanded rest)]
+                                    (macro-scratch-decl-list-append
+                                      expanded
+                                      rest)]
                                   [spliced-path-tail : AstDeclPathList
-                                    (macro-decl-path-list-append
+                                    (macro-scratch-decl-path-list-append
                                       expanded-paths
                                       rest-paths)]
                                   [next-decls : AstDeclList
-                                    (macro-decl-list-append
-                                      (macro-decl-list-reverse out-rev)
+                                    (macro-scratch-decl-list-append
+                                      (macro-scratch-decl-list-reverse out-rev)
                                       spliced-tail)]
                                   [next-paths : AstDeclPathList
-                                    (macro-decl-path-list-append
-                                      (macro-decl-path-list-reverse
+                                    (macro-scratch-decl-path-list-append
+                                      (macro-scratch-decl-path-list-reverse
                                         out-paths-rev)
                                       spliced-path-tail)]
                                   (begin
@@ -54688,13 +54984,13 @@
                       ;; materialization + re-pass did, inline in this pass.
                       (let
                         [full-decls : AstDeclList
-                          (macro-decl-list-prefix-rev-current-suffix
+                          (macro-scratch-decl-list-prefix-rev-current-suffix
                             out-rev
-                            (macro-decl-list-current-suffix decl rest))]
+                            (macro-scratch-decl-list-current-suffix decl rest))]
                         [full-paths : AstDeclPathList
-                          (macro-decl-path-list-prefix-rev-current-suffix
+                          (macro-scratch-decl-path-list-prefix-rev-current-suffix
                             out-paths-rev
-                            (macro-decl-path-list-current-suffix
+                            (macro-scratch-decl-path-list-current-suffix
                               decl-path
                               rest-paths))]
                         [seen : sym_i64_env.SymI64Env
@@ -54727,15 +55023,16 @@
                               [_install-after-load : unit
                                 (tc-context-install-pools! cur-ctx)]
                               [next-decls : AstDeclList
-                                (macro-decl-list-append
-                                  (macro-decl-list-reverse out-rev)
-                                  (macro-decl-list-append
+                                (macro-scratch-decl-list-append
+                                  (macro-scratch-decl-list-reverse out-rev)
+                                  (macro-scratch-decl-list-append
                                     materialized-decls
                                     rest))]
                               [next-paths : AstDeclPathList
-                                (macro-decl-path-list-append
-                                  (macro-decl-path-list-reverse out-paths-rev)
-                                  (macro-decl-path-list-append
+                                (macro-scratch-decl-path-list-append
+                                  (macro-scratch-decl-path-list-reverse
+                                    out-paths-rev)
+                                  (macro-scratch-decl-path-list-append
                                     materialized-paths
                                     rest-paths))]
                               (begin
@@ -54775,12 +55072,12 @@
                                       (set! cur-top-env next-top-env)
                                       (set!
                                         cur-decls
-                                        (macro-decl-list-append
+                                        (macro-scratch-decl-list-append
                                           materialized-decls
                                           rest))
                                       (set!
                                         cur-paths
-                                        (macro-decl-path-list-append
+                                        (macro-scratch-decl-path-list-append
                                           materialized-paths
                                           rest-paths)))]
                                   [(ResultMacroSpliceRebuild.Err diag)
@@ -55038,6 +55335,7 @@
                 has-expr-type-macros))
             (if (or has-defmacro has-visible-macro-call program-needs-expansion)
               (begin
+                (macro-expand-scratch-begin!)
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (macro-live-symbols-build-or-reuse! program paths)
                   [(ResultCompilerSymbols.Ok symbols)
@@ -55324,17 +55622,23 @@
       stdlib-roots
       cfgs)
       [(ResultMacroExpand.Ok expanded expanded-paths)
-        (if (compiler-specialize-needed? expanded)
-          (match (gen-normalize-program-with-paths-and-pools
-            expanded
-            expanded-paths
-            (tc-decl-path-list-last expanded-paths "")
-            pools)
-            [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
-              (ResultMacroExpand.Ok normalized normalized-paths)]
-            [(ResultGenProgramWithPaths.Err diag) (ResultMacroExpand.Err diag)])
-          (ResultMacroExpand.Ok expanded expanded-paths))]
-      [(ResultMacroExpand.Err diag) (ResultMacroExpand.Err diag)])))
+        (let
+          [_release-scratch : unit (macro-expand-scratch-release!)]
+          (if (compiler-specialize-needed? expanded)
+            (match (gen-normalize-program-with-paths-and-pools
+              expanded
+              expanded-paths
+              (tc-decl-path-list-last expanded-paths "")
+              pools)
+              [(ResultGenProgramWithPaths.Ok normalized normalized-paths)
+                (ResultMacroExpand.Ok normalized normalized-paths)]
+              [(ResultGenProgramWithPaths.Err diag)
+                (ResultMacroExpand.Err diag)])
+            (ResultMacroExpand.Ok expanded expanded-paths)))]
+      [(ResultMacroExpand.Err diag)
+        (begin
+          (macro-expand-scratch-release!)
+          (ResultMacroExpand.Err diag))])))
 
 ;; Expansion + build-once env boundary (plan P2). Runs the single demand-driven
 ;; expansion pass (which builds the CTFE base env exactly once and reuses it

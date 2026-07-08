@@ -27,8 +27,6 @@
 ;# The buffer and rendered strings allocate in the active arena: the default
 ;# program-lifetime arena outside `(with-arena ...)`, or the scoped arena inside
 ;# one.
-(module stdlib.text_buf)
-
 ;; lint-allow: unused-import
 (import stdlib.array)
 (import stdlib.comptime)

@@ -14,8 +14,6 @@
 ;#
 ;# Usage: `(import stdlib.process)`
 ;#
-(module stdlib.process)
-
 (import stdlib.string)
 (import stdlib.vector)
 (import (vector.vector String) as svec)

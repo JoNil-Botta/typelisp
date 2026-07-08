@@ -33,8 +33,6 @@
 ;#     (let [text : String "hello from io\n"] (io.stdout-write (& text)))
 ;#     0))
 ;# ```
-(module stdlib.io)
-
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.io_core)

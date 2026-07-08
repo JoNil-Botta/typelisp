@@ -16,8 +16,6 @@
 ;# matching the previous backend behavior.
 ;#
 ;# Usage: imported by `tl` (which provides the public wrappers).
-(module stdlib.process_runtime)
-
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 

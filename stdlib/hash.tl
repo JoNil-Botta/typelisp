@@ -17,8 +17,6 @@
 ;#   (let [key : String "symbol"]
 ;#     (hash.combine (hash.string-key (& key)) (hash.i64 7))))
 ;# ```
-(module stdlib.hash)
-
 (import stdlib.string as string_mod)
 
 ;: Return the fixed hash modulus.

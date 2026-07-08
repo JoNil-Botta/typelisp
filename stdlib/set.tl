@@ -22,8 +22,6 @@
 ;# insertion order, and it can change after resize/rehash. Walk by starting at
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
-(module stdlib.set)
-
 (import stdlib.comptime)
 
 ;; lint-allow: unused-import

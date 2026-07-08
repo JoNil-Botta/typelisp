@@ -27,8 +27,6 @@
 ;#           [(iter.I64RangeDone) (set! done true)]))
 ;#       sum)))
 ;# ```
-(module stdlib.iterator)
-
 ;: Scalar `i64` range iterable. Half-open ranges yield `[start, end)`;
 ;: inclusive ranges yield `[start, end]`.
 (defstruct I64Range

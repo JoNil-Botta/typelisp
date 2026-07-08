@@ -14,8 +14,6 @@
 ;# (define fallback : env.EnvMaybeString
 ;#   (let [name : String "TYPELISP_DOC_TEST_MISSING_ENV"] (env.get (& name))))
 ;# ```
-(module stdlib.env)
-
 (import stdlib.array)
 (import stdlib.string)
 (import stdlib.vector)

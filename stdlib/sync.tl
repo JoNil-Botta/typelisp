@@ -28,8 +28,6 @@
 ;#         (channel_i64.close ch)
 ;#         true)]))
 ;# ```
-(module stdlib.sync)
-
 (import stdlib.comptime)
 (import stdlib.thread)
 

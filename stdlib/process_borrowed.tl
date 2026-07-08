@@ -15,8 +15,6 @@
 ;# would copy before the `ProcessCommand` boundary. Ordered append helpers below
 ;# provide vector-style construction while preserving borrowed lifetimes and the
 ;# single owned-copy boundary.
-(module stdlib.process_borrowed)
-
 ;: Borrowed process argument strings in argv order. All entries in one list
 ;: share one lifetime; use owned conversion to join independently scoped text.
 (defenum ProcessBorrowedStringList

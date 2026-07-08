@@ -28,8 +28,6 @@
 ;#       (if (args.option-present? parsed "verbose") 1 0)]
 ;#     [(args.ErrArgsParsed _) 2]))
 ;# ```
-(module stdlib.args)
-
 (import stdlib.array)
 (import stdlib.io)
 (import stdlib.string)

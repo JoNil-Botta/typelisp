@@ -24,8 +24,6 @@
 ;# (define (main) : i64
 ;#   (if (>= (thread.default-worker-count) 1) 42 1))
 ;# ```
-(module stdlib.thread)
-
 (import stdlib.array)
 (import stdlib.arena)
 (import stdlib.comptime)

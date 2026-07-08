@@ -2,8 +2,6 @@
 ;#
 ;# This module keeps raw handle-table implementation details out of the public
 ;# `stdlib.io` module surface. User programs should import `stdlib.io`.
-(module stdlib.io_core)
-
 ;: Runtime allocator binding used to allocate raw handle tables.
 (extern (io-runtime-alloc [arg0 : i64]) : (MutPtr u8) (:symbol "tl_alloc"))
 

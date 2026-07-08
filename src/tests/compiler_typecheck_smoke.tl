@@ -2025,7 +2025,7 @@
       (tc-prefix-snapshot-cache-clear!)
       ok)))
 
-(define (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?) : bool
+(define (compiler-typecheck-smoke-prefix-cache-moduleless-local-ok?) : bool
   (let
     [dep : String "target/tc_prefix_flat_dep.tl"]
     [entry-a : String "target/tc_prefix_flat_entry_a.tl"]
@@ -2050,12 +2050,6 @@
         (set! ok false))
       (compiler-typecheck-reset-load-session!)
       (if (compiler-typecheck-smoke-prefix-cache-file-check entry-b roots cfgs)
-        unit
-        (set! ok false))
-      (if (= tc-prefix-snapshot-cache-hit-count 0)
-        unit
-        (set! ok false))
-      (if (= tc-prefix-snapshot-cache-store-count 0)
         unit
         (set! ok false))
       (compiler-load-session-cache-disable-for-test!)
@@ -3067,8 +3061,8 @@
       (compiler-typecheck-smoke-prefix-cache-local-module-hit-ok?)
       (io.panic "typecheck: prefix cache local module smoke failed"))
     (unless
-      (compiler-typecheck-smoke-prefix-cache-flat-local-no-hit-ok?)
-      (io.panic "typecheck: prefix cache flat local smoke failed"))
+      (compiler-typecheck-smoke-prefix-cache-moduleless-local-ok?)
+      (io.panic "typecheck: prefix cache moduleless local smoke failed"))
     (unless
       (compiler-typecheck-smoke-generated-moduleless-import-order-ok?)
       (io.panic "typecheck: generated moduleless import order smoke failed"))

@@ -8,8 +8,6 @@
 ;# The borrowed and owned TextBuf declaration bodies are generated from
 ;# `stdlib/text_buf_family.tl`; this module keeps the flat borrowed
 ;# compatibility namespace and inline test surface.
-(module stdlib.text_buf_borrowed)
-
 (import stdlib.string)
 
 ;; lint-allow: unused-import

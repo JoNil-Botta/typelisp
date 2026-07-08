@@ -3,8 +3,6 @@
 ;# Import with `(import stdlib.option)`, then instantiate a concrete module
 ;# with `(import (option i64) as option_i64)` or
 ;# `(import (option String) as option_string)`.
-(module stdlib.option)
-
 ;: Emit a generated absence-only option module for payload type `T`.
 (defmacro (option [T : type]) : Module
   (let

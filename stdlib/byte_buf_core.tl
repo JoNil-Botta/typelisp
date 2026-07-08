@@ -4,8 +4,6 @@
 ;# and full conversion surface from `stdlib.byte_buf`. Compiler-hot modules that
 ;# only need builder-style byte accumulation can import this small module without
 ;# pulling the full public owner/view API.
-(module stdlib.byte_buf_core)
-
 (import stdlib.array)
 (import stdlib.string)
 

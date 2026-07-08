@@ -60,8 +60,6 @@
 ;#       (svec.push (&mut words) "x")
 ;#       (+ (ivec.len (& v)) (svec.len (& words))))))
 ;# ```
-(module stdlib.vector)
-
 (import stdlib.array)
 
 ;: Local string equality fallback used when bootstrapping with a compiler that

@@ -16,8 +16,6 @@
 ;# (define (greet [name : String]) : String
 ;#   (str_cat.str-cat "hello, " name "!"))
 ;# ```
-(module stdlib.str_cat)
-
 (import stdlib.comptime)
 (import stdlib.array)
 (import stdlib.string)

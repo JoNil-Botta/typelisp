@@ -25,8 +25,6 @@
 ;#       (deque_i64.push-back (&mut q) 32)
 ;#       (deque_i64.peek-front (& q) 0))))
 ;# ```
-(module stdlib.queue)
-
 (import stdlib.comptime)
 
 ;: Emit a generated growable deque module for element type `T`.

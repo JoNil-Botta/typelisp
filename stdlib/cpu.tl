@@ -11,8 +11,6 @@
 ;# sign of the widening cast is irrelevant.
 ;#
 ;# Usage: `(import stdlib.cpu)`
-(module stdlib.cpu)
-
 ;: Return CPUID EAX for `leaf` and `subleaf`.
 (define (cpuid-eax32 [leaf : i64] [subleaf : i64]) : i32
   (cast (cpuid-eax leaf subleaf) : i32))

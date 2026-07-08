@@ -28,8 +28,6 @@
 ;#       42
 ;#       1)))
 ;# ```
-(module stdlib.byte_buf)
-
 (import stdlib.array)
 (import stdlib.string)
 

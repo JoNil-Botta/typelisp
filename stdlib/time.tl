@@ -14,8 +14,6 @@
 ;#     [(time.OkTimeMs ms) (if (> ms 0) 42 1)]
 ;#     [(time.ErrTimeMs _) 2]))
 ;# ```
-(module stdlib.time)
-
 (import stdlib.array)
 (import stdlib.string)
 

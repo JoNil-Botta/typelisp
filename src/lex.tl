@@ -32,6 +32,7 @@
 ;; Imported by module name so token declarations stay behind the `token.`
 ;; qualifier instead of flattening through `lex.tl`.
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import stdlib.io)
 (import token)
 (import stdlib.text_buf)
@@ -722,7 +723,7 @@
                     (set! i end))
                   (begin
                     (array-set! starts count i)
-                    (array-set! toks count (token.Token.Sym (ci.intern ":")))
+                    (array-set! toks count (token.Token.Sym cbi.compiler-builtin-id-fix-colon))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
             [(is-symbol-char c)
@@ -994,7 +995,7 @@
                       stoks
                       count
                       (token.spanned-token-new
-                        (token.Token.Sym (ci.intern ":"))
+                        (token.Token.Sym cbi.compiler-builtin-id-fix-colon)
                         line
                         col))
                     (set! count (+ count 1))

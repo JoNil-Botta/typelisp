@@ -6059,64 +6059,64 @@
     (tc-bind e2 (tc-default-boundary-name) (AstType.Unit))))
 
 (define (tc-macro-expr-clause-type) : AstType
-  (AstType.Var (intern "ExprClause")))
+  (AstType.Var cbi.compiler-builtin-id-fix-ExprClause))
 
 (define (tc-macro-expr-clause-list-type) : AstType
-  (AstType.Var (intern "ExprClauseList")))
+  (AstType.Var cbi.compiler-builtin-id-fix-ExprClauseList))
 
 (define (tc-macro-expr-binding-clause-type) : AstType
-  (AstType.Var (intern "ExprBindingClause")))
+  (AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClause))
 
 (define (tc-macro-expr-binding-clause-list-type) : AstType
-  (AstType.Var (intern "ExprBindingClauseList")))
+  (AstType.Var cbi.compiler-builtin-id-fix-ExprBindingClauseList))
 
 (define (tc-macro-pattern-type) : AstType
-  (AstType.Var (intern "Pattern")))
+  (AstType.Var cbi.compiler-builtin-id-fix-Pattern))
 
 (define (tc-macro-pattern-list-type) : AstType
-  (AstType.Var (intern "PatternList")))
+  (AstType.Var cbi.compiler-builtin-id-fix-PatternList))
 
 (define (tc-macro-match-arm-type) : AstType
-  (AstType.Var (intern "MatchArm")))
+  (AstType.Var cbi.compiler-builtin-id-fix-MatchArm))
 
 (define (tc-macro-match-arm-list-type) : AstType
-  (AstType.Var (intern "MatchArmList")))
+  (AstType.Var cbi.compiler-builtin-id-fix-MatchArmList))
 
 (define (tc-macro-expr-clause-type? [ty : AstType]) : bool
   (match ty
     [(AstType.Var name)
       (or
-        (= name (intern "ExprClause"))
-        (= name (intern "stdlib.comptime/ExprClause")))]
+        (= name cbi.compiler-builtin-id-fix-ExprClause)
+        (= name cbi.compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClause))]
     [_ false]))
 
 (define (tc-macro-expr-clause-list-type? [ty : AstType]) : bool
   (match ty
     [(AstType.Var name)
       (or
-        (= name (intern "ExprClauseList"))
-        (= name (intern "stdlib.comptime/ExprClauseList")))]
+        (= name cbi.compiler-builtin-id-fix-ExprClauseList)
+        (= name cbi.compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprClauseList))]
     [_ false]))
 
 (define (tc-macro-expr-binding-clause-type? [ty : AstType]) : bool
   (match ty
     [(AstType.Var name)
       (or
-        (= name (intern "ExprBindingClause"))
-        (= name (intern "stdlib.comptime/ExprBindingClause")))]
+        (= name cbi.compiler-builtin-id-fix-ExprBindingClause)
+        (= name cbi.compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClause))]
     [_ false]))
 
 (define (tc-macro-expr-binding-clause-list-type? [ty : AstType]) : bool
   (match ty
     [(AstType.Var name)
       (or
-        (= name (intern "ExprBindingClauseList"))
-        (= name (intern "stdlib.comptime/ExprBindingClauseList")))]
+        (= name cbi.compiler-builtin-id-fix-ExprBindingClauseList)
+        (= name cbi.compiler-builtin-id-fix-stdlib_dot_comptime_slash_ExprBindingClauseList))]
     [_ false]))
 
 (define (tc-macro-type-param-kind? [ty : AstType]) : bool
   (match ty
-    [(AstType.Var name) (= name (intern "type"))]
+    [(AstType.Var name) (= name cbi.compiler-builtin-id-fix-type)]
     [_ false]))
 
 (define (tc-macro-module-param-kind? [ty : AstType]) : bool
@@ -6124,7 +6124,7 @@
 
 (define (tc-type-unquote-marker? [ty : AstType]) : bool
   (match ty
-    [(AstType.VarArgs name _) (= name (intern "unquote"))]
+    [(AstType.VarArgs name _) (= name cbi.compiler-builtin-id-fix-unquote)]
     [_ false]))
 
 (define (tc-stdlib-comptime-module-name) : String
@@ -6194,9 +6194,11 @@
     (set! tc-stdlib-comptime-syntax-type-cache-generation (intern-generation))))
 
 (define (tc-stdlib-comptime-syntax-type-cache-ensure!) : unit
-  (if (= tc-stdlib-comptime-syntax-type-cache-generation (intern-generation))
-    unit
-    (tc-stdlib-comptime-syntax-type-cache-refresh!)))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (if (= tc-stdlib-comptime-syntax-type-cache-generation (intern-generation))
+      unit
+      (tc-stdlib-comptime-syntax-type-cache-refresh!))))
 
 (define (tc-stdlib-comptime-syntax-type-id [canonical-id : i64]) : AstMaybeType
   (let

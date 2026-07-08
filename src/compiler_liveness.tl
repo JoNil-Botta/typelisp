@@ -1303,6 +1303,23 @@
             (compiler-live-block-successors block)
             (compiler-live-instr-set-vec-empty))])]))
 
+(define (compiler-live-build-block-array-nophi [blocks : CompilerIrBlockSeq]) : (Array
+    CompilerLiveBlock)
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [out : (Array CompilerLiveBlock) (make-array CompilerLiveBlock count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set!
+            out
+            i
+            (compiler-live-build-block-nophi
+              (compiler-ir-block-seq-ref blocks i)))
+          (set! i (+ i 1))))
+      out)))
+
 (define (compiler-live-build-blocks-nophi [blocks : CompilerIrBlockList]) : CompilerLiveBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) CompilerLiveBlockList.Nil]
@@ -1374,6 +1391,20 @@
         (compiler-ir-block-seq-to-list seq)
         ids
         phi-out)]))
+
+(define (compiler-live-phi-out-build-seq!
+  [blocks : CompilerIrBlockSeq]
+  [ids : (& ids live_label_map.Map)]
+  [phi-out : (Array CompilerLiveI64Set)]) : unit
+  (let
+    [i : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< i count)
+      (begin
+        (match (compiler-ir-block-seq-ref blocks i)
+          [(CompilerIrBlock.Block _ instrs)
+            (compiler-live-phi-out-add-seq! instrs ids phi-out)])
+        (set! i (+ i 1))))))
 
 (define (compiler-live-recompute-block-graph-ep
   [block : CompilerLiveBlock]
@@ -1524,16 +1555,35 @@
                   (array-ref blocks slot)))
               (set! i (+ i 1))))))]))
 
+(define (compiler-live-fill-instr-after-graph-ep-seq!
+  [ir-blocks : CompilerIrBlockSeq]
+  [blocks : (Array CompilerLiveBlock)]) : unit
+  (let
+    [count : i64
+      (compiler-live-set-min
+        (compiler-ir-block-seq-count ir-blocks)
+        (array-length blocks))]
+    [i : i64 0]
+    (while (< i count)
+      (begin
+        (array-set!
+          blocks
+          i
+          (compiler-live-fill-instr-after-block-ep
+            (compiler-ir-block-seq-ref ir-blocks i)
+            (array-ref blocks i)))
+        (set! i (+ i 1))))))
+
 (define (compiler-live-analyze-function-edge-precise
   [func : CompilerIrFunction]) : CompilerFunctionLiveness
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (let
-        [walk-blocks : CompilerIrBlockList
-          (compiler-ir-block-list-force-cons blocks)]
+        [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
+        [block-array : (Array CompilerLiveBlock)
+          (compiler-live-build-block-array-nophi seq)]
         [graph0 : CompilerLiveBlockGraph
-          (compiler-live-block-graph-build
-            (compiler-live-build-blocks-nophi walk-blocks))]
+          (compiler-live-block-graph-build-from-array block-array)]
         [phi-out : (Array CompilerLiveI64Set)
           (make-array
             CompilerLiveI64Set
@@ -1546,18 +1596,17 @@
               (begin
                 (array-set! phi-out i (compiler-live-set-empty))
                 (set! i (+ i 1)))))
-          (compiler-live-phi-out-build!
-            walk-blocks
+          (compiler-live-phi-out-build-seq!
+            seq
             (& (struct-get graph0 ids))
             phi-out)
           (let
             [graph : CompilerLiveBlockGraph
               (compiler-live-fixpoint-ep graph0 phi-out)]
             (begin
-              (compiler-live-fill-instr-after-graph-ep-cons!
-                walk-blocks
-                (struct-get graph blocks)
-                0)
+              (compiler-live-fill-instr-after-graph-ep-seq!
+                seq
+                (struct-get graph blocks))
               (CompilerFunctionLiveness.Liveness
                 (struct-get graph ids)
                 (struct-get graph blocks))))))]))

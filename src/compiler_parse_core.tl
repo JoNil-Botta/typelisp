@@ -6,6 +6,7 @@
 (import stdlib.array)
 (import stdlib.io)
 (import "compiler_ast_types.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import "read.tl")
 (import sym_i64_env)
@@ -7641,7 +7642,7 @@
   (len i64))
 
 (define (parse-ast-decl-vec-fallback) : AstDecl
-  (AstDecl.Module (intern "<parse-ast-decl-vec-fallback>")))
+  (AstDecl.Module cbi.compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt))
 
 (define (parse-ast-decl-vec-with-capacity [capacity : i64]) : ParseAstDeclVec
   (let
@@ -8521,7 +8522,7 @@
           [(AstDecl.DefFn name _ _ body-box _)
             (let
               [body : AstExpr (ast-node-get body-box)]
-              (if (= name (intern "main"))
+              (if (= name cbi.compiler-builtin-id-fix-main)
                 (ast-expr-inner-tag body)
                 (ast-main-body-tag rest)))]
           [_ (ast-main-body-tag rest)]))]))
@@ -8697,7 +8698,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
-                (= name (intern "main"))
+                (= name cbi.compiler-builtin-id-fix-main)
                 (match (ast-expr-unspan body)
                   [(AstExpr.Literal (AstLiteral.Float text))
                     (string.eq text "1.5")]
@@ -8840,7 +8841,7 @@
             (let
               [body : AstExpr (ast-node-get body-box)]
               (and
-                (= name (intern "main"))
+                (= name cbi.compiler-builtin-id-fix-main)
                 (match (ast-expr-unspan body)
                   [(AstExpr.WithRegion region _) (string.eq region "r")]
                   [_ false])))]

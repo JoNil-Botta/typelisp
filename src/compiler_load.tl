@@ -2,6 +2,7 @@
 (import stdlib.arena)
 (import stdlib.io)
 (import "compiler_parse_core.tl")
+(import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
 (import sym_i64_env)
 (import stdlib.env)
@@ -3166,11 +3167,11 @@
     [(AstType.Expr) (CompilerLoadSurfaceMacroExpr)]
     [(AstType.Var name)
       (cond
-        [(or (= name (intern "Expr")) (= name (intern "expr")))
+        [(or (= name cbi.compiler-builtin-id-fix-Expr) (= name cbi.compiler-builtin-id-fix-expr))
           (CompilerLoadSurfaceMacroExpr)]
-        [(or (= name (intern "Module")) (= name (intern "module")))
+        [(or (= name cbi.compiler-builtin-id-fix-Module) (= name cbi.compiler-builtin-id-fix-module))
           (CompilerLoadSurfaceMacroModule)]
-        [(or (= name (intern "Decls")) (= name (intern "decls")))
+        [(or (= name cbi.compiler-builtin-id-fix-Decls) (= name cbi.compiler-builtin-id-fix-decls))
           (CompilerLoadSurfaceMacroDecls)]
         [else (CompilerLoadSurfaceMacroOther)])]
     [_ (CompilerLoadSurfaceMacroOther)]))

@@ -375,6 +375,18 @@
   -1)
 (define compiler-builtin-id-fix-y : i64
   -1)
+(define compiler-builtin-id-fix-module : i64
+  -1)
+(define compiler-builtin-id-fix-Module : i64
+  -1)
+(define compiler-builtin-id-fix-decls : i64
+  -1)
+(define compiler-builtin-id-fix-Decls : i64
+  -1)
+(define compiler-builtin-id-fix-expr : i64
+  -1)
+(define compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt : i64
+  -1)
 
 (defstruct CompilerBuiltinIdsState
   (generation (Array i64))
@@ -383,11 +395,11 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 186)]
+    [ids : (Array i64) (make-array i64 192)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 186)
+      (while (< i 192)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -608,6 +620,12 @@
     (state-set! state 183 compiler-builtin-id-fix-x)
     (state-set! state 184 compiler-builtin-id-fix-xs)
     (state-set! state 185 compiler-builtin-id-fix-y)
+    (state-set! state 186 compiler-builtin-id-fix-module)
+    (state-set! state 187 compiler-builtin-id-fix-Module)
+    (state-set! state 188 compiler-builtin-id-fix-decls)
+    (state-set! state 189 compiler-builtin-id-fix-Decls)
+    (state-set! state 190 compiler-builtin-id-fix-expr)
+    (state-set! state 191 compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt)
     ))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -806,6 +824,12 @@
     (set! compiler-builtin-id-fix-x (state-ref state 183))
     (set! compiler-builtin-id-fix-xs (state-ref state 184))
     (set! compiler-builtin-id-fix-y (state-ref state 185))
+    (set! compiler-builtin-id-fix-module (state-ref state 186))
+    (set! compiler-builtin-id-fix-Module (state-ref state 187))
+    (set! compiler-builtin-id-fix-decls (state-ref state 188))
+    (set! compiler-builtin-id-fix-Decls (state-ref state 189))
+    (set! compiler-builtin-id-fix-expr (state-ref state 190))
+    (set! compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt (state-ref state 191))
     ))
 
 (define (compiler-builtin-reset!) : unit
@@ -1063,6 +1087,12 @@
       (set! compiler-builtin-id-fix-x (ci.intern "x"))
       (set! compiler-builtin-id-fix-xs (ci.intern "xs"))
       (set! compiler-builtin-id-fix-y (ci.intern "y"))
+      (set! compiler-builtin-id-fix-module (ci.intern "module"))
+      (set! compiler-builtin-id-fix-Module (ci.intern "Module"))
+      (set! compiler-builtin-id-fix-decls (ci.intern "decls"))
+      (set! compiler-builtin-id-fix-Decls (ci.intern "Decls"))
+      (set! compiler-builtin-id-fix-expr (ci.intern "expr"))
+      (set! compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt (ci.intern "<parse-ast-decl-vec-fallback>"))
       (set! compiler-builtin-generation (ci.intern-generation)))))
 
 (define (compiler-builtin-id-any2? [name-id : i64] [a : i64] [b : i64]) : bool

@@ -1326,7 +1326,19 @@
         (compiler-load-normalize-path compiler-load-core-macro-prelude-path)))))
 
 (define (compiler-load-stdlib-import? [path : String]) : bool
-  (compiler-load-string-prefix-at? path "stdlib/" 0))
+  (or
+    (compiler-load-string-prefix-at? path "stdlib/" 0)
+    (compiler-load-string-prefix-at? path "stdlib\\" 0)))
+
+(define (compiler-load-stdlib-test-import? [path : String]) : bool
+  (or
+    (compiler-load-string-prefix-at? path "stdlib/tests/" 0)
+    (compiler-load-string-prefix-at? path "stdlib\\tests\\" 0)))
+
+(define (compiler-load-stdlib-source-module-import? [path : String]) : bool
+  (and
+    (compiler-load-stdlib-import? path)
+    (not (compiler-load-stdlib-test-import? path))))
 
 (define (compiler-load-stdlib-suffix [path : String]) : String
   (string.substring path 7 (- (string.string-length path) 7)))
@@ -2422,8 +2434,8 @@
             (compiler-load-normalize-path resolved-path)]
           (if (or
             (compiler-load-pkg-import? import-path)
-            (compiler-load-stdlib-import? normalized-import)
-            (compiler-load-stdlib-import? normalized-resolved))
+            (compiler-load-stdlib-source-module-import? normalized-import)
+            (compiler-load-stdlib-source-module-import? normalized-resolved))
             fallback
             (if (compiler-load-no-expected-module? expected-module)
               context-module
@@ -4398,7 +4410,7 @@
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
                 source-module-fallback
-                (if (compiler-load-stdlib-import?
+                (if (compiler-load-stdlib-source-module-import?
                   (compiler-load-normalize-path path))
                   module-id-fallback
                   ""))]
@@ -6436,7 +6448,7 @@
             [effective-source-module-fallback : String
               (if (> (string.string-length source-module-fallback) 0)
                 source-module-fallback
-                (if (compiler-load-stdlib-import?
+                (if (compiler-load-stdlib-source-module-import?
                   (compiler-load-normalize-path path))
                   module-id-fallback
                   ""))]
@@ -8008,6 +8020,16 @@
           (sym_i64_env.sym-i64-contains seen "root_leaf")
           (sym_i64_env.sym-i64-contains seen "nested.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (compiler-load-stdlib-source-module-import-ok?) : bool
+  (and
+    (compiler-load-stdlib-source-module-import? "stdlib/vector.tl")
+    (compiler-load-stdlib-source-module-import? "stdlib\\vector.tl")
+    (not
+      (compiler-load-stdlib-source-module-import? "stdlib/tests/thread_api.tl"))
+    (not
+      (compiler-load-stdlib-source-module-import?
+        "stdlib\\tests\\thread_api.tl"))))
 
 (define (compiler-load-dotted-source-root-fallback-ok?) : bool
   (let
@@ -10711,6 +10733,10 @@
       (compiler-load-moduleless-dotted-source-root-ok?)
       (return
         (io.panic "compiler-load: moduleless dotted source root smoke mismatch")))
+    (unless
+      (compiler-load-stdlib-source-module-import-ok?)
+      (return
+        (io.panic "compiler-load: stdlib source module import smoke mismatch")))
     (unless
       (compiler-load-dotted-source-root-fallback-ok?)
       (return

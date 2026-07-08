@@ -563,8 +563,10 @@
   (compiler-live-value-vars-into (compiler-live-values3-vars b c d) a))
 
 (define (compiler-live-value-list-vars [values : CompilerIrValueList]) : CompilerLiveI64Set
-  (match values
+  (match (compiler-ir-value-list-force-cons values)
     [(CompilerIrValueList.Nil) (compiler-live-set-empty)]
+    [(CompilerIrValueList.Array seq)
+      (compiler-live-value-list-vars (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-live-value-vars-into
         (compiler-live-value-list-vars (box-get rest))

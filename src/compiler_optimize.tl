@@ -1400,6 +1400,8 @@
   [values : CompilerIrValueList]) : opt_i64_i64_map.Map
   (match values
     [(CompilerIrValueList.Nil) set]
+    [(CompilerIrValueList.Array seq)
+      (opt-collect-value-list-uses set (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (opt-collect-value-list-uses
         (opt-collect-value-uses set value)
@@ -1864,6 +1866,10 @@
   [values : CompilerIrValueList]) : unit
   (match values
     [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Array seq)
+      (opt-collect-value-list-uses-array
+        items
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (begin
         (opt-collect-value-uses-array items value)
@@ -2109,6 +2115,10 @@
   [values : CompilerIrValueList]) : unit
   (match values
     [(CompilerIrValueList.Nil) unit]
+    [(CompilerIrValueList.Array seq)
+      (opt-uncount-value-list-uses-array
+        items
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (begin
         (opt-uncount-value-uses-array items value)
@@ -2703,6 +2713,11 @@
   [values : CompilerIrValueList]) : bool
   (match values
     [(CompilerIrValueList.Nil) false]
+    [(CompilerIrValueList.Array seq)
+      (opt-aggregate-value-list-has-pointer?
+        base
+        ptrs
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (or
         (opt-aggregate-value-has-pointer? base ptrs value)
@@ -4354,9 +4369,15 @@
     [(CompilerIrValueList.Nil)
       (match b
         [(CompilerIrValueList.Nil) true]
+        [(CompilerIrValueList.Array seq)
+          (opt-value-list-eq a (compiler-ir-value-seq-to-list seq))]
         [_ false])]
+    [(CompilerIrValueList.Array seq)
+      (opt-value-list-eq (compiler-ir-value-seq-to-list seq) b)]
     [(CompilerIrValueList.Cons ah at)
       (match b
+        [(CompilerIrValueList.Array seq)
+          (opt-value-list-eq a (compiler-ir-value-seq-to-list seq))]
         [(CompilerIrValueList.Cons bh bt)
           (and
             (opt-value-eq ah bh)
@@ -5490,21 +5511,31 @@
     (OptCopyEnv.PackWordCons group index value (box env))
     env))
 
+(define (opt-copy-add-pack-words-from
+  [env : OptCopyEnv]
+  [group : i64]
+  [index : i64]
+  [words : CompilerIrValueList]) : OptCopyEnv
+  (match words
+    [(CompilerIrValueList.Nil) env]
+    [(CompilerIrValueList.Array seq)
+      (opt-copy-add-pack-words-from
+        env
+        group
+        index
+        (compiler-ir-value-seq-to-list seq))]
+    [(CompilerIrValueList.Cons value rest)
+      (opt-copy-add-pack-words-from
+        (opt-copy-add-pack-word env group index value)
+        group
+        (+ index 1)
+        (box-get rest))]))
+
 (define (opt-copy-update-pack-env
   [env : OptCopyEnv]
   [dst : i64]
   [words : CompilerIrValueList]) : OptCopyEnv
-  (let
-    [e1 : OptCopyEnv (opt-copy-invalidate-var env dst)]
-    (match words
-      [(CompilerIrValueList.Nil) e1]
-      [(CompilerIrValueList.Cons w0 rest0)
-        (let
-          [e2 : OptCopyEnv (opt-copy-add-pack-word e1 dst 0 w0)]
-          (match (box-get rest0)
-            [(CompilerIrValueList.Nil) e2]
-            [(CompilerIrValueList.Cons w1 _)
-              (opt-copy-add-pack-word e2 dst 1 w1)]))])))
+  (opt-copy-add-pack-words-from (opt-copy-invalidate-var env dst) dst 0 words))
 
 (define (opt-copy-mask-source? [value : CompilerIrValue] [dst : i64]) : bool
   (match value
@@ -5531,6 +5562,8 @@
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Array seq)
+      (opt-copy-subst-value-list env (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-copy-resolve env value)
@@ -8404,6 +8437,13 @@
   [use-pos : i64]) : ResultCompilerOptimizeVerify
   (match values
     [(CompilerIrValueList.Nil) (ResultCompilerOptimizeVerify.Ok)]
+    [(CompilerIrValueList.Array seq)
+      (opt-verify-value-list-uses
+        defs
+        doms
+        (compiler-ir-value-seq-to-list seq)
+        use-block
+        use-pos)]
     [(CompilerIrValueList.Cons value rest)
       (match (opt-verify-value-use defs doms value use-block use-pos)
         [(ResultCompilerOptimizeVerify.Ok)
@@ -9639,6 +9679,8 @@
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Array seq)
+      (opt-ssa-rewrite-value-list env (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-ssa-rewrite-value env value)
@@ -11228,6 +11270,13 @@
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Array seq)
+      (opt-global-copy-subst-value-list
+        facts
+        doms
+        use-block-id
+        use-pos
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-global-copy-resolve facts doms use-block-id use-pos value)
@@ -17821,6 +17870,8 @@
   [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
+    [(CompilerIrValueList.Array seq)
+      (opt-sccp-rewrite-value-list env (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-sccp-rewrite-value env value)
@@ -23622,6 +23673,13 @@
     [(CompilerIrParamList.Cons param prest)
       (match args
         [(CompilerIrValueList.Nil) tail]
+        [(CompilerIrValueList.Array seq)
+          (opt-tailrec-stage-movs
+            params
+            (compiler-ir-value-seq-to-list seq)
+            base
+            index
+            tail)]
         [(CompilerIrValueList.Cons arg arest)
           (match param
             [(CompilerIrParam.Param _ ty _)
@@ -24528,6 +24586,11 @@
                   remap
                   (box-get rest)
                   (box-get value-rest)))]
+            [(CompilerIrValueList.Array seq)
+              (opt-unroll-write-phi-seeds
+                remap
+                others
+                (compiler-ir-value-seq-to-list seq))]
             [(CompilerIrValueList.Nil) unit])])]))
 
 ;; One clone of B's body (the non-phi instructions minus the c-def and the
@@ -24640,6 +24703,15 @@
                   guard-label
                   unrolled-label
                   tail))]
+            [(CompilerIrValueList.Array seq)
+              (opt-unroll-unrolled-phis
+                others
+                ku-ids
+                index
+                (compiler-ir-value-seq-to-list seq)
+                guard-label
+                unrolled-label
+                tail)]
             [(CompilerIrValueList.Nil) tail])])]))
 
 ;; B stays in place as the remainder loop: each phi keeps its back-edge input,
@@ -24723,6 +24795,20 @@
                           (box-get chain-rest)
                           guard-label
                           unrolled-label))]
+                    [(CompilerIrValueList.Array seq)
+                      (opt-unroll-tail-instrs
+                        instrs
+                        index
+                        count
+                        loop-label
+                        iphi
+                        seed
+                        inext
+                        inext3
+                        others
+                        (compiler-ir-value-seq-to-list seq)
+                        guard-label
+                        unrolled-label)]
                     [(CompilerIrValueList.Nil) (CompilerIrInstrList.Nil)])])]
             [(OptUnrollPhiList.Nil) (CompilerIrInstrList.Nil)]))]
       [_
@@ -25408,6 +25494,12 @@
   [instrs : CompilerIrInstrList]) : OptBceVersionGuardResult
   (match rest
     [(CompilerIrValueList.Nil) (OptBceVersionGuardResult.Some instrs first)]
+    [(CompilerIrValueList.Array seq)
+      (opt-bce-version-and-chain
+        cell
+        first
+        (compiler-ir-value-seq-to-list seq)
+        instrs)]
     [(CompilerIrValueList.Cons value tail)
       (let
         [dst : i64 (opt-bce-version-alloc-var cell)]
@@ -25511,6 +25603,18 @@
           [(OptBceVersionGuardAcc.Some all-instrs all-values _)
             (match all-values
               [(CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
+              [(CompilerIrValueList.Array seq)
+                (match (compiler-ir-value-seq-to-list seq)
+                  [(CompilerIrValueList.Nil) (OptBceVersionGuardResult.No)]
+                  [(CompilerIrValueList.Array _) (OptBceVersionGuardResult.No)]
+                  [(CompilerIrValueList.Cons first rest)
+                    (opt-bce-version-and-chain
+                      cell
+                      first
+                      (box-get rest)
+                      (compiler-ir-instr-list-reverse-onto
+                        all-instrs
+                        CompilerIrInstrList.Nil))])]
               [(CompilerIrValueList.Cons first rest)
                 (opt-bce-version-and-chain
                   cell
@@ -27625,6 +27729,11 @@
   [values : CompilerIrValueList]) : OptInlineCensus
   (match values
     [(CompilerIrValueList.Nil) census]
+    [(CompilerIrValueList.Array seq)
+      (opt-inline-census-value-list
+        index
+        census
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (opt-inline-census-value-list
         index
@@ -29106,6 +29215,12 @@
   [base : i64]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Nil) CompilerIrValueList.Nil]
+    [(CompilerIrValueList.Array seq)
+      (opt-inline-remap-value-list
+        (compiler-ir-value-seq-to-list seq)
+        sa
+        np
+        base)]
     [(CompilerIrValueList.Cons value rest)
       (compiler-ir-value-cons
         (opt-inline-remap-value value sa np base)
@@ -31674,6 +31789,8 @@
   [values : CompilerIrValueList]) : OptReachState
   (match values
     [(CompilerIrValueList.Nil) state]
+    [(CompilerIrValueList.Array seq)
+      (opt-reach-value-list index state (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (opt-reach-value-list
         index
@@ -36138,12 +36255,11 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           2
-          (CompilerIrValueList.Cons
+          (compiler-ir-value-cons
             (CompilerIrValue.I64 7)
-            (box
-              (CompilerIrValueList.Cons
-                (CompilerIrValue.I64 9)
-                (box CompilerIrValueList.Nil))))
+            (compiler-ir-value-cons
+              (CompilerIrValue.I64 9)
+              CompilerIrValueList.Nil))
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Return
@@ -39775,12 +39891,11 @@
         (compiler-ir-instr-cons
           (CompilerIrInstr.Pack
             2
-            (CompilerIrValueList.Cons
+            (compiler-ir-value-cons
               (CompilerIrValue.Var 0)
-              (box
-                (CompilerIrValueList.Cons
-                  (CompilerIrValue.Var 1)
-                  (box CompilerIrValueList.Nil))))
+              (compiler-ir-value-cons
+                (CompilerIrValue.Var 1)
+                CompilerIrValueList.Nil))
             (AstType.I64))
           (compiler-ir-instr-cons
             (CompilerIrInstr.Word 3 (CompilerIrValue.Var 2) 1 (AstType.I64))
@@ -40614,7 +40729,7 @@
       (= (opt-count-direct-call-name b-instrs "inline_mut_b") 0))))
 
 (define (opt-inline-pack-words-are-vars-1-2? [words : CompilerIrValueList]) : bool
-  (match words
+  (match (compiler-ir-value-list-force-cons words)
     [(CompilerIrValueList.Cons a arest)
       (match a
         [(CompilerIrValue.Var av)
@@ -43216,12 +43331,11 @@
       (compiler-ir-instr-cons
         (CompilerIrInstr.Pack
           0
-          (CompilerIrValueList.Cons
+          (compiler-ir-value-cons
             (CompilerIrValue.I64 1)
-            (box
-              (CompilerIrValueList.Cons
-                (CompilerIrValue.I64 5)
-                (box CompilerIrValueList.Nil))))
+            (compiler-ir-value-cons
+              (CompilerIrValue.I64 5)
+              CompilerIrValueList.Nil))
           (AstType.I64))
         (compiler-ir-instr-cons
           (CompilerIrInstr.Word 1 (CompilerIrValue.Var 0) 0 (AstType.I64))
@@ -46528,8 +46642,9 @@
       [(not (opt-verify-ok? (opt-verify-function constructed))) 1]
       ;; the pre-existing join phi reads the then/else VERSIONS of var 3: two
       ;; Var inputs that differ from each other (unrewritten would be 3 == 3).
-      [(match (opt-ssa-preexisting-test-phi-inputs
-          (opt-function-blocks constructed))
+      [(match (compiler-ir-value-list-force-cons
+          (opt-ssa-preexisting-test-phi-inputs
+            (opt-function-blocks constructed)))
           [(CompilerIrValueList.Cons a rest)
             (match (box-get rest)
               [(CompilerIrValueList.Cons b _)
@@ -48638,6 +48753,11 @@
   [values : CompilerIrValueList]) : bool
   (match values
     [(CompilerIrValueList.Nil) false]
+    [(CompilerIrValueList.Array seq)
+      (opt-scratch-value-list-derived?
+        roots
+        facts
+        (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (or
         (opt-scratch-value-derived? roots facts value)

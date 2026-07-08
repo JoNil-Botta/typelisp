@@ -51374,7 +51374,7 @@
     (if (and
       (>= (intern-first-dot lookup-id) 0)
       (not (tc-name-qualified-id? lookup-id))
-      (not (tc-source-slash-qualified? lookup-name)))
+      (not (tc-source-slash-qualified-id? lookup-name lookup-id)))
       (macro-call-decl-from-source-name
         ctx
         decls
@@ -51540,7 +51540,7 @@
     (if (and
       (> (string.string-length module) 0)
       (not (tc-name-qualified-id? name))
-      (not (tc-source-slash-qualified? name-str)))
+      (not (tc-source-slash-qualified-id? name-str name)))
       (str_cat.str-cat (tc-name-slashes-to-dots module) "." name-str)
       name-str)))
 

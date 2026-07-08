@@ -45968,6 +45968,19 @@
       (tc-name-slashes-to-dots source-name)
       source-name)))
 
+;; id-taking variant: callers have the interned name id; avoids the (intern
+;; source-name) the String variant does inside tc-source-slash-qualified?.
+(define (macro-output-source-name-id [name-id : i64]) : String
+  (let
+    [name : String (intern-str name-id)]
+    [source-name : String
+      (if (tc-hygiene-template-name? name)
+        (tc-hygiene-template-base name)
+        (tc-hygiene-global-symbol-name name))]
+    (if (tc-source-slash-qualified-id? source-name name-id)
+      (tc-name-slashes-to-dots source-name)
+      source-name)))
+
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
     [count : i64 (ast-decl-list-len (& items))]
@@ -47934,7 +47947,7 @@
           span))]
     [(AstType.Var name)
       (ResultMacroSexpr.Ok
-        (SpannedSexpr.Sym (macro-output-source-name (intern-str name)) span))]
+        (SpannedSexpr.Sym (macro-output-source-name-id name) span))]
     [(AstType.StructArgs name lifetimes)
       (ResultMacroSexpr.Ok
         (macro-resolved-nominal-type-sexpr
@@ -47951,7 +47964,7 @@
           span))]
     [(AstType.VarArgs name lifetimes)
       (macro-type-named-args-sexpr
-        (macro-output-source-name (intern-str name))
+        (macro-output-source-name-id name)
         (box-get lifetimes)
         span)]
     [(AstType.Ref region inner)
@@ -52417,7 +52430,7 @@
         (ast-expr-spanned (macro-generated-type-param-expr env inner) span))]
     [(AstExpr.Var name)
       (let
-        [lookup-name : String (macro-output-source-name (intern-str name))]
+        [lookup-name : String (macro-output-source-name-id name)]
         (match (ctfe-env-lookup env lookup-name)
           [(CtfeMaybeValue.Some value)
             (match value
@@ -52432,7 +52445,7 @@
 (define (macro-generated-call-func-for-lookup [expr : AstExpr]) : AstExpr
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name)
-      (AstExpr.Var (intern (macro-output-source-name (intern-str name))))]
+      (AstExpr.Var (intern (macro-output-source-name-id name)))]
     [_ expr]))
 
 (define (macro-generated-import-type-arg
@@ -52512,7 +52525,7 @@
   (match (ast-expr-unspan func)
     [(AstExpr.Var name)
       (let
-        [lookup-name : String (macro-output-source-name (intern-str name))]
+        [lookup-name : String (macro-output-source-name-id name)]
         [lookup-id : i64 (intern lookup-name)]
         (if (or
           (tc-name-qualified-id? lookup-id)

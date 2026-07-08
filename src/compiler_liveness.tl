@@ -640,7 +640,11 @@
         [(CompilerIrSwitchCase.Case _ label)
           (compiler-live-switch-case-successors
             (compiler-live-label-set-insert set label)
-            (box-get rest))])]))
+            (box-get rest))])]
+    [(CompilerIrSwitchCaseList.Array seq)
+      (compiler-live-switch-case-successors
+        set
+        (compiler-ir-switch-case-seq-to-list seq))]))
 
 (define (compiler-live-instr-uses [instr : CompilerIrInstr]) : CompilerLiveI64Set
   (match instr

@@ -111,6 +111,12 @@
   -1)
 (define compiler-builtin-id-string-eq-question : i64
   -1)
+(define compiler-builtin-id-eq : i64
+  -1)
+(define compiler-builtin-id-string-append : i64
+  -1)
+(define compiler-builtin-id-string-concat : i64
+  -1)
 (define compiler-builtin-id-string-to-int : i64
   -1)
 (define compiler-builtin-id-string-ref : i64
@@ -395,11 +401,11 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [generation : (Array i64) (make-array i64 1)]
-    [ids : (Array i64) (make-array i64 192)]
+    [ids : (Array i64) (make-array i64 195)]
     [i : i64 0]
     (begin
       (array-set! generation 0 -1)
-      (while (< i 192)
+      (while (< i 195)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -626,6 +632,9 @@
     (state-set! state 189 compiler-builtin-id-fix-Decls)
     (state-set! state 190 compiler-builtin-id-fix-expr)
     (state-set! state 191 compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt)
+    (state-set! state 192 compiler-builtin-id-eq)
+    (state-set! state 193 compiler-builtin-id-string-append)
+    (state-set! state 194 compiler-builtin-id-string-concat)
     ))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -830,6 +839,9 @@
     (set! compiler-builtin-id-fix-Decls (state-ref state 189))
     (set! compiler-builtin-id-fix-expr (state-ref state 190))
     (set! compiler-builtin-id-fix-lt_parse_ast_decl_vec_fallback_gt (state-ref state 191))
+    (set! compiler-builtin-id-eq (state-ref state 192))
+    (set! compiler-builtin-id-string-append (state-ref state 193))
+    (set! compiler-builtin-id-string-concat (state-ref state 194))
     ))
 
 (define (compiler-builtin-reset!) : unit
@@ -943,6 +955,9 @@
       (set! compiler-builtin-id-length (ci.intern "length"))
       (set! compiler-builtin-id-string-eq (ci.intern "string-eq"))
       (set! compiler-builtin-id-string-eq-question (ci.intern "string=?"))
+      (set! compiler-builtin-id-eq (ci.intern "eq"))
+      (set! compiler-builtin-id-string-append (ci.intern "string-append"))
+      (set! compiler-builtin-id-string-concat (ci.intern "string-concat"))
       (set! compiler-builtin-id-string-to-int (ci.intern "string->int"))
       (set! compiler-builtin-id-string-ref (ci.intern "string-ref"))
       (set! compiler-builtin-id-char-at (ci.intern "char-at"))

@@ -1168,6 +1168,9 @@
       (cfg test (unless (lsp-validate-forms-line-context-ok?) (return 8)) unit)
       (unless (lsp-documents-cache-bound-smoke-ok?) (return 12))
       (unless (lsp-documents-check-cache-smoke-ok?) (return 13))
+      (unless
+        (lsp-typecheck-tool-session-preserves-program-cache-ok?)
+        (return 14))
       42)))
 
 (define (lsp-diagnostic-uri
@@ -4901,6 +4904,39 @@
         "error"
         (json.JsonString "Check cache invalid"))]))
 
+(define (lsp-typecheck-tool-session-before!) : unit
+  ;; Preserve the loader program cache across interactive checks. The loader
+  ;; only caches imported files and embedded stdlib programs here; unsaved
+  ;; document text still goes through compiler-load-source and is reparsed.
+  (begin
+    (compiler-check-reset-pools!)
+    (compiler-check-reset-interns!)))
+
+(define (lsp-typecheck-tool-session-after!) : unit
+  (begin
+    (compiler-check-reset-pools!)
+    (compiler-check-reset-interns!)))
+
+(define (lsp-typecheck-tool-session-preserves-program-cache-ok?) : bool
+  (begin
+    (compiler-load-session-cache-disable-for-test!)
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-enable!)
+    (lsp-typecheck-tool-session-before!)
+    (lsp-typecheck-tool-session-after!)
+    (let
+      [enabled-ok : bool (compiler-load-session-program-cache-enabled?)]
+      (begin
+        (compiler-load-session-program-cache-disable!)
+        (lsp-typecheck-tool-session-before!)
+        (lsp-typecheck-tool-session-after!)
+        (let
+          [disabled-ok : bool
+            (not (compiler-load-session-program-cache-enabled?))]
+          (begin
+            (compiler-load-session-cache-disable-for-test!)
+            (and enabled-ok disabled-ok)))))))
+
 (define (lsp-write-check-cache-response
   [id : json.Json]
   [check-cache : LspCheckCache]) : unit
@@ -4930,9 +4966,11 @@
   [docs : LspDocuments]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
-    [check-cache : LspCheckCache
-      (lsp-check-source-cache path text stdlib-roots)]
+    [check-cache : LspCheckCache LspCheckCacheInvalid]
     (begin
+      (lsp-typecheck-tool-session-before!)
+      (set! check-cache (lsp-check-source-cache path text stdlib-roots))
+      (lsp-typecheck-tool-session-after!)
       (lsp-write-check-cache-response id check-cache)
       (LspHandleResult.Continue
         (lsp-documents-set-check-cache docs uri check-cache)))))
@@ -5696,34 +5734,16 @@
     [(string.eq method "tl/expandMacro")
       (lsp-handle-tl-expand-macro id params docs)]
     [(string.eq method "tl/check")
-      (let
-        [old-program-cache : bool
-          (compiler-load-session-program-cache-enabled?)]
-        [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
-        (begin
-          (compiler-load-session-program-cache-disable!)
-          (compiler-check-reset-pools!)
-          (compiler-check-reset-interns!)
-          (set! tool-result (lsp-handle-tl-check id params docs stdlib-roots))
-          (compiler-check-reset-pools!)
-          (compiler-check-reset-interns!)
-          (compiler-load-session-program-cache-set-enabled! old-program-cache)
-          tool-result))]
+      (lsp-handle-tl-check id params docs stdlib-roots)]
     [(string.eq method "tl/getType")
       (let
-        [old-program-cache : bool
-          (compiler-load-session-program-cache-enabled?)]
         [tool-result : LspHandleResult (LspHandleResult.Continue docs)]
         (begin
-          (compiler-load-session-program-cache-disable!)
-          (compiler-check-reset-pools!)
-          (compiler-check-reset-interns!)
+          (lsp-typecheck-tool-session-before!)
           (set!
             tool-result
             (lsp-handle-tl-get-type-at id params docs stdlib-roots))
-          (compiler-check-reset-pools!)
-          (compiler-check-reset-interns!)
-          (compiler-load-session-program-cache-set-enabled! old-program-cache)
+          (lsp-typecheck-tool-session-after!)
           tool-result))]
     [(string.eq method "tl/findReferences")
       (lsp-handle-tl-find-references id params docs)]

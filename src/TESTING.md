@@ -193,6 +193,24 @@ artifact directory, and `--asm target/path/build.s` to analyze an existing
 assembly file without recompiling. The report is intentionally a local
 measurement tool, not a CI size gate.
 
+Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
+for linked stage0 binary size comparisons. It reports total file bytes, section
+raw sizes from `llvm-readobj`, `readelf`, or `objdump`, and embedded stdlib
+payload bytes bucketed into top-level module sources and `stdlib/tests`
+payloads:
+
+```sh
+scripts/fetch-stage0.sh
+scripts/analyze-stage0-size.sh target/stage0/typelisp
+scripts/build-stage0.sh target/stage0/typelisp target/stage0-branch/typelisp
+scripts/analyze-stage0-size.sh target/stage0-branch/typelisp
+```
+
+On Windows, run the shell commands from Git Bash after fetching the Windows
+seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
+publication smoke also prints this report when a section reader is available,
+but it remains a measurement report rather than a size budget gate.
+
 Use [`../scripts/analyze-move-traffic.sh`](../scripts/analyze-move-traffic.sh)
 for adjacent `movq` traffic counts in selfhost assembly. It reports exact
 duplicate moves, swap-back pairs, repeated stack-slot loads, store-then-load

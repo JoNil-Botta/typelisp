@@ -854,6 +854,10 @@ run_linux_backend_fixtures() {
         phi-forward-scavenge-live-through-opt2 \
         tests/integration/phi_forward_scavenge_live_through.tl \
         42
+    run_linux_opt2_program_fixture \
+        inline-alloc-scavenge-live-through-opt2 \
+        tests/integration/inline_alloc_scavenge_live_through.tl \
+        42
 
     _runtime_dir="$WORKDIR/backend-runtime"
     mkdir -p "$_runtime_dir"
@@ -1152,6 +1156,10 @@ run_windows_backend_fixtures() {
     run_windows_opt2_program_fixture \
         phi-forward-scavenge-live-through-opt2 \
         tests/integration/phi_forward_scavenge_live_through.tl \
+        42
+    run_windows_opt2_program_fixture \
+        inline-alloc-scavenge-live-through-opt2 \
+        tests/integration/inline_alloc_scavenge_live_through.tl \
         42
 
     _runtime_dir="$WORKDIR/windows-backend-runtime"

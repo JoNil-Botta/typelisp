@@ -51326,10 +51326,12 @@
   [module : String]
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (if (or
-    (tc-name-qualified? lookup-name)
-    (tc-source-slash-qualified? lookup-name))
-    (macro-qualified-call-decl
+  (let
+    [lookup-id : i64 (tc-name-id lookup-name)]
+    (if (or
+      (tc-name-qualified-id? lookup-id)
+      (tc-source-slash-qualified-id? lookup-name lookup-id))
+      (macro-qualified-call-decl
       (tc-context-with-module ctx module)
       decls
       lookup-name
@@ -51339,7 +51341,7 @@
       decls
       module
       lookup-name
-      call-expr)))
+      call-expr))))
 
 (define (macro-call-decl-from-source-name
   [ctx : TcContext]
@@ -52514,7 +52516,7 @@
         [lookup-id : i64 (intern lookup-name)]
         (if (or
           (tc-name-qualified-id? lookup-id)
-          (tc-source-slash-qualified? lookup-name)
+          (tc-source-slash-qualified-id? lookup-name lookup-id)
           (>= (intern-first-dot lookup-id) 0))
           fallback
           (match (macro-import-alias-target-cached

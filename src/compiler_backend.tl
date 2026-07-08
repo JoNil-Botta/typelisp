@@ -6,7 +6,7 @@
 (import "compiler_diagnostic.tl")
 (import "compiler_optimize.tl")
 (import "compiler_regalloc.tl")
-(import "compiler_parallel_move.tl")
+(import compiler_parallel_move as pmove)
 (import stdlib.text_buf)
 (import "compiler_object.tl")
 (import compiler_intern as ci)
@@ -22421,10 +22421,10 @@
 
 (define (compiler-backend-arg-move-parallel-edge
   [assignments : CompilerRegAssignmentList]
-  [move : CompilerBackendArgMove]) : CompilerParallelMoveEdge
+  [move : CompilerBackendArgMove]) : pmove.CompilerParallelMoveEdge
   (match move
     [(BackendArgMove dest source)
-      (ParallelMoveEdge
+      (pmove.ParallelMoveEdge
         (compiler-backend-parallel-reg-resource dest)
         (compiler-backend-parallel-reg-resource dest)
         0
@@ -22434,27 +22434,27 @@
 
 (define (compiler-backend-arg-move-parallel-edges
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : CompilerParallelMoveEdgeList
+  [moves : CompilerBackendArgMoveList]) : pmove.CompilerParallelMoveEdgeList
   (match moves
-    [(BackendArgMoveNil) CompilerParallelMoveNil]
+    [(BackendArgMoveNil) pmove.CompilerParallelMoveNil]
     [(BackendArgMoveCons move rest)
-      (compiler-parallel-move-edge-cons
+      (pmove.compiler-parallel-move-edge-cons
         (compiler-backend-arg-move-parallel-edge assignments move)
         (compiler-backend-arg-move-parallel-edges assignments (box-get rest)))]))
 
 (define (compiler-backend-arg-move-decision
   [assignments : CompilerRegAssignmentList]
-  [moves : CompilerBackendArgMoveList]) : CompilerParallelMoveDecision
+  [moves : CompilerBackendArgMoveList]) : pmove.CompilerParallelMoveDecision
   (let
-    [edges : CompilerParallelMoveEdgeList
+    [edges : pmove.CompilerParallelMoveEdgeList
       (compiler-backend-arg-move-parallel-edges assignments moves)]
-    (compiler-parallel-move-decision edges edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-arg-moves-conflict?
   [assignments : CompilerRegAssignmentList]
   [moves : CompilerBackendArgMoveList]
   [all : CompilerBackendArgMoveList]) : bool
-  (compiler-parallel-move-list-has-blocked?
+  (pmove.compiler-parallel-move-list-has-blocked?
     (compiler-backend-arg-move-parallel-edges assignments moves)
     (compiler-backend-arg-move-parallel-edges assignments all)))
 
@@ -22646,8 +22646,8 @@
   [moves : CompilerBackendArgMoveList]
   [all : CompilerBackendArgMoveList]) : ResultCompilerBackend
   (match (compiler-backend-arg-move-decision assignments moves)
-    [(CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
-    [(CompilerParallelMoveUnblocked move-id)
+    [(pmove.CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
+    [(pmove.CompilerParallelMoveUnblocked move-id)
       (match (compiler-backend-arg-move-list-find moves move-id)
         [(BackendSomeArgMove move)
           (match move
@@ -22665,7 +22665,7 @@
                 [(ResultCompilerBackend.Err m) (ResultCompilerBackend.Err m)])])]
         [(BackendNoArgMove)
           (compiler-backend-parallel-move-missing "arg" move-id)])]
-    [(CompilerParallelMoveCycle move-id)
+    [(pmove.CompilerParallelMoveCycle move-id)
       (match (compiler-backend-arg-move-list-find moves move-id)
         [(BackendSomeArgMove move)
           (match move
@@ -23484,10 +23484,10 @@
 
 (define (compiler-backend-phi-copy-parallel-edge
   [assignments : CompilerRegAssignmentList]
-  [copy : CompilerBackendPhiCopy]) : CompilerParallelMoveEdge
+  [copy : CompilerBackendPhiCopy]) : pmove.CompilerParallelMoveEdge
   (match copy
     [(CompilerBackendPhiCopy.Copy dst source _)
-      (ParallelMoveEdge
+      (pmove.ParallelMoveEdge
         dst
         (compiler-backend-var-parallel-resource0 assignments dst)
         (compiler-backend-var-parallel-resource1 assignments dst)
@@ -23496,11 +23496,11 @@
 
 (define (compiler-backend-phi-copy-list-parallel-edges
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : CompilerParallelMoveEdgeList
+  [copies : CompilerBackendPhiCopyList]) : pmove.CompilerParallelMoveEdgeList
   (match copies
-    [(CompilerBackendPhiCopyList.Nil) CompilerParallelMoveNil]
+    [(CompilerBackendPhiCopyList.Nil) pmove.CompilerParallelMoveNil]
     [(CompilerBackendPhiCopyList.Cons copy rest)
-      (compiler-parallel-move-edge-cons
+      (pmove.compiler-parallel-move-edge-cons
         (compiler-backend-phi-copy-parallel-edge assignments copy)
         (compiler-backend-phi-copy-list-parallel-edges
           assignments
@@ -23508,11 +23508,11 @@
 
 (define (compiler-backend-phi-copy-list-decision
   [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]) : CompilerParallelMoveDecision
+  [copies : CompilerBackendPhiCopyList]) : pmove.CompilerParallelMoveDecision
   (let
-    [edges : CompilerParallelMoveEdgeList
+    [edges : pmove.CompilerParallelMoveEdgeList
       (compiler-backend-phi-copy-list-parallel-edges assignments copies)]
-    (compiler-parallel-move-decision edges edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-backend-phi-copy-list-find-id
   [copies : CompilerBackendPhiCopyList]
@@ -24475,8 +24475,8 @@
   [vars : i64]
   [outer-active : bool]) : ResultCompilerBackend
   (match (compiler-backend-phi-copy-list-decision assignments copies)
-    [(CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
-    [(CompilerParallelMoveUnblocked copy-id)
+    [(pmove.CompilerParallelMoveDone) (ResultCompilerBackend.Ok "")]
+    [(pmove.CompilerParallelMoveUnblocked copy-id)
       (match (compiler-backend-phi-copy-list-find-id copies copy-id)
         [(CompilerBackendMaybePhiCopy.Some copy)
           (match copy
@@ -24502,7 +24502,7 @@
                   (ResultCompilerBackend.Err message)])])]
         [(CompilerBackendMaybePhiCopy.No)
           (compiler-backend-parallel-move-missing "phi" copy-id)])]
-    [(CompilerParallelMoveCycle copy-id)
+    [(pmove.CompilerParallelMoveCycle copy-id)
       (match (compiler-backend-phi-copy-list-find-id copies copy-id)
         [(CompilerBackendMaybePhiCopy.Some copy)
           (match copy

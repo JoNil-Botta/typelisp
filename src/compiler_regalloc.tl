@@ -11,7 +11,7 @@
 (import stdlib.hashmap)
 (import (hashmap String i64) as reg_string_i64_map)
 (import "compiler_liveness.tl")
-(import "compiler_parallel_move.tl")
+(import compiler_parallel_move as pmove)
 (cfg test (import stdlib.test))
 
 (defenum CompilerRegStringList
@@ -1023,29 +1023,29 @@
 (define (compiler-reg-move-parallel-id [src : i64] [dst : i64]) : i64
   (+ (* (+ src 1) 1000000) (+ dst 1)))
 
-(define (compiler-reg-move-parallel-edge [move : CompilerRegMove]) : CompilerParallelMoveEdge
+(define (compiler-reg-move-parallel-edge [move : CompilerRegMove]) : pmove.CompilerParallelMoveEdge
   (match move
     [(CompilerRegMove.Move src dst _)
-      (ParallelMoveEdge
+      (pmove.ParallelMoveEdge
         (compiler-reg-move-parallel-id src dst)
         (compiler-reg-move-parallel-resource dst)
         0
         (compiler-reg-move-parallel-resource src)
         0)]))
 
-(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveList]) : CompilerParallelMoveEdgeList
+(define (compiler-reg-move-list-parallel-edges [moves : CompilerRegMoveList]) : pmove.CompilerParallelMoveEdgeList
   (match moves
-    [(CompilerRegMoveList.Nil) CompilerParallelMoveNil]
+    [(CompilerRegMoveList.Nil) pmove.CompilerParallelMoveNil]
     [(CompilerRegMoveList.Cons move rest)
-      (compiler-parallel-move-edge-cons
+      (pmove.compiler-parallel-move-edge-cons
         (compiler-reg-move-parallel-edge move)
         (compiler-reg-move-list-parallel-edges (box-get rest)))]))
 
-(define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveList]) : CompilerParallelMoveDecision
+(define (compiler-reg-move-list-parallel-decision [moves : CompilerRegMoveList]) : pmove.CompilerParallelMoveDecision
   (let
-    [edges : CompilerParallelMoveEdgeList
+    [edges : pmove.CompilerParallelMoveEdgeList
       (compiler-reg-move-list-parallel-edges moves)]
-    (compiler-parallel-move-decision edges edges)))
+    (pmove.compiler-parallel-move-decision edges edges)))
 
 (define (compiler-reg-move-list-parallel-decision-ok?) : bool
   (let
@@ -1063,11 +1063,11 @@
           CompilerRegMoveList.Nil))]
     (and
       (match (compiler-reg-move-list-parallel-decision chain)
-        [(CompilerParallelMoveUnblocked id)
+        [(pmove.CompilerParallelMoveUnblocked id)
           (= id (compiler-reg-move-parallel-id 1 2))]
         [_ false])
       (match (compiler-reg-move-list-parallel-decision cycle)
-        [(CompilerParallelMoveCycle id)
+        [(pmove.CompilerParallelMoveCycle id)
           (= id (compiler-reg-move-parallel-id 0 1))]
         [_ false]))))
 

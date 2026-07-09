@@ -11262,12 +11262,9 @@
     (intern-qualified? source-id))
     source-id
     (if (>= (intern-first-dot source-id) 0)
-      (match (tc-source-name-lookup-key-id ctx env source-name source-id)
-        [(ResultTcString.Ok lookup-name)
-          (if (string.eq lookup-name source-name)
-            source-id
-            (tc-builtin-name-id lookup-name))]
-        [(ResultTcString.Err _) source-id])
+      (match (tc-source-name-lookup-key-with-field-check-lookup ctx env source-name source-id true)
+        [(TcNameLookup.Ok lookup-name lookup-id) (begin (cbi.compiler-builtin-refresh!) lookup-id)]
+        [(TcNameLookup.Err _) source-id])
       source-id)))
 
 (define (tc-source-dotted-alias-key

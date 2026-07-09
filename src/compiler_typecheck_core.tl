@@ -7836,26 +7836,35 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcType
-  (match (tc-source-name-lookup-key-after-local-field-check ctx env name)
-    [(ResultTcString.Ok lookup-name)
-      (let
-        [lookup-id : i64 (tc-name-id lookup-name)]
-        (match (tc-lookup-unsafe-id env lookup-id)
-          [(ResultTcTypeUnsafe.Ok ty unsafe)
-            (if unsafe
-              (match (tc-require-unsafe
-                env
-                (tc-source-lookup-display-name ctx name lookup-name))
-                [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
-                [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-              (ResultTcType.Ok ty))]
-          [(ResultTcTypeUnsafe.Err message)
-            (tc-variant-constructor-type-for-lookup-or
-              ctx
-              lookup-name
-              (tc-source-lookup-display-name ctx name lookup-name)
-              (tc-source-unbound-display-message ctx name lookup-name message))]))]
-    [(ResultTcString.Err message) (ResultTcType.Err message)]))
+  (let
+    [name-id : i64 (tc-name-id name)]
+    (match (tc-source-name-lookup-key-after-local-field-check-id
+      ctx
+      env
+      name
+      name-id)
+      [(ResultTcString.Ok lookup-name)
+        (let
+          [lookup-id : i64
+            (if (string.eq lookup-name name)
+              name-id
+              (tc-name-id lookup-name))]
+          (match (tc-lookup-unsafe-id env lookup-id)
+            [(ResultTcTypeUnsafe.Ok ty unsafe)
+              (if unsafe
+                (match (tc-require-unsafe
+                  env
+                  (tc-source-lookup-display-name ctx name lookup-name))
+                  [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                (ResultTcType.Ok ty))]
+            [(ResultTcTypeUnsafe.Err message)
+              (tc-variant-constructor-type-for-lookup-or
+                ctx
+                lookup-name
+                (tc-source-lookup-display-name ctx name lookup-name)
+                (tc-source-unbound-display-message ctx name lookup-name message))]))]
+      [(ResultTcString.Err message) (ResultTcType.Err message)])))
 
 (define (tc-hygiene-definition-env [ctx : TcContext] [module : String]) : ResultTcEnv
   (if tc-hygiene-active-top-env-ready
@@ -9455,22 +9464,27 @@
 (define (tc-source-name-bound-exact? [env : TcTypeEnv] [name : String]) : bool
   (tc-source-name-bound-exact-id? env (tc-name-id name)))
 
-(define (tc-current-module-source-lookup-key
+(define (tc-current-module-source-lookup-key-id
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name : String]) : TcMaybeString
+  [name-id : i64]) : TcMaybeString
   (let
     [module : String (tc-context-module ctx)]
     (if (and
       (> (string.string-length module) 0)
-      (not (tc-name-qualified? name)))
+      (not (tc-name-qualified-id? name-id)))
       (let
-        [module-key : String (compiler-symbol-module-key module name)]
-        [module-key-id : i64 (tc-name-id module-key)]
+        [module-key-id : i64 (tc-module-name-id module name-id)]
         (if (tc-source-name-bound-exact-id? env module-key-id)
-          (TcMaybeString.Some module-key)
+          (TcMaybeString.Some (intern-str module-key-id))
           (TcMaybeString.No)))
       (TcMaybeString.No))))
+
+(define (tc-current-module-source-lookup-key
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]) : TcMaybeString
+  (tc-current-module-source-lookup-key-id ctx env (tc-name-id name)))
 
 (define (tc-source-leading-segment-bound?
   [env : TcTypeEnv]
@@ -10618,7 +10632,7 @@
     (if (tc-name-qualified-id? source-id)
       source-name
       (if (>= (intern-first-dot source-id) 0)
-        (match (tc-source-name-lookup-key ctx env source-name)
+        (match (tc-source-name-lookup-key-id ctx env source-name source-id)
           [(ResultTcString.Ok lookup-name) lookup-name]
           [(ResultTcString.Err _) source-name])
         source-name))))
@@ -10633,8 +10647,11 @@
     (intern-qualified? source-id))
     source-id
     (if (>= (intern-first-dot source-id) 0)
-      (match (tc-source-name-lookup-key ctx env source-name)
-        [(ResultTcString.Ok lookup-name) (tc-builtin-name-id lookup-name)]
+      (match (tc-source-name-lookup-key-id ctx env source-name source-id)
+        [(ResultTcString.Ok lookup-name)
+          (if (string.eq lookup-name source-name)
+            source-id
+            (tc-builtin-name-id lookup-name))]
         [(ResultTcString.Err _) source-id])
       source-id)))
 
@@ -11048,76 +11065,101 @@
     (tc-name-id name)
     (intern (tc-context-module ctx))))
 
-(define (tc-source-name-lookup-key-with-field-check
+(define (tc-source-name-lookup-key-with-field-check-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
+  [name-id : i64]
   [check-local-field : bool]) : ResultTcString
   ;; Intern `name` once; every metadata query below reads the id-keyed slots
   ;; instead of re-hashing the string. This is the hottest name-resolution
   ;; function, previously hashing each name 3-4x (slash-qualified?, first-dot,
   ;; leading-segment, bound-exact?).
-  (let
-    [name-id : i64 (tc-name-id name)]
-    (if (tc-source-slash-qualified-id? name name-id)
-      (ResultTcString.Err (tc-source-slash-qualified-message name))
-      (let
-        [first-dot : i64 (intern-first-dot name-id)]
-        (if (< first-dot 0)
-          (if (tc-source-name-bound-exact-id? env name-id)
-            (ResultTcString.Ok name)
-            (match (tc-current-module-source-lookup-key ctx env name)
-              [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-              [(TcMaybeString.No) (ResultTcString.Ok name)]))
-          (if (and
-            check-local-field
-            (tc-source-leading-segment-wins-over-exact-from-id?
-              env
-              name
-              name-id
-              first-dot))
-            (ResultTcString.Ok name)
-            (match (tc-comptime-helper-qualified-lookup-key
-              env
-              name
-              name-id
-              first-dot)
-              [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-              [(TcMaybeString.No)
-                (let
-                  [current-module-id : i64 (intern (tc-context-module ctx))]
-                  (match (tc-source-dotted-alias-key
-                    ctx
-                    name
-                    name-id
-                    first-dot
-                    current-module-id)
-                    [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-                    [(TcMaybeString.No)
-                      (match (tc-enum-qualified-variant-lookup-key-from-id
-                        ctx
-                        name
-                        name-id
-                        current-module-id)
-                        [(ResultTcString.Ok key) (ResultTcString.Ok key)]
-                        [(ResultTcString.Err _)
-                          (match (tc-source-dotted-full-path-key-from-id
-                            ctx
-                            name
-                            name-id
-                            current-module-id)
-                            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-                            [(TcMaybeString.No)
-                              (if (tc-source-name-bound-exact-id? env name-id)
-                                (ResultTcString.Ok name)
-                                (ResultTcString.Err
-                                  (tc-unresolved-dotted-name-message name)))])])]))])))))))
+  (if (tc-source-slash-qualified-id? name name-id)
+    (ResultTcString.Err (tc-source-slash-qualified-message name))
+    (let
+      [first-dot : i64 (intern-first-dot name-id)]
+      (if (< first-dot 0)
+        (if (tc-source-name-bound-exact-id? env name-id)
+          (ResultTcString.Ok name)
+          (match (tc-current-module-source-lookup-key-id ctx env name-id)
+            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+            [(TcMaybeString.No) (ResultTcString.Ok name)]))
+        (if (and
+          check-local-field
+          (tc-source-leading-segment-wins-over-exact-from-id?
+            env
+            name
+            name-id
+            first-dot))
+          (ResultTcString.Ok name)
+          (match (tc-comptime-helper-qualified-lookup-key
+            env
+            name
+            name-id
+            first-dot)
+            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+            [(TcMaybeString.No)
+              (let
+                [current-module-id : i64 (intern (tc-context-module ctx))]
+                (match (tc-source-dotted-alias-key
+                  ctx
+                  name
+                  name-id
+                  first-dot
+                  current-module-id)
+                  [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+                  [(TcMaybeString.No)
+                    (match (tc-enum-qualified-variant-lookup-key-from-id
+                      ctx
+                      name
+                      name-id
+                      current-module-id)
+                      [(ResultTcString.Ok key) (ResultTcString.Ok key)]
+                      [(ResultTcString.Err _)
+                        (match (tc-source-dotted-full-path-key-from-id
+                          ctx
+                          name
+                          name-id
+                          current-module-id)
+                          [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+                          [(TcMaybeString.No)
+                            (if (tc-source-name-bound-exact-id? env name-id)
+                              (ResultTcString.Ok name)
+                              (ResultTcString.Err
+                                (tc-unresolved-dotted-name-message name)))])])]))]))))))
+
+(define (tc-source-name-lookup-key-with-field-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [check-local-field : bool]) : ResultTcString
+  (tc-source-name-lookup-key-with-field-check-id
+    ctx
+    env
+    name
+    (tc-name-id name)
+    check-local-field))
+
+(define (tc-source-name-lookup-key-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : ResultTcString
+  (tc-source-name-lookup-key-with-field-check-id ctx env name name-id true))
 
 (define (tc-source-name-lookup-key
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcString
   (tc-source-name-lookup-key-with-field-check ctx env name true))
+
+(define (tc-source-name-lookup-key-after-local-field-check-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : String]
+  [name-id : i64]) : ResultTcString
+  (tc-source-name-lookup-key-with-field-check-id ctx env name name-id false))
 
 (define (tc-source-name-lookup-key-after-local-field-check
   [ctx : TcContext]
@@ -18585,11 +18627,13 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : bool
-  (if (tc-default-builtin-unshadowed? env name)
-    true
-    (match (tc-active-region env)
-      [(TcMaybeString.Some _) (tc-constructor-name? ctx name)]
-      [(TcMaybeString.No) false])))
+  (let
+    [name-id : i64 (tc-name-id name)]
+    (if (tc-default-builtin-unshadowed-id? env name-id)
+      true
+      (match (tc-active-region env)
+        [(TcMaybeString.Some _) (tc-constructor-name? ctx name)]
+        [(TcMaybeString.No) false]))))
 
 (define (tc-expr-var-name [expr : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan expr)
@@ -21574,7 +21618,9 @@
         [name-id : i64 (tc-builtin-name-id name)]
         [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (cond
-          [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+          [(and
+              (tc-layout-query-name? name)
+              (not (tc-name-bound-id? env name-id)))
             (tc-layout-query-runtime-call name args)]
           [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
             (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
@@ -21582,11 +21628,13 @@
             (tc-array-length-call ctx env name func args)]
           [(and
               (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-string-ref-call ctx env args)]
           [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
             (tc-string-ref-call ctx env args)]
-          [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
+          [(and
+              (tc-atomic-pointer-name? name)
+              (not (tc-name-bound-id? env name-id)))
             (tc-atomic-pointer-call ctx env name args)]
           [(tc-arena-safe-call-name? ctx env name "phase")
             (tc-phase-call ctx env args)]
@@ -21604,11 +21652,11 @@
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-reflection-query-runtime-call name)]
           [(and
               (cbi.compiler-builtin-typecheck-clone-id? name-id)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-clone-call ctx env args)]
           [else (tc-call-expr-ordinary ctx env func args)]))]
     [_ (tc-call-expr-ordinary ctx env func args)]))
@@ -22019,14 +22067,14 @@
     (begin
       (when
         (and
-          (or public-helper (tc-default-builtin-unshadowed? env name))
+          (or public-helper (tc-default-builtin-unshadowed-id? env name-id))
           (tc-length-handle-type? arg-ty))
         (return (ResultTcType.Ok (AstType.I64))))
       (unless
         (cbi.compiler-builtin-typecheck-string-length-id? name-id)
         (return (tc-call-expr-ordinary ctx env func args)))
       (unless
-        (or public-helper (tc-default-builtin-unshadowed? env name))
+        (or public-helper (tc-default-builtin-unshadowed-id? env name-id))
         (return (tc-call-expr-ordinary ctx env func args)))
       (if (tc-length-handle-type? arg-ty)
         (ResultTcType.Ok (AstType.I64))
@@ -22039,14 +22087,15 @@
   [func : AstExpr]
   [args : AstExprList]
   [arg-ty : AstType]) : ResultTcType
-  (if (cbi.compiler-builtin-typecheck-array-length-id?
-    (tc-builtin-name-id name))
-    (if (and
-      (tc-type-eq (tc-type-strip-region arg-ty) (AstType.Expr))
-      (tc-name-bound? env name))
-      (ResultTcType.Ok (AstType.I64))
-      (ResultTcType.Err "typecheck: array-length requires dynamic array"))
-    (tc-length-string-call ctx env name func args arg-ty)))
+  (let
+    [name-id : i64 (tc-builtin-name-id name)]
+    (if (cbi.compiler-builtin-typecheck-array-length-id? name-id)
+      (if (and
+        (tc-type-eq (tc-type-strip-region arg-ty) (AstType.Expr))
+        (tc-name-bound-id? env name-id))
+        (ResultTcType.Ok (AstType.I64))
+        (ResultTcType.Err "typecheck: array-length requires dynamic array"))
+      (tc-length-string-call ctx env name func args arg-ty))))
 
 (define (tc-array-length-array-call
   [ctx : TcContext]
@@ -22054,12 +22103,13 @@
   [name : String]
   [func : AstExpr]
   [args : AstExprList]) : ResultTcType
-  (if (cbi.compiler-builtin-typecheck-string-length-id?
-    (tc-builtin-name-id name))
-    (if (tc-default-builtin-unshadowed? env name)
-      (ResultTcType.Err "typecheck: argument type mismatch")
-      (tc-call-expr-ordinary ctx env func args))
-    (ResultTcType.Ok (AstType.I64))))
+  (let
+    [name-id : i64 (tc-builtin-name-id name)]
+    (if (cbi.compiler-builtin-typecheck-string-length-id? name-id)
+      (if (tc-default-builtin-unshadowed-id? env name-id)
+        (ResultTcType.Err "typecheck: argument type mismatch")
+        (tc-call-expr-ordinary ctx env func args))
+      (ResultTcType.Ok (AstType.I64)))))
 
 (define (tc-array-length-receiver [ctx : TcContext] [receiver-ty : AstType]) : ResultTcArrayReceiver
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
@@ -22263,7 +22313,9 @@
         [name-id : i64 (tc-builtin-name-id name)]
         [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
         (cond
-          [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+          [(and
+              (tc-layout-query-name? name)
+              (not (tc-name-bound-id? env name-id)))
             (tc-layout-query-runtime-call name args)]
           [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
             (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
@@ -22271,11 +22323,13 @@
             (tc-array-length-call ctx env name func args)]
           [(and
               (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-string-ref-call ctx env args)]
           [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
             (tc-string-ref-call ctx env args)]
-          [(and (tc-atomic-pointer-name? name) (not (tc-name-bound? env name)))
+          [(and
+              (tc-atomic-pointer-name? name)
+              (not (tc-name-bound-id? env name-id)))
             (tc-atomic-pointer-call ctx env name args)]
           [(tc-arena-safe-call-name? ctx env name "phase")
             (tc-phase-call ctx env args)]
@@ -22285,7 +22339,7 @@
             (tc-destroy-safe-call ctx env args)]
           [(and
               (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-tls-current-arena-call ctx env name-id args)]
           [(and
               (tc-borrowed-string-builtin-id? name-id)
@@ -22299,11 +22353,11 @@
             (tc-borrowed-string-builtin-call ctx env "__tl_string_to_int" args)]
           [(and
               (ctfe-reflection-query-name? name)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-reflection-query-runtime-call name)]
           [(and
               (cbi.compiler-builtin-typecheck-clone-id? name-id)
-              (not (tc-name-bound? env name)))
+              (not (tc-name-bound-id? env name-id)))
             (tc-clone-call ctx env args)]
           [else (tc-call-expr-ordinary ctx env func args)]))]
     [_ (tc-call-expr-ordinary ctx env func args)]))
@@ -22324,7 +22378,9 @@
           [name-id : i64 (tc-builtin-name-id name)]
           [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
           (cond
-            [(and (tc-layout-query-name? name) (not (tc-name-bound? env name)))
+            [(and
+                (tc-layout-query-name? name)
+                (not (tc-name-bound-id? env name-id)))
               (tc-layout-query-runtime-call name args)]
             [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
               (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
@@ -22332,13 +22388,13 @@
               (tc-array-length-call ctx env name func args)]
             [(and
                 (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
-                (not (tc-name-bound? env name)))
+                (not (tc-name-bound-id? env name-id)))
               (tc-string-ref-call ctx env args)]
             [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
               (tc-string-ref-call ctx env args)]
             [(and
                 (tc-atomic-pointer-name? name)
-                (not (tc-name-bound? env name)))
+                (not (tc-name-bound-id? env name-id)))
               (tc-atomic-pointer-call ctx env name args)]
             [(tc-arena-safe-call-name? ctx env name "phase")
               (tc-phase-call ctx env args)]
@@ -22348,7 +22404,7 @@
               (tc-destroy-safe-call ctx env args)]
             [(and
                 (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
-                (not (tc-name-bound? env name)))
+                (not (tc-name-bound-id? env name-id)))
               (tc-tls-current-arena-call ctx env name-id args)]
             [(and
                 (tc-borrowed-string-builtin-id? name-id)
@@ -22366,11 +22422,11 @@
                 args)]
             [(and
                 (ctfe-reflection-query-name? name)
-                (not (tc-name-bound? env name)))
+                (not (tc-name-bound-id? env name-id)))
               (tc-reflection-query-runtime-call name)]
             [(and
                 (cbi.compiler-builtin-typecheck-clone-id? name-id)
-                (not (tc-name-bound? env name)))
+                (not (tc-name-bound-id? env name-id)))
               (tc-clone-call ctx env args)]
             [else (tc-call-expr-ordinary-id ctx env func-id args)]))]
       [_ (tc-call-expr-ordinary-id ctx env func-id args)])))
@@ -23507,7 +23563,7 @@
           [(tc-hygiene-global-name? raw-text)
             (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))]
           [(tc-name-qualified-id? raw-name) (ResultTcString.Ok raw-text)]
-          [else (tc-source-name-lookup-key ctx env raw-text)]))]
+          [else (tc-source-name-lookup-key-id ctx env raw-text raw-name)]))]
     [_ (ResultTcString.Err "")]))
 
 (define (tc-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultTcSpmdInlineHelper
@@ -34326,13 +34382,17 @@
                   env
                   module
                   (tc-name-id global-name))])
-            (match (tc-source-name-lookup-key-after-local-field-check
+            (match (tc-source-name-lookup-key-after-local-field-check-id
               ctx
               env
-              name-text)
+              name-text
+              name)
               [(ResultTcString.Ok lookup-name)
                 (let
-                  [lookup-id : i64 (tc-name-id lookup-name)]
+                  [lookup-id : i64
+                    (if (string.eq lookup-name name-text)
+                      name
+                      (tc-name-id lookup-name))]
                   (match (tc-lookup-unsafe-id env lookup-id)
                     [(ResultTcTypeUnsafe.Ok ty unsafe)
                       (if unsafe

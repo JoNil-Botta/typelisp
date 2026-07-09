@@ -786,27 +786,6 @@
     [(CompilerMaybeSourceSpan.Some span) (CompilerMaybeSourceSpan.Some span)]
     [(CompilerMaybeSourceSpan.No) (lower-expr-id-first-span2 second third)]))
 
-(define (lower-expr-id-first-span4
-  [first : i64]
-  [second : i64]
-  [third : i64]
-  [fourth : i64]) : CompilerMaybeSourceSpan
-  (match (lower-expr-id-span first)
-    [(CompilerMaybeSourceSpan.Some span) (CompilerMaybeSourceSpan.Some span)]
-    [(CompilerMaybeSourceSpan.No)
-      (lower-expr-id-first-span3 second third fourth)]))
-
-(define (lower-expr-id-first-span5
-  [first : i64]
-  [second : i64]
-  [third : i64]
-  [fourth : i64]
-  [fifth : i64]) : CompilerMaybeSourceSpan
-  (match (lower-expr-id-span first)
-    [(CompilerMaybeSourceSpan.Some span) (CompilerMaybeSourceSpan.Some span)]
-    [(CompilerMaybeSourceSpan.No)
-      (lower-expr-id-first-span4 second third fourth fifth)]))
-
 (define (lower-expr-list-first-span-at
   [exprs : (& exprs AstExprList)]
   [index : i64]) : CompilerMaybeSourceSpan
@@ -935,11 +914,18 @@
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ _ _ start end init value)
-          (lower-expr-id-first-span4 start end init value)])]
+          (match (lower-expr-id-first-span3 start end init)
+            [(CompilerMaybeSourceSpan.Some span)
+              (CompilerMaybeSourceSpan.Some span)]
+            [(CompilerMaybeSourceSpan.No) (lower-expr-id-span value)])])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan _ _ _ start end _ _ init value body)
-          (lower-expr-id-first-span5 start end init value body)])]
+          (match (lower-expr-id-first-span3 start end init)
+            [(CompilerMaybeSourceSpan.Some span)
+              (CompilerMaybeSourceSpan.Some span)]
+            [(CompilerMaybeSourceSpan.No)
+              (lower-expr-id-first-span2 value body)])])]
     [(AstExpr.SpmdBroadcast value lane) (lower-expr-id-first-span2 value lane)]
     [(AstExpr.SpmdShuffle value lane) (lower-expr-id-first-span2 value lane)]
     [(AstExpr.StructGet target _) (lower-expr-id-span target)]
@@ -46765,6 +46751,17 @@
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerLower.Ok _ _) false]))
 
+(define (compiler-lower-maybe-span-start-ok?
+  [found-span : CompilerMaybeSourceSpan]
+  [line : i64]
+  [col : i64]) : bool
+  (match found-span
+    [(CompilerMaybeSourceSpan.Some found)
+      (and
+        (= (ast-source-span-start-line found) line)
+        (= (ast-source-span-start-col found) col))]
+    [(CompilerMaybeSourceSpan.No) false]))
+
 (define (compiler-lower-nested-expression-diagnostic-span-ok?) : bool
   (let
     [span : AstSourceSpan (ast-source-span 11 3 11 9)]
@@ -46784,14 +46781,103 @@
           "lower: nested expression diagnostic")
         (= (compiler-diagnostic-line diag) 11)
         (= (compiler-diagnostic-col diag) 3))]
-    [span-ok : bool
-      (match found-span
-        [(CompilerMaybeSourceSpan.Some found)
-          (and
-            (= (ast-source-span-start-line found) 11)
-            (= (ast-source-span-start-col found) 3))]
-        [(CompilerMaybeSourceSpan.No) false])]
+    [span-ok : bool (compiler-lower-maybe-span-start-ok? found-span 11 3)]
     (and diag-ok span-ok)))
+
+(define (compiler-lower-compound-expression-diagnostic-span-ok?) : bool
+  (let
+    [span : AstSourceSpan (ast-source-span 17 5 17 12)]
+    [plain : i64 (ast-node-push (AstExpr.Literal AstLiteral.Unit))]
+    [inner : i64 (ast-node-push (AstExpr.Var (intern "compound-value")))]
+    [spanned-inner : i64 (ast-expr-spanned inner span)]
+    [items : AstExprList
+      (ast-expr-cons plain (ast-expr-cons spanned-inner (ast-expr-list-new)))]
+    [bindings : AstLetBindingList
+      (ast-let-binding-cons
+        (ast-let-binding "a" (AstMaybeType.No) plain)
+        (ast-let-binding-cons
+          (ast-let-binding "b" (AstMaybeType.No) spanned-inner)
+          (ast-let-binding-list-new)))]
+    [arms : AstMatchArmList
+      (ast-match-arm-cons
+        (ast-match-arm (AstPattern.Wildcard) plain)
+        (ast-match-arm-cons
+          (ast-match-arm (AstPattern.Wildcard) spanned-inner)
+          (ast-match-arm-list-new)))]
+    [resources : AstResourceBindingList
+      (ast-resource-binding-cons
+        (ast-resource-binding "a" plain plain)
+        (ast-resource-binding-cons
+          (ast-resource-binding "b" spanned-inner plain)
+          (ast-resource-binding-list-new)))]
+    [ok : bool true]
+    (begin
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.Binary (AstBinOp.Add) plain spanned-inner))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.Call plain items))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.If plain plain spanned-inner))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.Let (box (AstLet.Let bindings plain))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.Match (box (AstMatch.Match plain arms))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.WithResource
+              (box (AstWithResource.WithResource resources items))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.SpmdScan
+              (box
+                (AstSpmdScan.Scan
+                  (AstReduceOp.Sum)
+                  (intern "i")
+                  (AstType.I64)
+                  plain
+                  plain
+                  (intern "prefix")
+                  (AstType.I64)
+                  plain
+                  plain
+                  spanned-inner))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.Syscall items))
+          17
+          5)
+        (set! ok false))
+      ok)))
 
 (define (compiler-lower-mode-error-ok?
   [src : String]
@@ -56164,6 +56250,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-nested-expression-diagnostic-span-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-compound-expression-diagnostic-span-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))

@@ -425,19 +425,7 @@ expected_target_asm_mismatch() {
     # TL-vs-C parity green). The gate flags a stale entry if the output matches
     # again, so remove an entry once a future change re-converges the two targets.
     #
-    # opt0/opt1 lambda_capture_struct_enum: the unoptimized backend emits a few
-    # EXTRA redundant home stores (`movq %rN, K(%rsp)`) on Windows that Linux
-    # does not, because the two ABIs lay the frame out differently (Win64's
-    # 4 arg registers + 32-byte shadow space vs SysV's 6 arg registers). The
-    # Windows body is a strict superset of the Linux body (only additive stores
-    # of already-correct values to owned frame slots -- diff shows only `+`
-    # lines), so it is behavior-identical; the lambda_capture integration
-    # fixture runs correctly on both targets. Not normalizable without the gate
-    # itself assuming which stores are dead, so it is allowlisted like the
-    # opt2 register-choice cases above.
     case "${_etm_opt}:${_etm_name}" in
-        0:lambda_capture_struct_enum) return 0 ;;
-        1:lambda_capture_struct_enum) return 0 ;;
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;

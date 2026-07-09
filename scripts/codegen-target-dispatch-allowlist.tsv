@@ -46,7 +46,7 @@ src/compiler_backend.tl	compiler-backend-emit-syscall	runtime	compiler-backend-t
 src/compiler_backend.tl	compiler-backend-emit-inline-fast-alloc	runtime	compiler-backend-target-windows[?]	1	Windows register choices differ in the inline allocator fast path.
 src/compiler_backend.tl	compiler-backend-emit-windows-main-argv-capture	entry	compiler-backend-target-windows[?]	1	Windows CRT passes argc and argv in Win64 registers.
 src/compiler_backend.tl	compiler-backend-emit-linux-crt-main-argv-capture	entry	compiler-backend-target-linux[?]	1	Linux CRT passes argc, argv, and envp in System V registers.
-src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	5	Function emission adds target entry argument capture and object-format suffixes.
+src/compiler_backend.tl	compiler-backend-emit-function	entry	compiler-backend-target-(linux|windows)[?]	6	Function emission adds target entry argument capture, object-format suffixes, and Win64 rbp-frame sweep metadata.
 src/compiler_backend.tl	compiler-backend-object-call-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object call lowering reserves target ABI shadow and stack argument space.
 src/compiler_backend.tl	compiler-backend-object-call-arg-moves	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object stack argument moves differ between System V and Win64.
 src/compiler_backend.tl	compiler-backend-object-param-spills	abi	CompilerBackendTarget[.](Linux|Windows)	2	Direct-object callee parameter spills differ for target stack arguments.

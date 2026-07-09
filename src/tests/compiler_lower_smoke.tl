@@ -440,6 +440,12 @@
       (compiler-lower-spans-ok? (compiler-lower-smoke-source))
       (panic "lower: source span smoke mismatch"))
     (unless
+      (compiler-lower-nested-expression-diagnostic-span-ok?)
+      (panic "lower: nested diagnostic span smoke mismatch"))
+    (unless
+      (compiler-lower-compound-expression-diagnostic-span-ok?)
+      (panic "lower: compound diagnostic span smoke mismatch"))
+    (unless
       (compiler-lower-ok? (compiler-lower-match-source))
       (panic "lower: match smoke mismatch"))
     (unless

@@ -733,6 +733,7 @@
 (defstruct SelfhostLintDeadDecl
   (path String)
   (name String)
+  (key String)
   (span AstSourceSpan)
   (refs lint_svec.Vec)
   (root bool)
@@ -860,6 +861,76 @@
     (struct-get scan decls)
     (selfhost-lint-dead-root-add (struct-get scan roots) name)))
 
+(define (selfhost-lint-dead-module-key [module : String] [name : String]) : String
+  (if (= (string.string-length module) 0)
+    name
+    (string.append module (string.append "/" name))))
+
+(define (selfhost-lint-dead-qualified-ref-prefix) : String
+  "\nselfhost-lint-dead-qualified-ref\n")
+
+(define (selfhost-lint-dead-qualified-ref [key : String] [fallback : String]) : String
+  (string.append
+    (selfhost-lint-dead-qualified-ref-prefix)
+    (string.append key (string.append "\n" fallback))))
+
+(define (selfhost-lint-dead-qualified-ref? [ref : String]) : bool
+  (selfhost-lint-prefix-at? ref 0 (selfhost-lint-dead-qualified-ref-prefix)))
+
+(define (selfhost-lint-dead-qualified-ref-separator [ref : String]) : i64
+  (string.index-of-byte
+    (& ref)
+    (string.string-length (selfhost-lint-dead-qualified-ref-prefix))
+    (cast '\n' : u8)))
+
+(define (selfhost-lint-dead-qualified-ref-key [ref : String]) : String
+  (let
+    [start : i64
+      (string.string-length (selfhost-lint-dead-qualified-ref-prefix))]
+    [sep : i64 (selfhost-lint-dead-qualified-ref-separator ref)]
+    (if (< sep start)
+      ""
+      (string.substring ref start (- sep start)))))
+
+(define (selfhost-lint-dead-qualified-ref-fallback [ref : String]) : String
+  (let
+    [sep : i64 (selfhost-lint-dead-qualified-ref-separator ref)]
+    [name-len : i64 (string.string-length ref)]
+    (if (or (< sep 0) (>= (+ sep 1) name-len))
+      ""
+      (string.substring ref (+ sep 1) (- name-len (+ sep 1))))))
+
+(define (selfhost-lint-dead-local-ref [module : String] [ref : String]) : String
+  (if (or
+    (= (string.string-length module) 0)
+    (selfhost-lint-dead-qualified-ref? ref))
+    ref
+    (selfhost-lint-dead-qualified-ref
+      (selfhost-lint-dead-module-key module ref)
+      ref)))
+
+(define (selfhost-lint-dead-localize-refs-from
+  [module : String]
+  [refs : lint_svec.Vec]
+  [index : i64]
+  [out : lint_svec.Vec]) : lint_svec.Vec
+  (if (>= index (lint_svec.len (& refs)))
+    out
+    (selfhost-lint-dead-localize-refs-from
+      module
+      refs
+      (+ index 1)
+      (selfhost-lint-dead-ref-add-raw
+        out
+        (selfhost-lint-dead-local-ref module (lint_svec.get (& refs) index ""))))))
+
+(define (selfhost-lint-dead-localize-refs
+  [module : String]
+  [refs : lint_svec.Vec]) : lint_svec.Vec
+  (if (= (string.string-length module) 0)
+    refs
+    (selfhost-lint-dead-localize-refs-from module refs 0 (lint_svec.new))))
+
 (define (selfhost-lint-dead-ref-add-raw [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
   (if (lint_svec.contains? (& refs) name)
     refs
@@ -887,14 +958,17 @@
 
 (define (selfhost-lint-dead-ref-add [refs : lint_svec.Vec] [name : String]) : lint_svec.Vec
   (let
-    [with-name : lint_svec.Vec (selfhost-lint-dead-ref-add-raw refs name)]
     [last-dot : i64 (selfhost-lint-dead-last-dot name)]
     [name-len : i64 (string.string-length name)]
     (if (and (>= last-dot 0) (< (+ last-dot 1) name-len))
       (selfhost-lint-dead-ref-add-raw
-        with-name
-        (string.substring name (+ last-dot 1) (- name-len (+ last-dot 1))))
-      with-name)))
+        refs
+        (selfhost-lint-dead-qualified-ref
+          (selfhost-lint-dead-module-key
+            (string.substring name 0 last-dot)
+            (string.substring name (+ last-dot 1) (- name-len (+ last-dot 1))))
+          (string.substring name (+ last-dot 1) (- name-len (+ last-dot 1)))))
+      (selfhost-lint-dead-ref-add-raw refs name))))
 
 (define (selfhost-lint-dead-ref-add-id [refs : lint_svec.Vec] [name : i64]) : lint_svec.Vec
   (selfhost-lint-dead-ref-add refs (intern-str name)))
@@ -1602,17 +1676,28 @@
 (define (selfhost-lint-dead-add-node
   [scan : SelfhostLintDeadScan]
   [path : String]
+  [module : String]
   [name : String]
   [span : AstSourceSpan]
   [refs : lint_svec.Vec]
   [reportable : bool]) : SelfhostLintDeadScan
-  (selfhost-lint-dead-scan-add-decl
-    scan
-    (SelfhostLintDeadDecl path name span refs false reportable)))
+  (let
+    [node-refs : lint_svec.Vec (selfhost-lint-dead-localize-refs module refs)]
+    (selfhost-lint-dead-scan-add-decl
+      scan
+      (SelfhostLintDeadDecl
+        path
+        name
+        (selfhost-lint-dead-module-key module name)
+        span
+        node-refs
+        false
+        reportable))))
 
 (define (selfhost-lint-dead-add-visible-node
   [scan : SelfhostLintDeadScan]
   [path : String]
+  [module : String]
   [name : String]
   [span : AstSourceSpan]
   [refs : lint_svec.Vec]
@@ -1620,7 +1705,7 @@
   [reportable : bool]) : SelfhostLintDeadScan
   (let
     [with-node : SelfhostLintDeadScan
-      (selfhost-lint-dead-add-node scan path name span refs reportable)]
+      (selfhost-lint-dead-add-node scan path module name span refs reportable)]
     (if root
       (selfhost-lint-dead-scan-add-root with-node name)
       with-node)))
@@ -1628,15 +1713,17 @@
 (define (selfhost-lint-dead-scan-decl
   [scan : SelfhostLintDeadScan]
   [path : String]
+  [module : String]
   [source : String]
   [decl : AstDecl]
   [visible-root : bool]
   [allow-report : bool]) : SelfhostLintDeadScan
   (match decl
-    [(AstDecl.ModuleBody _ body-box)
+    [(AstDecl.ModuleBody name body-box)
       (selfhost-lint-dead-scan-decls
         scan
         path
+        (intern-str name)
         source
         visible-root
         allow-report
@@ -1657,6 +1744,7 @@
         (selfhost-lint-dead-add-visible-node
           scan
           path
+          module
           text
           span
           refs
@@ -1679,6 +1767,7 @@
         (selfhost-lint-dead-add-visible-node
           scan
           path
+          module
           text
           span
           refs
@@ -1688,6 +1777,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (selfhost-lint-dead-expr-span body)
         (selfhost-lint-dead-expr-refs
@@ -1701,6 +1791,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-type-refs
@@ -1712,6 +1803,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
@@ -1723,6 +1815,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
@@ -1734,6 +1827,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
@@ -1745,6 +1839,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
@@ -1769,6 +1864,7 @@
       (selfhost-lint-dead-add-visible-node
         scan
         path
+        module
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-dispatch-variant-list-refs variants (lint_svec.new))
@@ -1782,6 +1878,7 @@
       (selfhost-lint-dead-scan-decl
         scan
         path
+        module
         source
         (box-get inner)
         visible-root
@@ -1791,6 +1888,7 @@
         (selfhost-lint-dead-scan-decl
           scan
           path
+          module
           source
           (box-get inner)
           visible-root
@@ -1800,6 +1898,7 @@
 (define (selfhost-lint-dead-scan-decls
   [scan : SelfhostLintDeadScan]
   [path : String]
+  [module : String]
   [source : String]
   [visible-root : bool]
   [reportable : bool]
@@ -1807,19 +1906,48 @@
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) scan]
     [(AstDeclListStep.Cons decl rest)
-      (selfhost-lint-dead-scan-decls
-        (selfhost-lint-dead-scan-decl
-          scan
-          path
-          source
-          decl
-          visible-root
-          reportable)
-        path
-        source
-        visible-root
-        reportable
-        rest)]))
+      (match decl
+        [(AstDecl.Module name)
+          (selfhost-lint-dead-scan-decls
+            scan
+            path
+            (intern-str name)
+            source
+            visible-root
+            reportable
+            rest)]
+        [(AstDecl.ModuleBody name body-box)
+          (selfhost-lint-dead-scan-decls
+            (selfhost-lint-dead-scan-decls
+              scan
+              path
+              (intern-str name)
+              source
+              visible-root
+              reportable
+              (box-get body-box))
+            path
+            module
+            source
+            visible-root
+            reportable
+            rest)]
+        [_
+          (selfhost-lint-dead-scan-decls
+            (selfhost-lint-dead-scan-decl
+              scan
+              path
+              module
+              source
+              decl
+              visible-root
+              reportable)
+            path
+            module
+            source
+            visible-root
+            reportable
+            rest)])]))
 
 (define (selfhost-lint-dead-scan-source
   [scan : SelfhostLintDeadScan]
@@ -1837,6 +1965,7 @@
           (selfhost-lint-dead-scan-decls
             scan
             path
+            ""
             source
             visible-root
             reportable
@@ -1891,6 +2020,23 @@
   [name : String]) : i64
   (selfhost-lint-dead-decls-index-of-from items name 0))
 
+(define (selfhost-lint-dead-decls-index-of-key-from
+  [items : SelfhostLintDeadDecls]
+  [key : String]
+  [index : i64]) : i64
+  (if (>= index (selfhost-lint-dead-decls-count items))
+    (- 0 1)
+    (if (string.eq
+      (struct-get (selfhost-lint-dead-decls-ref items index) key)
+      key)
+      index
+      (selfhost-lint-dead-decls-index-of-key-from items key (+ index 1)))))
+
+(define (selfhost-lint-dead-decls-index-of-key
+  [items : SelfhostLintDeadDecls]
+  [key : String]) : i64
+  (selfhost-lint-dead-decls-index-of-key-from items key 0))
+
 (define (selfhost-lint-dead-mark-refs-from
   [items : SelfhostLintDeadDecls]
   [refs : lint_svec.Vec]
@@ -1898,7 +2044,7 @@
   (if (>= index (lint_svec.len (& refs)))
     items
     (selfhost-lint-dead-mark-refs-from
-      (selfhost-lint-dead-mark-reachable-name
+      (selfhost-lint-dead-mark-reachable-ref
         items
         (lint_svec.get (& refs) index ""))
       refs
@@ -1916,6 +2062,7 @@
           (SelfhostLintDeadDecl
             (struct-get decl path)
             (struct-get decl name)
+            (struct-get decl key)
             (struct-get decl span)
             (struct-get decl refs)
             true
@@ -1932,6 +2079,22 @@
     (if (< index 0)
       items
       (selfhost-lint-dead-mark-reachable-index items index))))
+
+(define (selfhost-lint-dead-mark-reachable-ref
+  [items : SelfhostLintDeadDecls]
+  [ref : String]) : SelfhostLintDeadDecls
+  (if (selfhost-lint-dead-qualified-ref? ref)
+    (let
+      [index : i64
+        (selfhost-lint-dead-decls-index-of-key
+          items
+          (selfhost-lint-dead-qualified-ref-key ref))]
+      (if (< index 0)
+        (selfhost-lint-dead-mark-reachable-name
+          items
+          (selfhost-lint-dead-qualified-ref-fallback ref))
+        (selfhost-lint-dead-mark-reachable-index items index)))
+    (selfhost-lint-dead-mark-reachable-name items ref)))
 
 (define (selfhost-lint-dead-mark-root-name-from
   [items : SelfhostLintDeadDecls]
@@ -1950,7 +2113,9 @@
 (define (selfhost-lint-dead-mark-root-name
   [items : SelfhostLintDeadDecls]
   [name : String]) : SelfhostLintDeadDecls
-  (selfhost-lint-dead-mark-root-name-from items name 0))
+  (if (selfhost-lint-dead-qualified-ref? name)
+    (selfhost-lint-dead-mark-reachable-ref items name)
+    (selfhost-lint-dead-mark-root-name-from items name 0)))
 
 (define (selfhost-lint-dead-mark-roots-from
   [items : SelfhostLintDeadDecls]
@@ -3030,6 +3195,21 @@
 (define (selfhost-lint-package-dead-test-root-source) : String
   "(define (main) : i64 (test-reached-helper))")
 
+(define (selfhost-lint-package-dead-qualified-left-source) : String
+  "(module left)
+(define (helper) : i64 1)")
+
+(define (selfhost-lint-package-dead-qualified-right-source) : String
+  "(module right)
+(define (live) : i64 (helper))
+(define (helper) : i64 2)")
+
+(define (selfhost-lint-package-dead-qualified-main-source) : String
+  "(module main)
+(import left)
+(import right)
+(define (main) : i64 (right.live))")
+
 (define (selfhost-lint-unused-assignment-init-source) : String
   "(define (main) : i64
   (let
@@ -3451,6 +3631,39 @@
       (struct-get scan roots)
       0)))
 
+(define (selfhost-lint-package-dead-qualified-import-fixture-decls) : SelfhostLintDeadDecls
+  (let
+    [left-source : String (selfhost-lint-package-dead-qualified-left-source)]
+    [right-source : String (selfhost-lint-package-dead-qualified-right-source)]
+    [main-source : String (selfhost-lint-package-dead-qualified-main-source)]
+    [scan-left : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (lint_svec.new))
+        "pkg/left.tl"
+        left-source
+        false
+        true)]
+    [scan-right : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        scan-left
+        "pkg/right.tl"
+        right-source
+        false
+        true)]
+    [scan-main : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        scan-right
+        "pkg/main.tl"
+        main-source
+        false
+        true)]
+    [scan : SelfhostLintDeadScan
+      (selfhost-lint-package-dead-add-kind-roots scan-main CompilerPkgKindBin)]
+    (selfhost-lint-dead-mark-roots-from
+      (struct-get scan decls)
+      (struct-get scan roots)
+      0)))
+
 (define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
   (let
     [root : String "target/lint_dead_root_import_closure"]
@@ -3558,6 +3771,18 @@
         "pkg/src/main.tl"
         (selfhost-lint-package-dead-entry-source)
         test-root-decls)]
+    [qualified-import-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-qualified-import-fixture-decls)]
+    [qualified-left-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/left.tl"
+        (selfhost-lint-package-dead-qualified-left-source)
+        qualified-import-decls)]
+    [qualified-right-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/right.tl"
+        (selfhost-lint-package-dead-qualified-right-source)
+        qualified-import-decls)]
     [finding : LintFinding (lint-dead-code-finding "unused" (lint-no-span))]
     [finding-message : String (struct-get finding message)]
     [dead-suggestion : String (lint-rule-dead-code-suggestion)]
@@ -3570,6 +3795,8 @@
       [(not (= lib-count-b 0)) 53]
       [(not (= test-root-count 1)) 57]
       [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
+      [(not (= qualified-left-count 1)) 59]
+      [(not (= qualified-right-count 0)) 60]
       [(not
           (string.eq
             (lint-rule-message (lint-rule-dead-code-id))

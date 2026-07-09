@@ -17222,12 +17222,18 @@
 
 (define (lower-call-explicit-mut-borrow-var-name
   [ctx : TcContext]
+  [type-env : TcTypeEnv]
   [arg : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan arg)
     [(AstExpr.Borrow mutable _ place-box)
       (if mutable
         (match (ast-expr-unspan (lower-context-expr-get ctx place-box))
-          [(AstExpr.Var name) (TcMaybeString.Some (intern-str name))]
+          [(AstExpr.Var name)
+            (let
+              [name-text : String (intern-str name)]
+              (if (>= (tc-name-first-dot name-text) 0)
+                TcMaybeString.No
+                (TcMaybeString.Some name-text)))]
           [_ TcMaybeString.No])
         TcMaybeString.No)]
     [_ TcMaybeString.No]))
@@ -17321,7 +17327,10 @@
     [(ResultTcExpr.Ok effective-arg)
       (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
         [(AstType.MutRef _ _)
-          (match (lower-call-explicit-mut-borrow-var-name ctx effective-arg)
+          (match (lower-call-explicit-mut-borrow-var-name
+            ctx
+            type-env
+            effective-arg)
             [(TcMaybeString.Some name)
               (lower-call-arg-mut-borrow-var-as
                 ctx
@@ -21055,6 +21064,16 @@
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
         (lower-box-get ctx state env type-env inner expected-ty))]
+    [(AstExpr.Borrow _ _ _)
+      (lower-expr-with-type-and-coerce
+        ctx
+        state
+        env
+        type-env
+        expr
+        origin
+        expected-ty
+        expected-ty)]
     [(AstExpr.Init maybe-ty)
       (match maybe-ty
         [(AstMaybeType.No)
@@ -46326,6 +46345,17 @@
 (define (main [n : i64]) : unit
   (take n))")
 
+(define (compiler-lower-reference-mut-dotted-field-source) : String
+  "(defstruct Inner (value i64))
+(defstruct World (inner Inner))
+(define (set-inner [inner : (&mut inner Inner)]) : unit
+  (set! (struct-get inner value) 8))
+(define (main) : i64
+  (let [w : World (World (Inner 7))]
+    (begin
+      (set-inner (&mut w.inner))
+      (struct-get (struct-get w inner) value))))")
+
 (define (compiler-lower-reference-return-source) : String
   "(define (ref-return [n : i64]) : (& n i64) (& n))
 (define (ref-id [r : (& n i64)]) : (& n i64) r)
@@ -57346,6 +57376,10 @@
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-reference-auto-borrow-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-ok?
+        (compiler-lower-reference-mut-dotted-field-source))
         unit
         (set! ok false))
       (if (compiler-lower-reference-values-shape-ok?)

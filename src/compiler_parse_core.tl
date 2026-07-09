@@ -6957,7 +6957,10 @@
       (match (parse-ast-decl-maybe-with-pools dispatch pools (sp-node-get form))
         [(ResultAstMaybeDecl.SomeDecl decl)
           (begin
-            (parse-ast-decl-vec-push out decl)
+            (parse-ast-decl-vec-push-spanned
+              out
+              decl
+              (parse-ast-decl-primary-source-span (sp-node-get form)))
             (parse-ast-module-body-forms-into-vec
               dispatch
               pools
@@ -7621,8 +7624,42 @@
       (ast-node-pool-context-install! pools)
       result)))
 
+(define (parse-ast-decl-primary-source-span [s : SpannedSexpr]) : AstSourceSpan
+  (match s
+    [(SpannedSexpr.Cons head-node rest _)
+      (match (sp-node-get head-node)
+        [(SpannedSexpr.Sym "unsafe" _)
+          (match (sp-node-get rest)
+            [(SpannedSexpr.Cons inner _ _)
+              (ast-source-span-from-source-span
+                (spanned-sexpr-span (sp-node-get inner)))]
+            [_ (ast-source-span-from-source-span (spanned-sexpr-span s))])]
+        [(SpannedSexpr.Sym "comptime-decl" _)
+          (match (sp-node-get rest)
+            [(SpannedSexpr.Cons first tail _)
+              (match (sp-node-get tail)
+                [(SpannedSexpr.Nil _)
+                  (ast-source-span-from-source-span
+                    (spanned-sexpr-span (sp-node-get first)))]
+                [(SpannedSexpr.Cons template _ _)
+                  (ast-source-span-from-source-span
+                    (spanned-sexpr-span (sp-node-get template)))]
+                [_ (ast-source-span-from-source-span (spanned-sexpr-span s))])]
+            [_ (ast-source-span-from-source-span (spanned-sexpr-span s))])]
+        [(SpannedSexpr.Sym "cfg" _)
+          (match (sp-node-get rest)
+            [(SpannedSexpr.Cons _ decl-tail _)
+              (match (sp-node-get decl-tail)
+                [(SpannedSexpr.Cons decl _ _)
+                  (parse-ast-decl-primary-source-span (sp-node-get decl))]
+                [_ (ast-source-span-from-source-span (spanned-sexpr-span s))])]
+            [_ (ast-source-span-from-source-span (spanned-sexpr-span s))])]
+        [_ (ast-source-span-from-source-span (spanned-sexpr-span s))])]
+    [_ (ast-source-span-from-source-span (spanned-sexpr-span s))]))
+
 (defstruct ParseAstDeclVec
   (slots (Array AstDecl))
+  (spans (Array AstSourceSpan))
   (len i64))
 
 (define (parse-ast-decl-vec-fallback) : AstDecl
@@ -7634,7 +7671,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ParseAstDeclVec (make-array AstDecl cap) 0)))
+    (ParseAstDeclVec (make-array AstDecl cap) (make-array AstSourceSpan cap) 0)))
 
 (define (parse-ast-decl-vec-new) : ParseAstDeclVec
   (parse-ast-decl-vec-with-capacity 16))
@@ -7652,6 +7689,11 @@
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
     (array-ref (struct-get v slots) index)
     fallback))
+
+(define (parse-ast-decl-vec-span [v : (& v ParseAstDeclVec)] [index : i64]) : AstSourceSpan
+  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
+    (array-ref (struct-get v spans) index)
+    (ast-source-span-none)))
 
 (define (parse-ast-decl-vec-copy-range
   [dst : (&mut dst (Array AstDecl))]
@@ -7673,13 +7715,23 @@
         1
         (* old-cap 2))]
     [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
+    [bigger-spans : (Array AstSourceSpan) (make-array AstSourceSpan new-cap)]
     (begin
       (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
-      (set! (struct-get v slots) bigger))))
+      (ast-decl-list-copy-spans
+        (&mut bigger-spans)
+        (& (struct-get v spans))
+        0
+        0
+        0
+        n)
+      (set! (struct-get v slots) bigger)
+      (set! (struct-get v spans) bigger-spans))))
 
-(define (parse-ast-decl-vec-push
+(define (parse-ast-decl-vec-push-spanned
   [v : (&mut v ParseAstDeclVec)]
-  [value : AstDecl]) : unit
+  [value : AstDecl]
+  [span : AstSourceSpan]) : unit
   (begin
     (if (< (struct-get v len) (array-length (struct-get v slots)))
       unit
@@ -7688,7 +7740,13 @@
       [index : i64 (struct-get v len)]
       (begin
         (array-set! (struct-get v slots) index value)
+        (array-set! (struct-get v spans) index span)
         (set! (struct-get v len) (+ index 1))))))
+
+(define (parse-ast-decl-vec-push
+  [v : (&mut v ParseAstDeclVec)]
+  [value : AstDecl]) : unit
+  (parse-ast-decl-vec-push-spanned v value (ast-source-span-none)))
 
 (define (parse-ast-decl-vec-push-list!
   [out : (&mut out ParseAstDeclVec)]
@@ -7697,7 +7755,10 @@
     [(AstDeclListStep.Nil) unit]
     [(AstDeclListStep.Cons head rest)
       (begin
-        (parse-ast-decl-vec-push out head)
+        (parse-ast-decl-vec-push-spanned
+          out
+          head
+          (ast-decl-list-head-span decls))
         (parse-ast-decl-vec-push-list! out rest))]))
 
 (define (parse-ast-decl-vec-copy-to-list
@@ -7707,9 +7768,10 @@
   (if (>= index (parse-ast-decl-vec-len items))
     unit
     (begin
-      (ast-decl-list-push
+      (ast-decl-list-push-spanned
         out
-        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))
+        (parse-ast-decl-vec-span items index))
       (parse-ast-decl-vec-copy-to-list items (+ index 1) out))))
 
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
@@ -7740,7 +7802,10 @@
             [(ResultAstMaybeDecl.SomeDecl decl)
               (begin
                 (sp-node-pool-truncate! mark)
-                (parse-ast-decl-vec-push out decl)
+                (parse-ast-decl-vec-push-spanned
+                  out
+                  decl
+                  (parse-ast-decl-primary-source-span form))
                 (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
             [(ResultAstMaybeDecl.Decls decls)
               (begin
@@ -7921,7 +7986,10 @@
               [(ResultAstMaybeDecl.SomeDecl decl)
                 (begin
                   (sp-node-pool-truncate! mark)
-                  (parse-ast-decl-vec-push out decl)
+                  (parse-ast-decl-vec-push-spanned
+                    out
+                    decl
+                    (parse-ast-decl-primary-source-span spanned-form))
                   (parse-ast-program-forms-diagnostic-into-vec
                     path
                     dispatch
@@ -8153,6 +8221,53 @@
     [(ResultAstProgram.Ok _) false]
     [(ResultAstProgram.Err message)
       (string.eq message "parse: malformed value definition")]))
+
+(define (compiler-parse-decl-list-head-span-at?
+  [decls : AstDeclList]
+  [line : i64]
+  [col : i64]) : bool
+  (let
+    [span : AstSourceSpan (ast-decl-list-head-span decls)]
+    (and
+      (= (ast-source-span-start-line span) line)
+      (= (ast-source-span-start-col span) col))))
+
+(define (compiler-parse-declaration-sidecar-spans-ok?) : bool
+  (match (parse-ast-source
+    "(unsafe
+  (extern unsafe-raw : i64))
+(comptime-decl
+  (defstruct Deferred (value i64)))
+(module nested
+  (define module-value : i64 1))")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (match (ast-decl-list-step decls)
+          [(AstDeclListStep.Cons (AstDecl.Unsafe _) rest1)
+            (let
+              [rest1 : AstDeclList rest1]
+              (match (ast-decl-list-step rest1)
+                [(AstDeclListStep.Cons (AstDecl.ComptimeDecl _ _) rest2)
+                  (let
+                    [rest2 : AstDeclList rest2]
+                    (match (ast-decl-list-step rest2)
+                      [(AstDeclListStep.Cons
+                          (AstDecl.ModuleBody _ body-box)
+                          done)
+                        (let
+                          [body : AstDeclList (box-get body-box)]
+                          [done : AstDeclList done]
+                          (and
+                            (ast-decl-list-empty? (& done))
+                            (compiler-parse-decl-list-head-span-at? decls 2 3)
+                            (compiler-parse-decl-list-head-span-at? rest1 4 3)
+                            (compiler-parse-decl-list-head-span-at? rest2 6 3)
+                            (compiler-parse-decl-list-head-span-at? body 6 3)))]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-import-metadata-ok?) : bool
   (match (parse-ast-source "(import \"stdlib/tl\" module std.io :as io)")
@@ -11104,6 +11219,7 @@
     (compiler-parse-comptime-decl-ok?)
     (compiler-parse-unsafe-decl-ok?)
     (compiler-parse-module-decl-ok?)
+    (compiler-parse-declaration-sidecar-spans-ok?)
     (compiler-parse-import-metadata-ok?)
     (compiler-parse-dotted-import-metadata-ok?)
     (compiler-parse-module-macro-surface-ok?)

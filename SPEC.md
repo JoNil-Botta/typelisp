@@ -866,8 +866,10 @@ Diagnostics for generated declarations report the most useful source
 locations: the macro call or import site, the generated declaration span when
 available, and the generated identity key. Type errors inside generated
 declarations point at the generated declaration and include an expansion
-stack back to the call site. Duplicate diagnostics show both the existing
-generated identity and the conflicting request.
+stack back to the call site. A generated declaration with neither a concrete
+declaration nor expression span uses line 1, column 1 as the stable phase
+fallback and retains its generated-origin notes. Duplicate diagnostics show
+both the existing generated identity and the conflicting request.
 
 Collection modules that expose generated-module surfaces must keep their
 identity keys stable and must not rely on compiler-private generator names or
@@ -5933,7 +5935,7 @@ in documentation passes.
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
 | Aggregate `ptr-addr-of` implementation | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464. |
 | Cleanup-owning enums | Reserved. |
-| Complete source locations for all semantic errors | Partial: wrapper/unary expression-derived typecheck/lower diagnostics and common compound expression-derived lower diagnostics reuse nested source spans through first source-carrying child fallback; remaining gaps are symbol/registry failures, declaration-shape diagnostics without declaration spans, and internal/synthetic macro rebuild errors tracked by #4417. |
+| Complete source locations for all semantic errors | Partial: declaration-shape typecheck/lower diagnostics reuse concrete declaration spans, while wrapper/unary and compound expression-derived lower diagnostics reuse nested source spans. Remaining gaps are symbol/registry failures (#4671) and internal/synthetic macro rebuild errors (#4673), tracked by #4417. |
 | Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures and remaining #4035 source/smoke migration work before #2454 removes the syntax. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |

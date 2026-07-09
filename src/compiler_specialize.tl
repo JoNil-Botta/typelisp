@@ -5149,7 +5149,10 @@
                   (match maybe-decl
                     [(SpecMaybeDecl.None) unit]
                     [(SpecMaybeDecl.Some rewritten-decl)
-                      (ast-decl-list-push (&mut out) rewritten-decl)])
+                      (ast-decl-list-push-spanned
+                        (&mut out)
+                        rewritten-decl
+                        (ast-decl-list-head-span cursor))])
                   (set! cursor rest))]
               [(ResultSpecDecl.Err diag)
                 (begin
@@ -5190,6 +5193,7 @@
               (set! done true))]
           [(AstDeclListStep.Cons decl rest)
             (let
+              [decl-span : AstSourceSpan (ast-decl-list-head-span decl-cursor)]
               [decl-path : String
                 (gen-path-list-head-or path-cursor fallback-path)]
               (match (spec-rewrite-decl decl templates cur-state)
@@ -5200,7 +5204,10 @@
                       [(SpecMaybeDecl.None) unit]
                       [(SpecMaybeDecl.Some rewritten-decl)
                         (begin
-                          (ast-decl-list-push (&mut out) rewritten-decl)
+                          (ast-decl-list-push-spanned
+                            (&mut out)
+                            rewritten-decl
+                            decl-span)
                           (ast-decl-path-list-push (&mut out-paths) decl-path))])
                     (set! decl-cursor rest)
                     (set! path-cursor (gen-path-list-tail path-cursor)))]

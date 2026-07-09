@@ -2554,7 +2554,10 @@
           with-context))]
     [(AstGeneratedDeclMeta.No) diag]))
 
-(define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
+(define (tc-decl-diag-at-span
+  [decl : AstDecl]
+  [span : AstSourceSpan]
+  [message : String]) : CompilerDiagnostic
   (if (tc-rich-error? message)
     (tc-rich-error-diag message)
     (if (tc-located-error? message)
@@ -2563,27 +2566,61 @@
         [(AstDecl.Def _ _ expr-box)
           (let
             [expr : AstExpr (ast-node-get expr-box)]
-            (tc-expr-diag expr message))]
+            (match (tc-expr-maybe-span expr)
+              [(TcMaybeAstSourceSpan.Some expr-span)
+                (tc-canonical-diagnostic
+                  (compiler-diagnostic-from-ast-span "" expr-span message))]
+              [(TcMaybeAstSourceSpan.No)
+                (tc-canonical-diagnostic
+                  (compiler-diagnostic-from-ast-span "" span message))]))]
         [(AstDecl.DefFn _ _ _ body-box _)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (tc-expr-diag body message))]
+            (match (tc-expr-maybe-span body)
+              [(TcMaybeAstSourceSpan.Some body-span)
+                (tc-canonical-diagnostic
+                  (compiler-diagnostic-from-ast-span "" body-span message))]
+              [(TcMaybeAstSourceSpan.No)
+                (tc-canonical-diagnostic
+                  (compiler-diagnostic-from-ast-span "" span message))]))]
         [(AstDecl.DefMacro _ _ _ body-box)
           (let
             [body : AstExpr (ast-node-get body-box)]
-            (tc-expr-diag body message))]
+            (match (tc-expr-maybe-span body)
+              [(TcMaybeAstSourceSpan.Some body-span)
+                (tc-canonical-diagnostic
+                  (compiler-diagnostic-from-ast-span "" body-span message))]
+              [(TcMaybeAstSourceSpan.No)
+                (tc-canonical-diagnostic
+                  (compiler-diagnostic-from-ast-span "" span message))]))]
         [(AstDecl.Test _ _ span)
           (tc-canonical-diagnostic
             (compiler-diagnostic-from-ast-span "" span message))]
         [(AstDecl.Unsafe inner-box)
           (let
             [inner : AstDecl (box-get inner-box)]
-            (tc-decl-diag inner message))]
+            (tc-decl-diag-at-span inner span message))]
         [(AstDecl.ComptimeDecl meta template-box)
           (let
             [template : AstDecl (box-get template-box)]
-            (tc-generated-decl-diag meta (tc-decl-diag template message)))]
-        [_ (tc-diag-at-start message)]))))
+            (tc-generated-decl-diag
+              meta
+              (tc-decl-diag-at-span template span message)))]
+        [_
+          (if (ast-source-span-present? span)
+            (tc-canonical-diagnostic
+              (compiler-diagnostic-from-ast-span "" span message))
+            (tc-diag-at-start message))]))))
+
+(define (tc-decl-diag [decl : AstDecl] [message : String]) : CompilerDiagnostic
+  (tc-decl-diag-at-span decl (ast-source-span-none) message))
+
+(define (tc-locate-error-at-decl-span [span : AstSourceSpan] [message : String]) : String
+  (if (or (tc-rich-error? message) (tc-located-error? message))
+    message
+    (if (ast-source-span-present? span)
+      (tc-located-error span message)
+      message)))
 
 (define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
   (if (or (tc-rich-error? message) (tc-located-error? message))
@@ -16526,6 +16563,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList rest]
+              [decl-span : AstSourceSpan (ast-decl-list-head-span cursor)]
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
@@ -16543,7 +16581,9 @@
                         (set! cursor rest))]
                     [(ResultTcEnv.Err step-message)
                       (begin
-                        (set! message step-message)
+                        (set!
+                          message
+                          (tc-locate-error-at-decl-span decl-span step-message))
                         (set! ok false))])]))]))
       (if (string.eq message "")
         (ResultTcEnv.Ok current-env)
@@ -45176,13 +45216,23 @@
 (define (macro-decl-list-current-suffix [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (let
     [offset : i64 (struct-get rest offset)]
+    [has-spans : bool (ast-decl-list-has-spans? (& rest))]
     (if (> offset 0)
       (let
         [head-offset : i64 (- offset 1)]
         (begin
           (array-set! (struct-get rest slots) head-offset head)
+          (if has-spans
+            (array-set!
+              (struct-get rest spans)
+              head-offset
+              (ast-source-span-none))
+            unit)
           (AstDeclList
             (struct-get rest slots)
+            (if has-spans
+              (struct-get rest spans)
+              ast-decl-empty-spans)
             head-offset
             (+ (struct-get rest len) 1)
             false)))
@@ -45211,6 +45261,14 @@
   (let
     [prefix-count : i64 (ast-decl-list-len (& prefix-rev))]
     [suffix-offset : i64 (struct-get suffix offset)]
+    [has-spans : bool
+      (or
+        (ast-decl-list-has-spans? (& prefix-rev))
+        (ast-decl-list-has-spans? (& suffix)))]
+    [_enable-spans : unit
+      (if has-spans
+        (ast-decl-list-enable-spans! (&mut suffix))
+        unit)]
     (if (<= prefix-count suffix-offset)
       (let
         [cursor : AstDeclList prefix-rev]
@@ -45223,10 +45281,19 @@
               [(AstDeclListStep.Cons decl rest)
                 (begin
                   (array-set! (struct-get suffix slots) write-index decl)
+                  (if has-spans
+                    (array-set!
+                      (struct-get suffix spans)
+                      write-index
+                      (ast-decl-list-head-span cursor))
+                    unit)
                   (set! write-index (- write-index 1))
                   (set! cursor rest))]))
           (AstDeclList
             (struct-get suffix slots)
+            (if has-spans
+              (struct-get suffix spans)
+              ast-decl-empty-spans)
             (- suffix-offset prefix-count)
             (+ prefix-count (struct-get suffix len))
             false)))
@@ -56123,6 +56190,7 @@
                                   [next-decls-for-ctx : AstDeclList
                                     (AstDeclList
                                       (struct-get next-decls slots)
+                                      (struct-get next-decls spans)
                                       (struct-get next-decls offset)
                                       (struct-get next-decls len)
                                       false)]
@@ -58038,6 +58106,7 @@
           len)]
       (AstDeclList
         (struct-get decls slots)
+        (struct-get decls spans)
         (struct-get decls offset)
         take-count
         false))))
@@ -58066,6 +58135,7 @@
         (ast-decl-list-new)
         (AstDeclList
           (struct-get decls slots)
+          (struct-get decls spans)
           (+ (struct-get decls offset) count)
           (- len count)
           false)))))
@@ -58217,6 +58287,17 @@
       diag
       (compiler-diagnostic-with-path diag path))))
 
+(define (tc-typecheck-diag-with-path-and-decl-span
+  [decl : AstDecl]
+  [span : AstSourceSpan]
+  [path : String]
+  [message : String]) : CompilerDiagnostic
+  (let
+    [diag : CompilerDiagnostic (tc-decl-diag-at-span decl span message)]
+    (if (string.eq path "")
+      diag
+      (compiler-diagnostic-with-path diag path))))
+
 ;; Direct declaration typechecking stays below the self-build memory budget and
 ;; avoids the per-declaration scratch arena overhead.
 (define (tc-check-decl-escaping
@@ -58302,6 +58383,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList rest]
+              [decl-span : AstSourceSpan (ast-decl-list-head-span cur-decls)]
               [decl-path : String
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
@@ -58353,8 +58435,9 @@
                                 result
                                 (ResultCompilerTypecheck.Err
                                   (box
-                                    (tc-typecheck-diag-with-path
+                                    (tc-typecheck-diag-with-path-and-decl-span
                                       decl
+                                      decl-span
                                       decl-path
                                       message))))
                               (set! done true))])]
@@ -58367,8 +58450,9 @@
                             result
                             (ResultCompilerTypecheck.Err
                               (box
-                                (tc-typecheck-diag-with-path
+                                (tc-typecheck-diag-with-path-and-decl-span
                                   decl
+                                  decl-span
                                   decl-path
                                   message))))
                           (set! done true))]))]
@@ -58411,8 +58495,9 @@
                                 result
                                 (ResultCompilerTypecheck.Err
                                   (box
-                                    (tc-typecheck-diag-with-path
+                                    (tc-typecheck-diag-with-path-and-decl-span
                                       decl
+                                      decl-span
                                       decl-path
                                       message))))
                               (set! done true))]))))]))]))

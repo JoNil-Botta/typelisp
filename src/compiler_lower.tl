@@ -614,6 +614,19 @@
 (define (lower-diagnostic [message : String]) : CompilerDiagnostic
   (compiler-diagnostic-at-start "" message))
 
+(define (lower-diagnostic-at-decl-span
+  [span : AstSourceSpan]
+  [message : String]) : CompilerDiagnostic
+  (lower-diagnostic-at-decl-span-with-path "" span message))
+
+(define (lower-diagnostic-at-decl-span-with-path
+  [path : String]
+  [span : AstSourceSpan]
+  [message : String]) : CompilerDiagnostic
+  (if (ast-source-span-present? span)
+    (compiler-diagnostic-from-ast-span path span message)
+    (compiler-diagnostic-at-start path message)))
+
 (cfg
   compile-profile
   (define compiler-lower-profile-start-ms : i64
@@ -991,7 +1004,9 @@
     [(CompilerMaybeSourceSpan.No) (lower-diagnostic message)]))
 
 (define (lower-diagnostic-with-path [diag : CompilerDiagnostic] [path : String]) : CompilerDiagnostic
-  (compiler-diagnostic-with-path diag path))
+  (if (string.eq (compiler-diagnostic-path diag) "")
+    (compiler-diagnostic-with-path diag path)
+    diag))
 
 (define (lower-reference-support-message) : String
   "lower: reference-typed programs require borrow/reference lowering support")
@@ -8994,6 +9009,29 @@
                 unit)
               (set! index (+ index 1))))
           (ast-program out)))]))
+
+;; Keep declaration paths in lockstep with the post-typecheck dense filter.
+;; Clone helpers are appended after source declarations and intentionally use
+;; the entry-path fallback because they have no concrete source declaration.
+(define (lower-decl-keep-plan-apply-paths
+  [plan : LowerDeclKeepPlan]
+  [paths : AstDeclPathList]
+  [fallback-path : String]) : AstDeclPathList
+  (let
+    [source-count : i64 (struct-get plan source-count)]
+    [keep : (Array i64) (struct-get plan keep)]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity source-count)]
+    [index : i64 0]
+    (begin
+      (while (< index source-count)
+        (begin
+          (if (not (= (array-ref keep index) 0))
+            (ast-decl-path-list-push
+              (&mut out)
+              (ast-decl-path-list-get (& paths) index fallback-path))
+            unit)
+          (set! index (+ index 1))))
+      out)))
 
 ;; The synthesized clone$<T> helpers (compiler_clone.tl) are referenced by
 ;; `(clone x)` forms only after lowering. Seed exactly the helpers needed by
@@ -45365,6 +45403,7 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
+  [paths : AstDeclPathList]
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -45376,7 +45415,7 @@
     [dispatch-variants : lower_string_i64_map.Map
       (lower-dispatch-variant-set-from-decls
         decls
-        (ast-decl-path-list-new)
+        paths
         "<source>"
         dispatch-name-cache)]
     (begin
@@ -45394,6 +45433,7 @@
         top-env
         top-env
         decls
+        paths
         globals
         functions
         externs
@@ -45427,11 +45467,15 @@
                 (ast-decl-list-prepend-builder decl kept-rest)
                 kept-rest))]))]))
 
+(define (lower-ast-decl-list-offset [decls : (& decls AstDeclList)]) : i64
+  (struct-get decls offset))
+
 (define (lower-decls-in-module
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [local-top-env : TcTypeEnv]
   [decls : AstDeclList]
+  [paths : AstDeclPathList]
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
@@ -45443,6 +45487,7 @@
   [mode : CompilerLowerMode]
   [module : String]) : ResultLowerDecls
   (let
+    [decls-offset : i64 (lower-ast-decl-list-offset (& decls))]
     [cur-decls : AstDeclList decls]
     [cur-local-top-env : TcTypeEnv local-top-env]
     [cur-globals : CompilerIrGlobalList globals]
@@ -45476,6 +45521,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList rest]
+              [decl-span : AstSourceSpan (ast-decl-list-head-span cur-decls)]
               (match (ast-decl-unwrapped decl)
                 [(AstDecl.ModuleBody _ _) (set! cur-decls rest)]
                 [(AstDecl.Def name _ expr-box)
@@ -45576,7 +45622,14 @@
                           result
                           (ResultLowerDecls.Err
                             (box
-                              (lower-diagnostic
+                              (lower-diagnostic-at-decl-span-with-path
+                                (ast-decl-path-list-get
+                                  (& paths)
+                                  (-
+                                    (struct-get (& cur-decls) offset)
+                                    decls-offset)
+                                  "")
+                                decl-span
                                 (lower-reference-support-message)))))
                         (set! done true))
                       (begin
@@ -45863,6 +45916,7 @@
   [ctx : TcContext]
   [top-env : TcTypeEnv]
   [program : AstProgram]
+  [paths : AstDeclPathList]
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
@@ -45880,6 +45934,7 @@
             ctx
             top-env
             decls
+            paths
             CompilerIrGlobalList.Nil
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil
@@ -45906,6 +45961,7 @@
     ctx
     top-env
     program
+    (ast-decl-path-list-new)
     names
     (CompilerLowerMode.Scalar)))
 
@@ -45947,6 +46003,7 @@
               ctx
               top-env
               specialized
+              (ast-decl-path-list-new)
               alias-names
               mode))]
         [(ResultCompilerTypecheckChecked.Err diag)
@@ -46212,6 +46269,11 @@
                                           (lower-decl-keep-plan-apply
                                             checked-keep-plan
                                             checked-program)]
+                                        [pruned-paths : AstDeclPathList
+                                          (lower-decl-keep-plan-apply-paths
+                                            checked-keep-plan
+                                            checked-paths
+                                            checked-entry-path)]
                                         (begin
                                           (cfg
                                             compile-profile
@@ -46224,6 +46286,7 @@
                                             ctx
                                             top-env
                                             pruned-program
+                                            pruned-paths
                                             lower-names
                                             mode)
                                             [(ResultCompilerLower.Ok ir spans)
@@ -47339,6 +47402,30 @@
         (= (ast-source-span-start-line found) line)
         (= (ast-source-span-start-col found) col))]
     [(CompilerMaybeSourceSpan.No) false]))
+
+(define (compiler-lower-declaration-span-path-ok?) : bool
+  (match (parse-ast-source
+    "(extern (unsupported-ref [value : (& value i64)]) : i64)
+(define (main) : i64 0)")
+    [(ResultAstProgram.Ok program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (ast-decl-path-cons
+          "dep.tl"
+          (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))
+        [(ResultCompilerLower.Err diag)
+          (let
+            [found : CompilerDiagnostic (box-get diag)]
+            (and
+              (string.eq
+                (compiler-diagnostic-message found)
+                (lower-reference-support-message))
+              (string.eq (compiler-diagnostic-path found) "dep.tl")
+              (= (compiler-diagnostic-line found) 1)
+              (= (compiler-diagnostic-col found) 1)))]
+        [(ResultCompilerLower.Ok _ _) false])]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-nested-expression-diagnostic-span-ok?) : bool
   (let
@@ -56858,6 +56945,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-nested-expression-diagnostic-span-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-declaration-span-path-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-compound-expression-diagnostic-span-ok?)

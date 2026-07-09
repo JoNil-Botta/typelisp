@@ -127,6 +127,19 @@
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
+(define (compiler-typecheck-error-location-ok?
+  [src : String]
+  [want : String]
+  [want-line : i64]
+  [want-col : i64]) : bool
+  (match (typecheck-compiler-source src)
+    [(ResultCompilerTypecheck.Err diag)
+      (and
+        (string.eq (compiler-diagnostic-message (box-get diag)) want)
+        (= (compiler-diagnostic-line (box-get diag)) want-line)
+        (= (compiler-diagnostic-col (box-get diag)) want-col))]
+    [(ResultCompilerTypecheck.Ok _) false]))
+
 (define (compiler-typecheck-error-code-ok?
   [src : String]
   [want-code : String]
@@ -3373,7 +3386,24 @@
 (extern (foreign-box [arg0 : Box]) : unit (:abi c) (:symbol \"foreign_box\"))")
 
 (define (compiler-typecheck-extern-abi-tuple-source) : String
-  "(extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c) (:symbol \"bad_tuple\"))")
+  "(define sentinel : i64 0)
+(extern (bad [arg0 : (Tuple i64 i64)]) : i64 (:abi c) (:symbol \"bad_tuple\"))")
+
+(define (compiler-typecheck-extern-abi-tuple-paths-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-extern-abi-tuple-source))
+    [(ResultAstProgram.Ok program)
+      (match (typecheck-compiler-program-with-paths
+        program
+        (ast-decl-path-cons
+          "src/main.tl"
+          (ast-decl-path-cons "src/ffi.tl" (ast-decl-path-list-new))))
+        [(ResultCompilerTypecheck.Err diag)
+          (and
+            (string.eq (compiler-diagnostic-path (box-get diag)) "src/ffi.tl")
+            (= (compiler-diagnostic-line (box-get diag)) 2)
+            (= (compiler-diagnostic-col (box-get diag)) 1))]
+        [(ResultCompilerTypecheck.Ok _) false])]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-typecheck-extern-abi-array-source) : String
   "(extern (bad [arg0 : (Array i64 2)]) : i64 (:abi c) (:symbol \"bad_array\"))")
@@ -3460,9 +3490,12 @@
   (and
     (compiler-typecheck-ok? (compiler-typecheck-extern-abi-source))
     (compiler-typecheck-extern-head-varargs-tests-ok?)
-    (compiler-typecheck-error-ok?
+    (compiler-typecheck-error-location-ok?
       (compiler-typecheck-extern-abi-tuple-source)
-      "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)")
+      "typecheck: extern ABI c does not support parameter type (Tuple i64 i64)"
+      2
+      1)
+    (compiler-typecheck-extern-abi-tuple-paths-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-abi-array-source)
       "typecheck: extern ABI c does not support parameter type (Array i64 2)")
@@ -3693,7 +3726,8 @@
   (let [other : i64 1] (same-owner (& n) (& other))))")
 
 (define (compiler-typecheck-lifetime-duplicate-source) : String
-  "(defstruct RefBox (:lifetimes a a) (value (& a i64)))")
+  "(comptime-decl
+  (defstruct RefBox (:lifetimes a a) (value (& a i64))))")
 
 (define (compiler-typecheck-lifetime-missing-args-source) : String
   "(defstruct RefBox (:lifetimes a) (value (& a i64)))
@@ -4093,9 +4127,11 @@
         (compiler-typecheck-regular-call-lifetime-conflict-source)
         "typecheck: constructor lifetime mismatch")]
     [lifetime-duplicate-error-ok : bool
-      (compiler-typecheck-error-ok?
+      (compiler-typecheck-error-location-ok?
         (compiler-typecheck-lifetime-duplicate-source)
-        "typecheck: duplicate lifetime parameter")]
+        "typecheck: duplicate lifetime parameter"
+        2
+        3)]
     [lifetime-missing-args-error-ok : bool
       (compiler-typecheck-error-ok?
         (compiler-typecheck-lifetime-missing-args-source)
@@ -9419,9 +9455,11 @@
     (compiler-typecheck-ok? (compiler-typecheck-defdispatch-scalar-only-source))
     (compiler-typecheck-ok?
       (compiler-typecheck-defdispatch-export-alias-source))
-    (compiler-typecheck-error-ok?
+    (compiler-typecheck-error-location-ok?
       (compiler-typecheck-defdispatch-no-scalar-source)
-      "typecheck: defdispatch requires exactly one scalar variant")
+      "typecheck: defdispatch requires exactly one scalar variant"
+      2
+      1)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defdispatch-duplicate-isa-source)
       "typecheck: duplicate defdispatch ISA variant")

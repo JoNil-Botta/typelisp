@@ -44,26 +44,24 @@ one change.
   public parse/typecheck/load entry point plus the tests that prove path/span
   metadata survives through that boundary.
 
-## Generated and comptime declaration origin policy
+## Declaration and generated-origin policy
 
 Generated/comptime diagnostics follow the structured-diagnostic model from
 [#1580](https://github.com/JoNil-Botta/typelisp/issues/1580) while respecting
 the staged string-result audit from
 [#1582](https://github.com/JoNil-Botta/typelisp/issues/1582).
 
-- Primary location: use the nearest concrete source span on the generated
-  declaration payload when one exists. For example, a generated `define` body
-  type error points at that payload expression. The typechecker itself keeps
-  the diagnostic path empty; CLI/load callers that know the source file stamp
-  the path before rendering.
+- Primary location: use the nearest concrete source span. Parsed declarations
+  retain their full form span, including module bodies and the inner declaration
+  in `unsafe` or compatibility `comptime-decl`. Declaration paths remain aligned
+  separately through loading/typechecking/lowering and are stamped at the public boundary.
 - Generated context: attach generated origin as diagnostic notes, not by
   rewriting the primary message. Emit `generated identity: <key>` when the
   identity key is available, and emit `generated declaration: <item> from
   <generator>` for the generator/item context.
 - Fallback location: if a generated/comptime payload has no concrete source
-  expression span, preserve the same generated notes and use the phase fallback
-  span at line 1, column 1. Do not invent virtual generated filenames or source
-  maps in this compatibility layer.
+  declaration or expression span, preserve the same generated notes and use the
+  phase fallback span at line 1, column 1. Do not invent virtual generated filenames.
 - Plain `comptime-decl` payloads without `:generated` metadata use the same
   primary-location rules but do not receive generated-origin notes.
 - `compiler_symbols.tl` still reports `ErrCompilerSymbols String`, so duplicate

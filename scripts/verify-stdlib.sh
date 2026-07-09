@@ -267,6 +267,7 @@ stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
 stdlib/tests/process_runtime.tl|42|-|-
 stdlib/tests/process_runtime_stderr.tl|42|-|-
+stdlib/tests/result_api.tl|42|-|-|-
 stdlib/tests/sync_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message

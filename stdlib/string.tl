@@ -403,39 +403,6 @@
           (unsafe
             (string-from-bytes (ptr-cast dst : (Ptr u8)) total-len)))))))
 
-;: Stage0 bootstrap compatibility for str-cat fast-path output.
-;; lint-allow: redundant-function-name
-(define (string-concat-all [parts : (Array String)]) : String
-  (concat-all parts))
-
-;: Stage0 bootstrap compatibility for str-cat fast-path output.
-;; lint-allow: redundant-function-name
-(define (string-concat-all-pack-part
-  [parts : (Array String)]
-  [index : i64]
-  [value : String]) : (Array String)
-  (concat-all-pack-part parts index value))
-
-;: Stage0 bootstrap compatibility for str-cat fast-path output.
-;; lint-allow: redundant-function-name
-(define (string-concat3 [a : String] [b : String] [c : String]) : String
-  (concat3 a b c))
-
-;: Stage0 bootstrap compatibility for str-cat fast-path output.
-;; lint-allow: redundant-function-name
-(define (string-concat4 [a : String] [b : String] [c : String] [d : String]) : String
-  (concat4 a b c d))
-
-;: Stage0 bootstrap compatibility for str-cat fast-path output.
-;; lint-allow: redundant-function-name
-(define (string-concat5
-  [a : String]
-  [b : String]
-  [c : String]
-  [d : String]
-  [e : String]) : String
-  (concat5 a b c d e))
-
 ;: Return a fresh active-arena owned substring copied from borrowed text.
 (define (substring [text : (& text str)] [start : i64] [len : i64]) : String
   (begin

@@ -4921,12 +4921,12 @@ sites.
 
 **String building.** Fixed-arity string concatenation is the stdlib macro
 `stdlib.str_cat`'s `(str_cat.str-cat ...)`; incremental builders use
-`stdlib.text_buf`. `str-cat` uses direct one-allocation helpers for two to
-five operands and expands longer calls to an internal `string-concat-all`
-call over a packed `(Array String)`, so long calls allocate no chunk
-intermediates. The deprecated `string-append`, `string-concat`, and
-`string-concat3`/`string-concat4`/`string-concat5` names remain accepted
-only as low-level compatibility plumbing and are not public surface.
+`stdlib.text_buf`. `str-cat` uses direct one-allocation `stdlib.string`
+helpers for two to five operands and expands longer calls to an internal
+`string.concat-all` call over a packed `(Array String)`, so long calls
+allocate no chunk intermediates. The deprecated `string-append` and
+`string-concat` names remain staged lint targets for old source, while
+`tl_string_concat*` remains a runtime-plan compatibility ABI documented below.
 
 **Byte buffers.** `ByteBuf` and `bytes` are specified in section 3.11 as
 stdlib/language surface, not implicit compiler builtins. There is no

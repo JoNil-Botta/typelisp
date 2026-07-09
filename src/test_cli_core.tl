@@ -1547,12 +1547,7 @@
     (string.eq name "string-concat3")
     (string.eq name "string-concat4")
     (string.eq name "string-concat5")
-    (string.eq name "eq")
-    (string.eq name "string-concat-all")
-    (string.eq name "string-concat-all-pack-part")
-    (string.eq name "string-concat3")
-    (string.eq name "string-concat4")
-    (string.eq name "string-concat5")))
+    (string.eq name "eq")))
 
 (define (tltest-reach-mark-runtime-helper-root
   [decl : AstDecl]

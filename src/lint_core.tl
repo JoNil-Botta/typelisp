@@ -1074,11 +1074,8 @@
     (string.eq name "string.append")
     (string.eq name "string-concat")
     (string.eq name "string.concat")
-    (string.eq name "string-concat3")
     (string.eq name "string.concat3")
-    (string.eq name "string-concat4")
     (string.eq name "string.concat4")
-    (string.eq name "string-concat5")
     (string.eq name "string.concat5")))
 
 (define (lint-deprecated-string-concat-loop-form? [name : String]) : bool

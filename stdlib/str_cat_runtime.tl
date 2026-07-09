@@ -1,9 +1,9 @@
 ;# Test-bootstrap-safe String concatenation macro.
 ;#
 ;# Published stage0 compilers have a hardcoded fast path for `stdlib.str_cat`
-;# that still emits the legacy `stdlib.string/string-concat*` helper names while
-;# compiling `(test ...)` harnesses. This module intentionally uses a different
-;# module name so internal selfhost tests run the checked-in macro body below.
+;# while compiling `(test ...)` harnesses. This module intentionally uses a
+;# different module name so internal selfhost tests run the checked-in macro
+;# body below.
 (import stdlib.comptime)
 (import stdlib.array)
 (import stdlib.string)
@@ -40,7 +40,7 @@
 ;: `expr-list-nth`. With no operands it expands to `""`; with one operand it
 ;: expands to that operand unchanged. Two to five operands use direct
 ;: one-allocation helpers; six or more are packed into one dynamic parts array
-;: and copied by `string-concat-all`.
+;: and copied by `stdlib.string.concat-all`.
 (defmacro (str-cat [args : String ...]) : String
   (match (comptime.expr-list-length args)
     [0 `""]

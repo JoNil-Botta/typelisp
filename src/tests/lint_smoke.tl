@@ -60,7 +60,7 @@
           (lint-findings-empty)))
       1)
       unit
-      (panic "lint: string-concat5 call should be flagged"))
+      (panic "lint: string.concat5 call should be flagged"))
     (if (=
       (lint-findings-count
         (lint-deprecated-string-concat-scan

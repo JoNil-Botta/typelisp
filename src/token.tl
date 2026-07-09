@@ -33,8 +33,6 @@
 ;; and an end-of-stream sentinel. `Token.Str`, `Token.Char`, and `Token.Float`
 ;; are appended last so the existing variants/tags keep their stable ordering
 ;; for every importer.
-(module token)
-
 (import compiler_intern as ci)
 
 (defenum Token

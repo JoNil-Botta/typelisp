@@ -1,5 +1,3 @@
-(module doc_site_doc_bridge)
-
 ;; Keep the doc-site tools on dotted imports while the compiler CLI finishes
 ;; migrating the remaining doc command dependencies.
 (import doc_extract)

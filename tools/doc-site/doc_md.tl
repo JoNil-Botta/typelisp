@@ -9,8 +9,6 @@
 ;; never dropped.
 ;;
 ;; Reuses the doc HTML/anchor rendering helpers through doc_site_doc_bridge.tl.
-(module doc_md)
-
 (import doc_site_doc_bridge as doc_bridge)
 (import stdlib.string)
 (import stdlib.vector)

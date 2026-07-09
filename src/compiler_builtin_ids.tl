@@ -1,6 +1,4 @@
 ;; compiler_builtin_ids.tl - reset-aware intern ids for fixed compiler builtins.
-(module compiler_builtin_ids)
-
 (import compiler_intern as ci)
 
 (define compiler-builtin-generation : i64

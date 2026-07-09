@@ -3,8 +3,6 @@
 ;; The extractor exposes module docs and documented top-level items. It
 ;; does not expose undocumented declarations as separate records, so this
 ;; renderer emits exactly the declarations present in the extracted model.
-(module doc_render)
-
 (import stdlib.io)
 (import doc_extract)
 (import stdlib.string)

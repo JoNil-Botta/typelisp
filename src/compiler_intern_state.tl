@@ -6,8 +6,6 @@
 ;; functions below without touching the process-global compatibility table,
 ;; builtin-id cache, backend symbol cache, or typecheck caches keyed by
 ;; intern-generation.
-(module compiler_intern_state)
-
 (import compiler_intern as ci)
 
 (defstruct InternState

@@ -3035,6 +3035,8 @@
   false)
 (define tc-topenv-alias-fanout-active : bool
   false)
+(define tc-topenv-explicit-build-active : bool
+  false)
 
 (define (tc-topenv-membership-mark! [name-id : i64]) : unit
   (if (and (>= name-id 0) (< name-id 262144))
@@ -3159,7 +3161,7 @@
         -1))))
 
 (define (tc-env-compact-local-if-threshold [env : TcTypeEnv]) : TcTypeEnv
-  (if tc-topenv-alias-fanout-active
+  (if (or tc-topenv-explicit-build-active tc-topenv-alias-fanout-active)
     env
     (if (tc-env-uncached-prefix-reaches-cache? env (tc-local-cache-threshold))
       (let
@@ -16324,7 +16326,31 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [env : TcTypeEnv]) : ResultTcEnv
-  (tc-build-top-env-list-in-module ctx decls env ""))
+  (tc-build-top-env-list-explicit-in-module ctx decls env ""))
+
+;; An explicit top-env build creates one cache at its result boundary. Applying
+;; the function-body 32-bind compaction policy while the spine is still growing
+;; repeatedly copies the whole prefix (and every cache payload array), turning a
+;; large package top-env build into quadratic work. Nested module bodies call the
+;; raw list helper and inherit this outer scope.
+(define (tc-build-top-env-list-explicit-in-module
+  [ctx : TcContext]
+  [decls : AstDeclList]
+  [env : TcTypeEnv]
+  [module : String]) : ResultTcEnv
+  (let
+    [saved : bool tc-topenv-explicit-build-active]
+    (begin
+      (set! tc-topenv-explicit-build-active true)
+      (match (tc-build-top-env-list-in-module ctx decls env module)
+        [(ResultTcEnv.Ok next-env)
+          (begin
+            (set! tc-topenv-explicit-build-active saved)
+            (ResultTcEnv.Ok next-env))]
+        [(ResultTcEnv.Err message)
+          (begin
+            (set! tc-topenv-explicit-build-active saved)
+            (ResultTcEnv.Err message))]))))
 
 (define (tc-build-top-env-bind-decl-in-module
   [ctx : TcContext]
@@ -17213,7 +17239,7 @@
   (match (ast-decl-list-step summary)
     [(AstDeclListStep.Nil) (ResultTcEnv.Ok top-env)]
     [(AstDeclListStep.Cons _ _)
-      (match (tc-build-top-env-list-in-module ctx summary top-env "")
+      (match (tc-build-top-env-list-explicit-in-module ctx summary top-env "")
         [(ResultTcEnv.Ok next-env)
           (ResultTcEnv.Ok (tc-env-with-cache-layer-over-explicit next-env))]
         [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
@@ -55542,7 +55568,7 @@
                                                   out-paths-rev))
                                               (set! cur-decls rest)
                                               (set! cur-paths rest-paths))
-                                            (match (tc-build-top-env-list-in-module
+                                            (match (tc-build-top-env-list-explicit-in-module
                                               next-ctx
                                               refresh-decls
                                               next-top-env

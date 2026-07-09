@@ -22,12 +22,13 @@ scripts/check-instruction-counts.sh \
   --output target/instruction-count-heavy
 ```
 
-Benchmark metrics are exact: `current != baseline` fails and the baseline must
-ratchet in the same PR. The self-compile metric has a documented 0.5%
-cross-runner tolerance (`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`) because
-WSL and GitHub-hosted Linux cachegrind counts differ even with fixed paths and a
-clean measured environment. Deltas outside that tolerance fail and must be
-accepted by updating the committed baseline.
+TypeLisp-generated cachegrind metrics, including `self_compile`, are
+deterministic across WSL and GitHub-hosted Linux for a fixed compiler and
+command. Benchmark metrics are exact: `current != baseline` fails and the
+baseline must ratchet in the same PR. The checker currently applies a 0.5%
+self-compile tolerance (`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`), but
+intentional exact changes should still be reported and ratcheted rather than
+treated as runner noise.
 
 Comparison benchmark rows are split by implementation. TypeLisp-generated
 executables use `benchmark/typelisp/<name>` and the paired deterministic

@@ -2231,10 +2231,18 @@
   (Ok String i64)
   (Err (Box CompilerDiagnostic)))
 
-(define (ctfe-reflect-info-canonical-type [info : CtfeReflectInfo]) : AstType
+;; Build the canonical nominal type for `info`, reusing the caller's already-
+;; interned `name` id as the constructor payload. The reflection lookup that
+;; found `info` matched `info`'s key against `(intern-str name)`, so
+;; `(intern (ctfe-reflect-info-key info))` would round-trip back to `name`; using
+;; `name` directly avoids re-interning (re-hashing) the mangled composite key
+;; string against the intern table on every resolve call.
+(define (ctfe-reflect-info-canonical-type
+  [info : CtfeReflectInfo]
+  [name : i64]) : AstType
   (match info
-    [(CtfeReflectInfo.Struct key _ _ _) (AstType.Struct (intern key))]
-    [(CtfeReflectInfo.Enum key _ _ _) (AstType.Enum (intern key))]))
+    [(CtfeReflectInfo.Struct _key _module _name _fields) (AstType.Struct name)]
+    [(CtfeReflectInfo.Enum _key _module _name _variants) (AstType.Enum name)]))
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : AstNodePoolContext]
@@ -2365,17 +2373,17 @@
     [(AstType.Struct name)
       (match (ctfe-reflect-info-lookup infos (intern-str name))
         [(CtfeMaybeReflectInfo.Some info)
-          (ctfe-reflect-info-canonical-type info)]
+          (ctfe-reflect-info-canonical-type info name)]
         [(CtfeMaybeReflectInfo.None) ty])]
     [(AstType.Enum name)
       (match (ctfe-reflect-info-lookup infos (intern-str name))
         [(CtfeMaybeReflectInfo.Some info)
-          (ctfe-reflect-info-canonical-type info)]
+          (ctfe-reflect-info-canonical-type info name)]
         [(CtfeMaybeReflectInfo.None) ty])]
     [(AstType.Var name)
       (match (ctfe-reflect-info-lookup infos (intern-str name))
         [(CtfeMaybeReflectInfo.Some info)
-          (ctfe-reflect-info-canonical-type info)]
+          (ctfe-reflect-info-canonical-type info name)]
         [(CtfeMaybeReflectInfo.None) ty])]
     [_ ty]))
 

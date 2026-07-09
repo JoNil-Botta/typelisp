@@ -2,6 +2,7 @@
 (import stdlib.serialize)
 (import stdlib.array)
 (import stdlib.string)
+(import serialize_enum_fixture as enum_fixture)
 
 (defstruct Address
   (zip i64)
@@ -12,6 +13,7 @@
 (import (serialize.serialize json (Array i64 3)) as fixed_i64_json)
 (import (serialize.serialize json (Array i64)) as dyn_i64_json)
 (import (serialize.serialize json (Array Address 2)) as address_array_json)
+(import (serialize.serialize json enum_fixture.Status) as status_json)
 
 (defstruct Person
   (name String)
@@ -36,6 +38,33 @@
 
 (define (serialize-json-item [value : json.Json] [rest : json.JsonList]) : json.JsonList
   (json.JsonListCons value (box rest)))
+
+(define (serialize-json-empty-array) : json.Json
+  (json.JsonArray (box json.JsonListNil)))
+
+(define (serialize-json-enum-json [tag : String] [payload : json.Json]) : json.Json
+  (json.JsonObject
+    (box
+      (serialize-json-member
+        "tag"
+        (json.JsonString tag)
+        (serialize-json-member "payload" payload json.JsonMemberListNil)))))
+
+(define (serialize-json-enum-missing-tag) : json.Json
+  (json.JsonObject
+    (box
+      (serialize-json-member
+        "payload"
+        (serialize-json-empty-array)
+        json.JsonMemberListNil))))
+
+(define (serialize-json-enum-missing-payload) : json.Json
+  (json.JsonObject
+    (box
+      (serialize-json-member
+        "tag"
+        (json.JsonString "Idle")
+        json.JsonMemberListNil))))
 
 (define (serialize-json-address-json [zip : String] [city : String]) : json.Json
   (json.JsonObject
@@ -316,6 +345,49 @@
         [(address_array_json.Ok parsed) (serialize-json-previous-ok? parsed)]
         [(address_array_json.Err _) false]))))
 
+(define (serialize-json-status-nullary-unary-roundtrip-ok?) : bool
+  (and
+    (match (status_json.from-json (status_json.to-json (enum_fixture.idle)))
+      [(status_json.Ok parsed) (enum_fixture.idle? parsed)]
+      [(status_json.Err _) false])
+    (match (status_json.from-json
+      (status_json.to-json (enum_fixture.scored 12)))
+      [(status_json.Ok parsed) (enum_fixture.scored? parsed 12)]
+      [(status_json.Err _) false])))
+
+(define (serialize-json-status-root-roundtrip-ok?) : bool
+  (let
+    [status : enum_fixture.Status (enum_fixture.moved)]
+    [json : json.Json (status_json.to-json status)]
+    [encoded : String (stdlib.json.stringify json)]
+    (and
+      (string.eq encoded "{\"tag\":\"Moved\",\"payload\":[123,[9,10]]}")
+      (match (status_json.from-json json)
+        [(status_json.Ok parsed) (enum_fixture.moved? parsed)]
+        [(status_json.Err _) false]))))
+
+(define (serialize-json-status-invalid-tag-ok?) : bool
+  (match (status_json.from-json
+    (serialize-json-enum-json "Unknown" (serialize-json-empty-array)))
+    [(status_json.Ok _) false]
+    [(status_json.Err _) true]))
+
+(define (serialize-json-status-missing-tag-ok?) : bool
+  (match (status_json.from-json (serialize-json-enum-missing-tag))
+    [(status_json.Ok _) false]
+    [(status_json.Err _) true]))
+
+(define (serialize-json-status-missing-payload-ok?) : bool
+  (match (status_json.from-json (serialize-json-enum-missing-payload))
+    [(status_json.Ok _) false]
+    [(status_json.Err _) true]))
+
+(define (serialize-json-status-payload-length-ok?) : bool
+  (match (status_json.from-json
+    (serialize-json-enum-json "Scored" (serialize-json-empty-array)))
+    [(status_json.Ok _) false]
+    [(status_json.Err _) true]))
+
 (define (serialize-json-missing-field-ok?) : bool
   (match (person_json.from-json (serialize-json-person-missing-age))
     [(person_json.Ok _) false]
@@ -351,4 +423,10 @@
     (unless (serialize-json-fixed-array-root-roundtrip-ok?) (return 8))
     (unless (serialize-json-dyn-array-root-roundtrip-ok?) (return 9))
     (unless (serialize-json-address-array-root-roundtrip-ok?) (return 10))
+    (unless (serialize-json-status-nullary-unary-roundtrip-ok?) (return 11))
+    (unless (serialize-json-status-root-roundtrip-ok?) (return 12))
+    (unless (serialize-json-status-invalid-tag-ok?) (return 13))
+    (unless (serialize-json-status-missing-tag-ok?) (return 14))
+    (unless (serialize-json-status-missing-payload-ok?) (return 15))
+    (unless (serialize-json-status-payload-length-ok?) (return 16))
     42))

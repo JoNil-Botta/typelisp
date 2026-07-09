@@ -652,9 +652,12 @@ field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
 `pattern-wildcard`, `pattern-binding`, `pattern-variant`,
-`pattern-list-empty`, `pattern-list-cons`, `match-arm`,
+`pattern-list-empty`, `pattern-list-cons`, `pattern-list-bindings`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
 generated match expressions from computed pattern names and payload bindings.
+`pattern-list-bindings(prefix, count)` builds a dense ascending list of binding
+patterns named `prefix0` through `prefix<count - 1>`; a negative count is a
+compile-time diagnostic.
 Generated matches are still checked by the ordinary typechecker for variant
 resolution, payload arity, arm result types, and exhaustiveness after macro
 expansion.
@@ -1005,7 +1008,8 @@ layout-query surface, or compiler symbol-table handles.
 `ExprList`, `ExprClauseList`, `ExprBindingClauseList`, `PatternList`,
 `MatchArmList`, and reflection sequences are dense, length-indexed sequence
 wrappers over arrays (or an equivalent compiler-verified dense
-representation). Their public API is length/index/iteration-oriented.
+representation). Their public API is length/index/iteration-oriented;
+`pattern-list-bindings` provides dense computed binding construction.
 Recursive cons cells are not part of the public contract, and cons-list
 bridge names are not part of the public macro ABI.
 
@@ -4536,6 +4540,7 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 166 | `expr-binding-clause-list-length` |
 | 167 | `expr-binding-clause-list-nth` |
 | 168 | `expr-binding-clause-list->expr-list` |
+| 169 | `pattern-list-bindings` |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned
@@ -5918,7 +5923,7 @@ in documentation passes.
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
 | Aggregate `ptr-addr-of` implementation | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464. |
 | Cleanup-owning enums | Reserved. |
-| Complete source locations for all semantic errors | Partial: wrapper/unary expression-derived typecheck/lower diagnostics reuse nested source spans; remaining gaps are compound expression child fallback, symbol/registry failures, declaration-shape diagnostics without declaration spans, and internal/synthetic macro rebuild errors tracked by #4417. |
+| Complete source locations for all semantic errors | Partial: wrapper/unary expression-derived typecheck/lower diagnostics and common compound expression-derived lower diagnostics reuse nested source spans through first source-carrying child fallback; remaining gaps are symbol/registry failures, declaration-shape diagnostics without declaration spans, and internal/synthetic macro rebuild errors tracked by #4417. |
 | Dotted module imports everywhere | Migration in progress: source/docs use dotted imports as the canonical form; legacy path imports remain accepted only for compatibility fixtures and remaining #4035 source/smoke migration work before #2454 removes the syntax. |
 | Fixed-size-only public `Array` | Migration in progress: unsized `(Array T)` remains a compatibility surface. |
 | Qualified short stdlib names | Migration in progress: module-name-prefixed helpers remain during the rename. |

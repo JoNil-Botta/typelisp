@@ -55,7 +55,7 @@
 ;: `expr-list-nth`. With no operands it expands to `""`; with one operand it
 ;: expands to that operand unchanged. Two to five operands use direct
 ;: one-allocation helpers. Longer arities are packed into one dynamic parts
-;: array and copied by `string-concat-all`, so they no longer allocate chunk
+;: array and copied by `stdlib.string.concat-all`, so they no longer allocate chunk
 ;: intermediates.
 (defmacro (str-cat [args : String ...]) : String
   (match (comptime.expr-list-length args)

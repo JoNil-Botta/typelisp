@@ -9474,8 +9474,7 @@
       (> (string.string-length module) 0)
       (not (tc-name-qualified-id? name-id)))
       (let
-        [module-key-id : i64
-          (compiler-symbol-module-key-id-by-name-id module name-id)]
+        [module-key-id : i64 (tc-module-name-id module name-id)]
         (if (tc-source-name-bound-exact-id? env module-key-id)
           (TcMaybeString.Some (intern-str module-key-id))
           (TcMaybeString.No)))

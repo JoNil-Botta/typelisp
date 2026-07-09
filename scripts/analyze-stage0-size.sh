@@ -73,13 +73,17 @@ done
     exit 1
 }
 
+SECTION_TOOL_CANDIDATES=
 if command -v llvm-readobj >/dev/null 2>&1; then
-    SECTION_TOOL=llvm-readobj
-elif command -v readelf >/dev/null 2>&1; then
-    SECTION_TOOL=readelf
-elif command -v objdump >/dev/null 2>&1; then
-    SECTION_TOOL=objdump
-else
+    SECTION_TOOL_CANDIDATES="${SECTION_TOOL_CANDIDATES} llvm-readobj"
+fi
+if command -v readelf >/dev/null 2>&1; then
+    SECTION_TOOL_CANDIDATES="${SECTION_TOOL_CANDIDATES} readelf"
+fi
+if command -v objdump >/dev/null 2>&1; then
+    SECTION_TOOL_CANDIDATES="${SECTION_TOOL_CANDIDATES} objdump"
+fi
+if [ -z "$SECTION_TOOL_CANDIDATES" ]; then
     echo "no section reader found: install llvm-readobj, readelf, or objdump" >&2
     exit 1
 fi
@@ -283,14 +287,34 @@ function decimal_hex(value, s, i, c, digit, n) {
     printf 'object file (objdump)\n' > "$sections_tsv.format"
 }
 
-case "$SECTION_TOOL" in
-    llvm-readobj) parse_llvm_readobj_sections ;;
-    readelf) parse_readelf_sections ;;
-    objdump) parse_objdump_sections ;;
-esac
+parse_sections_with_tool() {
+    SECTION_TOOL=$1
+    : > "$sections_tsv"
+    rm -f "$sections_tsv.format"
+    case "$SECTION_TOOL" in
+        llvm-readobj) parse_llvm_readobj_sections ;;
+        readelf) parse_readelf_sections ;;
+        objdump) parse_objdump_sections ;;
+    esac
+}
 
-[ -s "$sections_tsv" ] || {
-    echo "could not parse any sections from $BINARY with $SECTION_TOOL" >&2
+SECTION_TOOL=
+for candidate in $SECTION_TOOL_CANDIDATES; do
+    err_file="$tmp_dir/sections-$candidate.err"
+    if parse_sections_with_tool "$candidate" 2> "$err_file" && [ -s "$sections_tsv" ]; then
+        SECTION_TOOL=$candidate
+        break
+    fi
+done
+
+[ -n "$SECTION_TOOL" ] || {
+    echo "could not parse any sections from $BINARY with available section readers" >&2
+    for candidate in $SECTION_TOOL_CANDIDATES; do
+        err_file="$tmp_dir/sections-$candidate.err"
+        if [ -s "$err_file" ]; then
+            sed "s/^/  $candidate: /" "$err_file" >&2
+        fi
+    done
     exit 1
 }
 

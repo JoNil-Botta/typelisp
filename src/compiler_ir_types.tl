@@ -948,6 +948,95 @@
 (define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
   (array-ref (struct-get instrs slots) index))
 
+(define (compiler-ir-instr-loop-dst-or
+  [instr : CompilerIrInstr]
+  [fallback : i64]) : i64
+  (match instr
+    [(CompilerIrInstr.Mov dst _ _) dst]
+    [(CompilerIrInstr.Gep dst _ _ _) dst]
+    [(CompilerIrInstr.Load dst _ _) dst]
+    [(CompilerIrInstr.Cast dst _ _ _) dst]
+    [(CompilerIrInstr.Bitcast dst _ _ _) dst]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) dst]
+    [(CompilerIrInstr.UnOp dst _ _ _) dst]
+    [(CompilerIrInstr.Phi dst _ _) dst]
+    [_ fallback]))
+
+(define (compiler-ir-instr-array-loop-dst-or
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [fallback : i64]) : i64
+  (compiler-ir-instr-loop-dst-or (array-ref slots index) fallback))
+
+(define (compiler-ir-instr-seq-loop-dst-or
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [fallback : i64]) : i64
+  (compiler-ir-instr-loop-dst-or
+    (compiler-ir-instr-seq-ref instrs index)
+    fallback))
+
+(define (compiler-ir-instr-return? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Return _) true]
+    [_ false]))
+
+(define (compiler-ir-instr-phi? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Phi _ _ _) true]
+    [_ false]))
+
+(define (compiler-ir-instr-bounds-check? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [_ false]))
+
+(define (compiler-ir-instr-seq-return?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (compiler-ir-instr-return? (compiler-ir-instr-seq-ref instrs index)))
+
+(define (compiler-ir-instr-seq-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
+  (compiler-ir-instr-phi? (compiler-ir-instr-seq-ref instrs index)))
+
+(define (compiler-ir-instr-seq-bounds-check?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (compiler-ir-instr-bounds-check? (compiler-ir-instr-seq-ref instrs index)))
+
+(define (compiler-ir-instr-binop-lhs-var-for-dst-or
+  [instr : CompilerIrInstr]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (match instr
+    [(CompilerIrInstr.BinOp actual-dst _ lhs _ _)
+      (if (= actual-dst dst)
+        (match lhs
+          [(CompilerIrValue.Var id) id]
+          [_ (- 0 1)])
+        fallback)]
+    [_ fallback]))
+
+(define (compiler-ir-instr-seq-binop-lhs-var-for-dst-or
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (compiler-ir-instr-binop-lhs-var-for-dst-or
+    (compiler-ir-instr-seq-ref instrs index)
+    dst
+    fallback))
+
+(define (compiler-ir-instr-array-binop-lhs-var-for-dst-or
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]
+  [dst : i64]
+  [fallback : i64]) : i64
+  (compiler-ir-instr-binop-lhs-var-for-dst-or
+    (array-ref slots index)
+    dst
+    fallback))
+
 (define (compiler-ir-instr-seq-set!
   [instrs : CompilerIrInstrSeq]
   [index : i64]

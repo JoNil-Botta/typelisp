@@ -411,6 +411,52 @@
             (= (ast-source-span-end-col found) 9))]
         [(CompilerMaybeSourceSpan.No) false]))))
 
+(define (compiler-ir-smoke-access-helpers-ok?) : bool
+  (let
+    [call-indirect : CompilerIrInstr
+      (CompilerIrInstr.CallIndirect
+        9
+        (CompilerIrValue.Var 1)
+        CompilerIrCallArgs.Nil
+        (AstType.I64))]
+    [instrs : CompilerIrInstrList
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 7 (CompilerIrValue.I64 10) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.BoundsCheck
+            (CompilerIrValue.Var 7)
+            (CompilerIrValue.I64 10)
+            "ok")
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.BinOp
+              8
+              (CompilerIrBinOp.Add)
+              (CompilerIrValue.Var 7)
+              (CompilerIrValue.I64 1)
+              (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 8)))
+              CompilerIrInstrList.Nil))))]
+    [seq : CompilerIrInstrSeq (compiler-ir-instr-seq-from-list instrs)]
+    [slots : (Array CompilerIrInstr) (struct-get seq slots)]
+    (and
+      (= (compiler-ir-instr-loop-dst-or call-indirect (- 0 1)) (- 0 1))
+      (= (compiler-ir-instr-array-loop-dst-or slots 0 (- 0 1)) 7)
+      (= (compiler-ir-instr-array-loop-dst-or slots 1 (- 0 1)) (- 0 1))
+      (= (compiler-ir-instr-seq-loop-dst-or seq 0 (- 0 1)) 7)
+      (= (compiler-ir-instr-seq-loop-dst-or seq 1 (- 0 1)) (- 0 1))
+      (not (compiler-ir-instr-seq-phi? seq 0))
+      (not (compiler-ir-instr-seq-return? seq 0))
+      (not (compiler-ir-instr-seq-bounds-check? seq 0))
+      (compiler-ir-instr-seq-bounds-check? seq 1)
+      (compiler-ir-instr-seq-return? seq 3)
+      (= (compiler-ir-instr-seq-binop-lhs-var-for-dst-or seq 2 8 (- 0 1)) 7)
+      (=
+        (compiler-ir-instr-seq-binop-lhs-var-for-dst-or seq 2 9 (- 0 2))
+        (- 0 2))
+      (= (compiler-ir-instr-array-binop-lhs-var-for-dst-or slots 2 8 (- 0 1)) 7))))
+
 (define (main) : i64
   (begin
     (unless (compiler-ir-smoke-function-seq-roundtrip-ok?) (return 1))
@@ -418,4 +464,5 @@
     (unless (compiler-ir-smoke-spmd-call-shape-ok?) (return 3))
     (unless (compiler-ir-smoke-dense-function-params-ok?) (return 4))
     (unless (compiler-ir-smoke-global-extern-seq-roundtrip-ok?) (return 5))
+    (unless (compiler-ir-smoke-access-helpers-ok?) (return 6))
     (compiler-ir-effect-self-test)))

@@ -9,6 +9,7 @@
 (import "compiler_regalloc.tl")
 (import compiler_parallel_move as pmove)
 (import stdlib.text_buf)
+(import stdlib.text_buf_borrowed)
 (import "compiler_object.tl")
 (import compiler_intern as ci)
 (import sym_i64_env)
@@ -242,6 +243,7 @@
   (start i64)
   (end i64)
   (newline bool)
+  (owned bool)
   (mnemonic-start i64)
   (mnemonic-len i64)
   (has-operands bool)
@@ -259,7 +261,8 @@
   (zext-dst String))
 
 (defstruct CompilerBackendPeepholeEmitResult
-  (buf text_buf.TextBuf)
+  (:lifetimes asm)
+  (buf (text_buf_borrowed.TextBufBorrowed asm))
   (owners CompilerBackendPeepholeOwners))
 
 (defenum CompilerBackendUnsignedDivMagic
@@ -38045,7 +38048,8 @@
     [data : (Ptr u8)
       (unsafe
         (string-data text))]
-    [buf : text_buf.TextBuf (text_buf.empty)]
+    [buf : (text_buf_borrowed.TextBufBorrowed text)
+      (text_buf_borrowed.empty-like (& text))]
     [i : i64 0]
     [delta : i64 0]
     [valid : bool true]
@@ -38349,13 +38353,13 @@
                                                                   false))
                                                               (set!
                                                                 buf
-                                                                (text_buf.append
+                                                                (text_buf_borrowed.append-owned
                                                                   buf
                                                                   (string.int->string
                                                                     noff)))
                                                               (set!
                                                                 buf
-                                                                (text_buf.append
+                                                                (text_buf_borrowed.append-owned
                                                                   buf
                                                                   "(%rsp)"))
                                                               (set!
@@ -38477,7 +38481,7 @@
           (set!
             compiler-backend-rsp-rebase-ok-count
             (+ compiler-backend-rsp-rebase-ok-count 1))
-          (text_buf.render buf))
+          (text_buf_borrowed.render buf))
         (begin
           (set! compiler-backend-rsp-rebase-last-ok false)
           (set!
@@ -38993,7 +38997,7 @@
 ;; Sweep one function region [rstart,rend): collect reads/candidates/poison
 ;; state in pass 1, then append the region with dead candidate stores dropped.
 (define (compiler-backend-sweep-region
-  [out : text_buf.TextBuf]
+  [out : (text_buf_borrowed.TextBufBorrowed asm)]
   [asm : String]
   [data : (Ptr u8)]
   [rstart : i64]
@@ -39003,9 +39007,9 @@
   [disp : i64]
   [em-lo : i64]
   [em-hi : i64]
-  [win64 : bool]) : text_buf.TextBuf
+  [win64 : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
   (let
-    [buf : text_buf.TextBuf out]
+    [buf : (text_buf_borrowed.TextBufBorrowed asm) out]
     [delta : i64 (- 0 disp)]
     [sweepable : bool true]
     [win64-tail : bool false]
@@ -39351,7 +39355,8 @@
       [data : (Ptr u8)
         (unsafe
           (string-data asm))]
-      [out : text_buf.TextBuf (text_buf.empty)]
+      [out : (text_buf_borrowed.TextBufBorrowed asm)
+        (text_buf_borrowed.empty-like (& asm))]
       [flush : i64 0]
       [cursor : i64 0]
       [matched : bool false]
@@ -39432,7 +39437,7 @@
                     flush
                     n
                     false))
-                (text_buf.render out)))]
+                (text_buf_borrowed.render out)))]
           (begin
             (compiler-backend-sweep-reset!)
             result))))))
@@ -49522,38 +49527,59 @@ tl_tlci_call_image_entry:
         i))))
 
 (define (compiler-backend-peephole-append-line
-  [buf : text_buf.TextBuf]
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
   [line : String]
-  [newline : bool]) : text_buf.TextBuf
-  (let
-    [with-line : text_buf.TextBuf (text_buf.append buf line)]
-    (if newline
-      (text_buf.append with-line "\n")
-      with-line)))
+  [newline : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
+  (if newline
+    (text_buf_borrowed.append-char
+      (text_buf_borrowed.append-owned buf line)
+      '\n')
+    (text_buf_borrowed.append-owned buf line)))
 
 (define (compiler-backend-peephole-append-line-range
-  [buf : text_buf.TextBuf]
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
   [asm : String]
   [start : i64]
   [end : i64]
-  [newline : bool]) : text_buf.TextBuf
+  [newline : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
   (let
-    [with-line : text_buf.TextBuf
-      (if (> end start)
-        (text_buf.append buf (string.substring asm start (- end start)))
-        buf)]
-    (if newline
-      (text_buf.append with-line "\n")
-      with-line)))
+    [slice-end : i64
+      (if newline
+        (+ end 1)
+        end)]
+    (if (> slice-end start)
+      (text_buf_borrowed.append-slice buf (& asm) start (- slice-end start))
+      buf)))
+
+(define (compiler-backend-peephole-line-append-owned?
+  [line : CompilerBackendPeepholeLine]) : bool
+  (struct-get line owned))
+
+(define (compiler-backend-peephole-append-parsed-line
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
+  [asm : String]
+  [line : CompilerBackendPeepholeLine]) : (text_buf_borrowed.TextBufBorrowed
+    asm)
+  (if (compiler-backend-peephole-line-append-owned? line)
+    (compiler-backend-peephole-append-line
+      buf
+      (struct-get line src)
+      (struct-get line newline))
+    (compiler-backend-peephole-append-line-range
+      buf
+      asm
+      (struct-get line start)
+      (struct-get line end)
+      (struct-get line newline))))
 
 (define (compiler-backend-peephole-append-pending-line
-  [buf : text_buf.TextBuf]
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
   [asm : String]
   [start : i64]
   [end : i64]
   [owned-line : String]
   [owned? : bool]
-  [newline : bool]) : text_buf.TextBuf
+  [newline : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
   (if owned?
     (compiler-backend-peephole-append-line buf owned-line newline)
     (compiler-backend-peephole-append-line-range buf asm start end newline)))
@@ -51301,21 +51327,19 @@ tl_tlci_call_image_entry:
     (- (struct-get line end) (struct-get line start))))
 
 (define (compiler-backend-peephole-line-append
-  [buf : text_buf.TextBuf]
-  [line : CompilerBackendPeepholeLine]) : text_buf.TextBuf
-  (compiler-backend-peephole-append-line-range
-    buf
-    (struct-get line src)
-    (struct-get line start)
-    (struct-get line end)
-    (struct-get line newline)))
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
+  [asm : String]
+  [line : CompilerBackendPeepholeLine]) : (text_buf_borrowed.TextBufBorrowed
+    asm)
+  (compiler-backend-peephole-append-parsed-line buf asm line))
 
 (define (compiler-backend-peephole-parse-line
   [src : String]
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]
-  [newline : bool]) : CompilerBackendPeepholeLine
+  [newline : bool]
+  [owned : bool]) : CompilerBackendPeepholeLine
   (let
     [ms : i64 start]
     (begin
@@ -51405,6 +51429,7 @@ tl_tlci_call_image_entry:
               start
               end
               newline
+              owned
               ms
               mlen
               has-operands
@@ -51430,7 +51455,8 @@ tl_tlci_call_image_entry:
       (string-data line))
     0
     (string.string-length line)
-    newline))
+    newline
+    true))
 
 (define (compiler-backend-peephole-empty-line) : CompilerBackendPeepholeLine
   (compiler-backend-peephole-owned-line "" false))
@@ -51443,6 +51469,7 @@ tl_tlci_call_image_entry:
     (struct-get line start)
     (struct-get line end)
     (struct-get line newline)
+    (struct-get line owned)
     (struct-get line mnemonic-start)
     (struct-get line mnemonic-len)
     (struct-get line has-operands)
@@ -51657,7 +51684,13 @@ tl_tlci_call_image_entry:
               (+ end 1)
               end)]
           [line : CompilerBackendPeepholeLine
-            (compiler-backend-peephole-parse-line asm asm-data i end (< end n))]
+            (compiler-backend-peephole-parse-line
+              asm
+              asm-data
+              i
+              end
+              (< end n)
+              false)]
           [mentions-r10 : bool
             (compiler-backend-peephole-range-mentions-r10-data? asm-data i end)]
           [clean-writes-r10 : bool
@@ -51773,10 +51806,11 @@ tl_tlci_call_image_entry:
     (compiler-backend-peephole-line-text next)))
 
 (define (compiler-backend-peephole-emit-line-desc
-  [out : text_buf.TextBuf]
+  [out : (text_buf_borrowed.TextBufBorrowed asm)]
+  [asm : String]
   [line : CompilerBackendPeepholeLine]
   [owners : CompilerBackendPeepholeOwners]
-  [prev-abort? : bool]) : CompilerBackendPeepholeEmitResult
+  [prev-abort? : bool]) : (CompilerBackendPeepholeEmitResult asm)
   (if (struct-get line movq)
     (let
       [src : String (struct-get line op-src)]
@@ -51800,19 +51834,23 @@ tl_tlci_call_image_entry:
             src-key
             dst)
           "")]
-      [next-out : text_buf.TextBuf
+      [next-out : (text_buf_borrowed.TextBufBorrowed asm)
         (cond
           [dst-owns out]
           [(not (string.eq ry ""))
             (let
-              [b1 : text_buf.TextBuf (text_buf.append out "    movq ")]
-              [b2 : text_buf.TextBuf (text_buf.append b1 ry)]
-              [b3 : text_buf.TextBuf (text_buf.append b2 ", ")]
-              [b4 : text_buf.TextBuf (text_buf.append b3 dst)]
+              [b1 : (text_buf_borrowed.TextBufBorrowed asm)
+                (text_buf_borrowed.append-owned out "    movq ")]
+              [b2 : (text_buf_borrowed.TextBufBorrowed asm)
+                (text_buf_borrowed.append-owned b1 ry)]
+              [b3 : (text_buf_borrowed.TextBufBorrowed asm)
+                (text_buf_borrowed.append-owned b2 ", ")]
+              [b4 : (text_buf_borrowed.TextBufBorrowed asm)
+                (text_buf_borrowed.append-owned b3 dst)]
               (if (struct-get line newline)
-                (text_buf.append b4 "\n")
+                (text_buf_borrowed.append-char b4 '\n')
                 b4))]
-          [else (compiler-backend-peephole-line-append out line)])]
+          [else (compiler-backend-peephole-line-append out asm line)])]
       [next-owners : CompilerBackendPeepholeOwners
         (compiler-backend-peephole-movq-owners-transfer-keyed
           owners
@@ -51822,14 +51860,14 @@ tl_tlci_call_image_entry:
           dst-key)]
       (CompilerBackendPeepholeEmitResult next-out next-owners))
     (CompilerBackendPeepholeEmitResult
-      (compiler-backend-peephole-line-append out line)
+      (compiler-backend-peephole-line-append out asm line)
       (compiler-backend-peephole-line-clobber-owners-desc
         owners
         line
         prev-abort?))))
 
 (define (compiler-backend-peephole-emit-pending-line
-  [out : text_buf.TextBuf]
+  [out : (text_buf_borrowed.TextBufBorrowed asm)]
   [asm : String]
   [asm-data : (Ptr u8)]
   [pending-start : i64]
@@ -51838,7 +51876,7 @@ tl_tlci_call_image_entry:
   [pending-owned? : bool]
   [pending-newline : bool]
   [owners : CompilerBackendPeepholeOwners]
-  [prev-abort? : bool]) : CompilerBackendPeepholeEmitResult
+  [prev-abort? : bool]) : (CompilerBackendPeepholeEmitResult asm)
   (match (compiler-backend-peephole-line-movq
     asm
     asm-data
@@ -51873,17 +51911,21 @@ tl_tlci_call_image_entry:
               src-key
               dst)
             "")]
-        [next-out : text_buf.TextBuf
+        [next-out : (text_buf_borrowed.TextBufBorrowed asm)
           (cond
             [dst-owns out]
             [(not (string.eq ry ""))
               (let
-                [b1 : text_buf.TextBuf (text_buf.append out "    movq ")]
-                [b2 : text_buf.TextBuf (text_buf.append b1 ry)]
-                [b3 : text_buf.TextBuf (text_buf.append b2 ", ")]
-                [b4 : text_buf.TextBuf (text_buf.append b3 dst)]
+                [b1 : (text_buf_borrowed.TextBufBorrowed asm)
+                  (text_buf_borrowed.append-owned out "    movq ")]
+                [b2 : (text_buf_borrowed.TextBufBorrowed asm)
+                  (text_buf_borrowed.append-owned b1 ry)]
+                [b3 : (text_buf_borrowed.TextBufBorrowed asm)
+                  (text_buf_borrowed.append-owned b2 ", ")]
+                [b4 : (text_buf_borrowed.TextBufBorrowed asm)
+                  (text_buf_borrowed.append-owned b3 dst)]
                 (if pending-newline
-                  (text_buf.append b4 "\n")
+                  (text_buf_borrowed.append-char b4 '\n')
                   b4))]
             [else
               (compiler-backend-peephole-append-pending-line
@@ -51961,7 +52003,8 @@ tl_tlci_call_image_entry:
       (unsafe
         (string-data asm))]
     [i : i64 0]
-    [out : text_buf.TextBuf (text_buf.empty)]
+    [out : (text_buf_borrowed.TextBufBorrowed asm)
+      (text_buf_borrowed.empty-like (& asm))]
     [has-pending : bool false]
     [pending : CompilerBackendPeepholeLine
       (compiler-backend-peephole-empty-line)]
@@ -51988,7 +52031,8 @@ tl_tlci_call_image_entry:
                     asm-data
                     i
                     end
-                    line-newline)]
+                    line-newline
+                    false)]
                 [action : i64
                   (compiler-backend-peephole-pair-action-desc
                     asm
@@ -52007,9 +52051,10 @@ tl_tlci_call_image_entry:
                           line)]
                       (begin
                         (let
-                          [emit : CompilerBackendPeepholeEmitResult
+                          [emit : (CompilerBackendPeepholeEmitResult asm)
                             (compiler-backend-peephole-emit-line-desc
                               out
+                              asm
                               pending
                               owners
                               prev-abort?)]
@@ -52036,9 +52081,10 @@ tl_tlci_call_image_entry:
                   [else
                     (begin
                       (let
-                        [emit : CompilerBackendPeepholeEmitResult
+                        [emit : (CompilerBackendPeepholeEmitResult asm)
                           (compiler-backend-peephole-emit-line-desc
                             out
+                            asm
                             pending
                             owners
                             prev-abort?)]
@@ -52057,15 +52103,17 @@ tl_tlci_call_image_entry:
                       asm-data
                       i
                       end
-                      line-newline)))))
+                      line-newline
+                      false)))))
             (set! i next-start))))
       (if (and
         has-pending
         (not (compiler-backend-peephole-line-self-move-desc? pending)))
         (let
-          [emit : CompilerBackendPeepholeEmitResult
+          [emit : (CompilerBackendPeepholeEmitResult asm)
             (compiler-backend-peephole-emit-line-desc
               out
+              asm
               pending
               owners
               prev-abort?)]
@@ -52073,7 +52121,7 @@ tl_tlci_call_image_entry:
             (set! out (struct-get emit buf))
             (set! owners (struct-get emit owners))))
         unit)
-      (text_buf.render out))))
+      (text_buf_borrowed.render out))))
 
 ;; Iterate the peephole to a fixpoint. A rewrite in one pass can expose further
 ;; rewrites a single pass misses (an into-%r10 fold creating a new adjacency, a

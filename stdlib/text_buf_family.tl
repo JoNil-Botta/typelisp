@@ -313,6 +313,8 @@
     (defenum TextBufBorrowedChunk
       (:lifetimes text)
       (TextBufBorrowedChunkBorrowed (& text str))
+      (TextBufBorrowedChunkSlice (& text str) i64 i64)
+      (TextBufBorrowedChunkChar char)
       (TextBufBorrowedChunkOwned String))
     (defenum TextBufBorrowedChunkList
       (:lifetimes text)
@@ -326,13 +328,7 @@
     (define (empty-like [_text : (& text str)]) : (TextBufBorrowed text)
       (TextBufBorrowed TextBufBorrowedChunkNil 0))
     (define (single [text : (& text str)]) : (TextBufBorrowed text)
-      (let
-        [chunk-len : i64 (string-length text)]
-        (TextBufBorrowed
-          (TextBufBorrowedChunkCons
-            (TextBufBorrowedChunkBorrowed text)
-            (box TextBufBorrowedChunkNil))
-          chunk-len)))
+      (append (empty-like text) text))
     (define (empty? [buf : (TextBufBorrowed text)]) : bool
       (match buf
         [(TextBufBorrowed _ len) (= len 0)]))
@@ -341,15 +337,91 @@
         [(TextBufBorrowed _ len) len]))
     (define (append [buf : (TextBufBorrowed text)] [text : (& text str)]) : (TextBufBorrowed
         text)
+      (append-slice buf text 0 (string-length text)))
+    (define (slice-valid? [text : (& text str)] [start : i64] [len : i64]) : bool
       (let
-        [chunk-len : i64 (string-length text)]
+        [n : i64 (string-length text)]
+        (and (>= start 0) (>= len 0) (<= start n) (<= len (- n start)))))
+    (define (same-borrowed-source? [left : (& text str)] [right : (& text str)]) : bool
+      (=
+        (unsafe
+          (ptr->int (string-data left)))
+        (unsafe
+          (ptr->int (string-data right)))))
+    (define (append-slice-chunks
+      [chunks : (TextBufBorrowedChunkList text)]
+      [text : (& text str)]
+      [start : i64]
+      [len : i64]) : (TextBufBorrowedChunkList text)
+      (match chunks
+        [(TextBufBorrowedChunkCons chunk rest)
+          (match chunk
+            [(TextBufBorrowedChunkSlice prev-text prev-start prev-len)
+              (if (and
+                (same-borrowed-source? prev-text text)
+                (= (+ prev-start prev-len) start))
+                (TextBufBorrowedChunkCons
+                  (TextBufBorrowedChunkSlice
+                    prev-text
+                    prev-start
+                    (+ prev-len len))
+                  rest)
+                (TextBufBorrowedChunkCons
+                  (TextBufBorrowedChunkSlice text start len)
+                  (box chunks)))]
+            [(TextBufBorrowedChunkBorrowed prev-text)
+              (let
+                [prev-len : i64 (string-length prev-text)]
+                (if (and
+                  (same-borrowed-source? prev-text text)
+                  (= prev-len start))
+                  (TextBufBorrowedChunkCons
+                    (TextBufBorrowedChunkSlice prev-text 0 (+ prev-len len))
+                    rest)
+                  (TextBufBorrowedChunkCons
+                    (TextBufBorrowedChunkSlice text start len)
+                    (box chunks))))]
+            [_
+              (TextBufBorrowedChunkCons
+                (TextBufBorrowedChunkSlice text start len)
+                (box chunks))])]
+        [(TextBufBorrowedChunkNil)
+          (TextBufBorrowedChunkCons
+            (TextBufBorrowedChunkSlice text start len)
+            (box TextBufBorrowedChunkNil))]))
+    (define (append-slice
+      [buf : (TextBufBorrowed text)]
+      [text : (& text str)]
+      [start : i64]
+      [len : i64]) : (TextBufBorrowed text)
+      (if (not (slice-valid? text start len))
+        (begin
+          (io.panic "text-buf-borrowed: invalid slice")
+          buf)
+        (if (= len 0)
+          buf
+          (match buf
+            [(TextBufBorrowed chunks total-len)
+              (TextBufBorrowed
+                (append-slice-chunks chunks text start len)
+                (+ total-len len))]))))
+    (define (append-char-supported? [c : char]) : bool
+      (let
+        [code : i64 (cast c : i64)]
+        (or (= code 9) (= code 10) (= code 13) (and (>= code 32) (<= code 126)))))
+    (define (append-char [buf : (TextBufBorrowed text)] [c : char]) : (TextBufBorrowed
+        text)
+      (if (not (append-char-supported? c))
+        (begin
+          (io.panic "text-buf-borrowed: unsupported non-printable char")
+          buf)
         (match buf
           [(TextBufBorrowed chunks len)
             (TextBufBorrowed
               (TextBufBorrowedChunkCons
-                (TextBufBorrowedChunkBorrowed text)
+                (TextBufBorrowedChunkChar c)
                 (box chunks))
-              (+ len chunk-len))])))
+              (+ len 1))])))
     (define (append-owned [buf : (TextBufBorrowed text)] [chunk : String]) : (TextBufBorrowed
         text)
       (let
@@ -372,6 +444,9 @@
       (match chunk
         [(TextBufBorrowedChunkBorrowed text)
           (string.substring text 0 (string-length text))]
+        [(TextBufBorrowedChunkSlice text start len)
+          (string.substring text start len)]
+        [(TextBufBorrowedChunkChar c) (text_buf.char-string c)]
         [(TextBufBorrowedChunkOwned text) text]))
     (define (chunks-to-owned [chunks : (TextBufBorrowedChunkList text)]) : text_buf.TextBufChunkList
       (match chunks
@@ -380,7 +455,113 @@
           (text_buf.TextBufChunkCons
             (chunk-string chunk)
             (box (chunks-to-owned (box-get rest))))]))
+    (define (chunk-length [chunk : (TextBufBorrowedChunk text)]) : i64
+      (match chunk
+        [(TextBufBorrowedChunkBorrowed text) (string-length text)]
+        [(TextBufBorrowedChunkSlice _ _ len) len]
+        [(TextBufBorrowedChunkChar _) 1]
+        [(TextBufBorrowedChunkOwned text) (string-length text)]))
+    (define (chunks-count
+      [chunks : (TextBufBorrowedChunkList text)]
+      [count : i64]) : i64
+      (match chunks
+        [(TextBufBorrowedChunkNil) count]
+        [(TextBufBorrowedChunkCons _ rest)
+          (chunks-count (box-get rest) (+ count 1))]))
+    (define (chunk-count [buf : (TextBufBorrowed text)]) : i64
+      (match buf
+        [(TextBufBorrowed chunks _) (chunks-count chunks 0)]))
+    (define (copy-byte-range-into
+      [src : (Ptr u8)]
+      [src-start : i64]
+      [clen : i64]
+      [dst : (MutPtr u8)]
+      [dst-start : i64]) : unit
+      (let
+        [base : (Ptr u8)
+          (unsafe
+            (ptr-offset src src-start))]
+        [words : i64 (/ clen 8)]
+        [src64 : (Ptr i64)
+          (unsafe
+            (ptr-cast base : (Ptr i64)))]
+        [dst64 : (MutPtr i64)
+          (unsafe
+            (ptr-cast (ptr-offset dst dst-start) : (MutPtr i64)))]
+        [w : i64 0]
+        [b : i64 (* words 8)]
+        (begin
+          (while (< w words)
+            (begin
+              (unsafe
+                (ptr-write!
+                  (ptr-offset dst64 w)
+                  (ptr-read (ptr-offset src64 w))))
+              (set! w (+ w 1))))
+          (while (< b clen)
+            (begin
+              (unsafe
+                (ptr-write!
+                  (ptr-offset dst (+ dst-start b))
+                  (ptr-read (ptr-offset base b))))
+              (set! b (+ b 1))))
+          unit)))
+    (define (copy-chunk-into
+      [chunk : (TextBufBorrowedChunk text)]
+      [dst : (MutPtr u8)]
+      [start : i64]) : unit
+      (match chunk
+        [(TextBufBorrowedChunkBorrowed text)
+          (copy-byte-range-into
+            (unsafe
+              (string-data text))
+            0
+            (string-length text)
+            dst
+            start)]
+        [(TextBufBorrowedChunkSlice text slice-start len)
+          (copy-byte-range-into
+            (unsafe
+              (string-data text))
+            slice-start
+            len
+            dst
+            start)]
+        [(TextBufBorrowedChunkChar c)
+          (unsafe
+            (ptr-write! (ptr-offset dst start) (cast c : u8)))]
+        [(TextBufBorrowedChunkOwned text)
+          (copy-byte-range-into
+            (unsafe
+              (string-data (& text)))
+            0
+            (string-length text)
+            dst
+            start)]))
+    (define (fill-rev-into
+      [chunks : (TextBufBorrowedChunkList text)]
+      [dst : (MutPtr u8)]
+      [pos : i64]) : unit
+      (match chunks
+        [(TextBufBorrowedChunkNil) unit]
+        [(TextBufBorrowedChunkCons chunk rest)
+          (let
+            [clen : i64 (chunk-length chunk)]
+            [start : i64 (- pos clen)]
+            (begin
+              (copy-chunk-into chunk dst start)
+              (fill-rev-into (box-get rest) dst start)))]))
     (define (render [buf : (TextBufBorrowed text)]) : String
       (match buf
         [(TextBufBorrowed chunks len)
-          (text_buf.render-chunks (chunks-to-owned chunks) len)]))))
+          (if (= len 0)
+            ""
+            (let
+              [out : (Array u8) (array.make-array u8 len)]
+              [dst : (MutPtr u8)
+                (unsafe
+                  (array-data out))]
+              (begin
+                (fill-rev-into chunks dst len)
+                (unsafe
+                  (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))]))))

@@ -10,7 +10,7 @@
 (import compiler_parallel_move as pmove)
 (import stdlib.text_buf)
 (import stdlib.text_buf_borrowed)
-(import "compiler_object.tl")
+(import compiler_object as cobj)
 (import compiler_intern as ci)
 (import sym_i64_env)
 (import stdlib.array)
@@ -288,7 +288,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCompilerBackendObject
-  (Ok CompilerObjectImage)
+  (Ok cobj.CompilerObjectImage)
   (Err (Box CompilerDiagnostic)))
 
 (defenum CompilerBackendSwitchValidation
@@ -42156,10 +42156,11 @@
         (cast (compiler-backend-float-payload-bits ty bits) : i64))
       "\n")))
 
-(define (compiler-backend-float-object-data [ty : AstType] [bits : u64]) : CompilerObjectDataRecord
+(define (compiler-backend-float-object-data [ty : AstType] [bits : u64]) : cobj.CompilerObjectDataRecord
   (if (compiler-backend-f64-type? ty)
-    (CompilerObjectDataRecord.F64 bits)
-    (CompilerObjectDataRecord.F32 (compiler-backend-float-payload-bits ty bits))))
+    (cobj.CompilerObjectDataRecord.F64 bits)
+    (cobj.CompilerObjectDataRecord.F32
+      (compiler-backend-float-payload-bits ty bits))))
 
 (define (compiler-backend-emit-float-entry [ty : AstType] [bits : u64]) : String
   (str_cat.str-cat
@@ -46564,31 +46565,31 @@ tl_tlci_call_image_entry:
             (box (compiler-diagnostic-at-start "" message))))])))
 
 (defstruct CompilerBackendObjectParts
-  (text CompilerObjectX64InstrBuilder)
-  (data CompilerObjectDataRecordBuilder)
-  (rodata CompilerObjectDataRecordBuilder)
-  (bss CompilerObjectDataRecordBuilder)
-  (pdata CompilerObjectDataRecordBuilder)
-  (xdata CompilerObjectDataRecordBuilder)
-  (symbols CompilerObjectSymbolBuilder)
-  (relocations CompilerObjectRelocationBuilder))
+  (text cobj.CompilerObjectX64InstrBuilder)
+  (data cobj.CompilerObjectDataRecordBuilder)
+  (rodata cobj.CompilerObjectDataRecordBuilder)
+  (bss cobj.CompilerObjectDataRecordBuilder)
+  (pdata cobj.CompilerObjectDataRecordBuilder)
+  (xdata cobj.CompilerObjectDataRecordBuilder)
+  (symbols cobj.CompilerObjectSymbolBuilder)
+  (relocations cobj.CompilerObjectRelocationBuilder))
 
 (define (compiler-backend-object-parts-empty) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
-    (compiler-object-instr-builder-new)
-    (compiler-object-data-record-builder-new)
-    (compiler-object-data-record-builder-new)
-    (compiler-object-data-record-builder-new)
-    (compiler-object-data-record-builder-new)
-    (compiler-object-data-record-builder-new)
-    (compiler-object-symbol-builder-new)
-    (compiler-object-relocation-builder-new)))
+    (cobj.compiler-object-instr-builder-new)
+    (cobj.compiler-object-data-record-builder-new)
+    (cobj.compiler-object-data-record-builder-new)
+    (cobj.compiler-object-data-record-builder-new)
+    (cobj.compiler-object-data-record-builder-new)
+    (cobj.compiler-object-data-record-builder-new)
+    (cobj.compiler-object-symbol-builder-new)
+    (cobj.compiler-object-relocation-builder-new)))
 
 (define (compiler-backend-object-add-text
   [parts : CompilerBackendObjectParts]
-  [instr : CompilerObjectX64Instr]) : CompilerBackendObjectParts
+  [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
-    (compiler-object-instr-builder-push (struct-get parts text) instr)
+    (cobj.compiler-object-instr-builder-push (struct-get parts text) instr)
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
@@ -46599,10 +46600,12 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-object-add-data
   [parts : CompilerBackendObjectParts]
-  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
-    (compiler-object-data-record-builder-push (struct-get parts data) record)
+    (cobj.compiler-object-data-record-builder-push
+      (struct-get parts data)
+      record)
     (struct-get parts rodata)
     (struct-get parts bss)
     (struct-get parts pdata)
@@ -46612,11 +46615,13 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-object-add-rodata
   [parts : CompilerBackendObjectParts]
-  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
     (struct-get parts data)
-    (compiler-object-data-record-builder-push (struct-get parts rodata) record)
+    (cobj.compiler-object-data-record-builder-push
+      (struct-get parts rodata)
+      record)
     (struct-get parts bss)
     (struct-get parts pdata)
     (struct-get parts xdata)
@@ -46625,12 +46630,14 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-object-add-bss
   [parts : CompilerBackendObjectParts]
-  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
     (struct-get parts data)
     (struct-get parts rodata)
-    (compiler-object-data-record-builder-push (struct-get parts bss) record)
+    (cobj.compiler-object-data-record-builder-push
+      (struct-get parts bss)
+      record)
     (struct-get parts pdata)
     (struct-get parts xdata)
     (struct-get parts symbols)
@@ -46638,36 +46645,40 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-object-add-pdata
   [parts : CompilerBackendObjectParts]
-  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
-    (compiler-object-data-record-builder-push (struct-get parts pdata) record)
+    (cobj.compiler-object-data-record-builder-push
+      (struct-get parts pdata)
+      record)
     (struct-get parts xdata)
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
 (define (compiler-backend-object-add-xdata
   [parts : CompilerBackendObjectParts]
-  [record : CompilerObjectDataRecord]) : CompilerBackendObjectParts
+  [record : cobj.CompilerObjectDataRecord]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
     (struct-get parts data)
     (struct-get parts rodata)
     (struct-get parts bss)
     (struct-get parts pdata)
-    (compiler-object-data-record-builder-push (struct-get parts xdata) record)
+    (cobj.compiler-object-data-record-builder-push
+      (struct-get parts xdata)
+      record)
     (struct-get parts symbols)
     (struct-get parts relocations)))
 
 (define (compiler-backend-object-add-symbol
   [parts : CompilerBackendObjectParts]
   [name : String]
-  [binding : CompilerObjectSymbolBinding]
-  [kind : CompilerObjectSymbolKind]
-  [section : CompilerObjectMaybeSection]) : CompilerBackendObjectParts
+  [binding : cobj.CompilerObjectSymbolBinding]
+  [kind : cobj.CompilerObjectSymbolKind]
+  [section : cobj.CompilerObjectMaybeSection]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
     (struct-get parts data)
@@ -46675,16 +46686,16 @@ tl_tlci_call_image_entry:
     (struct-get parts bss)
     (struct-get parts pdata)
     (struct-get parts xdata)
-    (compiler-object-symbol-builder-push
+    (cobj.compiler-object-symbol-builder-push
       (struct-get parts symbols)
-      (CompilerObjectSymbol.Symbol name binding kind section))
+      (cobj.CompilerObjectSymbol.Symbol name binding kind section))
     (struct-get parts relocations)))
 
 (define (compiler-backend-object-add-relocation
   [parts : CompilerBackendObjectParts]
-  [section : CompilerObjectSectionKind]
+  [section : cobj.CompilerObjectSectionKind]
   [site : String]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectParts
   (CompilerBackendObjectParts
     (struct-get parts text)
@@ -46694,53 +46705,53 @@ tl_tlci_call_image_entry:
     (struct-get parts pdata)
     (struct-get parts xdata)
     (struct-get parts symbols)
-    (compiler-object-relocation-builder-push
+    (cobj.compiler-object-relocation-builder-push
       (struct-get parts relocations)
-      (CompilerObjectRelocation.Relocation section site kind target))))
+      (cobj.CompilerObjectRelocation.Relocation section site kind target))))
 
 (define (compiler-backend-object-symbol-local-section
   [parts : CompilerBackendObjectParts]
   [name : String]
-  [section : CompilerObjectSectionKind]
-  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  [section : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
   (compiler-backend-object-add-symbol
     parts
     name
-    (CompilerObjectSymbolBinding.Local)
+    (cobj.CompilerObjectSymbolBinding.Local)
     kind
-    (CompilerObjectMaybeSection.Some section)))
+    (cobj.CompilerObjectMaybeSection.Some section)))
 
 (define (compiler-backend-object-symbol-export-section
   [parts : CompilerBackendObjectParts]
   [name : String]
-  [section : CompilerObjectSectionKind]
-  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  [section : cobj.CompilerObjectSectionKind]
+  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
   (compiler-backend-object-add-symbol
     parts
     name
-    (CompilerObjectSymbolBinding.Export)
+    (cobj.CompilerObjectSymbolBinding.Export)
     kind
-    (CompilerObjectMaybeSection.Some section)))
+    (cobj.CompilerObjectMaybeSection.Some section)))
 
 (define (compiler-backend-object-symbol-extern
   [parts : CompilerBackendObjectParts]
   [name : String]
-  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
   (compiler-backend-object-add-symbol
     parts
     name
-    (CompilerObjectSymbolBinding.Extern)
+    (cobj.CompilerObjectSymbolBinding.Extern)
     kind
-    (CompilerObjectMaybeSection.No)))
+    (cobj.CompilerObjectMaybeSection.No)))
 
 (define (compiler-backend-object-symbol-extern-once
   [parts : CompilerBackendObjectParts]
   [name : String]
-  [kind : CompilerObjectSymbolKind]) : CompilerBackendObjectParts
-  (if (compiler-object-symbol-builder-contains?
+  [kind : cobj.CompilerObjectSymbolKind]) : CompilerBackendObjectParts
+  (if (cobj.compiler-object-symbol-builder-contains?
     (struct-get parts symbols)
     name
-    (CompilerObjectSymbolBinding.Extern)
+    (cobj.CompilerObjectSymbolBinding.Extern)
     kind)
     parts
     (compiler-backend-object-symbol-extern parts name kind)))
@@ -46748,11 +46759,11 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-object-add-text-relocation
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (CompilerObjectSectionKind.Text)
+    (cobj.CompilerObjectSectionKind.Text)
     site
     kind
     target))
@@ -46760,11 +46771,11 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-object-add-data-relocation
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (CompilerObjectSectionKind.Data)
+    (cobj.CompilerObjectSectionKind.Data)
     site
     kind
     target))
@@ -46772,11 +46783,11 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-object-add-rodata-relocation
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (CompilerObjectSectionKind.Rodata)
+    (cobj.CompilerObjectSectionKind.Rodata)
     site
     kind
     target))
@@ -46784,11 +46795,11 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-object-add-pdata-relocation
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : CompilerBackendObjectParts
   (compiler-backend-object-add-relocation
     parts
-    (CompilerObjectSectionKind.Pdata)
+    (cobj.CompilerObjectSectionKind.Pdata)
     site
     kind
     target))
@@ -46805,9 +46816,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipValue)
+            (cobj.CompilerObjectRelocationKind.RipValue)
             symbol)
-          (CompilerObjectX64Instr.LoadRip symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
     [(CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -46815,9 +46826,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipAddress)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [(CompilerIrValue.String text)
       (let
         [symbol : String (compiler-backend-string-fat-label text)]
@@ -46825,9 +46836,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipAddress)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [(CompilerIrValue.Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
@@ -46835,9 +46846,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipAddress)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [(CompilerIrValue.F64 bits)
       (let
         [symbol : String (compiler-backend-f64-label bits)]
@@ -46845,9 +46856,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipValue)
+            (cobj.CompilerObjectRelocationKind.RipValue)
             symbol)
-          (CompilerObjectX64Instr.LoadRip symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
     [(CompilerIrValue.Function name)
       (let
         [symbol : String (compiler-backend-closure-descriptor-label name)]
@@ -46855,9 +46866,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipAddress)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (CompilerObjectX64Instr.LoadRipAddress symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRipAddress symbol)))]
     [_ parts]))
 
 (define (compiler-backend-object-value-ref-with-type
@@ -46873,9 +46884,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             site
-            (CompilerObjectRelocationKind.RipValue)
+            (cobj.CompilerObjectRelocationKind.RipValue)
             symbol)
-          (CompilerObjectX64Instr.LoadRip symbol)))]
+          (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
     [_ (compiler-backend-object-value-ref parts site value)]))
 
 (define (compiler-backend-object-call-args
@@ -47005,7 +47016,7 @@ tl_tlci_call_image_entry:
     parts
     (compiler-backend-object-add-text
       parts
-      (CompilerObjectX64Instr.Bytes bytes))))
+      (cobj.CompilerObjectX64Instr.Bytes bytes))))
 
 (define (compiler-backend-object-reg-low-code [reg : String]) : i64
   (cond
@@ -47442,11 +47453,11 @@ tl_tlci_call_image_entry:
                 (compiler-backend-object-add-rodata-relocation
                   (compiler-backend-object-add-rodata
                     parts
-                    (CompilerObjectDataRecord.Label entry-label))
+                    (cobj.CompilerObjectDataRecord.Label entry-label))
                   entry-label
-                  (CompilerObjectRelocationKind.Abs64)
+                  (cobj.CompilerObjectRelocationKind.Abs64)
                   target)
-                (CompilerObjectDataRecord.SymbolAddress target))
+                (cobj.CompilerObjectDataRecord.SymbolAddress target))
               label-scope
               table-label
               (box-get rest)
@@ -47473,10 +47484,10 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-symbol-local-section
             parts
             table-label
-            (CompilerObjectSectionKind.Rodata)
-            (CompilerObjectSymbolKind.Data))
-          (CompilerObjectDataRecord.Align 8))
-        (CompilerObjectDataRecord.Label table-label))
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (cobj.CompilerObjectSymbolKind.Data))
+          (cobj.CompilerObjectDataRecord.Align 8))
+        (cobj.CompilerObjectDataRecord.Label table-label))
       label-scope
       table-label
       cases
@@ -47507,32 +47518,32 @@ tl_tlci_call_image_entry:
         with-index
         (compiler-backend-object-add-text
           with-index
-          (CompilerObjectX64Instr.Bytes
+          (cobj.CompilerObjectX64Instr.Bytes
             (compiler-backend-object-sub-imm32-rax-bytes base))))]
     [with-cmp : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-base
-        (CompilerObjectX64Instr.Bytes
+        (cobj.CompilerObjectX64Instr.Bytes
           (compiler-backend-object-cmp-imm32-rax-bytes (- case-count 1))))]
     [with-ja : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-cmp
           function-symbol
-          (CompilerObjectRelocationKind.Branch)
+          (cobj.CompilerObjectRelocationKind.Branch)
           default-symbol)
-        (CompilerObjectX64Instr.Ja default-symbol))]
+        (cobj.CompilerObjectX64Instr.Ja default-symbol))]
     [with-table : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-ja
           function-symbol
-          (CompilerObjectRelocationKind.RipAddress)
+          (cobj.CompilerObjectRelocationKind.RipAddress)
           table-label)
-        (CompilerObjectX64Instr.LoadRipAddressR11 table-label))]
+        (cobj.CompilerObjectX64Instr.LoadRipAddressR11 table-label))]
     (compiler-backend-object-add-text
       with-table
-      (CompilerObjectX64Instr.Bytes
+      (cobj.CompilerObjectX64Instr.Bytes
         (compiler-backend-object-switch-indirect-jump-bytes)))))
 
 (define (compiler-backend-object-switch
@@ -47704,9 +47715,9 @@ tl_tlci_call_image_entry:
             args
             0)
           site
-          (CompilerObjectRelocationKind.Call)
+          (cobj.CompilerObjectRelocationKind.Call)
           symbol)
-        (CompilerObjectX64Instr.Call symbol))
+        (cobj.CompilerObjectX64Instr.Call symbol))
       (compiler-backend-object-add-rsp-bytes space))))
 
 (define (compiler-backend-object-param-spills
@@ -47784,9 +47795,9 @@ tl_tlci_call_image_entry:
               (compiler-backend-object-add-rip-instr
                 with-src
                 function
-                (CompilerObjectRelocationKind.RipValue)
+                (cobj.CompilerObjectRelocationKind.RipValue)
                 (compiler-backend-f64-sign-bit-label)
-                (CompilerObjectX64Instr.XorpdRip
+                (cobj.CompilerObjectX64Instr.XorpdRip
                   (compiler-backend-f64-sign-bit-label)))
               with-src)]
           [_ with-src]))]
@@ -47857,9 +47868,9 @@ tl_tlci_call_image_entry:
                 0)
               (compiler-backend-object-leave-bytes))
             function
-            (CompilerObjectRelocationKind.TailCall)
+            (cobj.CompilerObjectRelocationKind.TailCall)
             call-target)
-          (CompilerObjectX64Instr.TailCall call-target)))]
+          (cobj.CompilerObjectX64Instr.TailCall call-target)))]
     [(CompilerIrInstr.Store name value ty)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -47871,9 +47882,9 @@ tl_tlci_call_image_entry:
               value
               ty)
             function
-            (CompilerObjectRelocationKind.RipAddress)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
             symbol)
-          (CompilerObjectX64Instr.StoreRip symbol)))]
+          (cobj.CompilerObjectX64Instr.StoreRip symbol)))]
     [(CompilerIrInstr.Jump target)
       (let
         [symbol : String (compiler-backend-asm-label label-scope target)]
@@ -47881,9 +47892,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-text-relocation
             parts
             function
-            (CompilerObjectRelocationKind.Branch)
+            (cobj.CompilerObjectRelocationKind.Branch)
             symbol)
-          (CompilerObjectX64Instr.Jump symbol)))]
+          (cobj.CompilerObjectX64Instr.Jump symbol)))]
     [(CompilerIrInstr.Branch cond true-label false-label)
       (let
         [true-symbol : String
@@ -47895,12 +47906,12 @@ tl_tlci_call_image_entry:
             (compiler-backend-object-add-text-relocation
               (compiler-backend-object-value-ref parts function cond)
               function
-              (CompilerObjectRelocationKind.Branch)
+              (cobj.CompilerObjectRelocationKind.Branch)
               true-symbol)
             function
-            (CompilerObjectRelocationKind.Branch)
+            (cobj.CompilerObjectRelocationKind.Branch)
             false-symbol)
-          (CompilerObjectX64Instr.Branch true-symbol false-symbol)))]
+          (cobj.CompilerObjectX64Instr.Branch true-symbol false-symbol)))]
     [(CompilerIrInstr.Return value)
       (compiler-backend-object-add-nonempty-bytes
         (match value
@@ -48146,9 +48157,9 @@ tl_tlci_call_image_entry:
                   (compiler-backend-object-symbol-local-section
                     parts
                     block-label
-                    (CompilerObjectSectionKind.Text)
-                    (CompilerObjectSymbolKind.Function))
-                  (CompilerObjectX64Instr.Label block-label))
+                    (cobj.CompilerObjectSectionKind.Text)
+                    (cobj.CompilerObjectSymbolKind.Function))
+                  (cobj.CompilerObjectX64Instr.Label block-label))
                 target
                 function-symbol
                 label-scope
@@ -48195,9 +48206,9 @@ tl_tlci_call_image_entry:
                 (compiler-backend-object-symbol-local-section
                   parts
                   block-label
-                  (CompilerObjectSectionKind.Text)
-                  (CompilerObjectSymbolKind.Function))
-                (CompilerObjectX64Instr.Label block-label))
+                  (cobj.CompilerObjectSectionKind.Text)
+                  (cobj.CompilerObjectSymbolKind.Function))
+                (cobj.CompilerObjectX64Instr.Label block-label))
               target
               function-symbol
               label-scope
@@ -48238,9 +48249,9 @@ tl_tlci_call_image_entry:
                       (compiler-backend-object-symbol-export-section
                         parts
                         symbol
-                        (CompilerObjectSectionKind.Text)
-                        (CompilerObjectSymbolKind.Function))
-                      (CompilerObjectX64Instr.Label symbol))
+                        (cobj.CompilerObjectSectionKind.Text)
+                        (cobj.CompilerObjectSymbolKind.Function))
+                      (cobj.CompilerObjectX64Instr.Label symbol))
                     (compiler-backend-object-prologue-bytes
                       (compiler-backend-frame-size vars)))
                   target
@@ -48289,9 +48300,9 @@ tl_tlci_call_image_entry:
                     (compiler-backend-object-symbol-export-section
                       parts
                       symbol
-                      (CompilerObjectSectionKind.Text)
-                      (CompilerObjectSymbolKind.Function))
-                    (CompilerObjectX64Instr.Label symbol))
+                      (cobj.CompilerObjectSectionKind.Text)
+                      (cobj.CompilerObjectSymbolKind.Function))
+                    (cobj.CompilerObjectX64Instr.Label symbol))
                   (compiler-backend-object-prologue-bytes
                     (compiler-backend-frame-size vars)))
                 target
@@ -48316,20 +48327,24 @@ tl_tlci_call_image_entry:
   [value : CompilerIrValue]) : CompilerBackendObjectParts
   (match value
     [(CompilerIrValue.I64 n)
-      (compiler-backend-object-add-data parts (CompilerObjectDataRecord.I64 n))]
+      (compiler-backend-object-add-data
+        parts
+        (cobj.CompilerObjectDataRecord.I64 n))]
     [(CompilerIrValue.Bool b)
       (compiler-backend-object-add-data
         parts
-        (CompilerObjectDataRecord.I64
+        (cobj.CompilerObjectDataRecord.I64
           (if b
             1
             0)))]
     [(CompilerIrValue.Char c)
       (compiler-backend-object-add-data
         parts
-        (CompilerObjectDataRecord.I64 (compiler-backend-char-code c)))]
+        (cobj.CompilerObjectDataRecord.I64 (compiler-backend-char-code c)))]
     [(CompilerIrValue.Unit)
-      (compiler-backend-object-add-data parts (CompilerObjectDataRecord.I64 0))]
+      (compiler-backend-object-add-data
+        parts
+        (cobj.CompilerObjectDataRecord.I64 0))]
     [(CompilerIrValue.F64 bits)
       (compiler-backend-object-add-data
         parts
@@ -48341,9 +48356,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             symbol)
-          (CompilerObjectDataRecord.SymbolAddress symbol)))]
+          (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.Bytes text)
       (let
         [symbol : String (compiler-backend-bytes-fat-label text)]
@@ -48351,9 +48366,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             symbol)
-          (CompilerObjectDataRecord.SymbolAddress symbol)))]
+          (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.Global name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -48361,9 +48376,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             symbol)
-          (CompilerObjectDataRecord.SymbolAddress symbol)))]
+          (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.GlobalAddr name)
       (let
         [symbol : String (compiler-backend-user-symbol name)]
@@ -48371,9 +48386,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             symbol)
-          (CompilerObjectDataRecord.SymbolAddress symbol)))]
+          (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.Function name)
       (let
         [symbol : String (compiler-backend-closure-descriptor-label name)]
@@ -48381,9 +48396,9 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-add-data-relocation
             parts
             site
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             symbol)
-          (CompilerObjectDataRecord.SymbolAddress symbol)))]
+          (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [_ parts]))
 
 (define (compiler-backend-object-globals
@@ -48404,18 +48419,18 @@ tl_tlci_call_image_entry:
                     (compiler-backend-object-symbol-export-section
                       parts
                       symbol
-                      (CompilerObjectSectionKind.Bss)
-                      (CompilerObjectSymbolKind.Data))
-                    (CompilerObjectDataRecord.Label symbol))
-                  (CompilerObjectDataRecord.Zero 8))
+                      (cobj.CompilerObjectSectionKind.Bss)
+                      (cobj.CompilerObjectSymbolKind.Data))
+                    (cobj.CompilerObjectDataRecord.Label symbol))
+                  (cobj.CompilerObjectDataRecord.Zero 8))
                 (compiler-backend-object-global-value
                   (compiler-backend-object-add-data
                     (compiler-backend-object-symbol-export-section
                       parts
                       symbol
-                      (CompilerObjectSectionKind.Data)
-                      (CompilerObjectSymbolKind.Data))
-                    (CompilerObjectDataRecord.Label symbol))
+                      (cobj.CompilerObjectSectionKind.Data)
+                      (cobj.CompilerObjectSymbolKind.Data))
+                    (cobj.CompilerObjectDataRecord.Label symbol))
                   symbol
                   ty
                   value))
@@ -48448,20 +48463,20 @@ tl_tlci_call_image_entry:
                           (compiler-backend-object-symbol-local-section
                             parts
                             data-symbol
-                            (CompilerObjectSectionKind.Rodata)
-                            (CompilerObjectSymbolKind.Data))
-                          (CompilerObjectDataRecord.Label data-symbol))
-                        (CompilerObjectDataRecord.String text))
+                            (cobj.CompilerObjectSectionKind.Rodata)
+                            (cobj.CompilerObjectSymbolKind.Data))
+                          (cobj.CompilerObjectDataRecord.Label data-symbol))
+                        (cobj.CompilerObjectDataRecord.String text))
                       fat-symbol
-                      (CompilerObjectSectionKind.Rodata)
-                      (CompilerObjectSymbolKind.Data))
-                    (CompilerObjectDataRecord.Align 8))
+                      (cobj.CompilerObjectSectionKind.Rodata)
+                      (cobj.CompilerObjectSymbolKind.Data))
+                    (cobj.CompilerObjectDataRecord.Align 8))
                   fat-symbol
-                  (CompilerObjectRelocationKind.Abs64)
+                  (cobj.CompilerObjectRelocationKind.Abs64)
                   data-symbol)
-                (CompilerObjectDataRecord.Label fat-symbol))
-              (CompilerObjectDataRecord.SymbolAddress data-symbol))
-            (CompilerObjectDataRecord.I64 (string.string-length text)))
+                (cobj.CompilerObjectDataRecord.Label fat-symbol))
+              (cobj.CompilerObjectDataRecord.SymbolAddress data-symbol))
+            (cobj.CompilerObjectDataRecord.I64 (string.string-length text)))
           (box-get rest)))]))
 
 (define (compiler-backend-object-bytes
@@ -48486,23 +48501,23 @@ tl_tlci_call_image_entry:
                             (compiler-backend-object-symbol-local-section
                               parts
                               data-symbol
-                              (CompilerObjectSectionKind.Data)
-                              (CompilerObjectSymbolKind.Data))
+                              (cobj.CompilerObjectSectionKind.Data)
+                              (cobj.CompilerObjectSymbolKind.Data))
                             fat-symbol
-                            (CompilerObjectSectionKind.Data)
-                            (CompilerObjectSymbolKind.Data))
-                          (CompilerObjectDataRecord.Align 8))
-                        (CompilerObjectDataRecord.Label data-symbol))
+                            (cobj.CompilerObjectSectionKind.Data)
+                            (cobj.CompilerObjectSymbolKind.Data))
+                          (cobj.CompilerObjectDataRecord.Align 8))
+                        (cobj.CompilerObjectDataRecord.Label data-symbol))
                       (if (= (string.string-length bytes) 0)
-                        (CompilerObjectDataRecord.Zero 1)
-                        (CompilerObjectDataRecord.Bytes bytes)))
+                        (cobj.CompilerObjectDataRecord.Zero 1)
+                        (cobj.CompilerObjectDataRecord.Bytes bytes)))
                     fat-symbol
-                    (CompilerObjectRelocationKind.Abs64)
+                    (cobj.CompilerObjectRelocationKind.Abs64)
                     data-symbol)
-                  (CompilerObjectDataRecord.Align 8))
-                (CompilerObjectDataRecord.Label fat-symbol))
-              (CompilerObjectDataRecord.SymbolAddress data-symbol))
-            (CompilerObjectDataRecord.I64 (string.string-length bytes)))
+                  (cobj.CompilerObjectDataRecord.Align 8))
+                (cobj.CompilerObjectDataRecord.Label fat-symbol))
+              (cobj.CompilerObjectDataRecord.SymbolAddress data-symbol))
+            (cobj.CompilerObjectDataRecord.I64 (string.string-length bytes)))
           (box-get rest)))]))
 
 (define (compiler-backend-object-floats
@@ -48520,13 +48535,13 @@ tl_tlci_call_image_entry:
                 (compiler-backend-object-symbol-local-section
                   parts
                   symbol
-                  (CompilerObjectSectionKind.Rodata)
-                  (CompilerObjectSymbolKind.Data))
-                (CompilerObjectDataRecord.Align
+                  (cobj.CompilerObjectSectionKind.Rodata)
+                  (cobj.CompilerObjectSymbolKind.Data))
+                (cobj.CompilerObjectDataRecord.Align
                   (if (compiler-backend-f64-type? ty)
                     8
                     4)))
-              (CompilerObjectDataRecord.Label symbol))
+              (cobj.CompilerObjectDataRecord.Label symbol))
             (compiler-backend-float-object-data ty bits))
           (box-get rest)))]))
 
@@ -48543,12 +48558,12 @@ tl_tlci_call_image_entry:
               (compiler-backend-object-symbol-local-section
                 parts
                 symbol
-                (CompilerObjectSectionKind.Rodata)
-                (CompilerObjectSymbolKind.Data))
-              (CompilerObjectDataRecord.Align 16))
-            (CompilerObjectDataRecord.Label symbol))
-          (CompilerObjectDataRecord.I64 -9223372036854775808))
-        (CompilerObjectDataRecord.I64 0)))
+                (cobj.CompilerObjectSectionKind.Rodata)
+                (cobj.CompilerObjectSymbolKind.Data))
+              (cobj.CompilerObjectDataRecord.Align 16))
+            (cobj.CompilerObjectDataRecord.Label symbol))
+          (cobj.CompilerObjectDataRecord.I64 -9223372036854775808))
+        (cobj.CompilerObjectDataRecord.I64 0)))
     parts))
 
 (define (compiler-backend-object-closure-descriptors
@@ -48573,18 +48588,18 @@ tl_tlci_call_image_entry:
                           (compiler-backend-object-symbol-local-section
                             parts
                             descriptor
-                            (CompilerObjectSectionKind.Rodata)
-                            (CompilerObjectSymbolKind.Data))
+                            (cobj.CompilerObjectSectionKind.Rodata)
+                            (cobj.CompilerObjectSymbolKind.Data))
                           entry
-                          (CompilerObjectSectionKind.Text)
-                          (CompilerObjectSymbolKind.Function))
-                        (CompilerObjectDataRecord.Align 8))
-                      (CompilerObjectDataRecord.Label descriptor))
+                          (cobj.CompilerObjectSectionKind.Text)
+                          (cobj.CompilerObjectSymbolKind.Function))
+                        (cobj.CompilerObjectDataRecord.Align 8))
+                      (cobj.CompilerObjectDataRecord.Label descriptor))
                     descriptor
-                    (CompilerObjectRelocationKind.Abs64)
+                    (cobj.CompilerObjectRelocationKind.Abs64)
                     entry)
-                  (CompilerObjectDataRecord.SymbolAddress entry))
-                (CompilerObjectDataRecord.I64 0))]
+                  (cobj.CompilerObjectDataRecord.SymbolAddress entry))
+                (cobj.CompilerObjectDataRecord.I64 0))]
             [(CompilerBackendMaybeSignature.No) parts])
           (box-get rest)
           program-index))]))
@@ -48619,7 +48634,7 @@ tl_tlci_call_image_entry:
               (compiler-backend-object-symbol-extern
                 parts
                 (compiler-backend-link-symbol link-symbol plan)
-                (CompilerObjectSymbolKind.Function))
+                (cobj.CompilerObjectSymbolKind.Function))
               parts)
             (box-get rest)
             plan
@@ -48676,8 +48691,8 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-symbol-local-section
             parts
             name
-            (CompilerObjectSectionKind.Text)
-            (CompilerObjectSymbolKind.Runtime))
+            (cobj.CompilerObjectSectionKind.Text)
+            (cobj.CompilerObjectSymbolKind.Runtime))
           parts)
         plan
         (box-get rest))]))
@@ -48769,55 +48784,55 @@ tl_tlci_call_image_entry:
 (define compiler-backend-object-windows-utf8-manifest : String
   "<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\r\n<assembly xmlns=\"urn:schemas-microsoft-com:asm.v1\" manifestVersion=\"1.0\">\r\n  <application xmlns=\"urn:schemas-microsoft-com:asm.v3\">\r\n    <windowsSettings>\r\n      <activeCodePage xmlns=\"http://schemas.microsoft.com/SMI/2019/WindowsSettings\">UTF-8</activeCodePage>\r\n    </windowsSettings>\r\n  </application>\r\n</assembly>\r\n")
 
-(define (compiler-backend-object-windows-manifest-resource-records) : CompilerObjectDataRecordList
+(define (compiler-backend-object-windows-manifest-resource-records) : cobj.CompilerObjectDataRecordList
   (let
-    [records0 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-with-capacity 9)]
-    [records1 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records0 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-with-capacity 9)]
+    [records1 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records0
-        (CompilerObjectDataRecord.Label ".L_tl_rsrc_base"))]
-    [records2 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+        (cobj.CompilerObjectDataRecord.Label ".L_tl_rsrc_base"))]
+    [records2 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records1
-        (CompilerObjectDataRecord.Bytes
+        (cobj.CompilerObjectDataRecord.Bytes
           (compiler-backend-object-bytes-from-hex
             "000000000000000000000000000001001800000018000080000000000000000000000000000001000100000030000080000000000000000000000000000001000904000048000000")))]
-    [records3 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records3 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records2
-        (CompilerObjectDataRecord.Label
+        (cobj.CompilerObjectDataRecord.Label
           compiler-backend-object-windows-rsrc-data-label))]
-    [records4 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records4 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records3
-        (CompilerObjectDataRecord.SymbolRva32
+        (cobj.CompilerObjectDataRecord.SymbolRva32
           compiler-backend-object-windows-manifest-label))]
-    [records5 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records5 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records4
         ;; Manifest size is 376 bytes (0x178), followed by codepage/reserved zeros.
-        (CompilerObjectDataRecord.Bytes
+        (cobj.CompilerObjectDataRecord.Bytes
           (compiler-backend-object-bytes-from-hex "780100000000000000000000")))]
-    [records6 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records6 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records5
-        (CompilerObjectDataRecord.Align 4))]
-    [records7 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+        (cobj.CompilerObjectDataRecord.Align 4))]
+    [records7 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records6
-        (CompilerObjectDataRecord.Label
+        (cobj.CompilerObjectDataRecord.Label
           compiler-backend-object-windows-manifest-label))]
-    [records8 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records8 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records7
-        (CompilerObjectDataRecord.Bytes
+        (cobj.CompilerObjectDataRecord.Bytes
           compiler-backend-object-windows-utf8-manifest))]
-    [records9 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
+    [records9 : cobj.CompilerObjectDataRecordBuilder
+      (cobj.compiler-object-data-record-builder-push
         records8
-        (CompilerObjectDataRecord.Label ".L_tl_manifest_end"))]
-    (compiler-object-data-record-builder-finish records9)))
+        (cobj.CompilerObjectDataRecord.Label ".L_tl_manifest_end"))]
+    (cobj.compiler-object-data-record-builder-finish records9)))
 
 (define (compiler-backend-object-add-windows-entry-data
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -48826,56 +48841,58 @@ tl_tlci_call_image_entry:
       (compiler-backend-object-symbol-local-section
         parts
         ".L_tl_argc"
-        (CompilerObjectSectionKind.Data)
-        (CompilerObjectSymbolKind.Data))]
+        (cobj.CompilerObjectSectionKind.Data)
+        (cobj.CompilerObjectSymbolKind.Data))]
     [with-argc : CompilerBackendObjectParts
       (compiler-backend-object-add-data
         (compiler-backend-object-add-data
           with-argc-symbol
-          (CompilerObjectDataRecord.Label ".L_tl_argc"))
-        (CompilerObjectDataRecord.I64 0))]
+          (cobj.CompilerObjectDataRecord.Label ".L_tl_argc"))
+        (cobj.CompilerObjectDataRecord.I64 0))]
     [with-argv-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
         with-argc
         ".L_tl_argv"
-        (CompilerObjectSectionKind.Data)
-        (CompilerObjectSymbolKind.Data))]
+        (cobj.CompilerObjectSectionKind.Data)
+        (cobj.CompilerObjectSymbolKind.Data))]
     [with-argv : CompilerBackendObjectParts
       (compiler-backend-object-add-data
         (compiler-backend-object-add-data
           with-argv-symbol
-          (CompilerObjectDataRecord.Label ".L_tl_argv"))
-        (CompilerObjectDataRecord.I64 0))]
+          (cobj.CompilerObjectDataRecord.Label ".L_tl_argv"))
+        (cobj.CompilerObjectDataRecord.I64 0))]
     [with-boot-off-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
         with-argv
         "tl_boot_off"
-        (CompilerObjectSectionKind.Bss)
-        (CompilerObjectSymbolKind.Data))]
+        (cobj.CompilerObjectSectionKind.Bss)
+        (cobj.CompilerObjectSymbolKind.Data))]
     [with-boot-off : CompilerBackendObjectParts
       (compiler-backend-object-add-bss
         (compiler-backend-object-add-bss
           (compiler-backend-object-add-bss
             with-boot-off-symbol
-            (CompilerObjectDataRecord.Align 8))
-          (CompilerObjectDataRecord.Label "tl_boot_off"))
-        (CompilerObjectDataRecord.Zero 8))]
+            (cobj.CompilerObjectDataRecord.Align 8))
+          (cobj.CompilerObjectDataRecord.Label "tl_boot_off"))
+        (cobj.CompilerObjectDataRecord.Zero 8))]
     [with-boot-pool-symbol : CompilerBackendObjectParts
       (compiler-backend-object-symbol-local-section
         with-boot-off
         "tl_boot_pool"
-        (CompilerObjectSectionKind.Bss)
-        (CompilerObjectSymbolKind.Data))]
+        (cobj.CompilerObjectSectionKind.Bss)
+        (cobj.CompilerObjectSymbolKind.Data))]
     (compiler-backend-object-add-bss
       (compiler-backend-object-add-bss
         with-boot-pool-symbol
-        (CompilerObjectDataRecord.Label "tl_boot_pool"))
-      (CompilerObjectDataRecord.Zero 524288))))
+        (cobj.CompilerObjectDataRecord.Label "tl_boot_pool"))
+      (cobj.CompilerObjectDataRecord.Zero 524288))))
 
 (define (compiler-backend-object-add-text-bytes
   [parts : CompilerBackendObjectParts]
   [bytes : String]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-text parts (CompilerObjectX64Instr.Bytes bytes)))
+  (compiler-backend-object-add-text
+    parts
+    (cobj.CompilerObjectX64Instr.Bytes bytes)))
 
 (define (compiler-backend-object-add-call-instr
   [parts : CompilerBackendObjectParts]
@@ -48885,9 +48902,9 @@ tl_tlci_call_image_entry:
     (compiler-backend-object-add-text-relocation
       parts
       site
-      (CompilerObjectRelocationKind.Call)
+      (cobj.CompilerObjectRelocationKind.Call)
       target)
-    (CompilerObjectX64Instr.Call target)))
+    (cobj.CompilerObjectX64Instr.Call target)))
 
 (define (compiler-backend-object-add-tlci-entry-runtime-text
   [parts : CompilerBackendObjectParts]
@@ -48895,7 +48912,7 @@ tl_tlci_call_image_entry:
   (compiler-backend-object-add-text-bytes
     (compiler-backend-object-add-text
       parts
-      (CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+      (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
     (compiler-backend-object-tlci-entry-bytes target)))
 
 (define (compiler-backend-object-linux-exit-bytes) : String
@@ -48909,12 +48926,12 @@ tl_tlci_call_image_entry:
       (compiler-backend-object-symbol-export-section
         parts
         entry
-        (CompilerObjectSectionKind.Text)
-        (CompilerObjectSymbolKind.Function))]
+        (cobj.CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSymbolKind.Function))]
     [with-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-symbol
-        (CompilerObjectX64Instr.Label entry))]
+        (cobj.CompilerObjectX64Instr.Label entry))]
     [with-main-call : CompilerBackendObjectParts
       (compiler-backend-object-add-call-instr with-label entry "main")]
     (compiler-backend-object-add-text-bytes
@@ -48924,9 +48941,9 @@ tl_tlci_call_image_entry:
 (define (compiler-backend-object-add-rip-instr
   [parts : CompilerBackendObjectParts]
   [site : String]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]
-  [instr : CompilerObjectX64Instr]) : CompilerBackendObjectParts
+  [instr : cobj.CompilerObjectX64Instr]) : CompilerBackendObjectParts
   (compiler-backend-object-add-text
     (compiler-backend-object-add-text-relocation parts site kind target)
     instr))
@@ -48941,20 +48958,20 @@ tl_tlci_call_image_entry:
             (compiler-backend-object-symbol-local-section
               parts
               "__chkstk"
-              (CompilerObjectSectionKind.Text)
-              (CompilerObjectSymbolKind.Runtime))
+              (cobj.CompilerObjectSectionKind.Text)
+              (cobj.CompilerObjectSymbolKind.Runtime))
             "tl_setup_argv"
-            (CompilerObjectSectionKind.Text)
-            (CompilerObjectSymbolKind.Runtime))
+            (cobj.CompilerObjectSectionKind.Text)
+            (cobj.CompilerObjectSymbolKind.Runtime))
           ".L_tl_boot_alloc"
-          (CompilerObjectSectionKind.Text)
-          (CompilerObjectSymbolKind.Runtime))
+          (cobj.CompilerObjectSectionKind.Text)
+          (cobj.CompilerObjectSymbolKind.Runtime))
         "GetCommandLineA"
-        (CompilerObjectSymbolKind.Function))]
+        (cobj.CompilerObjectSymbolKind.Function))]
     [with-chkstk-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-symbols
-        (CompilerObjectX64Instr.Label "__chkstk"))]
+        (cobj.CompilerObjectX64Instr.Label "__chkstk"))]
     [with-chkstk : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-chkstk-label
@@ -48962,7 +48979,7 @@ tl_tlci_call_image_entry:
     [with-setup-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-chkstk
-        (CompilerObjectX64Instr.Label "tl_setup_argv"))]
+        (cobj.CompilerObjectX64Instr.Label "tl_setup_argv"))]
     [with-setup-pre : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-setup-label
@@ -48998,16 +49015,16 @@ tl_tlci_call_image_entry:
       (compiler-backend-object-add-rip-instr
         with-after-boot2
         "tl_setup_argv"
-        (CompilerObjectRelocationKind.RipAddress)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
         ".L_tl_argc"
-        (CompilerObjectX64Instr.StoreR15Rip ".L_tl_argc"))]
+        (cobj.CompilerObjectX64Instr.StoreR15Rip ".L_tl_argc"))]
     [with-argv-store : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
         with-argc-store
         "tl_setup_argv"
-        (CompilerObjectRelocationKind.RipAddress)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
         ".L_tl_argv"
-        (CompilerObjectX64Instr.StoreR14Rip ".L_tl_argv"))]
+        (cobj.CompilerObjectX64Instr.StoreR14Rip ".L_tl_argv"))]
     [with-setup-end : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-argv-store
@@ -49015,25 +49032,25 @@ tl_tlci_call_image_entry:
     [with-boot-public-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-setup-end
-        (CompilerObjectX64Instr.Label "tl_alloc"))]
+        (cobj.CompilerObjectX64Instr.Label "tl_alloc"))]
     [with-boot-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-boot-public-label
-        (CompilerObjectX64Instr.Label ".L_tl_boot_alloc"))]
+        (cobj.CompilerObjectX64Instr.Label ".L_tl_boot_alloc"))]
     [with-boot-off-load : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
         with-boot-label
         ".L_tl_boot_alloc"
-        (CompilerObjectRelocationKind.RipValue)
+        (cobj.CompilerObjectRelocationKind.RipValue)
         "tl_boot_off"
-        (CompilerObjectX64Instr.LoadRip "tl_boot_off"))]
+        (cobj.CompilerObjectX64Instr.LoadRip "tl_boot_off"))]
     [with-boot-pool-lea : CompilerBackendObjectParts
       (compiler-backend-object-add-rip-instr
         with-boot-off-load
         ".L_tl_boot_alloc"
-        (CompilerObjectRelocationKind.RipAddress)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
         "tl_boot_pool"
-        (CompilerObjectX64Instr.LoadRipAddressRdx "tl_boot_pool"))]
+        (cobj.CompilerObjectX64Instr.LoadRipAddressRdx "tl_boot_pool"))]
     [with-add-base : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-boot-pool-lea
@@ -49042,9 +49059,9 @@ tl_tlci_call_image_entry:
       (compiler-backend-object-add-rip-instr
         with-add-base
         ".L_tl_boot_alloc"
-        (CompilerObjectRelocationKind.RipAddress)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
         "tl_boot_off"
-        (CompilerObjectX64Instr.AddRcxRip "tl_boot_off"))]
+        (cobj.CompilerObjectX64Instr.AddRcxRip "tl_boot_off"))]
     (compiler-backend-object-add-text-bytes
       with-boot-off-add
       (compiler-backend-object-windows-ret-bytes))))
@@ -49060,29 +49077,29 @@ tl_tlci_call_image_entry:
           (compiler-backend-object-symbol-export-section
             parts
             entry
-            (CompilerObjectSectionKind.Text)
-            (CompilerObjectSymbolKind.Function))
+            (cobj.CompilerObjectSectionKind.Text)
+            (cobj.CompilerObjectSymbolKind.Function))
           entry-end
-          (CompilerObjectSectionKind.Text)
-          (CompilerObjectSymbolKind.Function))
+          (cobj.CompilerObjectSectionKind.Text)
+          (cobj.CompilerObjectSymbolKind.Function))
         "ExitProcess"
-        (CompilerObjectSymbolKind.Function))]
+        (cobj.CompilerObjectSymbolKind.Function))]
     [with-label : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-symbols
-        (CompilerObjectX64Instr.Label entry))]
+        (cobj.CompilerObjectX64Instr.Label entry))]
     [with-sub : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-label
-        (CompilerObjectX64Instr.SubRspImm8 40))]
+        (cobj.CompilerObjectX64Instr.SubRspImm8 40))]
     [with-setup-call : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-sub
           entry
-          (CompilerObjectRelocationKind.Call)
+          (cobj.CompilerObjectRelocationKind.Call)
           "tl_setup_argv")
-        (CompilerObjectX64Instr.Call "tl_setup_argv"))]
+        (cobj.CompilerObjectX64Instr.Call "tl_setup_argv"))]
     [with-gs-clear : CompilerBackendObjectParts
       (compiler-backend-object-add-text-bytes
         with-setup-call
@@ -49092,40 +49109,40 @@ tl_tlci_call_image_entry:
         (compiler-backend-object-add-text-relocation
           with-gs-clear
           entry
-          (CompilerObjectRelocationKind.RipValue)
+          (cobj.CompilerObjectRelocationKind.RipValue)
           ".L_tl_argc")
-        (CompilerObjectX64Instr.MovRcxRip ".L_tl_argc"))]
+        (cobj.CompilerObjectX64Instr.MovRcxRip ".L_tl_argc"))]
     [with-argv : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-argc
           entry
-          (CompilerObjectRelocationKind.RipValue)
+          (cobj.CompilerObjectRelocationKind.RipValue)
           ".L_tl_argv")
-        (CompilerObjectX64Instr.MovRdxRip ".L_tl_argv"))]
+        (cobj.CompilerObjectX64Instr.MovRdxRip ".L_tl_argv"))]
     [with-main-call : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-argv
           entry
-          (CompilerObjectRelocationKind.Call)
+          (cobj.CompilerObjectRelocationKind.Call)
           "main")
-        (CompilerObjectX64Instr.Call "main"))]
+        (cobj.CompilerObjectX64Instr.Call "main"))]
     [with-move-exit-code : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         with-main-call
-        (CompilerObjectX64Instr.MovRcxRax))]
+        (cobj.CompilerObjectX64Instr.MovRcxRax))]
     [with-exit-call : CompilerBackendObjectParts
       (compiler-backend-object-add-text
         (compiler-backend-object-add-text-relocation
           with-move-exit-code
           entry
-          (CompilerObjectRelocationKind.Call)
+          (cobj.CompilerObjectRelocationKind.Call)
           "ExitProcess")
-        (CompilerObjectX64Instr.Call "ExitProcess"))]
+        (cobj.CompilerObjectX64Instr.Call "ExitProcess"))]
     (compiler-backend-object-add-text
       with-exit-call
-      (CompilerObjectX64Instr.Label entry-end))))
+      (cobj.CompilerObjectX64Instr.Label entry-end))))
 
 (define (compiler-backend-object-add-windows-entry-unwind
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -49138,44 +49155,44 @@ tl_tlci_call_image_entry:
       (compiler-backend-object-symbol-local-section
         parts
         xdata-label
-        (CompilerObjectSectionKind.Xdata)
-        (CompilerObjectSymbolKind.Data))]
+        (cobj.CompilerObjectSectionKind.Xdata)
+        (cobj.CompilerObjectSymbolKind.Data))]
     [with-xdata : CompilerBackendObjectParts
       (compiler-backend-object-add-xdata
         (compiler-backend-object-add-xdata
           with-xdata-symbol
-          (CompilerObjectDataRecord.Label xdata-label))
-        (CompilerObjectDataRecord.Bytes
+          (cobj.CompilerObjectDataRecord.Label xdata-label))
+        (cobj.CompilerObjectDataRecord.Bytes
           (compiler-backend-object-windows-entry-xdata-bytes)))]
     [with-pdata-begin : CompilerBackendObjectParts
       (compiler-backend-object-add-pdata
         (compiler-backend-object-add-pdata-relocation
           (compiler-backend-object-add-pdata
             with-xdata
-            (CompilerObjectDataRecord.Label pdata-begin))
+            (cobj.CompilerObjectDataRecord.Label pdata-begin))
           pdata-begin
-          (CompilerObjectRelocationKind.Addr32Nb)
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
           "_tl_start")
-        (CompilerObjectDataRecord.SymbolRva32 "_tl_start"))]
+        (cobj.CompilerObjectDataRecord.SymbolRva32 "_tl_start"))]
     [with-pdata-end : CompilerBackendObjectParts
       (compiler-backend-object-add-pdata
         (compiler-backend-object-add-pdata-relocation
           (compiler-backend-object-add-pdata
             with-pdata-begin
-            (CompilerObjectDataRecord.Label pdata-end))
+            (cobj.CompilerObjectDataRecord.Label pdata-end))
           pdata-end
-          (CompilerObjectRelocationKind.Addr32Nb)
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
           ".L_tl_start_end")
-        (CompilerObjectDataRecord.SymbolRva32 ".L_tl_start_end"))]
+        (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_tl_start_end"))]
     (compiler-backend-object-add-pdata
       (compiler-backend-object-add-pdata-relocation
         (compiler-backend-object-add-pdata
           with-pdata-end
-          (CompilerObjectDataRecord.Label pdata-unwind))
+          (cobj.CompilerObjectDataRecord.Label pdata-unwind))
         pdata-unwind
-        (CompilerObjectRelocationKind.Addr32Nb)
+        (cobj.CompilerObjectRelocationKind.Addr32Nb)
         xdata-label)
-      (CompilerObjectDataRecord.SymbolRva32 xdata-label))))
+      (cobj.CompilerObjectDataRecord.SymbolRva32 xdata-label))))
 
 (define (compiler-backend-object-add-windows-entry
   [parts : CompilerBackendObjectParts]) : CompilerBackendObjectParts
@@ -49205,111 +49222,113 @@ tl_tlci_call_image_entry:
   [parts : CompilerBackendObjectParts]
   [target : CompilerBackendTarget]
   [emit-entry : bool]
-  [crt-entry : bool]) : CompilerObjectSectionList
+  [crt-entry : bool]) : cobj.CompilerObjectSectionList
   (let
-    [empty-data : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish
-        (compiler-object-data-record-builder-with-capacity 1))]
-    [empty-instrs : CompilerObjectX64InstrList
-      (compiler-object-instr-builder-finish
-        (compiler-object-instr-builder-with-capacity 1))]
-    [text-instrs : CompilerObjectX64InstrList
-      (compiler-object-instr-builder-finish (struct-get parts text))]
-    [data-records : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish (struct-get parts data))]
-    [rodata-records : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish (struct-get parts rodata))]
-    [bss-records : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish (struct-get parts bss))]
-    [pdata-records : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish (struct-get parts pdata))]
-    [xdata-records : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish (struct-get parts xdata))]
-    [sections0 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-with-capacity 7)]
-    [sections1 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
+    [empty-data : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish
+        (cobj.compiler-object-data-record-builder-with-capacity 1))]
+    [empty-instrs : cobj.CompilerObjectX64InstrList
+      (cobj.compiler-object-instr-builder-finish
+        (cobj.compiler-object-instr-builder-with-capacity 1))]
+    [text-instrs : cobj.CompilerObjectX64InstrList
+      (cobj.compiler-object-instr-builder-finish (struct-get parts text))]
+    [data-records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish (struct-get parts data))]
+    [rodata-records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish
+        (struct-get parts rodata))]
+    [bss-records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish (struct-get parts bss))]
+    [pdata-records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish (struct-get parts pdata))]
+    [xdata-records : cobj.CompilerObjectDataRecordList
+      (cobj.compiler-object-data-record-builder-finish (struct-get parts xdata))]
+    [sections0 : cobj.CompilerObjectSectionBuilder
+      (cobj.compiler-object-section-builder-with-capacity 7)]
+    [sections1 : cobj.CompilerObjectSectionBuilder
+      (cobj.compiler-object-section-builder-push
         sections0
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSection.Section
+          (cobj.CompilerObjectSectionKind.Text)
           empty-data
           text-instrs))]
-    [sections2 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
+    [sections2 : cobj.CompilerObjectSectionBuilder
+      (cobj.compiler-object-section-builder-push
         sections1
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Data)
+        (cobj.CompilerObjectSection.Section
+          (cobj.CompilerObjectSectionKind.Data)
           data-records
           empty-instrs))]
-    [sections3 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
+    [sections3 : cobj.CompilerObjectSectionBuilder
+      (cobj.compiler-object-section-builder-push
         sections2
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Rodata)
+        (cobj.CompilerObjectSection.Section
+          (cobj.CompilerObjectSectionKind.Rodata)
           rodata-records
           empty-instrs))]
-    [sections4 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
+    [sections4 : cobj.CompilerObjectSectionBuilder
+      (cobj.compiler-object-section-builder-push
         sections3
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Bss)
+        (cobj.CompilerObjectSection.Section
+          (cobj.CompilerObjectSectionKind.Bss)
           bss-records
           empty-instrs))]
     (match target
       [(CompilerBackendTarget.Linux)
-        (compiler-object-section-builder-finish sections4)]
+        (cobj.compiler-object-section-builder-finish sections4)]
       [(CompilerBackendTarget.Windows)
         (let
-          [sections5 : CompilerObjectSectionBuilder
-            (compiler-object-section-builder-push
+          [sections5 : cobj.CompilerObjectSectionBuilder
+            (cobj.compiler-object-section-builder-push
               sections4
-              (CompilerObjectSection.Section
-                (CompilerObjectSectionKind.Pdata)
+              (cobj.CompilerObjectSection.Section
+                (cobj.CompilerObjectSectionKind.Pdata)
                 pdata-records
                 empty-instrs))]
-          [sections6 : CompilerObjectSectionBuilder
-            (compiler-object-section-builder-push
+          [sections6 : cobj.CompilerObjectSectionBuilder
+            (cobj.compiler-object-section-builder-push
               sections5
-              (CompilerObjectSection.Section
-                (CompilerObjectSectionKind.Xdata)
+              (cobj.CompilerObjectSection.Section
+                (cobj.CompilerObjectSectionKind.Xdata)
                 xdata-records
                 empty-instrs))]
-          [sections7 : CompilerObjectSectionBuilder
-            (compiler-object-section-builder-push
+          [sections7 : cobj.CompilerObjectSectionBuilder
+            (cobj.compiler-object-section-builder-push
               sections6
-              (CompilerObjectSection.Section
-                (CompilerObjectSectionKind.Rsrc)
+              (cobj.CompilerObjectSection.Section
+                (cobj.CompilerObjectSectionKind.Rsrc)
                 (if (and emit-entry (not crt-entry))
                   (compiler-backend-object-windows-manifest-resource-records)
                   empty-data)
                 empty-instrs))]
-          (compiler-object-section-builder-finish sections7))])))
+          (cobj.compiler-object-section-builder-finish sections7))])))
 
 (define (compiler-backend-object-image-symbols
   [parts : CompilerBackendObjectParts]
-  [emit-manifest-resource : bool]) : CompilerObjectSymbolList
-  (compiler-object-symbol-builder-finish
+  [emit-manifest-resource : bool]) : cobj.CompilerObjectSymbolList
+  (cobj.compiler-object-symbol-builder-finish
     (if emit-manifest-resource
-      (compiler-object-symbol-builder-push
+      (cobj.compiler-object-symbol-builder-push
         (struct-get parts symbols)
-        (CompilerObjectSymbol.Symbol
+        (cobj.CompilerObjectSymbol.Symbol
           compiler-backend-object-windows-manifest-label
-          (CompilerObjectSymbolBinding.Local)
-          (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rsrc))))
+          (cobj.CompilerObjectSymbolBinding.Local)
+          (cobj.CompilerObjectSymbolKind.Data)
+          (cobj.CompilerObjectMaybeSection.Some
+            (cobj.CompilerObjectSectionKind.Rsrc))))
       (struct-get parts symbols))))
 
 (define (compiler-backend-object-image-relocations
   [parts : CompilerBackendObjectParts]
-  [emit-manifest-resource : bool]) : CompilerObjectRelocationList
-  (compiler-object-relocation-builder-finish
+  [emit-manifest-resource : bool]) : cobj.CompilerObjectRelocationList
+  (cobj.compiler-object-relocation-builder-finish
     (if emit-manifest-resource
-      (compiler-object-relocation-builder-push
+      (cobj.compiler-object-relocation-builder-push
         (struct-get parts relocations)
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Rsrc)
+        (cobj.CompilerObjectRelocation.Relocation
+          (cobj.CompilerObjectSectionKind.Rsrc)
           compiler-backend-object-windows-rsrc-data-label
-          (CompilerObjectRelocationKind.Addr32Nb)
+          (cobj.CompilerObjectRelocationKind.Addr32Nb)
           compiler-backend-object-windows-manifest-label))
       (struct-get parts relocations))))
 
@@ -49317,11 +49336,11 @@ tl_tlci_call_image_entry:
   [parts : CompilerBackendObjectParts]
   [target : CompilerBackendTarget]
   [emit-entry : bool]
-  [crt-entry : bool]) : CompilerObjectImage
+  [crt-entry : bool]) : cobj.CompilerObjectImage
   (let
     [emit-manifest-resource : bool
       (and emit-entry (not crt-entry) (compiler-backend-target-windows? target))]
-    (CompilerObjectImage
+    (cobj.CompilerObjectImage
       (compiler-backend-object-image-sections parts target emit-entry crt-entry)
       (compiler-backend-object-image-symbols parts emit-manifest-resource)
       (compiler-backend-object-image-relocations parts emit-manifest-resource))))
@@ -49336,7 +49355,7 @@ tl_tlci_call_image_entry:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [emit-entry : bool]
-  [crt-entry : bool]) : CompilerObjectImage
+  [crt-entry : bool]) : cobj.CompilerObjectImage
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
@@ -49388,7 +49407,9 @@ tl_tlci_call_image_entry:
         emit-entry
         crt-entry)]
     (compiler-backend-object-image-from-parts
-      (compiler-backend-object-add-bss seed (CompilerObjectDataRecord.Zero 0))
+      (compiler-backend-object-add-bss
+        seed
+        (cobj.CompilerObjectDataRecord.Zero 0))
       target
       emit-entry
       crt-entry)))
@@ -52520,18 +52541,18 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-pic-rewrite-relocs
   [asm : String]
-  [relocs : CompilerObjectRelocationList]) : String
+  [relocs : cobj.CompilerObjectRelocationList]) : String
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [out : String asm]
     (begin
       (while (< index count)
         (begin
-          (match (compiler-object-relocation-list-ref relocs index)
-            [(CompilerObjectRelocation.Relocation _ _ kind target)
+          (match (cobj.compiler-object-relocation-list-ref relocs index)
+            [(cobj.CompilerObjectRelocation.Relocation _ _ kind target)
               (match kind
-                [(CompilerObjectRelocationKind.Abs64)
+                [(cobj.CompilerObjectRelocationKind.Abs64)
                   (set! out (compiler-backend-pic-rewrite-target out target))]
                 [_ unit])])
           (set! index (+ index 1))))
@@ -52547,29 +52568,29 @@ tl_tlci_call_image_entry:
         (+ offset (- align rem))))))
 
 (define (compiler-backend-pic-data-record-end-offset
-  [record : CompilerObjectDataRecord]
+  [record : cobj.CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(CompilerObjectDataRecord.Label _) offset]
-    [(CompilerObjectDataRecord.Align align)
+    [(cobj.CompilerObjectDataRecord.Label _) offset]
+    [(cobj.CompilerObjectDataRecord.Align align)
       (compiler-backend-pic-align-offset offset align)]
-    [(CompilerObjectDataRecord.Bytes bytes)
+    [(cobj.CompilerObjectDataRecord.Bytes bytes)
       (+ offset (string.string-length bytes))]
-    [(CompilerObjectDataRecord.String text)
+    [(cobj.CompilerObjectDataRecord.String text)
       (+ offset (+ (string.string-length text) 1))]
-    [(CompilerObjectDataRecord.F64 _) (+ offset 8)]
-    [(CompilerObjectDataRecord.F32 _) (+ offset 4)]
-    [(CompilerObjectDataRecord.I64 _) (+ offset 8)]
-    [(CompilerObjectDataRecord.Zero count) (+ offset count)]
-    [(CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
-    [(CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
+    [(cobj.CompilerObjectDataRecord.F64 _) (+ offset 8)]
+    [(cobj.CompilerObjectDataRecord.F32 _) (+ offset 4)]
+    [(cobj.CompilerObjectDataRecord.I64 _) (+ offset 8)]
+    [(cobj.CompilerObjectDataRecord.Zero count) (+ offset count)]
+    [(cobj.CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
+    [(cobj.CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-backend-pic-data-label-offset-from
-  [records : CompilerObjectDataRecordList]
+  [records : cobj.CompilerObjectDataRecordList]
   [label : String]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 -1]
@@ -52577,10 +52598,10 @@ tl_tlci_call_image_entry:
     (begin
       (while (and (not done) (< index count))
         (let
-          [record : CompilerObjectDataRecord
-            (compiler-object-data-record-list-ref records index)]
+          [record : cobj.CompilerObjectDataRecord
+            (cobj.compiler-object-data-record-list-ref records index)]
           (match record
-            [(CompilerObjectDataRecord.Label found)
+            [(cobj.CompilerObjectDataRecord.Label found)
               (if (string.eq found label)
                 (begin
                   (set! result cur-offset)
@@ -52597,27 +52618,30 @@ tl_tlci_call_image_entry:
       result)))
 
 (define (compiler-backend-pic-section-label-offset
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]
   [label : String]) : i64
-  (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(CompilerObjectSection.Section _ data _)
+  (match (cobj.compiler-object-section-list-find
+    (struct-get image sections)
+    kind)
+    [(cobj.CompilerObjectSection.Section _ data _)
       (match kind
-        [(CompilerObjectSectionKind.Text) -1]
+        [(cobj.CompilerObjectSectionKind.Text) -1]
         [_ (compiler-backend-pic-data-label-offset-from data label 0)])]))
 
-(define (compiler-backend-pic-section-name [kind : CompilerObjectSectionKind]) : String
+(define (compiler-backend-pic-section-name
+  [kind : cobj.CompilerObjectSectionKind]) : String
   (match kind
-    [(CompilerObjectSectionKind.Text) "text"]
-    [(CompilerObjectSectionKind.Data) "data"]
-    [(CompilerObjectSectionKind.Rodata) "rodata"]
-    [(CompilerObjectSectionKind.Bss) "bss"]
-    [(CompilerObjectSectionKind.Pdata) "pdata"]
-    [(CompilerObjectSectionKind.Xdata) "xdata"]
-    [(CompilerObjectSectionKind.Rsrc) "rsrc"]))
+    [(cobj.CompilerObjectSectionKind.Text) "text"]
+    [(cobj.CompilerObjectSectionKind.Data) "data"]
+    [(cobj.CompilerObjectSectionKind.Rodata) "rodata"]
+    [(cobj.CompilerObjectSectionKind.Bss) "bss"]
+    [(cobj.CompilerObjectSectionKind.Pdata) "pdata"]
+    [(cobj.CompilerObjectSectionKind.Xdata) "xdata"]
+    [(cobj.CompilerObjectSectionKind.Rsrc) "rsrc"]))
 
 (define (compiler-backend-pic-fixup-line
-  [section : CompilerObjectSectionKind]
+  [section : cobj.CompilerObjectSectionKind]
   [offset : i64]
   [site : String]
   [target : String]) : String
@@ -52631,20 +52655,20 @@ tl_tlci_call_image_entry:
     (string.append " " (string.append target "\n"))))
 
 (define (compiler-backend-pic-fixup-table-relocs
-  [image : CompilerObjectImage]
-  [relocs : CompilerObjectRelocationList]
+  [image : cobj.CompilerObjectImage]
+  [relocs : cobj.CompilerObjectRelocationList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [out : text_buf.TextBuf buf]
     (begin
       (while (< index count)
         (begin
-          (match (compiler-object-relocation-list-ref relocs index)
-            [(CompilerObjectRelocation.Relocation section site kind target)
+          (match (cobj.compiler-object-relocation-list-ref relocs index)
+            [(cobj.CompilerObjectRelocation.Relocation section site kind target)
               (match kind
-                [(CompilerObjectRelocationKind.Abs64)
+                [(cobj.CompilerObjectRelocationKind.Abs64)
                   (let
                     [offset : i64
                       (compiler-backend-pic-section-label-offset
@@ -52666,7 +52690,7 @@ tl_tlci_call_image_entry:
           (set! index (+ index 1))))
       out)))
 
-(define (compiler-backend-pic-fixup-table [image : CompilerObjectImage]) : String
+(define (compiler-backend-pic-fixup-table [image : cobj.CompilerObjectImage]) : String
   (text_buf.render
     (compiler-backend-pic-fixup-table-relocs
       image
@@ -52674,59 +52698,59 @@ tl_tlci_call_image_entry:
       (text_buf.append (text_buf.empty) "typelisp-pic-fixups v1\n"))))
 
 (define (compiler-backend-pic-symbols-have-extern?
-  [symbols : CompilerObjectSymbolList]) : bool
+  [symbols : cobj.CompilerObjectSymbolList]) : bool
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [found : bool false]
     (begin
       (while (and (not found) (< index count))
-        (match (compiler-object-symbol-list-ref symbols index)
-          [(CompilerObjectSymbol.Symbol _ binding _ _)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
+          [(cobj.CompilerObjectSymbol.Symbol _ binding _ _)
             (match binding
-              [(CompilerObjectSymbolBinding.Extern) (set! found true)]
+              [(cobj.CompilerObjectSymbolBinding.Extern) (set! found true)]
               [_ (set! index (+ index 1))])]))
       found)))
 
 (define (compiler-backend-pic-target-symbol-internal?
-  [symbols : CompilerObjectSymbolList]
+  [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [result : bool false]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (compiler-object-symbol-list-ref symbols index)
-          [(CompilerObjectSymbol.Symbol name binding _ section)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
+          [(cobj.CompilerObjectSymbol.Symbol name binding _ section)
             (if (string.eq name target)
               (begin
                 (set!
                   result
                   (match binding
-                    [(CompilerObjectSymbolBinding.Extern) false]
+                    [(cobj.CompilerObjectSymbolBinding.Extern) false]
                     [_
                       (match section
-                        [(CompilerObjectMaybeSection.No) false]
+                        [(cobj.CompilerObjectMaybeSection.No) false]
                         [_ true])]))
                 (set! done true))
               (set! index (+ index 1)))]))
       result)))
 
 (define (compiler-backend-pic-reloc-site-valid?
-  [image : CompilerObjectImage]
-  [reloc : CompilerObjectRelocation]) : bool
+  [image : cobj.CompilerObjectImage]
+  [reloc : cobj.CompilerObjectRelocation]) : bool
   (match reloc
-    [(CompilerObjectRelocation.Relocation section site kind target)
+    [(cobj.CompilerObjectRelocation.Relocation section site kind target)
       (match kind
-        [(CompilerObjectRelocationKind.Abs64)
+        [(cobj.CompilerObjectRelocationKind.Abs64)
           (and
             (compiler-backend-pic-target-symbol-internal?
               (struct-get image symbols)
               target)
             (match section
-              [(CompilerObjectSectionKind.Data)
+              [(cobj.CompilerObjectSectionKind.Data)
                 (let
                   [offset : i64
                     (compiler-backend-pic-section-label-offset
@@ -52734,7 +52758,7 @@ tl_tlci_call_image_entry:
                       section
                       site)]
                   (and (>= offset 0) (= (% offset 8) 0)))]
-              [(CompilerObjectSectionKind.Rodata)
+              [(cobj.CompilerObjectSectionKind.Rodata)
                 (let
                   [offset : i64
                     (compiler-backend-pic-section-label-offset
@@ -52746,22 +52770,24 @@ tl_tlci_call_image_entry:
         [_ true])]))
 
 (define (compiler-backend-pic-relocs-valid?
-  [image : CompilerObjectImage]
-  [relocs : CompilerObjectRelocationList]) : bool
+  [image : cobj.CompilerObjectImage]
+  [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
         (if (compiler-backend-pic-reloc-site-valid?
           image
-          (compiler-object-relocation-list-ref relocs index))
+          (cobj.compiler-object-relocation-list-ref relocs index))
           (set! index (+ index 1))
           (set! ok false)))
       ok)))
 
-(define (compiler-backend-pic-asm [asm : String] [image : CompilerObjectImage]) : String
+(define (compiler-backend-pic-asm
+  [asm : String]
+  [image : cobj.CompilerObjectImage]) : String
   (string.append
     (str_cat.str-cat ".text\n" compiler-backend-pic-image-base-label ":\n")
     (compiler-backend-pic-rewrite-relocs asm (struct-get image relocations))))

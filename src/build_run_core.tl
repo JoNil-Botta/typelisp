@@ -2,6 +2,7 @@
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import "compiler_driver_core.tl")
+(import compiler_object as cobj)
 (import "compiler_object_coff.tl")
 (import "compiler_object_elf.tl")
 (import stdlib.env)
@@ -803,28 +804,28 @@
   (source-tool-env-command-set? (source-tool-linux-direct-object-env-name)))
 
 (define (source-tool-linux-direct-object-linkable?
-  [image : CompilerObjectImage]) : bool
+  [image : cobj.CompilerObjectImage]) : bool
   (and
     (compiler-object-elf-image-supported? image)
     (or
-      (compiler-object-symbol-list-contains?
+      (cobj.compiler-object-symbol-list-contains?
         (struct-get image symbols)
         "_tl_start"
-        (CompilerObjectSymbolBinding.Export)
-        (CompilerObjectSymbolKind.Function))
-      (compiler-object-symbol-list-contains?
+        (cobj.CompilerObjectSymbolBinding.Export)
+        (cobj.CompilerObjectSymbolKind.Function))
+      (cobj.compiler-object-symbol-list-contains?
         (struct-get image symbols)
         "main"
-        (CompilerObjectSymbolBinding.Export)
-        (CompilerObjectSymbolKind.Function)))
+        (cobj.CompilerObjectSymbolBinding.Export)
+        (cobj.CompilerObjectSymbolKind.Function)))
     (>
       (compiler-object-elf-section-raw-size
         image
-        (CompilerObjectSectionKind.Text))
+        (cobj.CompilerObjectSectionKind.Text))
       0)))
 
 (define (source-tool-linux-direct-object-archivable?
-  [image : CompilerObjectImage]) : bool
+  [image : cobj.CompilerObjectImage]) : bool
   (compiler-object-elf-image-supported? image))
 
 (define (source-tool-linux-direct-object-unavailable-message) : String
@@ -834,7 +835,7 @@
   "linux direct object unavailable: object image has unsupported ELF records")
 
 (define (source-tool-render-linkable-linux-elf-object
-  [image : CompilerObjectImage]) : ResultSourceToolString
+  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-linux-direct-object-linkable? image)
     (match (compiler-object-elf-render image)
       [(ResultCompilerObjectElf.Ok obj) (ResultSourceToolString.Ok obj)]
@@ -844,7 +845,7 @@
       (source-tool-linux-direct-object-unavailable-message))))
 
 (define (source-tool-render-archivable-linux-elf-object
-  [image : CompilerObjectImage]) : ResultSourceToolString
+  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-linux-direct-object-archivable? image)
     (match (compiler-object-elf-render image)
       [(ResultCompilerObjectElf.Ok obj) (ResultSourceToolString.Ok obj)]
@@ -922,9 +923,11 @@
 
 (define (source-tool-windows-direct-object-extern-linkable?
   [name : String]
-  [kind : CompilerObjectSymbolKind]) : bool
+  [kind : cobj.CompilerObjectSymbolKind]) : bool
   (and
-    (compiler-object-symbol-kind-eq? kind (CompilerObjectSymbolKind.Function))
+    (cobj.compiler-object-symbol-kind-eq?
+      kind
+      (cobj.CompilerObjectSymbolKind.Function))
     (or
       (string.eq name "ExitProcess")
       (string.eq name "GetCommandLineA")
@@ -934,21 +937,21 @@
       (string.eq name "VirtualFree"))))
 
 (define (source-tool-windows-direct-object-relocation-target-linkable?
-  [symbols : CompilerObjectSymbolList]
+  [symbols : cobj.CompilerObjectSymbolList]
   [target : String]) : bool
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [ok : bool true]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (compiler-object-symbol-list-ref symbols index)
-          [(CompilerObjectSymbol.Symbol name binding kind _)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
+          [(cobj.CompilerObjectSymbol.Symbol name binding kind _)
             (if (string.eq name target)
               (begin
                 (match binding
-                  [(CompilerObjectSymbolBinding.Extern)
+                  [(cobj.CompilerObjectSymbolBinding.Extern)
                     (set!
                       ok
                       (source-tool-windows-direct-object-extern-linkable?
@@ -960,16 +963,16 @@
       ok)))
 
 (define (source-tool-windows-direct-object-relocations-linkable?
-  [symbols : CompilerObjectSymbolList]
-  [relocs : CompilerObjectRelocationList]) : bool
+  [symbols : cobj.CompilerObjectSymbolList]
+  [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (compiler-object-relocation-list-ref relocs index)
-          [(CompilerObjectRelocation.Relocation _ _ _ target)
+        (match (cobj.compiler-object-relocation-list-ref relocs index)
+          [(cobj.CompilerObjectRelocation.Relocation _ _ _ target)
             (if (source-tool-windows-direct-object-relocation-target-linkable?
               symbols
               target)
@@ -978,35 +981,35 @@
       ok)))
 
 (define (source-tool-windows-direct-object-linkable?
-  [image : CompilerObjectImage]) : bool
+  [image : cobj.CompilerObjectImage]) : bool
   (and
     (compiler-object-coff-image-supported? image)
     (source-tool-windows-direct-object-relocations-linkable?
       (struct-get image symbols)
       (struct-get image relocations))
-    (compiler-object-symbol-list-contains?
+    (cobj.compiler-object-symbol-list-contains?
       (struct-get image symbols)
       "_tl_start"
-      (CompilerObjectSymbolBinding.Export)
-      (CompilerObjectSymbolKind.Function))
+      (cobj.CompilerObjectSymbolBinding.Export)
+      (cobj.CompilerObjectSymbolKind.Function))
     ;; Text labels live in the instruction stream, not the section data records.
     (>=
       (compiler-object-coff-section-label-offset
         image
-        (CompilerObjectSectionKind.Text)
+        (cobj.CompilerObjectSectionKind.Text)
         "tl_setup_argv")
       0)
     (>
       (compiler-object-coff-section-raw-size
         image
-        (CompilerObjectSectionKind.Text))
+        (cobj.CompilerObjectSectionKind.Text))
       0)))
 
 (define (source-tool-windows-direct-object-unavailable-message) : String
   "windows direct object unavailable: object image lacks encoded .text, _tl_start, or Windows runtime entry body")
 
 (define (source-tool-render-linkable-windows-coff-object
-  [image : CompilerObjectImage]) : ResultSourceToolString
+  [image : cobj.CompilerObjectImage]) : ResultSourceToolString
   (if (source-tool-windows-direct-object-linkable? image)
     (match (compiler-object-coff-render image)
       [(ResultCompilerObjectCoff.Ok obj) (ResultSourceToolString.Ok obj)]
@@ -1343,46 +1346,46 @@
 
 (define (source-tool-windows-direct-object-relocation-gate-smoke-ok?) : bool
   (let
-    [symbols0 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-with-capacity 2)]
-    [symbols1 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
+    [symbols0 : cobj.CompilerObjectSymbolBuilder
+      (cobj.compiler-object-symbol-builder-with-capacity 2)]
+    [symbols1 : cobj.CompilerObjectSymbolBuilder
+      (cobj.compiler-object-symbol-builder-push
         symbols0
-        (CompilerObjectSymbol.Symbol
+        (cobj.CompilerObjectSymbol.Symbol
           "GetStdHandle"
-          (CompilerObjectSymbolBinding.Extern)
-          (CompilerObjectSymbolKind.Function)
-          CompilerObjectMaybeSection.No))]
-    [symbols2 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
+          (cobj.CompilerObjectSymbolBinding.Extern)
+          (cobj.CompilerObjectSymbolKind.Function)
+          cobj.CompilerObjectMaybeSection.No))]
+    [symbols2 : cobj.CompilerObjectSymbolBuilder
+      (cobj.compiler-object-symbol-builder-push
         symbols1
-        (CompilerObjectSymbol.Symbol
+        (cobj.CompilerObjectSymbol.Symbol
           "GetCurrentProcessId"
-          (CompilerObjectSymbolBinding.Extern)
-          (CompilerObjectSymbolKind.Function)
-          CompilerObjectMaybeSection.No))]
-    [symbols : CompilerObjectSymbolList
-      (compiler-object-symbol-builder-finish symbols2)]
-    [empty-relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-builder-finish
-        (compiler-object-relocation-builder-with-capacity 1))]
-    [allowed-relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-builder-finish
-        (compiler-object-relocation-builder-push
-          (compiler-object-relocation-builder-with-capacity 1)
-          (CompilerObjectRelocation.Relocation
-            (CompilerObjectSectionKind.Text)
+          (cobj.CompilerObjectSymbolBinding.Extern)
+          (cobj.CompilerObjectSymbolKind.Function)
+          cobj.CompilerObjectMaybeSection.No))]
+    [symbols : cobj.CompilerObjectSymbolList
+      (cobj.compiler-object-symbol-builder-finish symbols2)]
+    [empty-relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish
+        (cobj.compiler-object-relocation-builder-with-capacity 1))]
+    [allowed-relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish
+        (cobj.compiler-object-relocation-builder-push
+          (cobj.compiler-object-relocation-builder-with-capacity 1)
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
             "main"
-            (CompilerObjectRelocationKind.Call)
+            (cobj.CompilerObjectRelocationKind.Call)
             "GetStdHandle")))]
-    [blocked-relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-builder-finish
-        (compiler-object-relocation-builder-push
-          (compiler-object-relocation-builder-with-capacity 1)
-          (CompilerObjectRelocation.Relocation
-            (CompilerObjectSectionKind.Text)
+    [blocked-relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish
+        (cobj.compiler-object-relocation-builder-push
+          (cobj.compiler-object-relocation-builder-with-capacity 1)
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
             "main"
-            (CompilerObjectRelocationKind.Call)
+            (cobj.CompilerObjectRelocationKind.Call)
             "GetCurrentProcessId")))]
     (and
       (source-tool-windows-direct-object-relocations-linkable?

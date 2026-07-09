@@ -2466,11 +2466,11 @@
     (tc-rich-error-diag message)
     (if (tc-located-error? message)
       (tc-located-error-diag message)
-      (match expr
-        [(AstExpr.Spanned _ span)
+      (match (tc-expr-maybe-span expr)
+        [(TcMaybeAstSourceSpan.Some span)
           (tc-canonical-diagnostic
             (compiler-diagnostic-from-ast-span "" span message))]
-        [_ (tc-diag-at-start message)]))))
+        [(TcMaybeAstSourceSpan.No) (tc-diag-at-start message)]))))
 
 ;; Locate an error at the nearest available declaration body span. A top-level
 ;; `define` body is wrapped in `AstExpr.Spanned`, so its span points the
@@ -2528,13 +2528,45 @@
 (define (tc-locate-error-at-expr [expr : AstExpr] [message : String]) : String
   (if (or (tc-rich-error? message) (tc-located-error? message))
     message
-    (match expr
-      [(AstExpr.Spanned _ span) (tc-located-error span message)]
-      [_ message])))
+    (match (tc-expr-maybe-span expr)
+      [(TcMaybeAstSourceSpan.Some span) (tc-located-error span message)]
+      [(TcMaybeAstSourceSpan.No) message])))
+
+(define (tc-expr-id-maybe-span [expr-id : i64]) : TcMaybeAstSourceSpan
+  (tc-expr-maybe-span (ast-node-get expr-id)))
 
 (define (tc-expr-maybe-span [expr : AstExpr]) : TcMaybeAstSourceSpan
   (match expr
     [(AstExpr.Spanned _ span) (TcMaybeAstSourceSpan.Some span)]
+    [(AstExpr.Unary _ inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda _ _ body) (tc-expr-id-maybe-span body)])]
+    [(AstExpr.TupleRef target _) (tc-expr-id-maybe-span target)]
+    [(AstExpr.MakeArray _ size) (tc-expr-id-maybe-span size)]
+    [(AstExpr.Set _ value) (tc-expr-id-maybe-span value)]
+    [(AstExpr.Ann inner _) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Cast inner _) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Borrow _ _ inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Box value) (tc-expr-id-maybe-span value)]
+    [(AstExpr.BoxGet value) (tc-expr-id-maybe-span value)]
+    [(AstExpr.BoxTake value) (tc-expr-id-maybe-span value)]
+    [(AstExpr.Comptime inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Quote inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Quasiquote inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Unquote inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.UnquoteSplicing inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Try inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Return inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.PtrNullCheck inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.PtrAddrOf inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.PtrRead inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.PtrCast inner _) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.PtrToInt inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.IntToPtr inner _) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.StringData inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.ArrayData inner) (tc-expr-id-maybe-span inner)]
+    [(AstExpr.Xgetbv inner) (tc-expr-id-maybe-span inner)]
     [_ (TcMaybeAstSourceSpan.No)]))
 
 (define (tc-expr-list-last-maybe-span [exprs : AstExprList]) : TcMaybeAstSourceSpan

@@ -7931,42 +7931,27 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcType
-  (begin
-    (cfg
-      compile-profile
-      (set!
-        tc-attrib-lookup-dotted-source-visible
-        (+ tc-attrib-lookup-dotted-source-visible 1)))
+  (begin (cfg compile-profile (set! tc-attrib-lookup-dotted-source-visible (+ tc-attrib-lookup-dotted-source-visible 1)))
     (let
     [name-id : i64 (tc-name-id name)]
-    (match (tc-source-name-lookup-key-after-local-field-check-id
-      ctx
-      env
-      name
-      name-id)
-      [(ResultTcString.Ok lookup-name)
-        (let
-          [lookup-id : i64
-            (if (string.eq lookup-name name)
-              name-id
-              (tc-name-id lookup-name))]
-          (match (tc-lookup-unsafe-id env lookup-id)
-            [(ResultTcTypeUnsafe.Ok ty unsafe)
-              (if unsafe
-                (match (tc-require-unsafe
-                  env
-                  (tc-source-lookup-display-name ctx name lookup-name))
-                  [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-                (ResultTcType.Ok ty))]
-            [(ResultTcTypeUnsafe.Err message)
-              (tc-variant-constructor-type-for-lookup-or-id
-                ctx
-                lookup-name
-                lookup-id
-                (tc-source-lookup-display-name ctx name lookup-name)
-                (tc-source-unbound-display-message ctx name lookup-name message))]))]
-      [(ResultTcString.Err message) (ResultTcType.Err message)]))))
+    (match (tc-source-name-lookup-key-with-field-check-lookup ctx env name name-id false)
+    [(TcNameLookup.Ok lookup-name lookup-id)
+      (match (tc-lookup-unsafe-id env lookup-id)
+        [(ResultTcTypeUnsafe.Ok ty unsafe)
+          (if unsafe
+            (match (tc-require-unsafe
+              env
+              (tc-source-lookup-display-name ctx name lookup-name))
+              [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+            (ResultTcType.Ok ty))]
+        [(ResultTcTypeUnsafe.Err message)
+          (tc-variant-constructor-type-for-lookup-or-id
+            ctx
+            lookup-name
+            lookup-id
+            (tc-source-unbound-display-message ctx name lookup-name message))])]
+    [(TcNameLookup.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-hygiene-definition-env [ctx : TcContext] [module : String]) : ResultTcEnv
   (if tc-hygiene-active-top-env-ready
@@ -10104,7 +10089,9 @@
     [first-dot : i64 (tc-name-first-dot name)]
     (if (< first-dot 0)
       false
-      (tc-source-leading-segment-wins-over-exact? env name first-dot))))
+      (let
+        [name-id : i64 (tc-name-id name)]
+        (tc-source-leading-segment-wins-over-exact-from-id? env name name-id first-dot)))))
 
 (define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
@@ -12289,8 +12276,9 @@
   (match ctx
     [(TcContext _ symbols _ module _)
       (let
+        [name-id : i64 (tc-name-id name)]
         [source-name : String
-          (match (tc-dotted-type-name-lookup-key ctx name)
+          (match (tc-dotted-type-name-lookup-key-from-id ctx name name-id)
             [(ResultTcString.Ok key) key]
             [(ResultTcString.Err _) name])]
         [lookup-name : String
@@ -12375,8 +12363,9 @@
   (match ctx
     [(TcContext _ symbols _ module _)
       (let
+        [name-id : i64 (tc-name-id name)]
         [source-name : String
-          (match (tc-dotted-type-name-lookup-key ctx name)
+          (match (tc-dotted-type-name-lookup-key-from-id ctx name name-id)
             [(ResultTcString.Ok key) key]
             [(ResultTcString.Err _) name])]
         [lookup-name : String
@@ -32979,12 +32968,14 @@
     (if (tc-name-qualified-id? variant-id)
       variant-name
       (if (>= (intern-first-dot variant-id) 0)
-        (match (tc-enum-qualified-variant-lookup-key ctx variant-name)
-          [(ResultTcString.Ok lookup-name) lookup-name]
-          [(ResultTcString.Err _)
-            (match (tc-dotted-type-name-lookup-key ctx variant-name)
-              [(ResultTcString.Ok lookup-name) lookup-name]
-              [(ResultTcString.Err _) variant-name])])
+        (let
+          [current-module-id : i64 (intern (tc-context-module ctx))]
+          (match (tc-enum-qualified-variant-lookup-key-from-id ctx variant-name variant-id current-module-id)
+            [(ResultTcString.Ok lookup-name) lookup-name]
+            [(ResultTcString.Err _)
+              (match (tc-dotted-type-name-lookup-key-from-id ctx variant-name variant-id)
+                [(ResultTcString.Ok lookup-name) lookup-name]
+                [(ResultTcString.Err _) variant-name])]))
         (let
           [handle : i64
             (compiler-registries-lookup-variant-or
@@ -33031,7 +33022,7 @@
           variant-name-id)
           [(option_i64.Some handle) handle]
           [(option_i64.None)
-            (match (tc-dotted-type-name-lookup-key ctx variant-name)
+            (match (tc-dotted-type-name-lookup-key-from-id ctx variant-name variant-name-id)
               [(ResultTcString.Ok lookup-name)
                 (compiler-registries-lookup-variant-or
                   registries
@@ -46042,7 +46033,8 @@
       (if (tc-hygiene-template-name? name)
         (tc-hygiene-template-base name)
         (tc-hygiene-global-symbol-name name))]
-    (if (tc-source-slash-qualified? source-name)
+    [source-name-id : i64 (tc-name-id source-name)]
+    (if (tc-source-slash-qualified-id? source-name source-name-id)
       (tc-name-slashes-to-dots source-name)
       source-name)))
 

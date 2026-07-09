@@ -9,6 +9,7 @@
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import stdlib.vector)
@@ -3089,32 +3090,14 @@
         (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
         0)]))
 
-(define (build-package-write-assembly
+(define (build-package-write-assembly-buffer
   [path : String]
-  [asm : String]
+  [asm : text_buf.TextBuf]
   [target : CompilerBackendTarget]) : SourceToolCommandStatus
-  (match (source-tool-write-file
+  (source-tool-write-text-buf
     path
-    asm
-    "build: failed to write package assembly")
-    [(SourceToolCommandStatus.Err message)
-      (SourceToolCommandStatus.Err message)]
-    [(SourceToolCommandStatus.Ok)
-      (let
-        [haystack : String asm]
-        [needle : String ".note.GNU-stack"]
-        [note : String (source-tool-noexecstack-note)]
-        (if (and
-          (compiler-backend-target-linux? target)
-          (not (string.contains (& haystack) (& needle))))
-          (match (io.try-append-file (& path) (& note))
-            [(io.OkIoUnit) SourceToolCommandStatus.Ok]
-            [(io.ErrIoUnit error)
-              (SourceToolCommandStatus.Err
-                (str_cat.str-cat
-                  "build: failed to write package assembly: "
-                  (io.error-message error)))])
-          SourceToolCommandStatus.Ok))]))
+    (source-tool-augment-assembly-buffer-for-target asm target)
+    "build: failed to write package assembly"))
 
 (define (build-package-finish-artifacts
   [kind : CompilerPkgKind]
@@ -3125,9 +3108,9 @@
   [link-inputs : SourceToolLinkInputs]
   [tlci-path : String]
   [tlci-text : String]
-  [asm : String]
+  [asm : text_buf.TextBuf]
   [direct-object : ResultSourceToolString]) : i64
-  (match (build-package-write-assembly asm-path asm target)
+  (match (build-package-write-assembly-buffer asm-path asm target)
     [(SourceToolCommandStatus.Err message)
       (begin
         (io.print-error message)
@@ -3180,7 +3163,7 @@
   [tlci-path : String]
   [tlci-text : String]
   [direct-message : String]) : i64
-  (match (compiler-driver-emit-package-loaded
+  (match (compiler-driver-emit-package-loaded-buffer
     ""
     target
     true
@@ -3190,11 +3173,11 @@
     crt-entry
     decls
     owned-paths)
-    [(ResultCompilerDriver.Err diag)
+    [(ResultCompilerDriverBuffer.Err diag)
       (begin
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]
-    [(ResultCompilerDriver.Ok asm)
+    [(ResultCompilerDriverBuffer.Ok asm)
       (begin
         (compiler-driver-release-lower-arenas-after-emit!)
         (compiler-driver-reset-file-state!)
@@ -3219,7 +3202,7 @@
   [decls : AstDeclList]
   [owned-paths : AstDeclPathList]
   [asm-path : String]) : SourceToolCommandStatus
-  (match (compiler-driver-emit-package-loaded
+  (match (compiler-driver-emit-package-loaded-buffer
     ""
     target
     true
@@ -3229,12 +3212,12 @@
     crt-entry
     decls
     owned-paths)
-    [(ResultCompilerDriver.Err diag)
+    [(ResultCompilerDriverBuffer.Err diag)
       (SourceToolCommandStatus.Err (compiler-diagnostic-render (box-get diag)))]
-    [(ResultCompilerDriver.Ok asm)
+    [(ResultCompilerDriverBuffer.Ok asm)
       (begin
         (compiler-driver-release-lower-arenas-after-emit!)
-        (build-package-write-assembly asm-path asm target))]))
+        (build-package-write-assembly-buffer asm-path asm target))]))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
   (match (ast-decl-path-list-step paths)

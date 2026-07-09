@@ -1051,13 +1051,32 @@
   [mode : CompilerBackendMode]
   [opt-level : i64]
   [emit-entry : bool]) : ResultCompilerDriverBuffer
+  (compiler-driver-emit-lowered-result-buffer-with-level-mode-entry-and-crt
+    input-path
+    lowered
+    target
+    has-target
+    mode
+    opt-level
+    emit-entry
+    false))
+
+(define (compiler-driver-emit-lowered-result-buffer-with-level-mode-entry-and-crt
+  [input-path : String]
+  [lowered : ResultCompilerDriverLowered]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [mode : CompilerBackendMode]
+  [opt-level : i64]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerDriverBuffer
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
         [out : ResultCompilerDriverBuffer
           (begin
             (ast-node-pool-reader-use! pools)
-            (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
+            (compiler-driver-emit-lowered-buffer-with-level-mode-entry-and-crt
               input-path
               program
               spans
@@ -1065,7 +1084,8 @@
               has-target
               mode
               opt-level
-              emit-entry))]
+              emit-entry
+              crt-entry))]
         (begin
           (ast-node-pool-reader-clear!)
           out))]
@@ -1987,9 +2007,28 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverBuffer
+  (compiler-driver-emit-file-buffer-with-target-roots-level-mode-cfg-and-crt
+    input-path
+    target
+    has-target
+    stdlib-roots
+    opt-level
+    mode
+    cfgs
+    false))
+
+(define (compiler-driver-emit-file-buffer-with-target-roots-level-mode-cfg-and-crt
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [stdlib-roots : svec.Vec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : sym_i64_env.SymI64Env]
+  [crt-entry : bool]) : ResultCompilerDriverBuffer
   (begin
     (cfg compile-profile (compiler-driver-profile-start-total))
-    (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
+    (compiler-driver-emit-lowered-result-buffer-with-level-mode-entry-and-crt
       input-path
       (compiler-driver-load-and-lower-escaping
         input-path
@@ -2001,7 +2040,8 @@
       has-target
       mode
       opt-level
-      true)))
+      true
+      crt-entry)))
 
 (define (compiler-driver-emit-file-object-image-with-target-roots-level-mode-cfg-and-crt
   [input-path : String]
@@ -2164,6 +2204,26 @@
   [decls : AstDeclList]
   [paths : AstDeclPathList]) : ResultCompilerDriver
   (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+    input-path
+    (compiler-driver-lower-package-loaded input-path target mode decls paths)
+    target
+    has-target
+    mode
+    opt-level
+    emit-entry
+    crt-entry))
+
+(define (compiler-driver-emit-package-loaded-buffer
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [has-target : bool]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerDriverBuffer
+  (compiler-driver-emit-lowered-result-buffer-with-level-mode-entry-and-crt
     input-path
     (compiler-driver-lower-package-loaded input-path target mode decls paths)
     target

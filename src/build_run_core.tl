@@ -10,6 +10,7 @@
 (import stdlib.msvc)
 (import stdlib.process)
 (import stdlib.string)
+(import stdlib.text_buf)
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 
@@ -23,6 +24,10 @@
 
 (defenum ResultSourceToolString
   (Ok String)
+  (Err String))
+
+(defenum ResultSourceToolTextBuf
+  (Ok text_buf.TextBuf)
   (Err String))
 
 (defenum SourceToolDirectObjectStatus
@@ -796,6 +801,45 @@
           (ResultSourceToolString.Err
             (compiler-diagnostic-render (box-get diag)))])]))
 
+(define (source-tool-augment-assembly-buffer-for-target
+  [buf : text_buf.TextBuf]
+  [target : CompilerBackendTarget]) : text_buf.TextBuf
+  ;; Compiler-generated assembly does not contain the Linux noexec-stack note.
+  ;; Append as a chunk so build/run fallback writes do not allocate a second
+  ;; whole-program string just to add the suffix.
+  (if (compiler-backend-target-linux? target)
+    (text_buf.append buf (source-tool-noexecstack-note))
+    buf))
+
+(define (source-tool-emit-assembly-buffer
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : cli_svec.Vec]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [cfgs : sym_i64_env.SymI64Env]
+  [link-inputs : SourceToolLinkInputs]) : ResultSourceToolTextBuf
+  (match (source-tool-try-read-file source)
+    [(io.ErrIoString error)
+      (ResultSourceToolTextBuf.Err
+        (source-tool-cannot-read-module-message source error))]
+    [(io.OkIoString _)
+      (match (compiler-driver-emit-file-buffer-with-target-roots-level-mode-cfg-and-crt
+        source
+        target
+        true
+        stdlib-roots
+        opt-level
+        mode
+        cfgs
+        (source-tool-linux-crt-entry? target link-inputs))
+        [(ResultCompilerDriverBuffer.Ok buf)
+          (ResultSourceToolTextBuf.Ok
+            (source-tool-augment-assembly-buffer-for-target buf target))]
+        [(ResultCompilerDriverBuffer.Err diag)
+          (ResultSourceToolTextBuf.Err
+            (compiler-diagnostic-render (box-get diag)))])]))
+
 (define (source-tool-linux-direct-object-env-name) : String
   "TYPELISP_LINUX_DIRECT_OBJECT")
 
@@ -1101,6 +1145,16 @@
     [(io.ErrIoUnit error)
       (SourceToolCommandStatus.Err
         (str_cat.str-cat context ": " (io.error-message error)))]))
+
+(define (source-tool-write-text-buf
+  [path : String]
+  [buf : text_buf.TextBuf]
+  [context : String]) : SourceToolCommandStatus
+  (let
+    [status : i64 (text_buf.write-file path buf)]
+    (if (= status 0)
+      SourceToolCommandStatus.Ok
+      (SourceToolCommandStatus.Err context))))
 
 (define (source-tool-forward-output [output : process.ProcessOutput]) : unit
   (begin
@@ -1764,7 +1818,7 @@
   [obj-path : String]
   [bin-path : String]
   [write-context : String]) : SourceToolCommandStatus
-  (match (source-tool-emit-assembly
+  (match (source-tool-emit-assembly-buffer
     source
     target
     stdlib-roots
@@ -1772,16 +1826,38 @@
     mode
     cfgs
     link-inputs)
-    [(ResultSourceToolString.Err message) (SourceToolCommandStatus.Err message)]
-    [(ResultSourceToolString.Ok asm)
-      (source-tool-write-assembly-and-link
+    [(ResultSourceToolTextBuf.Err message)
+      (SourceToolCommandStatus.Err message)]
+    [(ResultSourceToolTextBuf.Ok asm)
+      (match (source-tool-write-text-buf asm-path asm write-context)
+        [(SourceToolCommandStatus.Err message)
+          (SourceToolCommandStatus.Err message)]
+        [(SourceToolCommandStatus.Ok)
+          (source-tool-assemble-and-link
+            target
+            asm-path
+            obj-path
+            bin-path
+            link-inputs)])]))
+
+(define (source-tool-write-assembly-buffer-and-link
+  [target : CompilerBackendTarget]
+  [asm-path : String]
+  [obj-path : String]
+  [bin-path : String]
+  [link-inputs : SourceToolLinkInputs]
+  [asm : text_buf.TextBuf]
+  [write-context : String]) : SourceToolCommandStatus
+  (match (source-tool-write-text-buf asm-path asm write-context)
+    [(SourceToolCommandStatus.Err message)
+      (SourceToolCommandStatus.Err message)]
+    [(SourceToolCommandStatus.Ok)
+      (source-tool-assemble-and-link
         target
         asm-path
         obj-path
         bin-path
-        link-inputs
-        asm
-        write-context)]))
+        link-inputs)]))
 
 (define (source-tool-object-or-assembly-and-link
   [source : String]
@@ -1873,23 +1949,25 @@
         [(SourceToolDirectObjectStatus.Err message)
           (SourceToolCommandStatus.Err message)]
         [(SourceToolDirectObjectStatus.Unavailable _)
-          (match (compiler-driver-emit-lowered-with-level
+          (match (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
             source
             program
             spans
             target
             true
-            opt-level)
-            [(ResultCompilerDriver.Ok asm)
-              (source-tool-write-assembly-and-link
+            (CompilerBackendMode.Scalar)
+            opt-level
+            true)
+            [(ResultCompilerDriverBuffer.Ok asm)
+              (source-tool-write-assembly-buffer-and-link
                 target
                 asm-path
                 obj-path
                 bin-path
                 link-inputs
-                (source-tool-augment-assembly-for-target asm target)
+                (source-tool-augment-assembly-buffer-for-target asm target)
                 write-context)]
-            [(ResultCompilerDriver.Err diag)
+            [(ResultCompilerDriverBuffer.Err diag)
               (SourceToolCommandStatus.Err
                 (compiler-diagnostic-render (box-get diag)))])])]))
 

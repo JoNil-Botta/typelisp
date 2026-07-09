@@ -125,6 +125,133 @@
 
 (cfg
   compile-profile
+  (define compiler-opt-load-cse-profile-max-table-size : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-opt-load-cse-profile-max-kinds-size : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-opt-load-cse-profile-max-table-cap : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-opt-load-cse-profile-max-kinds-cap : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-opt-load-cse-profile-table-cap-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-opt-load-cse-profile-kinds-cap-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-opt-load-cse-profile-field-key-drops : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-reset) : unit
+    (begin
+      (set! compiler-opt-load-cse-profile-max-table-size 0)
+      (set! compiler-opt-load-cse-profile-max-kinds-size 0)
+      (set! compiler-opt-load-cse-profile-max-table-cap 0)
+      (set! compiler-opt-load-cse-profile-max-kinds-cap 0)
+      (set! compiler-opt-load-cse-profile-table-cap-hits 0)
+      (set! compiler-opt-load-cse-profile-kinds-cap-hits 0)
+      (set! compiler-opt-load-cse-profile-field-key-drops 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-table-size [size : i64]) : unit
+    (if (> size compiler-opt-load-cse-profile-max-table-size)
+      (set! compiler-opt-load-cse-profile-max-table-size size)
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-kinds-size [size : i64]) : unit
+    (if (> size compiler-opt-load-cse-profile-max-kinds-size)
+      (set! compiler-opt-load-cse-profile-max-kinds-size size)
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-table-cap [cap : i64]) : unit
+    (if (> cap compiler-opt-load-cse-profile-max-table-cap)
+      (set! compiler-opt-load-cse-profile-max-table-cap cap)
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-kinds-cap [cap : i64]) : unit
+    (if (> cap compiler-opt-load-cse-profile-max-kinds-cap)
+      (set! compiler-opt-load-cse-profile-max-kinds-cap cap)
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-table-cap-hit) : unit
+    (set!
+      compiler-opt-load-cse-profile-table-cap-hits
+      (+ compiler-opt-load-cse-profile-table-cap-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-kinds-cap-hit) : unit
+    (set!
+      compiler-opt-load-cse-profile-kinds-cap-hits
+      (+ compiler-opt-load-cse-profile-kinds-cap-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-note-field-key-drop) : unit
+    (set!
+      compiler-opt-load-cse-profile-field-key-drops
+      (+ compiler-opt-load-cse-profile-field-key-drops 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-line [name : String] [value : i64]) : unit
+    (io.print-error
+      (string.concat5
+        "compile-profile|optimize.load_cse."
+        name
+        "|"
+        (string.int->string value)
+        "\n"))))
+
+(cfg
+  compile-profile
+  (define (compiler-opt-load-cse-profile-emit) : unit
+    (begin
+      (compiler-opt-load-cse-profile-line
+        "max_table_size"
+        compiler-opt-load-cse-profile-max-table-size)
+      (compiler-opt-load-cse-profile-line
+        "max_kinds_size"
+        compiler-opt-load-cse-profile-max-kinds-size)
+      (compiler-opt-load-cse-profile-line
+        "max_table_cap"
+        compiler-opt-load-cse-profile-max-table-cap)
+      (compiler-opt-load-cse-profile-line
+        "max_kinds_cap"
+        compiler-opt-load-cse-profile-max-kinds-cap)
+      (compiler-opt-load-cse-profile-line
+        "table_cap_hits"
+        compiler-opt-load-cse-profile-table-cap-hits)
+      (compiler-opt-load-cse-profile-line
+        "kinds_cap_hits"
+        compiler-opt-load-cse-profile-kinds-cap-hits)
+      (compiler-opt-load-cse-profile-line
+        "field_key_drops"
+        compiler-opt-load-cse-profile-field-key-drops))))
+
+(cfg
+  compile-profile
   (define (compiler-opt-profile-start) : unit
     (begin
       (set! compiler-opt-profile-start-ms (profile.now-ms))
@@ -23635,7 +23762,11 @@
           (opt-fold-instr-seq-rewrite! (OptConstEnv.Nil) work)
           (opt-strength-instr-seq-rewrite! (OptConstEnv.Nil) work)
           (opt-cse-instr-seq-rewrite! (OptExprTable.Nil) work)
-          (opt-load-cse-instr-seq-rewrite! hs (opt-load-cse-empty-state) work)
+          (opt-load-cse-instr-seq-rewrite!
+            hs
+            (opt-load-cse-empty-state-for-size
+              (compiler-ir-instr-seq-count work))
+            work)
           (opt-copy-instr-seq-rewrite! (OptCopyEnv.Nil) work)
           (compiler-ir-block
             label
@@ -33637,6 +33768,11 @@
                     pruned-globals
                     pruned-functions
                     level)]
+                [_load-cse-profile-reset : unit
+                  (cfg
+                    compile-profile
+                    (compiler-opt-load-cse-profile-reset)
+                    unit)]
                 [optimized-functions : CompilerIrFunctionList
                   (optimize-function-list-with-level-and-summaries
                     pruned-functions
@@ -33646,6 +33782,7 @@
                   (cfg
                     compile-profile
                     (compiler-opt-profile-finish "functions"))
+                  (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                   (cfg compile-profile (compiler-opt-profile-start))
                   (let
                     [final-pruned
@@ -33949,6 +34086,11 @@
                       pruned-globals
                       pruned-functions
                       level)]
+                  [_load-cse-profile-reset : unit
+                    (cfg
+                      compile-profile
+                      (compiler-opt-load-cse-profile-reset)
+                      unit)]
                   [optimized-functions : CompilerIrFunctionList
                     (optimize-function-list-with-level-and-summaries
                       pruned-functions
@@ -33958,6 +34100,7 @@
                     (cfg
                       compile-profile
                       (compiler-opt-profile-finish "functions"))
+                    (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
                       [final-pruned
@@ -50578,6 +50721,32 @@
     blocks
     (opt-load-header-set-add-params params (opt-load-header-set-empty))))
 
+(define opt-load-cse-table-cap-floor : i64
+  128)
+(define opt-load-cse-kinds-cap-floor : i64
+  96)
+(define opt-load-cse-cap-hard-max : i64
+  2048)
+(define opt-load-cse-cap-scale-divisor : i64
+  2)
+
+(define (opt-load-cse-scaled-cap [floor : i64] [instr-count : i64]) : i64
+  (let
+    [from-size : i64 (/ instr-count opt-load-cse-cap-scale-divisor)]
+    [with-floor : i64
+      (if (> from-size floor)
+        from-size
+        floor)]
+    (if (> with-floor opt-load-cse-cap-hard-max)
+      opt-load-cse-cap-hard-max
+      with-floor)))
+
+(define (opt-load-cse-table-cap-for-size [instr-count : i64]) : i64
+  (opt-load-cse-scaled-cap opt-load-cse-table-cap-floor instr-count))
+
+(define (opt-load-cse-kinds-cap-for-size [instr-count : i64]) : i64
+  (opt-load-cse-scaled-cap opt-load-cse-kinds-cap-floor instr-count))
+
 ;; Byte width of a scalar Load/StorePtr and the gep displacement scale. MUST
 ;; mirror compiler-backend-type-size (gep disp = offset * this); 0 means
 ;; zero-sized/unclassifiable and callers must treat the location as unknown.
@@ -50632,6 +50801,21 @@
   (OptLoadLocElement)
   (OptLoadLocField i64 i64 i64 bool))
 
+(define opt-load-loc-kind-base-scale : i64
+  4294967296)
+(define opt-load-loc-kind-offset-scale : i64
+  4096)
+(define opt-load-loc-kind-header-scale : i64
+  4)
+(define opt-load-loc-kind-width-scale : i64
+  8)
+(define opt-load-loc-field-base-limit : i64
+  1073741824)
+(define opt-load-loc-field-offset-limit : i64
+  1048576)
+(define opt-load-loc-field-width-limit : i64
+  512)
+
 ;; Encoding: 0 unknown, 1 element, field = 2 + h*4 + w*8 + off*4096 + B*2^32.
 (define (opt-load-loc-kind-encode [kind : OptLoadLocKind]) : i64
   (match kind
@@ -50642,9 +50826,13 @@
         2
         (+
           (if header?
-            4
+            opt-load-loc-kind-header-scale
             0)
-          (+ (* width 8) (+ (* off 4096) (* base 4294967296)))))]))
+          (+
+            (* width opt-load-loc-kind-width-scale)
+            (+
+              (* off opt-load-loc-kind-offset-scale)
+              (* base opt-load-loc-kind-base-scale)))))]))
 
 (define (opt-load-loc-kind-decode [value : i64]) : OptLoadLocKind
   (cond
@@ -50652,10 +50840,14 @@
     [(= value 1) (OptLoadLocElement)]
     [else
       (OptLoadLocField
-        (/ value 4294967296)
-        (% (/ value 4096) 1048576)
-        (% (/ value 8) 512)
-        (= (% (/ value 4) 2) 1))]))
+        (/ value opt-load-loc-kind-base-scale)
+        (%
+          (/ value opt-load-loc-kind-offset-scale)
+          opt-load-loc-field-offset-limit)
+        (%
+          (/ value opt-load-loc-kind-width-scale)
+          opt-load-loc-field-width-limit)
+        (= (% (/ value opt-load-loc-kind-header-scale) 2) 1))]))
 
 ;; Range-checked Field constructor: out-of-range components degrade to Unknown
 ;; (the encoding packs base<2^30, off<2^20, 0<w<512).
@@ -50666,29 +50858,40 @@
   [header? : bool]) : OptLoadLocKind
   (if (and
     (>= base 0)
-    (< base 1073741824)
+    (< base opt-load-loc-field-base-limit)
     (>= off 0)
-    (< off 1048576)
+    (< off opt-load-loc-field-offset-limit)
     (> width 0)
-    (< width 512))
+    (< width opt-load-loc-field-width-limit))
     (OptLoadLocField base off width header?)
-    (OptLoadLocUnknown)))
+    (begin
+      (cfg compile-profile (compiler-opt-load-cse-profile-note-field-key-drop))
+      (OptLoadLocUnknown))))
 
 ;; Pointer-kind env: var -> encoded kind, plus a base-var refcount so the
 ;; common no-references case of a base redefinition skips the sweep. Mutable
 ;; hashmaps threaded linearly (the opt-alias-facts pattern): block entries in
 ;; the cross-block pass clone before processing.
 (defenum OptLoadPtrKinds
-  (OptLoadPtrKinds opt_i64_i64_map.Map opt_i64_i64_map.Map))
+  (OptLoadPtrKinds opt_i64_i64_map.Map opt_i64_i64_map.Map i64))
+
+(define (opt-load-kinds-empty-with-cap [cap : i64]) : OptLoadPtrKinds
+  (begin
+    (cfg compile-profile (compiler-opt-load-cse-profile-note-kinds-cap cap))
+    (OptLoadPtrKinds
+      (opt_i64_i64_map.with-capacity 17)
+      (opt_i64_i64_map.with-capacity 17)
+      cap)))
 
 (define (opt-load-kinds-empty) : OptLoadPtrKinds
   (OptLoadPtrKinds
     (opt_i64_i64_map.with-capacity 17)
-    (opt_i64_i64_map.with-capacity 17)))
+    (opt_i64_i64_map.with-capacity 17)
+    opt-load-cse-kinds-cap-floor))
 
 (define (opt-load-kinds-lookup [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadLocKind
   (match kinds
-    [(OptLoadPtrKinds map _)
+    [(OptLoadPtrKinds map _ _)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (opt-load-loc-kind-decode value)]
         [(opt_i64_i64_map.LookupMissing) (OptLoadLocUnknown)])]))
@@ -50712,7 +50915,7 @@
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
 (define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (match kinds
-    [(OptLoadPtrKinds map refs)
+    [(OptLoadPtrKinds map refs cap)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound old-value)
           (let
@@ -50727,7 +50930,7 @@
                 [(OptLoadLocField base _ _ _)
                   (opt-load-kinds-ref-add refs base (- 0 1))]
                 [_ refs])]
-            (OptLoadPtrKinds map2 refs2))]
+            (OptLoadPtrKinds map2 refs2 cap))]
         [(opt_i64_i64_map.LookupMissing) kinds])]))
 
 ;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
@@ -50742,25 +50945,44 @@
       (let
         [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
         (match removed
-          [(OptLoadPtrKinds map refs)
-            (if (>= (opt_i64_i64_map.len (& map)) 96)
-              removed
-              (let
-                [refs2 : opt_i64_i64_map.Map
-                  (match kind
-                    [(OptLoadLocField base _ _ _)
-                      (opt-load-kinds-ref-add refs base 1)]
-                    [_ refs])]
-                (OptLoadPtrKinds
+          [(OptLoadPtrKinds map refs cap)
+            (let
+              [current-len : i64 (opt_i64_i64_map.len (& map))]
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-opt-load-cse-profile-note-kinds-size current-len))
+                (cfg
+                  compile-profile
+                  (compiler-opt-load-cse-profile-note-kinds-cap cap))
+                (if (>= current-len cap)
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-opt-load-cse-profile-note-kinds-cap-hit))
+                    removed)
                   (let
-                    [out : opt_i64_i64_map.Map map]
+                    [refs2 : opt_i64_i64_map.Map
+                      (match kind
+                        [(OptLoadLocField base _ _ _)
+                          (opt-load-kinds-ref-add refs base 1)]
+                        [_ refs])]
                     (begin
-                      (opt_i64_i64_map.insert
-                        (&mut out)
-                        var
-                        (opt-load-loc-kind-encode kind))
-                      out))
-                  refs2)))]))]))
+                      (cfg
+                        compile-profile
+                        (compiler-opt-load-cse-profile-note-kinds-size
+                          (+ current-len 1)))
+                      (OptLoadPtrKinds
+                        (let
+                          [out : opt_i64_i64_map.Map map]
+                          (begin
+                            (opt_i64_i64_map.insert
+                              (&mut out)
+                              var
+                              (opt-load-loc-kind-encode kind))
+                            out))
+                        refs2
+                        cap))))))]))]))
 
 ;; Redefinition of `var`: drop its own binding, and (only when some Field kind
 ;; references it as a base -- refcount-gated) sweep out every binding whose
@@ -50769,7 +50991,7 @@
   (let
     [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
     (match removed
-      [(OptLoadPtrKinds map refs)
+      [(OptLoadPtrKinds map refs cap)
         (if (<= (opt-load-kinds-ref-count refs var) 0)
           removed
           (let
@@ -50799,11 +51021,11 @@
                               [_ unit]))))]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
-              (OptLoadPtrKinds out out-refs))))])))
+              (OptLoadPtrKinds out out-refs cap))))])))
 
 (define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
-    [(OptLoadPtrKinds map refs)
+    [(OptLoadPtrKinds map refs cap)
       (let
         [out : opt_i64_i64_map.Map
           (opt_i64_i64_map.with-capacity
@@ -50824,16 +51046,16 @@
                       [_ unit]))]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
-          (OptLoadPtrKinds out out-refs)))]))
+          (OptLoadPtrKinds out out-refs cap)))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
 (define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match a
-    [(OptLoadPtrKinds amap _)
+    [(OptLoadPtrKinds amap _ acap)
       (match b
-        [(OptLoadPtrKinds bmap _)
+        [(OptLoadPtrKinds bmap _ _)
           (let
-            [out : OptLoadPtrKinds (opt-load-kinds-empty)]
+            [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap acap)]
             [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
             [i : i64 (opt_i64_i64_map.next-occupied (& amap) 0)]
             (begin
@@ -50945,7 +51167,7 @@
   (Cons OptLoadEntry (Box OptLoadTable)))
 
 (defenum OptLoadCseState
-  (State OptAliasFacts OptLoadTable OptLoadPtrKinds))
+  (State OptAliasFacts OptLoadTable OptLoadPtrKinds i64))
 
 (defenum OptLoadCseResult
   (Result OptLoadCseState CompilerIrInstr))
@@ -51067,9 +51289,10 @@
     [(OptLoadTable.Cons _ rest) (+ 1 (opt-load-table-len (box-get rest)))]))
 
 ;; Bind key -> value. Since granular invalidation lets tables survive stores,
-;; cap growth: a fresh key is skipped once the table holds 128 entries.
+;; cap growth: a fresh key is skipped once the table reaches the state cap.
 (define (opt-load-table-bind
   [table : OptLoadTable]
+  [cap : i64]
   [key : OptLoadKey]
   [value : CompilerIrValue]) : OptLoadTable
   (match (opt-load-table-lookup table key)
@@ -51078,9 +51301,27 @@
         (OptLoadEntry.Entry key value)
         (box (opt-load-table-remove-key-scan table key)))]
     [(CompilerIrMaybeValue.No)
-      (if (>= (opt-load-table-len table) 128)
-        table
-        (OptLoadTable.Cons (OptLoadEntry.Entry key value) (box table)))]))
+      (let
+        [current-len : i64 (opt-load-table-len table)]
+        (begin
+          (cfg
+            compile-profile
+            (compiler-opt-load-cse-profile-note-table-size current-len))
+          (cfg
+            compile-profile
+            (compiler-opt-load-cse-profile-note-table-cap cap))
+          (if (>= current-len cap)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-opt-load-cse-profile-note-table-cap-hit))
+              table)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-opt-load-cse-profile-note-table-size
+                  (+ current-len 1)))
+              (OptLoadTable.Cons (OptLoadEntry.Entry key value) (box table))))))]))
 
 (define (opt-load-copy-entry-within?
   [entry : OptLoadEntry]
@@ -51100,6 +51341,7 @@
 
 (define (opt-load-copy-transfer-entry
   [table : OptLoadTable]
+  [cap : i64]
   [entry : OptLoadEntry]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
@@ -51127,7 +51369,7 @@
                 (opt-load-value-gvn-stable? sources value))
               true)]
           (if eligible?
-            (opt-load-table-bind table key value)
+            (opt-load-table-bind table cap key value)
             table))]
       [_ table])
     table))
@@ -51135,6 +51377,7 @@
 (define (opt-load-table-transfer-copy-fields
   [source : OptLoadTable]
   [out : OptLoadTable]
+  [cap : i64]
   [gated? : bool]
   [sources : opt_i64_i64_map.Map]
   [src-base : i64]
@@ -51150,6 +51393,7 @@
         (box-get rest)
         (opt-load-copy-transfer-entry
           out
+          cap
           entry
           gated?
           sources
@@ -51159,6 +51403,7 @@
           dst-off
           size
           dst-header?)
+        cap
         gated?
         sources
         src-base
@@ -51328,13 +51573,14 @@
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds)
+    [(OptLoadCseState.State facts table kinds table-cap)
       (OptLoadCseState.State
         (opt-alias-update-facts facts instr)
         (match (opt-instr-def-var instr)
           [(option_i64.Some dst) (opt-load-table-invalidate-var table dst)]
           [(option_i64.None) table])
-        (opt-load-kinds-step kinds hs instr))]))
+        (opt-load-kinds-step kinds hs instr)
+        table-cap)]))
 
 ;; Calls/unknown effects: the table clears entirely; pointer kinds are value
 ;; properties and survive (only the instr's own def is invalidated).
@@ -51343,11 +51589,12 @@
   [state : OptLoadCseState]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts _ kinds)
+    [(OptLoadCseState.State facts _ kinds table-cap)
       (OptLoadCseState.State
         (opt-alias-update-facts facts instr)
         (OptLoadTable.Nil)
-        (opt-load-kinds-step kinds hs instr))]))
+        (opt-load-kinds-step kinds hs instr)
+        table-cap)]))
 
 ;; StorePtr: granular invalidation, then store-to-load forwarding. The
 ;; forwarded value must be a copy-safe source (no hidden global reads). Sub-word
@@ -51364,14 +51611,14 @@
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds)
+    [(OptLoadCseState.State facts table kinds table-cap)
       (let
         [width : i64 (opt-load-loc-type-size ty)]
         [class : OptLoadStoreClass (opt-load-classify-store kinds ptr width)]
         [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
         (match class
           [(OptLoadStoreUnknown)
-            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
+            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds table-cap)]
           [_
             (let
               [filtered : OptLoadTable
@@ -51395,9 +51642,10 @@
                 facts2
                 (match forwarded
                   [(CompilerIrMaybeValue.Some forwarded-value)
-                    (opt-load-table-bind filtered key forwarded-value)]
+                    (opt-load-table-bind filtered table-cap key forwarded-value)]
                   [(CompilerIrMaybeValue.No) filtered])
-                kinds))]))]))
+                kinds
+                table-cap))]))]))
 
 ;; CopyBytes writes `size` bytes through its dst pointer: same granular
 ;; invalidation, plus conservative field-to-field forwarding when source and
@@ -51411,19 +51659,20 @@
   [size : i64]
   [instr : CompilerIrInstr]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds)
+    [(OptLoadCseState.State facts table kinds table-cap)
       (let
         [class : OptLoadStoreClass (opt-load-classify-store kinds dst size)]
         [src-class : OptLoadStoreClass (opt-load-classify-store kinds src size)]
         [facts2 : OptAliasFacts (opt-alias-update-facts facts instr)]
         (match class
           [(OptLoadStoreUnknown)
-            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds)]
+            (OptLoadCseState.State facts2 (OptLoadTable.Nil) kinds table-cap)]
           [(OptLoadStoreElement)
             (OptLoadCseState.State
               facts2
               (opt-load-table-filter-store table class)
-              kinds)]
+              kinds
+              table-cap)]
           [(OptLoadStoreField dst-base dst-off _ dst-header?)
             (let
               [filtered : OptLoadTable
@@ -51444,6 +51693,7 @@
                       (opt-load-table-transfer-copy-fields
                         filtered
                         filtered
+                        table-cap
                         gated?
                         sources
                         src-base
@@ -51454,7 +51704,7 @@
                         dst-header?)
                       filtered)]
                   [_ filtered])]
-              (OptLoadCseState.State facts2 copied kinds))]))]))
+              (OptLoadCseState.State facts2 copied kinds table-cap))]))]))
 
 (define (opt-load-cse-core-load
   [hs : OptLoadHeaderSet]
@@ -51466,7 +51716,7 @@
   [ty : AstType]
   [instr : CompilerIrInstr]) : OptLoadCseResult
   (match state
-    [(OptLoadCseState.State facts table kinds)
+    [(OptLoadCseState.State facts table kinds table-cap)
       (let
         ;; The dst redefinition drops stale entries first; the key is computed
         ;; from the PRE-def kinds (a `Load dst <- dst` reads the old address).
@@ -51490,7 +51740,8 @@
                 (OptLoadCseState.State
                   (opt-alias-update-facts facts new-instr)
                   table2
-                  (opt-load-kinds-step kinds hs new-instr))
+                  (opt-load-kinds-step kinds hs new-instr)
+                  table-cap)
                 new-instr))]
           [(CompilerIrMaybeValue.No)
             (let
@@ -51500,9 +51751,14 @@
                 (OptLoadCseState.State
                   (opt-alias-update-facts facts instr)
                   (if record?
-                    (opt-load-table-bind table2 key (CompilerIrValue.Var dst))
+                    (opt-load-table-bind
+                      table2
+                      table-cap
+                      key
+                      (CompilerIrValue.Var dst))
                     table2)
-                  (opt-load-kinds-step kinds hs instr))
+                  (opt-load-kinds-step kinds hs instr)
+                  table-cap)
                 instr))]))]))
 
 ;; Shared per-instruction dispatcher for the block-local (gated? false) and
@@ -51594,22 +51850,38 @@
 (defenum OptLoadGvnBlockRewrite
   (Rewrite OptLoadCseState CompilerIrInstrList))
 
+(define (opt-load-cse-empty-state-with-caps [table-cap : i64] [kinds-cap : i64]) : OptLoadCseState
+  (begin
+    (cfg
+      compile-profile
+      (compiler-opt-load-cse-profile-note-table-cap table-cap))
+    (OptLoadCseState.State
+      (opt-alias-empty)
+      (OptLoadTable.Nil)
+      (opt-load-kinds-empty-with-cap kinds-cap)
+      table-cap)))
+
+(define (opt-load-cse-empty-state-for-size [instr-count : i64]) : OptLoadCseState
+  (opt-load-cse-empty-state-with-caps
+    (opt-load-cse-table-cap-for-size instr-count)
+    (opt-load-cse-kinds-cap-for-size instr-count)))
+
 (define (opt-load-cse-empty-state) : OptLoadCseState
-  (OptLoadCseState.State
-    (opt-alias-empty)
-    (OptLoadTable.Nil)
-    (opt-load-kinds-empty)))
+  (opt-load-cse-empty-state-with-caps
+    opt-load-cse-table-cap-floor
+    opt-load-cse-kinds-cap-floor))
 
 ;; The load table is a persistent list, but the alias facts and pointer kinds
 ;; are mutable tables; entering a block through a single predecessor must
 ;; process a copy.
 (define (opt-load-cse-state-clone-facts [state : OptLoadCseState]) : OptLoadCseState
   (match state
-    [(OptLoadCseState.State facts table kinds)
+    [(OptLoadCseState.State facts table kinds table-cap)
       (OptLoadCseState.State
         (opt-alias-clone facts)
         table
-        (opt-load-kinds-clone kinds))]))
+        (opt-load-kinds-clone kinds)
+        table-cap)]))
 
 (define (opt-load-table-contains-entry?
   [table : OptLoadTable]
@@ -51634,13 +51906,16 @@
   [a : OptLoadCseState]
   [b : OptLoadCseState]) : OptLoadCseState
   (match a
-    [(OptLoadCseState.State afacts atable akinds)
+    [(OptLoadCseState.State afacts atable akinds atable-cap)
       (match b
-        [(OptLoadCseState.State bfacts btable bkinds)
+        [(OptLoadCseState.State bfacts btable bkinds btable-cap)
           (OptLoadCseState.State
             (opt-alias-intersect afacts bfacts)
             (opt-load-table-intersect atable btable)
-            (opt-load-kinds-intersect akinds bkinds))])]))
+            (opt-load-kinds-intersect akinds bkinds)
+            (if (< atable-cap btable-cap)
+              atable-cap
+              btable-cap))])]))
 
 (define (opt-load-state-array-fill-empty!
   [states : (Array OptMaybeLoadCseState)]
@@ -51658,6 +51933,7 @@
   [index : OptCfgIndex]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
+  [empty-state : OptLoadCseState]
   [edge : i64]
   [end : i64]
   [has-state : bool]
@@ -51671,30 +51947,33 @@
           index
           exit-states
           processed
+          empty-state
           (+ edge 1)
           end
           has-state
           acc)
         (if (not (array-ref processed pred))
-          (opt-load-cse-empty-state)
+          empty-state
           (match (array-ref exit-states pred)
             [(OptMaybeLoadCseState.Some pred-state)
               (opt-load-gvn-entry-from-preds
                 index
                 exit-states
                 processed
+                empty-state
                 (+ edge 1)
                 end
                 true
                 (if has-state
                   (opt-load-cse-state-intersect acc pred-state)
                   (opt-load-cse-state-clone-facts pred-state)))]
-            [(OptMaybeLoadCseState.No) (opt-load-cse-empty-state)]))))))
+            [(OptMaybeLoadCseState.No) empty-state]))))))
 
 (define (opt-load-gvn-entry-state
   [context : OptCfgContext]
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
+  [empty-state : OptLoadCseState]
   [id : i64]) : OptLoadCseState
   (let
     [index : OptCfgIndex (struct-get context index)]
@@ -51703,16 +51982,17 @@
     (match (opt-cfg-index-id index entry-label)
       [(option_i64.Some entry-id)
         (if (= id entry-id)
-          (opt-load-cse-empty-state)
+          empty-state
           (opt-load-gvn-entry-from-preds
             index
             exit-states
             processed
+            empty-state
             (array-ref (struct-get preds offsets) id)
             (array-ref (struct-get preds offsets) (+ id 1))
             false
-            (opt-load-cse-empty-state)))]
-      [(option_i64.None) (opt-load-cse-empty-state)])))
+            empty-state))]
+      [(option_i64.None) empty-state])))
 
 (define (opt-load-gvn-instr-seq-from
   [hs : OptLoadHeaderSet]
@@ -51763,12 +52043,13 @@
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [out : (Array OptGvnBlockResult)]
+  [empty-state : OptLoadCseState]
   [id : i64]) : unit
   (let
     [index : OptCfgIndex (struct-get context index)]
     [label : String (opt-cfg-index-label index id)]
     [entry-state : OptLoadCseState
-      (opt-load-gvn-entry-state context exit-states processed id)]
+      (opt-load-gvn-entry-state context exit-states processed empty-state id)]
     (match (opt-cfg-find-block blocks label)
       [(OptMaybeBlock.No) unit]
       [(OptMaybeBlock.Some block)
@@ -51796,6 +52077,7 @@
   [exit-states : (Array OptMaybeLoadCseState)]
   [processed : (Array bool)]
   [out : (Array OptGvnBlockResult)]
+  [empty-state : OptLoadCseState]
   [slot : i64]) : unit
   (let
     [index : OptCfgIndex (struct-get context index)]
@@ -51813,6 +52095,7 @@
             exit-states
             processed
             out
+            empty-state
             id)
           (opt-load-gvn-process-rpo
             context
@@ -51822,6 +52105,7 @@
             exit-states
             processed
             out
+            empty-state
             (+ slot 1)))))))
 
 (define (opt-load-gvn-blocks-with-context
@@ -51836,6 +52120,9 @@
       (array.make-array OptMaybeLoadCseState count)]
     [processed : (Array bool) (array.make-array bool count)]
     [out : (Array OptGvnBlockResult) (array.make-array OptGvnBlockResult count)]
+    [empty-state : OptLoadCseState
+      (opt-load-cse-empty-state-for-size
+        (compiler-ir-block-list-instruction-count blocks))]
     (begin
       (opt-load-state-array-fill-empty! exit-states count)
       (opt-cfg-fill-bool! processed count false)
@@ -51848,6 +52135,7 @@
         exit-states
         processed
         out
+        empty-state
         0)
       (opt-gvn-materialize-blocks (struct-get context doms) out blocks))))
 
@@ -51997,7 +52285,7 @@
 (define (opt-load-cse-run [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs
     (opt-load-header-set-empty)
-    (opt-load-cse-empty-state)
+    (opt-load-cse-empty-state-for-size (compiler-ir-instr-list-count instrs))
     instrs))
 
 ;; Run with header-typed handle params (vars 0 and 1 are (Array i64)
@@ -52013,7 +52301,7 @@
       (compiler-ir-block-cons
         (compiler-ir-block "entry" instrs)
         (CompilerIrBlockList.Nil)))
-    (opt-load-cse-empty-state)
+    (opt-load-cse-empty-state-for-size (compiler-ir-instr-list-count instrs))
     instrs))
 
 (define (opt-count-mov-dst-i64-src
@@ -52526,6 +52814,68 @@
                 (CompilerIrInstr.Load 5 (CompilerIrValue.Var 4) (AstType.I64))
                 (CompilerIrInstrList.Nil)))))))))
 
+(define (opt-load-cse-cap-self-test?) : bool
+  (let
+    [key0 : OptLoadKey
+      (OptLoadKey.Raw (CompilerIrValue.Var 0) (AstType.I64) false)]
+    [key1 : OptLoadKey
+      (OptLoadKey.Raw (CompilerIrValue.Var 1) (AstType.I64) false)]
+    [table1 : OptLoadTable
+      (opt-load-table-bind (OptLoadTable.Nil) 1 key0 (CompilerIrValue.Var 10))]
+    [table2 : OptLoadTable
+      (opt-load-table-bind table1 1 key1 (CompilerIrValue.Var 11))]
+    [table-updated : OptLoadTable
+      (opt-load-table-bind table2 1 key0 (CompilerIrValue.Var 12))]
+    [kinds1 : OptLoadPtrKinds
+      (opt-load-kinds-bind
+        (opt-load-kinds-empty-with-cap 1)
+        1
+        (OptLoadLocElement))]
+    [kinds2 : OptLoadPtrKinds
+      (opt-load-kinds-bind kinds1 2 (OptLoadLocElement))]
+    [field-ok : OptLoadLocKind
+      (opt-load-loc-field-checked
+        (- opt-load-loc-field-base-limit 1)
+        (- opt-load-loc-field-offset-limit 1)
+        (- opt-load-loc-field-width-limit 1)
+        true)]
+    [field-bad : OptLoadLocKind
+      (opt-load-loc-field-checked opt-load-loc-field-base-limit 0 8 false)]
+    (and
+      (= (opt-load-cse-table-cap-for-size 8) opt-load-cse-table-cap-floor)
+      (= (opt-load-cse-kinds-cap-for-size 8) opt-load-cse-kinds-cap-floor)
+      (=
+        (opt-load-cse-table-cap-for-size
+          (* opt-load-cse-cap-hard-max (* opt-load-cse-cap-scale-divisor 2)))
+        opt-load-cse-cap-hard-max)
+      (= (opt-load-table-len table2) 1)
+      (match (opt-load-table-lookup table2 key1)
+        [(CompilerIrMaybeValue.No) true]
+        [_ false])
+      (match (opt-load-table-lookup table-updated key0)
+        [(CompilerIrMaybeValue.Some value)
+          (match value
+            [(CompilerIrValue.Var id) (= id 12)]
+            [_ false])]
+        [(CompilerIrMaybeValue.No) false])
+      (match (opt-load-kinds-lookup kinds2 1)
+        [(OptLoadLocElement) true]
+        [_ false])
+      (match (opt-load-kinds-lookup kinds2 2)
+        [(OptLoadLocUnknown) true]
+        [_ false])
+      (match field-ok
+        [(OptLoadLocField base off width header?)
+          (and
+            (= base (- opt-load-loc-field-base-limit 1))
+            (= off (- opt-load-loc-field-offset-limit 1))
+            (= width (- opt-load-loc-field-width-limit 1))
+            header?)]
+        [_ false])
+      (match field-bad
+        [(OptLoadLocUnknown) true]
+        [_ false]))))
+
 (define (compiler-optimize-load-cse-self-test) : i64
   (let
     [positive : CompilerIrInstrList
@@ -52669,4 +53019,5 @@
         41]
       [(not (= (opt-count-load-instrs copybytes-overlap) 2)) 42]
       [(not (= (opt-count-mov-dst-instrs copybytes-overlap 5) 0)) 43]
+      [(not (opt-load-cse-cap-self-test?)) 45]
       [else 44])))

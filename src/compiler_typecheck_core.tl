@@ -6429,7 +6429,7 @@
 
 (define (tc-stdlib-type-normalize-name [ctx : TcContext] [ty : AstType]) : AstType
   (match ty
-    [(AstType.Var name) (tc-resolve-type-name ctx (intern-str name))]
+    [(AstType.Var name) (tc-resolve-type-name ctx (intern-str name) name)]
     [_ ty]))
 
 (define (tc-stdlib-type-match-normalized?
@@ -11208,7 +11208,7 @@
     (if (tc-name-qualified-id? source-id)
       source-name
       (if (>= (intern-first-dot source-id) 0)
-        (match (tc-source-name-lookup-key-id ctx env source-name source-id)
+        (match (tc-source-name-lookup-key-with-field-check ctx env source-name source-id true)
           [(ResultTcString.Ok lookup-name) lookup-name]
           [(ResultTcString.Err _) source-name])
         source-name))))
@@ -11524,13 +11524,14 @@
               [(TcMaybeString.No)
                 (ResultTcString.Err (tc-unresolved-dotted-name-message name))])])))))
 
-(define (tc-source-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
+(define (tc-source-type-name-lookup-key
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : ResultTcString
   (begin (cfg compile-profile (set! tc-attrib-source-type-name-lookup-key (+ tc-attrib-source-type-name-lookup-key 1)))
-    (let
-    [name-id : i64 (intern name)]
     (if (tc-source-slash-qualified-id? name name-id)
       (ResultTcString.Err (tc-source-slash-qualified-message name))
-      (tc-dotted-type-name-lookup-key-from-id ctx name name-id)))))
+      (tc-dotted-type-name-lookup-key-from-id ctx name name-id))))
 
 (define (tc-enum-qualified-variant-lookup-name? [name : String]) : bool
   (>= (tc-name-first-dot (tc-qualified-name-base name)) 0))
@@ -11642,7 +11643,7 @@
       (intern name)
       (tc-context-module-id ctx))))
 
-(define (tc-source-name-lookup-key-with-field-check-id
+(define (tc-source-name-lookup-key-with-field-check
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
@@ -11651,7 +11652,9 @@
   ;; Intern `name` once; every metadata query below reads the id-keyed slots
   ;; instead of re-hashing the string. This is the hottest name-resolution
   ;; function, previously hashing each name 3-4x (slash-qualified?, first-dot,
-  ;; leading-segment, bound-exact?).
+  ;; leading-segment, bound-exact?). The already-interned `name-id` is threaded
+  ;; from the caller (AST field or upstream intern) so this hot path no longer
+  ;; re-interns the string; the public String wrappers below intern once.
   (begin
     (cfg
       compile-profile
@@ -11710,26 +11713,7 @@
                               (if (tc-source-name-bound-exact-id? env name-id)
                                 (ResultTcString.Ok name)
                                 (ResultTcString.Err
-                                (tc-unresolved-dotted-name-message name)))])])]))]))))))))
-
-(define (tc-source-name-lookup-key-with-field-check
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]
-  [check-local-field : bool]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check-id
-    ctx
-    env
-    name
-    (intern name)
-    check-local-field))
-
-(define (tc-source-name-lookup-key-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]
-  [name-id : i64]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check-id ctx env name name-id true))
+                                  (tc-unresolved-dotted-name-message name)))])])]))])))))))
 ;; id-returning variant of tc-source-name-lookup-key-with-field-check. Takes the
 ;; already-interned name-id (the AST stores it) so it does not (intern name),
 ;; and returns the resolved lookup name together with its id, so the hot tc-expr
@@ -11803,20 +11787,13 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check ctx env name true))
-
-(define (tc-source-name-lookup-key-after-local-field-check-id
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]
-  [name-id : i64]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check-id ctx env name name-id false))
+  (tc-source-name-lookup-key-with-field-check ctx env name (intern name) true))
 
 (define (tc-source-name-lookup-key-after-local-field-check
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check ctx env name false))
+  (tc-source-name-lookup-key-with-field-check ctx env name (intern name) false))
 
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
@@ -12265,11 +12242,13 @@
       (tc-context-with-owner-name-module ctx owner-name)]
     [(ResultTcString.Err _) ctx]))
 
-(define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
+(define (tc-resolve-type-name
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : AstType
   (match ctx
     [(TcContext _ symbols _ module _ _)
       (let
-        [name-id : i64 (intern name)]
         [source-name : String
           (match (tc-dotted-type-name-lookup-key-from-id ctx name name-id)
             [(ResultTcString.Ok key) key]
@@ -12344,19 +12323,20 @@
         (tc-resolve-type-name-with-args
           ctx
           (intern-str name)
+          name
           (box-get lifetimes))]
-      [(AstType.Var name) (tc-resolve-type-name ctx (intern-str name))]
+      [(AstType.Var name) (tc-resolve-type-name ctx (intern-str name) name)]
       [_ ty])
     ty))
 
 (define (tc-resolve-type-name-with-args
   [ctx : TcContext]
   [name : String]
+  [name-id : i64]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
     [(TcContext _ symbols _ module _ _)
       (let
-        [name-id : i64 (intern name)]
         [source-name : String
           (match (tc-dotted-type-name-lookup-key-from-id ctx name name-id)
             [(ResultTcString.Ok key) key]
@@ -12499,11 +12479,11 @@
       [syntax-ok : ResultTcUnit
         (match ty
           [(AstType.Var name)
-            (match (tc-source-type-name-lookup-key ctx (intern-str name))
+            (match (tc-source-type-name-lookup-key ctx (intern-str name) name)
               [(ResultTcString.Ok _) ResultTcUnit.Ok]
               [(ResultTcString.Err message) (ResultTcUnit.Err message)])]
           [(AstType.VarArgs name _)
-            (match (tc-source-type-name-lookup-key ctx (intern-str name))
+            (match (tc-source-type-name-lookup-key ctx (intern-str name) name)
               [(ResultTcString.Ok _) ResultTcUnit.Ok]
               [(ResultTcString.Err message) (ResultTcUnit.Err message)])]
           [_ ResultTcUnit.Ok])]
@@ -14685,20 +14665,20 @@
               (tc-atomic-update-arity-message name)))))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
-(define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
+(define (tc-ptr-addr-of-local-lookup [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (match (tc-type-env-spine-step env)
     [(TcTypeEnvSpineStep.Done)
       (ResultTcType.Err
         "typecheck: ptr-addr-of requires a local or parameter name")]
     [(TcTypeEnvSpineStep.Cache rest-env)
-      (tc-ptr-addr-of-local-lookup rest-env name)]
+      (tc-ptr-addr-of-local-lookup rest-env name-id)]
     [(TcTypeEnvSpineStep.Bind key ty rest-env)
       (if (= key (tc-hygiene-global-boundary-id))
         (ResultTcType.Err
           "typecheck: ptr-addr-of requires a local or parameter name")
-        (if (= key (intern name))
+        (if (= key name-id)
           (ResultTcType.Ok ty)
-          (tc-ptr-addr-of-local-lookup rest-env name)))]))
+          (tc-ptr-addr-of-local-lookup rest-env name-id)))]))
 
 (define (tc-ptr-addr-of-place
   [ctx : TcContext]
@@ -14706,7 +14686,7 @@
   [place : AstExpr]) : ResultTcType
   (match (ast-expr-unspan place)
     [(AstExpr.Var name)
-      (match (tc-ptr-addr-of-local-lookup env (intern-str name))
+      (match (tc-ptr-addr-of-local-lookup env name)
         [(ResultTcType.Ok ty)
           (match (tc-type-strip-region (tc-resolve-type ctx ty))
             [(AstType.Ref _ _)
@@ -16201,10 +16181,10 @@
         (intern "unsafe-value"))
         [(TcTypeEnvUnsafeLookupStep.Found (AstType.I64) unsafe) unsafe]
         [_ false])
-      (match (tc-ptr-addr-of-local-lookup hygiene-env "visible")
+      (match (tc-ptr-addr-of-local-lookup hygiene-env (intern "visible"))
         [(ResultTcType.Ok (AstType.Bool)) true]
         [_ false])
-      (match (tc-ptr-addr-of-local-lookup hygiene-root "visible")
+      (match (tc-ptr-addr-of-local-lookup hygiene-root (intern "visible"))
         [(ResultTcType.Err _) true]
         [_ false])
       (match (tc-lookup-id lookup-deep (intern "global"))
@@ -20516,9 +20496,9 @@
     [kind : i64 (tc-arena-owner-call-kind ctx env init)]
     (cond
       [(= kind (tc-arena-owner-kind-atomic))
-        (tc-bind-atomic-arena-owner env (intern-str name))]
+        (tc-bind-id env (tc-atomic-arena-owner-marker-id) (AstType.Var name))]
       [(= kind (tc-arena-owner-kind-ordinary))
-        (tc-bind-ordinary-arena-owner env (intern-str name))]
+        (tc-bind-id env (tc-ordinary-arena-owner-marker-id) (AstType.Var name))]
       [else env])))
 
 (define (tc-bind-arena-phase-if-needed-id
@@ -24461,7 +24441,7 @@
                           (tc-resource-bindings-at
                             ctx
                             (tc-bind-id
-                              (tc-bind-cleanup-owner env (intern-str name))
+                              (tc-bind-id env (tc-cleanup-owner-marker-id) (AstType.Var name))
                               name
                               (tc-type-without-regions init-ty))
                             bindings
@@ -24521,7 +24501,7 @@
           [(tc-hygiene-global-name? raw-text)
             (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))]
           [(tc-name-qualified-id? raw-name) (ResultTcString.Ok raw-text)]
-          [else (tc-source-name-lookup-key-id ctx env raw-text raw-name)]))]
+          [else (tc-source-name-lookup-key-with-field-check ctx env raw-text raw-name true)]))]
     [_ (ResultTcString.Err "")]))
 
 (define (tc-spmd-inline-helper-from-decl [name : String] [decl : AstDecl]) : ResultTcSpmdInlineHelper
@@ -30128,12 +30108,10 @@
 ;; indexes mid-compile (observed as a wrong cached layout under
 ;; --cfg compile-profile). Type names are unique program-wide in the flat
 ;; namespace, so the name id identifies exactly one layout per generation.
-(define (tc-agg-layout-cache-slot-key [name : String]) : i64
-  (let
-    [id : i64 (intern name)]
-    (if (>= id tc-agg-layout-cache-capacity)
-      (- 0 1)
-      id)))
+(define (tc-agg-layout-cache-slot-key [name-id : i64]) : i64
+  (if (>= name-id tc-agg-layout-cache-capacity)
+    (- 0 1)
+    name-id))
 
 ;; Deep-clone the completed layout into the persistent program arena and store
 ;; it. Only fully-resolved Ok layouts reach this point, so a cached entry can
@@ -30197,6 +30175,7 @@
 (define (tc-inline-aggregate-layout-for-with-stack
   [ctx : TcContext]
   [name : String]
+  [name-id : i64]
   [stack : TcStringList]) : ResultTcInlineAggregateLayout
   (let
     [handle : i64
@@ -30208,7 +30187,7 @@
       (begin
         (tc-agg-layout-cache-ensure!)
         (let
-          [key : i64 (tc-agg-layout-cache-slot-key name)]
+          [key : i64 (tc-agg-layout-cache-slot-key name-id)]
           (if (< key 0)
             (begin
               (cfg compile-profile (tc-lp-note 14))
@@ -30315,6 +30294,7 @@
       (match (tc-inline-aggregate-layout-for-with-stack
         ctx
         (intern-str name)
+        name
         stack)
         [(ResultTcInlineAggregateLayout.Ok layout)
           (ResultTcLayoutInfo.Ok
@@ -30327,6 +30307,7 @@
       (match (tc-inline-aggregate-layout-for-with-stack
         ctx
         (intern-str name)
+        name
         stack)
         [(ResultTcInlineAggregateLayout.Ok layout)
           (ResultTcLayoutInfo.Ok
@@ -30339,6 +30320,7 @@
       (match (tc-inline-aggregate-layout-for-with-stack
         ctx
         (intern-str name)
+        name
         stack)
         [(ResultTcInlineAggregateLayout.Ok layout)
           (ResultTcLayoutInfo.Ok
@@ -30351,6 +30333,7 @@
       (match (tc-inline-aggregate-layout-for-with-stack
         ctx
         (intern-str name)
+        name
         stack)
         [(ResultTcInlineAggregateLayout.Ok layout)
           (ResultTcLayoutInfo.Ok
@@ -30364,7 +30347,7 @@
   (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringList.Nil))
 
 (define (tc-inline-aggregate-layout-for [ctx : TcContext] [name : String]) : ResultTcInlineAggregateLayout
-  (tc-inline-aggregate-layout-for-with-stack ctx name TcStringList.Nil))
+  (tc-inline-aggregate-layout-for-with-stack ctx name (intern name) TcStringList.Nil))
 
 ;; Compile-time cache: memoize the inline-aggregate SIZE. tc-inline-aggregate-
 ;; layout-for re-walks the whole layout on every lower-type-size query, which is
@@ -30420,7 +30403,7 @@
     (let
       [key : i64 (tc-agg-scalar-cache-key-id name-id)]
       (if (< key 0)
-        (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+        (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name-id) name-id TcStringList.Nil)
           [(ResultTcInlineAggregateLayout.Ok layout)
             (tc-inline-aggregate-layout-size layout)]
           [(ResultTcInlineAggregateLayout.Err _) fallback])
@@ -30428,7 +30411,7 @@
           [cached : i64 (array-ref tc-agg-size-cache key)]
           (if (> cached 0)
             (- cached 1)
-            (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+            (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name-id) name-id TcStringList.Nil)
               [(ResultTcInlineAggregateLayout.Ok layout)
                 (let
                   [size : i64 (tc-inline-aggregate-layout-size layout)]
@@ -30466,7 +30449,7 @@
     (let
       [key : i64 (tc-agg-scalar-cache-key-id name-id)]
       (if (< key 0)
-        (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+        (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name-id) name-id TcStringList.Nil)
           [(ResultTcInlineAggregateLayout.Ok layout)
             (tc-inline-aggregate-layout-align layout)]
           [(ResultTcInlineAggregateLayout.Err _) fallback])
@@ -30474,7 +30457,7 @@
           [cached : i64 (array-ref tc-agg-align-cache key)]
           (if (> cached 0)
             (- cached 1)
-            (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+            (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name-id) name-id TcStringList.Nil)
               [(ResultTcInlineAggregateLayout.Ok layout)
                 (let
                   [align : i64 (tc-inline-aggregate-layout-align layout)]
@@ -30516,7 +30499,7 @@
         (set! tc-agg-regwords-cache-generation (intern-generation))))))
 
 (define (tc-inline-aggregate-regwords-compute [ctx : TcContext] [name-id : i64]) : i64
-  (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+  (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name-id) name-id TcStringList.Nil)
     [(ResultTcInlineAggregateLayout.Ok layout)
       (if (tc-inline-aggregate-layout-register-resident? layout)
         (/ (+ (tc-inline-aggregate-layout-size layout) 7) 8)
@@ -30534,7 +30517,7 @@
           [cached : i64 (array-ref tc-agg-regwords-cache key)]
           (if (> cached 0)
             (- cached 1)
-            (match (tc-inline-aggregate-layout-for ctx (intern-str name-id))
+            (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name-id) name-id TcStringList.Nil)
               [(ResultTcInlineAggregateLayout.Ok layout)
                 (let
                   [words : i64
@@ -32156,7 +32139,7 @@
       [base : String (tc-qualified-name-base pattern-name)]
       [target-module : String (tc-qualified-access-target-module ctx qualifier)]
       (ResultTcString.Ok (compiler-symbol-module-key target-module base)))
-    (match (tc-source-type-name-lookup-key ctx pattern-name)
+    (match (tc-source-type-name-lookup-key ctx pattern-name (intern pattern-name))
       [(ResultTcString.Ok lookup-name)
         (ResultTcString.Ok
           (tc-struct-pattern-name-in-scrut-module ctx struct-name lookup-name))]
@@ -36296,14 +36279,14 @@
 (define (tc-extern-abi-inline-enum-type-ok? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-without-regions ty)
     [(AstType.Enum name)
-      (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+      (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name) name TcStringList.Nil)
         [(ResultTcInlineAggregateLayout.Ok layout)
           (match layout
             [(TcInlineAggregateLayout.Enum _ _ _) true]
             [_ false])]
         [(ResultTcInlineAggregateLayout.Err _) false])]
     [(AstType.EnumArgs name _)
-      (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+      (match (tc-inline-aggregate-layout-for-with-stack ctx (intern-str name) name TcStringList.Nil)
         [(ResultTcInlineAggregateLayout.Ok layout)
           (match layout
             [(TcInlineAggregateLayout.Enum _ _ _) true]
@@ -40341,7 +40324,7 @@
                       (match (tc-move-check-resource-bindings-at
                         ctx
                         (tc-bind-id
-                          (tc-bind-cleanup-owner env (intern-str name))
+                          (tc-bind-id env (tc-cleanup-owner-marker-id) (AstType.Var name))
                           name
                           (tc-type-without-regions init-ty))
                         (tc-moved-add locals (intern-str name))
@@ -44471,7 +44454,7 @@
                       (tc-borrow-check-resource-bindings-at
                         ctx
                         (tc-bind-id
-                          (tc-bind-cleanup-owner env (intern-str name))
+                          (tc-bind-id env (tc-cleanup-owner-marker-id) (AstType.Var name))
                           name
                           (tc-type-without-regions init-ty))
                         (tc-moved-add locals (intern-str name))
@@ -51432,7 +51415,7 @@
         (tc-context-with-program
           (tc-context-with-module ctx module)
           (ast-program decls))]
-      (match (tc-source-type-name-lookup-key source-ctx lookup-name)
+      (match (tc-source-type-name-lookup-key source-ctx lookup-name (intern lookup-name))
         [(ResultTcString.Ok resolved-name)
           (macro-call-decl-from-name ctx decls module resolved-name call-expr)]
         [(ResultTcString.Err message)

@@ -17222,7 +17222,6 @@
 
 (define (lower-call-explicit-mut-borrow-var-name
   [ctx : TcContext]
-  [type-env : TcTypeEnv]
   [arg : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan arg)
     [(AstExpr.Borrow mutable _ place-box)
@@ -17327,10 +17326,7 @@
     [(ResultTcExpr.Ok effective-arg)
       (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
         [(AstType.MutRef _ _)
-          (match (lower-call-explicit-mut-borrow-var-name
-            ctx
-            type-env
-            effective-arg)
+          (match (lower-call-explicit-mut-borrow-var-name ctx effective-arg)
             [(TcMaybeString.Some name)
               (lower-call-arg-mut-borrow-var-as
                 ctx

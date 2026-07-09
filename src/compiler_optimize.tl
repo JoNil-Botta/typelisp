@@ -23762,6 +23762,7 @@
           (opt-fold-instr-seq-rewrite! (OptConstEnv.Nil) work)
           (opt-strength-instr-seq-rewrite! (OptConstEnv.Nil) work)
           (opt-cse-instr-seq-rewrite! (OptExprTable.Nil) work)
+          (set! work (opt-dead-store-instr-seq hs work))
           (opt-load-cse-instr-seq-rewrite!
             hs
             (opt-load-cse-empty-state-for-size
@@ -51516,6 +51517,238 @@
           [(OptLoadLocUnknown) (OptLoadStoreUnknown)])]
       [_ (OptLoadStoreUnknown)])))
 
+;; Block-local dead-store elimination. Pending entries are stores that have not
+;; yet been observed by an aliasing load or unknown memory effect.
+(defenum OptDeadStoreEntry
+  (Entry i64 OptLoadStoreClass))
+
+(defenum OptDeadStoreSet
+  (Nil)
+  (Cons OptDeadStoreEntry (Box OptDeadStoreSet)))
+
+(define (opt-dead-store-trackable? [class : OptLoadStoreClass]) : bool
+  (match class
+    [(OptLoadStoreField _ _ _ _) true]
+    [_ false]))
+
+(define (opt-dead-store-set-len [pending : OptDeadStoreSet]) : i64
+  (match pending
+    [(OptDeadStoreSet.Nil) 0]
+    [(OptDeadStoreSet.Cons _ rest)
+      (+ 1 (opt-dead-store-set-len (box-get rest)))]))
+
+(define (opt-dead-store-classes-exact?
+  [a : OptLoadStoreClass]
+  [b : OptLoadStoreClass]) : bool
+  (match a
+    [(OptLoadStoreField abase aoff awidth aheader?)
+      (match b
+        [(OptLoadStoreField bbase boff bwidth bheader?)
+          (and
+            (= abase bbase)
+            (= aoff boff)
+            (= awidth bwidth)
+            (=
+              (if aheader?
+                1
+                0)
+              (if bheader?
+                1
+                0)))]
+        [_ false])]
+    [_ false]))
+
+(define (opt-dead-store-classes-disjoint?
+  [access : OptLoadStoreClass]
+  [candidate : OptLoadStoreClass]) : bool
+  (match access
+    [(OptLoadStoreUnknown) false]
+    [(OptLoadStoreElement)
+      (match candidate
+        [(OptLoadStoreField _ _ _ header?) header?]
+        [_ false])]
+    [(OptLoadStoreField abase aoff awidth aheader?)
+      (match candidate
+        [(OptLoadStoreElement) aheader?]
+        [(OptLoadStoreField bbase boff bwidth _)
+          (and
+            (= abase bbase)
+            (opt-load-ranges-disjoint? aoff awidth boff bwidth))]
+        [(OptLoadStoreUnknown) false])]))
+
+(define (opt-dead-store-filter-store
+  [pending : OptDeadStoreSet]
+  [dead : (Array i64)]
+  [class : OptLoadStoreClass]) : OptDeadStoreSet
+  (match pending
+    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
+    [(OptDeadStoreSet.Cons entry rest)
+      (let
+        [tail : OptDeadStoreSet
+          (opt-dead-store-filter-store (box-get rest) dead class)]
+        (match entry
+          [(OptDeadStoreEntry.Entry old-index old-class)
+            (if (opt-dead-store-classes-exact? old-class class)
+              (begin
+                (array-set! dead old-index 1)
+                tail)
+              (if (opt-dead-store-classes-disjoint? class old-class)
+                (OptDeadStoreSet.Cons entry (box tail))
+                tail))]))]))
+
+(define (opt-dead-store-add-current
+  [pending : OptDeadStoreSet]
+  [index : i64]
+  [class : OptLoadStoreClass]) : OptDeadStoreSet
+  (if (and
+    (opt-dead-store-trackable? class)
+    (< (opt-dead-store-set-len pending) 128))
+    (OptDeadStoreSet.Cons (OptDeadStoreEntry.Entry index class) (box pending))
+    pending))
+
+(define (opt-dead-store-filter-access
+  [pending : OptDeadStoreSet]
+  [class : OptLoadStoreClass]) : OptDeadStoreSet
+  (match pending
+    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
+    [(OptDeadStoreSet.Cons entry rest)
+      (let
+        [tail : OptDeadStoreSet
+          (opt-dead-store-filter-access (box-get rest) class)]
+        (match entry
+          [(OptDeadStoreEntry.Entry _ old-class)
+            (if (opt-dead-store-classes-disjoint? class old-class)
+              (OptDeadStoreSet.Cons entry (box tail))
+              tail)]))]))
+
+(define (opt-dead-store-class-uses-var? [class : OptLoadStoreClass] [var : i64]) : bool
+  (match class
+    [(OptLoadStoreField base _ _ _) (= base var)]
+    [_ false]))
+
+(define (opt-dead-store-filter-def [pending : OptDeadStoreSet] [var : i64]) : OptDeadStoreSet
+  (match pending
+    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
+    [(OptDeadStoreSet.Cons entry rest)
+      (let
+        [tail : OptDeadStoreSet (opt-dead-store-filter-def (box-get rest) var)]
+        (match entry
+          [(OptDeadStoreEntry.Entry _ class)
+            (if (opt-dead-store-class-uses-var? class var)
+              tail
+              (OptDeadStoreSet.Cons entry (box tail)))]))]))
+
+(define (opt-dead-store-other-keeps-pending? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.Alloc _ _) true]
+    [_
+      (if (opt-alias-instr-clears-all? instr)
+        false
+        (match (compiler-ir-instr-effect instr)
+          [(CompilerIrEffect.Pure) true]
+          [_ false]))]))
+
+(define (opt-dead-store-step
+  [pending : OptDeadStoreSet]
+  [kinds : OptLoadPtrKinds]
+  [dead : (Array i64)]
+  [index : i64]
+  [instr : CompilerIrInstr]) : OptDeadStoreSet
+  (let
+    [after-memory : OptDeadStoreSet
+      (match instr
+        [(CompilerIrInstr.StorePtr ptr _ ty)
+          (let
+            [class : OptLoadStoreClass
+              (opt-load-classify-store kinds ptr (opt-load-loc-type-size ty))]
+            (opt-dead-store-add-current
+              (opt-dead-store-filter-store pending dead class)
+              index
+              class))]
+        [(CompilerIrInstr.Load _ src ty)
+          (opt-dead-store-filter-access
+            pending
+            (opt-load-classify-store kinds src (opt-load-loc-type-size ty)))]
+        [(CompilerIrInstr.CopyBytes _ _ _) (OptDeadStoreSet.Nil)]
+        [_
+          (if (opt-dead-store-other-keeps-pending? instr)
+            pending
+            (OptDeadStoreSet.Nil))])]
+    (match (opt-instr-def-var instr)
+      [(option_i64.Some dst) (opt-dead-store-filter-def after-memory dst)]
+      [(option_i64.None) after-memory])))
+
+(define (opt-dead-store-has-dead? [dead : (Array i64)] [count : i64]) : bool
+  (let
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (not found))
+        (begin
+          (if (= (array-ref dead index) 0)
+            unit
+            (set! found true))
+          (set! index (+ index 1))))
+      found)))
+
+(define (opt-dead-store-build
+  [instrs : CompilerIrInstrSeq]
+  [dead : (Array i64)]
+  [count : i64]) : CompilerIrInstrSeq
+  (let
+    [builder : CompilerIrInstrBuilder
+      (compiler-ir-instr-builder-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (if (= (array-ref dead index) 0)
+            (compiler-ir-instr-builder-push!
+              (&mut builder)
+              (compiler-ir-instr-seq-ref instrs index))
+            unit)
+          (set! index (+ index 1))))
+      (compiler-ir-instr-builder-to-seq builder))))
+
+(define (opt-dead-store-has-two-storeptr? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [stores : i64 0]
+    (begin
+      (while (and (< index count) (< stores 2))
+        (begin
+          (match (compiler-ir-instr-seq-ref instrs index)
+            [(CompilerIrInstr.StorePtr _ _ _) (set! stores (+ stores 1))]
+            [_ unit])
+          (set! index (+ index 1))))
+      (>= stores 2))))
+
+(define (opt-dead-store-instr-seq
+  [hs : OptLoadHeaderSet]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (if (opt-dead-store-has-two-storeptr? instrs)
+    (let
+      [count : i64 (compiler-ir-instr-seq-count instrs)]
+      [dead : (Array i64) (make-array i64 count)]
+      [pending : OptDeadStoreSet (OptDeadStoreSet.Nil)]
+      [kinds : OptLoadPtrKinds (opt-load-kinds-empty)]
+      [index : i64 0]
+      (begin
+        (while (< index count)
+          (let
+            [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
+            (begin
+              (set!
+                pending
+                (opt-dead-store-step pending kinds dead index instr))
+              (set! kinds (opt-load-kinds-step kinds hs instr))
+              (set! index (+ index 1)))))
+        (if (opt-dead-store-has-dead? dead count)
+          (opt-dead-store-build instrs dead count)
+          instrs)))
+    instrs))
+
 ;; GVN stability for a key's referenced vars (the cross-block pass only
 ;; caches/forwards through single-source vars, mirroring its original
 ;; gates; the block-local pass needs none).
@@ -52304,6 +52537,20 @@
     (opt-load-cse-empty-state-for-size (compiler-ir-instr-list-count instrs))
     instrs))
 
+(define (opt-dead-store-run-with-array-param [instrs : CompilerIrInstrList]) : CompilerIrInstrList
+  (compiler-ir-instr-seq-to-list
+    (opt-dead-store-instr-seq
+      (opt-load-header-set-from-function
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "xs" (AstType.DynArray 0) 0)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "ys" (AstType.DynArray 0) 1)
+            (CompilerIrParamList.Nil)))
+        (compiler-ir-block-cons
+          (compiler-ir-block "entry" instrs)
+          (CompilerIrBlockList.Nil)))
+      (compiler-ir-instr-seq-from-list instrs))))
+
 (define (opt-count-mov-dst-i64-src
   [instrs : CompilerIrInstrList]
   [dst : i64]
@@ -52367,6 +52614,158 @@
               0)]
           [_ 0])
         (opt-count-mov-dst-bool-src (box-get rest) dst src))]))
+
+(define (opt-count-storeptr-instrs [instrs : CompilerIrInstrList]) : i64
+  (match instrs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(CompilerIrInstr.StorePtr _ _ _) 1]
+          [_ 0])
+        (opt-count-storeptr-instrs (box-get rest)))]))
+
+(define (opt-count-storeptr-i64-value
+  [instrs : CompilerIrInstrList]
+  [want : i64]) : i64
+  (match instrs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(CompilerIrInstr.StorePtr _ value ty)
+            (if (opt-type-eq ty (AstType.I64))
+              (match value
+                [(CompilerIrValue.I64 actual)
+                  (if (= actual want)
+                    1
+                    0)]
+                [_ 0])
+              0)]
+          [_ 0])
+        (opt-count-storeptr-i64-value (box-get rest) want))]))
+
+(define (opt-dead-store-overwritten-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.StorePtr
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 2)
+          (CompilerIrValue.I64 2)
+          (AstType.I64))
+        (CompilerIrInstrList.Nil)))))
+
+(define (opt-dead-store-load-blocked-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.StorePtr
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (CompilerIrInstrList.Nil))))))
+
+(define (opt-dead-store-disjoint-field-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.Gep
+        3
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.I64 2)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.StorePtr
+          (CompilerIrValue.Var 2)
+          (CompilerIrValue.I64 1)
+          (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 3)
+            (CompilerIrValue.I64 9)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.StorePtr
+              (CompilerIrValue.Var 2)
+              (CompilerIrValue.I64 2)
+              (AstType.I64))
+            (CompilerIrInstrList.Nil)))))))
+
+(define (opt-dead-store-call-blocked-instrs) : CompilerIrInstrList
+  (compiler-ir-instr-cons
+    (CompilerIrInstr.Gep
+      2
+      (CompilerIrValue.Var 0)
+      (CompilerIrValue.I64 1)
+      (AstType.I64))
+    (compiler-ir-instr-cons
+      (CompilerIrInstr.StorePtr
+        (CompilerIrValue.Var 2)
+        (CompilerIrValue.I64 1)
+        (AstType.I64))
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Call 4 "touch" (CompilerIrCallArgs.Nil) (AstType.I64))
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.StorePtr
+            (CompilerIrValue.Var 2)
+            (CompilerIrValue.I64 2)
+            (AstType.I64))
+          (CompilerIrInstrList.Nil))))))
+
+(define (compiler-optimize-dead-store-self-test) : i64
+  (let
+    [overwritten : CompilerIrInstrList
+      (opt-dead-store-run-with-array-param (opt-dead-store-overwritten-instrs))]
+    [load-blocked : CompilerIrInstrList
+      (opt-dead-store-run-with-array-param (opt-dead-store-load-blocked-instrs))]
+    [disjoint-field : CompilerIrInstrList
+      (opt-dead-store-run-with-array-param
+        (opt-dead-store-disjoint-field-instrs))]
+    [call-blocked : CompilerIrInstrList
+      (opt-dead-store-run-with-array-param (opt-dead-store-call-blocked-instrs))]
+    [pipeline : CompilerIrBlock
+      (optimize-block
+        (compiler-ir-block "entry" (opt-dead-store-overwritten-instrs)))]
+    [pipeline-instrs : CompilerIrInstrList
+      (match pipeline
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-ir-instr-seq-to-list instrs)])]
+    (cond
+      [(not (= (opt-count-storeptr-instrs overwritten) 1)) 1]
+      [(not (= (opt-count-storeptr-i64-value overwritten 2) 1)) 2]
+      [(not (= (opt-count-storeptr-i64-value overwritten 1) 0)) 3]
+      [(not (= (opt-count-storeptr-instrs load-blocked) 2)) 4]
+      [(not (= (opt-count-load-instrs load-blocked) 1)) 5]
+      [(not (= (opt-count-storeptr-instrs disjoint-field) 2)) 6]
+      [(not (= (opt-count-storeptr-i64-value disjoint-field 9) 1)) 7]
+      [(not (= (opt-count-storeptr-i64-value disjoint-field 2) 1)) 8]
+      [(not (= (opt-count-storeptr-instrs call-blocked) 2)) 9]
+      [(not (= (opt-count-storeptr-instrs pipeline-instrs) 1)) 10]
+      [else 42])))
 
 (define (opt-load-cse-positive-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons

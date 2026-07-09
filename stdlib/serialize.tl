@@ -376,96 +376,94 @@
                   "_p")
                 "7"))]
           [payload-patterns : comptime.PatternList
-            (if (= payload-count 0)
-              (comptime.pattern-list-empty)
-              (if (= payload-count 1)
-                (comptime.pattern-list-cons p0 (comptime.pattern-list-empty))
-                (if (= payload-count 2)
+            (match payload-count
+              [0 (comptime.pattern-list-empty)]
+              [1 (comptime.pattern-list-cons p0 (comptime.pattern-list-empty))]
+              [2
+                (comptime.pattern-list-cons
+                  p0
+                  (comptime.pattern-list-cons p1 (comptime.pattern-list-empty)))]
+              [3
+                (comptime.pattern-list-cons
+                  p0
                   (comptime.pattern-list-cons
-                    p0
+                    p1
                     (comptime.pattern-list-cons
-                      p1
-                      (comptime.pattern-list-empty)))
-                  (if (= payload-count 3)
+                      p2
+                      (comptime.pattern-list-empty))))]
+              [4
+                (comptime.pattern-list-cons
+                  p0
+                  (comptime.pattern-list-cons
+                    p1
                     (comptime.pattern-list-cons
-                      p0
+                      p2
                       (comptime.pattern-list-cons
-                        p1
-                        (comptime.pattern-list-cons
-                          p2
-                          (comptime.pattern-list-empty))))
-                    (if (= payload-count 4)
+                        p3
+                        (comptime.pattern-list-empty)))))]
+              [5
+                (comptime.pattern-list-cons
+                  p0
+                  (comptime.pattern-list-cons
+                    p1
+                    (comptime.pattern-list-cons
+                      p2
                       (comptime.pattern-list-cons
-                        p0
+                        p3
                         (comptime.pattern-list-cons
-                          p1
-                          (comptime.pattern-list-cons
-                            p2
-                            (comptime.pattern-list-cons
-                              p3
-                              (comptime.pattern-list-empty)))))
-                      (if (= payload-count 5)
+                          p4
+                          (comptime.pattern-list-empty))))))]
+              [6
+                (comptime.pattern-list-cons
+                  p0
+                  (comptime.pattern-list-cons
+                    p1
+                    (comptime.pattern-list-cons
+                      p2
+                      (comptime.pattern-list-cons
+                        p3
                         (comptime.pattern-list-cons
-                          p0
+                          p4
                           (comptime.pattern-list-cons
-                            p1
-                            (comptime.pattern-list-cons
-                              p2
-                              (comptime.pattern-list-cons
-                                p3
-                                (comptime.pattern-list-cons
-                                  p4
-                                  (comptime.pattern-list-empty))))))
-                        (if (= payload-count 6)
+                            p5
+                            (comptime.pattern-list-empty)))))))]
+              [7
+                (comptime.pattern-list-cons
+                  p0
+                  (comptime.pattern-list-cons
+                    p1
+                    (comptime.pattern-list-cons
+                      p2
+                      (comptime.pattern-list-cons
+                        p3
+                        (comptime.pattern-list-cons
+                          p4
                           (comptime.pattern-list-cons
-                            p0
+                            p5
                             (comptime.pattern-list-cons
-                              p1
-                              (comptime.pattern-list-cons
-                                p2
-                                (comptime.pattern-list-cons
-                                  p3
-                                  (comptime.pattern-list-cons
-                                    p4
-                                    (comptime.pattern-list-cons
-                                      p5
-                                      (comptime.pattern-list-empty)))))))
-                          (if (= payload-count 7)
+                              p6
+                              (comptime.pattern-list-empty))))))))]
+              [8
+                (comptime.pattern-list-cons
+                  p0
+                  (comptime.pattern-list-cons
+                    p1
+                    (comptime.pattern-list-cons
+                      p2
+                      (comptime.pattern-list-cons
+                        p3
+                        (comptime.pattern-list-cons
+                          p4
+                          (comptime.pattern-list-cons
+                            p5
                             (comptime.pattern-list-cons
-                              p0
+                              p6
                               (comptime.pattern-list-cons
-                                p1
-                                (comptime.pattern-list-cons
-                                  p2
-                                  (comptime.pattern-list-cons
-                                    p3
-                                    (comptime.pattern-list-cons
-                                      p4
-                                      (comptime.pattern-list-cons
-                                        p5
-                                        (comptime.pattern-list-cons
-                                          p6
-                                          (comptime.pattern-list-empty))))))))
-                            (if (= payload-count 8)
-                              (comptime.pattern-list-cons
-                                p0
-                                (comptime.pattern-list-cons
-                                  p1
-                                  (comptime.pattern-list-cons
-                                    p2
-                                    (comptime.pattern-list-cons
-                                      p3
-                                      (comptime.pattern-list-cons
-                                        p4
-                                        (comptime.pattern-list-cons
-                                          p5
-                                          (comptime.pattern-list-cons
-                                            p6
-                                            (comptime.pattern-list-cons
-                                              p7
-                                              (comptime.pattern-list-empty)))))))))
-                              (comptime.comptime-error
-                                "serialize: enum variants with more than 8 payloads are not supported"))))))))))]
+                                p7
+                                (comptime.pattern-list-empty)))))))))]
+              [_
+                (comptime.comptime-error
+                  "serialize: enum variants with more than 8 payloads are not supported")])]
           [pattern : comptime.Pattern
             (comptime.pattern-variant variant-source-name payload-patterns)]
           [empty-object-hook : comptime.Expr
@@ -1399,13 +1397,12 @@
         ["f64" true]
         ["f32" true]
         [_
-          (if (string.eq root-kind "struct")
-            true
-            (if (string.eq root-kind "array")
-              true
-              (if (string.eq root-kind "dyn-array")
-                true
-                (string.eq root-kind "enum"))))])]
+          (match root-kind
+            ["struct" true]
+            ["array" true]
+            ["dyn-array" true]
+            ["enum" true]
+            [_ false])])]
     (if root-supported
       (let
         [format-name : String (comptime.module-name format)]

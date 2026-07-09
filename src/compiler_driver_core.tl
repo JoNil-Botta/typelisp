@@ -855,30 +855,27 @@
                 (compiler-backend-set-scalar-registers! (>= opt-level 2))
                 (cfg compile-profile (compiler-driver-profile-start-phase))
                 (match (if has-target
-                  (compiler-backend-emit-program-target-with-mode-and-crt
+                  (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
                     optimized
                     target
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry)
-                  (compiler-backend-emit-program-target-with-mode-and-crt
+                  (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
                     optimized
                     (CompilerBackendTarget.Linux)
                     mode
                     optimized-spans
                     emit-entry
                     crt-entry))
-                  [(ResultCompilerBackend.Ok asm)
-                    (let
-                      [peepholed : text_buf.TextBuf
-                        (text_buf.append (text_buf.empty) asm)]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-driver-profile-finish-phase "backend"))
-                        (ResultCompilerDriverBuffer.Ok peepholed)))]
-                  [(ResultCompilerBackend.Err diag)
+                  [(ResultCompilerBackendBuffer.Ok asm)
+                    (begin
+                      (cfg
+                        compile-profile
+                        (compiler-driver-profile-finish-phase "backend"))
+                      (ResultCompilerDriverBuffer.Ok asm))]
+                  [(ResultCompilerBackendBuffer.Err diag)
                     (begin
                       (cfg
                         compile-profile

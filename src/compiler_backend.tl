@@ -39343,13 +39343,22 @@
               rend
               false)))))))
 
+(define (compiler-backend-borrowed-copy-to-owned
+  [buf : (text_buf_borrowed.TextBufBorrowed asm)]) : text_buf.TextBuf
+  (match buf
+    [(text_buf_borrowed.TextBufBorrowed chunks len)
+      (text_buf.TextBuf (text_buf_borrowed.chunks-to-owned chunks) len)]))
+
+(define (compiler-backend-string-copy-to-buffer [asm : String]) : text_buf.TextBuf
+  (compiler-backend-borrowed-copy-to-owned (text_buf_borrowed.single (& asm))))
+
 ;; The whole-program sweep driver: walk the final text, match each metadata
 ;; symbol's label IN EMISSION ORDER (buffer order == record order), and sweep
 ;; its region ([label+1, next .globl)). Unmatched metadata degrades gracefully
 ;; (the remaining text is appended verbatim).
-(define (compiler-backend-deadstore-sweep [asm : String]) : String
+(define (compiler-backend-deadstore-sweep-buffer [asm : String]) : text_buf.TextBuf
   (if (= compiler-backend-sweep-count 0)
-    asm
+    (compiler-backend-string-copy-to-buffer asm)
     (let
       [n : i64 (string.string-length asm)]
       [data : (Ptr u8)
@@ -39425,9 +39434,9 @@
               "\n"
               "")))
         (let
-          [result : String
+          [result : text_buf.TextBuf
             (if (not matched)
-              asm
+              (compiler-backend-string-copy-to-buffer asm)
               (begin
                 (set!
                   out
@@ -39437,10 +39446,13 @@
                     flush
                     n
                     false))
-                (text_buf_borrowed.render out)))]
+                (compiler-backend-borrowed-copy-to-owned out)))]
           (begin
             (compiler-backend-sweep-reset!)
             result))))))
+
+(define (compiler-backend-deadstore-sweep [asm : String]) : String
+  (text_buf.render (compiler-backend-deadstore-sweep-buffer asm)))
 
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
@@ -52172,19 +52184,20 @@ tl_tlci_call_image_entry:
         next
         (compiler-backend-peephole-asm-iter next next-len shrink (+ pass 1))))))
 
-(define (compiler-backend-peephole-asm [asm : String]) : String
+(define (compiler-backend-peephole-asm-buffer [asm : String]) : text_buf.TextBuf
   ;; GAP5: after the owner-map peephole fixpoint has forwarded every
   ;; register-forwardable frame READ, sweep never-read local frame STORES
   ;; (recorded per FPO function during emission). Whole-program input; with an
   ;; empty metadata table (Windows, unit tests on hand-written text) the sweep
   ;; returns its input unchanged.
-  (compiler-backend-deadstore-sweep
+  (compiler-backend-deadstore-sweep-buffer
     (compiler-backend-peephole-asm-iter asm (string.string-length asm) 0 0)))
 
+(define (compiler-backend-peephole-asm [asm : String]) : String
+  (text_buf.render (compiler-backend-peephole-asm-buffer asm)))
+
 (define (compiler-backend-peephole-text-buf [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (text_buf.append
-    (text_buf.empty)
-    (compiler-backend-peephole-asm (text_buf.render buf))))
+  (compiler-backend-peephole-asm-buffer (text_buf.render buf)))
 
 (define (compiler-backend-emit-program-target-with-mode-raw-asm-and-crt
   [program : CompilerIrProgram]
@@ -52216,24 +52229,25 @@ tl_tlci_call_image_entry:
     [(ResultCompilerBackendBuffer.Err message)
       (ResultCompilerBackend.Err message)]))
 
-(define (compiler-backend-emit-program-target-with-mode-and-crt
+(define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
   [program : CompilerIrProgram]
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
-  ;; Emit the raw TextBuf in a temporary arena, render and peephole in the
-  ;; caller arena, then destroy the raw emission arena. The peephole consumes
-  ;; backend metadata recorded during emission, so the temporary arena must stay
-  ;; alive until peephole finishes. Avoid `with-scratch` here: cloning the final
-  ;; whole-program assembly would duplicate the largest string at peak memory.
+  [crt-entry : bool]) : ResultCompilerBackendBuffer
+  ;; Emit raw chunks, render the raw assembly, and run the peephole in separate
+  ;; temporary arenas. The sweep metadata is copied into fixed global arrays
+  ;; during emission, so raw chunks can be destroyed after render and raw text
+  ;; can be destroyed after the peephole creates its independent output.
   (let
     [home-arena : arena.Arena (arena.current)]
-    [raw-arena : arena.Arena (arena.make)]
+    [emit-arena : arena.Arena (arena.make)]
+    [render-arena : arena.Arena (arena.make)]
+    [peephole-arena : arena.Arena (arena.make)]
     (begin
       (unsafe
-        (arena.set! raw-arena))
+        (arena.set! emit-arena))
       (let
         [emitted : ResultCompilerBackendBuffer
           (if crt-entry
@@ -52250,11 +52264,11 @@ tl_tlci_call_image_entry:
               mode
               spans
               emit-entry))]
-        (begin
-          (unsafe
-            (arena.set! home-arena))
-          (match emitted
-            [(ResultCompilerBackendBuffer.Ok buf)
+        (match emitted
+          [(ResultCompilerBackendBuffer.Ok buf)
+            (begin
+              (unsafe
+                (arena.set! render-arena))
               (let
                 [raw-asm : String
                   (begin
@@ -52266,25 +52280,65 @@ tl_tlci_call_image_entry:
                           compile-profile
                           (compiler-backend-profile-finish "render"))
                         rendered)))]
-                [peepholed : String
-                  (begin
-                    (cfg compile-profile (compiler-backend-profile-start))
-                    (let
-                      [peeped : String (compiler-backend-peephole-asm raw-asm)]
-                      (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "peephole"))
-                        peeped)))]
                 (begin
                   (unsafe
-                    (arena.destroy raw-arena))
-                  (compiler-backend-clear-scratch-escaped-emit-state!)
-                  (ResultCompilerBackend.Ok peepholed)))]
-            [(ResultCompilerBackendBuffer.Err message)
-              (begin
-                (compiler-backend-clear-scratch-escaped-emit-state!)
-                (ResultCompilerBackend.Err message))]))))))
+                    (arena.destroy emit-arena))
+                  (unsafe
+                    (arena.set! peephole-arena))
+                  (cfg compile-profile (compiler-backend-profile-start))
+                  (let
+                    [peepholed-asm : String
+                      (compiler-backend-peephole-asm-iter
+                        raw-asm
+                        (string.string-length raw-asm)
+                        0
+                        0)]
+                    (begin
+                      (unsafe
+                        (arena.destroy render-arena))
+                      (unsafe
+                        (arena.set! home-arena))
+                      (let
+                        [peepholed : text_buf.TextBuf
+                          (compiler-backend-deadstore-sweep-buffer
+                            peepholed-asm)]
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-backend-profile-finish "peephole"))
+                          (unsafe
+                            (arena.destroy peephole-arena))
+                          (compiler-backend-clear-scratch-escaped-emit-state!)
+                          (ResultCompilerBackendBuffer.Ok peepholed))))))))]
+          [(ResultCompilerBackendBuffer.Err message)
+            (begin
+              (unsafe
+                (arena.set! home-arena))
+              (unsafe
+                (arena.destroy render-arena))
+              (unsafe
+                (arena.destroy peephole-arena))
+              (compiler-backend-clear-scratch-escaped-emit-state!)
+              (ResultCompilerBackendBuffer.Err message))])))))
+
+(define (compiler-backend-emit-program-target-with-mode-and-crt
+  [program : CompilerIrProgram]
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [spans : CompilerSourceSpans]
+  [emit-entry : bool]
+  [crt-entry : bool]) : ResultCompilerBackend
+  (match (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+    program
+    target
+    mode
+    spans
+    emit-entry
+    crt-entry)
+    [(ResultCompilerBackendBuffer.Ok buf)
+      (ResultCompilerBackend.Ok (text_buf.render buf))]
+    [(ResultCompilerBackendBuffer.Err message)
+      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-program-target-with-mode
   [program : CompilerIrProgram]

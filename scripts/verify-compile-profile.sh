@@ -469,6 +469,31 @@ assert_contains_in \
     "compile-profile|optimize.functions|" \
     "$OPT_STDOUT" \
     "$OPT_STDERR"
+assert_contains_in \
+    "$OPT_STDERR" \
+    "compile-profile|optimize.load_cse.max_table_size|" \
+    "$OPT_STDOUT" \
+    "$OPT_STDERR"
+assert_contains_in \
+    "$OPT_STDERR" \
+    "compile-profile|optimize.load_cse.max_kinds_size|" \
+    "$OPT_STDOUT" \
+    "$OPT_STDERR"
+assert_contains_in \
+    "$OPT_STDERR" \
+    "compile-profile|optimize.load_cse.table_cap_hits|" \
+    "$OPT_STDOUT" \
+    "$OPT_STDERR"
+assert_contains_in \
+    "$OPT_STDERR" \
+    "compile-profile|optimize.load_cse.kinds_cap_hits|" \
+    "$OPT_STDOUT" \
+    "$OPT_STDERR"
+assert_contains_in \
+    "$OPT_STDERR" \
+    "compile-profile|optimize.load_cse.field_key_drops|" \
+    "$OPT_STDOUT" \
+    "$OPT_STDERR"
 assert_opt_escape_row "body"
 assert_opt_escape_row "dce_escape"
 assert_opt_escape_row "restore"

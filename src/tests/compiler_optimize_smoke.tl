@@ -1357,7 +1357,8 @@
     [(not (= (compiler-optimize-gvn-self-test) 42)) 46]
     [(not (= (smoke-heavy-pass-large-gvn-self-test) 42)) 47]
     [(not (= (compiler-optimize-load-cse-self-test) 44)) 48]
-    [(not (= (compiler-optimize-scratch-region-self-test) 42)) 49]
+    [(not (= (compiler-optimize-dead-store-self-test) 42)) 49]
+    [(not (= (compiler-optimize-scratch-region-self-test) 42)) 50]
     [else (compiler-optimize-alias-self-test)]))
 
 (test
@@ -1366,3 +1367,10 @@
     (compiler-optimize-load-cse-self-test)
     44
     "load-cse copybytes forwarding"))
+
+(test
+  dead-store-overwrite
+  (test.assert-i64-eq
+    (compiler-optimize-dead-store-self-test)
+    42
+    "dead-store overwrite"))

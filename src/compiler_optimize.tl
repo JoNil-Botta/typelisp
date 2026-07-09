@@ -28657,13 +28657,12 @@
   [np : i64]
   [index : i64]
   [last : i64]) : bool
-  (if (> index last)
-    false
-    (if (= index last)
-      (compiler-ir-instr-seq-return? instrs index)
-      (if (opt-inline-body-instr-seq-ok? instrs index np)
-        (opt-inline-instr-seq-ok-from? instrs np (+ index 1) last)
-        false))))
+  (cond
+    [(> index last) false]
+    [(= index last) (compiler-ir-instr-seq-return? instrs index)]
+    [(opt-inline-body-instr-seq-ok? instrs index np)
+      (opt-inline-instr-seq-ok-from? instrs np (+ index 1) last)]
+    [else false]))
 
 (define (opt-inline-instr-seq-ok? [instrs : CompilerIrInstrSeq] [np : i64]) : bool
   (opt-inline-instr-seq-ok-from?

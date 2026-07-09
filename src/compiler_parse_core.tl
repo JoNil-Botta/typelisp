@@ -3334,6 +3334,28 @@
         [_ (ResultAstExpr.Err "parse: malformed unary expression")])]
     [_ (ResultAstExpr.Err "parse: malformed unary expression")]))
 
+(define (parse-ast-if-missing-else-message) : String
+  "parse: if is missing its else branch")
+
+(define (parse-ast-if-arity-message) : String
+  "parse: if expects condition, then branch, and else branch")
+
+(define (parse-ast-if-example-note) : String
+  "example: (if condition then-expr else-expr)")
+
+(define (parse-ast-if-one-sided-note) : String
+  "use (when condition body...) or (unless condition body...) for one-sided conditionals")
+
+(define (parse-ast-if-message? [message : String]) : bool
+  (or
+    (string.eq message (parse-ast-if-missing-else-message))
+    (string.eq message (parse-ast-if-arity-message))))
+
+(define (parse-ast-if-diagnostic-notes [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (compiler-diagnostic-with-note
+    (compiler-diagnostic-with-note diag (parse-ast-if-one-sided-note))
+    (parse-ast-if-example-note)))
+
 (define (parse-ast-if
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -3372,10 +3394,10 @@
                         [(ResultAstExpr.Err message)
                           (ResultAstExpr.Err message)])]
                     [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
-                [_ (ResultAstExpr.Err "parse: malformed if")])]
-            [_ (ResultAstExpr.Err "parse: malformed if")])]
-        [_ (ResultAstExpr.Err "parse: malformed if")])]
-    [_ (ResultAstExpr.Err "parse: malformed if")]))
+                [_ (ResultAstExpr.Err (parse-ast-if-arity-message))])]
+            [_ (ResultAstExpr.Err (parse-ast-if-missing-else-message))])]
+        [_ (ResultAstExpr.Err (parse-ast-if-arity-message))])]
+    [_ (ResultAstExpr.Err (parse-ast-if-arity-message))]))
 
 (define (parse-ast-while
   [dispatch : sym_i64_env.SymI64Env]
@@ -7808,9 +7830,14 @@
       result)))
 
 (define (parse-ast-canonical-diagnostic [diag : CompilerDiagnostic]) : CompilerDiagnostic
-  (compiler-diagnostic-with-category
-    (compiler-diagnostic-with-code diag (compiler-diagnostic-code-parse))
-    "parse"))
+  (let
+    [canonical : CompilerDiagnostic
+      (compiler-diagnostic-with-category
+        (compiler-diagnostic-with-code diag (compiler-diagnostic-code-parse))
+        "parse")]
+    (if (parse-ast-if-message? (compiler-diagnostic-message canonical))
+      (parse-ast-if-diagnostic-notes canonical)
+      canonical)))
 
 (define (parse-ast-program-forms-diagnostic-into-vec
   [path : String]
@@ -8634,6 +8661,24 @@
 
 (define (compiler-parse-malformed-if-source) : String
   "(define (main) : i64 (if true 1))")
+
+(define (compiler-parse-if-missing-else-diagnostic-notes-ok?) : bool
+  (match (parse-ast-source-diagnostic
+    "missing-if-else.tl"
+    (compiler-parse-malformed-if-source))
+    [(ResultAstProgramDiagnostic.Err diag)
+      (let
+        [rendered : String (compiler-diagnostic-render (box-get diag))]
+        [message-needle : String "parse: if is missing its else branch"]
+        [example-needle : String "example: (if condition then-expr else-expr)"]
+        [when-needle : String "when condition body..."]
+        [unless-needle : String "unless condition body..."]
+        (and
+          (string.contains (& rendered) (& message-needle))
+          (string.contains (& rendered) (& example-needle))
+          (string.contains (& rendered) (& when-needle))
+          (string.contains (& rendered) (& unless-needle))))]
+    [(ResultAstProgramDiagnostic.Ok _) false]))
 
 (define (compiler-parse-malformed-while-source) : String
   "(define (main) : i64 (while true))")
@@ -10247,7 +10292,8 @@
       "parse: malformed binary expression")
     (compiler-parse-error-ok?
       (compiler-parse-malformed-if-source)
-      "parse: malformed if")
+      "parse: if is missing its else branch")
+    (compiler-parse-if-missing-else-diagnostic-notes-ok?)
     (compiler-parse-error-ok?
       (compiler-parse-malformed-while-source)
       "parse: malformed while")

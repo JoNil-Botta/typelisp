@@ -1,7 +1,8 @@
 ;; compiler_object_elf.tl - ELF64 object-file serialization for object images.
 (import stdlib.byte_buf_core)
 (import stdlib.string)
-(import "compiler_object.tl")
+(import compiler_object as cobj)
+(cfg test (import stdlib.test))
 
 (define (compiler-object-elf-string-length [text : String]) : i64
   (cfg
@@ -162,28 +163,28 @@
   (compiler-object-elf-push-zeroes! out (- offset (struct-get out len))))
 
 (define (compiler-object-elf-data-record-end-offset
-  [record : CompilerObjectDataRecord]
+  [record : cobj.CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(CompilerObjectDataRecord.Label _) offset]
-    [(CompilerObjectDataRecord.Align align)
+    [(cobj.CompilerObjectDataRecord.Label _) offset]
+    [(cobj.CompilerObjectDataRecord.Align align)
       (compiler-object-elf-align-offset offset align)]
-    [(CompilerObjectDataRecord.Bytes bytes)
+    [(cobj.CompilerObjectDataRecord.Bytes bytes)
       (+ offset (compiler-object-elf-string-length bytes))]
-    [(CompilerObjectDataRecord.String text)
+    [(cobj.CompilerObjectDataRecord.String text)
       (+ offset (+ (compiler-object-elf-string-length text) 1))]
-    [(CompilerObjectDataRecord.F64 _) (+ offset 8)]
-    [(CompilerObjectDataRecord.F32 _) (+ offset 4)]
-    [(CompilerObjectDataRecord.I64 _) (+ offset 8)]
-    [(CompilerObjectDataRecord.Zero count) (+ offset count)]
-    [(CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
-    [(CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
+    [(cobj.CompilerObjectDataRecord.F64 _) (+ offset 8)]
+    [(cobj.CompilerObjectDataRecord.F32 _) (+ offset 4)]
+    [(cobj.CompilerObjectDataRecord.I64 _) (+ offset 8)]
+    [(cobj.CompilerObjectDataRecord.Zero count) (+ offset count)]
+    [(cobj.CompilerObjectDataRecord.SymbolAddress _) (+ offset 8)]
+    [(cobj.CompilerObjectDataRecord.SymbolRva32 _) (+ offset 4)]))
 
 (define (compiler-object-elf-data-records-size-from
-  [records : CompilerObjectDataRecordList]
+  [records : cobj.CompilerObjectDataRecordList]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
@@ -192,71 +193,71 @@
           (set!
             cur-offset
             (compiler-object-elf-data-record-end-offset
-              (compiler-object-data-record-list-ref records index)
+              (cobj.compiler-object-data-record-list-ref records index)
               cur-offset))
           (set! index (+ index 1))))
       cur-offset)))
 
 (define (compiler-object-elf-data-records-size
-  [records : CompilerObjectDataRecordList]) : i64
+  [records : cobj.CompilerObjectDataRecordList]) : i64
   (compiler-object-elf-data-records-size-from records 0))
 
-(define (compiler-object-elf-instr-size [instr : CompilerObjectX64Instr]) : i64
+(define (compiler-object-elf-instr-size [instr : cobj.CompilerObjectX64Instr]) : i64
   (match instr
-    [(CompilerObjectX64Instr.Label _) 0]
-    [(CompilerObjectX64Instr.Call _) 5]
-    [(CompilerObjectX64Instr.TailCall _) 5]
-    [(CompilerObjectX64Instr.Jump _) 5]
-    [(CompilerObjectX64Instr.Ja _) 6]
-    [(CompilerObjectX64Instr.Branch _ _) 14]
-    [(CompilerObjectX64Instr.LoadRip _) 7]
-    [(CompilerObjectX64Instr.LoadRipAddress _) 7]
-    [(CompilerObjectX64Instr.LoadRipAddressR11 _) 7]
-    [(CompilerObjectX64Instr.StoreRip _) 7]
-    [(CompilerObjectX64Instr.SubRspImm8 _) 4]
-    [(CompilerObjectX64Instr.MovRcxRip _) 7]
-    [(CompilerObjectX64Instr.MovRdxRip _) 7]
-    [(CompilerObjectX64Instr.LoadRipAddressRdx _) 7]
-    [(CompilerObjectX64Instr.StoreR14Rip _) 7]
-    [(CompilerObjectX64Instr.StoreR15Rip _) 7]
-    [(CompilerObjectX64Instr.AddRcxRip _) 7]
-    [(CompilerObjectX64Instr.MovRcxRax) 3]
-    [(CompilerObjectX64Instr.XorpdRip _) 8]
-    [(CompilerObjectX64Instr.Bytes bytes)
+    [(cobj.CompilerObjectX64Instr.Label _) 0]
+    [(cobj.CompilerObjectX64Instr.Call _) 5]
+    [(cobj.CompilerObjectX64Instr.TailCall _) 5]
+    [(cobj.CompilerObjectX64Instr.Jump _) 5]
+    [(cobj.CompilerObjectX64Instr.Ja _) 6]
+    [(cobj.CompilerObjectX64Instr.Branch _ _) 14]
+    [(cobj.CompilerObjectX64Instr.LoadRip _) 7]
+    [(cobj.CompilerObjectX64Instr.LoadRipAddress _) 7]
+    [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 _) 7]
+    [(cobj.CompilerObjectX64Instr.StoreRip _) 7]
+    [(cobj.CompilerObjectX64Instr.SubRspImm8 _) 4]
+    [(cobj.CompilerObjectX64Instr.MovRcxRip _) 7]
+    [(cobj.CompilerObjectX64Instr.MovRdxRip _) 7]
+    [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx _) 7]
+    [(cobj.CompilerObjectX64Instr.StoreR14Rip _) 7]
+    [(cobj.CompilerObjectX64Instr.StoreR15Rip _) 7]
+    [(cobj.CompilerObjectX64Instr.AddRcxRip _) 7]
+    [(cobj.CompilerObjectX64Instr.MovRcxRax) 3]
+    [(cobj.CompilerObjectX64Instr.XorpdRip _) 8]
+    [(cobj.CompilerObjectX64Instr.Bytes bytes)
       (compiler-object-elf-string-length bytes)]
-    [(CompilerObjectX64Instr.Raw bytes)
+    [(cobj.CompilerObjectX64Instr.Raw bytes)
       (compiler-object-elf-string-length bytes)]
     [_ 0]))
 
 (define (compiler-object-elf-instr-relocation-count
-  [instr : CompilerObjectX64Instr]) : i64
+  [instr : cobj.CompilerObjectX64Instr]) : i64
   (match instr
-    [(CompilerObjectX64Instr.Label _) 0]
-    [(CompilerObjectX64Instr.Call _) 1]
-    [(CompilerObjectX64Instr.TailCall _) 1]
-    [(CompilerObjectX64Instr.Jump _) 1]
-    [(CompilerObjectX64Instr.Ja _) 1]
-    [(CompilerObjectX64Instr.Branch _ _) 2]
-    [(CompilerObjectX64Instr.LoadRip _) 1]
-    [(CompilerObjectX64Instr.LoadRipAddress _) 1]
-    [(CompilerObjectX64Instr.LoadRipAddressR11 _) 1]
-    [(CompilerObjectX64Instr.StoreRip _) 1]
-    [(CompilerObjectX64Instr.SubRspImm8 _) 0]
-    [(CompilerObjectX64Instr.MovRcxRip _) 1]
-    [(CompilerObjectX64Instr.MovRdxRip _) 1]
-    [(CompilerObjectX64Instr.LoadRipAddressRdx _) 1]
-    [(CompilerObjectX64Instr.StoreR14Rip _) 1]
-    [(CompilerObjectX64Instr.StoreR15Rip _) 1]
-    [(CompilerObjectX64Instr.AddRcxRip _) 1]
-    [(CompilerObjectX64Instr.MovRcxRax) 0]
-    [(CompilerObjectX64Instr.XorpdRip _) 1]
-    [(CompilerObjectX64Instr.Bytes _) 0]
-    [(CompilerObjectX64Instr.Raw _) 0]))
+    [(cobj.CompilerObjectX64Instr.Label _) 0]
+    [(cobj.CompilerObjectX64Instr.Call _) 1]
+    [(cobj.CompilerObjectX64Instr.TailCall _) 1]
+    [(cobj.CompilerObjectX64Instr.Jump _) 1]
+    [(cobj.CompilerObjectX64Instr.Ja _) 1]
+    [(cobj.CompilerObjectX64Instr.Branch _ _) 2]
+    [(cobj.CompilerObjectX64Instr.LoadRip _) 1]
+    [(cobj.CompilerObjectX64Instr.LoadRipAddress _) 1]
+    [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 _) 1]
+    [(cobj.CompilerObjectX64Instr.StoreRip _) 1]
+    [(cobj.CompilerObjectX64Instr.SubRspImm8 _) 0]
+    [(cobj.CompilerObjectX64Instr.MovRcxRip _) 1]
+    [(cobj.CompilerObjectX64Instr.MovRdxRip _) 1]
+    [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx _) 1]
+    [(cobj.CompilerObjectX64Instr.StoreR14Rip _) 1]
+    [(cobj.CompilerObjectX64Instr.StoreR15Rip _) 1]
+    [(cobj.CompilerObjectX64Instr.AddRcxRip _) 1]
+    [(cobj.CompilerObjectX64Instr.MovRcxRax) 0]
+    [(cobj.CompilerObjectX64Instr.XorpdRip _) 1]
+    [(cobj.CompilerObjectX64Instr.Bytes _) 0]
+    [(cobj.CompilerObjectX64Instr.Raw _) 0]))
 
 (define (compiler-object-elf-instrs-relocation-count
-  [instrs : CompilerObjectX64InstrList]) : i64
+  [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [total : i64 0]
     (begin
@@ -267,15 +268,15 @@
             (+
               total
               (compiler-object-elf-instr-relocation-count
-                (compiler-object-instr-list-ref instrs index))))
+                (cobj.compiler-object-instr-list-ref instrs index))))
           (set! index (+ index 1))))
       total)))
 
 (define (compiler-object-elf-instrs-size-from
-  [instrs : CompilerObjectX64InstrList]
+  [instrs : cobj.CompilerObjectX64InstrList]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
@@ -286,119 +287,123 @@
             (+
               cur-offset
               (compiler-object-elf-instr-size
-                (compiler-object-instr-list-ref instrs index))))
+                (cobj.compiler-object-instr-list-ref instrs index))))
           (set! index (+ index 1))))
       cur-offset)))
 
-(define (compiler-object-elf-instrs-size [instrs : CompilerObjectX64InstrList]) : i64
+(define (compiler-object-elf-instrs-size
+  [instrs : cobj.CompilerObjectX64InstrList]) : i64
   (compiler-object-elf-instrs-size-from instrs 0))
 
 (define (compiler-object-elf-section-virtual-size
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : i64
-  (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(CompilerObjectSection.Section _ data instrs)
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
+  (match (cobj.compiler-object-section-list-find
+    (struct-get image sections)
+    kind)
+    [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
-        [(CompilerObjectSectionKind.Text)
+        [(cobj.CompilerObjectSectionKind.Text)
           (compiler-object-elf-instrs-size instrs)]
         [_ (compiler-object-elf-data-records-size data)])]))
 
 (define (compiler-object-elf-section-raw-size
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : i64
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Bss) 0]
+    [(cobj.CompilerObjectSectionKind.Bss) 0]
     [_ (compiler-object-elf-section-virtual-size image kind)]))
 
 (define (compiler-object-elf-text-relocation-kind-supported?
-  [kind : CompilerObjectRelocationKind]) : bool
+  [kind : cobj.CompilerObjectRelocationKind]) : bool
   (match kind
-    [(CompilerObjectRelocationKind.Call) true]
-    [(CompilerObjectRelocationKind.TailCall) true]
-    [(CompilerObjectRelocationKind.RipValue) true]
-    [(CompilerObjectRelocationKind.RipAddress) true]
-    [(CompilerObjectRelocationKind.Branch) true]
+    [(cobj.CompilerObjectRelocationKind.Call) true]
+    [(cobj.CompilerObjectRelocationKind.TailCall) true]
+    [(cobj.CompilerObjectRelocationKind.RipValue) true]
+    [(cobj.CompilerObjectRelocationKind.RipAddress) true]
+    [(cobj.CompilerObjectRelocationKind.Branch) true]
     [_ false]))
 
 (define (compiler-object-elf-data-relocation-kind-supported?
-  [kind : CompilerObjectRelocationKind]) : bool
+  [kind : cobj.CompilerObjectRelocationKind]) : bool
   (match kind
-    [(CompilerObjectRelocationKind.Abs64) true]
+    [(cobj.CompilerObjectRelocationKind.Abs64) true]
     [_ false]))
 
 (define (compiler-object-elf-relocation-supported?
-  [reloc : CompilerObjectRelocation]) : bool
+  [reloc : cobj.CompilerObjectRelocation]) : bool
   (match reloc
-    [(CompilerObjectRelocation.Relocation section _ kind _)
+    [(cobj.CompilerObjectRelocation.Relocation section _ kind _)
       (match section
-        [(CompilerObjectSectionKind.Text)
+        [(cobj.CompilerObjectSectionKind.Text)
           (compiler-object-elf-text-relocation-kind-supported? kind)]
         [_ (compiler-object-elf-data-relocation-kind-supported? kind)])]))
 
 (define (compiler-object-elf-relocation-list-supported?
-  [relocs : CompilerObjectRelocationList]) : bool
+  [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
         (if (compiler-object-elf-relocation-supported?
-          (compiler-object-relocation-list-ref relocs index))
+          (cobj.compiler-object-relocation-list-ref relocs index))
           (set! index (+ index 1))
           (set! ok false)))
       ok)))
 
 (define (compiler-object-elf-instrs-supported?
-  [instrs : CompilerObjectX64InstrList]) : bool
+  [instrs : cobj.CompilerObjectX64InstrList]) : bool
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
-          [(CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Call _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.TailCall _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Jump _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Ja _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Branch _ _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.LoadRip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.LoadRipAddress _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.LoadRipAddressR11 _)
+        (match (cobj.compiler-object-instr-list-ref instrs index)
+          [(cobj.CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Call _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.TailCall _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Jump _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Ja _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Branch _ _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.LoadRip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.LoadRipAddress _)
             (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.StoreRip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.SubRspImm8 _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.MovRcxRip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.MovRdxRip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.LoadRipAddressRdx _)
+          [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 _)
             (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.StoreR14Rip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.StoreR15Rip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.AddRcxRip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.MovRcxRax) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.XorpdRip _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Bytes _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Raw _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.StoreRip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.SubRspImm8 _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.MovRcxRip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.MovRdxRip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx _)
+            (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.StoreR14Rip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.StoreR15Rip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.AddRcxRip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.MovRcxRax) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.XorpdRip _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Bytes _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Raw _) (set! index (+ index 1))]
           [_ (set! ok false)]))
       ok)))
 
 (define (compiler-object-elf-sections-supported?
-  [sections : CompilerObjectSectionList]) : bool
+  [sections : cobj.CompilerObjectSectionList]) : bool
   (let
-    [count : i64 (compiler-object-section-list-count sections)]
+    [count : i64 (cobj.compiler-object-section-list-count sections)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (compiler-object-section-list-ref sections index)
-          [(CompilerObjectSection.Section kind _ instrs)
+        (match (cobj.compiler-object-section-list-ref sections index)
+          [(cobj.CompilerObjectSection.Section kind _ instrs)
             (if (and
               (match kind
-                [(CompilerObjectSectionKind.Pdata) false]
-                [(CompilerObjectSectionKind.Xdata) false]
-                [(CompilerObjectSectionKind.Rsrc) false]
+                [(cobj.CompilerObjectSectionKind.Pdata) false]
+                [(cobj.CompilerObjectSectionKind.Xdata) false]
+                [(cobj.CompilerObjectSectionKind.Rsrc) false]
                 [_ true])
               (compiler-object-elf-instrs-supported? instrs))
               (set! index (+ index 1))
@@ -406,22 +411,22 @@
       ok)))
 
 (define (compiler-object-elf-symbol-binding-local?
-  [binding : CompilerObjectSymbolBinding]) : bool
+  [binding : cobj.CompilerObjectSymbolBinding]) : bool
   (match binding
-    [(CompilerObjectSymbolBinding.Local) true]
+    [(cobj.CompilerObjectSymbolBinding.Local) true]
     [_ false]))
 
 (define (compiler-object-elf-local-symbol-count
-  [symbols : CompilerObjectSymbolList]) : i64
+  [symbols : cobj.CompilerObjectSymbolList]) : i64
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [total : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (compiler-object-symbol-list-ref symbols index)
-            [(CompilerObjectSymbol.Symbol _ binding _ _)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
+            [(cobj.CompilerObjectSymbol.Symbol _ binding _ _)
               (if (compiler-object-elf-symbol-binding-local? binding)
                 (set! total (+ total 1))
                 unit)])
@@ -429,19 +434,19 @@
       total)))
 
 (define (compiler-object-elf-local-symbol-index-from
-  [symbols : CompilerObjectSymbolList]
+  [symbols : cobj.CompilerObjectSymbolList]
   [name : String]
   [index : i64]) : i64
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [slot : i64 0]
     [cur-index : i64 index]
     [result : i64 -1]
     [done : bool false]
     (begin
       (while (and (not done) (< slot count))
-        (match (compiler-object-symbol-list-ref symbols slot)
-          [(CompilerObjectSymbol.Symbol found binding _ _)
+        (match (cobj.compiler-object-symbol-list-ref symbols slot)
+          [(cobj.CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (if (string.eq found name)
                 (begin
@@ -454,19 +459,19 @@
       result)))
 
 (define (compiler-object-elf-global-symbol-index-from
-  [symbols : CompilerObjectSymbolList]
+  [symbols : cobj.CompilerObjectSymbolList]
   [name : String]
   [index : i64]) : i64
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [slot : i64 0]
     [cur-index : i64 index]
     [result : i64 -1]
     [done : bool false]
     (begin
       (while (and (not done) (< slot count))
-        (match (compiler-object-symbol-list-ref symbols slot)
-          [(CompilerObjectSymbol.Symbol found binding _ _)
+        (match (cobj.compiler-object-symbol-list-ref symbols slot)
+          [(cobj.CompilerObjectSymbol.Symbol found binding _ _)
             (if (compiler-object-elf-symbol-binding-local? binding)
               (set! slot (+ slot 1))
               (if (string.eq found name)
@@ -479,10 +484,10 @@
       result)))
 
 (define (compiler-object-elf-symbol-index
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [name : String]) : i64
   (let
-    [symbols : CompilerObjectSymbolList (struct-get image symbols)]
+    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
     [local : i64 (compiler-object-elf-local-symbol-index-from symbols name 1)]
     (if (>= local 0)
       local
@@ -492,11 +497,11 @@
         (+ 1 (compiler-object-elf-local-symbol-count symbols))))))
 
 (define (compiler-object-elf-data-label-offset-from
-  [records : CompilerObjectDataRecordList]
+  [records : cobj.CompilerObjectDataRecordList]
   [label : String]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 -1]
@@ -504,10 +509,10 @@
     (begin
       (while (and (not done) (< index count))
         (let
-          [record : CompilerObjectDataRecord
-            (compiler-object-data-record-list-ref records index)]
+          [record : cobj.CompilerObjectDataRecord
+            (cobj.compiler-object-data-record-list-ref records index)]
           (match record
-            [(CompilerObjectDataRecord.Label found)
+            [(cobj.CompilerObjectDataRecord.Label found)
               (if (string.eq found label)
                 (begin
                   (set! result cur-offset)
@@ -522,11 +527,11 @@
       result)))
 
 (define (compiler-object-elf-instr-label-offset-from
-  [instrs : CompilerObjectX64InstrList]
+  [instrs : cobj.CompilerObjectX64InstrList]
   [label : String]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 -1]
@@ -534,10 +539,10 @@
     (begin
       (while (and (not done) (< index count))
         (let
-          [instr : CompilerObjectX64Instr
-            (compiler-object-instr-list-ref instrs index)]
+          [instr : cobj.CompilerObjectX64Instr
+            (cobj.compiler-object-instr-list-ref instrs index)]
           (match instr
-            [(CompilerObjectX64Instr.Label found)
+            [(cobj.CompilerObjectX64Instr.Label found)
               (if (string.eq found label)
                 (begin
                   (set! result cur-offset)
@@ -552,27 +557,29 @@
       result)))
 
 (define (compiler-object-elf-section-label-offset
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]
   [label : String]) : i64
-  (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(CompilerObjectSection.Section _ data instrs)
+  (match (cobj.compiler-object-section-list-find
+    (struct-get image sections)
+    kind)
+    [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
-        [(CompilerObjectSectionKind.Text)
+        [(cobj.CompilerObjectSectionKind.Text)
           (compiler-object-elf-instr-label-offset-from instrs label 0)]
         [_ (compiler-object-elf-data-label-offset-from data label 0)])]))
 
 (define (compiler-object-elf-relocation-sites-known?
-  [image : CompilerObjectImage]
-  [relocs : CompilerObjectRelocationList]) : bool
+  [image : cobj.CompilerObjectImage]
+  [relocs : cobj.CompilerObjectRelocationList]) : bool
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (compiler-object-relocation-list-ref relocs index)
-          [(CompilerObjectRelocation.Relocation section site _ target)
+        (match (cobj.compiler-object-relocation-list-ref relocs index)
+          [(cobj.CompilerObjectRelocation.Relocation section site _ target)
             (if (and
               (>=
                 (compiler-object-elf-section-label-offset image section site)
@@ -583,112 +590,114 @@
       ok)))
 
 (define (compiler-object-elf-instr-targets-known?
-  [image : CompilerObjectImage]
-  [instrs : CompilerObjectX64InstrList]) : bool
+  [image : cobj.CompilerObjectImage]
+  [instrs : cobj.CompilerObjectX64InstrList]) : bool
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [ok : bool true]
     (begin
       (while (and ok (< index count))
-        (match (compiler-object-instr-list-ref instrs index)
-          [(CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Call target)
+        (match (cobj.compiler-object-instr-list-ref instrs index)
+          [(cobj.CompilerObjectX64Instr.Label _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Call target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.TailCall target)
+          [(cobj.CompilerObjectX64Instr.TailCall target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.Jump target)
+          [(cobj.CompilerObjectX64Instr.Jump target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.Ja target)
+          [(cobj.CompilerObjectX64Instr.Ja target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.Branch true-target false-target)
+          [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
             (if (and
               (>= (compiler-object-elf-symbol-index image true-target) 0)
               (>= (compiler-object-elf-symbol-index image false-target) 0))
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.LoadRip target)
+          [(cobj.CompilerObjectX64Instr.LoadRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.LoadRipAddress target)
+          [(cobj.CompilerObjectX64Instr.LoadRipAddress target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.LoadRipAddressR11 target)
+          [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.StoreRip target)
+          [(cobj.CompilerObjectX64Instr.StoreRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.SubRspImm8 _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.MovRcxRip target)
+          [(cobj.CompilerObjectX64Instr.SubRspImm8 _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.MovRcxRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.MovRdxRip target)
+          [(cobj.CompilerObjectX64Instr.MovRdxRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.LoadRipAddressRdx target)
+          [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.StoreR14Rip target)
+          [(cobj.CompilerObjectX64Instr.StoreR14Rip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.StoreR15Rip target)
+          [(cobj.CompilerObjectX64Instr.StoreR15Rip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.AddRcxRip target)
+          [(cobj.CompilerObjectX64Instr.AddRcxRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.MovRcxRax) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.XorpdRip target)
+          [(cobj.CompilerObjectX64Instr.MovRcxRax) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.XorpdRip target)
             (if (>= (compiler-object-elf-symbol-index image target) 0)
               (set! index (+ index 1))
               (set! ok false))]
-          [(CompilerObjectX64Instr.Bytes _) (set! index (+ index 1))]
-          [(CompilerObjectX64Instr.Raw _) (set! index (+ index 1))]))
+          [(cobj.CompilerObjectX64Instr.Bytes _) (set! index (+ index 1))]
+          [(cobj.CompilerObjectX64Instr.Raw _) (set! index (+ index 1))]))
       ok)))
 
-(define (compiler-object-elf-text-targets-known? [image : CompilerObjectImage]) : bool
-  (match (compiler-object-section-list-find
+(define (compiler-object-elf-text-targets-known?
+  [image : cobj.CompilerObjectImage]) : bool
+  (match (cobj.compiler-object-section-list-find
     (struct-get image sections)
-    (CompilerObjectSectionKind.Text))
-    [(CompilerObjectSection.Section _ _ instrs)
+    (cobj.CompilerObjectSectionKind.Text))
+    [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instr-targets-known? image instrs)]))
 
 (define (compiler-object-elf-text-instr-relocation-count
-  [image : CompilerObjectImage]) : i64
-  (match (compiler-object-section-list-find
+  [image : cobj.CompilerObjectImage]) : i64
+  (match (cobj.compiler-object-section-list-find
     (struct-get image sections)
-    (CompilerObjectSectionKind.Text))
-    [(CompilerObjectSection.Section _ _ instrs)
+    (cobj.CompilerObjectSectionKind.Text))
+    [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-instrs-relocation-count instrs)]))
 
 (define (compiler-object-elf-text-relocation-count-matches?
-  [image : CompilerObjectImage]) : bool
+  [image : cobj.CompilerObjectImage]) : bool
   (=
     (compiler-object-elf-relocation-count
       (struct-get image relocations)
-      (CompilerObjectSectionKind.Text))
+      (cobj.CompilerObjectSectionKind.Text))
     (compiler-object-elf-text-instr-relocation-count image)))
 
-(define (compiler-object-elf-image-supported? [image : CompilerObjectImage]) : bool
+(define (compiler-object-elf-image-supported?
+  [image : cobj.CompilerObjectImage]) : bool
   (and
     (compiler-object-elf-sections-supported? (struct-get image sections))
     (compiler-object-elf-relocation-list-supported?
@@ -700,56 +709,57 @@
     (compiler-object-elf-text-relocation-count-matches? image)))
 
 (define (compiler-object-elf-relocation-count
-  [relocs : CompilerObjectRelocationList]
-  [kind : CompilerObjectSectionKind]) : i64
+  [relocs : cobj.CompilerObjectRelocationList]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     [total : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (compiler-object-relocation-list-ref relocs index)
-            [(CompilerObjectRelocation.Relocation section _ _ _)
-              (if (compiler-object-section-kind-eq? section kind)
+          (match (cobj.compiler-object-relocation-list-ref relocs index)
+            [(cobj.CompilerObjectRelocation.Relocation section _ _ _)
+              (if (cobj.compiler-object-section-kind-eq? section kind)
                 (set! total (+ total 1))
                 unit)])
           (set! index (+ index 1))))
       total)))
 
 (define (compiler-object-elf-section-relocation-count
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : i64
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Text)
+    [(cobj.CompilerObjectSectionKind.Text)
       (compiler-object-elf-text-instr-relocation-count image)]
     [_
       (compiler-object-elf-relocation-count (struct-get image relocations) kind)]))
 
 (define (compiler-object-elf-relocation-section-size
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : i64
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (*
     compiler-object-elf-relocation-size
     (compiler-object-elf-section-relocation-count image kind)))
 
-(define (compiler-object-elf-symbol-table-size [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-symbol-table-size
+  [image : cobj.CompilerObjectImage]) : i64
   (*
     compiler-object-elf-symbol-size
-    (+ 1 (compiler-object-symbol-list-count (struct-get image symbols)))))
+    (+ 1 (cobj.compiler-object-symbol-list-count (struct-get image symbols)))))
 
 (define (compiler-object-elf-string-table-size-from
-  [symbols : CompilerObjectSymbolList]
+  [symbols : cobj.CompilerObjectSymbolList]
   [size : i64]) : i64
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [total : i64 size]
     (begin
       (while (< index count)
         (begin
-          (match (compiler-object-symbol-list-ref symbols index)
-            [(CompilerObjectSymbol.Symbol name _ _ _)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
+            [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
               (set!
                 total
                 (+ total (+ (compiler-object-elf-string-length name) 1)))])
@@ -757,7 +767,7 @@
       total)))
 
 (define (compiler-object-elf-string-table-size
-  [symbols : CompilerObjectSymbolList]) : i64
+  [symbols : cobj.CompilerObjectSymbolList]) : i64
   (compiler-object-elf-string-table-size-from symbols 1))
 
 (define (compiler-object-elf-push-shstrtab-name!
@@ -784,132 +794,144 @@
     (compiler-object-elf-push-shstrtab-name! out ".shstrtab")
     (compiler-object-elf-push-shstrtab-name! out ".note.GNU-stack")))
 
-(define (compiler-object-elf-text-offset [_image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-text-offset [_image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset compiler-object-elf-header-size 16))
 
-(define (compiler-object-elf-data-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-data-offset [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-text-offset image)
       (compiler-object-elf-section-raw-size
         image
-        (CompilerObjectSectionKind.Text)))
+        (cobj.CompilerObjectSectionKind.Text)))
     8))
 
-(define (compiler-object-elf-rodata-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-rodata-offset [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-data-offset image)
       (compiler-object-elf-section-raw-size
         image
-        (CompilerObjectSectionKind.Data)))
+        (cobj.CompilerObjectSectionKind.Data)))
     8))
 
-(define (compiler-object-elf-bss-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-bss-offset [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rodata-offset image)
       (compiler-object-elf-section-raw-size
         image
-        (CompilerObjectSectionKind.Rodata)))
+        (cobj.CompilerObjectSectionKind.Rodata)))
     8))
 
-(define (compiler-object-elf-rela-text-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-rela-text-offset
+  [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset (compiler-object-elf-bss-offset image) 8))
 
-(define (compiler-object-elf-rela-data-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-rela-data-offset
+  [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-text-offset image)
       (compiler-object-elf-relocation-section-size
         image
-        (CompilerObjectSectionKind.Text)))
+        (cobj.CompilerObjectSectionKind.Text)))
     8))
 
-(define (compiler-object-elf-rela-rodata-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-rela-rodata-offset
+  [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-data-offset image)
       (compiler-object-elf-relocation-section-size
         image
-        (CompilerObjectSectionKind.Data)))
+        (cobj.CompilerObjectSectionKind.Data)))
     8))
 
-(define (compiler-object-elf-rela-bss-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-rela-bss-offset [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-rodata-offset image)
       (compiler-object-elf-relocation-section-size
         image
-        (CompilerObjectSectionKind.Rodata)))
+        (cobj.CompilerObjectSectionKind.Rodata)))
     8))
 
-(define (compiler-object-elf-symtab-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-symtab-offset [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-rela-bss-offset image)
       (compiler-object-elf-relocation-section-size
         image
-        (CompilerObjectSectionKind.Bss)))
+        (cobj.CompilerObjectSectionKind.Bss)))
     8))
 
-(define (compiler-object-elf-strtab-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-strtab-offset [image : cobj.CompilerObjectImage]) : i64
   (+
     (compiler-object-elf-symtab-offset image)
     (compiler-object-elf-symbol-table-size image)))
 
-(define (compiler-object-elf-shstrtab-offset [image : CompilerObjectImage]) : i64
+(define (compiler-object-elf-shstrtab-offset [image : cobj.CompilerObjectImage]) : i64
   (+
     (compiler-object-elf-strtab-offset image)
     (compiler-object-elf-string-table-size (struct-get image symbols))))
 
 (define (compiler-object-elf-section-header-offset
-  [image : CompilerObjectImage]) : i64
+  [image : cobj.CompilerObjectImage]) : i64
   (compiler-object-elf-align-offset
     (+
       (compiler-object-elf-shstrtab-offset image)
       compiler-object-elf-shstrtab-size)
     8))
 
-(define (compiler-object-elf-section-index [kind : CompilerObjectSectionKind]) : i64
+(define (compiler-object-elf-section-index
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Text) compiler-object-elf-section-text-index]
-    [(CompilerObjectSectionKind.Data) compiler-object-elf-section-data-index]
-    [(CompilerObjectSectionKind.Rodata)
+    [(cobj.CompilerObjectSectionKind.Text)
+      compiler-object-elf-section-text-index]
+    [(cobj.CompilerObjectSectionKind.Data)
+      compiler-object-elf-section-data-index]
+    [(cobj.CompilerObjectSectionKind.Rodata)
       compiler-object-elf-section-rodata-index]
-    [(CompilerObjectSectionKind.Bss) compiler-object-elf-section-bss-index]
-    [(CompilerObjectSectionKind.Pdata) compiler-object-elf-section-null-index]
-    [(CompilerObjectSectionKind.Xdata) compiler-object-elf-section-null-index]
-    [(CompilerObjectSectionKind.Rsrc) compiler-object-elf-section-null-index]))
+    [(cobj.CompilerObjectSectionKind.Bss) compiler-object-elf-section-bss-index]
+    [(cobj.CompilerObjectSectionKind.Pdata)
+      compiler-object-elf-section-null-index]
+    [(cobj.CompilerObjectSectionKind.Xdata)
+      compiler-object-elf-section-null-index]
+    [(cobj.CompilerObjectSectionKind.Rsrc)
+      compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-section-file-offset
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : i64
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Text) (compiler-object-elf-text-offset image)]
-    [(CompilerObjectSectionKind.Data) (compiler-object-elf-data-offset image)]
-    [(CompilerObjectSectionKind.Rodata)
+    [(cobj.CompilerObjectSectionKind.Text)
+      (compiler-object-elf-text-offset image)]
+    [(cobj.CompilerObjectSectionKind.Data)
+      (compiler-object-elf-data-offset image)]
+    [(cobj.CompilerObjectSectionKind.Rodata)
       (compiler-object-elf-rodata-offset image)]
-    [(CompilerObjectSectionKind.Bss) (compiler-object-elf-bss-offset image)]
-    [(CompilerObjectSectionKind.Pdata) 0]
-    [(CompilerObjectSectionKind.Xdata) 0]
-    [(CompilerObjectSectionKind.Rsrc) 0]))
+    [(cobj.CompilerObjectSectionKind.Bss)
+      (compiler-object-elf-bss-offset image)]
+    [(cobj.CompilerObjectSectionKind.Pdata) 0]
+    [(cobj.CompilerObjectSectionKind.Xdata) 0]
+    [(cobj.CompilerObjectSectionKind.Rsrc) 0]))
 
 (define (compiler-object-elf-relocation-section-offset
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : i64
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Text)
+    [(cobj.CompilerObjectSectionKind.Text)
       (compiler-object-elf-rela-text-offset image)]
-    [(CompilerObjectSectionKind.Data)
+    [(cobj.CompilerObjectSectionKind.Data)
       (compiler-object-elf-rela-data-offset image)]
-    [(CompilerObjectSectionKind.Rodata)
+    [(cobj.CompilerObjectSectionKind.Rodata)
       (compiler-object-elf-rela-rodata-offset image)]
-    [(CompilerObjectSectionKind.Bss)
+    [(cobj.CompilerObjectSectionKind.Bss)
       (compiler-object-elf-rela-bss-offset image)]
-    [(CompilerObjectSectionKind.Pdata) 0]
-    [(CompilerObjectSectionKind.Xdata) 0]
-    [(CompilerObjectSectionKind.Rsrc) 0]))
+    [(cobj.CompilerObjectSectionKind.Pdata) 0]
+    [(cobj.CompilerObjectSectionKind.Xdata) 0]
+    [(cobj.CompilerObjectSectionKind.Rsrc) 0]))
 
 (define (compiler-object-elf-section-name-offset [index : i64]) : i64
   (cond
@@ -929,7 +951,7 @@
 
 (define (compiler-object-elf-push-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]) : unit
+  [image : cobj.CompilerObjectImage]) : unit
   (begin
     (compiler-object-elf-push-u8! out 0x7f)
     (compiler-object-elf-push-u8! out 0x45)
@@ -961,56 +983,56 @@
 
 (define (compiler-object-elf-render-data-record!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [record : CompilerObjectDataRecord]
+  [record : cobj.CompilerObjectDataRecord]
   [offset : i64]) : i64
   (match record
-    [(CompilerObjectDataRecord.Label _) offset]
-    [(CompilerObjectDataRecord.Align align)
+    [(cobj.CompilerObjectDataRecord.Label _) offset]
+    [(cobj.CompilerObjectDataRecord.Align align)
       (let
         [aligned : i64 (compiler-object-elf-align-offset offset align)]
         (begin
           (compiler-object-elf-push-zeroes! out (- aligned offset))
           aligned))]
-    [(CompilerObjectDataRecord.Bytes bytes)
+    [(cobj.CompilerObjectDataRecord.Bytes bytes)
       (begin
         (compiler-object-elf-push-string-bytes! out bytes)
         (+ offset (compiler-object-elf-string-length bytes)))]
-    [(CompilerObjectDataRecord.String text)
+    [(cobj.CompilerObjectDataRecord.String text)
       (begin
         (compiler-object-elf-push-string-bytes! out text)
         (compiler-object-elf-push-u8! out 0)
         (+ offset (+ (compiler-object-elf-string-length text) 1)))]
-    [(CompilerObjectDataRecord.F64 bits)
+    [(cobj.CompilerObjectDataRecord.F64 bits)
       (begin
         (compiler-object-elf-push-u64! out bits)
         (+ offset 8))]
-    [(CompilerObjectDataRecord.F32 bits)
+    [(cobj.CompilerObjectDataRecord.F32 bits)
       (begin
         (compiler-object-elf-push-u32! out (cast bits : i64))
         (+ offset 4))]
-    [(CompilerObjectDataRecord.I64 value)
+    [(cobj.CompilerObjectDataRecord.I64 value)
       (begin
         (compiler-object-elf-push-i64! out value)
         (+ offset 8))]
-    [(CompilerObjectDataRecord.Zero count)
+    [(cobj.CompilerObjectDataRecord.Zero count)
       (begin
         (compiler-object-elf-push-zeroes! out count)
         (+ offset count))]
-    [(CompilerObjectDataRecord.SymbolAddress _)
+    [(cobj.CompilerObjectDataRecord.SymbolAddress _)
       (begin
         (compiler-object-elf-push-i64! out 0)
         (+ offset 8))]
-    [(CompilerObjectDataRecord.SymbolRva32 _)
+    [(cobj.CompilerObjectDataRecord.SymbolRva32 _)
       (begin
         (compiler-object-elf-push-u32! out 0)
         (+ offset 4))]))
 
 (define (compiler-object-elf-render-data-records!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [records : CompilerObjectDataRecordList]
+  [records : cobj.CompilerObjectDataRecordList]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-data-record-list-count records)]
+    [count : i64 (cobj.compiler-object-data-record-list-count records)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
@@ -1020,7 +1042,7 @@
             cur-offset
             (compiler-object-elf-render-data-record!
               out
-              (compiler-object-data-record-list-ref records index)
+              (cobj.compiler-object-data-record-list-ref records index)
               cur-offset))
           (set! index (+ index 1))))
       cur-offset)))
@@ -1031,27 +1053,27 @@
 
 (define (compiler-object-elf-render-instr!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [instr : CompilerObjectX64Instr]) : unit
+  [instr : cobj.CompilerObjectX64Instr]) : unit
   (match instr
-    [(CompilerObjectX64Instr.Label _) unit]
-    [(CompilerObjectX64Instr.Call _)
+    [(cobj.CompilerObjectX64Instr.Label _) unit]
+    [(cobj.CompilerObjectX64Instr.Call _)
       (begin
         (compiler-object-elf-push-u8! out 0xe8)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.TailCall _)
+    [(cobj.CompilerObjectX64Instr.TailCall _)
       (begin
         (compiler-object-elf-push-u8! out 0xe9)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.Jump _)
+    [(cobj.CompilerObjectX64Instr.Jump _)
       (begin
         (compiler-object-elf-push-u8! out 0xe9)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.Ja _)
+    [(cobj.CompilerObjectX64Instr.Ja _)
       (begin
         (compiler-object-elf-push-u8! out 0x0f)
         (compiler-object-elf-push-u8! out 0x87)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.Branch _ _)
+    [(cobj.CompilerObjectX64Instr.Branch _ _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x85)
@@ -1061,113 +1083,115 @@
         (compiler-object-elf-push-rel32-placeholder! out)
         (compiler-object-elf-push-u8! out 0xe9)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.LoadRip _)
+    [(cobj.CompilerObjectX64Instr.LoadRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.LoadRipAddress _)
+    [(cobj.CompilerObjectX64Instr.LoadRipAddress _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8d)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.LoadRipAddressR11 _)
+    [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 _)
       (begin
         (compiler-object-elf-push-u8! out 0x4c)
         (compiler-object-elf-push-u8! out 0x8d)
         (compiler-object-elf-push-u8! out 0x1d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.StoreRip _)
+    [(cobj.CompilerObjectX64Instr.StoreRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.SubRspImm8 imm)
+    [(cobj.CompilerObjectX64Instr.SubRspImm8 imm)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x83)
         (compiler-object-elf-push-u8! out 0xec)
         (compiler-object-elf-push-u8! out imm))]
-    [(CompilerObjectX64Instr.MovRcxRip _)
+    [(cobj.CompilerObjectX64Instr.MovRcxRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x0d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.MovRdxRip _)
+    [(cobj.CompilerObjectX64Instr.MovRdxRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8b)
         (compiler-object-elf-push-u8! out 0x15)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.LoadRipAddressRdx _)
+    [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x8d)
         (compiler-object-elf-push-u8! out 0x15)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.StoreR14Rip _)
+    [(cobj.CompilerObjectX64Instr.StoreR14Rip _)
       (begin
         (compiler-object-elf-push-u8! out 0x4c)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0x35)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.StoreR15Rip _)
+    [(cobj.CompilerObjectX64Instr.StoreR15Rip _)
       (begin
         (compiler-object-elf-push-u8! out 0x4c)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0x3d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.AddRcxRip _)
+    [(cobj.CompilerObjectX64Instr.AddRcxRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x01)
         (compiler-object-elf-push-u8! out 0x0d)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.MovRcxRax)
+    [(cobj.CompilerObjectX64Instr.MovRcxRax)
       (begin
         (compiler-object-elf-push-u8! out 0x48)
         (compiler-object-elf-push-u8! out 0x89)
         (compiler-object-elf-push-u8! out 0xc1))]
-    [(CompilerObjectX64Instr.XorpdRip _)
+    [(cobj.CompilerObjectX64Instr.XorpdRip _)
       (begin
         (compiler-object-elf-push-u8! out 0x66)
         (compiler-object-elf-push-u8! out 0x0f)
         (compiler-object-elf-push-u8! out 0x57)
         (compiler-object-elf-push-u8! out 0x05)
         (compiler-object-elf-push-rel32-placeholder! out))]
-    [(CompilerObjectX64Instr.Bytes bytes)
+    [(cobj.CompilerObjectX64Instr.Bytes bytes)
       (compiler-object-elf-push-string-bytes! out bytes)]
-    [(CompilerObjectX64Instr.Raw bytes)
+    [(cobj.CompilerObjectX64Instr.Raw bytes)
       (compiler-object-elf-push-string-bytes! out bytes)]
     [_ unit]))
 
 (define (compiler-object-elf-render-instrs!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [instrs : CompilerObjectX64InstrList]) : unit
+  [instrs : cobj.CompilerObjectX64InstrList]) : unit
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
           (compiler-object-elf-render-instr!
             out
-            (compiler-object-instr-list-ref instrs index))
+            (cobj.compiler-object-instr-list-ref instrs index))
           (set! index (+ index 1))))
       unit)))
 
 (define (compiler-object-elf-render-section!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : unit
-  (match (compiler-object-section-list-find (struct-get image sections) kind)
-    [(CompilerObjectSection.Section _ data instrs)
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : unit
+  (match (cobj.compiler-object-section-list-find
+    (struct-get image sections)
+    kind)
+    [(cobj.CompilerObjectSection.Section _ data instrs)
       (match kind
-        [(CompilerObjectSectionKind.Text)
+        [(cobj.CompilerObjectSectionKind.Text)
           (compiler-object-elf-render-instrs! out instrs)]
         [_
           (begin
@@ -1176,7 +1200,7 @@
 
 (define (compiler-object-elf-render-loadable-sections!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]) : unit
+  [image : cobj.CompilerObjectImage]) : unit
   (begin
     (compiler-object-elf-render-padding-to!
       out
@@ -1184,49 +1208,53 @@
     (compiler-object-elf-render-section!
       out
       image
-      (CompilerObjectSectionKind.Text))
+      (cobj.CompilerObjectSectionKind.Text))
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-data-offset image))
     (compiler-object-elf-render-section!
       out
       image
-      (CompilerObjectSectionKind.Data))
+      (cobj.CompilerObjectSectionKind.Data))
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-rodata-offset image))
     (compiler-object-elf-render-section!
       out
       image
-      (CompilerObjectSectionKind.Rodata))))
+      (cobj.CompilerObjectSectionKind.Rodata))))
 
 (define (compiler-object-elf-relocation-type
-  [kind : CompilerObjectRelocationKind]) : i64
+  [kind : cobj.CompilerObjectRelocationKind]) : i64
   (match kind
-    [(CompilerObjectRelocationKind.Call) compiler-object-elf-r-x86-64-plt32]
-    [(CompilerObjectRelocationKind.TailCall) compiler-object-elf-r-x86-64-plt32]
-    [(CompilerObjectRelocationKind.Abs64) compiler-object-elf-r-x86-64-64]
-    [(CompilerObjectRelocationKind.RipValue) compiler-object-elf-r-x86-64-pc32]
-    [(CompilerObjectRelocationKind.RipAddress)
+    [(cobj.CompilerObjectRelocationKind.Call)
+      compiler-object-elf-r-x86-64-plt32]
+    [(cobj.CompilerObjectRelocationKind.TailCall)
+      compiler-object-elf-r-x86-64-plt32]
+    [(cobj.CompilerObjectRelocationKind.Abs64) compiler-object-elf-r-x86-64-64]
+    [(cobj.CompilerObjectRelocationKind.RipValue)
       compiler-object-elf-r-x86-64-pc32]
-    [(CompilerObjectRelocationKind.Branch) compiler-object-elf-r-x86-64-pc32]
+    [(cobj.CompilerObjectRelocationKind.RipAddress)
+      compiler-object-elf-r-x86-64-pc32]
+    [(cobj.CompilerObjectRelocationKind.Branch)
+      compiler-object-elf-r-x86-64-pc32]
     [_ 0]))
 
 (define (compiler-object-elf-relocation-addend
-  [kind : CompilerObjectRelocationKind]) : i64
+  [kind : cobj.CompilerObjectRelocationKind]) : i64
   (match kind
-    [(CompilerObjectRelocationKind.Call) -4]
-    [(CompilerObjectRelocationKind.TailCall) -4]
-    [(CompilerObjectRelocationKind.RipValue) -4]
-    [(CompilerObjectRelocationKind.RipAddress) -4]
-    [(CompilerObjectRelocationKind.Branch) -4]
+    [(cobj.CompilerObjectRelocationKind.Call) -4]
+    [(cobj.CompilerObjectRelocationKind.TailCall) -4]
+    [(cobj.CompilerObjectRelocationKind.RipValue) -4]
+    [(cobj.CompilerObjectRelocationKind.RipAddress) -4]
+    [(cobj.CompilerObjectRelocationKind.Branch) -4]
     [_ 0]))
 
 (define (compiler-object-elf-render-relocation-record!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [offset : i64]
-  [kind : CompilerObjectRelocationKind]
+  [kind : cobj.CompilerObjectRelocationKind]
   [target : String]) : unit
   (begin
     (compiler-object-elf-push-i64! out offset)
@@ -1241,10 +1269,10 @@
 
 (define (compiler-object-elf-render-relocation!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [reloc : CompilerObjectRelocation]) : unit
+  [image : cobj.CompilerObjectImage]
+  [reloc : cobj.CompilerObjectRelocation]) : unit
   (match reloc
-    [(CompilerObjectRelocation.Relocation section site kind target)
+    [(cobj.CompilerObjectRelocation.Relocation section site kind target)
       (compiler-object-elf-render-relocation-record!
         out
         image
@@ -1254,144 +1282,144 @@
 
 (define (compiler-object-elf-render-text-instr-relocations!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [instrs : CompilerObjectX64InstrList]
+  [image : cobj.CompilerObjectImage]
+  [instrs : cobj.CompilerObjectX64InstrList]
   [offset : i64]) : unit
   (let
-    [count : i64 (compiler-object-instr-list-count instrs)]
+    [count : i64 (cobj.compiler-object-instr-list-count instrs)]
     [index : i64 0]
     [cur-offset : i64 offset]
     (begin
       (while (< index count)
         (let
-          [instr : CompilerObjectX64Instr
-            (compiler-object-instr-list-ref instrs index)]
+          [instr : cobj.CompilerObjectX64Instr
+            (cobj.compiler-object-instr-list-ref instrs index)]
           (begin
             (match instr
-              [(CompilerObjectX64Instr.Label _) unit]
-              [(CompilerObjectX64Instr.Call target)
+              [(cobj.CompilerObjectX64Instr.Label _) unit]
+              [(cobj.CompilerObjectX64Instr.Call target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 1)
-                  (CompilerObjectRelocationKind.Call)
+                  (cobj.CompilerObjectRelocationKind.Call)
                   target)]
-              [(CompilerObjectX64Instr.TailCall target)
+              [(cobj.CompilerObjectX64Instr.TailCall target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 1)
-                  (CompilerObjectRelocationKind.TailCall)
+                  (cobj.CompilerObjectRelocationKind.TailCall)
                   target)]
-              [(CompilerObjectX64Instr.Jump target)
+              [(cobj.CompilerObjectX64Instr.Jump target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 1)
-                  (CompilerObjectRelocationKind.Branch)
+                  (cobj.CompilerObjectRelocationKind.Branch)
                   target)]
-              [(CompilerObjectX64Instr.Ja target)
+              [(cobj.CompilerObjectX64Instr.Ja target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 2)
-                  (CompilerObjectRelocationKind.Branch)
+                  (cobj.CompilerObjectRelocationKind.Branch)
                   target)]
-              [(CompilerObjectX64Instr.Branch true-target false-target)
+              [(cobj.CompilerObjectX64Instr.Branch true-target false-target)
                 (begin
                   (compiler-object-elf-render-relocation-record!
                     out
                     image
                     (+ cur-offset 5)
-                    (CompilerObjectRelocationKind.Branch)
+                    (cobj.CompilerObjectRelocationKind.Branch)
                     true-target)
                   (compiler-object-elf-render-relocation-record!
                     out
                     image
                     (+ cur-offset 10)
-                    (CompilerObjectRelocationKind.Branch)
+                    (cobj.CompilerObjectRelocationKind.Branch)
                     false-target))]
-              [(CompilerObjectX64Instr.LoadRip target)
+              [(cobj.CompilerObjectX64Instr.LoadRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipValue)
+                  (cobj.CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(CompilerObjectX64Instr.LoadRipAddress target)
+              [(cobj.CompilerObjectX64Instr.LoadRipAddress target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.LoadRipAddressR11 target)
+              [(cobj.CompilerObjectX64Instr.LoadRipAddressR11 target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.StoreRip target)
+              [(cobj.CompilerObjectX64Instr.StoreRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.SubRspImm8 _) unit]
-              [(CompilerObjectX64Instr.MovRcxRip target)
+              [(cobj.CompilerObjectX64Instr.SubRspImm8 _) unit]
+              [(cobj.CompilerObjectX64Instr.MovRcxRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipValue)
+                  (cobj.CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(CompilerObjectX64Instr.MovRdxRip target)
+              [(cobj.CompilerObjectX64Instr.MovRdxRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipValue)
+                  (cobj.CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(CompilerObjectX64Instr.LoadRipAddressRdx target)
+              [(cobj.CompilerObjectX64Instr.LoadRipAddressRdx target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.StoreR14Rip target)
+              [(cobj.CompilerObjectX64Instr.StoreR14Rip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.StoreR15Rip target)
+              [(cobj.CompilerObjectX64Instr.StoreR15Rip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.AddRcxRip target)
+              [(cobj.CompilerObjectX64Instr.AddRcxRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 3)
-                  (CompilerObjectRelocationKind.RipAddress)
+                  (cobj.CompilerObjectRelocationKind.RipAddress)
                   target)]
-              [(CompilerObjectX64Instr.MovRcxRax) unit]
-              [(CompilerObjectX64Instr.XorpdRip target)
+              [(cobj.CompilerObjectX64Instr.MovRcxRax) unit]
+              [(cobj.CompilerObjectX64Instr.XorpdRip target)
                 (compiler-object-elf-render-relocation-record!
                   out
                   image
                   (+ cur-offset 4)
-                  (CompilerObjectRelocationKind.RipValue)
+                  (cobj.CompilerObjectRelocationKind.RipValue)
                   target)]
-              [(CompilerObjectX64Instr.Bytes _) unit]
-              [(CompilerObjectX64Instr.Raw _) unit])
+              [(cobj.CompilerObjectX64Instr.Bytes _) unit]
+              [(cobj.CompilerObjectX64Instr.Raw _) unit])
             (set!
               cur-offset
               (+ cur-offset (compiler-object-elf-instr-size instr)))
@@ -1400,30 +1428,30 @@
 
 (define (compiler-object-elf-render-text-relocations!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]) : unit
-  (match (compiler-object-section-list-find
+  [image : cobj.CompilerObjectImage]) : unit
+  (match (cobj.compiler-object-section-list-find
     (struct-get image sections)
-    (CompilerObjectSectionKind.Text))
-    [(CompilerObjectSection.Section _ _ instrs)
+    (cobj.CompilerObjectSectionKind.Text))
+    [(cobj.CompilerObjectSection.Section _ _ instrs)
       (compiler-object-elf-render-text-instr-relocations! out image instrs 0)]))
 
 (define (compiler-object-elf-render-relocations-for-section!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [relocs : CompilerObjectRelocationList]
-  [kind : CompilerObjectSectionKind]) : unit
+  [image : cobj.CompilerObjectImage]
+  [relocs : cobj.CompilerObjectRelocationList]
+  [kind : cobj.CompilerObjectSectionKind]) : unit
   (let
-    [count : i64 (compiler-object-relocation-list-count relocs)]
+    [count : i64 (cobj.compiler-object-relocation-list-count relocs)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [reloc : CompilerObjectRelocation
-            (compiler-object-relocation-list-ref relocs index)]
+          [reloc : cobj.CompilerObjectRelocation
+            (cobj.compiler-object-relocation-list-ref relocs index)]
           (begin
             (match reloc
-              [(CompilerObjectRelocation.Relocation section _ _ _)
-                (if (compiler-object-section-kind-eq? section kind)
+              [(cobj.CompilerObjectRelocation.Relocation section _ _ _)
+                (if (cobj.compiler-object-section-kind-eq? section kind)
                   (compiler-object-elf-render-relocation! out image reloc)
                   unit)])
             (set! index (+ index 1)))))
@@ -1431,14 +1459,14 @@
 
 (define (compiler-object-elf-render-relocation-section!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : unit
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : unit
   (begin
     (compiler-object-elf-render-padding-to!
       out
       (compiler-object-elf-relocation-section-offset image kind))
     (match kind
-      [(CompilerObjectSectionKind.Text)
+      [(cobj.CompilerObjectSectionKind.Text)
         (compiler-object-elf-render-text-relocations! out image)]
       [_
         (compiler-object-elf-render-relocations-for-section!
@@ -1448,19 +1476,19 @@
           kind)])))
 
 (define (compiler-object-elf-symbol-string-offset-from
-  [symbols : CompilerObjectSymbolList]
+  [symbols : cobj.CompilerObjectSymbolList]
   [name : String]
   [offset : i64]) : i64
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     [cur-offset : i64 offset]
     [result : i64 0]
     [done : bool false]
     (begin
       (while (and (not done) (< index count))
-        (match (compiler-object-symbol-list-ref symbols index)
-          [(CompilerObjectSymbol.Symbol found _ _ _)
+        (match (cobj.compiler-object-symbol-list-ref symbols index)
+          [(cobj.CompilerObjectSymbol.Symbol found _ _ _)
             (if (string.eq found name)
               (begin
                 (set! result cur-offset)
@@ -1473,7 +1501,7 @@
       result)))
 
 (define (compiler-object-elf-symbol-string-offset
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [name : String]) : i64
   (compiler-object-elf-symbol-string-offset-from
     (struct-get image symbols)
@@ -1481,39 +1509,39 @@
     1))
 
 (define (compiler-object-elf-symbol-binding
-  [binding : CompilerObjectSymbolBinding]) : i64
+  [binding : cobj.CompilerObjectSymbolBinding]) : i64
   (match binding
-    [(CompilerObjectSymbolBinding.Local) 0]
+    [(cobj.CompilerObjectSymbolBinding.Local) 0]
     [_ 1]))
 
-(define (compiler-object-elf-symbol-type [kind : CompilerObjectSymbolKind]) : i64
+(define (compiler-object-elf-symbol-type [kind : cobj.CompilerObjectSymbolKind]) : i64
   (match kind
-    [(CompilerObjectSymbolKind.Function) 2]
-    [(CompilerObjectSymbolKind.Runtime) 2]
-    [(CompilerObjectSymbolKind.Data) 1]
+    [(cobj.CompilerObjectSymbolKind.Function) 2]
+    [(cobj.CompilerObjectSymbolKind.Runtime) 2]
+    [(cobj.CompilerObjectSymbolKind.Data) 1]
     [_ 0]))
 
 (define (compiler-object-elf-symbol-info
-  [binding : CompilerObjectSymbolBinding]
-  [kind : CompilerObjectSymbolKind]) : i64
+  [binding : cobj.CompilerObjectSymbolBinding]
+  [kind : cobj.CompilerObjectSymbolKind]) : i64
   (bit-or
     (shl (compiler-object-elf-symbol-binding binding) 4)
     (compiler-object-elf-symbol-type kind)))
 
 (define (compiler-object-elf-symbol-section-index
-  [section : CompilerObjectMaybeSection]) : i64
+  [section : cobj.CompilerObjectMaybeSection]) : i64
   (match section
-    [(CompilerObjectMaybeSection.No) 0]
-    [(CompilerObjectMaybeSection.Some kind)
+    [(cobj.CompilerObjectMaybeSection.No) 0]
+    [(cobj.CompilerObjectMaybeSection.Some kind)
       (compiler-object-elf-section-index kind)]))
 
 (define (compiler-object-elf-symbol-value
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [name : String]
-  [section : CompilerObjectMaybeSection]) : i64
+  [section : cobj.CompilerObjectMaybeSection]) : i64
   (match section
-    [(CompilerObjectMaybeSection.No) 0]
-    [(CompilerObjectMaybeSection.Some kind)
+    [(cobj.CompilerObjectMaybeSection.No) 0]
+    [(cobj.CompilerObjectMaybeSection.Some kind)
       (let
         [offset : i64
           (compiler-object-elf-section-label-offset image kind name)]
@@ -1527,10 +1555,10 @@
 
 (define (compiler-object-elf-render-symbol!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [symbol : CompilerObjectSymbol]) : unit
+  [image : cobj.CompilerObjectImage]
+  [symbol : cobj.CompilerObjectSymbol]) : unit
   (match symbol
-    [(CompilerObjectSymbol.Symbol name binding kind section)
+    [(cobj.CompilerObjectSymbol.Symbol name binding kind section)
       (begin
         (compiler-object-elf-push-u32!
           out
@@ -1549,20 +1577,20 @@
 
 (define (compiler-object-elf-render-symbols-by-locality!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [symbols : CompilerObjectSymbolList]
+  [image : cobj.CompilerObjectImage]
+  [symbols : cobj.CompilerObjectSymbolList]
   [want-local : bool]) : unit
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     (begin
       (while (< index count)
         (let
-          [symbol : CompilerObjectSymbol
-            (compiler-object-symbol-list-ref symbols index)]
+          [symbol : cobj.CompilerObjectSymbol
+            (cobj.compiler-object-symbol-list-ref symbols index)]
           (begin
             (match symbol
-              [(CompilerObjectSymbol.Symbol _ binding _ _)
+              [(cobj.CompilerObjectSymbol.Symbol _ binding _ _)
                 (if (=
                   (compiler-object-elf-symbol-binding-local? binding)
                   want-local)
@@ -1573,7 +1601,7 @@
 
 (define (compiler-object-elf-render-symbol-table!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]) : unit
+  [image : cobj.CompilerObjectImage]) : unit
   (begin
     (compiler-object-elf-render-padding-to!
       out
@@ -1592,15 +1620,15 @@
 
 (define (compiler-object-elf-render-string-table-symbols!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [symbols : CompilerObjectSymbolList]) : unit
+  [symbols : cobj.CompilerObjectSymbolList]) : unit
   (let
-    [count : i64 (compiler-object-symbol-list-count symbols)]
+    [count : i64 (cobj.compiler-object-symbol-list-count symbols)]
     [index : i64 0]
     (begin
       (while (< index count)
         (begin
-          (match (compiler-object-symbol-list-ref symbols index)
-            [(CompilerObjectSymbol.Symbol name _ _ _)
+          (match (cobj.compiler-object-symbol-list-ref symbols index)
+            [(cobj.CompilerObjectSymbol.Symbol name _ _ _)
               (begin
                 (compiler-object-elf-push-string-bytes! out name)
                 (compiler-object-elf-push-u8! out 0))])
@@ -1609,7 +1637,7 @@
 
 (define (compiler-object-elf-render-string-tables!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]) : unit
+  [image : cobj.CompilerObjectImage]) : unit
   (begin
     (compiler-object-elf-render-padding-to!
       out
@@ -1623,18 +1651,19 @@
       (compiler-object-elf-shstrtab-offset image))
     (compiler-object-elf-push-shstrtab! out)))
 
-(define (compiler-object-elf-section-flags [kind : CompilerObjectSectionKind]) : i64
+(define (compiler-object-elf-section-flags
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Text)
+    [(cobj.CompilerObjectSectionKind.Text)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-execinstr)]
-    [(CompilerObjectSectionKind.Data)
+    [(cobj.CompilerObjectSectionKind.Data)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
-    [(CompilerObjectSectionKind.Rodata) compiler-object-elf-shf-alloc]
-    [(CompilerObjectSectionKind.Bss)
+    [(cobj.CompilerObjectSectionKind.Rodata) compiler-object-elf-shf-alloc]
+    [(cobj.CompilerObjectSectionKind.Bss)
       (bit-or compiler-object-elf-shf-alloc compiler-object-elf-shf-write)]
-    [(CompilerObjectSectionKind.Pdata) 0]
-    [(CompilerObjectSectionKind.Xdata) 0]
-    [(CompilerObjectSectionKind.Rsrc) 0]))
+    [(cobj.CompilerObjectSectionKind.Pdata) 0]
+    [(cobj.CompilerObjectSectionKind.Xdata) 0]
+    [(cobj.CompilerObjectSectionKind.Rsrc) 0]))
 
 (define (compiler-object-elf-push-section-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
@@ -1662,15 +1691,15 @@
 
 (define (compiler-object-elf-push-load-section-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : unit
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : unit
   (let
     [index : i64 (compiler-object-elf-section-index kind)]
     (compiler-object-elf-push-section-header!
       out
       (compiler-object-elf-section-name-offset index)
       (match kind
-        [(CompilerObjectSectionKind.Bss) compiler-object-elf-sht-nobits]
+        [(cobj.CompilerObjectSectionKind.Bss) compiler-object-elf-sht-nobits]
         [_ compiler-object-elf-sht-progbits])
       (compiler-object-elf-section-flags kind)
       0
@@ -1679,28 +1708,32 @@
       0
       0
       (match kind
-        [(CompilerObjectSectionKind.Text) 16]
+        [(cobj.CompilerObjectSectionKind.Text) 16]
         [_ 8])
       0)))
 
 (define (compiler-object-elf-rela-section-index
-  [kind : CompilerObjectSectionKind]) : i64
+  [kind : cobj.CompilerObjectSectionKind]) : i64
   (match kind
-    [(CompilerObjectSectionKind.Text)
+    [(cobj.CompilerObjectSectionKind.Text)
       compiler-object-elf-section-rela-text-index]
-    [(CompilerObjectSectionKind.Data)
+    [(cobj.CompilerObjectSectionKind.Data)
       compiler-object-elf-section-rela-data-index]
-    [(CompilerObjectSectionKind.Rodata)
+    [(cobj.CompilerObjectSectionKind.Rodata)
       compiler-object-elf-section-rela-rodata-index]
-    [(CompilerObjectSectionKind.Bss) compiler-object-elf-section-rela-bss-index]
-    [(CompilerObjectSectionKind.Pdata) compiler-object-elf-section-null-index]
-    [(CompilerObjectSectionKind.Xdata) compiler-object-elf-section-null-index]
-    [(CompilerObjectSectionKind.Rsrc) compiler-object-elf-section-null-index]))
+    [(cobj.CompilerObjectSectionKind.Bss)
+      compiler-object-elf-section-rela-bss-index]
+    [(cobj.CompilerObjectSectionKind.Pdata)
+      compiler-object-elf-section-null-index]
+    [(cobj.CompilerObjectSectionKind.Xdata)
+      compiler-object-elf-section-null-index]
+    [(cobj.CompilerObjectSectionKind.Rsrc)
+      compiler-object-elf-section-null-index]))
 
 (define (compiler-object-elf-push-rela-section-header!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]
-  [kind : CompilerObjectSectionKind]) : unit
+  [image : cobj.CompilerObjectImage]
+  [kind : cobj.CompilerObjectSectionKind]) : unit
   (let
     [index : i64 (compiler-object-elf-rela-section-index kind)]
     (compiler-object-elf-push-section-header!
@@ -1718,7 +1751,7 @@
 
 (define (compiler-object-elf-push-section-headers!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [image : CompilerObjectImage]) : unit
+  [image : cobj.CompilerObjectImage]) : unit
   (begin
     (compiler-object-elf-render-padding-to!
       out
@@ -1738,35 +1771,35 @@
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (CompilerObjectSectionKind.Text))
+      (cobj.CompilerObjectSectionKind.Text))
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (CompilerObjectSectionKind.Data))
+      (cobj.CompilerObjectSectionKind.Data))
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (CompilerObjectSectionKind.Rodata))
+      (cobj.CompilerObjectSectionKind.Rodata))
     (compiler-object-elf-push-load-section-header!
       out
       image
-      (CompilerObjectSectionKind.Bss))
+      (cobj.CompilerObjectSectionKind.Bss))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (CompilerObjectSectionKind.Text))
+      (cobj.CompilerObjectSectionKind.Text))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (CompilerObjectSectionKind.Data))
+      (cobj.CompilerObjectSectionKind.Data))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (CompilerObjectSectionKind.Rodata))
+      (cobj.CompilerObjectSectionKind.Rodata))
     (compiler-object-elf-push-rela-section-header!
       out
       image
-      (CompilerObjectSectionKind.Bss))
+      (cobj.CompilerObjectSectionKind.Bss))
     (compiler-object-elf-push-section-header!
       out
       (compiler-object-elf-section-name-offset
@@ -1824,7 +1857,7 @@
   [out : (& out byte_buf_core.ByteBufBuilder)]) : String
   (byte_buf_core.byte-buf-builder-finish-string out))
 
-(define (compiler-object-elf-render [image : CompilerObjectImage]) : ResultCompilerObjectElf
+(define (compiler-object-elf-render [image : cobj.CompilerObjectImage]) : ResultCompilerObjectElf
   (if (compiler-object-elf-image-supported? image)
     (let
       [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
@@ -1834,19 +1867,19 @@
         (compiler-object-elf-render-relocation-section!
           (&mut out)
           image
-          (CompilerObjectSectionKind.Text))
+          (cobj.CompilerObjectSectionKind.Text))
         (compiler-object-elf-render-relocation-section!
           (&mut out)
           image
-          (CompilerObjectSectionKind.Data))
+          (cobj.CompilerObjectSectionKind.Data))
         (compiler-object-elf-render-relocation-section!
           (&mut out)
           image
-          (CompilerObjectSectionKind.Rodata))
+          (cobj.CompilerObjectSectionKind.Rodata))
         (compiler-object-elf-render-relocation-section!
           (&mut out)
           image
-          (CompilerObjectSectionKind.Bss))
+          (cobj.CompilerObjectSectionKind.Bss))
         (compiler-object-elf-render-symbol-table! (&mut out) image)
         (compiler-object-elf-render-string-tables! (&mut out) image)
         (compiler-object-elf-push-section-headers! (&mut out) image)
@@ -1868,7 +1901,7 @@
   (cast (compiler-object-elf-string-ref text offset) : i64))
 
 (define (compiler-object-elf-section-header-start
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [index : i64]) : i64
   (+
     (compiler-object-elf-section-header-offset image)
@@ -1876,7 +1909,7 @@
 
 (define (compiler-object-elf-section-header-size-at
   [text : String]
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [index : i64]) : i64
   (compiler-object-elf-u32-at
     text
@@ -1950,507 +1983,547 @@
           (set! i (+ i 1))))
       found)))
 
-(define (compiler-object-elf-ret-bytes) : String
-  (let
-    [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
-    (begin
-      (compiler-object-elf-push-u8! (&mut out) 0xc3)
-      (compiler-object-elf-bytes-string (& out)))))
+(cfg
+  test
+  (define (compiler-object-elf-ret-bytes) : String
+    (let
+      [out : byte_buf_core.ByteBufBuilder (byte_buf_core.byte-buf-builder-new)]
+      (begin
+        (compiler-object-elf-push-u8! (&mut out) 0xc3)
+        (compiler-object-elf-bytes-string (& out))))))
 
-(define (compiler-object-elf-text-smoke-instrs) : CompilerObjectX64InstrList
-  (let
-    [instrs0 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-with-capacity 16)]
-    [instrs1 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs0
-        (CompilerObjectX64Instr.Label "_tl_text"))]
-    [instrs2 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs1
-        (CompilerObjectX64Instr.Call "foreign_exact"))]
-    [instrs3 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs2
-        (CompilerObjectX64Instr.LoadRip "_tl_cell"))]
-    [instrs4 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs3
-        (CompilerObjectX64Instr.LoadRipAddress "_tl_message"))]
-    [instrs5 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs4
-        (CompilerObjectX64Instr.StoreRip "_tl_cell"))]
-    [instrs6 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs5
-        (CompilerObjectX64Instr.Branch ".L_true" ".L_false"))]
-    [instrs7 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs6
-        (CompilerObjectX64Instr.Label ".L_true"))]
-    [instrs8 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs7
-        (CompilerObjectX64Instr.Jump ".L_done"))]
-    [instrs9 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs8
-        (CompilerObjectX64Instr.Label ".L_false"))]
-    [instrs10 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs9
-        (CompilerObjectX64Instr.TailCall "_tl_text"))]
-    [instrs11 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs10
-        (CompilerObjectX64Instr.Label ".L_done"))]
-    [instrs12 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs11
-        (CompilerObjectX64Instr.SubRspImm8 8))]
-    [instrs13 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs12
-        (CompilerObjectX64Instr.MovRcxRip "_tl_cell"))]
-    [instrs14 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs13
-        (CompilerObjectX64Instr.MovRdxRip "_tl_message"))]
-    [instrs15 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs14
-        (CompilerObjectX64Instr.MovRcxRax))]
-    [instrs16 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        instrs15
-        (CompilerObjectX64Instr.Raw (compiler-object-elf-ret-bytes)))]
-    (compiler-object-instr-builder-finish instrs16)))
+(cfg
+  test
+  (define (compiler-object-elf-text-smoke-instrs) : cobj.CompilerObjectX64InstrList
+    (let
+      [instrs0 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-with-capacity 16)]
+      [instrs1 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs0
+          (cobj.CompilerObjectX64Instr.Label "_tl_text"))]
+      [instrs2 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs1
+          (cobj.CompilerObjectX64Instr.Call "foreign_exact"))]
+      [instrs3 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs2
+          (cobj.CompilerObjectX64Instr.LoadRip "_tl_cell"))]
+      [instrs4 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs3
+          (cobj.CompilerObjectX64Instr.LoadRipAddress "_tl_message"))]
+      [instrs5 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs4
+          (cobj.CompilerObjectX64Instr.StoreRip "_tl_cell"))]
+      [instrs6 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs5
+          (cobj.CompilerObjectX64Instr.Branch ".L_true" ".L_false"))]
+      [instrs7 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs6
+          (cobj.CompilerObjectX64Instr.Label ".L_true"))]
+      [instrs8 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs7
+          (cobj.CompilerObjectX64Instr.Jump ".L_done"))]
+      [instrs9 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs8
+          (cobj.CompilerObjectX64Instr.Label ".L_false"))]
+      [instrs10 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs9
+          (cobj.CompilerObjectX64Instr.TailCall "_tl_text"))]
+      [instrs11 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs10
+          (cobj.CompilerObjectX64Instr.Label ".L_done"))]
+      [instrs12 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs11
+          (cobj.CompilerObjectX64Instr.SubRspImm8 8))]
+      [instrs13 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs12
+          (cobj.CompilerObjectX64Instr.MovRcxRip "_tl_cell"))]
+      [instrs14 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs13
+          (cobj.CompilerObjectX64Instr.MovRdxRip "_tl_message"))]
+      [instrs15 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs14
+          (cobj.CompilerObjectX64Instr.MovRcxRax))]
+      [instrs16 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          instrs15
+          (cobj.CompilerObjectX64Instr.Raw (compiler-object-elf-ret-bytes)))]
+      (cobj.compiler-object-instr-builder-finish instrs16))))
 
-(define (compiler-object-elf-text-smoke-relocations) : CompilerObjectRelocationList
-  (let
-    [relocs0 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-with-capacity 10)]
-    [relocs1 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs0
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.Call)
-          "foreign_exact"))]
-    [relocs2 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs1
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.RipValue)
-          "_tl_cell"))]
-    [relocs3 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs2
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.RipAddress)
-          "_tl_message"))]
-    [relocs4 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs3
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.RipAddress)
-          "_tl_cell"))]
-    [relocs5 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs4
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.Branch)
-          ".L_true"))]
-    [relocs6 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs5
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.Branch)
-          ".L_false"))]
-    [relocs7 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs6
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.Branch)
-          ".L_done"))]
-    [relocs8 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs7
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.TailCall)
-          "_tl_text"))]
-    [relocs9 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs8
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.RipValue)
-          "_tl_cell"))]
-    [relocs10 : CompilerObjectRelocationBuilder
-      (compiler-object-relocation-builder-push
-        relocs9
-        (CompilerObjectRelocation.Relocation
-          (CompilerObjectSectionKind.Text)
-          "_tl_text"
-          (CompilerObjectRelocationKind.RipValue)
-          "_tl_message"))]
-    (compiler-object-relocation-builder-finish relocs10)))
+(cfg
+  test
+  (define (compiler-object-elf-text-smoke-relocations) : cobj.CompilerObjectRelocationList
+    (let
+      [relocs0 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-with-capacity 10)]
+      [relocs1 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs0
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.Call)
+            "foreign_exact"))]
+      [relocs2 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs1
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.RipValue)
+            "_tl_cell"))]
+      [relocs3 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs2
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.RipAddress)
+            "_tl_message"))]
+      [relocs4 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs3
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.RipAddress)
+            "_tl_cell"))]
+      [relocs5 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs4
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.Branch)
+            ".L_true"))]
+      [relocs6 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs5
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.Branch)
+            ".L_false"))]
+      [relocs7 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs6
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.Branch)
+            ".L_done"))]
+      [relocs8 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs7
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.TailCall)
+            "_tl_text"))]
+      [relocs9 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs8
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.RipValue)
+            "_tl_cell"))]
+      [relocs10 : cobj.CompilerObjectRelocationBuilder
+        (cobj.compiler-object-relocation-builder-push
+          relocs9
+          (cobj.CompilerObjectRelocation.Relocation
+            (cobj.CompilerObjectSectionKind.Text)
+            "_tl_text"
+            (cobj.CompilerObjectRelocationKind.RipValue)
+            "_tl_message"))]
+      (cobj.compiler-object-relocation-builder-finish relocs10))))
 
-(define (compiler-object-elf-text-smoke-image) : CompilerObjectImage
-  (let
-    [empty-data : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish
-        (compiler-object-data-record-builder-with-capacity 1))]
-    [empty-instrs : CompilerObjectX64InstrList
-      (compiler-object-instr-builder-finish
-        (compiler-object-instr-builder-with-capacity 1))]
-    [data0 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-with-capacity 2)]
-    [data1 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        data0
-        (CompilerObjectDataRecord.Label "_tl_cell"))]
-    [data2 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        data1
-        (CompilerObjectDataRecord.I64 0))]
-    [rodata0 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-with-capacity 2)]
-    [rodata1 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata0
-        (CompilerObjectDataRecord.Label "_tl_message"))]
-    [rodata2 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata1
-        (CompilerObjectDataRecord.String "ok"))]
-    [sections0 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-with-capacity 4)]
-    [sections1 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections0
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Text)
-          empty-data
-          (compiler-object-elf-text-smoke-instrs)))]
-    [sections2 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections1
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Data)
-          (compiler-object-data-record-builder-finish data2)
-          empty-instrs))]
-    [sections3 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections2
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Rodata)
-          (compiler-object-data-record-builder-finish rodata2)
-          empty-instrs))]
-    [sections4 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections3
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Bss)
-          empty-data
-          empty-instrs))]
-    [symbols0 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-with-capacity 7)]
-    [symbols1 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols0
-        (CompilerObjectSymbol.Symbol
-          ".L_true"
-          (CompilerObjectSymbolBinding.Local)
-          (CompilerObjectSymbolKind.Function)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
-    [symbols2 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols1
-        (CompilerObjectSymbol.Symbol
-          ".L_false"
-          (CompilerObjectSymbolBinding.Local)
-          (CompilerObjectSymbolKind.Function)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
-    [symbols3 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols2
-        (CompilerObjectSymbol.Symbol
-          ".L_done"
-          (CompilerObjectSymbolBinding.Local)
-          (CompilerObjectSymbolKind.Function)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
-    [symbols4 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols3
-        (CompilerObjectSymbol.Symbol
-          "_tl_message"
-          (CompilerObjectSymbolBinding.Local)
-          (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rodata))))]
-    [symbols5 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols4
-        (CompilerObjectSymbol.Symbol
-          "_tl_text"
-          (CompilerObjectSymbolBinding.Export)
-          (CompilerObjectSymbolKind.Function)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
-    [symbols6 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols5
-        (CompilerObjectSymbol.Symbol
-          "_tl_cell"
-          (CompilerObjectSymbolBinding.Export)
-          (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data))))]
-    [symbols7 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols6
-        (CompilerObjectSymbol.Symbol
-          "foreign_exact"
-          (CompilerObjectSymbolBinding.Extern)
-          (CompilerObjectSymbolKind.Function)
-          CompilerObjectMaybeSection.No))]
-    (CompilerObjectImage
-      (compiler-object-section-builder-finish sections4)
-      (compiler-object-symbol-builder-finish symbols7)
-      (compiler-object-elf-text-smoke-relocations))))
-
-(define (compiler-object-elf-smoke-image) : CompilerObjectImage
-  (let
-    [empty-data : CompilerObjectDataRecordList
-      (compiler-object-data-record-builder-finish
-        (compiler-object-data-record-builder-with-capacity 1))]
-    [empty-instrs : CompilerObjectX64InstrList
-      (compiler-object-instr-builder-finish
-        (compiler-object-instr-builder-with-capacity 1))]
-    [text0 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-with-capacity 2)]
-    [text1 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        text0
-        (CompilerObjectX64Instr.Label "_tl_empty"))]
-    [text2 : CompilerObjectX64InstrBuilder
-      (compiler-object-instr-builder-push
-        text1
-        (CompilerObjectX64Instr.Raw (compiler-object-elf-ret-bytes)))]
-    [data0 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-with-capacity 3)]
-    [data1 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        data0
-        (CompilerObjectDataRecord.Label "_tl_cell"))]
-    [data2 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        data1
-        (CompilerObjectDataRecord.SymbolAddress "_tl_message"))]
-    [data3 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        data2
-        (CompilerObjectDataRecord.I64 99))]
-    [rodata0 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-with-capacity 5)]
-    [rodata1 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata0
-        (CompilerObjectDataRecord.Label "_tl_message"))]
-    [rodata2 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata1
-        (CompilerObjectDataRecord.String "ok"))]
-    [rodata3 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata2
-        (CompilerObjectDataRecord.Align 8))]
-    [rodata4 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata3
-        (CompilerObjectDataRecord.Label "_tl_pi"))]
-    [rodata5 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        rodata4
-        (CompilerObjectDataRecord.F64 0x400c000000000000))]
-    [bss0 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-with-capacity 2)]
-    [bss1 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        bss0
-        (CompilerObjectDataRecord.Label "_tl_zero"))]
-    [bss2 : CompilerObjectDataRecordBuilder
-      (compiler-object-data-record-builder-push
-        bss1
-        (CompilerObjectDataRecord.Zero 16))]
-    [sections0 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-with-capacity 4)]
-    [sections1 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections0
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Text)
-          empty-data
-          (compiler-object-instr-builder-finish text2)))]
-    [sections2 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections1
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Data)
-          (compiler-object-data-record-builder-finish data3)
-          empty-instrs))]
-    [sections3 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections2
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Rodata)
-          (compiler-object-data-record-builder-finish rodata5)
-          empty-instrs))]
-    [sections4 : CompilerObjectSectionBuilder
-      (compiler-object-section-builder-push
-        sections3
-        (CompilerObjectSection.Section
-          (CompilerObjectSectionKind.Bss)
-          (compiler-object-data-record-builder-finish bss2)
-          empty-instrs))]
-    [symbols0 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-with-capacity 5)]
-    [symbols1 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols0
-        (CompilerObjectSymbol.Symbol
-          "_tl_empty"
-          (CompilerObjectSymbolBinding.Export)
-          (CompilerObjectSymbolKind.Function)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Text))))]
-    [symbols2 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols1
-        (CompilerObjectSymbol.Symbol
-          "_tl_cell"
-          (CompilerObjectSymbolBinding.Export)
-          (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Data))))]
-    [symbols3 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols2
-        (CompilerObjectSymbol.Symbol
-          "_tl_message"
-          (CompilerObjectSymbolBinding.Local)
-          (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Rodata))))]
-    [symbols4 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols3
-        (CompilerObjectSymbol.Symbol
-          "_tl_zero"
-          (CompilerObjectSymbolBinding.Export)
-          (CompilerObjectSymbolKind.Data)
-          (CompilerObjectMaybeSection.Some (CompilerObjectSectionKind.Bss))))]
-    [symbols5 : CompilerObjectSymbolBuilder
-      (compiler-object-symbol-builder-push
-        symbols4
-        (CompilerObjectSymbol.Symbol
-          "foreign_exact"
-          (CompilerObjectSymbolBinding.Extern)
-          (CompilerObjectSymbolKind.Function)
-          CompilerObjectMaybeSection.No))]
-    [relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-builder-finish
-        (compiler-object-relocation-builder-push
-          (compiler-object-relocation-builder-with-capacity 1)
-          (CompilerObjectRelocation.Relocation
-            (CompilerObjectSectionKind.Data)
+(cfg
+  test
+  (define (compiler-object-elf-text-smoke-image) : cobj.CompilerObjectImage
+    (let
+      [empty-data : cobj.CompilerObjectDataRecordList
+        (cobj.compiler-object-data-record-builder-finish
+          (cobj.compiler-object-data-record-builder-with-capacity 1))]
+      [empty-instrs : cobj.CompilerObjectX64InstrList
+        (cobj.compiler-object-instr-builder-finish
+          (cobj.compiler-object-instr-builder-with-capacity 1))]
+      [data0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 2)]
+      [data1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data0
+          (cobj.CompilerObjectDataRecord.Label "_tl_cell"))]
+      [data2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data1
+          (cobj.CompilerObjectDataRecord.I64 0))]
+      [rodata0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 2)]
+      [rodata1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata0
+          (cobj.CompilerObjectDataRecord.Label "_tl_message"))]
+      [rodata2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata1
+          (cobj.CompilerObjectDataRecord.String "ok"))]
+      [sections0 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-with-capacity 4)]
+      [sections1 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections0
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Text)
+            empty-data
+            (compiler-object-elf-text-smoke-instrs)))]
+      [sections2 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections1
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Data)
+            (cobj.compiler-object-data-record-builder-finish data2)
+            empty-instrs))]
+      [sections3 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections2
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (cobj.compiler-object-data-record-builder-finish rodata2)
+            empty-instrs))]
+      [sections4 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections3
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Bss)
+            empty-data
+            empty-instrs))]
+      [symbols0 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-with-capacity 7)]
+      [symbols1 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols0
+          (cobj.CompilerObjectSymbol.Symbol
+            ".L_true"
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Function)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Text))))]
+      [symbols2 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols1
+          (cobj.CompilerObjectSymbol.Symbol
+            ".L_false"
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Function)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Text))))]
+      [symbols3 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols2
+          (cobj.CompilerObjectSymbol.Symbol
+            ".L_done"
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Function)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Text))))]
+      [symbols4 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols3
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_message"
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Data)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Rodata))))]
+      [symbols5 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols4
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_text"
+            (cobj.CompilerObjectSymbolBinding.Export)
+            (cobj.CompilerObjectSymbolKind.Function)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Text))))]
+      [symbols6 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols5
+          (cobj.CompilerObjectSymbol.Symbol
             "_tl_cell"
-            (CompilerObjectRelocationKind.Abs64)
-            "_tl_message")))]
-    (CompilerObjectImage
-      (compiler-object-section-builder-finish sections4)
-      (compiler-object-symbol-builder-finish symbols5)
-      relocs)))
+            (cobj.CompilerObjectSymbolBinding.Export)
+            (cobj.CompilerObjectSymbolKind.Data)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Data))))]
+      [symbols7 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols6
+          (cobj.CompilerObjectSymbol.Symbol
+            "foreign_exact"
+            (cobj.CompilerObjectSymbolBinding.Extern)
+            (cobj.CompilerObjectSymbolKind.Function)
+            cobj.CompilerObjectMaybeSection.No))]
+      (cobj.CompilerObjectImage
+        (cobj.compiler-object-section-builder-finish sections4)
+        (cobj.compiler-object-symbol-builder-finish symbols7)
+        (compiler-object-elf-text-smoke-relocations)))))
 
-(define (compiler-object-elf-smoke-ok?) : bool
-  (match (compiler-object-elf-render (compiler-object-elf-smoke-image))
-    [(ResultCompilerObjectElf.Ok obj)
-      (and
-        (=
-          (compiler-object-elf-string-length obj)
-          (+
-            (compiler-object-elf-section-header-offset
-              (compiler-object-elf-smoke-image))
-            (*
-              compiler-object-elf-section-header-size
-              compiler-object-elf-section-count)))
-        (= (cast (compiler-object-elf-string-ref obj 0) : i64) 0x7f)
-        (= (cast (compiler-object-elf-string-ref obj 1) : i64) 0x45)
-        (= (compiler-object-elf-u16-at obj 18) 62)
-        (=
-          (compiler-object-elf-u16-at obj 58)
-          compiler-object-elf-section-header-size)
-        (=
-          (compiler-object-elf-u16-at obj 60)
-          compiler-object-elf-section-count)
-        (compiler-object-elf-contains? obj ".rela.data")
-        (compiler-object-elf-contains? obj ".note.GNU-stack")
-        (compiler-object-elf-contains? obj "_tl_message")
-        (compiler-object-elf-contains? obj "foreign_exact"))]
-    [(ResultCompilerObjectElf.Err _) false]))
+(cfg
+  test
+  (define (compiler-object-elf-smoke-image) : cobj.CompilerObjectImage
+    (let
+      [empty-data : cobj.CompilerObjectDataRecordList
+        (cobj.compiler-object-data-record-builder-finish
+          (cobj.compiler-object-data-record-builder-with-capacity 1))]
+      [empty-instrs : cobj.CompilerObjectX64InstrList
+        (cobj.compiler-object-instr-builder-finish
+          (cobj.compiler-object-instr-builder-with-capacity 1))]
+      [text0 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-with-capacity 2)]
+      [text1 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          text0
+          (cobj.CompilerObjectX64Instr.Label "_tl_empty"))]
+      [text2 : cobj.CompilerObjectX64InstrBuilder
+        (cobj.compiler-object-instr-builder-push
+          text1
+          (cobj.CompilerObjectX64Instr.Raw (compiler-object-elf-ret-bytes)))]
+      [data0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 3)]
+      [data1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data0
+          (cobj.CompilerObjectDataRecord.Label "_tl_cell"))]
+      [data2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data1
+          (cobj.CompilerObjectDataRecord.SymbolAddress "_tl_message"))]
+      [data3 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          data2
+          (cobj.CompilerObjectDataRecord.I64 99))]
+      [rodata0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 5)]
+      [rodata1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata0
+          (cobj.CompilerObjectDataRecord.Label "_tl_message"))]
+      [rodata2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata1
+          (cobj.CompilerObjectDataRecord.String "ok"))]
+      [rodata3 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata2
+          (cobj.CompilerObjectDataRecord.Align 8))]
+      [rodata4 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata3
+          (cobj.CompilerObjectDataRecord.Label "_tl_pi"))]
+      [rodata5 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          rodata4
+          (cobj.CompilerObjectDataRecord.F64 0x400c000000000000))]
+      [bss0 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-with-capacity 2)]
+      [bss1 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          bss0
+          (cobj.CompilerObjectDataRecord.Label "_tl_zero"))]
+      [bss2 : cobj.CompilerObjectDataRecordBuilder
+        (cobj.compiler-object-data-record-builder-push
+          bss1
+          (cobj.CompilerObjectDataRecord.Zero 16))]
+      [sections0 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-with-capacity 4)]
+      [sections1 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections0
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Text)
+            empty-data
+            (cobj.compiler-object-instr-builder-finish text2)))]
+      [sections2 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections1
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Data)
+            (cobj.compiler-object-data-record-builder-finish data3)
+            empty-instrs))]
+      [sections3 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections2
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Rodata)
+            (cobj.compiler-object-data-record-builder-finish rodata5)
+            empty-instrs))]
+      [sections4 : cobj.CompilerObjectSectionBuilder
+        (cobj.compiler-object-section-builder-push
+          sections3
+          (cobj.CompilerObjectSection.Section
+            (cobj.CompilerObjectSectionKind.Bss)
+            (cobj.compiler-object-data-record-builder-finish bss2)
+            empty-instrs))]
+      [symbols0 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-with-capacity 5)]
+      [symbols1 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols0
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_empty"
+            (cobj.CompilerObjectSymbolBinding.Export)
+            (cobj.CompilerObjectSymbolKind.Function)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Text))))]
+      [symbols2 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols1
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_cell"
+            (cobj.CompilerObjectSymbolBinding.Export)
+            (cobj.CompilerObjectSymbolKind.Data)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Data))))]
+      [symbols3 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols2
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_message"
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Data)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Rodata))))]
+      [symbols4 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols3
+          (cobj.CompilerObjectSymbol.Symbol
+            "_tl_zero"
+            (cobj.CompilerObjectSymbolBinding.Export)
+            (cobj.CompilerObjectSymbolKind.Data)
+            (cobj.CompilerObjectMaybeSection.Some
+              (cobj.CompilerObjectSectionKind.Bss))))]
+      [symbols5 : cobj.CompilerObjectSymbolBuilder
+        (cobj.compiler-object-symbol-builder-push
+          symbols4
+          (cobj.CompilerObjectSymbol.Symbol
+            "foreign_exact"
+            (cobj.CompilerObjectSymbolBinding.Extern)
+            (cobj.CompilerObjectSymbolKind.Function)
+            cobj.CompilerObjectMaybeSection.No))]
+      [relocs : cobj.CompilerObjectRelocationList
+        (cobj.compiler-object-relocation-builder-finish
+          (cobj.compiler-object-relocation-builder-push
+            (cobj.compiler-object-relocation-builder-with-capacity 1)
+            (cobj.CompilerObjectRelocation.Relocation
+              (cobj.CompilerObjectSectionKind.Data)
+              "_tl_cell"
+              (cobj.CompilerObjectRelocationKind.Abs64)
+              "_tl_message")))]
+      (cobj.CompilerObjectImage
+        (cobj.compiler-object-section-builder-finish sections4)
+        (cobj.compiler-object-symbol-builder-finish symbols5)
+        relocs))))
 
-(define (compiler-object-elf-text-smoke-ok?) : bool
-  (let
-    [image : CompilerObjectImage (compiler-object-elf-text-smoke-image)]
-    (match (compiler-object-elf-render image)
+(cfg
+  test
+  (define (compiler-object-elf-smoke-ok?) : bool
+    (match (compiler-object-elf-render (compiler-object-elf-smoke-image))
       [(ResultCompilerObjectElf.Ok obj)
-        (let
-          [text-offset : i64 (compiler-object-elf-text-offset image)]
-          [rela-offset : i64 (compiler-object-elf-rela-text-offset image)]
-          (and
-            (=
-              (compiler-object-elf-section-header-size-at
-                obj
-                image
-                compiler-object-elf-section-text-index)
-              72)
-            (=
-              (compiler-object-elf-section-header-size-at
-                obj
-                image
-                compiler-object-elf-section-rela-text-index)
-              (* 10 compiler-object-elf-relocation-size))
-            (= (compiler-object-elf-u8-at obj text-offset) 0xe8)
-            (= (compiler-object-elf-u8-at obj (+ text-offset 26)) 0x48)
-            (= (compiler-object-elf-u8-at obj (+ text-offset 27)) 0x85)
-            (= (compiler-object-elf-u8-at obj (+ text-offset 28)) 0xc0)
-            (= (compiler-object-elf-rela-target-offset-at obj rela-offset 0) 1)
-            (=
-              (compiler-object-elf-rela-type-at obj rela-offset 0)
-              compiler-object-elf-r-x86-64-plt32)
-            (compiler-object-elf-rela-addend-rel32? obj rela-offset 0)
-            (= (compiler-object-elf-rela-target-offset-at obj rela-offset 1) 8)
-            (=
-              (compiler-object-elf-rela-type-at obj rela-offset 1)
-              compiler-object-elf-r-x86-64-pc32)
-            (compiler-object-elf-rela-addend-rel32? obj rela-offset 1)
-            (= (compiler-object-elf-rela-target-offset-at obj rela-offset 5) 36)
-            (=
-              (compiler-object-elf-rela-type-at obj rela-offset 5)
-              compiler-object-elf-r-x86-64-pc32)
-            (compiler-object-elf-rela-addend-rel32? obj rela-offset 5)
-            (compiler-object-elf-contains? obj "_tl_cell")
-            (compiler-object-elf-contains? obj "foreign_exact")))]
+        (and
+          (=
+            (compiler-object-elf-string-length obj)
+            (+
+              (compiler-object-elf-section-header-offset
+                (compiler-object-elf-smoke-image))
+              (*
+                compiler-object-elf-section-header-size
+                compiler-object-elf-section-count)))
+          (= (cast (compiler-object-elf-string-ref obj 0) : i64) 0x7f)
+          (= (cast (compiler-object-elf-string-ref obj 1) : i64) 0x45)
+          (= (compiler-object-elf-u16-at obj 18) 62)
+          (=
+            (compiler-object-elf-u16-at obj 58)
+            compiler-object-elf-section-header-size)
+          (=
+            (compiler-object-elf-u16-at obj 60)
+            compiler-object-elf-section-count)
+          (compiler-object-elf-contains? obj ".rela.data")
+          (compiler-object-elf-contains? obj ".note.GNU-stack")
+          (compiler-object-elf-contains? obj "_tl_message")
+          (compiler-object-elf-contains? obj "foreign_exact"))]
       [(ResultCompilerObjectElf.Err _) false])))
+
+(cfg
+  test
+  (define (compiler-object-elf-text-smoke-ok?) : bool
+    (let
+      [image : cobj.CompilerObjectImage (compiler-object-elf-text-smoke-image)]
+      (match (compiler-object-elf-render image)
+        [(ResultCompilerObjectElf.Ok obj)
+          (let
+            [text-offset : i64 (compiler-object-elf-text-offset image)]
+            [rela-offset : i64 (compiler-object-elf-rela-text-offset image)]
+            (and
+              (=
+                (compiler-object-elf-section-header-size-at
+                  obj
+                  image
+                  compiler-object-elf-section-text-index)
+                72)
+              (=
+                (compiler-object-elf-section-header-size-at
+                  obj
+                  image
+                  compiler-object-elf-section-rela-text-index)
+                (* 10 compiler-object-elf-relocation-size))
+              (= (compiler-object-elf-u8-at obj text-offset) 0xe8)
+              (= (compiler-object-elf-u8-at obj (+ text-offset 26)) 0x48)
+              (= (compiler-object-elf-u8-at obj (+ text-offset 27)) 0x85)
+              (= (compiler-object-elf-u8-at obj (+ text-offset 28)) 0xc0)
+              (=
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 0)
+                1)
+              (=
+                (compiler-object-elf-rela-type-at obj rela-offset 0)
+                compiler-object-elf-r-x86-64-plt32)
+              (compiler-object-elf-rela-addend-rel32? obj rela-offset 0)
+              (=
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 1)
+                8)
+              (=
+                (compiler-object-elf-rela-type-at obj rela-offset 1)
+                compiler-object-elf-r-x86-64-pc32)
+              (compiler-object-elf-rela-addend-rel32? obj rela-offset 1)
+              (=
+                (compiler-object-elf-rela-target-offset-at obj rela-offset 5)
+                36)
+              (=
+                (compiler-object-elf-rela-type-at obj rela-offset 5)
+                compiler-object-elf-r-x86-64-pc32)
+              (compiler-object-elf-rela-addend-rel32? obj rela-offset 5)
+              (compiler-object-elf-contains? obj "_tl_cell")
+              (compiler-object-elf-contains? obj "foreign_exact")))]
+        [(ResultCompilerObjectElf.Err _) false]))))
+
+(cfg
+  test
+  (test
+    compiler-object-elf-smoke
+    (begin
+      (test.assert-true (compiler-object-elf-smoke-ok?) "elf object smoke")
+      (test.assert-true
+        (compiler-object-elf-text-smoke-ok?)
+        "elf text object smoke"))))

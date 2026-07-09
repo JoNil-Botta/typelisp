@@ -2,13 +2,14 @@
 (import stdlib.array)
 (import stdlib.hashmap)
 (import (hashmap String i64) as backend_test_string_i64_map)
+(import compiler_object as cobj)
+(import compiler_object_coff as coff)
+(import compiler_object_elf as elf)
 (import "compiler_backend.tl")
 (import compiler_parallel_move as pmove)
 (import compiler_builtin_ids as cbi)
 (import "compiler_float.tl")
 (import compiler_intern as ci)
-(import "compiler_object_coff.tl")
-(import "compiler_object_elf.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.text_buf)
@@ -1221,133 +1222,136 @@
     (compiler-backend-object-image-source))
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
-        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (struct-get image relocations)]
         (and
-          (compiler-object-image-dense? image)
+          (cobj.compiler-object-image-dense? image)
           (backend-and8
-            (= (compiler-object-section-list-count sections) 4)
+            (= (cobj.compiler-object-section-list-count sections) 4)
             (>
-              (compiler-object-section-instr-count
+              (cobj.compiler-object-section-instr-count
                 sections
-                (CompilerObjectSectionKind.Text))
+                (cobj.CompilerObjectSectionKind.Text))
               0)
             (>
-              (compiler-object-section-data-count
+              (cobj.compiler-object-section-data-count
                 sections
-                (CompilerObjectSectionKind.Data))
+                (cobj.CompilerObjectSectionKind.Data))
               0)
             (>
-              (compiler-object-section-data-count
+              (cobj.compiler-object-section-data-count
                 sections
-                (CompilerObjectSectionKind.Rodata))
+                (cobj.CompilerObjectSectionKind.Rodata))
               0)
-            (compiler-object-symbol-list-contains?
+            (cobj.compiler-object-symbol-list-contains?
               symbols
               "_tl_start"
-              (CompilerObjectSymbolBinding.Export)
-              (CompilerObjectSymbolKind.Function))
-            (compiler-object-symbol-list-contains?
+              (cobj.CompilerObjectSymbolBinding.Export)
+              (cobj.CompilerObjectSymbolKind.Function))
+            (cobj.compiler-object-symbol-list-contains?
               symbols
               "main"
-              (CompilerObjectSymbolBinding.Export)
-              (CompilerObjectSymbolKind.Function))
-            (compiler-object-symbol-list-contains?
+              (cobj.CompilerObjectSymbolBinding.Export)
+              (cobj.CompilerObjectSymbolKind.Function))
+            (cobj.compiler-object-symbol-list-contains?
               symbols
               "_tl_inc"
-              (CompilerObjectSymbolBinding.Export)
-              (CompilerObjectSymbolKind.Function))
-            (compiler-object-symbol-list-contains?
+              (cobj.CompilerObjectSymbolBinding.Export)
+              (cobj.CompilerObjectSymbolKind.Function))
+            (cobj.compiler-object-symbol-list-contains?
               symbols
               "foreign_exact"
-              (CompilerObjectSymbolBinding.Extern)
-              (CompilerObjectSymbolKind.Function)))
-          (compiler-object-symbol-list-contains?
+              (cobj.CompilerObjectSymbolBinding.Extern)
+              (cobj.CompilerObjectSymbolKind.Function)))
+          (cobj.compiler-object-symbol-list-contains?
             symbols
             "tl_alloc"
-            (CompilerObjectSymbolBinding.Local)
-            (CompilerObjectSymbolKind.Runtime))
-          (compiler-object-symbol-list-contains?
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Runtime))
+          (cobj.compiler-object-symbol-list-contains?
             symbols
             "tl_tlci_call_image_entry"
-            (CompilerObjectSymbolBinding.Local)
-            (CompilerObjectSymbolKind.Runtime))
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Runtime))
           (backend-and8
-            (compiler-object-section-contains-label?
+            (cobj.compiler-object-section-contains-label?
               sections
-              (CompilerObjectSectionKind.Data)
+              (cobj.CompilerObjectSectionKind.Data)
               "_tl_answer")
-            (compiler-object-section-contains-label?
+            (cobj.compiler-object-section-contains-label?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               (compiler-backend-string-data-label "hi"))
-            (compiler-object-section-contains-label?
+            (cobj.compiler-object-section-contains-label?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               (compiler-backend-string-fat-label "hi"))
-            (compiler-object-section-contains-string?
+            (cobj.compiler-object-section-contains-string?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               "hi")
-            (compiler-object-section-contains-align?
+            (cobj.compiler-object-section-contains-align?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               8)
-            (compiler-object-section-contains-i64?
+            (cobj.compiler-object-section-contains-i64?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               2)
-            (compiler-object-section-contains-f64?
+            (cobj.compiler-object-section-contains-f64?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               (compiler-backend-test-f64-bits "4.0"))
             true)
-          (compiler-object-section-contains-f32?
+          (cobj.compiler-object-section-contains-f32?
             sections
-            (CompilerObjectSectionKind.Data)
+            (cobj.CompilerObjectSectionKind.Data)
             (compiler-backend-test-f32-bits "2.5"))
-          (compiler-object-section-contains-f32?
+          (cobj.compiler-object-section-contains-f32?
             sections
-            (CompilerObjectSectionKind.Rodata)
+            (cobj.CompilerObjectSectionKind.Rodata)
             (compiler-backend-test-f32-bits "3.0"))
           (backend-and8
-            (compiler-object-section-contains-call? sections "_tl_inc")
-            (compiler-object-section-contains-call? sections "foreign_exact")
-            (compiler-object-relocation-list-contains?
-              relocs
-              (CompilerObjectRelocationKind.Call)
-              "_tl_inc")
-            (compiler-object-relocation-list-contains?
-              relocs
-              (CompilerObjectRelocationKind.Call)
+            (cobj.compiler-object-section-contains-call? sections "_tl_inc")
+            (cobj.compiler-object-section-contains-call?
+              sections
               "foreign_exact")
-            (compiler-object-relocation-list-contains?
+            (cobj.compiler-object-relocation-list-contains?
               relocs
-              (CompilerObjectRelocationKind.Call)
+              (cobj.CompilerObjectRelocationKind.Call)
+              "_tl_inc")
+            (cobj.compiler-object-relocation-list-contains?
+              relocs
+              (cobj.CompilerObjectRelocationKind.Call)
+              "foreign_exact")
+            (cobj.compiler-object-relocation-list-contains?
+              relocs
+              (cobj.CompilerObjectRelocationKind.Call)
               "tl_alloc")
-            (compiler-object-section-contains-bytes?
+            (cobj.compiler-object-section-contains-bytes?
               sections
               (compiler-backend-object-bytes-from-hex "554889e5"))
-            (compiler-object-section-contains-bytes?
+            (cobj.compiler-object-section-contains-bytes?
               sections
               (compiler-backend-object-bytes-from-hex "c9c3"))
-            (compiler-object-section-contains-bytes?
+            (cobj.compiler-object-section-contains-bytes?
               sections
               (compiler-backend-object-linux-exit-bytes)))
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-tlci-entry-bytes
               (CompilerBackendTarget.Linux)))
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             (compiler-backend-string-data-label "hi"))
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.RipValue)
+            (cobj.CompilerObjectRelocationKind.RipValue)
             "_tl_answer")
-          (> (compiler-object-relocation-list-count relocs) 5)))]
+          (> (cobj.compiler-object-relocation-list-count relocs) 5)))]
     [(ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-pic-source) : String
@@ -1409,14 +1413,14 @@
   (and
     (=
       (compiler-backend-pic-data-record-end-offset
-        (CompilerObjectDataRecord.SymbolRva32 ".L_target")
+        (cobj.CompilerObjectDataRecord.SymbolRva32 ".L_target")
         8)
       12)
     (string.eq
-      (compiler-backend-pic-section-name (CompilerObjectSectionKind.Pdata))
+      (compiler-backend-pic-section-name (cobj.CompilerObjectSectionKind.Pdata))
       "pdata")
     (string.eq
-      (compiler-backend-pic-section-name (CompilerObjectSectionKind.Xdata))
+      (compiler-backend-pic-section-name (cobj.CompilerObjectSectionKind.Xdata))
       "xdata")))
 
 (define (compiler-backend-pic-ok?) : bool
@@ -1430,21 +1434,21 @@
     (compiler-backend-coff-real-text-source)
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)
-      (match (compiler-object-coff-render image)
-        [(ResultCompilerObjectCoff.Ok obj)
+      (match (coff.compiler-object-coff-render image)
+        [(coff.ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
-              (compiler-object-coff-section-header-offset
-                (CompilerObjectSectionKind.Text))]
+              (coff.compiler-object-coff-section-header-offset
+                (cobj.CompilerObjectSectionKind.Text))]
             [text-size : i64
-              (compiler-object-coff-u32-at obj (+ text-header 16))]
+              (coff.compiler-object-coff-u32-at obj (+ text-header 16))]
             [reloc-count : i64
-              (compiler-object-coff-u16-at obj (+ text-header 32))]
+              (coff.compiler-object-coff-u16-at obj (+ text-header 32))]
             (and
               (> text-size 0)
               (> reloc-count 0)
-              (compiler-object-coff-contains? obj "foreign_exact")))]
-        [(ResultCompilerObjectCoff.Err _) false])]
+              (coff.compiler-object-coff-contains? obj "foreign_exact")))]
+        [(coff.ResultCompilerObjectCoff.Err _) false])]
     [(ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-elf-renders-real-text-ok?) : bool
@@ -1452,61 +1456,63 @@
     (compiler-backend-coff-real-text-source)
     (CompilerBackendTarget.Linux))
     [(ResultCompilerBackendObject.Ok image)
-      (match (compiler-object-elf-render image)
-        [(ResultCompilerObjectElf.Ok obj)
+      (match (elf.compiler-object-elf-render image)
+        [(elf.ResultCompilerObjectElf.Ok obj)
           (let
             [text-size : i64
-              (compiler-object-elf-section-header-size-at
+              (elf.compiler-object-elf-section-header-size-at
                 obj
                 image
-                compiler-object-elf-section-text-index)]
+                elf.compiler-object-elf-section-text-index)]
             [rela-text-size : i64
-              (compiler-object-elf-section-header-size-at
+              (elf.compiler-object-elf-section-header-size-at
                 obj
                 image
-                compiler-object-elf-section-rela-text-index)]
+                elf.compiler-object-elf-section-rela-text-index)]
             (and
               (> text-size 0)
               (> rela-text-size 0)
-              (= (% rela-text-size compiler-object-elf-relocation-size) 0)
-              (compiler-object-elf-contains? obj "foreign_exact")))]
-        [(ResultCompilerObjectElf.Err _) false])]
+              (= (% rela-text-size elf.compiler-object-elf-relocation-size) 0)
+              (elf.compiler-object-elf-contains? obj "foreign_exact")))]
+        [(elf.ResultCompilerObjectElf.Err _) false])]
     [(ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-windows-object-manifest-resource-ok?
-  [image : CompilerObjectImage]) : bool
+  [image : cobj.CompilerObjectImage]) : bool
   (let
-    [sections : CompilerObjectSectionList (struct-get image sections)]
-    [symbols : CompilerObjectSymbolList (struct-get image symbols)]
-    [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+    [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+    [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+    [relocs : cobj.CompilerObjectRelocationList (struct-get image relocations)]
     [manifest : String compiler-backend-object-windows-utf8-manifest]
     [manifest-size : i64 (string.string-length manifest)]
     [manifest-label : String compiler-backend-object-windows-manifest-label]
     [rsrc-data-label : String compiler-backend-object-windows-rsrc-data-label]
     [manifest-offset : i64
-      (compiler-object-coff-section-label-offset
+      (coff.compiler-object-coff-section-label-offset
         image
-        (CompilerObjectSectionKind.Rsrc)
+        (cobj.CompilerObjectSectionKind.Rsrc)
         manifest-label)]
     [data-offset : i64
-      (compiler-object-coff-section-label-offset
+      (coff.compiler-object-coff-section-label-offset
         image
-        (CompilerObjectSectionKind.Rsrc)
+        (cobj.CompilerObjectSectionKind.Rsrc)
         rsrc-data-label)]
-    (match (compiler-object-coff-render image)
-      [(ResultCompilerObjectCoff.Ok obj)
+    (match (coff.compiler-object-coff-render image)
+      [(coff.ResultCompilerObjectCoff.Ok obj)
         (let
           [rsrc-header : i64
-            (compiler-object-coff-section-header-offset
-              (CompilerObjectSectionKind.Rsrc))]
-          [rsrc-size : i64 (compiler-object-coff-u32-at obj (+ rsrc-header 16))]
-          [rsrc-ptr : i64 (compiler-object-coff-u32-at obj (+ rsrc-header 20))]
+            (coff.compiler-object-coff-section-header-offset
+              (cobj.CompilerObjectSectionKind.Rsrc))]
+          [rsrc-size : i64
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 16))]
+          [rsrc-ptr : i64
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 20))]
           [rsrc-reloc-ptr : i64
-            (compiler-object-coff-u32-at obj (+ rsrc-header 24))]
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 24))]
           [rsrc-reloc-count : i64
-            (compiler-object-coff-u16-at obj (+ rsrc-header 32))]
+            (coff.compiler-object-coff-u16-at obj (+ rsrc-header 32))]
           [rsrc-flags : i64
-            (compiler-object-coff-u32-at obj (+ rsrc-header 36))]
+            (coff.compiler-object-coff-u32-at obj (+ rsrc-header 36))]
           (and
             (backend-and8
               (= rsrc-size (+ 88 manifest-size))
@@ -1516,67 +1522,75 @@
               (= manifest-size 376)
               (= data-offset 72)
               (= manifest-offset 88)
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Rsrc)
+                (cobj.CompilerObjectSectionKind.Rsrc)
                 ".L_tl_rsrc_base"))
             (backend-and8
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Rsrc)
+                (cobj.CompilerObjectSectionKind.Rsrc)
                 manifest-label)
-              (compiler-object-symbol-list-contains?
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 manifest-label
-                (CompilerObjectSymbolBinding.Local)
-                (CompilerObjectSymbolKind.Data))
-              (compiler-object-relocation-list-contains?
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Data))
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Addr32Nb)
+                (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 manifest-label)
-              (compiler-object-coff-reloc-entry-ok?
+              (coff.compiler-object-coff-reloc-entry-ok?
                 obj
                 rsrc-reloc-ptr
                 0
                 data-offset
-                (compiler-object-coff-symbol-index image manifest-label)
-                compiler-object-coff-reloc-amd64-addr32nb)
-              (= (compiler-object-coff-u32-at obj (+ rsrc-ptr data-offset)) 0)
+                (coff.compiler-object-coff-symbol-index image manifest-label)
+                coff.compiler-object-coff-reloc-amd64-addr32nb)
               (=
-                (compiler-object-coff-u32-at obj (+ rsrc-ptr (+ data-offset 4)))
-                manifest-size)
-              (=
-                (compiler-object-coff-u32-at obj (+ rsrc-ptr (+ data-offset 8)))
+                (coff.compiler-object-coff-u32-at obj (+ rsrc-ptr data-offset))
                 0)
               (=
-                (compiler-object-coff-u32-at
+                (coff.compiler-object-coff-u32-at
+                  obj
+                  (+ rsrc-ptr (+ data-offset 4)))
+                manifest-size)
+              (=
+                (coff.compiler-object-coff-u32-at
+                  obj
+                  (+ rsrc-ptr (+ data-offset 8)))
+                0)
+              (=
+                (coff.compiler-object-coff-u32-at
                   obj
                   (+ rsrc-ptr (+ data-offset 12)))
                 0))
             (backend-and8
               (=
-                (compiler-object-coff-u8-at obj (+ rsrc-ptr manifest-offset))
+                (coff.compiler-object-coff-u8-at
+                  obj
+                  (+ rsrc-ptr manifest-offset))
                 0x3c)
               (=
-                (compiler-object-coff-u8-at
+                (coff.compiler-object-coff-u8-at
                   obj
                   (+ rsrc-ptr (+ manifest-offset 1)))
                 0x3f)
               (=
-                (compiler-object-coff-u8-at
+                (coff.compiler-object-coff-u8-at
                   obj
                   (+ rsrc-ptr (+ manifest-offset 2)))
                 0x78)
               (=
-                (compiler-object-coff-u8-at
+                (coff.compiler-object-coff-u8-at
                   obj
                   (+ rsrc-ptr (+ manifest-offset 3)))
                 0x6d)
-              (compiler-object-coff-contains? obj "activeCodePage")
-              (compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
-              (compiler-object-coff-contains? obj ".rsrc")
+              (coff.compiler-object-coff-contains? obj "activeCodePage")
+              (coff.compiler-object-coff-contains? obj "UTF-8</activeCodePage>")
+              (coff.compiler-object-coff-contains? obj ".rsrc")
               true)))]
-      [(ResultCompilerObjectCoff.Err _) false])))
+      [(coff.ResultCompilerObjectCoff.Err _) false])))
 
 (define (compiler-backend-windows-object-entry-unwind-ok?) : bool
   (match (compiler-backend-emit-source-object-image-for-target
@@ -1584,57 +1598,58 @@
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
-        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (struct-get image relocations)]
         [shape-ok : bool
           (and
-            (compiler-object-image-dense? image)
+            (cobj.compiler-object-image-dense? image)
             (backend-and8
-              (= (compiler-object-section-list-count sections) 7)
-              (compiler-object-symbol-list-contains?
+              (= (cobj.compiler-object-section-list-count sections) 7)
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 "_tl_start"
-                (CompilerObjectSymbolBinding.Export)
-                (CompilerObjectSymbolKind.Function))
-              (compiler-object-symbol-list-contains?
+                (cobj.CompilerObjectSymbolBinding.Export)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 ".L_tl_start_end"
-                (CompilerObjectSymbolBinding.Local)
-                (CompilerObjectSymbolKind.Function))
-              (compiler-object-symbol-list-contains?
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 "ExitProcess"
-                (CompilerObjectSymbolBinding.Extern)
-                (CompilerObjectSymbolKind.Function))
-              (compiler-object-symbol-list-contains?
+                (cobj.CompilerObjectSymbolBinding.Extern)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 "GetCommandLineA"
-                (CompilerObjectSymbolBinding.Extern)
-                (CompilerObjectSymbolKind.Function))
-              (compiler-object-symbol-list-contains?
+                (cobj.CompilerObjectSymbolBinding.Extern)
+                (cobj.CompilerObjectSymbolKind.Function))
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 "__chkstk"
-                (CompilerObjectSymbolBinding.Local)
-                (CompilerObjectSymbolKind.Runtime))
-              (compiler-object-symbol-list-contains?
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Runtime))
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 ".L_tl_start_xdata"
-                (CompilerObjectSymbolBinding.Local)
-                (CompilerObjectSymbolKind.Data))
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Data))
               true)
             (backend-and8
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Data)
+                (cobj.CompilerObjectSectionKind.Data)
                 ".L_tl_argc")
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Bss)
+                (cobj.CompilerObjectSectionKind.Bss)
                 "tl_boot_off")
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Bss)
+                (cobj.CompilerObjectSectionKind.Bss)
                 "tl_boot_pool")
               true
               true
@@ -1643,149 +1658,149 @@
               true)
             (backend-and8
               (>=
-                (compiler-object-coff-section-label-offset
+                (coff.compiler-object-coff-section-label-offset
                   image
-                  (CompilerObjectSectionKind.Text)
+                  (cobj.CompilerObjectSectionKind.Text)
                   "tl_setup_argv")
                 0)
               (>=
-                (compiler-object-coff-section-label-offset
+                (coff.compiler-object-coff-section-label-offset
                   image
-                  (CompilerObjectSectionKind.Text)
+                  (cobj.CompilerObjectSectionKind.Text)
                   ".L_tl_boot_alloc")
                 0)
               (>=
-                (compiler-object-coff-section-label-offset
+                (coff.compiler-object-coff-section-label-offset
                   image
-                  (CompilerObjectSectionKind.Text)
+                  (cobj.CompilerObjectSectionKind.Text)
                   "tl_alloc")
                 0)
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Pdata)
+                (cobj.CompilerObjectSectionKind.Pdata)
                 ".L_tl_start_pdata_begin")
-              (compiler-object-section-contains-label?
+              (cobj.compiler-object-section-contains-label?
                 sections
-                (CompilerObjectSectionKind.Xdata)
+                (cobj.CompilerObjectSectionKind.Xdata)
                 ".L_tl_start_xdata")
-              (compiler-object-symbol-list-contains?
+              (cobj.compiler-object-symbol-list-contains?
                 symbols
                 ".L_tl_boot_alloc"
-                (CompilerObjectSymbolBinding.Local)
-                (CompilerObjectSymbolKind.Runtime))
+                (cobj.CompilerObjectSymbolBinding.Local)
+                (cobj.CompilerObjectSymbolKind.Runtime))
               true
               true)
             (backend-and8
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Call)
+                (cobj.CompilerObjectRelocationKind.Call)
                 "tl_setup_argv")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Call)
+                (cobj.CompilerObjectRelocationKind.Call)
                 "GetCommandLineA")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Call)
+                (cobj.CompilerObjectRelocationKind.Call)
                 ".L_tl_boot_alloc")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipAddress)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_argc")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipAddress)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
                 ".L_tl_argv")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipValue)
+                (cobj.CompilerObjectRelocationKind.RipValue)
                 "tl_boot_off")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipAddress)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
                 "tl_boot_pool")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipAddress)
+                (cobj.CompilerObjectRelocationKind.RipAddress)
                 "tl_boot_off"))
             (backend-and8
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Call)
+                (cobj.CompilerObjectRelocationKind.Call)
                 "main")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Call)
+                (cobj.CompilerObjectRelocationKind.Call)
                 "ExitProcess")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipValue)
+                (cobj.CompilerObjectRelocationKind.RipValue)
                 ".L_tl_argc")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.RipValue)
+                (cobj.CompilerObjectRelocationKind.RipValue)
                 ".L_tl_argv")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Addr32Nb)
+                (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 "_tl_start")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Addr32Nb)
+                (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_end")
-              (compiler-object-relocation-list-contains?
+              (cobj.compiler-object-relocation-list-contains?
                 relocs
-                (CompilerObjectRelocationKind.Addr32Nb)
+                (cobj.CompilerObjectRelocationKind.Addr32Nb)
                 ".L_tl_start_xdata")
               true))]
         (if (and
           shape-ok
           (compiler-backend-windows-object-manifest-resource-ok? image))
-          (match (compiler-object-coff-render image)
-            [(ResultCompilerObjectCoff.Ok obj)
+          (match (coff.compiler-object-coff-render image)
+            [(coff.ResultCompilerObjectCoff.Ok obj)
               (let
                 [pdata-header : i64
-                  (compiler-object-coff-section-header-offset
-                    (CompilerObjectSectionKind.Pdata))]
+                  (coff.compiler-object-coff-section-header-offset
+                    (cobj.CompilerObjectSectionKind.Pdata))]
                 [text-header : i64
-                  (compiler-object-coff-section-header-offset
-                    (CompilerObjectSectionKind.Text))]
+                  (coff.compiler-object-coff-section-header-offset
+                    (cobj.CompilerObjectSectionKind.Text))]
                 [text-ptr : i64
-                  (compiler-object-coff-u32-at obj (+ text-header 20))]
+                  (coff.compiler-object-coff-u32-at obj (+ text-header 20))]
                 [entry-offset : i64
-                  (compiler-object-coff-section-label-offset
+                  (coff.compiler-object-coff-section-label-offset
                     image
-                    (CompilerObjectSectionKind.Text)
+                    (cobj.CompilerObjectSectionKind.Text)
                     "_tl_start")]
                 [gs-clear-offset : i64 (+ text-ptr (+ entry-offset 9))]
                 [xdata-header : i64
-                  (compiler-object-coff-section-header-offset
-                    (CompilerObjectSectionKind.Xdata))]
+                  (coff.compiler-object-coff-section-header-offset
+                    (cobj.CompilerObjectSectionKind.Xdata))]
                 [pdata-size : i64
-                  (compiler-object-coff-u32-at obj (+ pdata-header 16))]
+                  (coff.compiler-object-coff-u32-at obj (+ pdata-header 16))]
                 [pdata-relocs : i64
-                  (compiler-object-coff-u16-at obj (+ pdata-header 32))]
+                  (coff.compiler-object-coff-u16-at obj (+ pdata-header 32))]
                 [xdata-size : i64
-                  (compiler-object-coff-u32-at obj (+ xdata-header 16))]
+                  (coff.compiler-object-coff-u32-at obj (+ xdata-header 16))]
                 [xdata-ptr : i64
-                  (compiler-object-coff-u32-at obj (+ xdata-header 20))]
+                  (coff.compiler-object-coff-u32-at obj (+ xdata-header 20))]
                 (and
                   (= pdata-size 12)
                   (= pdata-relocs 3)
                   (= xdata-size 8)
-                  (= (compiler-object-coff-u8-at obj xdata-ptr) 0x01)
-                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 1)) 0x04)
-                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 2)) 0x01)
-                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 4)) 0x04)
-                  (= (compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)
-                  (= (compiler-object-coff-u8-at obj gs-clear-offset) 0x65)
+                  (= (coff.compiler-object-coff-u8-at obj xdata-ptr) 0x01)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 1)) 0x04)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 2)) 0x01)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 4)) 0x04)
+                  (= (coff.compiler-object-coff-u8-at obj (+ xdata-ptr 5)) 0x42)
+                  (= (coff.compiler-object-coff-u8-at obj gs-clear-offset) 0x65)
                   (=
-                    (compiler-object-coff-u8-at obj (+ gs-clear-offset 1))
+                    (coff.compiler-object-coff-u8-at obj (+ gs-clear-offset 1))
                     0x48)
                   (=
-                    (compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
+                    (coff.compiler-object-coff-u8-at obj (+ gs-clear-offset 2))
                     0xc7)))]
-            [(ResultCompilerObjectCoff.Err _) false])
+            [(coff.ResultCompilerObjectCoff.Err _) false])
           false))]
     [(ResultCompilerBackendObject.Err _) false]))
 
@@ -1794,32 +1809,32 @@
     "(define (main) : unit unit)"
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)
-      (match (compiler-object-coff-render image)
-        [(ResultCompilerObjectCoff.Ok obj)
+      (match (coff.compiler-object-coff-render image)
+        [(coff.ResultCompilerObjectCoff.Ok obj)
           (let
             [text-header : i64
-              (compiler-object-coff-section-header-offset
-                (CompilerObjectSectionKind.Text))]
+              (coff.compiler-object-coff-section-header-offset
+                (cobj.CompilerObjectSectionKind.Text))]
             [text-ptr : i64
-              (compiler-object-coff-u32-at obj (+ text-header 20))]
+              (coff.compiler-object-coff-u32-at obj (+ text-header 20))]
             [main-offset : i64
-              (compiler-object-coff-section-label-offset
+              (coff.compiler-object-coff-section-label-offset
                 image
-                (CompilerObjectSectionKind.Text)
+                (cobj.CompilerObjectSectionKind.Text)
                 "main")]
             [main-ptr : i64 (+ text-ptr main-offset)]
             (if (< main-offset 0)
               false
               (backend-and8
-                (= (compiler-object-coff-u8-at obj main-ptr) 0x55)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 1)) 0x48)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 2)) 0x89)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 3)) 0xe5)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 19)) 0x31)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
-                (= (compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
-        [(ResultCompilerObjectCoff.Err _) false])]
+                (= (coff.compiler-object-coff-u8-at obj main-ptr) 0x55)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 1)) 0x48)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 2)) 0x89)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 3)) 0xe5)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 19)) 0x31)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 20)) 0xc0)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 21)) 0xc9)
+                (= (coff.compiler-object-coff-u8-at obj (+ main-ptr 22)) 0xc3))))]
+        [(coff.ResultCompilerObjectCoff.Err _) false])]
     [(ResultCompilerBackendObject.Err _) false]))
 
 (define (compiler-backend-windows-object-load-stores-dst-ok?) : bool
@@ -1831,12 +1846,12 @@
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
         (and
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-bytes-from-hex "488b00"))
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-bytes-from-hex "488945"))))]
     [(ResultCompilerBackendObject.Err _) false]))
@@ -1850,12 +1865,12 @@
     (CompilerBackendTarget.Windows))
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
         (backend-and4
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-bytes-from-hex "4889442420"))
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-bytes-from-hex "488b4530"))
           true
@@ -4847,21 +4862,21 @@
         (CompilerIrInstr.Word 1 (CompilerIrValue.Function "word_target") 0 ty)
         plan
         index)]
-    [relocs : CompilerObjectRelocationList
-      (compiler-object-relocation-builder-finish
+    [relocs : cobj.CompilerObjectRelocationList
+      (cobj.compiler-object-relocation-builder-finish
         (struct-get worded relocations))]
     (and
-      (compiler-object-relocation-list-contains?
+      (cobj.compiler-object-relocation-list-contains?
         relocs
-        (CompilerObjectRelocationKind.RipAddress)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
         (compiler-backend-string-fat-label "object-walked"))
-      (compiler-object-relocation-list-contains?
+      (cobj.compiler-object-relocation-list-contains?
         relocs
-        (CompilerObjectRelocationKind.RipValue)
+        (cobj.CompilerObjectRelocationKind.RipValue)
         (compiler-backend-f64-label (compiler-backend-test-f64-bits "6.25")))
-      (compiler-object-relocation-list-contains?
+      (cobj.compiler-object-relocation-list-contains?
         relocs
-        (CompilerObjectRelocationKind.RipAddress)
+        (cobj.CompilerObjectRelocationKind.RipAddress)
         (compiler-backend-closure-descriptor-label "word_target")))))
 
 (define (compiler-backend-ir-walker-object-refs-ok?) : bool
@@ -7577,54 +7592,55 @@
     (compiler-source-spans-empty))
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
-        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (struct-get image relocations)]
         [table-label : String ".Lf0_entry_switch_table"]
         (and
-          (compiler-object-elf-image-supported? image)
-          (compiler-object-coff-image-supported? image)
-          (compiler-object-symbol-list-contains?
+          (elf.compiler-object-elf-image-supported? image)
+          (coff.compiler-object-coff-image-supported? image)
+          (cobj.compiler-object-symbol-list-contains?
             symbols
             table-label
-            (CompilerObjectSymbolBinding.Local)
-            (CompilerObjectSymbolKind.Data))
-          (compiler-object-section-contains-label?
+            (cobj.CompilerObjectSymbolBinding.Local)
+            (cobj.CompilerObjectSymbolKind.Data))
+          (cobj.compiler-object-section-contains-label?
             sections
-            (CompilerObjectSectionKind.Rodata)
+            (cobj.CompilerObjectSectionKind.Rodata)
             table-label)
-          (compiler-object-section-contains-align?
+          (cobj.compiler-object-section-contains-align?
             sections
-            (CompilerObjectSectionKind.Rodata)
+            (cobj.CompilerObjectSectionKind.Rodata)
             8)
-          (compiler-object-section-contains-label?
+          (cobj.compiler-object-section-contains-label?
             sections
-            (CompilerObjectSectionKind.Rodata)
+            (cobj.CompilerObjectSectionKind.Rodata)
             ".Lf0_entry_switch_table_entry_0")
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.RipAddress)
+            (cobj.CompilerObjectRelocationKind.RipAddress)
             table-label)
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.Branch)
+            (cobj.CompilerObjectRelocationKind.Branch)
             ".Lf0_other")
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             ".Lf0_zero")
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             ".Lf0_one")
-          (compiler-object-relocation-list-contains?
+          (cobj.compiler-object-relocation-list-contains?
             relocs
-            (CompilerObjectRelocationKind.Abs64)
+            (cobj.CompilerObjectRelocationKind.Abs64)
             ".Lf0_two")
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-cmp-imm32-rax-bytes 2))
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-switch-indirect-jump-bytes))))]
     [(ResultCompilerBackendObject.Err diag) false]))
@@ -7635,12 +7651,12 @@
     (compiler-source-spans-empty))
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
         (and
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-sub-imm32-rax-bytes 4))
-          (compiler-object-section-contains-bytes?
+          (cobj.compiler-object-section-contains-bytes?
             sections
             (compiler-backend-object-cmp-imm32-rax-bytes 1))))]
     [(ResultCompilerBackendObject.Err _) false]))
@@ -14998,17 +15014,17 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-f64-neg-sign-mask-object-render-ok?
-  [image : CompilerObjectImage]
+  [image : cobj.CompilerObjectImage]
   [target : CompilerBackendTarget]) : bool
   (match target
     [(CompilerBackendTarget.Linux)
-      (match (compiler-object-elf-render image)
-        [(ResultCompilerObjectElf.Ok _) true]
-        [(ResultCompilerObjectElf.Err _) false])]
+      (match (elf.compiler-object-elf-render image)
+        [(elf.ResultCompilerObjectElf.Ok _) true]
+        [(elf.ResultCompilerObjectElf.Err _) false])]
     [(CompilerBackendTarget.Windows)
-      (match (compiler-object-coff-render image)
-        [(ResultCompilerObjectCoff.Ok _) true]
-        [(ResultCompilerObjectCoff.Err _) false])]))
+      (match (coff.compiler-object-coff-render image)
+        [(coff.ResultCompilerObjectCoff.Ok _) true]
+        [(coff.ResultCompilerObjectCoff.Err _) false])]))
 
 (define (compiler-backend-f64-neg-sign-mask-object-target-ok?
   [target : CompilerBackendTarget]) : bool
@@ -15017,35 +15033,36 @@
     target)
     [(ResultCompilerBackendObject.Ok image)
       (let
-        [sections : CompilerObjectSectionList (struct-get image sections)]
-        [symbols : CompilerObjectSymbolList (struct-get image symbols)]
-        [relocs : CompilerObjectRelocationList (struct-get image relocations)]
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [symbols : cobj.CompilerObjectSymbolList (struct-get image symbols)]
+        [relocs : cobj.CompilerObjectRelocationList
+          (struct-get image relocations)]
         [label : String (compiler-backend-f64-sign-bit-label)]
         (and
           (backend-and8
-            (compiler-object-symbol-list-contains?
+            (cobj.compiler-object-symbol-list-contains?
               symbols
               label
-              (CompilerObjectSymbolBinding.Local)
-              (CompilerObjectSymbolKind.Data))
-            (compiler-object-section-contains-label?
+              (cobj.CompilerObjectSymbolBinding.Local)
+              (cobj.CompilerObjectSymbolKind.Data))
+            (cobj.compiler-object-section-contains-label?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               label)
-            (compiler-object-section-contains-align?
+            (cobj.compiler-object-section-contains-align?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               16)
-            (compiler-object-section-label-has-i64-pair?
+            (cobj.compiler-object-section-label-has-i64-pair?
               sections
-              (CompilerObjectSectionKind.Rodata)
+              (cobj.CompilerObjectSectionKind.Rodata)
               label
               -9223372036854775808
               0)
-            (compiler-object-section-contains-xorpd-rip? sections label)
-            (compiler-object-relocation-list-contains?
+            (cobj.compiler-object-section-contains-xorpd-rip? sections label)
+            (cobj.compiler-object-relocation-list-contains?
               relocs
-              (CompilerObjectRelocationKind.RipValue)
+              (cobj.CompilerObjectRelocationKind.RipValue)
               label)
             true
             true)
@@ -20240,15 +20257,11 @@
       (compiler-backend-source-ok? (compiler-backend-smoke-source))
       (and
         (compiler-backend-object-image-shape-ok?)
-        (compiler-object-coff-smoke-ok?)
-        (compiler-object-coff-text-smoke-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)
         (compiler-backend-windows-object-load-stores-dst-ok?)
         (compiler-backend-windows-object-stack-param-spill-ok?)
-        (compiler-object-elf-smoke-ok?)
-        (compiler-object-elf-text-smoke-ok?)
         (compiler-backend-elf-renders-real-text-ok?)
         (compiler-backend-pic-ok?)
         (compiler-backend-deterministic-ok? (compiler-backend-smoke-source)))

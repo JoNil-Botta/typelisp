@@ -381,6 +381,112 @@
         [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-lower-smoke-maybe-span-start-ok?
+  [found-span : CompilerMaybeSourceSpan]
+  [line : i64]
+  [col : i64]) : bool
+  (match found-span
+    [(CompilerMaybeSourceSpan.Some found)
+      (and
+        (= (ast-source-span-start-line found) line)
+        (= (ast-source-span-start-col found) col))]
+    [(CompilerMaybeSourceSpan.No) false]))
+
+(define (compiler-lower-smoke-compound-expression-diagnostic-span-ok?) : bool
+  (let
+    [span : AstSourceSpan (ast-source-span 17 5 17 12)]
+    [plain : i64 (ast-node-push (AstExpr.Literal AstLiteral.Unit))]
+    [inner : i64 (ast-node-push (AstExpr.Var (intern "compound-value")))]
+    [spanned-inner : i64 (ast-expr-spanned inner span)]
+    [items : AstExprList
+      (ast-expr-cons plain (ast-expr-cons spanned-inner (ast-expr-list-new)))]
+    [bindings : AstLetBindingList
+      (ast-let-binding-cons
+        (ast-let-binding "a" (AstMaybeType.No) plain)
+        (ast-let-binding-cons
+          (ast-let-binding "b" (AstMaybeType.No) spanned-inner)
+          (ast-let-binding-list-new)))]
+    [arms : AstMatchArmList
+      (ast-match-arm-cons
+        (ast-match-arm (AstPattern.Wildcard) plain)
+        (ast-match-arm-cons
+          (ast-match-arm (AstPattern.Wildcard) spanned-inner)
+          (ast-match-arm-list-new)))]
+    [resources : AstResourceBindingList
+      (ast-resource-binding-cons
+        (ast-resource-binding "a" plain plain)
+        (ast-resource-binding-cons
+          (ast-resource-binding "b" spanned-inner plain)
+          (ast-resource-binding-list-new)))]
+    [ok : bool true]
+    (begin
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.Binary (AstBinOp.Add) plain spanned-inner))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.Call plain items))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.If plain plain spanned-inner))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.Let (box (AstLet.Let bindings plain))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.Match (box (AstMatch.Match plain arms))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.WithResource
+              (box (AstWithResource.WithResource resources items))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span
+            (AstExpr.SpmdScan
+              (box
+                (AstSpmdScan.Scan
+                  (AstReduceOp.Sum)
+                  (intern "i")
+                  (AstType.I64)
+                  plain
+                  plain
+                  (intern "prefix")
+                  (AstType.I64)
+                  plain
+                  plain
+                  spanned-inner))))
+          17
+          5)
+        (set! ok false))
+      (unless
+        (compiler-lower-smoke-maybe-span-start-ok?
+          (lower-ast-expr-span (AstExpr.Syscall items))
+          17
+          5)
+        (set! ok false))
+      ok)))
+
 (define (compiler-lower-smoke-self-test) : unit
   (begin
     (unless
@@ -443,7 +549,7 @@
       (compiler-lower-nested-expression-diagnostic-span-ok?)
       (panic "lower: nested diagnostic span smoke mismatch"))
     (unless
-      (compiler-lower-compound-expression-diagnostic-span-ok?)
+      (compiler-lower-smoke-compound-expression-diagnostic-span-ok?)
       (panic "lower: compound diagnostic span smoke mismatch"))
     (unless
       (compiler-lower-ok? (compiler-lower-match-source))

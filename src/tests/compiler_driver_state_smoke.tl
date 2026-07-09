@@ -1254,7 +1254,7 @@
                   [(ResultCompilerRegistries.Ok registries)
                     (let
                       [ctx : TcContext
-                        (TcContext program symbols registries "" pools-a)]
+                        (TcContext program symbols registries "" (intern "") pools-a)]
                       [_ : unit (ast-node-pool-context-install! pools-b)]
                       [active-len : i64 (ty-node-pool-len)]
                       [name-id : i64 (intern "xs")]
@@ -1361,7 +1361,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext program symbols registries "" (intern "") pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -1492,7 +1492,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext program symbols registries "" (intern "") pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -1676,7 +1676,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext program symbols registries "" (intern "") pools-a)]
                   [env : sym_i64_env.SymI64Env
                     (sym_i64_env.sym-i64-bind-id
                       (sym_i64_env.sym-i64-empty)
@@ -1765,7 +1765,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext program symbols registries "" (intern "") pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -1849,7 +1849,7 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext program symbols registries "" (intern "") pools-a)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [rewritten : ResultLowerAstExpr
@@ -2040,7 +2040,7 @@
                       [(ResultCompilerRegistries.Ok registries)
                         (let
                           [ctx : TcContext
-                            (TcContext program-a symbols registries "" pools-a)]
+                            (TcContext program-a symbols registries "" (intern "") pools-a)]
                           [names : LowerNameEnv
                             (match program-a
                               [(AstProgram.Program decls-box)

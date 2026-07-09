@@ -1201,6 +1201,7 @@
                       symbols
                       registries
                       ""
+                      (intern "")
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
                     [(ResultTcReprCLayout.Ok packet)
@@ -1258,6 +1259,7 @@
                       symbols
                       registries
                       ""
+                      (intern "")
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
                     [(ResultTcReprCLayout.Ok layout)
@@ -1349,6 +1351,7 @@
                       symbols
                       registries
                       ""
+                      (intern "")
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
                     [(ResultTcReprCLayout.Ok _) false]
@@ -1373,6 +1376,7 @@
                       symbols
                       registries
                       ""
+                      (intern "")
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
                     [(ResultTcReprCLayout.Ok layout)
@@ -1437,6 +1441,7 @@
                     symbols
                     registries
                     ""
+                    (intern "")
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
             [(ResultCompilerRegistries.Err message) (ResultTcUnit.Err message)])]
@@ -1465,6 +1470,7 @@
                     symbols
                     registries
                     ""
+                    (intern "")
                     (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
                   [(ResultTcInlineAggregateLayout.Ok layout)
@@ -1514,6 +1520,7 @@
                     symbols
                     registries
                     ""
+                    (intern "")
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]
                 (begin

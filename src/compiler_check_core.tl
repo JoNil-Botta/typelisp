@@ -591,6 +591,7 @@
                       symbols
                       registries
                       ""
+                      (intern "")
                       (ast-node-pool-context-capture-active))]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")

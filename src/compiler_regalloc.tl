@@ -3663,23 +3663,20 @@
               (set! i (+ i 1))))
           out))]))
 
-;; --- Register-eligible direct-call args (option b) -------------------------
-;; A direct IrInstrCall keeps its arg vars register-eligible when every arg is
-;; passed in a single GP arg register (compiler-reg-call-gp-parallel?): no
-;; float/group/aggregate args (which shift positions or need two-register
-;; marshalling) and at most the per-ABI GP arg-register count, so none land on
-;; the stack. Scalars and 8-byte handles are one register class here; the
-;; backend resolves any register source/dest conflict among them with a sound
-;; parallel move (compiler-backend-emit-arg-move-list). Every other call shape
-;; keeps its arg vars ineligible (memory-sourced), so the backend's naive
-;; ascending marshalling stays correct for them. The SIMD path keeps the old
-;; block-everything behavior via compiler-reg-call-arg-vars-blocks (unchanged).
+;; --- Register-eligible GP call args ---------------------------------------
+;; Direct, c-abi, and indirect call USER args may stay register-eligible when
+;; every arg is passed in a single GP arg register, within the per-ABI arg-register
+;; count from that call shape's starting ABI slot. Scalars and 8-byte handles are
+;; one register class here; the backend resolves any register source/dest conflict
+;; among them with a target-aware parallel move. Float/group/aggregate/stack args
+;; still stay memory-sourced because they use other banks, multiple registers, or
+;; stack marshalling. Special operands such as indirect call targets and C ABI
+;; result bases also stay memory-sourced; the backend loads them after user arg
+;; setup. The SIMD path keeps the old block-everything behavior via
+;; compiler-reg-call-arg-vars-blocks (unchanged).
 ;; Per-ABI GP integer arg-register count: SysV has 6 (%rdi/%rsi/%rdx/%rcx/%r8/%r9),
-;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Direct-call args within this arity (and all
-;; GP-class) are register-passed and left eligible; the backend parallel
-;; move resolves any source/dest conflict (and uses the matching target-aware
-;; threshold, so a 5..6-arg SysV conflict is never naive-marshalled). Mirrored in the
-;; backend at compiler-backend-call-args-gp-parallel? -- keep the two in sync.
+;; Win64 has 4 (%rcx/%rdx/%r8/%r9). Mirrored in the backend at
+;; compiler-backend-call-args-gp-parallel-from? -- keep the two in sync.
 (define (compiler-reg-arg-reg-limit-for-abi [abi : CompilerRegTargetAbi]) : i64
   (compiler-abi-gp-arg-register-count abi))
 
@@ -3715,16 +3712,9 @@
       (compiler-reg-call-arg-gp-class? (array-ref values index) types)
       (compiler-reg-call-args-array-gp-class? values types (+ index 1) count))))
 
-;; A call whose args are ALL single-GP-register passed (and within the per-ABI
-;; arg-register arity) is marshalled by the backend with the sound parallel move
-;; (compiler-backend-emit-arg-move-list) whenever a register source/dest conflict
-;; exists, so ALL its arg vars -- scalars and 8-byte handles alike, they are the
-;; same GP register class -- may stay register-homed.
-;; Mirrors compiler-backend-call-args-gp-parallel? (count<=limit, all GP).
-(define (compiler-reg-call-gp-parallel?
+(define (compiler-reg-call-args-gp-class?
   [args : CompilerIrCallArgs]
-  [types : CompilerRegVarTypeList]
-  [limit : i64]) : bool
+  [types : CompilerRegVarTypeList]) : bool
   (match args
     [(CompilerIrCallArgs.Nil) false]
     [(CompilerIrCallArgs.One v) (compiler-reg-call-arg-gp-class? v types)]
@@ -3733,13 +3723,45 @@
         (compiler-reg-call-arg-gp-class? a types)
         (compiler-reg-call-arg-gp-class? b types))]
     [(CompilerIrCallArgs.Array values)
-      (if (> (array-length values) limit)
-        false
-        (compiler-reg-call-args-array-gp-class?
-          values
-          types
-          0
-          (array-length values)))]))
+      (compiler-reg-call-args-array-gp-class?
+        values
+        types
+        0
+        (array-length values))]))
+
+;; A call whose args are ALL single-GP-register passed (and within the per-ABI
+;; arg-register arity from its starting ABI slot) is marshalled by the backend
+;; with the sound parallel move (compiler-backend-emit-arg-move-list) whenever a
+;; register source/dest conflict exists, so ALL its arg vars -- scalars and
+;; 8-byte handles alike, they are the same GP register class -- may stay
+;; register-homed. Mirrors compiler-backend-call-args-gp-parallel-from?.
+(define (compiler-reg-call-gp-parallel-from?
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [start : i64]
+  [limit : i64]) : bool
+  (let
+    [count : i64 (compiler-ir-call-args-count args)]
+    (and
+      (> count 0)
+      (<= (+ start count) limit)
+      (compiler-reg-call-args-gp-class? args types))))
+
+(define (compiler-reg-call-gp-parallel?
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [limit : i64]) : bool
+  (compiler-reg-call-gp-parallel-from? args types 0 limit))
+
+(define (compiler-reg-call-arg-vars-unless-gp-parallel
+  [out : CompilerLiveI64Set]
+  [args : CompilerIrCallArgs]
+  [types : CompilerRegVarTypeList]
+  [start : i64]
+  [limit : i64]) : CompilerLiveI64Set
+  (if (compiler-reg-call-gp-parallel-from? args types start limit)
+    out
+    (compiler-live-set-union out (compiler-live-call-args-vars args))))
 
 (define (compiler-reg-call-arg-vars-instr-seq-scalar
   [instrs : CompilerIrInstrSeq]
@@ -3768,11 +3790,12 @@
                 ;; over-arity calls are marshalled by the naive ascending path,
                 ;; which is correct only when every arg var is memory-sourced,
                 ;; so keep those calls' arg vars ineligible.
-                (if (compiler-reg-call-gp-parallel? args types limit)
+                (compiler-reg-call-arg-vars-unless-gp-parallel
                   out
-                  (compiler-live-set-union
-                    out
-                    (compiler-live-call-args-vars args)))]
+                  args
+                  types
+                  0
+                  limit)]
               [(CompilerIrInstr.CallCAbiStoreResult payload-box)
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallCAbiStoreResultPayload.Payload
@@ -3780,11 +3803,12 @@
                       _
                       args
                       _)
-                    (compiler-live-set-union
-                      out
-                      (compiler-live-value-vars-into
-                        (compiler-live-call-args-vars args)
-                        base))])]
+                    (compiler-reg-call-arg-vars-unless-gp-parallel
+                      (compiler-live-value-vars-into out base)
+                      args
+                      types
+                      0
+                      limit)])]
               [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
                 (match (box-get payload-box)
                   [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
@@ -3792,13 +3816,14 @@
                       func
                       args
                       _)
-                    (compiler-live-set-union
-                      out
+                    (compiler-reg-call-arg-vars-unless-gp-parallel
                       (compiler-live-value-vars-into
-                        (compiler-live-value-vars-into
-                          (compiler-live-call-args-vars args)
-                          base)
-                        func))])]
+                        (compiler-live-value-vars-into out base)
+                        func)
+                      args
+                      types
+                      0
+                      limit)])]
               ;; Tail calls (M-G2a): the true tail-jump path marshals args FIRST
               ;; (compiler-backend-emit-tail-call routes a gp-parallel shape --
               ;; tail-stack-count 0, target always an in-program function, so
@@ -3815,39 +3840,43 @@
               ;; naive ascending (frame-staged) marshalling -> args stay
               ;; ineligible.
               [(CompilerIrInstr.TailCall _ args _)
-                (if (compiler-reg-call-gp-parallel? args types limit)
+                (compiler-reg-call-arg-vars-unless-gp-parallel
                   out
-                  (compiler-live-set-union
-                    out
-                    (compiler-live-call-args-vars args)))]
+                  args
+                  types
+                  0
+                  limit)]
               ;; Indirect tail calls marshal at base 1 (closure env reserved in
-              ;; ABI arg-register 0) but the parallel-move builder is base-0
-              ;; only, so their arg vars must stay memory-sourced (the naive
-              ;; base-correct path handles them; no register cycle can form).
+              ;; ABI arg-register 0). The backend's base-aware parallel move can
+              ;; safely marshal register-homed GP user args, but the closure
+              ;; pointer itself is loaded after argument setup and remains
+              ;; memory-sourced.
               [(CompilerIrInstr.TailCallIndirect func args _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-value-vars-into
-                    (compiler-live-call-args-vars args)
-                    func))]
+                (compiler-reg-call-arg-vars-unless-gp-parallel
+                  (compiler-live-value-vars-into out func)
+                  args
+                  types
+                  1
+                  limit)]
               ;; Closure/indirect calls reserve ABI arg-register 0 for the env and
-              ;; marshal user args at base 1; the parallel-move solver builds at base
-              ;; 0, so keep their arg vars memory-sourced (ineligible) -> the naive
-              ;; (base-correct) marshalling handles them and no register cycle forms.
-              ;; (Follow-up: a base-aware + cap-aware parallel move could re-enable
-              ;; register-homed indirect-call args.)
+              ;; marshal user args at base 1. Register-homed GP user args are safe
+              ;; through the same base-aware backend parallel move; the closure
+              ;; descriptor/call target remains memory-sourced because it is loaded
+              ;; after argument setup.
               [(CompilerIrInstr.CallIndirect _ func args _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-value-vars-into
-                    (compiler-live-call-args-vars args)
-                    func))]
+                (compiler-reg-call-arg-vars-unless-gp-parallel
+                  (compiler-live-value-vars-into out func)
+                  args
+                  types
+                  1
+                  limit)]
               [(CompilerIrInstr.CallIndirectC _ func args _)
-                (compiler-live-set-union
-                  out
-                  (compiler-live-value-vars-into
-                    (compiler-live-call-args-vars args)
-                    func))]
+                (compiler-reg-call-arg-vars-unless-gp-parallel
+                  (compiler-live-value-vars-into out func)
+                  args
+                  types
+                  0
+                  limit)]
               [_ out]))
           (set! index (+ index 1))))
       out)))
@@ -14667,11 +14696,12 @@
               unit))))]
     [_ unit]))
 
-(define (compiler-reg-arg-pref-array!
+(define (compiler-reg-arg-pref-array-at!
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegStringList]
   [values : (Array CompilerIrValue)]
   [i : i64]
+  [pos : i64]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
   (if (>= i (array-length values))
@@ -14681,10 +14711,44 @@
         abi
         pool
         (array-ref values i)
-        i
+        pos
         prefs
         parents)
-      (compiler-reg-arg-pref-array! abi pool values (+ i 1) prefs parents))))
+      (compiler-reg-arg-pref-array-at!
+        abi
+        pool
+        values
+        (+ i 1)
+        (+ pos 1)
+        prefs
+        parents))))
+
+(define (compiler-reg-arg-pref-array!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [values : (Array CompilerIrValue)]
+  [i : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (compiler-reg-arg-pref-array-at! abi pool values i i prefs parents))
+
+(define (compiler-reg-arg-pref-args-at!
+  [abi : CompilerRegTargetAbi]
+  [pool : CompilerRegStringList]
+  [args : CompilerIrCallArgs]
+  [start : i64]
+  [prefs : (Array i64)]
+  [parents : (Array i64)]) : unit
+  (match args
+    [(CompilerIrCallArgs.Nil) unit]
+    [(CompilerIrCallArgs.One a)
+      (compiler-reg-arg-pref-value! abi pool a start prefs parents)]
+    [(CompilerIrCallArgs.Two a b)
+      (begin
+        (compiler-reg-arg-pref-value! abi pool a start prefs parents)
+        (compiler-reg-arg-pref-value! abi pool b (+ start 1) prefs parents))]
+    [(CompilerIrCallArgs.Array values)
+      (compiler-reg-arg-pref-array-at! abi pool values 0 start prefs parents)]))
 
 (define (compiler-reg-arg-pref-args!
   [abi : CompilerRegTargetAbi]
@@ -14692,21 +14756,13 @@
   [args : CompilerIrCallArgs]
   [prefs : (Array i64)]
   [parents : (Array i64)]) : unit
-  (match args
-    [(CompilerIrCallArgs.Nil) unit]
-    [(CompilerIrCallArgs.One a)
-      (compiler-reg-arg-pref-value! abi pool a 0 prefs parents)]
-    [(CompilerIrCallArgs.Two a b)
-      (begin
-        (compiler-reg-arg-pref-value! abi pool a 0 prefs parents)
-        (compiler-reg-arg-pref-value! abi pool b 1 prefs parents))]
-    [(CompilerIrCallArgs.Array values)
-      (compiler-reg-arg-pref-array! abi pool values 0 prefs parents)]))
+  (compiler-reg-arg-pref-args-at! abi pool args 0 prefs parents))
 
 ;; Outgoing call instructions whose integer args are marshalled through ABI arg
 ;; registers. The callee/function-pointer operand of the indirect forms is NOT an
-;; argument and is left without a preference. (Syscalls use a different register
-;; convention and are intentionally omitted.)
+;; argument and is left without a preference. Closure calls reserve ABI arg slot
+;; 0 for the environment pointer, so their user-arg preferences start at slot 1.
+;; Syscalls use a different register convention and are intentionally omitted.
 (define (compiler-reg-arg-pref-instr!
   [abi : CompilerRegTargetAbi]
   [pool : CompilerRegStringList]
@@ -14716,9 +14772,6 @@
   (match instr
     [(CompilerIrInstr.Call _ _ args _)
       (compiler-reg-arg-pref-args! abi pool args prefs parents)]
-    ;; Indirect/closure calls: arg vars are ineligible (see
-    ;; compiler-reg-call-arg-vars-instr-seq-scalar) so no arg-reg preference
-    ;; applies; the base-0 pref was also wrong for the closure base-1 marshalling.
     [(CompilerIrInstr.CallCAbiStoreResult payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrCallCAbiStoreResultPayload.Payload _ _ args _)
@@ -14730,6 +14783,10 @@
     [(CompilerIrInstr.TailCall _ args _)
       (compiler-reg-arg-pref-args! abi pool args prefs parents)]
     [(CompilerIrInstr.TailCallIndirect _ args _)
+      (compiler-reg-arg-pref-args-at! abi pool args 1 prefs parents)]
+    [(CompilerIrInstr.CallIndirect _ _ args _)
+      (compiler-reg-arg-pref-args-at! abi pool args 1 prefs parents)]
+    [(CompilerIrInstr.CallIndirectC _ _ args _)
       (compiler-reg-arg-pref-args! abi pool args prefs parents)]
     [_ unit]))
 
@@ -21111,6 +21168,119 @@
                   CompilerIrInstrList.Nil))))))
       CompilerIrBlockList.Nil)))
 
+(define (compiler-reg-func2-ty) : AstType
+  (ast-ty-func
+    (ast-type-cons
+      (compiler-reg-i64-ty)
+      (ast-type-cons (compiler-reg-i64-ty) (ast-type-list-new)))
+    (compiler-reg-i64-ty)))
+
+(define (compiler-reg-func4-ty) : AstType
+  (ast-ty-func
+    (ast-type-cons
+      (compiler-reg-i64-ty)
+      (ast-type-cons
+        (compiler-reg-i64-ty)
+        (ast-type-cons
+          (compiler-reg-i64-ty)
+          (ast-type-cons (compiler-reg-i64-ty) (ast-type-list-new)))))
+    (compiler-reg-i64-ty)))
+
+(define (compiler-reg-indirect-call-arg-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "indirect_call_arg"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "callee" (compiler-reg-func2-ty) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 1)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 2)
+          CompilerIrParamList.Nil)))
+    (compiler-reg-i64-ty)
+    4
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.CallIndirect
+            3
+            (CompilerIrValue.Var 0)
+            (CompilerIrCallArgs.Two
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2))
+            (compiler-reg-i64-ty))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-indirect-call-arg4-function) : CompilerIrFunction
+  (let
+    [args : (Array CompilerIrValue) (array.make-array CompilerIrValue 4)]
+    (begin
+      (array-set! args 0 (CompilerIrValue.Var 1))
+      (array-set! args 1 (CompilerIrValue.Var 2))
+      (array-set! args 2 (CompilerIrValue.Var 3))
+      (array-set! args 3 (CompilerIrValue.Var 4))
+      (CompilerIrFunction.Function
+        "indirect_call_arg4"
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "callee" (compiler-reg-func4-ty) 0)
+          (compiler-ir-param-cons
+            (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 1)
+            (compiler-ir-param-cons
+              (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 2)
+              (compiler-ir-param-cons
+                (CompilerIrParam.Param "c" (compiler-reg-i64-ty) 3)
+                (compiler-ir-param-cons
+                  (CompilerIrParam.Param "d" (compiler-reg-i64-ty) 4)
+                  CompilerIrParamList.Nil)))))
+        (compiler-reg-i64-ty)
+        6
+        (compiler-ir-block-cons
+          (compiler-ir-block
+            "entry"
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.CallIndirect
+                5
+                (CompilerIrValue.Var 0)
+                (CompilerIrCallArgs.Array args)
+                (compiler-reg-i64-ty))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 5)))
+                CompilerIrInstrList.Nil)))
+          CompilerIrBlockList.Nil)))))
+
+(define (compiler-reg-c-abi-store-result-arg-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "c_abi_store_result_arg"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "base" (compiler-reg-i64-ty) 0)
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "a" (compiler-reg-i64-ty) 1)
+        (compiler-ir-param-cons
+          (CompilerIrParam.Param "b" (compiler-reg-i64-ty) 2)
+          CompilerIrParamList.Nil)))
+    (AstType.Unit)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (ir-instr-call-cabi-store-result
+            (CompilerIrValue.Var 0)
+            "c_ret_pair"
+            (CompilerIrCallArgs.Two
+              (CompilerIrValue.Var 1)
+              (CompilerIrValue.Var 2))
+            CompilerIrCAbiReturnSlotList.Nil)
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return CompilerIrMaybeValue.No)
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
 (define (compiler-reg-ineligible-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "ineligible"
@@ -22623,6 +22793,71 @@
         (not (compiler-live-set-contains? ineligible 1))
         (compiler-reg-location-any-register?
           (compiler-reg-assignment-lookup assignments 0)))]))
+
+(define (compiler-reg-scalar-indirect-call-arg-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegTargetAbi.Linux
+    (compiler-reg-indirect-call-arg-function))
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (not (compiler-live-set-contains? ineligible 1))
+        (not (compiler-live-set-contains? ineligible 2))
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%rsi")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%rdx"))]))
+
+(define (compiler-reg-scalar-c-abi-store-result-call-arg-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegTargetAbi.Linux
+    (compiler-reg-c-abi-store-result-arg-function))
+    [(CompilerRegPlan.Plan assignments ineligible _ _ _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (not (compiler-live-set-contains? ineligible 1))
+        (not (compiler-live-set-contains? ineligible 2))
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 1)
+          "%rsi")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup assignments 2)
+          "%rdx"))]))
+
+(define (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?) : bool
+  (match (compiler-reg-plan-function-scalar-for-abi
+    CompilerRegTargetAbi.Windows
+    (compiler-reg-indirect-call-arg4-function))
+    [(CompilerRegPlan.Plan _ ineligible _ _ _ _)
+      (and
+        (compiler-live-set-contains? ineligible 0)
+        (compiler-live-set-contains? ineligible 1)
+        (compiler-live-set-contains? ineligible 2)
+        (compiler-live-set-contains? ineligible 3)
+        (compiler-live-set-contains? ineligible 4))]))
+
+(cfg
+  test
+  (define (compiler-reg-indirect-call-arg-prefs-ok?) : bool
+    (let
+      [pool : CompilerRegStringList
+        (compiler-reg-greedy-integer-pool-for-abi CompilerRegTargetAbi.Linux)]
+      [prefs : (Array i64)
+        (compiler-reg-function-arg-prefs
+          CompilerRegTargetAbi.Linux
+          (compiler-reg-indirect-call-arg-function)
+          (compiler-reg-test-identity-coalesce 4)
+          4)]
+      (and
+        (= (array-ref prefs 0) -1)
+        (=
+          (array-ref prefs 1)
+          (compiler-reg-string-list-index-of pool "%rsi" 0))
+        (=
+          (array-ref prefs 2)
+          (compiler-reg-string-list-index-of pool "%rdx" 0))))))
 
 (cfg
   test
@@ -27005,10 +27240,14 @@
     (compiler-reg-scalar-f64-call-live-ok?)
     (compiler-reg-scalar-handle-eligible-ok?)
     (compiler-reg-scalar-handle-call-arg-ok?)
+    (compiler-reg-scalar-indirect-call-arg-ok?)
+    (compiler-reg-scalar-c-abi-store-result-call-arg-ok?)
+    (compiler-reg-scalar-win64-indirect-call-arg-cap-ok?)
     (cfg test (compiler-reg-scalar-linux-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-param-registers-ok?) true)
     (cfg test (compiler-reg-scalar-windows-rsi-rdi-pool-ok?) true)
     (cfg test (compiler-reg-win64-arg-result-prefs-ok?) true)
+    (cfg test (compiler-reg-indirect-call-arg-prefs-ok?) true)
     (cfg test (compiler-reg-scalar-param-clobber-ok?) true)
     (cfg test (compiler-reg-scalar-param-const-shift-pin-ok?) true)
     (cfg test (compiler-reg-scalar-param-var-shift-pin-ok?) true)

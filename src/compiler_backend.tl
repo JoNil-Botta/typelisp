@@ -22520,8 +22520,9 @@
 
 ;; --- Sound register-arg parallel move (option b) ---------------------------
 ;; Direct/indirect call args can be register-eligible (regalloc only leaves them
-;; eligible for 1..4 integer-class scalar args, all GP-register passed on both
-;; ABIs). Then one arg's source register can be another arg's destination arg
+;; eligible when every user arg is GP-register passed within that call shape's
+;; target ABI arg-register window). Then one arg's source register can be another
+;; arg's destination arg
 ;; register, so the naive ascending marshalling could clobber a source before it
 ;; is read. This emits the GP-register arg loads in a safe order, breaking cycles
 ;; through %r11 (the marshalling scratch, never an arg register). It runs ONLY
@@ -22917,33 +22918,90 @@
 (define (compiler-backend-arg-moves-build-from
   [target : CompilerBackendTarget]
   [args : CompilerIrCallArgs]
-  [index : i64]
-  [count : i64]) : CompilerBackendArgMoveList
-  (if (>= index count)
+  [arg-index : i64]
+  [count : i64]
+  [int-idx : i64]
+  [position : i64]) : CompilerBackendArgMoveList
+  (if (>= arg-index count)
     BackendArgMoveNil
-    (match (compiler-backend-target-arg-reg target index)
+    (match (compiler-backend-target-arg-reg-for-banks target int-idx position)
       [(ResultBackendReg.Ok reg)
         (BackendArgMoveCons
           (BackendArgMove
             reg
-            (BackendArgMoveValue (compiler-backend-call-arg-at args index)))
+            (BackendArgMoveValue (compiler-backend-call-arg-at args arg-index)))
           (box
             (compiler-backend-arg-moves-build-from
               target
               args
-              (+ index 1)
-              count)))]
+              (+ arg-index 1)
+              count
+              (+ int-idx 1)
+              (+ position 1))))]
       [(ResultBackendReg.Err _)
-        (compiler-backend-arg-moves-build-from target args (+ index 1) count)])))
+        (compiler-backend-arg-moves-build-from
+          target
+          args
+          (+ arg-index 1)
+          count
+          (+ int-idx 1)
+          (+ position 1))])))
 
-(define (compiler-backend-arg-moves-build
+(define (compiler-backend-arg-moves-build-at
   [target : CompilerBackendTarget]
-  [args : CompilerIrCallArgs]) : CompilerBackendArgMoveList
+  [args : CompilerIrCallArgs]
+  [int-idx : i64]
+  [position : i64]) : CompilerBackendArgMoveList
   (compiler-backend-arg-moves-build-from
     target
     args
     0
-    (compiler-backend-call-args-count args)))
+    (compiler-backend-call-args-count args)
+    int-idx
+    position))
+
+(define (compiler-backend-arg-moves-build
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]) : CompilerBackendArgMoveList
+  (compiler-backend-arg-moves-build-at target args 0 0))
+
+(define (compiler-backend-call-args-gp-fit-from?
+  [target : CompilerBackendTarget]
+  [index : i64]
+  [count : i64]
+  [int-idx : i64]
+  [position : i64]) : bool
+  (if (>= index count)
+    true
+    (and
+      (not
+        (compiler-backend-stack-call-arg-for-banks?
+          target
+          false
+          int-idx
+          0
+          position))
+      (compiler-backend-call-args-gp-fit-from?
+        target
+        (+ index 1)
+        count
+        (+ int-idx 1)
+        (+ position 1)))))
+
+(define (compiler-backend-call-args-gp-parallel-from?
+  [target : CompilerBackendTarget]
+  [args : CompilerIrCallArgs]
+  [types : AstTypeList]
+  [c-abi? : bool]
+  [program-index : CompilerBackendProgramIndex]
+  [int-idx : i64]
+  [position : i64]) : bool
+  (let
+    [count : i64 (compiler-backend-call-args-count args)]
+    (and
+      (> count 0)
+      (compiler-backend-call-args-gp-fit-from? target 0 count int-idx position)
+      (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
 
 (define (compiler-backend-types-all-gp-int-from?
   [target : CompilerBackendTarget]
@@ -22991,13 +23049,14 @@
   [types : AstTypeList]
   [c-abi? : bool]
   [program-index : CompilerBackendProgramIndex]) : bool
-  (let
-    [count : i64 (compiler-backend-call-args-count args)]
-    [limit : i64 (compiler-backend-call-register-count target)]
-    (and
-      (> count 0)
-      (<= count limit)
-      (compiler-backend-types-all-gp-int? target types c-abi? program-index))))
+  (compiler-backend-call-args-gp-parallel-from?
+    target
+    args
+    types
+    c-abi?
+    program-index
+    0
+    0))
 
 (define (compiler-backend-emit-call-args-with-assignments
   [target : CompilerBackendTarget]
@@ -23253,26 +23312,28 @@
   [func-diag : CompilerDiagnostic]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  ;; Intercept only a fresh (arg-index 0), non-c-abi call whose args are all GP
-  ;; register-passed scalars AND that has a real register source/dest conflict;
-  ;; emit those via the sound parallel move. Every other call (including the
-  ;; conflict-free common case) delegates to the byte-identical naive path.
+  ;; Intercept only a fresh (arg-index 0) call whose args are all GP
+  ;; register-passed scalars from the caller's current ABI bank position AND that
+  ;; has a real register source/dest conflict; emit those via the sound parallel
+  ;; move. Every other call (including the conflict-free common case) delegates
+  ;; to the byte-identical naive path.
   (if (and
     (= arg-index 0)
-    (not c-abi?)
-    (compiler-backend-call-args-gp-parallel?
+    (compiler-backend-call-args-gp-parallel-from?
       target
       args
       types
       c-abi?
-      program-index)
+      program-index
+      int-idx
+      position)
     (compiler-backend-arg-moves-conflict?
       assignments
-      (compiler-backend-arg-moves-build target args)
-      (compiler-backend-arg-moves-build target args)))
+      (compiler-backend-arg-moves-build-at target args int-idx position)
+      (compiler-backend-arg-moves-build-at target args int-idx position)))
     (compiler-backend-emit-arg-move-list
       assignments
-      (compiler-backend-arg-moves-build target args))
+      (compiler-backend-arg-moves-build-at target args int-idx position))
     (compiler-backend-emit-call-args-with-assignments
       target
       assignments

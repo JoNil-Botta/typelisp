@@ -6892,6 +6892,119 @@
         (set! compiler-backend-cycle-temp-base-offset prev-base))]
     ok))
 
+(define (compiler-backend-base1-arg-cycle-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rdx"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rsi"))
+          CompilerRegAssignmentList.Nil))]
+    [args : CompilerIrCallArgs
+      (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
+    (match (compiler-backend-emit-call-args
+      (CompilerBackendTarget.Linux)
+      assignments
+      args
+      (compiler-backend-i64-type-list8)
+      false
+      0
+      1
+      0
+      1
+      0
+      (compiler-diagnostic-at-start "" "")
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)
+      2)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm ", %rsi\n")
+          (compiler-backend-string-contains? asm ", %rdx\n")
+          (not (compiler-backend-string-contains? asm "%rdi")))]
+      [(ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-base1-arg-env-source-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rdi"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rsi"))
+          CompilerRegAssignmentList.Nil))]
+    [args : CompilerIrCallArgs
+      (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
+    (match (compiler-backend-emit-call-args
+      (CompilerBackendTarget.Linux)
+      assignments
+      args
+      (compiler-backend-i64-type-list8)
+      false
+      0
+      1
+      0
+      1
+      0
+      (compiler-diagnostic-at-start "" "")
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)
+      2)
+      [(ResultCompilerBackend.Ok asm)
+        (compiler-backend-string-contains?
+          asm
+          "    movq %rsi, %rdx\n    movq %rdi, %rsi\n")]
+      [(ResultCompilerBackend.Err _) false])))
+
+(define (compiler-backend-c-abi-arg-cycle-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%rsi"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rdi"))
+          CompilerRegAssignmentList.Nil))]
+    [args : CompilerIrCallArgs
+      (CompilerIrCallArgs.Two (CompilerIrValue.Var 0) (CompilerIrValue.Var 1))]
+    (match (compiler-backend-emit-call-args
+      (CompilerBackendTarget.Linux)
+      assignments
+      args
+      (compiler-backend-i64-type-list8)
+      true
+      0
+      0
+      0
+      0
+      0
+      (compiler-diagnostic-at-start "" "")
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)
+      2)
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (compiler-backend-string-contains? asm ", %rdi\n")
+          (compiler-backend-string-contains? asm ", %rsi\n")
+          (not
+            (compiler-backend-string-contains?
+              asm
+              "    movq %rsi, %rdi\n    movq %rdi, %rsi\n")))]
+      [(ResultCompilerBackend.Err _) false])))
+
 (define (compiler-backend-reg-is? [r : ResultBackendReg] [name : String]) : bool
   (match r
     [(ResultBackendReg.Ok reg) (string.eq reg name)]
@@ -20322,6 +20435,9 @@
         (compiler-backend-phi-group-cycle-copy-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)
         (compiler-backend-arg-cycle-temp-slot-ok?)
+        (compiler-backend-base1-arg-cycle-ok?)
+        (compiler-backend-base1-arg-env-source-ok?)
+        (compiler-backend-c-abi-arg-cycle-ok?)
         (compiler-backend-branch-phi-edge-copy-ok?)
         (compiler-backend-phi-immediate-stack-copy-ok?)
         (compiler-backend-phi-direct-scalar-copy-ok?)

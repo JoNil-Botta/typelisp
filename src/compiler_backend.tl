@@ -21507,6 +21507,32 @@
     [(CompilerIrExternList.Array seq)
       (compiler-backend-c-aggregate-extern-call-seq? seq name 0)]))
 
+(define (compiler-backend-c-extern-call?
+  [externs : CompilerIrExternList]
+  [name : String]) : bool
+  (match externs
+    [(CompilerIrExternList.Nil) false]
+    [(CompilerIrExternList.Cons item rest)
+      (match item
+        [(CompilerIrExtern.Extern extern-name _ abi link-symbol _ _)
+          (if (or (string.eq name extern-name) (string.eq name link-symbol))
+            (ast-extern-abi-c? abi)
+            (compiler-backend-c-extern-call? (box-get rest) name))])]
+    [(CompilerIrExternList.Array seq)
+      (compiler-backend-c-extern-call-seq? seq name 0)]))
+
+(define (compiler-backend-c-extern-call-seq?
+  [externs : CompilerIrExternSeq]
+  [name : String]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-extern-seq-count externs))
+    false
+    (match (compiler-ir-extern-seq-ref externs index)
+      [(CompilerIrExtern.Extern extern-name _ abi link-symbol _ _)
+        (if (or (string.eq name extern-name) (string.eq name link-symbol))
+          (ast-extern-abi-c? abi)
+          (compiler-backend-c-extern-call-seq? externs name (+ index 1)))])))
+
 (define (compiler-backend-c-aggregate-extern-call-seq?
   [externs : CompilerIrExternSeq]
   [name : String]
@@ -26392,19 +26418,51 @@
 ;; Scalar/float call-result store through the dead-elision gate: the syscall
 ;; and C-ABI indirect-call paths store %rax/%xmm0 inline rather than via
 ;; emit-call-result-store; route their stores through the same deadness check.
+(define (compiler-backend-emit-call-result-store-reg-normalize
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]
+  [ty : AstType]
+  [normalize? : bool]) : String
+  (if (compiler-backend-call-result-store-dead? assignments dst)
+    ""
+    (string.append
+      (compiler-backend-call-result-normalize normalize? reg ty)
+      (compiler-backend-emit-store-typed-var-with-plan assignments dst reg ty))))
+
 (define (compiler-backend-emit-call-result-store-reg
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [reg : String]
   [ty : AstType]) : String
-  (if (compiler-backend-call-result-store-dead? assignments dst)
-    ""
-    (let
-      [store : String
-        (compiler-backend-emit-store-typed-var-with-plan assignments dst reg ty)]
-      (match ty
-        [(AstType.Bool) (string.append "    movzbq %al, %rax\n" store)]
-        [_ store]))))
+  (compiler-backend-emit-call-result-store-reg-normalize
+    assignments
+    dst
+    reg
+    ty
+    false))
+
+(define (compiler-backend-emit-c-abi-call-result-store-reg
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [reg : String]
+  [ty : AstType]) : String
+  (compiler-backend-emit-call-result-store-reg-normalize
+    assignments
+    dst
+    reg
+    ty
+    true))
+
+(define (compiler-backend-call-result-normalize
+  [normalize? : bool]
+  [reg : String]
+  [ty : AstType]) : String
+  (if (and normalize? (string.eq reg "%rax"))
+    (match ty
+      [(AstType.Bool) "    movzbq %al, %rax\n"]
+      [_ ""])
+    ""))
 
 (define (compiler-backend-emit-call-result-store
   [assignments : CompilerRegAssignmentList]
@@ -26412,6 +26470,35 @@
   [ty : AstType]
   [vars : i64]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (compiler-backend-emit-call-result-store-normalize
+    assignments
+    dst
+    ty
+    vars
+    program-index
+    false))
+
+(define (compiler-backend-emit-c-abi-call-result-store
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [ty : AstType]
+  [vars : i64]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (compiler-backend-emit-call-result-store-normalize
+    assignments
+    dst
+    ty
+    vars
+    program-index
+    true))
+
+(define (compiler-backend-emit-call-result-store-normalize
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [ty : AstType]
+  [vars : i64]
+  [program-index : CompilerBackendProgramIndex]
+  [normalize? : bool]) : ResultCompilerBackend
   (if (compiler-backend-call-result-store-dead? assignments dst)
     (ResultCompilerBackend.Ok "")
     (compiler-backend-emit-call-result-store-live
@@ -26419,14 +26506,16 @@
       dst
       ty
       vars
-      program-index)))
+      program-index
+      normalize?)))
 
 (define (compiler-backend-emit-call-result-store-live
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [ty : AstType]
   [vars : i64]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [normalize? : bool]) : ResultCompilerBackend
   (if (compiler-backend-group-type? program-index ty)
     (compiler-backend-emit-group-store
       assignments
@@ -26436,19 +26525,19 @@
       vars
       ty
       program-index)
-    (let
-      [store : String
-        (compiler-backend-emit-store-typed-var-with-plan
-          assignments
-          dst
+    (ResultCompilerBackend.Ok
+      (let
+        [reg : String
           (if (compiler-backend-float-type? ty)
             "%xmm0"
-            "%rax")
-          ty)]
-      (ResultCompilerBackend.Ok
-        (match ty
-          [(AstType.Bool) (string.append "    movzbq %al, %rax\n" store)]
-          [_ store])))))
+            "%rax")]
+        (string.append
+          (compiler-backend-call-result-normalize normalize? reg ty)
+          (compiler-backend-emit-store-typed-var-with-plan
+            assignments
+            dst
+            reg
+            ty))))))
 
 (define (compiler-backend-tls-current-arena-call-name? [name : String]) : bool
   (let
@@ -26938,6 +27027,7 @@
               assignments)]
           [c-abi? : bool
             (compiler-backend-c-aggregate-extern-call? externs name)]
+          [c-return? : bool (compiler-backend-c-extern-call? externs name)]
           [call-space : i64
             (compiler-backend-call-arg-space
               target
@@ -26968,12 +27058,13 @@
             program-index
             vars)
             [(ResultCompilerBackend.Ok args-asm)
-              (match (compiler-backend-emit-call-result-store
+              (match (compiler-backend-emit-call-result-store-normalize
                 assignments
                 dst
                 ty
                 vars
-                program-index)
+                program-index
+                c-return?)
                 [(ResultCompilerBackend.Ok result-store)
                   (ResultCompilerBackend.Ok
                     (string.append
@@ -32117,7 +32208,7 @@
                           call-reg
                           "\n"
                           (compiler-backend-emit-call-space-add call-space)
-                          (compiler-backend-emit-call-result-store-reg
+                          (compiler-backend-emit-c-abi-call-result-store-reg
                             assignments
                             dst
                             (if (compiler-backend-float-type? ty)
@@ -32142,7 +32233,7 @@
                   direct-home
                   "\n"
                   (compiler-backend-emit-call-space-add call-space)
-                  (compiler-backend-emit-call-result-store-reg
+                  (compiler-backend-emit-c-abi-call-result-store-reg
                     assignments
                     dst
                     (if (compiler-backend-float-type? ty)

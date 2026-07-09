@@ -2793,12 +2793,31 @@
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
     CompilerRegAssignmentList.Nil))
 
-(define (compiler-backend-call-result-store-bool-asm-ok? [asm : String]) : bool
+(define (compiler-backend-c-abi-call-result-store-bool-asm-ok? [asm : String]) : bool
   (and
     (compiler-backend-string-contains? asm "    movzbq %al, %rax\n")
-    (compiler-backend-string-contains? asm "%r12")))
+    (compiler-backend-string-contains? asm "    movq %rax, %r12\n")))
 
-(define (compiler-backend-call-result-store-bool-ok?) : bool
+(define (compiler-backend-typelisp-call-result-store-bool-asm-ok?
+  [asm : String]) : bool
+  (and
+    (not (compiler-backend-string-contains? asm "    movzbq %al, %rax\n"))
+    (compiler-backend-string-contains? asm "    movq %rax, %r12\n")))
+
+(define (compiler-backend-c-abi-call-result-store-bool-ok?) : bool
+  (match (compiler-backend-emit-c-abi-call-result-store
+    (compiler-backend-call-result-store-bool-assignments)
+    0
+    (AstType.Bool)
+    1
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil))
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-c-abi-call-result-store-bool-asm-ok? asm)]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-typelisp-call-result-store-bool-ok?) : bool
   (match (compiler-backend-emit-call-result-store
     (compiler-backend-call-result-store-bool-assignments)
     0
@@ -2808,10 +2827,22 @@
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil))
     [(ResultCompilerBackend.Ok asm)
-      (compiler-backend-call-result-store-bool-asm-ok? asm)]
+      (compiler-backend-typelisp-call-result-store-bool-asm-ok? asm)]
     [(ResultCompilerBackend.Err _) false]))
 
-(define (compiler-backend-call-result-store-reg-bool-ok?) : bool
+(define (compiler-backend-c-abi-call-result-store-reg-bool-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-call-result-store-bool-assignments)]
+    [asm : String
+      (compiler-backend-emit-c-abi-call-result-store-reg
+        assignments
+        0
+        "%rax"
+        (AstType.Bool))]
+    (compiler-backend-c-abi-call-result-store-bool-asm-ok? asm)))
+
+(define (compiler-backend-typelisp-call-result-store-reg-bool-ok?) : bool
   (let
     [assignments : CompilerRegAssignmentList
       (compiler-backend-call-result-store-bool-assignments)]
@@ -2821,12 +2852,32 @@
         0
         "%rax"
         (AstType.Bool))]
-    (compiler-backend-call-result-store-bool-asm-ok? asm)))
+    (compiler-backend-typelisp-call-result-store-bool-asm-ok? asm)))
+
+(define (compiler-backend-c-abi-bool-return-source) : String
+  "(extern (foreign-bool) : bool (:symbol \"tl_cabi_bool_return\"))
+(define (main) : i64
+  (if (foreign-bool) 42 1))")
+
+(define (compiler-backend-c-abi-direct-bool-return-ok?) : bool
+  (match (compiler-backend-emit-source-for-target
+    (compiler-backend-c-abi-bool-return-source)
+    (CompilerBackendTarget.Linux))
+    [(ResultCompilerBackend.Ok asm)
+      (and
+        (compiler-backend-string-contains? asm ".extern tl_cabi_bool_return\n")
+        (compiler-backend-string-contains? asm "    call tl_cabi_bool_return\n")
+        (compiler-backend-string-contains? asm "    movzbq %al, %rax\n"))]
+    [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-c-abi-bool-return-ok?) : bool
-  (and
-    (compiler-backend-call-result-store-bool-ok?)
-    (compiler-backend-call-result-store-reg-bool-ok?)))
+  (backend-and4
+    (compiler-backend-c-abi-call-result-store-bool-ok?)
+    (compiler-backend-typelisp-call-result-store-bool-ok?)
+    (compiler-backend-c-abi-call-result-store-reg-bool-ok?)
+    (and
+      (compiler-backend-typelisp-call-result-store-reg-bool-ok?)
+      (compiler-backend-c-abi-direct-bool-return-ok?))))
 
 (define (compiler-backend-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)

@@ -285,6 +285,9 @@ run_with_compiler "$STAGE2_BIN" "no-libc dependency guard" scripts/verify-no-lib
 run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
 run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
 run_with_compiler "$STAGE2_BIN" "stage2 opt2-built CLI compile + cross-fixpoint regression" scripts/check-opt2-cli-regression.sh
+if [ "$HOST_OS" = linux ]; then
+    run_with_compiler "$STAGE2_BIN" "stage2 opt1/opt2 build-invariance" scripts/check-build-invariance.sh
+fi
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
@@ -327,9 +330,10 @@ else
     run_with_compiler "$STAGE2_BIN" "windows native link build/run" scripts/verify-native-link-windows.sh
     echo
     echo "[ci-verify] Linux-only gates not applicable on Windows:"
-    echo "[ci-verify]   host-action smoke (as/ld), stdlib documentation (doc target"
-    echo "[ci-verify]   selection), instruction counts (valgrind), native link"
-    echo "[ci-verify]   generated programs (Linux linker inputs)"
+    echo "[ci-verify]   opt1/opt2 build-invariance, host-action smoke (as/ld),"
+    echo "[ci-verify]   stdlib documentation (doc target selection), instruction"
+    echo "[ci-verify]   counts (valgrind), native link generated programs"
+    echo "[ci-verify]   (Linux linker inputs)"
 fi
 
 echo

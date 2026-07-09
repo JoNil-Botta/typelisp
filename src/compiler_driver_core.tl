@@ -591,9 +591,6 @@
         "miss"
         (ci.intern-profile-miss-value))
       (compiler-driver-profile-intern-line
-        "tc_name_id_calls"
-        (tc-name-id-call-value))
-      (compiler-driver-profile-intern-line
         "attrib_bind_raw"
         (tc-attrib-bind-raw-value))
       (compiler-driver-profile-intern-line

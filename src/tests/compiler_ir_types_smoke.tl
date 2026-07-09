@@ -446,9 +446,15 @@
       (= (compiler-ir-instr-array-loop-dst-or slots 1 (- 0 1)) (- 0 1))
       (= (compiler-ir-instr-seq-loop-dst-or seq 0 (- 0 1)) 7)
       (= (compiler-ir-instr-seq-loop-dst-or seq 1 (- 0 1)) (- 0 1))
+      (not (compiler-ir-instr-seq-phi? seq 0))
+      (not (compiler-ir-instr-seq-return? seq 0))
+      (not (compiler-ir-instr-seq-bounds-check? seq 0))
       (compiler-ir-instr-seq-bounds-check? seq 1)
       (compiler-ir-instr-seq-return? seq 3)
       (= (compiler-ir-instr-seq-binop-lhs-var-for-dst-or seq 2 8 (- 0 1)) 7)
+      (=
+        (compiler-ir-instr-seq-binop-lhs-var-for-dst-or seq 2 9 (- 0 2))
+        (- 0 2))
       (= (compiler-ir-instr-array-binop-lhs-var-for-dst-or slots 2 8 (- 0 1)) 7))))
 
 (define (main) : i64

@@ -7114,7 +7114,9 @@
 (define (compiler-backend-emergency-append
   [buf : text_buf.TextBuf]
   [head : String]) : text_buf.TextBuf
-  (text_buf.append buf (compiler-backend-emergency-wrap head)))
+  (begin
+    (text_buf.append! buf (compiler-backend-emergency-wrap head))
+    buf))
 
 (define (compiler-backend-emergency-render-append
   [buf : text_buf.TextBuf]

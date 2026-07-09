@@ -1815,6 +1815,22 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-live-rebuilds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-live-reuses : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-live-registry-rebuilds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-live-registry-reuses : i64
+    0))
+(cfg
+  compile-profile
   (define tc-lp-counts : (Array i64)
     (array.make-array i64 15)))
 
@@ -1894,6 +1910,10 @@
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
+      (set! compiler-tc-macro-live-rebuilds 0)
+      (set! compiler-tc-macro-live-reuses 0)
+      (set! compiler-tc-macro-live-registry-rebuilds 0)
+      (set! compiler-tc-macro-live-registry-reuses 0)
       (set! compiler-tc-macro-walk-decls-shared 0)
       (set! compiler-tc-macro-walk-decls-expanded 0)
       (set! compiler-tc-macro-walk-share-gate-open 0))))
@@ -1934,6 +1954,30 @@
     (set!
       compiler-tc-macro-generated-module-memo-hits
       (+ compiler-tc-macro-generated-module-memo-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-live-rebuild) : unit
+    (set! compiler-tc-macro-live-rebuilds (+ compiler-tc-macro-live-rebuilds 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-live-reuse) : unit
+    (set! compiler-tc-macro-live-reuses (+ compiler-tc-macro-live-reuses 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-live-registry-rebuild) : unit
+    (set!
+      compiler-tc-macro-live-registry-rebuilds
+      (+ compiler-tc-macro-live-registry-rebuilds 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-live-registry-reuse) : unit
+    (set!
+      compiler-tc-macro-live-registry-reuses
+      (+ compiler-tc-macro-live-registry-reuses 1))))
 
 (cfg
   compile-profile
@@ -2434,6 +2478,18 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_memo_hits"
         compiler-tc-macro-generated-module-memo-hits)
+      (compiler-tc-macro-counter-profile-line
+        "live_rebuilds"
+        compiler-tc-macro-live-rebuilds)
+      (compiler-tc-macro-counter-profile-line
+        "live_reuses"
+        compiler-tc-macro-live-reuses)
+      (compiler-tc-macro-counter-profile-line
+        "live_registry_rebuilds"
+        compiler-tc-macro-live-registry-rebuilds)
+      (compiler-tc-macro-counter-profile-line
+        "live_registry_reuses"
+        compiler-tc-macro-live-registry-reuses)
       (compiler-tc-macro-counter-profile-line
         "walk_decls_shared"
         compiler-tc-macro-walk-decls-shared)
@@ -43885,16 +43941,24 @@
   (compiler-registries-empty))
 (define macro-live-symbols-fallback : bool
   false)
+(define macro-live-registries-ready : bool
+  false)
+(define macro-live-registries-fallback : bool
+  true)
 
 (define (macro-live-symbols-reset!) : unit
   (begin
     (set! macro-live-symbols-ready false)
-    (set! macro-live-symbols-fallback false)))
+    (set! macro-live-symbols-fallback false)
+    (set! macro-live-registries-ready false)
+    (set! macro-live-registries-fallback true)))
 
 (define (macro-live-symbols-clear!) : unit
   (begin
     (set! macro-live-symbols-ready false)
     (set! macro-live-symbols-fallback false)
+    (set! macro-live-registries-ready false)
+    (set! macro-live-registries-fallback true)
     (set! macro-live-symbols-value (compiler-symbols-empty))
     (set! macro-live-registries-value (compiler-registries-empty))))
 
@@ -43905,26 +43969,52 @@
 (define (macro-live-symbols-invalidate!) : unit
   (set! macro-live-symbols-fallback true))
 
+(define (macro-live-registries-invalidate!) : unit
+  (set! macro-live-registries-fallback true))
+
 ;; Return the live symbols (building both symbols and registries on demand),
 ;; reusing the cached pair across passes unless a rebuild was requested. Errors
 ;; from a fresh build propagate as ResultCompilerSymbols.Err; the registries are
 ;; read back from macro-live-registries-value by the caller.
-(define (macro-live-symbols-build-fresh-current
+(define (macro-live-registries-build-current
   [program : AstProgram]
-  [paths : AstDeclPathList]) : ResultCompilerSymbols
-  (match (build-compiler-symbols-with-paths program paths)
-    [(ResultCompilerSymbols.Ok symbols)
+  [symbols : CompilerSymbols]) : ResultCompilerRegistries
+  (if (and macro-live-registries-ready (not macro-live-registries-fallback))
+    (begin
+      (cfg compile-profile (compiler-tc-macro-profile-note-live-registry-reuse))
+      (ResultCompilerRegistries.Ok macro-live-registries-value))
+    (begin
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-note-live-registry-rebuild))
       (match (build-compiler-registries-with-symbols program symbols)
         [(ResultCompilerRegistries.Ok registries)
           (begin
-            (set! macro-live-symbols-value symbols)
             (set! macro-live-registries-value registries)
-            (set! macro-live-symbols-ready true)
-            (set! macro-live-symbols-fallback false)
-            (ResultCompilerSymbols.Ok macro-live-symbols-value))]
+            (set! macro-live-registries-ready true)
+            (set! macro-live-registries-fallback false)
+            (ResultCompilerRegistries.Ok macro-live-registries-value))]
         [(ResultCompilerRegistries.Err message)
-          (ResultCompilerSymbols.Err message)])]
-    [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)]))
+          (ResultCompilerRegistries.Err message)]))))
+
+(define (macro-live-symbols-build-fresh-current
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerSymbols
+  (begin
+    (cfg compile-profile (compiler-tc-macro-profile-note-live-rebuild))
+    (match (build-compiler-symbols-with-paths program paths)
+      [(ResultCompilerSymbols.Ok symbols)
+        (match (macro-live-registries-build-current program symbols)
+          [(ResultCompilerRegistries.Ok registries)
+            (begin
+              (set! macro-live-symbols-value symbols)
+              (set! macro-live-registries-value registries)
+              (set! macro-live-symbols-ready true)
+              (set! macro-live-symbols-fallback false)
+              (ResultCompilerSymbols.Ok macro-live-symbols-value))]
+          [(ResultCompilerRegistries.Err message)
+            (ResultCompilerSymbols.Err message)])]
+      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (macro-live-symbols-build-fresh
   [program : AstProgram]
@@ -43935,7 +44025,9 @@
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerSymbols
   (if (and macro-live-symbols-ready (not macro-live-symbols-fallback))
-    (ResultCompilerSymbols.Ok macro-live-symbols-value)
+    (begin
+      (cfg compile-profile (compiler-tc-macro-profile-note-live-reuse))
+      (ResultCompilerSymbols.Ok macro-live-symbols-value))
     (macro-live-symbols-build-fresh program paths)))
 
 ;; Hoisted whole-program macro prescans. macro-program-has-defmacro?,
@@ -54881,6 +54973,29 @@
         (ctfe-decl-has-type-literal? decl)
         (ctfe-program-has-type-literal? rest))]))
 
+(define (macro-decl-registry-relevant? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefEnum _ _ _) true]
+    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+    [(AstDecl.DefStruct _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+    [(AstDecl.Import _) true]
+    [(AstDecl.Unsafe inner-box)
+      (macro-decl-registry-relevant? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-registry-relevant? (box-get template-box))]
+    [(AstDecl.ModuleBody _ body-box)
+      (macro-decls-registry-relevant? (box-get body-box))]
+    [_ false]))
+
+(define (macro-decls-registry-relevant? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (macro-decl-registry-relevant? decl)
+        (macro-decls-registry-relevant? rest))]))
+
 ;; When the decl walk splices generated or freshly loaded declarations that
 ;; introduce new names (types/modules/macros) the rest of the walk references,
 ;; rebuild the live symbols/registries + top-env over the current whole-program
@@ -55171,6 +55286,10 @@
                                         out-paths-rev)
                                       spliced-path-tail)]
                                   (begin
+                                    (if (macro-decls-registry-relevant?
+                                      expanded)
+                                      (macro-live-registries-invalidate!)
+                                      unit)
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
                                       next-decls
@@ -55265,6 +55384,10 @@
                                 ;; before the context rebuild consumes its
                                 ;; visible-name set.
                                 (macro-live-symbols-invalidate!)
+                                (if (macro-decls-registry-relevant?
+                                  materialized-decls)
+                                  (macro-live-registries-invalidate!)
+                                  unit)
                                 (macro-live-prescan-ensure! next-decls)
                                 (set!
                                   macro-expand-expr-type-macro-names

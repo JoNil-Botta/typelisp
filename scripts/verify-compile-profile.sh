@@ -229,6 +229,10 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_rebuilds|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_reuses|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_rebuilds|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_reuses|"
 # The multi-pass fixed-point loop and its follow-up worklist are deleted: macro
 # expansion is a single demand-driven pass, so the fixed_point_* counters no
 # longer exist.

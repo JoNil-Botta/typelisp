@@ -273,6 +273,37 @@
           [(toy.Missing) false]))]
     [_ false]))
 
+(define (serialize-status-wide-item-ok? [items : toy.ValueList] [index : i64]) : bool
+  (match (toy.value-list-get items index)
+    [(toy.Found item)
+      (match item
+        [(toy.Int found) (= found (+ index 1))]
+        [_ false])]
+    [(toy.Missing) false]))
+
+(define (serialize-status-wide-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Object fields)
+      (and
+        (serialize-enum-object-tag-and-payload-count-ok? value "Wide" 9)
+        (match (toy.field-list-get (box-get fields) "payload")
+          [(toy.Found payload)
+            (match payload
+              [(toy.Sequence items)
+                (and
+                  (serialize-status-wide-item-ok? (box-get items) 0)
+                  (serialize-status-wide-item-ok? (box-get items) 1)
+                  (serialize-status-wide-item-ok? (box-get items) 2)
+                  (serialize-status-wide-item-ok? (box-get items) 3)
+                  (serialize-status-wide-item-ok? (box-get items) 4)
+                  (serialize-status-wide-item-ok? (box-get items) 5)
+                  (serialize-status-wide-item-ok? (box-get items) 6)
+                  (serialize-status-wide-item-ok? (box-get items) 7)
+                  (serialize-status-wide-item-ok? (box-get items) 8))]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
 (define (serialize-encoded-shape-ok? [value : toy.Value]) : bool
   (match value
     [(toy.Object fields)
@@ -420,6 +451,16 @@
         [(status_ser.Ok parsed) (enum_fixture.moved? parsed)]
         [(status_ser.Err _) false]))))
 
+(define (serialize-status-wide-roundtrip-ok?) : bool
+  (let
+    [status : enum_fixture.Status (enum_fixture.wide)]
+    [encoded : toy.Value (status_ser.encode status)]
+    (and
+      (serialize-status-wide-value-ok? encoded)
+      (match (status_ser.decode encoded)
+        [(status_ser.Ok parsed) (enum_fixture.wide? parsed)]
+        [(status_ser.Err _) false]))))
+
 (define (serialize-status-invalid-tag-ok?) : bool
   (match (status_ser.decode
     (serialize-toy-enum-object "Unknown" (serialize-toy-empty-sequence)))
@@ -525,4 +566,5 @@
     (unless (serialize-status-missing-tag-ok?) (return 14))
     (unless (serialize-status-missing-payload-ok?) (return 15))
     (unless (serialize-status-payload-length-ok?) (return 16))
+    (unless (serialize-status-wide-roundtrip-ok?) (return 17))
     42))

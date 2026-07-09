@@ -7260,6 +7260,12 @@
           out
           "pattern-list-cons"
           (tc-fn2 pattern pattern-list pattern-list)))
+      (set!
+        out
+        (tc-bind
+          out
+          "pattern-list-bindings"
+          (tc-fn2 (AstType.String) (AstType.I64) pattern-list)))
       (set! out (tc-bind out "match-arm" (tc-fn2 pattern expr match-arm)))
       (set! out (tc-bind out "match-arm-list-empty" (tc-fn0 match-arm-list)))
       (set!
@@ -10829,6 +10835,7 @@
     (string.eq name "pattern-variant")
     (string.eq name "pattern-list-empty")
     (string.eq name "pattern-list-cons")
+    (string.eq name "pattern-list-bindings")
     (string.eq name "match-arm")
     (string.eq name "match-arm-list-empty")
     (string.eq name "match-arm-list-cons")

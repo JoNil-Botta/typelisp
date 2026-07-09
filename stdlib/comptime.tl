@@ -205,6 +205,10 @@
 (define (pattern-list-cons [head : Pattern] [tail : PatternList]) : PatternList
   (pattern-list-cons head tail))
 
+;: Build `count` binding patterns named `prefix0` through `prefix<count - 1>`.
+(define (pattern-list-bindings [prefix : String] [count : i64]) : PatternList
+  (pattern-list-bindings prefix count))
+
 ;: Build a match arm from a generated pattern and result expression.
 (define (match-arm [pattern : Pattern] [body : Expr]) : MatchArm
   (match-arm pattern body))

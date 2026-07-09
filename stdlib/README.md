@@ -50,11 +50,11 @@ use.
   `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
   exported compile-time helper signatures such as `expr-int`,
   `expr-list-nth`, `expr-clause-list->expr-list`, `pattern-variant`,
-  `match-arm`, and `expr-match`. `expr-type` returns the produced type of a
-  captured expression for macro-time reflection. Dense sequence accessors use
-  the public `items` and `len` fields in ordinary stdlib source; remaining
-  compiler intrinsics are syntax constructors, reflection helpers, and
-  provenance-preserving sequence conversions such as
+  `pattern-list-bindings`, `match-arm`, and `expr-match`. `expr-type` returns
+  the produced type of a captured expression for macro-time reflection. Dense
+  sequence accessors use the public `items` and `len` fields in ordinary stdlib
+  source; remaining compiler intrinsics are syntax constructors, reflection
+  helpers, and provenance-preserving sequence conversions such as
   `expr-clause-list->expr-list` and
   `expr-binding-clause-list->expr-list`.
   The compiler verifies these shapes when the module is loaded and maps the
@@ -223,7 +223,7 @@ use.
   nested structs, arrays, enum values, and tuples within supported roots. Enums
   reuse object and sequence hooks as `{ tag: String, payload: [...] }`. Direct
   struct enum payloads, generated option/result family enum reflection, tuple
-  roots, and enum variants with more than eight payloads remain follow-ups.
+  roots remain follow-ups.
   Strategy hooks own object and sequence representation, decode diagnostics, and
   helper aliases. The checked toy format exercises the hook contract, and
   `json.tl` provides the JSON integration strategy.

@@ -54,7 +54,7 @@
 ;# module allocates and fills the fixed or dynamic output array. Enums are encoded
 ;# as an object with a string `tag` field and a sequence `payload` field. Direct
 ;# struct enum payloads, generated option/result family enum reflection, and tuple
-;# roots, and enum variants with more than eight payloads remain follow-ups.
+;# roots remain follow-ups.
 (import stdlib.comptime)
 (import stdlib.string)
 
@@ -303,167 +303,14 @@
           [variant-source-name : String variant-name]
           [payload-count : i64
             (enum-variant-payload-count enum-type variant-index)]
-          [p0 : comptime.Pattern
-            (comptime.pattern-binding
+          [payload-prefix : String
+            (comptime.string-append
               (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "0"))]
-          [p1 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "1"))]
-          [p2 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "2"))]
-          [p3 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "3"))]
-          [p4 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "4"))]
-          [p5 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "5"))]
-          [p6 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "6"))]
-          [p7 : comptime.Pattern
-            (comptime.pattern-binding
-              (comptime.string-append
-                (comptime.string-append
-                  (comptime.string-append
-                    "__serialize_v"
-                    (comptime.int->string variant-index))
-                  "_p")
-                "7"))]
+                "__serialize_v"
+                (comptime.int->string variant-index))
+              "_p")]
           [payload-patterns : comptime.PatternList
-            (match payload-count
-              [0 (comptime.pattern-list-empty)]
-              [1 (comptime.pattern-list-cons p0 (comptime.pattern-list-empty))]
-              [2
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons p1 (comptime.pattern-list-empty)))]
-              [3
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons
-                    p1
-                    (comptime.pattern-list-cons
-                      p2
-                      (comptime.pattern-list-empty))))]
-              [4
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons
-                    p1
-                    (comptime.pattern-list-cons
-                      p2
-                      (comptime.pattern-list-cons
-                        p3
-                        (comptime.pattern-list-empty)))))]
-              [5
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons
-                    p1
-                    (comptime.pattern-list-cons
-                      p2
-                      (comptime.pattern-list-cons
-                        p3
-                        (comptime.pattern-list-cons
-                          p4
-                          (comptime.pattern-list-empty))))))]
-              [6
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons
-                    p1
-                    (comptime.pattern-list-cons
-                      p2
-                      (comptime.pattern-list-cons
-                        p3
-                        (comptime.pattern-list-cons
-                          p4
-                          (comptime.pattern-list-cons
-                            p5
-                            (comptime.pattern-list-empty)))))))]
-              [7
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons
-                    p1
-                    (comptime.pattern-list-cons
-                      p2
-                      (comptime.pattern-list-cons
-                        p3
-                        (comptime.pattern-list-cons
-                          p4
-                          (comptime.pattern-list-cons
-                            p5
-                            (comptime.pattern-list-cons
-                              p6
-                              (comptime.pattern-list-empty))))))))]
-              [8
-                (comptime.pattern-list-cons
-                  p0
-                  (comptime.pattern-list-cons
-                    p1
-                    (comptime.pattern-list-cons
-                      p2
-                      (comptime.pattern-list-cons
-                        p3
-                        (comptime.pattern-list-cons
-                          p4
-                          (comptime.pattern-list-cons
-                            p5
-                            (comptime.pattern-list-cons
-                              p6
-                              (comptime.pattern-list-cons
-                                p7
-                                (comptime.pattern-list-empty)))))))))]
-              [_
-                (comptime.comptime-error
-                  "serialize: enum variants with more than 8 payloads are not supported")])]
+            (comptime.pattern-list-bindings payload-prefix payload-count)]
           [pattern : comptime.Pattern
             (comptime.pattern-variant variant-source-name payload-patterns)]
           [empty-object-hook : comptime.Expr

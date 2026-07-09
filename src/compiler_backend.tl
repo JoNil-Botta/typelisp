@@ -26399,7 +26399,12 @@
   [ty : AstType]) : String
   (if (compiler-backend-call-result-store-dead? assignments dst)
     ""
-    (compiler-backend-emit-store-typed-var-with-plan assignments dst reg ty)))
+    (let
+      [store : String
+        (compiler-backend-emit-store-typed-var-with-plan assignments dst reg ty)]
+      (match ty
+        [(AstType.Bool) (string.append "    movzbq %al, %rax\n" store)]
+        [_ store]))))
 
 (define (compiler-backend-emit-call-result-store
   [assignments : CompilerRegAssignmentList]
@@ -26431,14 +26436,19 @@
       vars
       ty
       program-index)
-    (ResultCompilerBackend.Ok
-      (compiler-backend-emit-store-typed-var-with-plan
-        assignments
-        dst
-        (if (compiler-backend-float-type? ty)
-          "%xmm0"
-          "%rax")
-        ty))))
+    (let
+      [store : String
+        (compiler-backend-emit-store-typed-var-with-plan
+          assignments
+          dst
+          (if (compiler-backend-float-type? ty)
+            "%xmm0"
+            "%rax")
+          ty)]
+      (ResultCompilerBackend.Ok
+        (match ty
+          [(AstType.Bool) (string.append "    movzbq %al, %rax\n" store)]
+          [_ store])))))
 
 (define (compiler-backend-tls-current-arena-call-name? [name : String]) : bool
   (let

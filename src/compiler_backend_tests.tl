@@ -2788,6 +2788,46 @@
           true)]
       [(ResultCompilerBackend.Err _) false])))
 
+(define (compiler-backend-call-result-store-bool-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    CompilerRegAssignmentList.Nil))
+
+(define (compiler-backend-call-result-store-bool-asm-ok? [asm : String]) : bool
+  (and
+    (compiler-backend-string-contains? asm "    movzbq %al, %rax\n")
+    (compiler-backend-string-contains? asm "%r12")))
+
+(define (compiler-backend-call-result-store-bool-ok?) : bool
+  (match (compiler-backend-emit-call-result-store
+    (compiler-backend-call-result-store-bool-assignments)
+    0
+    (AstType.Bool)
+    1
+    (compiler-backend-program-index-build
+      CompilerIrFunctionList.Nil
+      CompilerIrExternList.Nil))
+    [(ResultCompilerBackend.Ok asm)
+      (compiler-backend-call-result-store-bool-asm-ok? asm)]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-call-result-store-reg-bool-ok?) : bool
+  (let
+    [assignments : CompilerRegAssignmentList
+      (compiler-backend-call-result-store-bool-assignments)]
+    [asm : String
+      (compiler-backend-emit-call-result-store-reg
+        assignments
+        0
+        "%rax"
+        (AstType.Bool))]
+    (compiler-backend-call-result-store-bool-asm-ok? asm)))
+
+(define (compiler-backend-c-abi-bool-return-ok?) : bool
+  (and
+    (compiler-backend-call-result-store-bool-ok?)
+    (compiler-backend-call-result-store-reg-bool-ok?)))
+
 (define (compiler-backend-extern-value-fnptr-source) : String
   "(extern raw-value (:symbol \"tl_test_raw_value\") : i64)
 (extern raw-fn (:symbol \"tl_test_raw_fn\") : (-> i64 i64))
@@ -20528,6 +20568,7 @@
     (compiler-backend-extern-value-fnptr-ok?)
     (compiler-backend-indirect-c-call-home-shape-ok?)
     (compiler-backend-varargs-ffi-ok?)
+    (compiler-backend-c-abi-bool-return-ok?)
     (compiler-backend-c-abi-aggregate-ok?)
     (compiler-backend-c-abi-sret-aggregate-windows-ok?)
     (compiler-backend-c-abi-byref-aggregate-arg-windows-ok?)

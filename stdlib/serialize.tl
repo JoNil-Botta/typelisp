@@ -28,14 +28,15 @@
 ;#   `decode-float(T: type, value: Expr, err-ctor: Expr) -> Expr`,
 ;#   `encode-string(value: String) -> Value`, and
 ;#   `decode-string(value: Expr, err-ctor: Expr) -> Expr`.
-;# - Object hooks for every struct root or nested struct:
+;# - Object hooks for every struct root, enum root, nested struct, or nested
+;#   enum:
 ;#   `object-empty() -> FieldList`,
 ;#   `object-field(name: Expr, value: Expr, rest: Expr) -> FieldList`,
 ;#   `object-finish(fields: Expr) -> Value`,
 ;#   `expect-object(value: Expr, type-name: Expr, err-ctor: Expr) -> unit`, and
 ;#   `field-value(object: Expr, name: Expr, err-ctor: Expr) -> Expr`.
 ;# - Sequence hooks when any serialized value is a fixed array, dynamic array,
-;#   or tuple:
+;#   tuple, or enum payload list:
 ;#   `sequence-empty() -> ValueList`,
 ;#   `sequence-element(index: Expr, value: Expr, rest: Expr) -> ValueList`,
 ;#   `sequence-finish(items: Expr) -> Value`,
@@ -50,7 +51,10 @@
 ;# `(err-ctor message)` from the generated `decode` function; on success they
 ;# should produce a value expression of the requested field type. Sequence decode
 ;# hooks report the source length and individual encoded elements; the generated
-;# module allocates and fills the fixed or dynamic output array.
+;# module allocates and fills the fixed or dynamic output array. Enums are encoded
+;# as an object with a string `tag` field and a sequence `payload` field. Direct
+;# struct enum payloads, generated option/result family enum reflection, and tuple
+;# roots, and enum variants with more than eight payloads remain follow-ups.
 (import stdlib.comptime)
 (import stdlib.string)
 
@@ -202,6 +206,466 @@
       (comptime.comptime-error
         "serialize: tuple decode index must be an integer literal")]))
 
+;: Emit an enum payload's encoded sequence elements using payload bindings.
+(defmacro (encode-enum-payload-elements
+  [format : Module]
+  [enum-type : type]
+  [nested-alias : comptime.Expr]
+  [variant-index-expr : comptime.Expr]
+  [payload-index-expr : comptime.Expr]
+  [items : comptime.Expr]) : comptime.Expr
+  (match variant-index-expr
+    [(comptime.ExprInt variant-index)
+      (match payload-index-expr
+        [(comptime.ExprInt payload-index)
+          (if (< payload-index 0)
+            items
+            (let
+              [payload-name : String
+                (comptime.string-append
+                  (comptime.string-append
+                    (comptime.string-append
+                      "__serialize_v"
+                      (comptime.int->string variant-index))
+                    "_p")
+                  (comptime.int->string payload-index))]
+              [payload-value : comptime.Expr (comptime.expr-var payload-name)]
+              [payload-type : comptime.Expr
+                (enum-variant-payload-type
+                  enum-type
+                  variant-index
+                  payload-index)]
+              [payload-kind : String (type-kind payload-type)]
+              [payload-alias : comptime.Expr
+                (match nested-alias
+                  [(comptime.ExprVar nested-alias-text)
+                    (comptime.expr-var
+                      (comptime.string-append
+                        (comptime.string-append
+                          (comptime.string-append
+                            (comptime.string-append
+                              nested-alias-text
+                              "_variant_")
+                            (comptime.int->string variant-index))
+                          "_payload_")
+                        (comptime.int->string payload-index)))]
+                  [_
+                    (comptime.comptime-error
+                      "serialize: nested alias must be a name")])]
+              [element-hook : comptime.Expr
+                (comptime.module-hook format "sequence-element")]
+              [format-expr : comptime.Expr
+                (comptime.expr-var (comptime.module-name format))]
+              [prev-index : comptime.Expr
+                (comptime.expr-int (- payload-index 1))]
+              (if (string.eq payload-kind "struct")
+                (comptime.comptime-error
+                  "serialize: enum struct payloads are not supported yet")
+                `(stdlib.serialize.encode-enum-payload-elements
+                  ,format-expr
+                  ,enum-type
+                  ,nested-alias
+                  ,variant-index-expr
+                  ,prev-index
+                  (,element-hook
+                    ,payload-index-expr
+                    (stdlib.serialize.encode-value
+                      ,format-expr
+                      ,payload-type
+                      ,payload-alias
+                      ,payload-value)
+                    ,items)))))]
+        [_
+          (comptime.comptime-error
+            "serialize: enum payload index must be an integer literal")])]
+    [_
+      (comptime.comptime-error
+        "serialize: enum variant index must be an integer literal")]))
+
+;: Emit a staged single-variant match for encoding an enum value.
+(defmacro (encode-enum-dispatch
+  [format : Module]
+  [enum-type : type]
+  [nested-alias : comptime.Expr]
+  [value : comptime.Expr]
+  [variant-index-expr : comptime.Expr]) : comptime.Expr
+  (match variant-index-expr
+    [(comptime.ExprInt variant-index)
+      (if (>= variant-index (enum-variant-count enum-type))
+        (let
+          [empty-object-hook : comptime.Expr
+            (comptime.module-hook format "object-empty")]
+          [object-finish-hook : comptime.Expr
+            (comptime.module-hook format "object-finish")]
+          `(,object-finish-hook (,empty-object-hook)))
+        (let
+          [variant-name : String (enum-variant-name enum-type variant-index)]
+          [variant-source-name : String variant-name]
+          [payload-count : i64
+            (enum-variant-payload-count enum-type variant-index)]
+          [p0 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "0"))]
+          [p1 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "1"))]
+          [p2 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "2"))]
+          [p3 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "3"))]
+          [p4 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "4"))]
+          [p5 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "5"))]
+          [p6 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "6"))]
+          [p7 : comptime.Pattern
+            (comptime.pattern-binding
+              (comptime.string-append
+                (comptime.string-append
+                  (comptime.string-append
+                    "__serialize_v"
+                    (comptime.int->string variant-index))
+                  "_p")
+                "7"))]
+          [payload-patterns : comptime.PatternList
+            (if (= payload-count 0)
+              (comptime.pattern-list-empty)
+              (if (= payload-count 1)
+                (comptime.pattern-list-cons p0 (comptime.pattern-list-empty))
+                (if (= payload-count 2)
+                  (comptime.pattern-list-cons
+                    p0
+                    (comptime.pattern-list-cons
+                      p1
+                      (comptime.pattern-list-empty)))
+                  (if (= payload-count 3)
+                    (comptime.pattern-list-cons
+                      p0
+                      (comptime.pattern-list-cons
+                        p1
+                        (comptime.pattern-list-cons
+                          p2
+                          (comptime.pattern-list-empty))))
+                    (if (= payload-count 4)
+                      (comptime.pattern-list-cons
+                        p0
+                        (comptime.pattern-list-cons
+                          p1
+                          (comptime.pattern-list-cons
+                            p2
+                            (comptime.pattern-list-cons
+                              p3
+                              (comptime.pattern-list-empty)))))
+                      (if (= payload-count 5)
+                        (comptime.pattern-list-cons
+                          p0
+                          (comptime.pattern-list-cons
+                            p1
+                            (comptime.pattern-list-cons
+                              p2
+                              (comptime.pattern-list-cons
+                                p3
+                                (comptime.pattern-list-cons
+                                  p4
+                                  (comptime.pattern-list-empty))))))
+                        (if (= payload-count 6)
+                          (comptime.pattern-list-cons
+                            p0
+                            (comptime.pattern-list-cons
+                              p1
+                              (comptime.pattern-list-cons
+                                p2
+                                (comptime.pattern-list-cons
+                                  p3
+                                  (comptime.pattern-list-cons
+                                    p4
+                                    (comptime.pattern-list-cons
+                                      p5
+                                      (comptime.pattern-list-empty)))))))
+                          (if (= payload-count 7)
+                            (comptime.pattern-list-cons
+                              p0
+                              (comptime.pattern-list-cons
+                                p1
+                                (comptime.pattern-list-cons
+                                  p2
+                                  (comptime.pattern-list-cons
+                                    p3
+                                    (comptime.pattern-list-cons
+                                      p4
+                                      (comptime.pattern-list-cons
+                                        p5
+                                        (comptime.pattern-list-cons
+                                          p6
+                                          (comptime.pattern-list-empty))))))))
+                            (if (= payload-count 8)
+                              (comptime.pattern-list-cons
+                                p0
+                                (comptime.pattern-list-cons
+                                  p1
+                                  (comptime.pattern-list-cons
+                                    p2
+                                    (comptime.pattern-list-cons
+                                      p3
+                                      (comptime.pattern-list-cons
+                                        p4
+                                        (comptime.pattern-list-cons
+                                          p5
+                                          (comptime.pattern-list-cons
+                                            p6
+                                            (comptime.pattern-list-cons
+                                              p7
+                                              (comptime.pattern-list-empty)))))))))
+                              (comptime.comptime-error
+                                "serialize: enum variants with more than 8 payloads are not supported"))))))))))]
+          [pattern : comptime.Pattern
+            (comptime.pattern-variant variant-source-name payload-patterns)]
+          [empty-object-hook : comptime.Expr
+            (comptime.module-hook format "object-empty")]
+          [field-hook : comptime.Expr
+            (comptime.module-hook format "object-field")]
+          [object-finish-hook : comptime.Expr
+            (comptime.module-hook format "object-finish")]
+          [encode-string-hook : comptime.Expr
+            (comptime.module-hook format "encode-string")]
+          [sequence-empty-hook : comptime.Expr
+            (comptime.module-hook format "sequence-empty")]
+          [sequence-finish-hook : comptime.Expr
+            (comptime.module-hook format "sequence-finish")]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
+          [last-payload-index : comptime.Expr
+            (comptime.expr-int (- payload-count 1))]
+          [next-variant-index : comptime.Expr
+            (comptime.expr-int (+ variant-index 1))]
+          [fallback : comptime.Expr
+            `(stdlib.serialize.encode-enum-dispatch
+              ,format-expr
+              ,enum-type
+              ,nested-alias
+              ,value
+              ,next-variant-index)]
+          [body : comptime.Expr
+            `(,object-finish-hook
+              (,field-hook
+                "tag"
+                (,encode-string-hook ,(comptime.expr-string variant-name))
+                (,field-hook
+                  "payload"
+                  (,sequence-finish-hook
+                    (stdlib.serialize.encode-enum-payload-elements
+                      ,format-expr
+                      ,enum-type
+                      ,nested-alias
+                      ,variant-index-expr
+                      ,last-payload-index
+                      (,sequence-empty-hook)))
+                  (,empty-object-hook))))]
+          (comptime.expr-match
+            value
+            (comptime.match-arm-list-cons
+              (comptime.match-arm pattern body)
+              (comptime.match-arm-list-cons
+                (comptime.match-arm (comptime.pattern-wildcard) fallback)
+                (comptime.match-arm-list-empty))))))]
+    [_
+      (comptime.comptime-error
+        "serialize: enum variant index must be an integer literal")]))
+
+;: Emit an enum variant constructor from decoded payload expressions.
+(defmacro (decode-enum-payload-items
+  [format : Module]
+  [enum-type : type]
+  [nested-alias : comptime.Expr]
+  [payload : comptime.Expr]
+  [err-ctor : comptime.Expr]
+  [variant-index-expr : comptime.Expr]
+  [payload-index-expr : comptime.Expr]
+  [items : comptime.Expr ...]) : comptime.Expr
+  (match variant-index-expr
+    [(comptime.ExprInt variant-index)
+      (match payload-index-expr
+        [(comptime.ExprInt payload-index)
+          (if (>=
+            payload-index
+            (enum-variant-payload-count enum-type variant-index))
+            (let
+              [variant-name : String
+                (enum-variant-name enum-type variant-index)]
+              [enum-module : String (type-nominal-module enum-type)]
+              [enum-name : String (type-nominal-name enum-type)]
+              [enum-variant-source-name : String
+                (comptime.string-append
+                  enum-name
+                  (comptime.string-append "." variant-name))]
+              [enum-source-alias : String
+                (match nested-alias
+                  [(comptime.ExprVar nested-alias-text)
+                    (comptime.string-append nested-alias-text "_enum_source")]
+                  [_
+                    (comptime.comptime-error
+                      "serialize: nested alias must be a name")])]
+              [variant-source-name : String
+                (if (string.eq enum-module "")
+                  enum-variant-source-name
+                  (comptime.string-append
+                    enum-source-alias
+                    (comptime.string-append "." enum-variant-source-name)))]
+              [variant-ctor : comptime.Expr
+                (comptime.expr-var variant-source-name)]
+              `(,variant-ctor ,@items))
+            (let
+              [payload-type : comptime.Expr
+                (enum-variant-payload-type
+                  enum-type
+                  variant-index
+                  payload-index)]
+              [payload-alias : comptime.Expr
+                (match nested-alias
+                  [(comptime.ExprVar nested-alias-text)
+                    (comptime.expr-var
+                      (comptime.string-append
+                        (comptime.string-append
+                          (comptime.string-append
+                            (comptime.string-append
+                              nested-alias-text
+                              "_variant_")
+                            (comptime.int->string variant-index))
+                          "_payload_")
+                        (comptime.int->string payload-index)))]
+                  [_
+                    (comptime.comptime-error
+                      "serialize: nested alias must be a name")])]
+              [element-hook : comptime.Expr
+                (comptime.module-hook format "sequence-element-value")]
+              [format-expr : comptime.Expr
+                (comptime.expr-var (comptime.module-name format))]
+              [next-index : comptime.Expr
+                (comptime.expr-int (+ payload-index 1))]
+              [decoded : comptime.Expr
+                `(stdlib.serialize.decode-value
+                  ,format-expr
+                  ,payload-type
+                  ,payload-alias
+                  (,element-hook ,payload ,payload-index-expr ,err-ctor)
+                  ,err-ctor)]
+              `(stdlib.serialize.decode-enum-payload-items
+                ,format-expr
+                ,enum-type
+                ,nested-alias
+                ,payload
+                ,err-ctor
+                ,variant-index-expr
+                ,next-index
+                ,@items
+                ,decoded)))]
+        [_
+          (comptime.comptime-error
+            "serialize: enum payload index must be an integer literal")])]
+    [_
+      (comptime.comptime-error
+        "serialize: enum variant index must be an integer literal")]))
+
+;: Emit the runtime decode branch chain for enum tags.
+(defmacro (decode-enum-variants
+  [format : Module]
+  [enum-type : type]
+  [nested-alias : comptime.Expr]
+  [payload : comptime.Expr]
+  [err-ctor : comptime.Expr]
+  [tag : comptime.Expr]
+  [variant-index-expr : comptime.Expr]) : comptime.Expr
+  (match variant-index-expr
+    [(comptime.ExprInt variant-index)
+      (if (>= variant-index (enum-variant-count enum-type))
+        `(return (,err-ctor "serialize: unknown enum tag"))
+        (let
+          [variant-name : String (enum-variant-name enum-type variant-index)]
+          [payload-count : i64
+            (enum-variant-payload-count enum-type variant-index)]
+          [payload-count-expr : comptime.Expr (comptime.expr-int payload-count)]
+          [length-hook : comptime.Expr
+            (comptime.module-hook format "sequence-length")]
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
+          [next-variant-index : comptime.Expr
+            (comptime.expr-int (+ variant-index 1))]
+          `(if (stdlib.string.eq ,tag ,(comptime.expr-string variant-name))
+            (let
+              [__serialize_payload_count : i64
+                (,length-hook ,payload ,err-ctor)]
+              (begin
+                (if (!= __serialize_payload_count ,payload-count-expr)
+                  (return (,err-ctor "serialize: enum payload length mismatch"))
+                  unit)
+                (stdlib.serialize.decode-enum-payload-items
+                  ,format-expr
+                  ,enum-type
+                  ,nested-alias
+                  ,payload
+                  ,err-ctor
+                  ,variant-index-expr
+                  0)))
+            (stdlib.serialize.decode-enum-variants
+              ,format-expr
+              ,enum-type
+              ,nested-alias
+              ,payload
+              ,err-ctor
+              ,tag
+              ,next-variant-index))))]
+    [_
+      (comptime.comptime-error
+        "serialize: enum variant index must be an integer literal")]))
+
 ;: Emit the encoded value expression for one supported value type.
 (defmacro (encode-value
   [format : Module]
@@ -350,6 +814,13 @@
                   ,value
                   ,last-index
                   (,empty-hook))))]
+          ["enum"
+            `(stdlib.serialize.encode-enum-dispatch
+              ,format-expr
+              ,value-type
+              ,nested-alias
+              ,value
+              0)]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))
@@ -512,6 +983,43 @@
                     ,value
                     ,err-ctor
                     0))))]
+          ["enum"
+            (let
+              [expect-object-hook : comptime.Expr
+                (comptime.module-hook format "expect-object")]
+              [field-value-hook : comptime.Expr
+                (comptime.module-hook format "field-value")]
+              [decode-string-hook : comptime.Expr
+                (comptime.module-hook format "decode-string")]
+              [format-expr : comptime.Expr
+                (comptime.expr-var (comptime.module-name format))]
+              [type-name : String (type-nominal-name value-type)]
+              `(begin
+                (,expect-object-hook
+                  ,value
+                  ,(comptime.expr-string type-name)
+                  ,err-ctor)
+                (let
+                  [__serialize_tag_value
+                    (,field-value-hook
+                      ,value
+                      ,(comptime.expr-string "tag")
+                      ,err-ctor)]
+                  [__serialize_payload_value
+                    (,field-value-hook
+                      ,value
+                      ,(comptime.expr-string "payload")
+                      ,err-ctor)]
+                  [__serialize_tag : String
+                    (,decode-string-hook __serialize_tag_value ,err-ctor)]
+                  (stdlib.serialize.decode-enum-variants
+                    ,format-expr
+                    ,value-type
+                    ,nested-alias
+                    __serialize_payload_value
+                    ,err-ctor
+                    __serialize_tag
+                    0))))]
           [_
             (comptime.comptime-error
               (comptime.string-append "serialize: unsupported type " value-key))])])))
@@ -651,6 +1159,20 @@
       (comptime.comptime-error
         "serialize: decode fields index must be an integer literal")]))
 
+;: Emit the source-module import needed to construct enum variants on decode.
+(defmacro (enum-source-import [enum-type : type] [nested-alias : comptime.Expr]) : Decls
+  (let
+    [enum-module : String (type-nominal-module enum-type)]
+    [source-alias : comptime.Expr
+      (match nested-alias
+        [(comptime.ExprVar nested-alias-text)
+          (comptime.expr-var
+            (comptime.string-append nested-alias-text "_enum_source"))]
+        [_ (comptime.comptime-error "serialize: nested alias must be a name")])]
+    (if (string.eq enum-module "")
+      `(begin)
+      `(import ,(comptime.expr-var enum-module) as ,source-alias))))
+
 ;: Emit one recursive generated serializer import needed by a nested value type.
 (defmacro (nested-import-for-type
   [format : Module]
@@ -691,6 +1213,14 @@
           ,value-type
           ,nested-alias
           0)]
+      ["enum"
+        `(begin
+          (stdlib.serialize.enum-source-import ,value-type ,nested-alias)
+          (stdlib.serialize.nested-imports-for-enum
+            ,format-expr
+            ,value-type
+            ,nested-alias
+            0))]
       [_ `(begin)])))
 
 ;: Emit recursive generated serializer imports needed for tuple element types.
@@ -731,6 +1261,95 @@
     [_
       (comptime.comptime-error
         "serialize: nested tuple import index must be an integer literal")]))
+
+;: Emit recursive generated serializer imports needed for enum payload types.
+(defmacro (nested-imports-for-enum-payloads
+  [format : Module]
+  [enum-type : type]
+  [nested-alias : comptime.Expr]
+  [variant-index-expr : comptime.Expr]
+  [payload-index-expr : comptime.Expr]) : Decls
+  (match variant-index-expr
+    [(comptime.ExprInt variant-index)
+      (match payload-index-expr
+        [(comptime.ExprInt payload-index)
+          (if (>=
+            payload-index
+            (enum-variant-payload-count enum-type variant-index))
+            `(begin)
+            (let
+              [payload-type : comptime.Expr
+                (enum-variant-payload-type
+                  enum-type
+                  variant-index
+                  payload-index)]
+              [payload-alias : comptime.Expr
+                (match nested-alias
+                  [(comptime.ExprVar nested-alias-text)
+                    (comptime.expr-var
+                      (comptime.string-append
+                        (comptime.string-append
+                          (comptime.string-append
+                            (comptime.string-append
+                              nested-alias-text
+                              "_variant_")
+                            (comptime.int->string variant-index))
+                          "_payload_")
+                        (comptime.int->string payload-index)))]
+                  [_
+                    (comptime.comptime-error
+                      "serialize: nested alias must be a name")])]
+              [format-expr : comptime.Expr
+                (comptime.expr-var (comptime.module-name format))]
+              [next-index : comptime.Expr
+                (comptime.expr-int (+ payload-index 1))]
+              `(begin
+                (stdlib.serialize.nested-imports-for-enum-payloads
+                  ,format-expr
+                  ,enum-type
+                  ,nested-alias
+                  ,variant-index-expr
+                  ,next-index)
+                (stdlib.serialize.nested-import-for-type
+                  ,format-expr
+                  ,payload-type
+                  ,payload-alias))))]
+        [_
+          (comptime.comptime-error
+            "serialize: nested enum payload index must be an integer literal")])]
+    [_
+      (comptime.comptime-error
+        "serialize: nested enum variant index must be an integer literal")]))
+
+;: Emit recursive generated serializer imports needed for all enum variants.
+(defmacro (nested-imports-for-enum
+  [format : Module]
+  [enum-type : type]
+  [nested-alias : comptime.Expr]
+  [variant-index-expr : comptime.Expr]) : Decls
+  (match variant-index-expr
+    [(comptime.ExprInt variant-index)
+      (if (>= variant-index (enum-variant-count enum-type))
+        `(begin)
+        (let
+          [format-expr : comptime.Expr
+            (comptime.expr-var (comptime.module-name format))]
+          [next-index : comptime.Expr (comptime.expr-int (+ variant-index 1))]
+          `(begin
+            (stdlib.serialize.nested-imports-for-enum
+              ,format-expr
+              ,enum-type
+              ,nested-alias
+              ,next-index)
+            (stdlib.serialize.nested-imports-for-enum-payloads
+              ,format-expr
+              ,enum-type
+              ,nested-alias
+              ,variant-index-expr
+              0))))]
+    [_
+      (comptime.comptime-error
+        "serialize: nested enum import index must be an integer literal")]))
 
 ;: Emit recursive generated serializer imports needed for nested struct fields.
 (defmacro (nested-imports
@@ -784,16 +1403,29 @@
             true
             (if (string.eq root-kind "array")
               true
-              (string.eq root-kind "dyn-array")))])]
+              (if (string.eq root-kind "dyn-array")
+                true
+                (string.eq root-kind "enum"))))])]
     (if root-supported
       (let
         [format-name : String (comptime.module-name format)]
+        [root-module-suffix : String
+          (if (string.eq root-kind "enum")
+            (let
+              [enum-module : String (type-nominal-module T)]
+              [enum-name : String (type-nominal-name T)]
+              (if (string.eq enum-module "")
+                enum-name
+                (comptime.string-append
+                  enum-module
+                  (comptime.string-append "." enum-name))))
+            root-key)]
         [module-name-text : String
           (comptime.string-append
             (comptime.string-append
               (comptime.string-append "stdlib.serialize.generated." format-name)
               ".")
-            root-key)]
+            root-module-suffix)]
         [module-name-expr : comptime.Expr (comptime.expr-var module-name-text)]
         [format-module-expr : comptime.Expr (comptime.expr-var format-name)]
         [value-type : comptime.Expr

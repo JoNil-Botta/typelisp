@@ -187,7 +187,8 @@ use.
   exchange, with vector-backed parser builders that preserve the public
   list-shaped `Json` value model, plus deterministic finite `f64`/`f32` JSON
   number conversion helpers. It is also a `serialize.tl` strategy for scalar,
-  fixed-array, dynamic-array, and struct roots with nested structs and arrays:
+  fixed-array, dynamic-array, struct, and module-backed enum roots with nested
+  structs, arrays, tuples, and supported enum payloads:
   instantiate with `(import (serialize.serialize json Person) as person_json)`
   to get `to-json` / `from-json` aliases alongside generic `encode` / `decode`.
   Import it with `(import stdlib.json)`.
@@ -218,11 +219,14 @@ use.
   The generated module exposes `encode` / `decode` over the strategy's `Value`
   type, a local `Result` enum, and any format-specific declarations emitted by
   the strategy's `extra-decls` hook. Current serializers cover primitive roots,
-  fixed-array roots, dynamic-array roots, struct roots, nested structs, arrays,
-  and tuples within supported roots; strategy hooks own object and sequence
-  representation, decode diagnostics, and helper aliases. The checked toy format
-  exercises the hook contract, and `json.tl` provides the JSON integration
-  strategy. Enum and tuple roots remain separate follow-ups.
+  fixed-array roots, dynamic-array roots, struct roots, module-backed enum roots,
+  nested structs, arrays, enum values, and tuples within supported roots. Enums
+  reuse object and sequence hooks as `{ tag: String, payload: [...] }`. Direct
+  struct enum payloads, generated option/result family enum reflection, tuple
+  roots, and enum variants with more than eight payloads remain follow-ups.
+  Strategy hooks own object and sequence representation, decode diagnostics, and
+  helper aliases. The checked toy format exercises the hook contract, and
+  `json.tl` provides the JSON integration strategy.
 - `process.tl`: process command/output/error data model and the public
   `output`/`start`/`wait` wrappers for selfhost tools.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and

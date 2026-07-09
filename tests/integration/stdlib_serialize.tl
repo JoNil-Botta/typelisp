@@ -2,6 +2,7 @@
 (import stdlib.array)
 (import stdlib.string)
 (import serialize_toy_format as toy)
+(import serialize_enum_fixture as enum_fixture)
 
 (defstruct Address
   (zip i64)
@@ -12,6 +13,7 @@
 (import (serialize.serialize toy (Array i64 3)) as fixed_i64_ser)
 (import (serialize.serialize toy (Array i64)) as dyn_i64_ser)
 (import (serialize.serialize toy (Array Address 2)) as address_array_ser)
+(import (serialize.serialize toy enum_fixture.Status) as status_ser)
 
 (defstruct Person
   (name String)
@@ -182,6 +184,95 @@
           [(toy.Missing) false]))]
     [_ false]))
 
+(define (serialize-toy-empty-sequence) : toy.Value
+  (toy.Sequence (box toy.ValueNil)))
+
+(define (serialize-toy-enum-object [tag : String] [payload : toy.Value]) : toy.Value
+  (toy.Object
+    (box
+      (toy.FieldCons
+        "tag"
+        (toy.Text tag)
+        (box (toy.FieldCons "payload" payload (box toy.FieldNil)))))))
+
+(define (serialize-toy-enum-missing-tag) : toy.Value
+  (toy.Object
+    (box
+      (toy.FieldCons
+        "payload"
+        (serialize-toy-empty-sequence)
+        (box toy.FieldNil)))))
+
+(define (serialize-toy-enum-missing-payload) : toy.Value
+  (toy.Object (box (toy.FieldCons "tag" (toy.Text "Idle") (box toy.FieldNil)))))
+
+(define (serialize-enum-object-tag-and-payload-count-ok?
+  [value : toy.Value]
+  [expected-tag : String]
+  [expected-count : i64]) : bool
+  (match value
+    [(toy.Object fields)
+      (and
+        (match (toy.field-list-get (box-get fields) "tag")
+          [(toy.Found tag-value)
+            (match tag-value
+              [(toy.Text found) (string.eq found expected-tag)]
+              [_ false])]
+          [(toy.Missing) false])
+        (match (toy.field-list-get (box-get fields) "payload")
+          [(toy.Found payload-value)
+            (match payload-value
+              [(toy.Sequence items)
+                (= (toy.value-list-count (box-get items)) expected-count)]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-status-array-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 2)
+        (match (toy.value-list-get (box-get items) 0)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 9)]
+              [_ false])]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 10)]
+              [_ false])]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-status-payload-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Sequence items)
+      (and
+        (= (toy.value-list-count (box-get items)) 2)
+        (match (toy.value-list-get (box-get items) 0)
+          [(toy.Found item)
+            (match item
+              [(toy.Int found) (= found 123)]
+              [_ false])]
+          [(toy.Missing) false])
+        (match (toy.value-list-get (box-get items) 1)
+          [(toy.Found item) (serialize-status-array-value-ok? item)]
+          [(toy.Missing) false]))]
+    [_ false]))
+
+(define (serialize-status-value-ok? [value : toy.Value]) : bool
+  (match value
+    [(toy.Object fields)
+      (and
+        (serialize-enum-object-tag-and-payload-count-ok? value "Moved" 2)
+        (match (toy.field-list-get (box-get fields) "payload")
+          [(toy.Found payload) (serialize-status-payload-value-ok? payload)]
+          [(toy.Missing) false]))]
+    [_ false]))
+
 (define (serialize-encoded-shape-ok? [value : toy.Value]) : bool
   (match value
     [(toy.Object fields)
@@ -310,6 +401,47 @@
         [(address_array_ser.Ok parsed) (serialize-previous-ok? parsed)]
         [(address_array_ser.Err _) false]))))
 
+(define (serialize-status-nullary-unary-roundtrip-ok?) : bool
+  (and
+    (match (status_ser.decode (status_ser.encode (enum_fixture.idle)))
+      [(status_ser.Ok parsed) (enum_fixture.idle? parsed)]
+      [(status_ser.Err _) false])
+    (match (status_ser.decode (status_ser.encode (enum_fixture.scored 12)))
+      [(status_ser.Ok parsed) (enum_fixture.scored? parsed 12)]
+      [(status_ser.Err _) false])))
+
+(define (serialize-status-root-roundtrip-ok?) : bool
+  (let
+    [status : enum_fixture.Status (enum_fixture.moved)]
+    [encoded : toy.Value (status_ser.encode status)]
+    (and
+      (serialize-status-value-ok? encoded)
+      (match (status_ser.decode encoded)
+        [(status_ser.Ok parsed) (enum_fixture.moved? parsed)]
+        [(status_ser.Err _) false]))))
+
+(define (serialize-status-invalid-tag-ok?) : bool
+  (match (status_ser.decode
+    (serialize-toy-enum-object "Unknown" (serialize-toy-empty-sequence)))
+    [(status_ser.Ok _) false]
+    [(status_ser.Err _) true]))
+
+(define (serialize-status-missing-tag-ok?) : bool
+  (match (status_ser.decode (serialize-toy-enum-missing-tag))
+    [(status_ser.Ok _) false]
+    [(status_ser.Err _) true]))
+
+(define (serialize-status-missing-payload-ok?) : bool
+  (match (status_ser.decode (serialize-toy-enum-missing-payload))
+    [(status_ser.Ok _) false]
+    [(status_ser.Err _) true]))
+
+(define (serialize-status-payload-length-ok?) : bool
+  (match (status_ser.decode
+    (serialize-toy-enum-object "Scored" (serialize-toy-empty-sequence)))
+    [(status_ser.Ok _) false]
+    [(status_ser.Err _) true]))
+
 (define (serialize-missing-field-value) : toy.Value
   (toy.Object (box (toy.FieldCons "name" (toy.Text "Ada") (box toy.FieldNil)))))
 
@@ -387,4 +519,10 @@
     (unless (serialize-fixed-array-root-roundtrip-ok?) (return 8))
     (unless (serialize-dyn-array-root-roundtrip-ok?) (return 9))
     (unless (serialize-address-array-root-roundtrip-ok?) (return 10))
+    (unless (serialize-status-nullary-unary-roundtrip-ok?) (return 11))
+    (unless (serialize-status-root-roundtrip-ok?) (return 12))
+    (unless (serialize-status-invalid-tag-ok?) (return 13))
+    (unless (serialize-status-missing-tag-ok?) (return 14))
+    (unless (serialize-status-missing-payload-ok?) (return 15))
+    (unless (serialize-status-payload-length-ok?) (return 16))
     42))

@@ -18,8 +18,6 @@
 ;; IDs are assigned in INSERTION (parse) order, independent of the hash function,
 ;; so the emitted output is identical regardless of the probe's hash -- the hash
 ;; only affects bucket placement, never the id a string gets.
-(module compiler_intern)
-
 ;: Local arena hooks keep this module import-free while letting persistent
 ;: intern entries survive scoped compile arenas.
 (extern (tl_arena_make) : i64)

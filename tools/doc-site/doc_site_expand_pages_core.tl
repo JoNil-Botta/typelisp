@@ -1,6 +1,4 @@
 ;; doc_site_expand_pages_core.tl - Generated-module API section post-processing.
-(module doc_site_expand_pages_core)
-
 (import stdlib.io)
 (import stdlib.fs)
 (import stdlib.string)

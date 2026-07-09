@@ -3,8 +3,6 @@
 ;; The renderer stays in TypeLisp and consumes the same extracted documentation
 ;; model as the Markdown renderer. Anchors intentionally reuse `doc-render-anchor`
 ;; so standalone item links remain compatible with existing Markdown anchors.
-(module doc_html)
-
 (import stdlib.io)
 (import doc_render)
 (import doc_extract)

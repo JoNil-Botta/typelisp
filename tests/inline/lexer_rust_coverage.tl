@@ -4,10 +4,10 @@
 ;; This file exercises the remaining Rust test assertions that are not yet
 ;; mirrored by src/lex.tl self-tests, using the (test ...) inline harness
 ;; from #947 so the CI verification script picks them up automatically.
-;; Retained for #2454 path-import compatibility: this fixture intentionally uses
-;; flat names from compiler source imports to mirror the old Rust test surface.
-(import "../../src/lex.tl")
-(import "../../src/token.tl")
+;; Import the selfhost lexer modules by their implicit source identities so the
+;; lexer and token declarations deduplicate with lex.tl's own token import.
+(import lex)
+(import token)
 (import stdlib.io)
 (import stdlib.string)
 
@@ -32,9 +32,9 @@
 (test
   lexer-basic-tokens
   (let
-    [r : ResultTokens (lex-result "(define x 42)")]
+    [r : lex.ResultTokens (lex.lex-result "(define x 42)")]
     (match r
-      [(ResultTokens.Ok toks)
+      [(lex.ResultTokens.Ok toks)
         (let
           [ok : bool true]
           (begin
@@ -66,15 +66,15 @@
               ok
               true
               "basic token sequence should match Rust test_basic_tokens")))]
-      [(ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
 
 ;; ---- 2. src/lexer.rs test_types ----------------------------------------
 (test
   lexer-arrow-type-tokens
   (let
-    [r : ResultTokens (lex-result "(-> i64 i64)")]
+    [r : lex.ResultTokens (lex.lex-result "(-> i64 i64)")]
     (match r
-      [(ResultTokens.Ok toks)
+      [(lex.ResultTokens.Ok toks)
         (let
           [ok : bool true]
           (begin
@@ -106,14 +106,14 @@
               ok
               true
               "arrow-type tokens should lex as single tokens")))]
-      [(ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
 
 (test
   lexer-duplicate-symbols-share-intern-id
   (let
-    [r : ResultTokens (lex-result "(x x y)")]
+    [r : lex.ResultTokens (lex.lex-result "(x x y)")]
     (match r
-      [(ResultTokens.Ok toks)
+      [(lex.ResultTokens.Ok toks)
         (lexer-assert-true
           (and
             (=
@@ -126,13 +126,13 @@
             (string.eq (token.sym (array-ref toks 1)) "x")
             (string.eq (token.sym (array-ref toks 3)) "y"))
           "duplicate symbols should reuse the same intern id")]
-      [(ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
 
 ;; ---- 3. src/lexer.rs test_single_char_literals -------------------------
 (test
   lexer-single-char-literal-a
   (let
-    [toks : (Array token.Token) (lex "'a'")]
+    [toks : (Array token.Token) (lex.lex "'a'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       'a'
@@ -141,7 +141,7 @@
 (test
   lexer-single-char-literal-Z
   (let
-    [toks : (Array token.Token) (lex "'Z'")]
+    [toks : (Array token.Token) (lex.lex "'Z'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       'Z'
@@ -150,7 +150,7 @@
 (test
   lexer-single-char-literal-zero
   (let
-    [toks : (Array token.Token) (lex "'0'")]
+    [toks : (Array token.Token) (lex.lex "'0'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '0'
@@ -159,7 +159,7 @@
 (test
   lexer-single-char-literal-lparen
   (let
-    [toks : (Array token.Token) (lex "'('")]
+    [toks : (Array token.Token) (lex.lex "'('")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '('
@@ -168,7 +168,7 @@
 (test
   lexer-single-char-literal-plus
   (let
-    [toks : (Array token.Token) (lex "'+'")]
+    [toks : (Array token.Token) (lex.lex "'+'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '+'
@@ -177,7 +177,7 @@
 (test
   lexer-single-char-literal-space
   (let
-    [toks : (Array token.Token) (lex "' '")]
+    [toks : (Array token.Token) (lex.lex "' '")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       ' '
@@ -187,11 +187,11 @@
 (test
   lexer-legacy-escaped-char-literal-rejected
   (let
-    [r : ResultTokens (lex-result "#\\a'")]
+    [r : lex.ResultTokens (lex.lex-result "#\\a'")]
     (match r
-      [(ResultTokens.Ok _)
+      [(lex.ResultTokens.Ok _)
         (lexer-assert-true false "legacy escaped char should error")]
-      [(ResultTokens.Err msg)
+      [(lex.ResultTokens.Err msg)
         (let
           [haystack : String msg]
           [needle : String "unexpected character"]
@@ -203,7 +203,7 @@
 (test
   lexer-apostrophe-char-literal-a
   (let
-    [toks : (Array token.Token) (lex "'a'")]
+    [toks : (Array token.Token) (lex.lex "'a'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       'a'
@@ -212,7 +212,7 @@
 (test
   lexer-apostrophe-char-literal-space
   (let
-    [toks : (Array token.Token) (lex "' '")]
+    [toks : (Array token.Token) (lex.lex "' '")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       ' '
@@ -221,7 +221,7 @@
 (test
   lexer-apostrophe-char-literal-double-quote
   (let
-    [toks : (Array token.Token) (lex "'\"'")]
+    [toks : (Array token.Token) (lex.lex "'\"'")]
     (lexer-assert-bool-eq
       (= (cast (token.char (array-ref toks 0)) : i64) 34)
       true
@@ -230,7 +230,7 @@
 (test
   lexer-apostrophe-escaped-char-literal-newline
   (let
-    [toks : (Array token.Token) (lex "'\\n'")]
+    [toks : (Array token.Token) (lex.lex "'\\n'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\n'
@@ -239,10 +239,10 @@
 (test
   lexer-apostrophe-invalid-escape-errors
   (let
-    [r : ResultTokens (lex-result "'\\x'")]
+    [r : lex.ResultTokens (lex.lex-result "'\\x'")]
     (match r
-      [(ResultTokens.Ok _) (lexer-assert-true false "should error")]
-      [(ResultTokens.Err msg)
+      [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
+      [(lex.ResultTokens.Err msg)
         (let
           [haystack : String msg]
           [needle : String "unknown character escape"]
@@ -253,8 +253,8 @@
 
 (test
   lexer-apostrophe-quote-vs-char
-  (match (lex-result "'form")
-    [(ResultTokens.Ok toks)
+  (match (lex.lex-result "'form")
+    [(lex.ResultTokens.Ok toks)
       (lexer-assert-true
         (and
           (= (token.tag (array-ref toks 0)) (token.tag-quote))
@@ -262,15 +262,15 @@
           (string.eq (token.sym (array-ref toks 1)) "form")
           (= (token.tag (array-ref toks 2)) (token.tag-end)))
         "apostrophe quote should still quote forms")]
-    [(ResultTokens.Err msg) (lexer-assert-true false msg)]))
+    [(lex.ResultTokens.Err msg) (lexer-assert-true false msg)]))
 
 ;; ---- 5. src/lexer.rs test_char_literal_in_context ----------------------
 (test
   lexer-char-literal-in-context
   (let
-    [r : ResultTokens (lex-result "(= c ' ')")]
+    [r : lex.ResultTokens (lex.lex-result "(= c ' ')")]
     (match r
-      [(ResultTokens.Ok toks)
+      [(lex.ResultTokens.Ok toks)
         (let
           [ok : bool true]
           (begin
@@ -302,15 +302,15 @@
               ok
               true
               "char literal should lex in a surrounding token stream")))]
-      [(ResultTokens.Err e) (lexer-assert-true false e)])))
+      [(lex.ResultTokens.Err e) (lexer-assert-true false e)])))
 
 ;; ---- 6. src/lexer.rs test_spans_single_line ----------------------------
 (test
   lexer-single-line-spans
   (let
-    [r : ResultSpannedTokens (lex-spanned-result "(define x 42)")]
+    [r : lex.ResultSpannedTokens (lex.lex-spanned-result "(define x 42)")]
     (match r
-      [(ResultSpannedTokens.Ok s)
+      [(lex.ResultSpannedTokens.Ok s)
         (let
           [ok : bool true]
           (begin
@@ -359,16 +359,16 @@
               ok
               true
               "single-line spans should match Rust test_spans_single_line")))]
-      [(ResultSpannedTokens.Err e)
+      [(lex.ResultSpannedTokens.Err e)
         (lexer-assert-true false (token.source-error-message e))])))
 
 ;; ---- 7. src/lexer.rs test_spans_multi_line_and_blank_lines -------------
 (test
   lexer-multi-line-blank-spans
   (let
-    [r : ResultSpannedTokens (lex-spanned-result "(a\n\n  bb)")]
+    [r : lex.ResultSpannedTokens (lex.lex-spanned-result "(a\n\n  bb)")]
     (match r
-      [(ResultSpannedTokens.Ok s)
+      [(lex.ResultSpannedTokens.Ok s)
         (let
           [ok : bool true]
           (begin
@@ -388,14 +388,14 @@
               ok
               true
               "multi-line blank spans should match Rust test")))]
-      [(ResultSpannedTokens.Err e)
+      [(lex.ResultSpannedTokens.Err e)
         (lexer-assert-true false (token.source-error-message e))])))
 
 ;; ---- 8. src/lexer.rs EOF handling --------------------------------------
 (test
   lexer-eof-singleton
   (let
-    [toks : (Array token.Token) (lex "")]
+    [toks : (Array token.Token) (lex.lex "")]
     (lexer-assert-bool-eq
       (= (token.tag (array-ref toks 0)) (token.tag-end))
       true
@@ -405,10 +405,10 @@
 (test
   lexer-legacy-named-char-rejected
   (let
-    [r : ResultTokens (lex-result "#\\spcae'")]
+    [r : lex.ResultTokens (lex.lex-result "#\\spcae'")]
     (match r
-      [(ResultTokens.Ok _) (lexer-assert-true false "should error")]
-      [(ResultTokens.Err msg)
+      [(lex.ResultTokens.Ok _) (lexer-assert-true false "should error")]
+      [(lex.ResultTokens.Err msg)
         (let
           [haystack : String msg]
           [needle : String "unexpected character"]
@@ -420,31 +420,31 @@
 (test
   lexer-control-char-literals
   (let
-    [toks : (Array token.Token) (lex "' '")]
+    [toks : (Array token.Token) (lex.lex "' '")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       ' '
       "space char literal"))
   (let
-    [toks : (Array token.Token) (lex "'\\n'")]
+    [toks : (Array token.Token) (lex.lex "'\\n'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\n'
       "newline char literal"))
   (let
-    [toks : (Array token.Token) (lex "'\\t'")]
+    [toks : (Array token.Token) (lex.lex "'\\t'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\t'
       "tab char literal"))
   (let
-    [toks : (Array token.Token) (lex "'\\r'")]
+    [toks : (Array token.Token) (lex.lex "'\\r'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\r'
       "return char literal"))
   (let
-    [toks : (Array token.Token) (lex "'\\0'")]
+    [toks : (Array token.Token) (lex.lex "'\\0'")]
     (lexer-assert-char-eq
       (token.char (array-ref toks 0))
       '\0'
@@ -453,16 +453,16 @@
 (test
   lexer-apostrophe-escaped-char-literals
   (let
-    [toks : (Array token.Token) (lex "'\\n'")]
+    [toks : (Array token.Token) (lex.lex "'\\n'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\n' "escape n"))
   (let
-    [toks : (Array token.Token) (lex "'\\t'")]
+    [toks : (Array token.Token) (lex.lex "'\\t'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\t' "escape t"))
   (let
-    [toks : (Array token.Token) (lex "'\\r'")]
+    [toks : (Array token.Token) (lex.lex "'\\r'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\r' "escape r"))
   (let
-    [toks : (Array token.Token) (lex "'\\0'")]
+    [toks : (Array token.Token) (lex.lex "'\\0'")]
     (lexer-assert-char-eq (token.char (array-ref toks 0)) '\0' "escape 0"))
   ;; ordinary letters are direct character payloads in the apostrophe syntax
   )

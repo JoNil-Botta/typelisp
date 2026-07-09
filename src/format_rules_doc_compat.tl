@@ -1,178 +1,187 @@
 ;; format_rules_doc_compat.tl - Doc-algebra parity checks for formatter rules.
 (import "format_rules.tl")
-(import "format_doc.tl")
+(import format_doc as fmt_doc)
 (import stdlib.string)
 
-(define (format-rules-gap) : Doc
-  (doc-append (doc-hard-line) (doc-hard-line)))
+(define (format-rules-gap) : fmt_doc.Doc
+  (fmt_doc.doc-append (fmt_doc.doc-hard-line) (fmt_doc.doc-hard-line)))
 
-(define (format-rules-forms-separator [previous : FormatCst] [node : FormatCst]) : Doc
+(define (format-rules-forms-separator [previous : FormatCst] [node : FormatCst]) : fmt_doc.Doc
   (if (format-rules-node-comment? previous)
-    (doc-hard-line)
+    (fmt_doc.doc-hard-line)
     (if (format-rules-adjacent-top-forms? previous node)
-      (doc-hard-line)
+      (fmt_doc.doc-hard-line)
       (format-rules-gap))))
 
-(define (format-rules-space [doc : Doc]) : Doc
-  (doc-append (doc-text " ") doc))
+(define (format-rules-space [doc : fmt_doc.Doc]) : fmt_doc.Doc
+  (fmt_doc.doc-append (fmt_doc.doc-text " ") doc))
 
-(define (format-rules-colon-pair-doc [colon : FormatCst] [next : FormatCst]) : Doc
-  (doc-append
+(define (format-rules-colon-pair-doc [colon : FormatCst] [next : FormatCst]) : fmt_doc.Doc
+  (fmt_doc.doc-append
     (format-rules-cst-doc colon)
     (format-rules-space (format-rules-cst-doc next))))
 
 (define (format-rules-return-type-tail-doc
   [colon : FormatCst]
-  [typ : FormatCst]) : Doc
+  [typ : FormatCst]) : fmt_doc.Doc
   (format-rules-space (format-rules-colon-pair-doc colon typ)))
 
 (define (format-rules-return-type-breakable-tail-doc
   [colon : FormatCst]
-  [typ : FormatCst]) : Doc
-  (doc-group
-    (doc-append (doc-soft-line) (format-rules-colon-pair-doc colon typ))))
+  [typ : FormatCst]) : fmt_doc.Doc
+  (fmt_doc.doc-group
+    (fmt_doc.doc-append
+      (fmt_doc.doc-soft-line)
+      (format-rules-colon-pair-doc colon typ))))
 
-(define (format-rules-inline-tail-doc [items : FormatCstList]) : Doc
+(define (format-rules-inline-tail-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node rest)
-      (doc-append
+      (fmt_doc.doc-append
         (format-rules-space (format-rules-cst-doc node))
         (format-rules-inline-tail-doc rest))]))
 
-(define (format-rules-hard-tail-doc [items : FormatCstList]) : Doc
+(define (format-rules-hard-tail-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node tail)
       (if (format-rules-node-colon? node)
         (match (fmt-cst-list-step tail)
           [(FormatCstListStep.Item next after-next)
             (if (format-rules-node-comment? next)
-              (doc-append
-                (doc-hard-line)
-                (doc-append
+              (fmt_doc.doc-append
+                (fmt_doc.doc-hard-line)
+                (fmt_doc.doc-append
                   (format-rules-cst-doc node)
                   (format-rules-hard-tail-doc tail)))
-              (doc-append
-                (doc-hard-line)
-                (doc-append
+              (fmt_doc.doc-append
+                (fmt_doc.doc-hard-line)
+                (fmt_doc.doc-append
                   (format-rules-colon-pair-doc node next)
                   (if (fmt-cst-list-empty? after-next)
-                    (doc-empty)
+                    (fmt_doc.doc-empty)
                     (format-rules-hard-tail-doc after-next)))))]
-          [_ (doc-append (doc-hard-line) (format-rules-cst-doc node))])
-        (doc-append
-          (doc-hard-line)
-          (doc-append
+          [_
+            (fmt_doc.doc-append
+              (fmt_doc.doc-hard-line)
+              (format-rules-cst-doc node))])
+        (fmt_doc.doc-append
+          (fmt_doc.doc-hard-line)
+          (fmt_doc.doc-append
             (format-rules-cst-doc node)
             (if (fmt-cst-list-empty? tail)
               (if (format-rules-node-comment? node)
-                (doc-hard-line)
-                (doc-empty))
+                (fmt_doc.doc-hard-line)
+                (fmt_doc.doc-empty))
               (format-rules-hard-tail-doc tail)))))]))
 
 (define (format-rules-tail-separator
   [previous-comment : bool]
-  [node : FormatCst]) : Doc
+  [node : FormatCst]) : fmt_doc.Doc
   (if (or previous-comment (format-rules-node-comment? node))
-    (doc-hard-line)
-    (doc-soft-line)))
+    (fmt_doc.doc-hard-line)
+    (fmt_doc.doc-soft-line)))
 
 (define (format-rules-list-tail-doc
   [previous-comment : bool]
-  [items : FormatCstList]) : Doc
+  [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node tail)
       (if (format-rules-node-colon? node)
         (match (fmt-cst-list-step tail)
           [(FormatCstListStep.Item next after-next)
             (if (format-rules-node-comment? next)
-              (doc-append
+              (fmt_doc.doc-append
                 (format-rules-tail-separator previous-comment node)
-                (doc-append
+                (fmt_doc.doc-append
                   (format-rules-cst-doc node)
                   (format-rules-list-tail-doc false tail)))
-              (doc-append
+              (fmt_doc.doc-append
                 (format-rules-tail-separator previous-comment node)
-                (doc-append
+                (fmt_doc.doc-append
                   (format-rules-colon-pair-doc node next)
                   (if (fmt-cst-list-empty? after-next)
-                    (doc-empty)
+                    (fmt_doc.doc-empty)
                     (format-rules-list-tail-doc
                       (format-rules-node-comment? next)
                       after-next)))))]
           [_
-            (doc-append
+            (fmt_doc.doc-append
               (format-rules-tail-separator previous-comment node)
               (format-rules-cst-doc node))])
-        (doc-append
+        (fmt_doc.doc-append
           (format-rules-tail-separator previous-comment node)
-          (doc-append
+          (fmt_doc.doc-append
             (format-rules-cst-doc node)
             (if (fmt-cst-list-empty? tail)
               (if (format-rules-node-comment? node)
-                (doc-hard-line)
-                (doc-empty))
+                (fmt_doc.doc-hard-line)
+                (fmt_doc.doc-empty))
               (format-rules-list-tail-doc
                 (format-rules-node-comment? node)
                 tail)))))]))
 
-(define (format-rules-list-items-doc [items : FormatCstList]) : Doc
+(define (format-rules-list-items-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node tail)
-      (doc-append
+      (fmt_doc.doc-append
         (format-rules-cst-doc node)
         (if (fmt-cst-list-empty? tail)
           (if (format-rules-node-comment? node)
-            (doc-hard-line)
-            (doc-empty))
+            (fmt_doc.doc-hard-line)
+            (fmt_doc.doc-empty))
           (format-rules-list-tail-doc (format-rules-node-comment? node) tail)))]))
 
 (define (format-rules-delimited-doc
   [open : String]
   [items : FormatCstList]
-  [close : String]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text open)
-      (doc-append
-        (doc-nest 2 (format-rules-list-items-doc items))
-        (doc-text close)))))
+  [close : String]) : fmt_doc.Doc
+  (fmt_doc.doc-group
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text open)
+      (fmt_doc.doc-append
+        (fmt_doc.doc-nest 2 (format-rules-list-items-doc items))
+        (fmt_doc.doc-text close)))))
 
-(define (format-rules-inline-form-doc [head : String] [rest : FormatCstList]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text "(")
-      (doc-append
-        (doc-text head)
-        (doc-append (format-rules-inline-tail-doc rest) (doc-text ")"))))))
+(define (format-rules-inline-form-doc [head : String] [rest : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-group
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text "(")
+      (fmt_doc.doc-append
+        (fmt_doc.doc-text head)
+        (fmt_doc.doc-append
+          (format-rules-inline-tail-doc rest)
+          (fmt_doc.doc-text ")"))))))
 
-(define (format-rules-line-form-doc [head : String] [rest : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text head)
-      (doc-append (doc-nest 2 (format-rules-hard-tail-doc rest)) (doc-text ")")))))
+(define (format-rules-line-form-doc [head : String] [rest : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-append
+    (fmt_doc.doc-text "(")
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text head)
+      (fmt_doc.doc-append
+        (fmt_doc.doc-nest 2 (format-rules-hard-tail-doc rest))
+        (fmt_doc.doc-text ")")))))
 
 (define (format-rules-first-line-form-doc
   [head : String]
   [first : FormatCst]
-  [rest : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text head)
-      (doc-append
+  [rest : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-append
+    (fmt_doc.doc-text "(")
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text head)
+      (fmt_doc.doc-append
         (format-rules-space (format-rules-cst-doc first))
-        (doc-append
-          (doc-nest 2 (format-rules-hard-tail-doc rest))
-          (doc-text ")"))))))
+        (fmt_doc.doc-append
+          (fmt_doc.doc-nest 2 (format-rules-hard-tail-doc rest))
+          (fmt_doc.doc-text ")"))))))
 
 (define (format-rules-first-or-line-form-doc
   [head : String]
-  [rest : FormatCstList]) : Doc
+  [rest : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Empty)
       (format-rules-inline-form-doc head FormatCstList.Nil)]
@@ -183,35 +192,41 @@
   [name : FormatCst]
   [colon : FormatCst]
   [typ : FormatCst]
-  [init : FormatCst]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text "[")
-      (doc-append
+  [init : FormatCst]) : fmt_doc.Doc
+  (fmt_doc.doc-group
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text "[")
+      (fmt_doc.doc-append
         (format-rules-cst-doc name)
-        (doc-append
+        (fmt_doc.doc-append
           (format-rules-space (format-rules-cst-doc colon))
-          (doc-append
+          (fmt_doc.doc-append
             (format-rules-space (format-rules-cst-doc typ))
-            (doc-append
-              (doc-nest
+            (fmt_doc.doc-append
+              (fmt_doc.doc-nest
                 2
-                (doc-append (doc-soft-line) (format-rules-cst-doc init)))
-              (doc-text "]"))))))))
+                (fmt_doc.doc-append
+                  (fmt_doc.doc-soft-line)
+                  (format-rules-cst-doc init)))
+              (fmt_doc.doc-text "]"))))))))
 
 (define (format-rules-let-binding-unannotated-doc
   [name : FormatCst]
-  [init : FormatCst]) : Doc
-  (doc-group
-    (doc-append
-      (doc-text "[")
-      (doc-append
+  [init : FormatCst]) : fmt_doc.Doc
+  (fmt_doc.doc-group
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text "[")
+      (fmt_doc.doc-append
         (format-rules-cst-doc name)
-        (doc-append
-          (doc-nest 2 (doc-append (doc-soft-line) (format-rules-cst-doc init)))
-          (doc-text "]"))))))
+        (fmt_doc.doc-append
+          (fmt_doc.doc-nest
+            2
+            (fmt_doc.doc-append
+              (fmt_doc.doc-soft-line)
+              (format-rules-cst-doc init)))
+          (fmt_doc.doc-text "]"))))))
 
-(define (format-rules-let-item-list-doc [items : FormatCstList]) : Doc
+(define (format-rules-let-item-list-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
     [(FormatCstListStep.Item name after-name)
       (match (fmt-cst-list-step after-name)
@@ -236,91 +251,93 @@
         [_ (format-rules-delimited-doc "[" items "]")])]
     [_ (format-rules-delimited-doc "[" items "]")]))
 
-(define (format-rules-let-item-doc [node : FormatCst]) : Doc
+(define (format-rules-let-item-doc [node : FormatCst]) : fmt_doc.Doc
   (match node
     [(FormatCst.BracketList items)
       (format-rules-let-item-list-doc (box-get items))]
     [_ (format-rules-cst-doc node)]))
 
-(define (format-rules-let-tail-doc [items : FormatCstList]) : Doc
+(define (format-rules-let-tail-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node tail)
-      (doc-append
-        (doc-hard-line)
-        (doc-append
+      (fmt_doc.doc-append
+        (fmt_doc.doc-hard-line)
+        (fmt_doc.doc-append
           (format-rules-let-item-doc node)
           (if (fmt-cst-list-empty? tail)
             (if (format-rules-node-comment? node)
-              (doc-hard-line)
-              (doc-empty))
+              (fmt_doc.doc-hard-line)
+              (fmt_doc.doc-empty))
             (format-rules-let-tail-doc tail))))]))
 
-(define (format-rules-let-doc [rest : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text "let")
-      (doc-append
-        (doc-nest 2 (format-rules-let-tail-doc (format-rules-let-rest rest)))
-        (doc-text ")")))))
+(define (format-rules-let-doc [rest : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-append
+    (fmt_doc.doc-text "(")
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text "let")
+      (fmt_doc.doc-append
+        (fmt_doc.doc-nest
+          2
+          (format-rules-let-tail-doc (format-rules-let-rest rest)))
+        (fmt_doc.doc-text ")")))))
 
 (define (format-rules-signature-annotated-doc
   [head : String]
   [target : FormatCst]
   [colon : FormatCst]
   [typ : FormatCst]
-  [body-items : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text head)
-      (doc-append
+  [body-items : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-append
+    (fmt_doc.doc-text "(")
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text head)
+      (fmt_doc.doc-append
         (format-rules-space (format-rules-cst-doc target))
-        (doc-append
-          (doc-nest 2 (format-rules-return-type-tail-doc colon typ))
-          (doc-append
-            (doc-nest 2 (format-rules-hard-tail-doc body-items))
-            (doc-text ")")))))))
+        (fmt_doc.doc-append
+          (fmt_doc.doc-nest 2 (format-rules-return-type-tail-doc colon typ))
+          (fmt_doc.doc-append
+            (fmt_doc.doc-nest 2 (format-rules-hard-tail-doc body-items))
+            (fmt_doc.doc-text ")")))))))
 
 (define (format-rules-define-metadata-annotated-doc
   [target : FormatCst]
   [metadata : FormatCst]
   [colon : FormatCst]
   [typ : FormatCst]
-  [body-items : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text "define")
-      (doc-append
+  [body-items : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-append
+    (fmt_doc.doc-text "(")
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text "define")
+      (fmt_doc.doc-append
         (format-rules-space (format-rules-cst-doc target))
-        (doc-append
-          (doc-nest
+        (fmt_doc.doc-append
+          (fmt_doc.doc-nest
             2
-            (doc-append
-              (doc-hard-line)
-              (doc-append
+            (fmt_doc.doc-append
+              (fmt_doc.doc-hard-line)
+              (fmt_doc.doc-append
                 (format-rules-cst-doc metadata)
                 (format-rules-return-type-breakable-tail-doc colon typ))))
-          (doc-append
-            (doc-nest 2 (format-rules-hard-tail-doc body-items))
-            (doc-text ")")))))))
+          (fmt_doc.doc-append
+            (fmt_doc.doc-nest 2 (format-rules-hard-tail-doc body-items))
+            (fmt_doc.doc-text ")")))))))
 
 (define (format-rules-define-body-doc
   [target : FormatCst]
-  [body-items : FormatCstList]) : Doc
-  (doc-append
-    (doc-text "(")
-    (doc-append
-      (doc-text "define")
-      (doc-append
+  [body-items : FormatCstList]) : fmt_doc.Doc
+  (fmt_doc.doc-append
+    (fmt_doc.doc-text "(")
+    (fmt_doc.doc-append
+      (fmt_doc.doc-text "define")
+      (fmt_doc.doc-append
         (format-rules-space (format-rules-cst-doc target))
-        (doc-append
-          (doc-nest 2 (format-rules-hard-tail-doc body-items))
-          (doc-text ")"))))))
+        (fmt_doc.doc-append
+          (fmt_doc.doc-nest 2 (format-rules-hard-tail-doc body-items))
+          (fmt_doc.doc-text ")"))))))
 
-(define (format-rules-define-doc [rest : FormatCstList]) : Doc
+(define (format-rules-define-doc [rest : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Item target after-target)
       (match (fmt-cst-list-step after-target)
@@ -358,7 +375,7 @@
         [_ (format-rules-first-or-line-form-doc "define" rest)])]
     [_ (format-rules-first-or-line-form-doc "define" rest)]))
 
-(define (format-rules-defmacro-doc [rest : FormatCstList]) : Doc
+(define (format-rules-defmacro-doc [rest : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Item target after-target)
       (match (fmt-cst-list-step after-target)
@@ -379,7 +396,7 @@
         [_ (format-rules-first-or-line-form-doc "defmacro" rest)])]
     [_ (format-rules-first-or-line-form-doc "defmacro" rest)]))
 
-(define (format-rules-lambda-doc [rest : FormatCstList]) : Doc
+(define (format-rules-lambda-doc [rest : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Item target after-target)
       (match (fmt-cst-list-step after-target)
@@ -402,7 +419,7 @@
 
 (define (format-rules-special-list-doc
   [head : FormatCst]
-  [rest : FormatCstList]) : Doc
+  [rest : FormatCstList]) : fmt_doc.Doc
   (let
     [head-name : String (format-rules-node-symbol-name head)]
     (cond
@@ -435,7 +452,7 @@
           (FormatCstList.Cons head (box rest))
           ")")])))
 
-(define (format-rules-colon-list-doc [rest : FormatCstList]) : Doc
+(define (format-rules-colon-list-doc [rest : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step rest)
     [(FormatCstListStep.Item key tail)
       (let
@@ -452,7 +469,7 @@
         (FormatCstList.Cons (FormatCst.Atom (FormatToken.Colon)) (box rest))
         ")")]))
 
-(define (format-rules-list-doc [items : FormatCstList]) : Doc
+(define (format-rules-list-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
     [(FormatCstListStep.Empty)
       (format-rules-delimited-doc "(" FormatCstList.Nil ")")]
@@ -463,38 +480,38 @@
 
 (define (format-rules-forms-tail-doc
   [previous : FormatCst]
-  [items : FormatCstList]) : Doc
+  [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node rest)
-      (doc-append
+      (fmt_doc.doc-append
         (format-rules-forms-separator previous node)
-        (doc-append
+        (fmt_doc.doc-append
           (format-rules-cst-doc node)
           (format-rules-forms-tail-doc node rest)))]))
 
-(define (format-rules-forms-doc [items : FormatCstList]) : Doc
+(define (format-rules-forms-doc [items : FormatCstList]) : fmt_doc.Doc
   (match (fmt-cst-list-step items)
-    [(FormatCstListStep.Empty) (doc-empty)]
+    [(FormatCstListStep.Empty) (fmt_doc.doc-empty)]
     [(FormatCstListStep.Item node rest)
-      (doc-append
+      (fmt_doc.doc-append
         (format-rules-cst-doc node)
         (format-rules-forms-tail-doc node rest))]))
 
-(define (format-rules-cst-doc [node : FormatCst]) : Doc
+(define (format-rules-cst-doc [node : FormatCst]) : fmt_doc.Doc
   (match node
-    [(FormatCst.Atom tok) (doc-text (format-token-text tok))]
-    [(FormatCst.Comment text) (doc-text text)]
+    [(FormatCst.Atom tok) (fmt_doc.doc-text (format-token-text tok))]
+    [(FormatCst.Comment text) (fmt_doc.doc-text text)]
     [(FormatCst.Prefix tok child)
-      (doc-append
-        (doc-text (format-token-text tok))
+      (fmt_doc.doc-append
+        (fmt_doc.doc-text (format-token-text tok))
         (format-rules-cst-doc (box-get child)))]
     [(FormatCst.List items) (format-rules-list-doc (box-get items))]
     [(FormatCst.BracketList items)
       (format-rules-delimited-doc "[" (box-get items) "]")]
     [(FormatCst.Forms items) (format-rules-forms-doc (box-get items))]))
 
-(define (format-rules-source-doc [src : String]) : Doc
+(define (format-rules-source-doc [src : String]) : fmt_doc.Doc
   (format-rules-cst-doc (parse-format-source src)))
 
 (define (format-rules-streaming-matches-doc? [src : String] [width : i64]) : bool
@@ -502,7 +519,7 @@
     [tree : FormatCst (parse-format-source src)]
     (string.eq
       (format-rules-render-cst-width tree width)
-      (render-doc-width (format-rules-cst-doc tree) width))))
+      (fmt_doc.render-doc-width (format-rules-cst-doc tree) width))))
 
 (define (format-rules-streaming-doc-fixtures-ok?) : bool
   (and

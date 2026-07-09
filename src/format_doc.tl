@@ -4,7 +4,7 @@
 ;; owns the reusable layout engine: callers build `Doc` values, then render them
 ;; with deterministic width-aware grouping and indentation.
 (import stdlib.string)
-(import "format_render_buf.tl")
+(import format_render_buf as fmt_buf)
 
 (define (fmt-len [text : String]) : i64
   (string.string-length text))
@@ -108,7 +108,7 @@
     [(RenderedDoc.Rendered _ col) col]))
 
 (define (render-newline [indent : i64]) : RenderedDoc
-  (RenderedDoc.Rendered (fmt-cat "\n" (spaces indent)) indent))
+  (RenderedDoc.Rendered (fmt-cat "\n" (fmt_buf.spaces indent)) indent))
 
 ;; Render `doc` by appending into `buf` in place, returning the resulting column.
 ;; The buffer is owned by `render-doc-width` and threaded by reference, so the
@@ -120,26 +120,26 @@
   [indent : i64]
   [col : i64]
   [flat : bool]
-  [buf : FmtRenderBuf]) : i64
+  [buf : fmt_buf.FmtRenderBuf]) : i64
   (match doc
     [(Doc.Empty) col]
     [(Doc.Text text)
       (let
         [text-width : i64 (fmt-len text)]
         (begin
-          (fmt-render-buf-append buf text)
+          (fmt_buf.fmt-render-buf-append buf text)
           (+ col text-width)))]
     [(Doc.SoftLine)
       (if flat
         (begin
-          (fmt-render-buf-append buf " ")
+          (fmt_buf.fmt-render-buf-append buf " ")
           (+ col 1))
         (begin
-          (render-newline-into! buf indent)
+          (fmt_buf.render-newline-into! buf indent)
           indent))]
     [(Doc.HardLine)
       (begin
-        (render-newline-into! buf indent)
+        (fmt_buf.render-newline-into! buf indent)
         indent)]
     [(Doc.Concat left right)
       (let
@@ -182,13 +182,13 @@
 
 (define (render-doc-width [doc : Doc] [width : i64]) : String
   (let
-    [buf : FmtRenderBuf (fmt-render-buf-new)]
+    [buf : fmt_buf.FmtRenderBuf (fmt_buf.fmt-render-buf-new)]
     (begin
       (render-doc-into doc width 0 0 false buf)
-      (fmt-render-buf-string buf))))
+      (fmt_buf.fmt-render-buf-string buf))))
 
 (define (render-doc [doc : Doc]) : String
-  (render-doc-width doc (format-width)))
+  (render-doc-width doc (fmt_buf.format-width)))
 
 (define (sample-group-doc) : Doc
   (doc-group

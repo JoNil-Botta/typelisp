@@ -1808,6 +1808,7 @@
 (define (lower-name-env-add-import-alias-binding-base-id
   [names : LowerNameEnv]
   [alias : String]
+  [alias-id : i64]
   [base-name : String]
   [base-id : i64]
   [logical-name : String]) : LowerNameEnv
@@ -1815,7 +1816,7 @@
     names
     alias
     (compiler-symbol-module-key alias base-name)
-    (compiler-symbol-module-key-id-by-id (intern alias) base-id)
+    (compiler-symbol-module-key-id-by-id alias-id base-id)
     logical-name))
 
 (define (lower-name-env-add-import-alias-binding-base-cache-id
@@ -1823,13 +1824,14 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [alias : String]
+  [alias-id : i64]
   [base-name : String]
   [base-id : i64]
   [logical-name : String]) : LowerNameEnv
   (let
     [source-name : String (compiler-symbol-module-key alias base-name)]
     [source-id : i64
-      (compiler-symbol-module-key-id-by-id (intern alias) base-id)]
+      (compiler-symbol-module-key-id-by-id alias-id base-id)]
     (begin
       (when (< source-id 0) (set! lower-alias-overlay-valid false))
       ;; Aliased import (non-empty alias): unconditional bind; keep the overlay
@@ -2576,6 +2578,7 @@
   [entry-path : String]
   [decl-path : String]
   [alias : String]
+  [alias-id : i64]
   [module : String]
   [decl : AstDecl]
   [path-aware : bool]) : LowerNameEnv
@@ -2586,6 +2589,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           (lower-alias-logical-name
@@ -2600,6 +2604,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           (lower-alias-logical-name
@@ -2614,6 +2619,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           (lower-alias-logical-name
@@ -2628,6 +2634,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           name-str))]
@@ -2640,6 +2647,7 @@
             (lower-name-env-add-import-alias-binding-base-id
               names
               alias
+              alias-id
               cleanup-str
               cleanup-name
               (lower-alias-logical-name
@@ -2657,6 +2665,7 @@
             (lower-name-env-add-import-alias-binding-base-id
               names
               alias
+              alias-id
               cleanup-str
               cleanup-name
               (lower-alias-logical-name
@@ -2673,6 +2682,7 @@
           entry-path
           decl-path
           alias
+          alias-id
           module
           template
           path-aware))]
@@ -2684,6 +2694,7 @@
           entry-path
           decl-path
           alias
+          alias-id
           module
           inner
           path-aware))]
@@ -2694,6 +2705,7 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [alias : String]
+  [alias-id : i64]
   [module : String]
   [decl : AstDecl]) : LowerNameEnv
   (match decl
@@ -2705,6 +2717,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
           (lower-current-decl-logical-name-cache base-cache module name-str)))]
@@ -2716,6 +2729,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
           (lower-current-decl-logical-name-cache base-cache module name-str)))]
@@ -2727,6 +2741,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
           (lower-current-decl-logical-name-cache base-cache module name-str)))]
@@ -2738,6 +2753,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
           name-str))]
@@ -2752,6 +2768,7 @@
               base-cache
               dedup-base
               alias
+              alias-id
               cleanup-str
               cleanup-name
               (lower-current-decl-logical-name-cache
@@ -2769,6 +2786,7 @@
               base-cache
               dedup-base
               alias
+              alias-id
               cleanup-str
               cleanup-name
               (lower-current-decl-logical-name-cache
@@ -2783,6 +2801,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           module
           template))]
     [(AstDecl.Unsafe inner-box)
@@ -2793,6 +2812,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           module
           inner))]
     [_ names]))
@@ -2809,6 +2829,7 @@
   (let
     [cur-names : LowerNameEnv names]
     [target-module-id : i64 (intern target-module)]
+    [alias-id : i64 (intern alias)]
     [_ensure : unit (lower-module-decl-index-ensure! decls)]
     [slot : i64 (lower-module-decl-index-slot target-module-id)]
     (if (< slot 0)
@@ -2841,6 +2862,7 @@
                         entry-path
                         decl-path
                         alias
+                        alias-id
                         target-module
                         decl
                         path-aware))])
@@ -3008,6 +3030,7 @@
       (let
         [j : i64 (array-ref lower-module-decl-index-starts slot)]
         [end : i64 (array-ref lower-module-decl-index-ends slot)]
+        [alias-id : i64 (intern alias)]
         (begin
           (while (< j end)
             (let
@@ -3032,6 +3055,7 @@
                         base-cache
                         dedup-base
                         alias
+                        alias-id
                         target-module
                         decl))])
                 (set! j (+ j 1)))))
@@ -3235,7 +3259,8 @@
   [decls : AstDeclList]
   [names : LowerNameEnv]
   [base-cache : LowerNameCache]
-  [module : String]) : LowerNameEnv
+  [module : String]
+  [module-id : i64]) : LowerNameEnv
   ;; Build aliases into a fresh overlay so empty-alias duplicate checks do not
   ;; rescan the whole base env for every imported decl.
   (let
@@ -3250,7 +3275,7 @@
         LowerNameEnv.Nil
         base-cache
         dedup-base
-        (intern module)
+        module-id
         cbi.compiler-builtin-id-fix-empty)]
     (match names
       [(LowerNameEnv.Nil) overlay]
@@ -3607,7 +3632,8 @@
   [top-env : TcTypeEnv]
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
-  [module : String]) : ResultLowerModuleLocalEnv
+  [module : String]
+  [module-id : i64]) : ResultLowerModuleLocalEnv
   (if (string.eq module "")
     (ResultLowerModuleLocalEnv.Ok
       top-env
@@ -3623,7 +3649,8 @@
               decls
               names
               name-cache
-              module)]
+              module
+              module-id)]
           ;; The module's import aliases resolve against the global
           ;; name-cache (not the env base), so building them on an empty base
           ;; yields the module-local-only alias env -- the starting point for the
@@ -3634,7 +3661,8 @@
               decls
               (LowerNameEnv.Nil)
               name-cache
-              module)]
+              module
+              module-id)]
           (lower-module-local-envs-list
             top-env
             decls
@@ -3644,7 +3672,7 @@
             local-alias-names
             name-cache
             module
-            (intern module)
+            module-id
             cbi.compiler-builtin-id-fix-empty))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
@@ -5747,7 +5775,8 @@
   [_entry-path : String]
   [base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
-  [module : String]) : LowerNameCache
+  [module : String]
+  [module-id : i64]) : LowerNameCache
   (if (string.eq module "")
     base-cache
     (let
@@ -5756,13 +5785,15 @@
           decls
           base-names
           base-cache
-          module)]
+          module
+          module-id)]
       [alias-only-names : LowerNameEnv
         (lower-name-env-with-import-aliases-in-module-cache
           decls
           (LowerNameEnv.Nil)
           base-cache
-          module)]
+          module
+          module-id)]
       (lower-name-cache-overlay
         (lower-function-body-local-names-in-module-resolve
           decls
@@ -5770,7 +5801,7 @@
           module-base-names
           base-cache
           module
-          (intern module)
+          module-id
           cbi.compiler-builtin-id-fix-empty)))))
 
 (define (lower-function-decl-count-one [decl : AstDecl]) : i64
@@ -5875,7 +5906,8 @@
                   entry-path
                   base-names
                   base-name-cache
-                  next-module-str)
+                  next-module-str
+                  next-module)
                 index))]
           [(AstDecl.DefFn name _ _ body-box _)
             (let
@@ -44430,7 +44462,8 @@
                       top-env
                       names
                       cur-name-cache
-                      next-module-str)
+                      next-module-str
+                      next-module)
                       [(ResultLowerModuleLocalEnv.Ok
                           next-local-top-env
                           _

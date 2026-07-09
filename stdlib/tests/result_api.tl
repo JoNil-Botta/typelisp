@@ -41,8 +41,7 @@
 
 (import (result ResApiPoint ResApiTag) as result_struct_enum)
 
-(test
-  result-macro-struct-and-enum-element-kinds
+(define (assert-result-macro-struct-and-enum-element-kinds) : unit
   (let
     [ok-v : result_struct_enum.Result (result_struct_enum.ok (ResApiPoint 1 2))]
     [err-v : result_struct_enum.Result (result_struct_enum.err (ResApiTagA 5))]
@@ -54,8 +53,7 @@
         (result_struct_enum.is-err? (& err-v))
         "struct/enum result err predicate"))))
 
-(test
-  result-macro-i64-string-api
+(define (assert-result-macro-i64-string-api) : unit
   (let
     [hit : result_i64_string.Result (result_i64_string.ok 41)]
     [miss : result_i64_string.Result (result_i64_string.err "no")]
@@ -75,8 +73,7 @@
         7
         "result value-or returns fallback"))))
 
-(test
-  result-macro-map-and-duplicate-import
+(define (assert-result-macro-map-and-duplicate-import) : unit
   (let
     [mapped : result_i64_string.Result
       (result_i64_string.map (result_i64_string.ok 41) result-test-inc)]
@@ -100,8 +97,7 @@
         12
         "generated module result imports share the same generated type"))))
 
-(test
-  result-macro-string-i64-api
+(define (assert-result-macro-string-i64-api) : unit
   (let
     [hit : result_string_i64.Result (result_string_i64.ok "bee")]
     [miss : result_string_i64.Result (result_string_i64.err 4)]
@@ -120,3 +116,11 @@
           (& actual-miss)
           (& expected-miss)
           "string result value-or returns fallback")))))
+
+(define (main) : i64
+  (begin
+    (assert-result-macro-struct-and-enum-element-kinds)
+    (assert-result-macro-i64-string-api)
+    (assert-result-macro-map-and-duplicate-import)
+    (assert-result-macro-string-i64-api)
+    42))

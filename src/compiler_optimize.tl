@@ -19095,16 +19095,18 @@
             (opt-gvn-defs-add acc dst))))]))
 
 (define (opt-gvn-sources-instr-seq-from
-  [instrs : CompilerIrInstrSeq]
+  [slots : (Array CompilerIrInstr)]
   [index : i64]
+  [count : i64]
   [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (if (>= index (compiler-ir-instr-seq-count instrs))
+  (if (>= index count)
     acc
     (let
-      [dst : i64 (opt-gvn-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      [dst : i64 (opt-gvn-instr-dst (array-ref slots index))]
       (opt-gvn-sources-instr-seq-from
-        instrs
+        slots
         (+ index 1)
+        count
         (if (= dst (- 0 1))
           acc
           (opt-gvn-defs-add acc dst))))))
@@ -19119,7 +19121,11 @@
         [(CompilerIrBlock.Block _ instrs)
           (opt-gvn-sources-blocks
             (box-get rest)
-            (opt-gvn-sources-instr-seq-from instrs 0 acc))])]
+            (opt-gvn-sources-instr-seq-from
+              (struct-get instrs slots)
+              0
+              (compiler-ir-instr-seq-count instrs)
+              acc))])]
     [(CompilerIrBlockList.Array seq)
       (opt-gvn-sources-blocks (compiler-ir-block-seq-to-list seq) acc)]))
 
@@ -23541,22 +23547,32 @@
         false)]
     [_ false]))
 
+(define (opt-affine-instr-seq-candidate?
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]) : bool
+  (opt-affine-instr-candidate? (array-ref slots index)))
+
 (define (opt-affine-seq-candidate-from?
-  [instrs : CompilerIrInstrSeq]
+  [slots : (Array CompilerIrInstr)]
   [index : i64]
+  [count : i64]
   [seen : i64]) : bool
-  (if (>= index (compiler-ir-instr-seq-count instrs))
+  (if (>= index count)
     false
-    (if (opt-affine-instr-candidate? (compiler-ir-instr-seq-ref instrs index))
+    (if (opt-affine-instr-seq-candidate? slots index)
       (if (>= (+ seen 1) 2)
         true
-        (opt-affine-seq-candidate-from? instrs (+ index 1) (+ seen 1)))
-      (opt-affine-seq-candidate-from? instrs (+ index 1) seen))))
+        (opt-affine-seq-candidate-from? slots (+ index 1) count (+ seen 1)))
+      (opt-affine-seq-candidate-from? slots (+ index 1) count seen))))
 
 (define (opt-affine-block-candidate? [block : CompilerIrBlock]) : bool
   (match block
     [(CompilerIrBlock.Block _ instrs)
-      (opt-affine-seq-candidate-from? instrs 0 0)]))
+      (opt-affine-seq-candidate-from?
+        (struct-get instrs slots)
+        0
+        (compiler-ir-instr-seq-count instrs)
+        0)]))
 
 (define (opt-affine-blocks-have-candidate? [blocks : CompilerIrBlockList]) : bool
   (match blocks
@@ -23577,7 +23593,11 @@
       (begin
         (match block
           [(CompilerIrBlock.Block _ instrs)
-            (if (opt-affine-seq-candidate-from? instrs 0 0)
+            (if (opt-affine-seq-candidate-from?
+              (struct-get instrs slots)
+              0
+              (compiler-ir-instr-seq-count instrs)
+              0)
               (opt-affine-fold-step! instrs uses 0 (OptAffineEnv.Nil) 0)
               unit)])
         (opt-affine-fold-blocks-walk! uses (box-get rest)))]
@@ -24072,17 +24092,16 @@
   [index : i64]) : i64
   (if (>= index (compiler-ir-instr-seq-count instrs))
     index
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi _ _ _)
-        (opt-unroll-phi-prefix-count instrs (+ index 1))]
-      [_ index])))
+    (if (compiler-ir-instr-seq-phi? instrs index)
+      (opt-unroll-phi-prefix-count instrs (+ index 1))
+      index)))
 
 (define (opt-unroll-no-phi-from? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     true
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi _ _ _) false]
-      [_ (opt-unroll-no-phi-from? instrs (+ index 1))])))
+    (if (compiler-ir-instr-seq-phi? instrs index)
+      false
+      (opt-unroll-no-phi-from? instrs (+ index 1)))))
 
 ;; Clonable straight-line body instruction kinds. Anything else (calls, allocs,
 ;; vector ops, name stores, nested terminators) rejects the loop.
@@ -24105,41 +24124,48 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
+(define (opt-unroll-body-instr-seq-ok?
+  [slots : (Array CompilerIrInstr)]
+  [index : i64]) : bool
+  (opt-unroll-body-instr-ok? (array-ref slots index)))
+
 (define (opt-unroll-body-ok?
-  [instrs : CompilerIrInstrSeq]
+  [slots : (Array CompilerIrInstr)]
   [index : i64]
   [last : i64]) : bool
   (if (>= index last)
     true
     (and
-      (opt-unroll-body-instr-ok? (compiler-ir-instr-seq-ref instrs index))
-      (opt-unroll-body-ok? instrs (+ index 1) last))))
+      (opt-unroll-body-instr-seq-ok? slots index)
+      (opt-unroll-body-ok? slots (+ index 1) last))))
 
 (define (opt-unroll-block-defs
-  [instrs : CompilerIrInstrSeq]
+  [slots : (Array CompilerIrInstr)]
   [index : i64]
+  [count : i64]
   [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (if (>= index (compiler-ir-instr-seq-count instrs))
+  (if (>= index count)
     acc
     (let
-      [dst : i64 (opt-gvn-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      [dst : i64 (compiler-ir-instr-array-loop-dst-or slots index (- 0 1))]
       (opt-unroll-block-defs
-        instrs
+        slots
         (+ index 1)
+        count
         (if (< dst 0)
           acc
           (opt-used-add acc dst))))))
 
 (define (opt-unroll-def-index
-  [instrs : CompilerIrInstrSeq]
+  [slots : (Array CompilerIrInstr)]
   [index : i64]
   [last : i64]
   [var : i64]) : i64
   (if (>= index last)
     (- 0 1)
-    (if (= (opt-gvn-instr-dst (compiler-ir-instr-seq-ref instrs index)) var)
+    (if (= (compiler-ir-instr-array-loop-dst-or slots index (- 0 1)) var)
       index
-      (opt-unroll-def-index instrs (+ index 1) last var))))
+      (opt-unroll-def-index slots (+ index 1) last var))))
 
 (define (opt-unroll-uses-before
   [instrs : CompilerIrInstrSeq]
@@ -24166,10 +24192,11 @@
   (if (<= fuel 0)
     var
     (let
-      [def-index : i64 (opt-unroll-def-index instrs phi-count last var)]
+      [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+      [def-index : i64 (opt-unroll-def-index slots phi-count last var)]
       (if (< def-index 0)
         var
-        (match (compiler-ir-instr-seq-ref instrs def-index)
+        (match (array-ref slots def-index)
           [(CompilerIrInstr.Mov _ src _)
             (match src
               [(CompilerIrValue.Var src-id)
@@ -24340,7 +24367,8 @@
   [bound : CompilerIrValue]
   [iphi : i64]) : OptUnrollMaybeShape
   (let
-    [iphi-index : i64 (opt-unroll-def-index instrs 0 phi-count iphi)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
     (if (< iphi-index 0)
       (OptUnrollMaybeShape.No)
       (match (compiler-ir-instr-seq-ref instrs iphi-index)
@@ -24379,7 +24407,8 @@
   [inext : i64]
   [bound : CompilerIrValue]) : OptUnrollMaybeShape
   (let
-    [inext-index : i64 (opt-unroll-def-index instrs phi-count last inext)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
     (if (< inext-index 0)
       (OptUnrollMaybeShape.No)
       (match (compiler-ir-instr-seq-ref instrs inext-index)
@@ -24422,7 +24451,8 @@
   [last : i64]
   [cond-var : i64]) : OptUnrollMaybeShape
   (let
-    [cond-index : i64 (opt-unroll-def-index instrs phi-count last cond-var)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [cond-index : i64 (opt-unroll-def-index slots phi-count last cond-var)]
     (if (< cond-index 0)
       (OptUnrollMaybeShape.No)
       (match (compiler-ir-instr-seq-ref instrs cond-index)
@@ -24433,8 +24463,9 @@
                 [(CompilerIrValue.Var cmp-src)
                   (if (opt-unroll-invariant-bound?
                     (opt-unroll-block-defs
-                      instrs
+                      slots
                       0
+                      (+ last 1)
                       (opt_i64_i64_map.with-capacity 32))
                     cmp-rhs)
                     (opt-unroll-shape-step
@@ -24466,7 +24497,7 @@
       (< (- last phi-count) 2)
       (> (- last phi-count) 16)
       (not (opt-unroll-no-phi-from? instrs phi-count))
-      (not (opt-unroll-body-ok? instrs phi-count last))
+      (not (opt-unroll-body-ok? (struct-get instrs slots) phi-count last))
       ;; the c-def is dropped from the clones, so the final branch must be c's
       ;; only use inside B.
       (opt-used-contains
@@ -25359,6 +25390,11 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
+(define (opt-bce-version-body-instr-seq-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (opt-bce-version-body-instr-ok? (compiler-ir-instr-seq-ref instrs index)))
+
 (define (opt-bce-version-body-ok?
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -25366,7 +25402,7 @@
   (if (>= index last)
     true
     (and
-      (opt-bce-version-body-instr-ok? (compiler-ir-instr-seq-ref instrs index))
+      (opt-bce-version-body-instr-seq-ok? instrs index)
       (opt-bce-version-body-ok? instrs (+ index 1) last))))
 
 (define (opt-bce-version-check-count
@@ -25380,9 +25416,9 @@
       instrs
       (+ index 1)
       last
-      (match (compiler-ir-instr-seq-ref instrs index)
-        [(CompilerIrInstr.BoundsCheck _ _ _) (+ acc 1)]
-        [_ acc]))))
+      (if (compiler-ir-instr-seq-bounds-check? instrs index)
+        (+ acc 1)
+        acc))))
 
 (define (opt-bce-version-alloc-var [cell : (Array i64)]) : i64
   (let
@@ -25429,10 +25465,11 @@
   (if (<= fuel 0)
     var
     (let
-      [def-index : i64 (opt-unroll-def-index instrs phi-count last var)]
+      [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+      [def-index : i64 (opt-unroll-def-index slots phi-count last var)]
       (if (< def-index 0)
         var
-        (match (compiler-ir-instr-seq-ref instrs def-index)
+        (match (array-ref slots def-index)
           [(CompilerIrInstr.Mov _ src _)
             (match src
               [(CompilerIrValue.Var src-id)
@@ -25527,10 +25564,11 @@
                 (CompilerIrValue.I64 0)
                 acc))
             (let
-              [def-index : i64 (opt-unroll-def-index instrs phi-count last id)]
+              [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+              [def-index : i64 (opt-unroll-def-index slots phi-count last id)]
               (if (< def-index 0)
                 (OptBceVersionGuardAcc.No)
-                (match (compiler-ir-instr-seq-ref instrs def-index)
+                (match (array-ref slots def-index)
                   [(CompilerIrInstr.BinOp _ op lhs rhs _)
                     (match op
                       [(CompilerIrBinOp.BitAnd)
@@ -25745,7 +25783,8 @@
   [bound : CompilerIrValue]
   [iphi : i64]) : OptUnrollMaybeShape
   (let
-    [iphi-index : i64 (opt-unroll-def-index instrs 0 phi-count iphi)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [iphi-index : i64 (opt-unroll-def-index slots 0 phi-count iphi)]
     (if (< iphi-index 0)
       (OptUnrollMaybeShape.No)
       (match (compiler-ir-instr-seq-ref instrs iphi-index)
@@ -25802,7 +25841,8 @@
   [inext : i64]
   [bound : CompilerIrValue]) : OptUnrollMaybeShape
   (let
-    [inext-index : i64 (opt-unroll-def-index instrs phi-count last inext)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [inext-index : i64 (opt-unroll-def-index slots phi-count last inext)]
     (if (< inext-index 0)
       (OptUnrollMaybeShape.No)
       (match (compiler-ir-instr-seq-ref instrs inext-index)
@@ -25853,7 +25893,8 @@
   [cond-var : i64]
   [defs : opt_i64_i64_map.Map]) : OptUnrollMaybeShape
   (let
-    [cond-index : i64 (opt-unroll-def-index instrs phi-count last cond-var)]
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [cond-index : i64 (opt-unroll-def-index slots phi-count last cond-var)]
     (if (< cond-index 0)
       (OptUnrollMaybeShape.No)
       (match (compiler-ir-instr-seq-ref instrs cond-index)
@@ -25917,8 +25958,9 @@
                           last
                           cond-var
                           (opt-unroll-block-defs
-                            instrs
+                            (struct-get instrs slots)
                             0
+                            (+ last 1)
                             (opt_i64_i64_map.with-capacity 32)))))
                     (OptUnrollMaybeShape.No))]
                 [_ (OptUnrollMaybeShape.No)])]
@@ -25986,16 +26028,17 @@
         loop-label)]))
 
 (define (opt-bce-version-defs-escape?
-  [instrs : CompilerIrInstrSeq]
+  [slots : (Array CompilerIrInstr)]
   [index : i64]
+  [count : i64]
   [outside : opt_i64_i64_map.Map]) : bool
-  (if (>= index (compiler-ir-instr-seq-count instrs))
+  (if (>= index count)
     false
     (let
-      [dst : i64 (opt-gvn-instr-dst (compiler-ir-instr-seq-ref instrs index))]
+      [dst : i64 (compiler-ir-instr-array-loop-dst-or slots index (- 0 1))]
       (if (and (>= dst 0) (opt-used-contains outside dst))
         true
-        (opt-bce-version-defs-escape? instrs (+ index 1) outside)))))
+        (opt-bce-version-defs-escape? slots (+ index 1) count outside)))))
 
 ;; The fast clone's leading phis: the counter and every loop-carried value,
 ;; seeded from the guard and chained through the clone's remapped back edges.
@@ -26259,7 +26302,11 @@
         [guard-label : String (string.append label "__bce_guard")]
         [fast-label : String (string.append label "__bce_fast")]
         [defs : opt_i64_i64_map.Map
-          (opt-unroll-block-defs instrs 0 (opt_i64_i64_map.with-capacity 32))]
+          (opt-unroll-block-defs
+            (struct-get instrs slots)
+            0
+            (compiler-ir-instr-seq-count instrs)
+            (opt_i64_i64_map.with-capacity 32))]
         [outside : opt_i64_i64_map.Map
           (opt-bce-version-outside-uses
             (opt_i64_i64_map.with-capacity 64)
@@ -26268,7 +26315,11 @@
         (if (or
           (string.eq exit-label label)
           (string.eq exit-label pred-label)
-          (opt-bce-version-defs-escape? instrs 0 outside))
+          (opt-bce-version-defs-escape?
+            (struct-get instrs slots)
+            0
+            (compiler-ir-instr-seq-count instrs)
+            outside))
           (OptUnrollResult.Result blocks frame false)
           (let
             [cell : (Array i64) (array.make-array i64 1)]
@@ -28544,9 +28595,7 @@
             false)])]))
 
 (define (opt-inline-is-return? [instr : CompilerIrInstr]) : bool
-  (match instr
-    [(CompilerIrInstr.Return _) true]
-    [_ false]))
+  (compiler-ir-instr-return? instr))
 
 (define (opt-inline-body-instr-op-ok? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -28569,31 +28618,28 @@
 
 (define (opt-inline-body-instr-ok? [instr : CompilerIrInstr] [np : i64]) : bool
   (match instr
-    [(CompilerIrInstr.Mov dst _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Gep dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Load dst _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Cast dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Bitcast dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.BinOp dst _ _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.UnOp dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Pack dst _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Word dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.Call dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.CallIndirect dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [(CompilerIrInstr.CallIndirectC dst _ _ _)
-      (and (>= dst np) (opt-inline-body-instr-op-ok? instr))]
-    [_ (opt-inline-body-instr-op-ok? instr)]))
+    [(CompilerIrInstr.Mov dst _ _) (>= dst np)]
+    [(CompilerIrInstr.Gep dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.Load dst _ _) (>= dst np)]
+    [(CompilerIrInstr.Cast dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.Bitcast dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.BinOp dst _ _ _ _) (>= dst np)]
+    [(CompilerIrInstr.UnOp dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.Pack dst _ _) (>= dst np)]
+    [(CompilerIrInstr.Word dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.Call dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.CallIndirect dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.CallIndirectC dst _ _ _) (>= dst np)]
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [(CompilerIrInstr.StorePtr _ _ _) true]
+    [(CompilerIrInstr.CopyBytes _ _ _) true]
+    [_ false]))
+
+(define (opt-inline-body-instr-seq-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]
+  [np : i64]) : bool
+  (opt-inline-body-instr-ok? (compiler-ir-instr-seq-ref instrs index) np))
 
 (define (opt-inline-seq-ok? [instrs : CompilerIrInstrList] [np : i64]) : bool
   (match instrs
@@ -28613,13 +28659,11 @@
   [last : i64]) : bool
   (if (> index last)
     false
-    (let
-      [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
-      (if (= index last)
-        (opt-inline-is-return? instr)
-        (if (opt-inline-body-instr-ok? instr np)
-          (opt-inline-instr-seq-ok-from? instrs np (+ index 1) last)
-          false)))))
+    (if (= index last)
+      (compiler-ir-instr-seq-return? instrs index)
+      (if (opt-inline-body-instr-seq-ok? instrs index np)
+        (opt-inline-instr-seq-ok-from? instrs np (+ index 1) last)
+        false))))
 
 (define (opt-inline-instr-seq-ok? [instrs : CompilerIrInstrSeq] [np : i64]) : bool
   (opt-inline-instr-seq-ok-from?
@@ -28685,18 +28729,14 @@
     (let
       [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs index)]
       (if (= index last)
-        (and has-bounds (opt-inline-is-return? instr))
+        (and has-bounds (compiler-ir-instr-return? instr))
         (if (opt-inline-bounds-leaf-instr-ok? instr np)
           (opt-inline-bounds-leaf-instr-seq-ok-from?
             instrs
             np
             (+ index 1)
             last
-            (or
-              has-bounds
-              (match instr
-                [(CompilerIrInstr.BoundsCheck _ _ _) true]
-                [_ false])))
+            (or has-bounds (compiler-ir-instr-bounds-check? instr)))
           false)))))
 
 (define (opt-inline-bounds-leaf-seq-ok? [seq : CompilerIrInstrSeq] [np : i64]) : bool
@@ -28808,9 +28848,9 @@
   [index : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.BoundsCheck _ _ _) true]
-      [_ (opt-inline-instr-seq-has-bounds-check? instrs (+ index 1))])))
+    (if (compiler-ir-instr-seq-bounds-check? instrs index)
+      true
+      (opt-inline-instr-seq-has-bounds-check? instrs (+ index 1)))))
 
 (define (opt-inline-blocks-have-bounds-check? [blocks : CompilerIrBlockList]) : bool
   (match blocks
@@ -28900,9 +28940,9 @@
     (opt-inline-return-count-instrs-from
       instrs
       (+ index 1)
-      (match (compiler-ir-instr-seq-ref instrs index)
-        [(CompilerIrInstr.Return _) (+ count 1)]
-        [_ count]))))
+      (if (compiler-ir-instr-seq-return? instrs index)
+        (+ count 1)
+        count))))
 
 (define (opt-inline-return-count-instrs [instrs : CompilerIrInstrSeq]) : i64
   (opt-inline-return-count-instrs-from instrs 0 0))
@@ -28928,9 +28968,9 @@
     (opt-inline-cost-instrs-from
       instrs
       (+ index 1)
-      (match (compiler-ir-instr-seq-ref instrs index)
-        [(CompilerIrInstr.Return _) count]
-        [_ (+ count 1)]))))
+      (if (compiler-ir-instr-seq-return? instrs index)
+        count
+        (+ count 1)))))
 
 (define (opt-inline-cost-instrs [instrs : CompilerIrInstrSeq]) : i64
   (opt-inline-cost-instrs-from instrs 0 0))
@@ -29105,13 +29145,17 @@
     [(CompilerIrInstr.Jump _) true]
     [_ false]))
 
+(define (opt-inline-tiny-predicate-instr-seq-ok?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (opt-inline-tiny-predicate-instr-ok? (compiler-ir-instr-seq-ref instrs index)))
+
 (define (opt-inline-tiny-predicate-instrs-ok-from?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     true
-    (if (opt-inline-tiny-predicate-instr-ok?
-      (compiler-ir-instr-seq-ref instrs index))
+    (if (opt-inline-tiny-predicate-instr-seq-ok? instrs index)
       (opt-inline-tiny-predicate-instrs-ok-from? instrs (+ index 1))
       false)))
 
@@ -37699,14 +37743,16 @@
   [dst : i64]) : i64
   (if (>= index count)
     (- 0 1)
-    (match (array-ref slots index)
-      [(CompilerIrInstr.BinOp d _ l _ _)
-        (if (= d dst)
-          (match l
-            [(CompilerIrValue.Var id) id]
-            [_ (- 0 1)])
-          (opt-copy-binop-lhs-var-instr-seq-from slots (+ index 1) count dst))]
-      [_ (opt-copy-binop-lhs-var-instr-seq-from slots (+ index 1) count dst)])))
+    (let
+      [found : i64
+        (compiler-ir-instr-array-binop-lhs-var-for-dst-or
+          slots
+          index
+          dst
+          (- 0 2))]
+      (if (= found (- 0 2))
+        (opt-copy-binop-lhs-var-instr-seq-from slots (+ index 1) count dst)
+        found))))
 
 (define (opt-copy-binop-lhs-var-instr-seq
   [instrs : CompilerIrInstrSeq]

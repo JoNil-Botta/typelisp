@@ -225,6 +225,7 @@ profile.tl
 queue.tl
 random.tl
 result.tl
+result_tests.tl
 runtime.tl
 serialize.tl
 set.tl

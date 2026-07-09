@@ -1652,8 +1652,11 @@
         type-env
         name)
         [(ResultTcString.Ok lookup-name)
-          (let [lookup-id : i64 (intern lookup-name)]
-            (if (sym_i64_env.sym-i64-contains env lookup-name)
+          (let [lookup-id : i64
+            (match (intern-lookup lookup-name)
+              [(InternLookupFound id) id]
+              [(InternLookupMissing) (intern lookup-name)])]
+            (if (sym_i64_env.sym-i64-contains-id env lookup-id)
               (tc-lookup-id type-env lookup-id)
               ;; `type-cache` is the complete global type environment plus the
               ;; current module overlay. Nonlocals therefore resolve here in
@@ -4710,8 +4713,14 @@
 (define (lower-reach-string-snapshot-source-call? [name-id : i64]) : bool
   (let
     [name : String (tc-hygiene-global-call-name (intern-str name-id))]
-    [lookup-id : i64 (intern name)]
-    (cbi.compiler-builtin-lower-clone-id? lookup-id)))
+    [lookup-id : i64
+      (match (intern-lookup name)
+        [(InternLookupFound id) id]
+        [(InternLookupMissing) (intern name)])]
+    (or
+      (cbi.compiler-builtin-lower-clone-id? lookup-id)
+      (string.eq name "substring")
+      (string.eq name "string-slice"))))
 
 (define (lower-reach-add-source
   [all-functions : lower_string_i64_map.Map]
@@ -13263,7 +13272,7 @@
           (lower-atomic-extern-symbol-for-name
             ctx
             (tc-hygiene-global-call-name raw-text))
-          (if (tc-source-slash-qualified? raw-text)
+          (if (tc-source-slash-qualified-id? raw-text raw-name)
             (lower-atomic-extern-symbol-for-name ctx raw-text)
             (match (lower-source-name-lookup-key ctx type-env raw-text)
               [(ResultTcString.Ok lookup-name)
@@ -24586,9 +24595,14 @@
                           name)]
                       [source-id : i64
                         (if hygiene-global
-                          (intern source-name)
+                          (match (intern-lookup source-name)
+                            [(InternLookupFound id) id]
+                            [(InternLookupMissing) (intern source-name)])
                           raw-name)]
-                      [name-id : i64 (intern name)]
+                      [name-id : i64
+                        (match (intern-lookup name)
+                          [(InternLookupFound id) id]
+                          [(InternLookupMissing) (intern name)])]
                       [builtin-available : bool
                         (not (lower-top-level-value-defined-id? ctx name-id))]
                       [atomic-symbol : String
@@ -25452,7 +25466,10 @@
           (if (tc-hygiene-global-name? raw-text)
             (tc-hygiene-global-call-name raw-text)
             raw-text)]
-        [name-id : i64 (intern name)]
+        [name-id : i64
+          (match (intern-lookup name)
+            [(InternLookupFound id) id]
+            [(InternLookupMissing) (intern name)])]
         (and
           (lower-atomic-pointer-name? name)
           (not (tc-name-bound-id? type-env name-id))))]
@@ -41292,7 +41309,7 @@
             origin
             ret-ty
             sret-var)
-          (if (sym_i64_env.sym-i64-contains env raw-text)
+          (if (sym_i64_env.sym-i64-contains-id env raw-name)
             (lower-return-expr-generic
               ctx
               state

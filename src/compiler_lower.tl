@@ -1516,10 +1516,12 @@
     (if (tc-name-qualified-id? lookup-name-id)
       lookup-name
       (if (>= (intern-first-dot lookup-name-id) 0)
-        (match (tc-source-name-lookup-key
+        (match (tc-source-name-lookup-key-with-field-check
           (tc-context-with-module ctx module)
           type-env
-          lookup-name)
+          lookup-name
+          lookup-name-id
+          true)
           [(ResultTcString.Ok resolved-name) resolved-name]
           [(ResultTcString.Err _)
             (compiler-symbol-module-key module lookup-name)])
@@ -1591,19 +1593,32 @@
   (let
     [source-name : String
       (lower-hygiene-source-name-in-context ctx type-env name)]
-    (if (tc-source-slash-qualified? source-name)
+    [source-id : i64 (intern source-name)]
+    (if (tc-source-slash-qualified-id? source-name source-id)
       (ResultTcString.Ok source-name)
-      (match (tc-source-name-lookup-key ctx type-env source-name)
+      (match (tc-source-name-lookup-key-with-field-check
+        ctx
+        type-env
+        source-name
+        source-id
+        true)
         [(ResultTcString.Ok lookup-name) (ResultTcString.Ok lookup-name)]
         [(ResultTcString.Err message)
           (match (lower-hygiene-fallback-source-name name)
             [(TcMaybeString.Some fallback)
-              (if (tc-source-slash-qualified? fallback)
-                (ResultTcString.Ok fallback)
-                (match (tc-source-name-lookup-key ctx type-env fallback)
-                  [(ResultTcString.Ok lookup-name)
-                    (ResultTcString.Ok lookup-name)]
-                  [(ResultTcString.Err _) (ResultTcString.Err message)]))]
+              (let
+                [fallback-id : i64 (intern fallback)]
+                (if (tc-source-slash-qualified-id? fallback fallback-id)
+                  (ResultTcString.Ok fallback)
+                  (match (tc-source-name-lookup-key-with-field-check
+                    ctx
+                    type-env
+                    fallback
+                    fallback-id
+                    true)
+                    [(ResultTcString.Ok lookup-name)
+                      (ResultTcString.Ok lookup-name)]
+                    [(ResultTcString.Err _) (ResultTcString.Err message)])))]
             [(TcMaybeString.No) (ResultTcString.Err message)])]))))
 
 (define (lower-source-name-lookup-key-after-local-field-check
@@ -13274,7 +13289,12 @@
             (tc-hygiene-global-call-name raw-text))
           (if (tc-source-slash-qualified-id? raw-text raw-name)
             (lower-atomic-extern-symbol-for-name ctx raw-text)
-            (match (lower-source-name-lookup-key ctx type-env raw-text)
+            (match (tc-source-name-lookup-key-with-field-check
+                    ctx
+                    type-env
+                    raw-text
+                    raw-name
+                    true)
               [(ResultTcString.Ok lookup-name)
                 (lower-atomic-extern-symbol-for-name ctx lookup-name)]
               [(ResultTcString.Err _) ""]))))]
@@ -24575,7 +24595,14 @@
                 [hygiene-global : bool (tc-hygiene-global-name? raw-text)]
                 (match (if hygiene-global
                   (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))
-                  (lower-source-name-lookup-key ctx type-env raw-text))
+                  (if (tc-source-slash-qualified-id? raw-text raw-name)
+                    (ResultTcString.Ok raw-text)
+                    (tc-source-name-lookup-key-with-field-check
+                      ctx
+                      type-env
+                      raw-text
+                      raw-name
+                      true)))
                   [(ResultTcString.Ok name)
                     ;; `array-length`/`length` on a dynamic array and private
                     ;; string intrinsics load fat-value fields directly instead of
@@ -41324,7 +41351,14 @@
             (match (if (tc-hygiene-global-name? raw-text)
               (ResultTcString.Ok
                 (lower-hygiene-source-name-in-context ctx type-env raw-text))
-              (lower-source-name-lookup-key ctx type-env raw-text))
+              (if (tc-source-slash-qualified-id? raw-text raw-name)
+                (ResultTcString.Ok raw-text)
+                (tc-source-name-lookup-key-with-field-check
+                  ctx
+                  type-env
+                  raw-text
+                  raw-name
+                  true)))
               [(ResultTcString.Ok name)
                 (lower-return-call-name-to-sret
                   ctx

@@ -2130,29 +2130,6 @@
       root-sources
       stdlib-roots)))
 
-(define (selfhost-lint-package-dead-source-list-insert-from
-  [items : lint_svec.Vec]
-  [sources : PackageSourceList]
-  [index : i64]) : lint_svec.Vec
-  (if (>= index (package-source-list-len sources))
-    items
-    (selfhost-lint-package-dead-source-list-insert-from
-      (package-source-vec-insert
-        items
-        (compiler-load-normalize-path
-          (package-source-list-get sources index "")))
-      sources
-      (+ index 1))))
-
-(define (selfhost-lint-package-dead-source-list-append
-  [base : PackageSourceList]
-  [extra : PackageSourceList]) : PackageSourceList
-  (package-source-list-from-vec
-    (selfhost-lint-package-dead-source-list-insert-from
-      (package-source-list-items base)
-      extra
-      0)))
-
 (define (selfhost-lint-package-dead-repository-test-roots
   [source-set : PackageSourceSet]) : PackageSourceList
   (match (package-source-scan-optional-dir
@@ -2192,6 +2169,67 @@
       [(ResultCompilerLoadWithPaths.Err diag)
         (ResultSelfhostLintDeadSourceList.Err diag)])))
 
+(define (selfhost-lint-package-dead-root-file-closure-sources
+  [entry-path : String]
+  [source-set : PackageSourceSet]
+  [root-sources : PackageSourceList]
+  [stdlib-roots : lint_svec.Vec]
+  [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
+  (let
+    [_reset-file-state : unit (selfhost-lint-reset-file-state!)]
+    (match (compiler-load-file-with-paths-and-roots-cfg
+      entry-path
+      (sym_i64_env.sym-i64-empty)
+      stdlib-roots
+      (selfhost-lint-package-dead-cfgs))
+      [(ResultCompilerLoadWithPaths.Ok _ paths _ _)
+        (ResultSelfhostLintDeadSourceList.Ok
+          (selfhost-lint-package-dead-paths-to-sources-into
+            entry-path
+            paths
+            (struct-get source-set sources)
+            root-sources
+            stdlib-roots
+            items))]
+      [(ResultCompilerLoadWithPaths.Err diag)
+        (ResultSelfhostLintDeadSourceList.Err diag)])))
+
+(define (selfhost-lint-package-dead-root-closure-sources-from
+  [root-sources : PackageSourceList]
+  [source-set : PackageSourceSet]
+  [stdlib-roots : lint_svec.Vec]
+  [items : lint_svec.Vec]
+  [index : i64]) : ResultSelfhostLintDeadSourceList
+  (if (>= index (package-source-list-len root-sources))
+    (ResultSelfhostLintDeadSourceList.Ok (package-source-list-from-vec items))
+    (match (selfhost-lint-package-dead-root-file-closure-sources
+      (package-source-list-get root-sources index "")
+      source-set
+      root-sources
+      stdlib-roots
+      items)
+      [(ResultSelfhostLintDeadSourceList.Err diag)
+        (ResultSelfhostLintDeadSourceList.Err diag)]
+      [(ResultSelfhostLintDeadSourceList.Ok next-sources)
+        (selfhost-lint-package-dead-root-closure-sources-from
+          root-sources
+          source-set
+          stdlib-roots
+          (package-source-list-items next-sources)
+          (+ index 1))])))
+
+(define (selfhost-lint-package-dead-root-closure-sources
+  [root-sources : PackageSourceList]
+  [source-set : PackageSourceSet]
+  [stdlib-roots : lint_svec.Vec]
+  [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
+  (selfhost-lint-package-dead-root-closure-sources-from
+    root-sources
+    source-set
+    stdlib-roots
+    items
+    0))
+
 (define (selfhost-lint-package-dead-sources
   [source-set : PackageSourceSet]
   [stdlib-roots : lint_svec.Vec]) : ResultSelfhostLintDeadSources
@@ -2214,13 +2252,19 @@
           [(ResultSelfhostLintDeadSourceList.Err diag)
             (ResultSelfhostLintDeadSources.Err diag)]
           [(ResultSelfhostLintDeadSourceList.Ok entry-sources)
-            (ResultSelfhostLintDeadSources.Ok
-              (SelfhostLintDeadSourceSet
-                (selfhost-lint-package-dead-source-list-append
-                  entry-sources
-                  root-sources)
-                root-sources
-                (struct-get source-set sources)))]))
+            (match (selfhost-lint-package-dead-root-closure-sources
+              root-sources
+              source-set
+              stdlib-roots
+              (package-source-list-items entry-sources))
+              [(ResultSelfhostLintDeadSourceList.Err diag)
+                (ResultSelfhostLintDeadSources.Err diag)]
+              [(ResultSelfhostLintDeadSourceList.Ok graph-sources)
+                (ResultSelfhostLintDeadSources.Ok
+                  (SelfhostLintDeadSourceSet
+                    graph-sources
+                    root-sources
+                    (struct-get source-set sources)))])]))
       (ResultSelfhostLintDeadSources.Ok
         (SelfhostLintDeadSourceSet
           (struct-get source-set sources)
@@ -3407,6 +3451,72 @@
       (struct-get scan roots)
       0)))
 
+(define (selfhost-lint-package-dead-import-closure-fixture-ok?) : bool
+  (let
+    [root : String "target/lint_dead_root_import_closure"]
+    [src-dir : String (compiler-load-join-root-path root "src")]
+    [test-dir : String (compiler-load-join-root-path src-dir "tests")]
+    [manifest-path : String (compiler-load-join-root-path root "typelisp.pkg")]
+    [main-path : String (compiler-load-join-root-path src-dir "main.tl")]
+    [core-path : String (compiler-load-join-root-path src-dir "core.tl")]
+    [wrapper-path : String
+      (compiler-load-join-root-path src-dir "test_wrapper.tl")]
+    [test-path : String
+      (compiler-load-join-root-path test-dir "imported_smoke.tl")]
+    (begin
+      (compiler-load-test-mkdir root)
+      (compiler-load-test-mkdir src-dir)
+      (compiler-load-test-mkdir test-dir)
+      (io.write-file
+        manifest-path
+        "(package
+  (name \"lint-dead-root-import-closure\")
+  (version \"1\")
+  (kind \"bin\"))")
+      (io.write-file
+        main-path
+        "(import \"core.tl\")
+(define (main) : i64
+  (core-entry))")
+      (io.write-file
+        core-path
+        "(define (core-entry) : i64 7)
+(define (core-test-helper) : i64 42)
+(define (core-unused) : i64 13)")
+      (io.write-file
+        wrapper-path
+        "(import \"core.tl\")
+(define (wrapper-self-test) : i64
+  (core-test-helper))")
+      (io.write-file
+        test-path
+        "(import \"../test_wrapper.tl\")
+(define (main) : i64
+  (wrapper-self-test))")
+      (match (package-source-discover-for "lint" manifest-path true)
+        [(ResultPackageSourceSet.Err _) false]
+        [(ResultPackageSourceSet.Ok source-set)
+          (match (selfhost-lint-package-dead-sources source-set (lint_svec.new))
+            [(ResultSelfhostLintDeadSources.Err _) false]
+            [(ResultSelfhostLintDeadSources.Ok dead-source-set)
+              (let
+                [dead-decls : SelfhostLintDeadDecls
+                  (selfhost-lint-package-dead-code
+                    dead-source-set
+                    (lint_svec.new)
+                    (struct-get (struct-get source-set manifest) kind))]
+                [core-count : i64
+                  (selfhost-lint-package-dead-count-for-source
+                    (compiler-load-normalize-path core-path)
+                    (io.read-file core-path)
+                    dead-decls)]
+                [wrapper-count : i64
+                  (selfhost-lint-package-dead-count-for-source
+                    (compiler-load-normalize-path wrapper-path)
+                    (io.read-file wrapper-path)
+                    dead-decls)]
+                (and (= core-count 1) (= wrapper-count 0)))])]))))
+
 (define (selfhost-lint-package-dead-code-self-test) : i64
   (let
     [source-a : String (selfhost-lint-package-dead-source-a)]
@@ -3459,6 +3569,7 @@
       [(not (= lib-count-a 0)) 52]
       [(not (= lib-count-b 0)) 53]
       [(not (= test-root-count 1)) 57]
+      [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
       [(not
           (string.eq
             (lint-rule-message (lint-rule-dead-code-id))

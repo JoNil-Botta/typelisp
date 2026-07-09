@@ -2711,12 +2711,12 @@
                   (= (tc-lazy-import-stub-count) 1)
                   (= (tc-lazy-import-summary-backed-stub-count) 1)
                   (not
-                    (tc-name-bound?
+                    (tc-name-bound-id?
                       env
-                      (compiler-symbol-module-key "helper" "value")))
-                  (tc-name-bound?
+                      (tc-name-id (compiler-symbol-module-key "helper" "value"))))
+                  (tc-name-bound-id?
                     env
-                    (compiler-symbol-module-key "helper.module" "value"))
+                    (tc-name-id (compiler-symbol-module-key "helper.module" "value")))
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
@@ -2748,9 +2748,9 @@
                     [(ResultTcEnv.Ok local-env)
                       (and
                         (not
-                          (tc-name-bound?
+                          (tc-name-bound-id?
                             local-env
-                            (compiler-symbol-module-key "helper" "value")))
+                            (tc-name-id (compiler-symbol-module-key "helper" "value"))))
                         (match (tc-lookup-dotted-source-visible
                           entry-ctx
                           local-env
@@ -2777,7 +2777,9 @@
               (and
                 (> (tc-lazy-import-summary-backed-stub-count) 0)
                 (not
-                  (tc-name-bound? env (compiler-symbol-module-key "vec" "Vec"))))]
+                  (tc-name-bound-id?
+                    env
+                    (tc-name-id (compiler-symbol-module-key "vec" "Vec")))))]
             [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin

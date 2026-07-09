@@ -3155,10 +3155,6 @@
       unit)
     (TcTypeEnv.Bind name-id ty (box env))))
 
-(define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (begin (cfg compile-profile (set! tc-attrib-bind-raw (+ tc-attrib-bind-raw 1)))
-    (tc-bind-raw-id env (tc-name-id name) ty)))
-
 (define (tc-env-uncached-prefix-reaches-cache?
   [env : TcTypeEnv]
   [remaining : i64]) : bool
@@ -3230,9 +3226,6 @@
           (tc-env-with-full-local-cache env)
           (tc-env-with-local-cache env)))
       env)))
-
-(define (tc-bind [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-bind-id env (tc-name-id name) ty))
 
 (define (tc-bind-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
   (tc-env-compact-local-if-threshold (tc-bind-raw-id env name-id ty)))
@@ -4794,12 +4787,6 @@
 ;; cache for the newest bind window; marker scans keep scanning the full spine.
 (define (tc-env-with-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-partial-local-cache env))
-
-(define (tc-bind-alias-if-free [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (begin (cfg compile-profile (set! tc-attrib-bind-alias-if-free (+ tc-attrib-bind-alias-if-free 1)))
-    (if (tc-name-bound-id? env (tc-name-id name))
-      env
-      (tc-bind env name ty))))
 
 (define (tc-name-bound-id-with-top-env-membership?
   [env : TcTypeEnv]
@@ -15585,9 +15572,10 @@
   (define (tc-type-env-explicit-cache-layering-lookup-smoke?) : bool
     (let
       [base : TcTypeEnv
-        (tc-env-with-cache (tc-bind (tc-empty-env) "base" (AstType.I64)))]
-      [older : TcTypeEnv (tc-bind base "dup" (AstType.I64))]
-      [newer : TcTypeEnv (tc-bind older "dup" (AstType.Bool))]
+        (tc-env-with-cache
+          (tc-bind-id (tc-empty-env) (tc-name-id "base") (AstType.I64)))]
+      [older : TcTypeEnv (tc-bind-id base (tc-name-id "dup") (AstType.I64))]
+      [newer : TcTypeEnv (tc-bind-id older (tc-name-id "dup") (AstType.Bool))]
       [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit newer)]
       (and
         (= (tc-env-uncached-prefix-to-explicit-cache-count newer) 2)
@@ -15636,7 +15624,10 @@
       [base : TcTypeEnv
         (tc-env-with-cache (tc-push-region (tc-default-env) "hidden"))]
       [shadowed : TcTypeEnv
-        (tc-bind base "__tl_string_length" (tc-fn1 (AstType.I64) (AstType.I64)))]
+        (tc-bind-id
+          base
+          (tc-name-id "__tl_string_length")
+          (tc-fn1 (AstType.I64) (AstType.I64)))]
       [layer : TcTypeEnv (tc-env-with-cache-layer-over-explicit shadowed)]
       (and
         (tc-env-cache-explicit-head? layer)
@@ -15653,9 +15644,9 @@
     [body : AstExpr (AstExpr.Var (tc-name-id "captured"))]
     [base : TcTypeEnv (tc-env-with-cache (tc-empty-env))]
     [env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-push-region base "outer")
-        "captured"
+        (tc-name-id "captured")
         (ast-ty-ref "outer" (AstType.I64)))]
     [deep : TcTypeEnv
       (tc-type-env-bind-many env (+ (* (tc-local-cache-threshold) 2) 8))]

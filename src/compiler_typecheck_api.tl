@@ -412,6 +412,7 @@
                     symbols
                     registries
                     ""
+                    (intern "")
                     (ast-node-pool-context-capture-active))]
                 (match (tc-program-source-types-policy-ok ctx program)
                   [(ResultTcUnit.Ok)

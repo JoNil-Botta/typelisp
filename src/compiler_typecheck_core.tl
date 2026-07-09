@@ -204,6 +204,7 @@
     CompilerSymbols
     CompilerRegistries
     String
+    i64
     AstNodePoolContext))
 
 (defenum ResultTcType
@@ -832,21 +833,25 @@
 
 (define (tc-context-with-module [ctx : TcContext] [module : String]) : TcContext
   (match ctx
-    [(TcContext program symbols registries _ pools)
-      (TcContext program symbols registries module pools)]))
+    [(TcContext program symbols registries _ _ pools)
+      (TcContext program symbols registries module (intern module) pools)]))
 
 (define (tc-context-with-program [ctx : TcContext] [program : AstProgram]) : TcContext
   (match ctx
-    [(TcContext _ symbols registries module pools)
-      (TcContext program symbols registries module pools)]))
+    [(TcContext _ symbols registries module module-id pools)
+      (TcContext program symbols registries module module-id pools)]))
 
 (define (tc-context-module [ctx : TcContext]) : String
   (match ctx
-    [(TcContext _ _ _ module _) module]))
+    [(TcContext _ _ _ module _ _) module]))
+
+(define (tc-context-module-id [ctx : TcContext]) : i64
+  (match ctx
+    [(TcContext _ _ _ _ module-id _) module-id]))
 
 (define (tc-context-pools [ctx : TcContext]) : AstNodePoolContext
   (match ctx
-    [(TcContext _ _ _ _ pools) pools]))
+    [(TcContext _ _ _ _ _ pools) pools]))
 
 (define (tc-context-capture-active-pools! [ctx : TcContext]) : unit
   (if (ast-node-pool-compat-context-active?)
@@ -10444,13 +10449,12 @@
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
   (match ctx
-    [(TcContext program _ _ current-module _)
+    [(TcContext program _ _ current-module current-module-id _)
       (match program
         [(AstProgram.Program decls-box)
           (begin
             (tc-imported-module-identity-cache-ensure!)
             (let
-              [current-module-id : i64 (intern current-module)]
               [cached : i64
                 (tc-imported-module-identity-cache-get
                   current-module-id
@@ -10659,7 +10663,7 @@
   [ctx : TcContext]
   [base : String]) : bool
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-value-or
@@ -10881,12 +10885,12 @@
 
 (define (tc-context-imports-stdlib-string? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ module _)
+    [(TcContext program _ _ module module-id _)
       (match program
         [(AstProgram.Program decls-box)
           (tc-decl-list-module-imports-stdlib-string?
             (box-get decls-box)
-            (intern module)
+            module-id
             cbi.compiler-builtin-id-fix-empty)])]))
 
 (define (tc-stdlib-string-helper-visible-or-wrapper-id?
@@ -11332,7 +11336,7 @@
         [base-start : i64 (+ first-dot 1)]
         [base : String (string.substring name base-start (- n base-start))]
         (match ctx
-          [(TcContext program _ _ current-module _)
+          [(TcContext program _ _ current-module _ _)
             (match program
               [(AstProgram.Program decls-box)
                 (let
@@ -11425,7 +11429,7 @@
       ctx
       name
       (tc-name-id name)
-      (intern (tc-context-module ctx)))))
+      (tc-context-module-id ctx))))
 
 (define (tc-unresolved-dotted-name-message [name : String]) : String
   (str_cat.str-cat
@@ -11552,7 +11556,7 @@
     (if (< first-dot 0)
       (ResultTcString.Ok name)
       (let
-        [current-module-id : i64 (intern (tc-context-module ctx))]
+        [current-module-id : i64 (tc-context-module-id ctx)]
         (match (tc-source-dotted-alias-key
           ctx
           name
@@ -11595,7 +11599,7 @@
   [name-id : i64]) : option_i64.Option
   (if (tc-enum-qualified-variant-lookup-name-id? name-id)
     (match ctx
-      [(TcContext _ _ registries module _)
+      [(TcContext _ _ registries module _ _)
         (if (and
           (> (string.string-length module) 0)
           (not (tc-name-qualified? name)))
@@ -11618,7 +11622,7 @@
   [module-id : i64]) : ResultTcString
   (if (tc-enum-qualified-variant-lookup-name-id? name-id)
     (match ctx
-      [(TcContext _ _ registries module _)
+      [(TcContext _ _ registries module _ _)
         (let
           [cached : i64
             (tc-source-qualified-variant-key-cache-get module-id name-id)]
@@ -11686,7 +11690,7 @@
       ctx
       name
       (tc-name-id name)
-      (intern (tc-context-module ctx)))))
+      (tc-context-module-id ctx))))
 
 (define (tc-source-name-lookup-key-with-field-check-id
   [ctx : TcContext]
@@ -11705,58 +11709,58 @@
         tc-attrib-source-name-lookup-key
         (+ tc-attrib-source-name-lookup-key 1)))
     (if (tc-source-slash-qualified-id? name name-id)
-    (ResultTcString.Err (tc-source-slash-qualified-message name))
-    (let
-      [first-dot : i64 (intern-first-dot name-id)]
-      (if (< first-dot 0)
-        (if (tc-source-name-bound-exact-id? env name-id)
-          (ResultTcString.Ok name)
-          (match (tc-current-module-source-lookup-key-id ctx env name-id)
-            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-            [(TcMaybeString.No) (ResultTcString.Ok name)]))
-        (if (and
-          check-local-field
-          (tc-source-leading-segment-wins-over-exact-from-id?
-            env
-            name
-            name-id
-            first-dot))
-          (ResultTcString.Ok name)
-          (match (tc-comptime-helper-qualified-lookup-key
-            env
-            name
-            name-id
-            first-dot)
-            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-            [(TcMaybeString.No)
-              (let
-                [current-module-id : i64 (intern (tc-context-module ctx))]
-                (match (tc-source-dotted-alias-key
-                  ctx
-                  name
-                  name-id
-                  first-dot
-                  current-module-id)
-                  [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-                  [(TcMaybeString.No)
-                    (match (tc-enum-qualified-variant-lookup-key-from-id
-                      ctx
-                      name
-                      name-id
-                      current-module-id)
-                      [(ResultTcString.Ok key) (ResultTcString.Ok key)]
-                      [(ResultTcString.Err _)
-                        (match (tc-source-dotted-full-path-key-from-id
-                          ctx
-                          name
-                          name-id
-                          current-module-id)
-                          [(TcMaybeString.Some key) (ResultTcString.Ok key)]
-                          [(TcMaybeString.No)
-                            (if (tc-source-name-bound-exact-id? env name-id)
-                              (ResultTcString.Ok name)
-                              (ResultTcString.Err
-                                (tc-unresolved-dotted-name-message name)))])])]))])))))))
+      (ResultTcString.Err (tc-source-slash-qualified-message name))
+      (let
+        [first-dot : i64 (intern-first-dot name-id)]
+        (if (< first-dot 0)
+          (if (tc-source-name-bound-exact-id? env name-id)
+            (ResultTcString.Ok name)
+            (match (tc-current-module-source-lookup-key-id ctx env name-id)
+              [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+              [(TcMaybeString.No) (ResultTcString.Ok name)]))
+          (if (and
+            check-local-field
+            (tc-source-leading-segment-wins-over-exact-from-id?
+              env
+              name
+              name-id
+              first-dot))
+            (ResultTcString.Ok name)
+            (match (tc-comptime-helper-qualified-lookup-key
+              env
+              name
+              name-id
+              first-dot)
+              [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+              [(TcMaybeString.No)
+                (let
+                  [current-module-id : i64 (tc-context-module-id ctx)]
+                  (match (tc-source-dotted-alias-key
+                    ctx
+                    name
+                    name-id
+                    first-dot
+                    current-module-id)
+                    [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+                    [(TcMaybeString.No)
+                      (match (tc-enum-qualified-variant-lookup-key-from-id
+                        ctx
+                        name
+                        name-id
+                        current-module-id)
+                        [(ResultTcString.Ok key) (ResultTcString.Ok key)]
+                        [(ResultTcString.Err _)
+                          (match (tc-source-dotted-full-path-key-from-id
+                            ctx
+                            name
+                            name-id
+                            current-module-id)
+                            [(TcMaybeString.Some key) (ResultTcString.Ok key)]
+                            [(TcMaybeString.No)
+                              (if (tc-source-name-bound-exact-id? env name-id)
+                                (ResultTcString.Ok name)
+                                (ResultTcString.Err
+                                (tc-unresolved-dotted-name-message name)))])])]))]))))))))
 
 (define (tc-source-name-lookup-key-with-field-check
   [ctx : TcContext]
@@ -11817,7 +11821,7 @@
               [(TcMaybeString.Some key) (TcNameLookup.Ok key (tc-name-id key))]
               [(TcMaybeString.No)
                 (let
-                  [current-module-id : i64 (intern (tc-context-module ctx))]
+                  [current-module-id : i64 (tc-context-module-id ctx)]
                   (match (tc-source-dotted-alias-key
                     ctx
                     name
@@ -11868,7 +11872,7 @@
   [ctx : TcContext]
   [qualifier : String]) : String
   (match ctx
-    [(TcContext program _ _ current-module _)
+    [(TcContext program _ _ current-module _ _)
       (match program
         [(AstProgram.Program decls-box)
           (let
@@ -12274,7 +12278,7 @@
     [(ResultTcString.Ok cached) (ResultTcString.Ok cached)]
     [(ResultTcString.Err _)
       (match ctx
-        [(TcContext program symbols _ _ _)
+        [(TcContext program symbols _ _ _ _)
           (match (compiler-symbols-owner-name-at-index
             symbols
             (compiler-symbol-handle-index handle))
@@ -12313,7 +12317,7 @@
 
 (define (tc-resolve-type-name [ctx : TcContext] [name : String]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ module _ _)
       (let
         [name-id : i64 (tc-name-id name)]
         [source-name : String
@@ -12400,7 +12404,7 @@
   [name : String]
   [lifetimes : AstLifetimeList]) : AstType
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ module _ _)
       (let
         [name-id : i64 (tc-name-id name)]
         [source-name : String
@@ -12488,7 +12492,7 @@
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-or
@@ -19356,7 +19360,7 @@
 
 (define (tc-constructor-name? [ctx : TcContext] [name : String]) : bool
   (match ctx
-    [(TcContext _ symbols registries module _)
+    [(TcContext _ symbols registries module _ _)
       (let
         [lookup-name : String
           (if (and
@@ -19392,9 +19396,9 @@
 ;; instead of building and interning the qualified string.
 (define (tc-constructor-name-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols registries module _)
+    [(TcContext _ symbols registries module ctx-module-id _)
       (let
-        [module-id : i64 (if (> (string.string-length module) 0) (intern module) -1)]
+        [module-id : i64 (if (> (string.string-length module) 0) ctx-module-id -1)]
         [non-root-bare? : bool
           (and (> (string.string-length module) 0) (not (tc-name-qualified-id? name-id)))]
         [variant-key : i64
@@ -24823,7 +24827,7 @@
 
 (define (tc-spmd-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (tc-spmd-program-imports-atomic? (box-get decls-box))])]))
@@ -29010,15 +29014,15 @@
 
 (define (tc-context-program [ctx : TcContext]) : AstProgram
   (match ctx
-    [(TcContext program _ _ _ _) program]))
+    [(TcContext program _ _ _ _ _) program]))
 
 (define (tc-context-symbols [ctx : TcContext]) : CompilerSymbols
   (match ctx
-    [(TcContext _ symbols _ _ _) symbols]))
+    [(TcContext _ symbols _ _ _ _) symbols]))
 
 (define (tc-context-registries [ctx : TcContext]) : CompilerRegistries
   (match ctx
-    [(TcContext _ _ registries _ _) registries]))
+    [(TcContext _ _ registries _ _ _) registries]))
 
 (define (tc-program-enum-variants-list
   [decls : AstDeclList]
@@ -29590,7 +29594,7 @@
 
 (define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-or
@@ -29621,7 +29625,7 @@
 
 (define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-or
@@ -31015,7 +31019,7 @@
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (let
@@ -33011,7 +33015,7 @@
       variant-name
       (if (>= (intern-first-dot variant-id) 0)
         (let
-          [current-module-id : i64 (intern (tc-context-module ctx))]
+          [current-module-id : i64 (tc-context-module-id ctx)]
           (match (tc-enum-qualified-variant-lookup-key-from-id ctx variant-name variant-id current-module-id)
             [(ResultTcString.Ok lookup-name) lookup-name]
             [(ResultTcString.Err _)
@@ -51819,12 +51823,12 @@
                 arg
                 (tc-source-slash-qualified-message name))))
           (match ctx
-            [(TcContext program _ _ current-module _)
+            [(TcContext program _ _ current-module current-module-id _)
               (match program
                 [(AstProgram.Program decls-box)
                   (match (macro-import-alias-target-cached
                     (box-get decls-box)
-                    (intern current-module)
+                    current-module-id
                     name)
                     [(TcMaybeString.Some target)
                       (ResultMacroModuleArg.Ok target)]
@@ -57072,7 +57076,7 @@
           (let
             [next-registries : CompilerRegistries macro-live-registries-value]
             [next-ctx : TcContext
-              (TcContext next-program next-symbols next-registries "" pools)]
+              (TcContext next-program next-symbols next-registries "" (intern "") pools)]
             (begin
               (set! macro-expand-active-module "")
               (macro-expand-set-macro-names! macro-live-prescan-visible-names)
@@ -57747,7 +57751,7 @@
                           macro-live-prescan-visible-names)
                         (let
                           [ctx : TcContext
-                            (TcContext program symbols registries "" pools)]
+                            (TcContext program symbols registries "" (intern "") pools)]
                           (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
                             [(ResultTcUnit.Ok)
                               (match (tc-build-top-env ctx program)
@@ -58186,7 +58190,7 @@
       [(AstProgram.Program decls-box)
         (match (macro-import-alias-target-cached
           (box-get decls-box)
-          (intern (tc-context-module ctx))
+          (tc-context-module-id ctx)
           qualifier)
           [(TcMaybeString.Some target-module)
             (intern (compiler-symbol-module-key target-module base))]
@@ -59548,7 +59552,7 @@
         (match (build-compiler-registries-with-symbols program symbols)
           [(ResultCompilerRegistries.Ok registries)
             (let
-              [ctx : TcContext (TcContext program symbols registries "" pools)]
+              [ctx : TcContext (TcContext program symbols registries "" (intern "") pools)]
               (match (tc-stdlib-comptime-surface-ok ctx)
                 [(ResultTcUnit.Ok)
                   (match (tc-program-source-types-policy-ok ctx program)

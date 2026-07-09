@@ -8841,7 +8841,7 @@
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
           (compiler-symbols-lookup-type-or
@@ -12287,7 +12287,7 @@
                           fail-label
                           scrut-reg-group?)
                         (match ctx
-                          [(TcContext _ symbols registries _ _)
+                          [(TcContext _ symbols registries _ _ _)
                             (let
                               [nested-lookup-name : String
                                 (lower-variant-lookup-name-for-scrut
@@ -12600,7 +12600,7 @@
                   [nested-args : AstPatternList (box-get nested-args-box)]
                   [nested-name-str : String (intern-str nested-name)]
                   (match ctx
-                    [(TcContext _ symbols registries _ _)
+                    [(TcContext _ symbols registries _ _ _)
                       (let
                         [nested-lookup-name : String
                           (lower-variant-lookup-name-for-scrut
@@ -13151,7 +13151,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -13948,7 +13948,7 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match (tc-program-enum-variants program enum-name)
         [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
@@ -15212,7 +15212,7 @@
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _)
+    [(TcContext _ _ registries _ _ _)
       (let
         [enum-name : String (tc-result-info-enum-name return-info)]
         [err-name : String (tc-result-info-err-name return-info)]
@@ -15351,7 +15351,7 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _)
+    [(TcContext _ _ registries _ _ _)
       (let
         [ok-name : String (tc-result-info-ok-name operand-info)]
         [ok-handle : i64
@@ -15457,7 +15457,7 @@
 
 (define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ module _ _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
@@ -16955,7 +16955,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -17081,7 +17081,7 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
@@ -39839,7 +39839,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -40028,7 +40028,7 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -42110,7 +42110,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
@@ -42253,7 +42253,7 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]

@@ -800,6 +800,19 @@ rm -rf "$PKG_DIR/target"
 set +e
 (
     cd "$PKG_DIR"
+    "$COMPILER" run --target "$BUILD_TARGET" --opt-level 0 > "$WORKDIR/package-run-default.out" 2> "$WORKDIR/package-run-default.err"
+)
+status=$?
+set -e
+assert_status package-run-default "$status" 29
+assert_empty package-run-default "$WORKDIR/package-run-default.out"
+assert_empty package-run-default "$WORKDIR/package-run-default.err"
+[ -f "$PKG_EXE" ] || fail "package run did not write executable $PKG_EXE"
+
+rm -rf "$PKG_DIR/target"
+set +e
+(
+    cd "$PKG_DIR"
     "$COMPILER" build --target "$BUILD_TARGET" --profile dev > "$WORKDIR/package-build-dev.out" 2> "$WORKDIR/package-build-dev.err"
 )
 status=$?

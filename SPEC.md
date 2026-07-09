@@ -2547,6 +2547,10 @@ Example:
   through the same module loader and compiler pipeline as `compile`.
   `typelisp build` without `--manifest-path` searches for `typelisp.pkg` from
   the current directory upward.
+- `typelisp run [--manifest-path path/to/typelisp.pkg]` uses the same package
+  discovery and package build pipeline as `build`, then executes the emitted
+  `bin` artifact. Package runtime arguments follow `--`. `staticlib` packages
+  are not executable.
 - Package `typelisp check` typechecks the manifest entry's transitive import
   closure once — the same program closure that package `build` validates — and
   both typecheck doc-comment examples only in that closure. Source files
@@ -6118,7 +6122,7 @@ Commands:
   typelisp lsp            Start stdio LSP diagnostics server
   typelisp new            Scaffold a new package directory
   typelisp repl           Start minimal stdio REPL
-  typelisp run            Compile, link, and run a source file
+  typelisp run            Compile, link, and run a source file or package
   typelisp test           Run or check inline tests
 
 Global Options:
@@ -6142,6 +6146,7 @@ Selected Command Forms:
   typelisp build <file.tl> [-o <exe>]
   typelisp build [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock]
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
+  typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
   typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field]
   typelisp test [<file.tl>] [--check]

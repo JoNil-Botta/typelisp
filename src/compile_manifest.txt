@@ -267,7 +267,7 @@ contains|_tl_run_direct_from:
 contains|_tl_run_cli_config_from:
 contains|_tl_run_cli_run_source_with_doctests:
 contains|_tl_source_tool_run_source:
-contains|run: expected source path
+contains|run: package manifest kind must be bin to execute
 # test
 contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:

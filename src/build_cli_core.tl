@@ -181,7 +181,6 @@
   (opt-level i64)
   (lock-policy BuildPackageLockPolicy)
   (stdlib-roots cli_svec.Vec)
-  (announce bool)
   (resolved-deps CompilerPkgDepList))
 
 (defenum ResultBuildPackageWorkerConfig
@@ -735,7 +734,6 @@
   [has-opt-level : bool]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
-  [announce : bool]
   [resolved-deps : CompilerPkgDepList]) : ResultBuildPackageWorkerConfig
   (if (>= idx count)
     (if has-manifest
@@ -749,7 +747,6 @@
           opt-level
           lock-policy
           stdlib-roots
-          announce
           (build-package-dep-list-reverse resolved-deps)))
       (ResultBuildPackageWorkerConfig.Err
         "build: --package-worker requires --manifest-path"))
@@ -772,7 +769,6 @@
               has-opt-level
               lock-policy
               stdlib-roots
-              announce
               resolved-deps))]
         [(string.eq current "--target")
           (if (>= (+ idx 1) count)
@@ -794,7 +790,6 @@
                     has-opt-level
                     lock-policy
                     stdlib-roots
-                    announce
                     resolved-deps)]
                 [(ResultSourceToolTarget.Err _)
                   (ResultBuildPackageWorkerConfig.Err
@@ -819,7 +814,6 @@
                     has-opt-level
                     lock-policy
                     stdlib-roots
-                    announce
                     resolved-deps)]
                 [(ResultSourceToolBackendMode.Err message)
                   (ResultBuildPackageWorkerConfig.Err message)])))]
@@ -848,7 +842,6 @@
                     has-opt-level
                     lock-policy
                     stdlib-roots
-                    announce
                     resolved-deps))]))]
         [(string.eq current "--release")
           (build-package-worker-parse-options
@@ -865,7 +858,6 @@
             has-opt-level
             lock-policy
             stdlib-roots
-            announce
             resolved-deps)]
         [(string.eq current "--opt-level")
           (if (>= (+ idx 1) count)
@@ -886,7 +878,6 @@
                   true
                   lock-policy
                   stdlib-roots
-                  announce
                   resolved-deps)
                 (ResultBuildPackageWorkerConfig.Err
                   (build-unknown-opt-level value)))))]
@@ -906,7 +897,6 @@
               has-opt-level
               (BuildPackageLockPolicy.Locked)
               stdlib-roots
-              announce
               resolved-deps))]
         [(string.eq current "--update-lock")
           (if (build-package-lock-policy-provided? lock-policy)
@@ -924,7 +914,6 @@
               has-opt-level
               (BuildPackageLockPolicy.Update)
               stdlib-roots
-              announce
               resolved-deps))]
         [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
@@ -946,7 +935,6 @@
                 (begin
                   (cli_svec.push (&mut next-roots) (io.arg (+ idx 1)))
                   next-roots))
-              announce
               resolved-deps))]
         [(string.eq current "--resolved-dep")
           (if (>= (+ idx 2) count)
@@ -964,25 +952,9 @@
               has-opt-level
               lock-policy
               stdlib-roots
-              announce
               (CompilerPkgDepCons
                 (CompilerPkgDep (io.arg (+ idx 1)) (io.arg (+ idx 2)))
                 (box resolved-deps))))]
-        [(string.eq current "--quiet")
-          (build-package-worker-parse-options
-            (+ idx 1)
-            count
-            manifest-path
-            has-manifest
-            target
-            mode
-            profile
-            opt-level
-            has-opt-level
-            lock-policy
-            stdlib-roots
-            false
-            resolved-deps)]
         [(host-plan-flag? current)
           (ResultBuildPackageWorkerConfig.Err
             (str_cat.str-cat "build: unknown package worker flag " current))]
@@ -1005,7 +977,6 @@
     false
     (BuildPackageLockPolicy.Default)
     (cli_svec.new)
-    true
     CompilerPkgDepNil))
 
 (define (build-source-plan-render [config : BuildConfig]) : String
@@ -3024,7 +2995,6 @@
       (CompilerBackendMode.Scalar)
       (BuildPackageLockPolicy.Default)
       (cli_svec.new)
-      true
       (build-package-graph-worker-vec-new))
       [(ResultBuildPackageSchedulePass.Err _) false]
       [(ResultBuildPackageSchedulePass.Ok pass)
@@ -3604,38 +3574,6 @@
     (build-package-worker-resolved-deps-args-smoke-ok?)
     (io.panic "build package worker resolved deps args smoke failed")))
 
-(define (build-package-worker-quiet-args-smoke-ok?) : bool
-  (let
-    [quiet : process.ProcessStringList
-      (build-package-worker-args
-        "dep/typelisp.pkg"
-        (CompilerBackendTarget.Linux)
-        0
-        (BuildProfile.Release)
-        (CompilerBackendMode.Scalar)
-        (BuildPackageLockPolicy.Default)
-        false
-        (cli_svec.new))]
-    [announced : process.ProcessStringList
-      (build-package-worker-args
-        "dep/typelisp.pkg"
-        (CompilerBackendTarget.Linux)
-        0
-        (BuildProfile.Release)
-        (CompilerBackendMode.Scalar)
-        (BuildPackageLockPolicy.Default)
-        true
-        (cli_svec.new))]
-    (and
-      (source-tool-string-list-contains? quiet "--quiet")
-      (not (source-tool-string-list-contains? announced "--quiet")))))
-
-(test
-  build-package-worker-quiet-args-smoke
-  (unless
-    (build-package-worker-quiet-args-smoke-ok?)
-    (io.panic "build package worker quiet args smoke failed")))
-
 (define (build-package-worker-args-with-flag
   [worker-flag : String]
   [manifest-path : String]
@@ -3645,7 +3583,6 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [resolved-deps : CompilerPkgDepList]
-  [announce : bool]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
   (let
     [args0 : process.ProcessStringList
@@ -3678,11 +3615,7 @@
       (build-package-lock-policy-arg args6 lock-policy)]
     [args8 : process.ProcessStringList
       (build-package-worker-append-resolved-deps args7 resolved-deps)]
-    [args9 : process.ProcessStringList
-      (if announce
-        args8
-        (source-tool-args-append args8 "--quiet"))]
-    (build-package-worker-append-stdlib-roots args9 stdlib-roots)))
+    (build-package-worker-append-stdlib-roots args8 stdlib-roots)))
 
 (define (build-package-worker-args
   [manifest-path : String]
@@ -3691,7 +3624,6 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [announce : bool]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessStringList
   (build-package-worker-args-with-flag
     "--package-worker"
@@ -3702,7 +3634,6 @@
     mode
     lock-policy
     CompilerPkgDepNil
-    announce
     stdlib-roots))
 
 (define (build-package-worker-command
@@ -3712,7 +3643,6 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [announce : bool]
   [stdlib-roots : cli_svec.Vec]) : process.ProcessCommand
   (process.command
     (io.arg 0)
@@ -3723,7 +3653,6 @@
       profile
       mode
       lock-policy
-      announce
       stdlib-roots)))
 
 (define (build-package-doctest-worker-command
@@ -3746,7 +3675,6 @@
       mode
       lock-policy
       resolved-deps
-      true
       stdlib-roots)))
 
 (define (build-package-worker-spawn-supported?) : bool
@@ -3860,7 +3788,7 @@
                       (struct-get config lock-policy)
                       (struct-get config stdlib-roots)
                       (process.args-empty)
-                      (struct-get config announce))
+                      true)
                     (begin
                       (io.print-error
                         "build: package worker can only build staticlib packages")
@@ -4038,7 +3966,6 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [announce : bool]
   [stdlib-roots : cli_svec.Vec]) : ResultBuildPackageGraphWorker
   (let
     [manifest-path : String (struct-get node manifest-path)]
@@ -4054,7 +3981,6 @@
         profile
         mode
         lock-policy
-        announce
         stdlib-roots)]
     (match (process.start command)
       [(process.OkProcessChild child)
@@ -4078,7 +4004,6 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
-  [announce : bool]
   [workers : BuildPackageGraphWorkerVec]) : ResultBuildPackageSchedulePass
   (let
     [index : i64 0]
@@ -4104,7 +4029,6 @@
                   profile
                   mode
                   lock-policy
-                  announce
                   stdlib-roots)
                   [(ResultBuildPackageGraphWorker.Err message)
                     (begin
@@ -4158,6 +4082,7 @@
 (define (build-package-wait-workers-with
   [workers : BuildPackageGraphWorkerVec]
   [built : build_string_i64_map.Map]
+  [announce : bool]
   [failed-status : i64]) : ResultBuildPackageWait
   (let
     [index : i64 0]
@@ -4180,7 +4105,9 @@
             (match result
               [(process.OkProcessOutput output)
                 (begin
-                  (source-tool-forward-output output)
+                  (if (or announce (not (process.success? output)))
+                    (source-tool-forward-output output)
+                    unit)
                   (if (process.success? output)
                     (let
                       [runtime-path : String (struct-get artifacts runtime)]
@@ -4252,8 +4179,9 @@
 
 (define (build-package-wait-workers
   [workers : BuildPackageGraphWorkerVec]
-  [built : build_string_i64_map.Map]) : ResultBuildPackageWait
-  (build-package-wait-workers-with workers built 0))
+  [built : build_string_i64_map.Map]
+  [announce : bool]) : ResultBuildPackageWait
+  (build-package-wait-workers-with workers built announce 0))
 
 (define (build-package-emit-graph-nodes-parallel-loop
   [nodes : BuildPackageGraphNodeVec]
@@ -4278,7 +4206,6 @@
       mode
       lock-policy
       stdlib-roots
-      announce
       (build-package-graph-worker-vec-with-capacity
         (build-package-graph-node-vec-len nodes)))
       [(ResultBuildPackageSchedulePass.Err message)
@@ -4293,7 +4220,7 @@
               (io.print-error
                 "build: package dependency scheduler made no progress")
               1)
-            (match (build-package-wait-workers workers built)
+            (match (build-package-wait-workers workers built announce)
               [(ResultBuildPackageWait.Err status) status]
               [(ResultBuildPackageWait.Ok next-built)
                 (build-package-emit-graph-nodes-parallel-loop

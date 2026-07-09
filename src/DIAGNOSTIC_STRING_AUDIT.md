@@ -77,3 +77,11 @@ the staged string-result audit from
 This audit is intentionally a checked-in policy note. It classifies the current
 families and identifies the migration order; implementation PRs should handle
 one boundary at a time.
+
+Issue #4417 status: expression-origin lowering diagnostics that pass through
+`lower-diagnostic-at-expr` now recover spans through wrappers, unary forms, and
+common compound/generated forms by selecting the first source-carrying child.
+The remaining semantic-location gaps are source-facing symbol/registry failures,
+declaration-shape diagnostics that do not yet carry declaration spans, and
+internal/synthetic macro or generated rebuild errors that still cross string
+boundaries before a concrete origin span is available.

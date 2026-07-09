@@ -1652,24 +1652,25 @@
         type-env
         name)
         [(ResultTcString.Ok lookup-name)
-          (if (sym_i64_env.sym-i64-contains env lookup-name)
-            (tc-lookup-id type-env (tc-name-id lookup-name))
-            ;; `type-cache` is the complete global type environment plus the
-            ;; current module overlay. Nonlocals therefore resolve here in
-            ;; O(1); walking `type-env` first repeated a linear global-env scan
-            ;; for every ordinary function call during lowering.
-            (match (lower-type-cache-lookup type-cache lookup-name)
-              [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-              [(ResultTcType.Err message)
-                (tc-variant-constructor-type-for-lookup-or
-                  ctx
-                  lookup-name
-                  (tc-source-lookup-display-name ctx name lookup-name)
-                  (tc-source-unbound-display-message
+          (let [lookup-id : i64 (tc-name-id lookup-name)]
+            (if (sym_i64_env.sym-i64-contains env lookup-name)
+              (tc-lookup-id type-env lookup-id)
+              ;; `type-cache` is the complete global type environment plus the
+              ;; current module overlay. Nonlocals therefore resolve here in
+              ;; O(1); walking `type-env` first repeated a linear global-env scan
+              ;; for every ordinary function call during lowering.
+              (match (lower-type-cache-lookup type-cache lookup-name)
+                [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                [(ResultTcType.Err message)
+                  (tc-variant-constructor-type-for-lookup-or-id
                     ctx
-                    name
                     lookup-name
-                    message))]))]
+                    lookup-id
+                    (tc-source-unbound-display-message
+                      ctx
+                      name
+                      lookup-name
+                      message))])))]
         [(ResultTcString.Err message) (ResultTcType.Err message)]))))
 
 (define (lower-lookup-type-id
@@ -3349,9 +3350,10 @@
   [env : TcTypeEnv]
   [module : String]
   [name : String]) : ResultTcEnv
-  (match (tc-lookup-id top-env (tc-name-id (compiler-symbol-module-key module name)))
-    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-alias-if-free env name ty))]
-    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
+  (let [name-id : i64 (tc-name-id name)]
+    (match (tc-lookup-id top-env (tc-name-id (compiler-symbol-module-key module name)))
+      [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-alias-id-if-free env name-id ty))]
+      [(ResultTcType.Err message) (ResultTcEnv.Err message)])))
 
 (define (lower-module-local-type-env-bind-qualified-id-if-free
   [top-env : TcTypeEnv]

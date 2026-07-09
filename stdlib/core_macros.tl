@@ -17,8 +17,6 @@
 ;#       (set! value (cond [false 0] [true value] [else value]))
 ;#       value)))
 ;# ```
-(module stdlib.core_macros)
-
 (import stdlib.comptime)
 
 ;: Short-circuiting boolean conjunction.

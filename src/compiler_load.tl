@@ -2227,9 +2227,9 @@
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
 
-;; `core_macros.tl` loads as `stdlib.core_macros`. Add a root module marker
-;; after loading it so the following entry resumes in the root module, matching
-;; import restoration and keeping module-less `main` discoverable.
+;; `stdlib/core_macros.tl` infers as `stdlib.core_macros`. Add a root module
+;; marker after loading it so the following entry resumes in the root module,
+;; matching import restoration and keeping module-less `main` discoverable.
 (define (compiler-load-append-root-module-marker
   [loaded : ResultCompilerLoadWithPaths]) : ResultCompilerLoadWithPaths
   (match loaded

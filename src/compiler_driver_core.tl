@@ -597,23 +597,11 @@
         "attrib_bind_raw"
         (tc-attrib-bind-raw-value))
       (compiler-driver-profile-intern-line
-        "attrib_lookup"
-        (tc-attrib-lookup-value))
-      (compiler-driver-profile-intern-line
-        "attrib_lookup_unsafe"
-        (tc-attrib-lookup-unsafe-value))
-      (compiler-driver-profile-intern-line
-        "attrib_binding_unsafe"
-        (tc-attrib-binding-unsafe-value))
-      (compiler-driver-profile-intern-line
         "attrib_marker_miss"
         (tc-attrib-marker-miss-value))
       (compiler-driver-profile-intern-line
         "attrib_slash_qualified"
         (tc-attrib-source-name-bound-exact-value))
-      (compiler-driver-profile-intern-line
-        "attrib_name_bound_exact"
-        (tc-attrib-lookup-visible-id-value))
       (compiler-driver-profile-intern-line
         "attrib_local_bound_before_mod"
         (tc-attrib-stdlib-comptime-syntax-type-value))
@@ -621,26 +609,11 @@
         "attrib_default_unshadowed"
         (tc-attrib-dotted-type-name-lookup-key-value))
       (compiler-driver-profile-intern-line
-        "attrib_lookup_visible"
-        (tc-attrib-lookup-visible-value))
-      (compiler-driver-profile-intern-line
-        "attrib_lookup_hygiene_global"
-        (tc-attrib-lookup-hygiene-global-value))
-      (compiler-driver-profile-intern-line
-        "attrib_lookup_hygiene_global_visible"
-        (tc-attrib-lookup-hygiene-global-visible-value))
-      (compiler-driver-profile-intern-line
         "attrib_lookup_dotted_source_visible"
         (tc-attrib-lookup-dotted-source-visible-value))
       (compiler-driver-profile-intern-line
         "attrib_bind_alias_if_free"
         (tc-attrib-bind-alias-if-free-value))
-      (compiler-driver-profile-intern-line
-        "attrib_binding_c_abi_fnptr"
-        (tc-attrib-binding-c-abi-fnptr-value))
-      (compiler-driver-profile-intern-line
-        "attrib_binding_unsafe_marker_head"
-        (tc-attrib-binding-unsafe-marker-head-value))
       (compiler-driver-profile-intern-line
         "attrib_cleanup_owner_active_scan"
         (tc-attrib-cleanup-owner-active-scan-value))
@@ -663,23 +636,8 @@
         "attrib_leading_segment_wins"
         (tc-attrib-leading-segment-wins-value))
       (compiler-driver-profile-intern-line
-        "attrib_name_bound"
-        (tc-attrib-name-bound-value))
-      (compiler-driver-profile-intern-line
-        "attrib_default_builtin_unshadowed"
-        (tc-attrib-default-builtin-unshadowed-value))
-      (compiler-driver-profile-intern-line
-        "attrib_hygiene_global_binding_unsafe"
-        (tc-attrib-hygiene-global-binding-unsafe-value))
-      (compiler-driver-profile-intern-line
         "attrib_lifetime_visible"
         (tc-attrib-lifetime-visible-value))
-      (compiler-driver-profile-intern-line
-        "attrib_bind_unsafe"
-        (tc-attrib-bind-unsafe-value))
-      (compiler-driver-profile-intern-line
-        "attrib_bind_c_abi_fnptr"
-        (tc-attrib-bind-c-abi-fnptr-value))
       (compiler-driver-profile-intern-line
         "attrib_bind_comptime_helper_aliases"
         (tc-attrib-bind-comptime-helper-aliases-value))

@@ -302,8 +302,10 @@
   167)
 (define tlci-host-callback-op-expr-binding-clause-list->expr-list : i64
   168)
+(define tlci-host-callback-op-pattern-list-bindings : i64
+  169)
 (define tlci-host-callback-stdlib-op-count : i64
-  69)
+  70)
 (define tlci-header-size : i64
   160)
 (define tlci-page-align : i64
@@ -1305,7 +1307,8 @@
     (= tlci-host-callback-op-expr-binding-clause-list-length 166)
     (= tlci-host-callback-op-expr-binding-clause-list-nth 167)
     (= tlci-host-callback-op-expr-binding-clause-list->expr-list 168)
-    (= tlci-host-callback-stdlib-op-count 69)))
+    (= tlci-host-callback-op-pattern-list-bindings 169)
+    (= tlci-host-callback-stdlib-op-count 70)))
 
 (define (tlci-test-host-abi-ok?) : bool
   (and

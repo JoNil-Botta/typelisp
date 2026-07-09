@@ -25,7 +25,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 90))
+  (array.make-array i64 91))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -129,6 +129,7 @@
       (ctfe-builtin-set! 87 "function-param-count")
       (ctfe-builtin-set! 88 "function-param-type")
       (ctfe-builtin-set! 89 "function-return-type")
+      (ctfe-builtin-set! 90 "pattern-list-bindings")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -4315,6 +4316,7 @@
       [(= lookup-id (ctfe-builtin-ref 38)) "pattern-variant"]
       [(= lookup-id (ctfe-builtin-ref 39)) "pattern-list-empty"]
       [(= lookup-id (ctfe-builtin-ref 40)) "pattern-list-cons"]
+      [(= lookup-id (ctfe-builtin-ref 90)) "pattern-list-bindings"]
       [(= lookup-id (ctfe-builtin-ref 41)) "match-arm"]
       [(= lookup-id (ctfe-builtin-ref 42)) "match-arm-list-empty"]
       [(= lookup-id (ctfe-builtin-ref 43)) "match-arm-list-cons"]
@@ -5124,6 +5126,71 @@
           expr
           "pattern-list-cons expects exactly two args")))))
 
+(define (ctfe-pattern-list-bindings-build [prefix : String] [count : i64]) : AstPatternList
+  (let
+    [patterns : AstPatternList (ast-pattern-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-pattern-list-push
+            (&mut patterns)
+            (ast-pat-binding (string.append prefix (string.int->string index))))
+          (set! index (+ index 1))))
+      patterns)))
+
+(define (ctfe-eval-pattern-list-bindings-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [prefix-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [count-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (ctfe-eval-string-arg
+        prefix-arg
+        expr
+        env
+        fuel
+        "pattern-list-bindings")
+        [(ResultCtfeStringArg.Ok prefix prefix-fuel)
+          (match (ctfe-eval-i64-arg
+            count-arg
+            expr
+            env
+            prefix-fuel
+            "pattern-list-bindings")
+            [(result_ctfe_i64_arg.Ok count-value)
+              (let
+                [count : i64 (struct-get count-value value)]
+                [count-fuel : i64 (struct-get count-value fuel)]
+                (cond
+                  [(< count 0)
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "pattern-list-bindings count must be non-negative")))]
+                  [(> count count-fuel)
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "compile-time evaluation limit exceeded")))]
+                  [else
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.PatternList
+                        (ctfe-pattern-list-bindings-build prefix count))
+                      (- count-fuel count))]))]
+            [(result_ctfe_i64_arg.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfeStringArg.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "pattern-list-bindings expects exactly two args")))))
+
 (define (ctfe-eval-match-arm-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -5732,6 +5799,8 @@
             (ctfe-eval-pattern-list-empty-call args expr fuel)]
           [(= call-id (ctfe-builtin-ref 40))
             (ctfe-eval-pattern-list-cons-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 90))
+            (ctfe-eval-pattern-list-bindings-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 41))
             (ctfe-eval-match-arm-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 42))
@@ -11861,6 +11930,58 @@
       (compiler-ctfe-call1-in-env list-env "expr-list-length" items-var)]
     (compiler-ctfe-eval-i64-ok? len-call list-env 2)))
 
+(define (compiler-ctfe-pattern-list-bindings-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [prefix : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "payload")))]
+    [count : i64 (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 9 "")))]
+    [call : i64
+      (compiler-ctfe-call2-in-env env "pattern-list-bindings" prefix count)]
+    [negative-count : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int -1 "")))]
+    [negative-call : i64
+      (compiler-ctfe-call2-in-env
+        env
+        "pattern-list-bindings"
+        prefix
+        negative-count)]
+    [huge-count : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 10000 "")))]
+    [huge-call : i64
+      (compiler-ctfe-call2-in-env env "pattern-list-bindings" prefix huge-count)]
+    (and
+      (match (compiler-ctfe-eval (ctfe-ast-get env call) env (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.PatternList patterns)
+              (and
+                (= (ast-pattern-list-len (& patterns)) 9)
+                (match (ast-pattern-list-get
+                  (& patterns)
+                  0
+                  (ast-pattern-fallback))
+                  [(AstPattern.Binding name)
+                    (string.eq (intern-str name) "payload0")]
+                  [_ false])
+                (match (ast-pattern-list-get
+                  (& patterns)
+                  8
+                  (ast-pattern-fallback))
+                  [(AstPattern.Binding name)
+                    (string.eq (intern-str name) "payload8")]
+                  [_ false]))]
+            [_ false])]
+        [(ResultCtfe.Err _) false])
+      (compiler-ctfe-eval-error-ok?
+        negative-call
+        env
+        "pattern-list-bindings count must be non-negative")
+      (compiler-ctfe-eval-error-ok?
+        huge-call
+        env
+        "compile-time evaluation limit exceeded"))))
+
 (define (compiler-ctfe-checked-expr-constructors-ok?) : bool
   (let
     [env : CtfeEnv (ctfe-env-empty)]
@@ -12375,6 +12496,7 @@
     (unless (compiler-ctfe-expr-list-ok?) (return 1))
     (unless (compiler-ctfe-expr-list-fold-sketch-ok?) (return 1))
     (unless (compiler-ctfe-builtin-dispatch-reset-ok?) (return 1))
+    (unless (compiler-ctfe-pattern-list-bindings-ok?) (return 1))
     (unless (compiler-ctfe-checked-expr-constructors-ok?) (return 1))
     (unless (compiler-ctfe-checked-expr-inspectors-ok?) (return 1))
     (unless (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) (return 1))

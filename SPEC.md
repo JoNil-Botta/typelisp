@@ -652,9 +652,12 @@ field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
 `pattern-wildcard`, `pattern-binding`, `pattern-variant`,
-`pattern-list-empty`, `pattern-list-cons`, `match-arm`,
+`pattern-list-empty`, `pattern-list-cons`, `pattern-list-bindings`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build
 generated match expressions from computed pattern names and payload bindings.
+`pattern-list-bindings(prefix, count)` builds a dense ascending list of binding
+patterns named `prefix0` through `prefix<count - 1>`; a negative count is a
+compile-time diagnostic.
 Generated matches are still checked by the ordinary typechecker for variant
 resolution, payload arity, arm result types, and exhaustiveness after macro
 expansion.
@@ -1005,7 +1008,8 @@ layout-query surface, or compiler symbol-table handles.
 `ExprList`, `ExprClauseList`, `ExprBindingClauseList`, `PatternList`,
 `MatchArmList`, and reflection sequences are dense, length-indexed sequence
 wrappers over arrays (or an equivalent compiler-verified dense
-representation). Their public API is length/index/iteration-oriented.
+representation). Their public API is length/index/iteration-oriented;
+`pattern-list-bindings` provides dense computed binding construction.
 Recursive cons cells are not part of the public contract, and cons-list
 bridge names are not part of the public macro ABI.
 
@@ -4536,6 +4540,7 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 166 | `expr-binding-clause-list-length` |
 | 167 | `expr-binding-clause-list-nth` |
 | 168 | `expr-binding-clause-list->expr-list` |
+| 169 | `pattern-list-bindings` |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned

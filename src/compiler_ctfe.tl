@@ -15,6 +15,7 @@
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
 (import stdlib.string)
+(import stdlib.result)
 
 ;; Reset-aware intern ids for fixed CTFE dispatch names. Dispatch compares
 ;; intern ids; reset hooks force the fixed names back through the current
@@ -2230,9 +2231,11 @@
   (Ok AstType i64)
   (Err (Box CompilerDiagnostic)))
 
-(defenum ResultCtfeI64Arg
-  (Ok i64 i64)
-  (Err (Box CompilerDiagnostic)))
+(defstruct CtfeI64Arg
+  (value i64)
+  (fuel i64))
+
+(import (result CtfeI64Arg (Box CompilerDiagnostic)) as result_ctfe_i64_arg)
 
 (defenum ResultCtfeStringArg
   (Ok String i64)
@@ -2676,14 +2679,15 @@
   [expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]
-  [name : String]) : ResultCtfeI64Arg
+  [name : String]) : result_ctfe_i64_arg.Result
   (match (compiler-ctfe-eval arg env fuel)
-    [(ResultCtfe.Err d) (ResultCtfeI64Arg.Err d)]
+    [(ResultCtfe.Err d) (result_ctfe_i64_arg.Err d)]
     [(ResultCtfe.Ok value arg-fuel)
       (match value
-        [(CompilerCtfeValue.I64 n) (ResultCtfeI64Arg.Ok n arg-fuel)]
+        [(CompilerCtfeValue.I64 n)
+          (result_ctfe_i64_arg.Ok (CtfeI64Arg n arg-fuel))]
         [_
-          (ResultCtfeI64Arg.Err
+          (result_ctfe_i64_arg.Err
             (box
               (ctfe-diagnostic-at-expr
                 expr
@@ -3696,15 +3700,15 @@
         [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeTypeArg.Ok ty type-fuel)
           (match (ctfe-eval-i64-arg index-arg expr env type-fuel name)
-            [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeI64Arg.Ok index index-fuel)
+            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+            [(result_ctfe_i64_arg.Ok index-arg-value)
               (ctfe-eval-struct-field-from-type
                 name
                 ty
-                index
+                (struct-get index-arg-value value)
                 expr
                 env
-                index-fuel)])]))
+                (struct-get index-arg-value fuel))])]))
     (ctfe-struct-field-arity-error name expr)))
 
 (define (ctfe-enum-variant-arity-error [name : String] [expr : AstExpr]) : ResultCtfe
@@ -3778,15 +3782,15 @@
         [(ResultCtfeTypeArg.Err d) (ResultCtfe.Err d)]
         [(ResultCtfeTypeArg.Ok ty type-fuel)
           (match (ctfe-eval-i64-arg index-arg expr env type-fuel name)
-            [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeI64Arg.Ok index index-fuel)
+            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+            [(result_ctfe_i64_arg.Ok index-arg-value)
               (ctfe-eval-enum-variant-from-type
                 name
                 ty
-                index
+                (struct-get index-arg-value value)
                 expr
                 env
-                index-fuel)])]))
+                (struct-get index-arg-value fuel))])]))
     (ctfe-enum-variant-arity-error name expr)))
 
 (define (ctfe-enum-payload-type-arity-error [expr : AstExpr]) : ResultCtfe
@@ -3877,23 +3881,23 @@
             env
             type-fuel
             "enum-variant-payload-type")
-            [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeI64Arg.Ok variant-index variant-fuel)
+            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+            [(result_ctfe_i64_arg.Ok variant-arg-value)
               (match (ctfe-eval-i64-arg
                 payload-arg
                 expr
                 env
-                variant-fuel
+                (struct-get variant-arg-value fuel)
                 "enum-variant-payload-type")
-                [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-                [(ResultCtfeI64Arg.Ok payload-index payload-fuel)
+                [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+                [(result_ctfe_i64_arg.Ok payload-arg-value)
                   (ctfe-eval-enum-payload-type-from-type
                     ty
-                    variant-index
-                    payload-index
+                    (struct-get variant-arg-value value)
+                    (struct-get payload-arg-value value)
                     expr
                     env
-                    payload-fuel)])])]))
+                    (struct-get payload-arg-value fuel))])])]))
     (ctfe-enum-payload-type-arity-error expr)))
 
 (define (ctfe-eval-function-param-type-reflection
@@ -3914,19 +3918,19 @@
             env
             type-fuel
             "function-param-type")
-            [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeI64Arg.Ok index index-fuel)
+            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+            [(result_ctfe_i64_arg.Ok index-arg-value)
               (match ty
                 [(AstType.Func params _)
                   (match (ctfe-type-list-ref-with-pools
                     (box-get params)
                     (ctfe-env-pools env)
                     (ctfe-env-reflections env)
-                    index)
+                    (struct-get index-arg-value value))
                     [(ResultCtfeTypeLookup.Ok param-ty)
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.Type param-ty)
-                        index-fuel)]
+                        (struct-get index-arg-value fuel))]
                     [(ResultCtfeTypeLookup.Err message)
                       (ResultCtfe.Err
                         (box
@@ -4001,14 +4005,14 @@
             env
             type-fuel
             "tuple-element-type")
-            [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeI64Arg.Ok index index-fuel)
+            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+            [(result_ctfe_i64_arg.Ok index-arg-value)
               (ctfe-eval-tuple-element-type-from-type
                 ty
-                index
+                (struct-get index-arg-value value)
                 expr
                 env
-                index-fuel)])]))
+                (struct-get index-arg-value fuel))])]))
     (ctfe-tuple-element-type-arity-error expr)))
 
 (define (ctfe-eval-reflection-query
@@ -4129,15 +4133,18 @@
   [fuel : i64]
   [name : String]) : ResultCtfe
   (match (ctfe-eval-i64-arg index-expr origin env fuel name)
-    [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-    [(ResultCtfeI64Arg.Ok index index-fuel)
-      (if (or (< index 0) (>= index (string.string-length text)))
+    [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+    [(result_ctfe_i64_arg.Ok index-arg-value)
+      (if (or
+        (< (struct-get index-arg-value value) 0)
+        (>= (struct-get index-arg-value value) (string.string-length text)))
         (ResultCtfe.Err
           (box
             (ctfe-diagnostic-at-expr origin "string-ref index out of bounds")))
         (ResultCtfe.Ok
-          (CompilerCtfeValue.Char (string.string-ref text index))
-          index-fuel))]))
+          (CompilerCtfeValue.Char
+            (string.string-ref text (struct-get index-arg-value value)))
+          (struct-get index-arg-value fuel)))]))
 
 (define (ctfe-eval-string-to-int-call
   [name : String]
@@ -4164,11 +4171,12 @@
     (let
       [arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-i64-arg arg expr env fuel "string.int->string")
-        [(ResultCtfeI64Arg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeI64Arg.Ok n arg-fuel)
+        [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+        [(result_ctfe_i64_arg.Ok arg-value)
           (ResultCtfe.Ok
-            (CompilerCtfeValue.String (string.int->string n))
-            arg-fuel)]))
+            (CompilerCtfeValue.String
+              (string.int->string (struct-get arg-value value)))
+            (struct-get arg-value fuel))]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "string.int->string expects one i64")))))
 

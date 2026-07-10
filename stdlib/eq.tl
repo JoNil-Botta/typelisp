@@ -1,3 +1,4 @@
+;# Generated scalar equality modules.
 ;: Generate an equality module for concrete scalar type `T`.
 (defmacro (eq [T : type]) : Module
   (let

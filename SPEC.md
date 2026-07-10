@@ -715,6 +715,12 @@ implicitly; use `expr-clause-list->expr-list` or
 bracket operands. `unquote` and `unquote-splicing` outside quasiquote are
 rejected.
 
+Captured string-literal syntax is inspectable through
+`(expr-string? expr)` and `(expr-string-value expr)`. The predicate is false
+for expressions that merely produce `String`; the extractor rejects those
+non-literals with a macro diagnostic. `(comptime.string-slice text start len)`
+provides bounded byte-range parsing over compiler-owned comptime strings.
+
 The source surface is:
 
 ```lisp test=ignore name=macro-defmacro-surface reason=illustrative
@@ -906,8 +912,8 @@ macro body:
   system-seeded or host-facing implementation path is rejected by the same
   extern/unsafe rule.
 - Allocation through the active compiler arena is allowed. Pure
-  CTFE-supported helpers such as string equality/concatenation, string
-  length, `int->string`, layout/reflection queries, and the
+  CTFE-supported helpers such as string equality/concatenation, byte-range
+  string slicing, string length, `int->string`, layout/reflection queries, and the
   `Expr`/`ExprList`/`ExprClause` constructor and inspector surface are
   available.
 - Macro and generator code may call `(comptime-error message)` where

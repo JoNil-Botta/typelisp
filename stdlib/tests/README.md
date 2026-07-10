@@ -153,6 +153,11 @@ Inline stdlib coverage:
 - `str_cat.tl` owns inline tests for empty, single, two-operand, many-operand,
   variable-operand, nested `str-cat` expansion, generated helper hygiene, and
   declaration-family ordering beside macro expansion.
+- `format_api.tl` covers literal placeholders, escaped braces, and String,
+  integer, boolean, char, and float formatting; `comptime_string_literal_reject.tl`
+  keeps non-literal syntax inspection rejected at macro expansion. The
+  `format_*_reject.tl` fixtures cover non-literal templates, unsupported
+  specifiers, and both placeholder-count mismatches.
 - `text_buf.tl` owns inline tests for scoped arena rendering of a program-owned
   text buffer from an inner active arena, empty buffers, repeated appends,
   char/int append helpers, buffer concatenation, clear/reset behavior, and

@@ -212,6 +212,7 @@ env.tl
 eq.tl
 cpu.tl
 fs.tl
+format.tl
 ffi.tl
 hash.tl
 hashmap.tl
@@ -263,6 +264,7 @@ stdlib/tests/arena_atomic_api.tl|42|-|-|-
 stdlib/tests/arena_patterns.tl|42|-|-|-
 stdlib/tests/byte_buf_api.tl|42|-|-
 stdlib/tests/byte_buf_core_api.tl|42|-|-
+stdlib/tests/format_api.tl|42|-|-|-
 stdlib/tests/io_stdio_lines.tl|42|printf:stdout-line\n|printf:stderr-line\n|printf:alpha\n\nomega
 stdlib/tests/io_stdio_bytes.tl|42|-|-|literal:abcdef
 stdlib/tests/process_api.tl|42|-|-|-
@@ -287,9 +289,14 @@ stdlib_check_manifest() {
 stdlib/tests/arena_policy_escape_string.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/arena_policy_escape_text_buf.tl|fail|cannot escape with-arena 'inner'
 stdlib/tests/comptime_api.tl|pass|-
+stdlib/tests/comptime_string_literal_reject.tl|fail|expr-string-value expects a string literal Expr
 stdlib/tests/args_api.tl|pass|-
 stdlib/tests/core_macros_api.tl|pass|-
 stdlib/tests/env_api.tl|pass|-
+stdlib/tests/format_nonliteral_template_reject.tl|fail|format: template must be a string literal
+stdlib/tests/format_specifier_reject.tl|fail|format: format specifiers are not supported
+stdlib/tests/format_too_few_args_reject.tl|fail|format: not enough arguments for placeholders
+stdlib/tests/format_too_many_args_reject.tl|fail|format: not enough placeholders for arguments
 stdlib/tests/fs_api.tl|pass|-
 stdlib/tests/core_macros_cond_flat_reject.tl|fail|typecheck: ExprClause macro operand expects bracket syntax
 stdlib/tests/core_macros_cond_missing_else.tl|fail|core-cond-missing-else

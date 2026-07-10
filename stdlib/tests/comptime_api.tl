@@ -102,6 +102,17 @@
       (comptime.expr-string (comptime.string-append base "-literal"))]
     [_ (comptime.expr-string "")]))
 
+(defmacro (stdlib-comptime-string-literal-length [value : comptime.Expr]) : i64
+  (if (comptime.expr-string? value)
+    (comptime.expr-int
+      (string.string-length (comptime.expr-string-value value)))
+    (comptime.expr-int 0)))
+
+(defmacro (stdlib-comptime-constructed-string-literal-length) : i64
+  (comptime.expr-int
+    (string.string-length
+      (comptime.expr-string-value (comptime.expr-string "built")))))
+
 (defmacro (stdlib-comptime-string-helper-total [prefix : comptime.Expr]) : i64
   (match prefix
     [(ExprVar base)
@@ -185,6 +196,12 @@
 
 (define (stdlib-comptime-error-branch-shape) : i64
   (stdlib-comptime-error-unreached 42))
+
+(define (stdlib-comptime-string-literal-shape) : i64
+  (stdlib-comptime-string-literal-length "hello"))
+
+(define (stdlib-comptime-constructed-string-literal-shape) : i64
+  (stdlib-comptime-constructed-string-literal-length))
 
 (test
   comptime-qualified-import-shape
@@ -283,6 +300,22 @@
 (test
   comptime-error-branch-shape
   (if (= (stdlib-comptime-error-branch-shape) 42)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-string-literal-shape
+  (if (= (stdlib-comptime-string-literal-shape) 5)
+    unit
+    (begin
+      (/ 1 0)
+      unit)))
+
+(test
+  comptime-constructed-string-literal-shape
+  (if (= (stdlib-comptime-constructed-string-literal-shape) 5)
     unit
     (begin
       (/ 1 0)

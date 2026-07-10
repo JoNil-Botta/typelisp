@@ -140,6 +140,22 @@
 (define (expr-string [value : String]) : Expr
   (expr-string value))
 
+;: Return true when a captured expression is a string literal.
+;:
+;: This compile-time-only syntax inspector distinguishes caller literals from
+;: expressions that merely produce `String`, without exposing compiler AST
+;: internals.
+(define (expr-string? [_value : Expr]) : bool
+  false)
+
+;: Extract a captured string literal's bytes during macro CTFE.
+;:
+;: Calling this for a non-literal expression reports a source-located
+;: compile-time diagnostic. The fallback body keeps bootstrap source valid;
+;: the compiler preserves captured-literal provenance.
+(define (expr-string-value [_value : Expr]) : String
+  "")
+
 ;: Build a variable-reference expression during macro CTFE.
 (define (expr-var [name : String]) : Expr
   (expr-var name))
@@ -163,6 +179,12 @@
 ;: Alias for `string-concat` during macro CTFE.
 (define (string-append [left : String] [_right : String]) : String
   left)
+
+;: Extract a byte range from a comptime string during macro CTFE.
+;:
+;: Bounds use the `[start, start + len)` contract of `string.substring`.
+(define (string-slice [text : String] [_start : i64] [_len : i64]) : String
+  text)
 
 ;: Render an integer as a string during macro CTFE.
 (define (int->string [_value : i64]) : String

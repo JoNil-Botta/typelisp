@@ -11256,9 +11256,7 @@
         (ast-ty-enum-args (intern name) lifetimes)
         (tc-resolved-nominal-type-with-args name handle lifetimes))]))
 
-(define (tc-qualified-lookup-owner-name
-  [lookup-name : String]
-  [owner-name : String]) : String
+(define (tc-qualified-lookup-owner-name [owner-name : String]) : String
   ;; Import aliases are lookup syntax, never part of a nominal type's identity.
   ;; Once symbol lookup identified the owner, use its canonical module-qualified
   ;; name so a direct import and a nested aliased import share one public type.
@@ -11654,9 +11652,7 @@
                   [(AstMaybeType.Some syntax-ty) syntax-ty]
                   [(AstMaybeType.No)
                     (tc-resolved-nominal-type
-                      (tc-qualified-lookup-owner-name
-                        lookup-name
-                        canonical-name)
+                      (tc-qualified-lookup-owner-name canonical-name)
                       handle)])]
               [(ResultTcString.Err _)
                 (match (tc-stdlib-comptime-syntax-type lookup-name)
@@ -11746,9 +11742,7 @@
                   [(AstMaybeType.Some syntax-ty) syntax-ty]
                   [(AstMaybeType.No)
                     (tc-resolved-nominal-type-with-args
-                      (tc-qualified-lookup-owner-name
-                        lookup-name
-                        canonical-name)
+                      (tc-qualified-lookup-owner-name canonical-name)
                       handle
                       lifetimes)])]
               [(ResultTcString.Err _)

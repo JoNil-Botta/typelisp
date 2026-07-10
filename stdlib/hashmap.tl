@@ -3419,17 +3419,8 @@
   (I64I64MapProbeFull))
 
 ;: Generated concrete hashmap family helper.
-(define (i64-i64-map-hash-normalize [value : i64]) : i64
-  (let
-    [m : i64 2147483647]
-    [raw : i64 (% value 2147483647)]
-    (if (< raw 0)
-      (+ raw m)
-      raw)))
-
-;: Generated concrete hashmap family helper.
 (define (i64-i64-map-hash-key [key : i64]) : i64
-  (i64-i64-map-hash-normalize (* key 6364136223846793005)))
+  (* key 6364136223846793005))
 
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-power-two-capacity? [capacity : i64]) : bool
@@ -3452,9 +3443,7 @@
 
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-bucket-index [hash : i64] [capacity : i64]) : i64
-  (i64-i64-map-normalized-bucket-index
-    (i64-i64-map-hash-normalize hash)
-    capacity))
+  (i64-i64-map-normalized-bucket-index hash capacity))
 
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-next-index [index : i64] [capacity : i64]) : i64

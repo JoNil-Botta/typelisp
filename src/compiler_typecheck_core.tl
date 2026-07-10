@@ -44838,8 +44838,8 @@
 ;; Cached CTFE base environment (reflection + layout metadata) for the current
 ;; expansion run. `macro-expand-call` rebuilt this via `tc-ctfe-env` -- which runs
 ;; `ctfe-reflections-from-program` over the WHOLE program (O(program)) -- on EVERY
-;; macro call, costing ~150MB per call on a self-compile. The metadata is
-;; invariant across an expansion run, so build it once per run and reuse.
+;; macro call, costing ~150MB per call on a self-compile. Reuse it across the
+;; run unless a splice materializes a reflection-relevant nominal declaration.
 (define macro-expand-ctfe-env-ready : bool
   false)
 (define macro-expand-ctfe-env-value : CtfeEnv
@@ -44860,16 +44860,13 @@
     (set! macro-expand-ctfe-env-value (ctfe-env-empty))))
 
 ;; Build the CTFE base env (reflection + layout metadata) once per expansion run
-;; and reuse it across every in-pass splice rebuild (plan P2). The metadata is
-;; derived
-;; from all user-visible types, which are present before any generated module
-;; materializes, and generator comptime only queries element types (never the
-;; container type it is generating) -- so the metadata is invariant across the
-;; run and a rebuild never needs metadata a fresh first build lacked. The one
-;; exception is a run whose first build did not need metadata (empty env) and a
-;; later rebuild that does; the has-metadata guard rebuilds for that case. On
-;; reuse the cached env is only rebased onto the active pools (cheap); a full
-;; build otherwise costs ~150MB, so this removes the dominant rebuild.
+;; and reuse it across in-pass splice rebuilds (plan P2). A generated module can
+;; materialize a struct or enum whose own metadata is immediately queried by a
+;; later macro, so reflection-relevant splices clear the cache before calling this
+;; helper. The one other exception is a run whose first build did not need
+;; metadata (empty env) and a later rebuild that does; the has-metadata guard
+;; rebuilds for that case. On reuse the cached env is only rebased onto the active
+;; pools (cheap); a full build otherwise costs ~150MB.
 (define (macro-expand-ctfe-env-build-once! [ctx : TcContext]) : unit
   (let
     [reuse? : bool
@@ -56083,6 +56080,31 @@
         (macro-decl-registry-relevant? decl)
         (macro-decls-registry-relevant? rest))]))
 
+;; Reflection metadata only needs a refresh when a splice introduces a nominal
+;; declaration. Keep ordinary expression/function splices on the shared CTFE
+;; environment so the cache still avoids whole-program metadata walks.
+(define (macro-decl-reflection-relevant? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefEnum _ _ _) true]
+    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+    [(AstDecl.DefStruct _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+    [(AstDecl.Unsafe inner-box)
+      (macro-decl-reflection-relevant? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-reflection-relevant? (box-get template-box))]
+    [(AstDecl.ModuleBody _ body-box)
+      (macro-decls-reflection-relevant? (box-get body-box))]
+    [_ false]))
+
+(define (macro-decls-reflection-relevant? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (macro-decl-reflection-relevant? decl)
+        (macro-decls-reflection-relevant? rest))]))
+
 ;; When the decl walk splices generated or freshly loaded declarations that
 ;; introduce new names (types/modules/macros) the rest of the walk references,
 ;; rebuild the live symbols/registries + top-env over the current whole-program
@@ -56378,6 +56400,10 @@
                                       expanded)
                                       (macro-live-registries-invalidate!)
                                       unit)
+                                    (if (macro-decls-reflection-relevant?
+                                      expanded)
+                                      (compiler-typecheck-ctfe-env-cache-clear!)
+                                      unit)
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
                                       next-decls
@@ -56475,6 +56501,10 @@
                                 (if (macro-decls-registry-relevant?
                                   materialized-decls)
                                   (macro-live-registries-invalidate!)
+                                  unit)
+                                (if (macro-decls-reflection-relevant?
+                                  materialized-decls)
+                                  (compiler-typecheck-ctfe-env-cache-clear!)
                                   unit)
                                 (macro-live-prescan-ensure! next-decls)
                                 (set!

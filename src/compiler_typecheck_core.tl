@@ -47867,9 +47867,7 @@
     [cur-module : String ""]
     [out : TcStringList acc]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
@@ -48319,9 +48317,7 @@
     [cur-module-id : i64 (intern module)]
     [out : TcStringList acc]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)

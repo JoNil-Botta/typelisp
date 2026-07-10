@@ -29939,109 +29939,112 @@
       with-key
       (tc-ctfe-layout-add-alias with-key info name))))
 
+(define (tc-ctfe-layouts-add-struct
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [name : i64]) : CtfeLayoutInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String (compiler-symbol-module-key module name-str)]
+    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
+    (tc-ctfe-layout-add-names layouts info name-str module)))
+
+(define (tc-ctfe-layouts-add-enum
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [name : i64]) : CtfeLayoutInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String (compiler-symbol-module-key module name-str)]
+    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
+    (tc-ctfe-layout-add-names layouts info name-str module)))
+
+(define (tc-ctfe-layouts-add-template
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [template : AstDecl]) : CtfeLayoutInfoList
+  (match template
+    [(AstDecl.DefStruct name _ _ _)
+      (tc-ctfe-layouts-add-struct ctx layouts module name)]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
+      (tc-ctfe-layouts-add-struct ctx layouts module name)]
+    [(AstDecl.DefEnum name _ _)
+      (tc-ctfe-layouts-add-enum ctx layouts module name)]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
+      (tc-ctfe-layouts-add-enum ctx layouts module name)]
+    [_ layouts]))
+
 (define (tc-ctfe-layouts-from-decls
   [ctx : TcContext]
   [decls : AstDeclList]
   [module : String]
   [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) layouts]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-ctfe-layouts-from-decls
-              ctx
-              rest
-              (intern-str next-module)
-              layouts)]
-          [(AstDecl.DefStruct name _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefStructLifetimes name _ _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefEnum name _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefEnumLifetimes name _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct name _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefStructLifetimes name _ _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefEnum name _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefEnumLifetimes name _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]
-          [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [current-module : String module]
+    [current-layouts : CtfeLayoutInfoList layouts]
+    (begin
+      (while (< index count)
+        (begin
+          (if (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _) true]
+            [(AstDecl.DefStruct _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+            [(AstDecl.DefEnum _ _ _) true]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+            [(AstDecl.ComptimeDecl _ _) true]
+            [_ false])
+            (match (ast-decl-list-ref decls index)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefStruct name _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-struct
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefStructLifetimes name _ _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-struct
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefEnum name _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-enum
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefEnumLifetimes name _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-enum
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.ComptimeDecl _ template-box)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-template
+                    ctx
+                    current-layouts
+                    current-module
+                    (box-get template-box)))]
+              [_ unit])
+            unit)
+          (set! index (+ index 1))))
+      current-layouts)))
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx

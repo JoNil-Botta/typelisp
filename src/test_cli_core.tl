@@ -15,6 +15,8 @@
 (import (vector.vector String) as cli_svec)
 (import "build_run_core.tl")
 (import "compiler_backend.tl")
+(import compiler_builtin_ids as cbi)
+(import compiler_intern as ci)
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import "compiler_optimize.tl")
@@ -45,7 +47,7 @@
   (Err String))
 
 (defenum InlineTest
-  (Case String String String i64 i64 String))
+  (Case String String i64 i64 i64 String i64 i64))
 
 (defenum InlineCollect
   (Collect AstDeclList AstDeclPathList (Array InlineTest)))
@@ -66,6 +68,133 @@
 
 (define tltest-prefix-cache-stats : bool
   false)
+
+;; The generated harness is built after parsing, so its private helper/local
+;; identities must not enter the source-symbol hash table. Cache one opaque id
+;; per active intern pool and rebuild after file-state reset/state install.
+(define tltest-synthetic-id-generation : i64
+  -1)
+(define tltest-synthetic-id-pool-data-addr : i64
+  -1)
+(define tltest-print-error-id-cache : i64
+  -1)
+(define tltest-write-id-cache : i64
+  -1)
+(define tltest-get-std-handle-id-cache : i64
+  -1)
+(define tltest-write-file-id-cache : i64
+  -1)
+(define tltest-fd-id-cache : i64
+  -1)
+(define tltest-buf-id-cache : i64
+  -1)
+(define tltest-handle-id-cache : i64
+  -1)
+(define tltest-ok-id-cache : i64
+  -1)
+(define tltest-text-id-cache : i64
+  -1)
+
+(define (tltest-synthetic-ids-current?) : bool
+  (and
+    (= tltest-synthetic-id-generation (ci.intern-generation))
+    (= tltest-synthetic-id-pool-data-addr (ci.intern-pool-data-addr))))
+
+(define (tltest-synthetic-ids-refresh!) : unit
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (if (tltest-synthetic-ids-current?)
+      unit
+      (begin
+        (set!
+          tltest-print-error-id-cache
+          (ci.intern-generated-name "__tl_test_print_error"))
+        (set!
+          tltest-write-id-cache
+          (ci.intern-generated-name "__tl_test_write"))
+        (set!
+          tltest-get-std-handle-id-cache
+          (ci.intern-generated-name "__tl_test_get_std_handle"))
+        (set!
+          tltest-write-file-id-cache
+          (ci.intern-generated-name "__tl_test_write_file"))
+        (set! tltest-fd-id-cache (ci.intern-generated-name "fd"))
+        (set! tltest-buf-id-cache (ci.intern-generated-name "buf"))
+        (set! tltest-handle-id-cache (ci.intern-generated-name "handle"))
+        (set! tltest-ok-id-cache (ci.intern-generated-name "ok"))
+        (set! tltest-text-id-cache (ci.intern-generated-name "text"))
+        (set! tltest-synthetic-id-generation (ci.intern-generation))
+        (set! tltest-synthetic-id-pool-data-addr (ci.intern-pool-data-addr))))))
+
+(define (tltest-main-id) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-fix-main))
+
+(define (tltest-empty-name-id) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-fix-empty))
+
+(define (tltest-n-id) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-fix-n))
+
+(define (tltest-eq-id) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-eq))
+
+(define (tltest-string-id) : i64
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    cbi.compiler-builtin-id-fix-string))
+
+(define (tltest-print-error-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-print-error-id-cache))
+
+(define (tltest-write-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-write-id-cache))
+
+(define (tltest-get-std-handle-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-get-std-handle-id-cache))
+
+(define (tltest-write-file-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-write-file-id-cache))
+
+(define (tltest-fd-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-fd-id-cache))
+
+(define (tltest-buf-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-buf-id-cache))
+
+(define (tltest-handle-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-handle-id-cache))
+
+(define (tltest-ok-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-ok-id-cache))
+
+(define (tltest-text-id) : i64
+  (begin
+    (tltest-synthetic-ids-refresh!)
+    tltest-text-id-cache))
 
 (define (tltest-unknown-target [value : String]) : String
   (str_cat.str-cat "test: unknown target " value ""))
@@ -501,8 +630,8 @@
 
 (define (tltest-main-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def name _ _) (= name (intern "main"))]
-    [(AstDecl.DefFn name _ _ _ _) (= name (intern "main"))]
+    [(AstDecl.Def name _ _) (= name (tltest-main-id))]
+    [(AstDecl.DefFn name _ _ _ _) (= name (tltest-main-id))]
     [(AstDecl.DefMacro _ _ _ _) false]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -515,6 +644,15 @@
 
 (define (tltest-private-name [idx : i64]) : String
   (string.append "__tl_inline_test_" (string.int->string idx)))
+
+(define (tltest-private-call-id [module-id : i64] [private-id : i64]) : i64
+  (if (= module-id (tltest-empty-name-id))
+    private-id
+    (let
+      [qualified-id : i64
+        (compiler-symbol-module-key-id-by-id module-id private-id)]
+      (ci.intern-generated-name
+        (tc-hygiene-global-name (ci.intern-str qualified-id))))))
 
 (define (tltest-owned-test-path? [target-path : String] [decl-path : String]) : bool
   (string.eq target-path (compiler-load-normalize-path decl-path)))
@@ -532,7 +670,7 @@
     [runtime-decls-out : AstDeclList runtime-decls]
     [runtime-paths-out : AstDeclPathList runtime-paths]
     [test-items : (Array InlineTest) tests]
-    [current-module : String ""]
+    [current-module : i64 (tltest-empty-name-id)]
     [done : bool false]
     (begin
       (while (not done)
@@ -559,6 +697,9 @@
                       (let
                         [body : i64 body-box]
                         [test-count : i64 (array-length test-items)]
+                        [private-name : String (tltest-private-name test-count)]
+                        [private-id : i64
+                          (ci.intern-generated-name private-name)]
                         (array-push!
                           test-items
                           (InlineTest.Case
@@ -567,11 +708,13 @@
                             current-module
                             (tltest-source-line span)
                             body
-                            (tltest-private-name test-count))))
+                            private-name
+                            private-id
+                            (tltest-private-call-id current-module private-id))))
                       unit)]
                   [(AstDecl.Module name)
                     (begin
-                      (set! current-module (intern-str name))
+                      (set! current-module name)
                       (ast-decl-list-push (&mut runtime-decls-out) decl)
                       (ast-decl-path-list-push
                         (&mut runtime-paths-out)
@@ -610,7 +753,7 @@
 
 (define (tltest-print-expr [text : String]) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (intern "__tl_test_print_error")))
+    (ast-node-push (AstExpr.Var (tltest-print-error-id)))
     (ast-expr-cons
       (ast-node-push (AstExpr.Literal (AstLiteral.String text)))
       (ast-expr-cons
@@ -620,15 +763,8 @@
           (AstType.I32))
         (ast-expr-list-new)))))
 
-(define (tltest-call-expr [name : String]) : i64
-  (ast-expr-call
-    (ast-node-push (AstExpr.Var (intern name)))
-    (ast-expr-list-new)))
-
-(define (tltest-private-call-name [module : String] [private-name : String]) : String
-  (if (= (string.string-length module) 0)
-    private-name
-    (tc-hygiene-global-name (compiler-symbol-module-key module private-name))))
+(define (tltest-call-expr-id [name-id : i64]) : i64
+  (ast-expr-call (ast-node-push (AstExpr.Var name-id)) (ast-expr-list-new)))
 
 (define (tltest-location [path : String] [line : i64]) : String
   (if (string.eq path "")
@@ -637,7 +773,7 @@
 
 (define (tltest-running-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name path _ line _ _)
+    [(InlineTest.Case name path _ line _ _ _ _)
       (string.append
         "test "
         (string.append
@@ -646,7 +782,7 @@
 
 (define (tltest-ok-line [test : InlineTest]) : String
   (match test
-    [(InlineTest.Case name _ _ _ _ _)
+    [(InlineTest.Case name _ _ _ _ _ _ _)
       (string.append "ok " (string.append name "\n"))]))
 
 (define (tltest-summary-line [count : i64]) : String
@@ -656,17 +792,19 @@
 
 (define (tltest-print-runtime-write-params) : AstParamList
   (ast-param-cons
-    (ast-param "fd" (AstType.I32) false)
+    (ast-param-id (tltest-fd-id) (AstType.I32) false)
     (ast-param-cons
-      (ast-param "buf" (ast-ty-ptr (AstType.U8)) false)
-      (ast-param-cons (ast-param "n" (AstType.I32) false) (ast-param-list-new)))))
+      (ast-param-id (tltest-buf-id) (ast-ty-ptr (AstType.U8)) false)
+      (ast-param-cons
+        (ast-param-id (tltest-n-id) (AstType.I32) false)
+        (ast-param-list-new)))))
 
 (define (tltest-linux-write-ptr-arg) : i64
   (ast-node-push
     (AstExpr.Unsafe
       (ast-expr-cons
         (ast-expr-cast
-          (ast-expr-ptr-to-int (ast-node-push (AstExpr.Var (intern "buf"))))
+          (ast-expr-ptr-to-int (ast-node-push (AstExpr.Var (tltest-buf-id))))
           (AstType.I64))
         (ast-expr-list-new)))))
 
@@ -679,27 +817,27 @@
             (ast-node-push (AstExpr.Literal (ast-lit-int 1)))
             (ast-expr-cons
               (ast-expr-cast
-                (ast-node-push (AstExpr.Var (intern "fd")))
+                (ast-node-push (AstExpr.Var (tltest-fd-id)))
                 (AstType.I64))
               (ast-expr-cons
                 (tltest-linux-write-ptr-arg)
                 (ast-expr-cons
                   (ast-expr-cast
-                    (ast-node-push (AstExpr.Var (intern "n")))
+                    (ast-node-push (AstExpr.Var (tltest-n-id)))
                     (AstType.I64))
                   (ast-expr-list-new))))))
         (ast-expr-list-new)))))
 
 (define (tltest-linux-print-runtime-write-decl) : AstDecl
-  (ast-decl-def-fn
-    "__tl_test_write"
+  (ast-decl-def-fn-id
+    (tltest-write-id)
     (tltest-print-runtime-write-params)
     (AstType.I32)
     (ast-expr-cast (tltest-linux-write-syscall) (AstType.I32))))
 
 (define (tltest-windows-get-std-handle-decl) : AstDecl
-  (ast-decl-extern
-    "__tl_test_get_std_handle"
+  (ast-decl-extern-id
+    (tltest-get-std-handle-id)
     (AstExternKind.Function)
     (AstExternMetadata.Metadata
       (AstExternAbi.C)
@@ -711,8 +849,8 @@
       (AstType.I64))))
 
 (define (tltest-windows-write-file-decl) : AstDecl
-  (ast-decl-extern
-    "__tl_test_write_file"
+  (ast-decl-extern-id
+    (tltest-write-file-id)
     (AstExternKind.Function)
     (AstExternMetadata.Metadata
       (AstExternAbi.C)
@@ -733,7 +871,7 @@
 
 (define (tltest-windows-get-stderr-handle-expr) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (intern "__tl_test_get_std_handle")))
+    (ast-node-push (AstExpr.Var (tltest-get-std-handle-id)))
     (ast-expr-cons
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int -12)))
@@ -742,13 +880,13 @@
 
 (define (tltest-windows-write-file-call) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (intern "__tl_test_write_file")))
+    (ast-node-push (AstExpr.Var (tltest-write-file-id)))
     (ast-expr-cons
-      (ast-node-push (AstExpr.Var (intern "handle")))
+      (ast-node-push (AstExpr.Var (tltest-handle-id)))
       (ast-expr-cons
-        (ast-node-push (AstExpr.Var (intern "buf")))
+        (ast-node-push (AstExpr.Var (tltest-buf-id)))
         (ast-expr-cons
-          (ast-node-push (AstExpr.Var (intern "n")))
+          (ast-node-push (AstExpr.Var (tltest-n-id)))
           (ast-expr-cons
             (ast-node-push (AstExpr.PtrNull (ast-ty-mut-ptr (AstType.I32))))
             (ast-expr-cons
@@ -758,31 +896,31 @@
 (define (tltest-windows-write-body) : i64
   (ast-expr-let
     (ast-let-binding-cons
-      (ast-let-binding
-        "handle"
+      (ast-let-binding-id
+        (tltest-handle-id)
         (AstMaybeType.Some (AstType.I64))
         (tltest-windows-get-stderr-handle-expr))
       (ast-let-binding-cons
-        (ast-let-binding
-          "ok"
+        (ast-let-binding-id
+          (tltest-ok-id)
           (AstMaybeType.Some (AstType.I32))
           (tltest-windows-write-file-call))
         (ast-let-binding-list-new)))
     (ast-expr-if
       (ast-expr-binary
         (AstBinOp.Eq)
-        (ast-node-push (AstExpr.Var (intern "ok")))
+        (ast-node-push (AstExpr.Var (tltest-ok-id)))
         (ast-expr-cast
           (ast-node-push (AstExpr.Literal (ast-lit-int 0)))
           (AstType.I32)))
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int -1)))
         (AstType.I32))
-      (ast-node-push (AstExpr.Var (intern "n"))))))
+      (ast-node-push (AstExpr.Var (tltest-n-id))))))
 
 (define (tltest-windows-print-runtime-write-decl) : AstDecl
-  (ast-decl-def-fn
-    "__tl_test_write"
+  (ast-decl-def-fn-id
+    (tltest-write-id)
     (tltest-print-runtime-write-params)
     (AstType.I32)
     (tltest-windows-write-body)))
@@ -794,12 +932,14 @@
 
 (define (tltest-print-param-list) : AstParamList
   (ast-param-cons
-    (ast-param "text" (AstType.String) false)
-    (ast-param-cons (ast-param "n" (AstType.I32) false) (ast-param-list-new))))
+    (ast-param-id (tltest-text-id) (AstType.String) false)
+    (ast-param-cons
+      (ast-param-id (tltest-n-id) (AstType.I32) false)
+      (ast-param-list-new))))
 
 (define (tltest-print-runtime-write-call) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (intern "__tl_test_write")))
+    (ast-node-push (AstExpr.Var (tltest-write-id)))
     (ast-expr-cons
       (ast-expr-cast
         (ast-node-push (AstExpr.Literal (ast-lit-int 2)))
@@ -809,15 +949,15 @@
           (AstExpr.Unsafe
             (ast-expr-cons
               (ast-expr-string-data
-                (ast-node-push (AstExpr.Var (intern "text"))))
+                (ast-node-push (AstExpr.Var (tltest-text-id))))
               (ast-expr-list-new))))
         (ast-expr-cons
-          (ast-node-push (AstExpr.Var (intern "n")))
+          (ast-node-push (AstExpr.Var (tltest-n-id)))
           (ast-expr-list-new))))))
 
 (define (tltest-print-runtime-print-decl) : AstDecl
-  (ast-decl-def-fn
-    "__tl_test_print_error"
+  (ast-decl-def-fn-id
+    (tltest-print-error-id)
     (tltest-print-param-list)
     (AstType.Unit)
     (ast-node-push
@@ -877,15 +1017,14 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ _ module _ _ private-name)
+        [(InlineTest.Case _ _ _ _ _ _ _ call-id)
           (tltest-main-exprs-from
             tests
             (- index 1)
             (ast-expr-cons
               (tltest-print-expr (tltest-running-line test))
               (ast-expr-cons
-                (tltest-call-expr
-                  (tltest-private-call-name module private-name))
+                (tltest-call-expr-id call-id)
                 (ast-expr-cons (tltest-print-expr (tltest-ok-line test)) out))))]))))
 
 (define (tltest-main-exprs [tests : (Array InlineTest)]) : AstExprList
@@ -909,15 +1048,15 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ _ module _ body private-name)
+        [(InlineTest.Case _ _ module-id _ body _ private-id _)
           (tltest-test-decls-onto
             tests
             (- index 1)
             (ast-decl-list-prepend-builder
-              (ast-decl-module module)
+              (ast-decl-module-id module-id)
               (ast-decl-list-prepend-builder
-                (ast-decl-def-fn
-                  private-name
+                (ast-decl-def-fn-id
+                  private-id
                   (ast-param-list-new)
                   (AstType.Unit)
                   body)
@@ -925,7 +1064,7 @@
 
 (define (tltest-main-decls [tests : (Array InlineTest)]) : AstDeclList
   (ast-decl-cons
-    (ast-decl-module "")
+    (ast-decl-module-id (tltest-empty-name-id))
     (ast-decl-cons (tltest-main-decl tests) (ast-decl-list-new))))
 
 (define (tltest-main-paths [source : String]) : AstDeclPathList
@@ -965,7 +1104,7 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ path _ _ _ _)
+        [(InlineTest.Case _ path _ _ _ _ _ _)
           (tltest-test-paths-onto
             tests
             (- index 1)
@@ -974,8 +1113,8 @@
               (ast-decl-path-list-prepend-builder path out)))]))))
 
 (define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
-  (ast-decl-def-fn
-    "main"
+  (ast-decl-def-fn-id
+    (tltest-main-id)
     (ast-param-list-new)
     (AstType.I64)
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
@@ -1536,7 +1675,7 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ _ _ _ body _)
+        [(InlineTest.Case _ _ _ _ body _ _ _)
           (tltest-reach-mark-tests-from
             tests
             (- index 1)
@@ -2068,7 +2207,7 @@
     [(sym_i64_env.SymI64Nil) (TltestCfgNameList.Nil)]
     [(sym_i64_env.SymI64Bind key value rest)
       (TltestCfgNameList.Cons
-        (intern-str key)
+        (compiler-cfg-name key)
         value
         (box (tltest-cfg-name-list-from-env (box-get rest))))]))
 
@@ -2076,7 +2215,7 @@
   (match names
     [(TltestCfgNameList.Nil) (sym_i64_env.sym-i64-empty)]
     [(TltestCfgNameList.Cons name value rest)
-      (sym_i64_env.sym-i64-bind
+      (compiler-cfg-bind
         (tltest-cfg-name-list-to-env (box-get rest))
         name
         value)]))
@@ -2198,9 +2337,15 @@
     [span : AstSourceSpan (ast-source-span 1 1 1 1)]
     [dep-path : String "stdlib/string.tl"]
     [source : String "stdlib/args.tl"]
+    [stdlib-string-id : i64 (ci.intern-generated-name "stdlib.string")]
+    [stdlib-args-id : i64 (ci.intern-generated-name "stdlib.args")]
+    [string-id : i64 (tltest-string-id)]
+    [eq-id : i64 (tltest-eq-id)]
+    [string-eq-id : i64 (ci.intern-generated-dotted-name "string.eq" string-id)]
+    [owned-id : i64 (ci.intern-generated-name "owned")]
     [dep-fn : AstDecl
-      (ast-decl-def-fn
-        "eq"
+      (ast-decl-def-fn-id
+        eq-id
         (ast-param-list-new)
         (AstType.Bool)
         (ast-node-push (AstExpr.Literal (AstLiteral.Bool true))))]
@@ -2209,20 +2354,23 @@
         (AstImportSpec.Spec
           (AstImportKind.Module)
           dep-path
-          (AstMaybeModuleName.Some "stdlib.string")
-          (AstMaybeImportAlias.Some "string")
+          (AstMaybeModuleName.Some stdlib-string-id)
+          (AstMaybeImportAlias.Some string-id)
           span))]
     [decls : AstDeclList
       (ast-decl-cons
-        (ast-decl-module "stdlib.string")
+        (ast-decl-module-id stdlib-string-id)
         (ast-decl-cons
           dep-fn
           (ast-decl-cons
-            (ast-decl-module "stdlib.args")
+            (ast-decl-module-id stdlib-args-id)
             (ast-decl-cons
               source-import
               (ast-decl-cons
-                (ast-decl-test "owned" (tltest-call-expr "string.eq") span)
+                (ast-decl-test-id
+                  owned-id
+                  (tltest-call-expr-id string-eq-id)
+                  span)
                 (ast-decl-list-new))))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
@@ -2251,9 +2399,12 @@
 (define (tltest-vector-builders-self-test?) : bool
   (let
     [helper-name : String "__tl_fixture_helper"]
+    [helper-id : i64 (ci.intern-generated-name helper-name)]
+    [first-id : i64 (ci.intern-generated-name "first")]
+    [second-id : i64 (ci.intern-generated-name "second")]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        helper-name
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
@@ -2263,9 +2414,12 @@
       (ast-decl-cons
         helper-decl
         (ast-decl-cons
-          (ast-decl-test "first" (tltest-call-expr helper-name) first-span)
+          (ast-decl-test-id first-id (tltest-call-expr-id helper-id) first-span)
           (ast-decl-cons
-            (ast-decl-test "second" (tltest-call-expr helper-name) second-span)
+            (ast-decl-test-id
+              second-id
+              (tltest-call-expr-id helper-id)
+              second-span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
@@ -2309,14 +2463,24 @@
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
+    [substring-id : i64 (ci.intern-generated-name "tl-runtime-substring")]
+    [str-view-id : i64 (ci.intern-generated-name "tl-runtime-str-view")]
+    [bytes-view-id : i64
+      (ci.intern-generated-name "tl_bytes_view_from_str_parts")]
+    [helper-id : i64 (ci.intern-generated-name "__tl_generated_runtime_helper")]
+    [test-id : i64 (ci.intern-generated-name "keeps-generated-runtime")]
     [substring-decl : AstDecl
-      (ast-decl-def-fn
-        "substring"
+      (ast-decl-def-fn-id
+        substring-id
         (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
     [str-view-decl : AstDecl
-      (ast-decl-def-fn "str-view" (ast-param-list-new) (AstType.Unit) unit-expr)]
+      (ast-decl-def-fn-id
+        str-view-id
+        (ast-param-list-new)
+        (AstType.Unit)
+        unit-expr)]
     [helper-body : i64
       (ast-node-push
         (AstExpr.Begin
@@ -2324,11 +2488,11 @@
             (ast-expr-with-scratch
               (ast-expr-cons unit-expr (ast-expr-list-new)))
             (ast-expr-cons
-              (tltest-call-expr "tl_bytes_view_from_str_parts")
+              (tltest-call-expr-id bytes-view-id)
               (ast-expr-cons unit-expr (ast-expr-list-new))))))]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        "__tl_generated_runtime_helper"
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
@@ -2341,10 +2505,7 @@
           (ast-decl-cons
             helper-decl
             (ast-decl-cons
-              (ast-decl-test
-                "keeps-generated-runtime"
-                (tltest-call-expr "__tl_generated_runtime_helper")
-                span)
+              (ast-decl-test-id test-id (tltest-call-expr-id helper-id) span)
               (ast-decl-list-new)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
@@ -2377,9 +2538,12 @@
 (define (tltest-generated-runtime-lambda-reachability-self-test?) : bool
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
+    [substring-id : i64 (ci.intern-generated-name "tl-runtime-substring")]
+    [helper-id : i64 (ci.intern-generated-name "__tl_generated_lambda_helper")]
+    [test-id : i64 (ci.intern-generated-name "keeps-generated-lambda-runtime")]
     [substring-decl : AstDecl
-      (ast-decl-def-fn
-        "substring"
+      (ast-decl-def-fn-id
+        substring-id
         (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
@@ -2392,8 +2556,8 @@
             lambda-expr
             (ast-expr-cons unit-expr (ast-expr-list-new)))))]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        "__tl_generated_lambda_helper"
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
@@ -2404,10 +2568,7 @@
         (ast-decl-cons
           helper-decl
           (ast-decl-cons
-            (ast-decl-test
-              "keeps-generated-lambda-runtime"
-              (tltest-call-expr "__tl_generated_lambda_helper")
-              span)
+            (ast-decl-test-id test-id (tltest-call-expr-id helper-id) span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
@@ -2437,9 +2598,16 @@
 (define (tltest-generated-runtime-substring-reachability-self-test?) : bool
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
+    [runtime-substring-id : i64
+      (ci.intern-generated-name "tl-runtime-substring")]
+    [substring-id : i64 (ci.intern-generated-name "substring")]
+    [helper-id : i64
+      (ci.intern-generated-name "__tl_generated_substring_helper")]
+    [test-id : i64
+      (ci.intern-generated-name "keeps-generated-substring-runtime")]
     [substring-decl : AstDecl
-      (ast-decl-def-fn
-        "substring"
+      (ast-decl-def-fn-id
+        runtime-substring-id
         (ast-param-list-new)
         (AstType.Unit)
         unit-expr)]
@@ -2447,11 +2615,11 @@
       (ast-node-push
         (AstExpr.Begin
           (ast-expr-cons
-            (tltest-call-expr "substring")
+            (tltest-call-expr-id substring-id)
             (ast-expr-cons unit-expr (ast-expr-list-new)))))]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        "__tl_generated_substring_helper"
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
         helper-body)]
@@ -2462,10 +2630,7 @@
         (ast-decl-cons
           helper-decl
           (ast-decl-cons
-            (ast-decl-test
-              "keeps-generated-substring-runtime"
-              (tltest-call-expr "__tl_generated_substring_helper")
-              span)
+            (ast-decl-test-id test-id (tltest-call-expr-id helper-id) span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
@@ -2495,9 +2660,12 @@
 (define (tltest-imported-tests-skipped-self-test?) : bool
   (let
     [helper-name : String "__tl_imported_skip_helper"]
+    [helper-id : i64 (ci.intern-generated-name helper-name)]
+    [owned-id : i64 (ci.intern-generated-name "owned")]
+    [imported-id : i64 (ci.intern-generated-name "imported")]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        helper-name
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
@@ -2507,11 +2675,11 @@
       (ast-decl-cons
         helper-decl
         (ast-decl-cons
-          (ast-decl-test "owned" (tltest-call-expr helper-name) owned-span)
+          (ast-decl-test-id owned-id (tltest-call-expr-id helper-id) owned-span)
           (ast-decl-cons
-            (ast-decl-test
-              "imported"
-              (tltest-call-expr helper-name)
+            (ast-decl-test-id
+              imported-id
+              (tltest-call-expr-id helper-id)
               imported-span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
@@ -2556,26 +2724,31 @@
           (AstMaybeModuleName.Some module)
           (AstMaybeImportAlias.Some alias)
           _))
-      (and (string.eq module "stdlib.core_macros") (string.eq alias "core"))]
+      (and
+        (string.eq (intern-str module) "stdlib.core_macros")
+        (string.eq (intern-str alias) "core"))]
     [_ false]))
 
 (define (tltest-import-alias-preserved-self-test?) : bool
   (let
+    [module-id : i64 (ci.intern-generated-name "stdlib.core_macros")]
+    [alias-id : i64 (ci.intern-generated-name "core")]
+    [test-id : i64 (ci.intern-generated-name "uses-qualified-macro-alias")]
     [import-decl : AstDecl
       (AstDecl.Import
         (AstImportSpec.Spec
           (AstImportKind.Path)
           "stdlib/core_macros.tl"
-          (AstMaybeModuleName.Some "stdlib.core_macros")
-          (AstMaybeImportAlias.Some "core")
+          (AstMaybeModuleName.Some module-id)
+          (AstMaybeImportAlias.Some alias-id)
           (ast-source-span 0 0 0 0)))]
     [span : AstSourceSpan (ast-source-span 9 1 9 1)]
     [decls : AstDeclList
       (ast-decl-cons
         import-decl
         (ast-decl-cons
-          (ast-decl-test
-            "uses-qualified-macro-alias"
+          (ast-decl-test-id
+            test-id
             (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
             span)
           (ast-decl-list-new)))]
@@ -2604,30 +2777,36 @@
     [helper-name : String "substring"]
     [eq-dep-name : String "__tl_runtime_eq_dep"]
     [eq-name : String "eq"]
+    [dep-id : i64 (ci.intern-generated-name dep-name)]
+    [helper-id : i64 (ci.intern-generated-name helper-name)]
+    [eq-dep-id : i64 (ci.intern-generated-name eq-dep-name)]
+    [eq-id : i64 (tltest-eq-id)]
+    [test-id : i64
+      (ci.intern-generated-name "runtime-helper-not-called-by-test")]
     [dep-decl : AstDecl
-      (ast-decl-def-fn
-        dep-name
+      (ast-decl-def-fn-id
+        dep-id
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        helper-name
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
-        (tltest-call-expr dep-name))]
+        (tltest-call-expr-id dep-id))]
     [eq-dep-decl : AstDecl
-      (ast-decl-def-fn
-        eq-dep-name
+      (ast-decl-def-fn-id
+        eq-dep-id
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [eq-decl : AstDecl
-      (ast-decl-def-fn
-        eq-name
+      (ast-decl-def-fn-id
+        eq-id
         (ast-param-list-new)
         (AstType.Unit)
-        (tltest-call-expr eq-dep-name))]
+        (tltest-call-expr-id eq-dep-id))]
     [span : AstSourceSpan (ast-source-span 13 1 13 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2639,8 +2818,8 @@
             (ast-decl-cons
               eq-decl
               (ast-decl-cons
-                (ast-decl-test
-                  "runtime-helper-not-called-by-test"
+                (ast-decl-test-id
+                  test-id
                   (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
                   span)
                 (ast-decl-list-new))))))]
@@ -2687,27 +2866,31 @@
     [dep-name : String "__tl_generated_reachable_dep"]
     [live-name : String "__tl_generated_reachable_live"]
     [dead-name : String "__tl_generated_reachable_dead"]
+    [dep-id : i64 (ci.intern-generated-name dep-name)]
+    [live-id : i64 (ci.intern-generated-name live-name)]
+    [dead-id : i64 (ci.intern-generated-name dead-name)]
+    [test-id : i64 (ci.intern-generated-name "uses-generated-live")]
     [dep-decl : AstDecl
       (tltest-generated-wrapper
         dep-name
-        (ast-decl-def-fn
-          dep-name
+        (ast-decl-def-fn-id
+          dep-id
           (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [live-decl : AstDecl
       (tltest-generated-wrapper
         live-name
-        (ast-decl-def-fn
-          live-name
+        (ast-decl-def-fn-id
+          live-id
           (ast-param-list-new)
           (AstType.Unit)
-          (tltest-call-expr dep-name)))]
+          (tltest-call-expr-id dep-id)))]
     [dead-decl : AstDecl
       (tltest-generated-wrapper
         dead-name
-        (ast-decl-def-fn
-          dead-name
+        (ast-decl-def-fn-id
+          dead-id
           (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
@@ -2720,10 +2903,7 @@
           (ast-decl-cons
             dead-decl
             (ast-decl-cons
-              (ast-decl-test
-                "uses-generated-live"
-                (tltest-call-expr live-name)
-                span)
+              (ast-decl-test-id test-id (tltest-call-expr-id live-id) span)
               (ast-decl-list-new)))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons
@@ -2755,17 +2935,20 @@
   (let
     [dead-name : String "__tl_imported_generated_dead"]
     [ordinary-name : String "__tl_imported_ordinary_dead"]
+    [dead-id : i64 (ci.intern-generated-name dead-name)]
+    [ordinary-id : i64 (ci.intern-generated-name ordinary-name)]
+    [test-id : i64 (ci.intern-generated-name "keeps-imported-generated")]
     [dead-decl : AstDecl
       (tltest-generated-wrapper
         dead-name
-        (ast-decl-def-fn
-          dead-name
+        (ast-decl-def-fn-id
+          dead-id
           (ast-param-list-new)
           (AstType.Unit)
           (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))))]
     [ordinary-decl : AstDecl
-      (ast-decl-def-fn
-        ordinary-name
+      (ast-decl-def-fn-id
+        ordinary-id
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
@@ -2776,8 +2959,8 @@
         (ast-decl-cons
           ordinary-decl
           (ast-decl-cons
-            (ast-decl-test
-              "keeps-imported-generated"
+            (ast-decl-test-id
+              test-id
               (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
               span)
             (ast-decl-list-new))))]
@@ -2808,18 +2991,21 @@
   (let
     [helper-name : String "__tl_macro_generated_helper"]
     [macro-name : String "__tl_macro_generated_call"]
+    [helper-id : i64 (ci.intern-generated-name helper-name)]
+    [macro-id : i64 (ci.intern-generated-name macro-name)]
+    [test-id : i64 (ci.intern-generated-name "uses-macro-generated-helper")]
     [helper-decl : AstDecl
-      (ast-decl-def-fn
-        helper-name
+      (ast-decl-def-fn-id
+        helper-id
         (ast-param-list-new)
         (AstType.Unit)
         (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))]
     [macro-decl : AstDecl
-      (ast-decl-def-macro
-        macro-name
+      (ast-decl-def-macro-id
+        macro-id
         (ast-macro-param-list-new)
         (AstType.Expr)
-        (ast-expr-quasiquote (tltest-call-expr helper-name)))]
+        (ast-expr-quasiquote (tltest-call-expr-id helper-id)))]
     [span : AstSourceSpan (ast-source-span 31 1 31 1)]
     [decls : AstDeclList
       (ast-decl-cons
@@ -2827,10 +3013,7 @@
         (ast-decl-cons
           macro-decl
           (ast-decl-cons
-            (ast-decl-test
-              "uses-macro-generated-helper"
-              (tltest-call-expr macro-name)
-              span)
+            (ast-decl-test-id test-id (tltest-call-expr-id macro-id) span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
       (ast-decl-path-cons

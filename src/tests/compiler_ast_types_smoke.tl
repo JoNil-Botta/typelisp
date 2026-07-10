@@ -536,10 +536,12 @@
       (and
         (string.eq path "pkg/path")
         (match module-name
-          [(ast.AstMaybeModuleName.Some name) (string.eq name "pkg.module")]
+          [(ast.AstMaybeModuleName.Some name)
+            (string.eq (intern-str name) "pkg.module")]
           [_ false])
         (match alias
-          [(ast.AstMaybeImportAlias.Some name) (string.eq name "pkg")]
+          [(ast.AstMaybeImportAlias.Some name)
+            (string.eq (intern-str name) "pkg")]
           [_ false]))]
     [_ false]))
 
@@ -640,8 +642,10 @@
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Path)
                   "pkg/path"
-                  (ast.AstMaybeModuleName.Some "pkg.module")
-                  (ast.AstMaybeImportAlias.Some "pkg")
+                  (ast.AstMaybeModuleName.Some
+                    (ci.intern-generated-name "pkg.module"))
+                  (ast.AstMaybeImportAlias.Some
+                    (ci.intern-generated-name "pkg"))
                   (ast.ast-source-span 1 1 1 1)))
               (ast.ast-decl-cons
                 (ast.ast-decl-extern

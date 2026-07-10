@@ -8,6 +8,7 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.array)
+(import stdlib.io)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -18,6 +19,50 @@
 ;; Hash/equality helpers for the ty-node hash-consing table below.
 (import stdlib.hash)
 (import stdlib.string)
+
+;; Nominal AST nodes carry either a parser intern id or a structural module/name
+;; id. Rendering must decode the latter instead of indexing the intern pool with
+;; the composite value.
+(define (ast-nominal-name-id-display [name-id : i64]) : String
+  (let
+    [stride : i64 (ci.intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [triple-offset : i64 (+ stride stride2)]
+    (if (and
+      (>= name-id triple-offset)
+      (< name-id (+ triple-offset (* stride2 stride))))
+      (let
+        [raw : i64 (- name-id triple-offset)]
+        [module-id : i64 (/ raw stride2)]
+        [enum-id : i64 (% (/ raw stride) stride)]
+        [variant-id : i64 (% raw stride)]
+        (string.append
+          (ci.intern-str module-id)
+          (string.append
+            "/"
+            (string.append
+              (ci.intern-str enum-id)
+              (string.append "." (ci.intern-str variant-id))))))
+      (if (and (>= name-id stride) (< name-id (+ stride stride2)))
+        (let
+          [raw : i64 (- name-id stride)]
+          (string.append
+            (ci.intern-str (/ raw stride))
+            (string.append "/" (ci.intern-str (% raw stride)))))
+        (if (and (>= name-id 0) (< name-id stride))
+          (ci.intern-str name-id)
+          "<structural-nominal>")))))
+
+;; String-taking constructors are compatibility boundaries only. Source names
+;; must already have been assigned ids by the parser before an AST is built.
+(define (ast-existing-name-id [name : String]) : i64
+  (match (ci.intern-lookup-preserving-generated-id name)
+    [(InternLookupFound name-id) name-id]
+    [(InternLookupMissing)
+      (io.panic
+        (string.append
+          "AST constructor: name has no parser-assigned symbol id: "
+          name))]))
 
 (defstruct AstSourceSpan
   (start-line i32)
@@ -2003,11 +2048,11 @@
 
 (defenum AstMaybeModuleName
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum AstMaybeImportAlias
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum AstImportKind
   (Path)
@@ -2382,7 +2427,7 @@
       out)))
 
 (define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam.Param (ci.intern name) ty is-comptime))
+  (AstParam.Param (ast-existing-name-id name) ty is-comptime))
 
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param name ty is-comptime))
@@ -2472,7 +2517,7 @@
       out)))
 
 (define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
-  (AstMacroParam.Param (ci.intern name) ty variadic))
+  (AstMacroParam.Param (ast-existing-name-id name) ty variadic))
 
 (define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
   (AstMacroParam.Param name ty variadic))
@@ -2569,7 +2614,7 @@
       out)))
 
 (define (ast-field-cleanup-fn [name : String]) : AstFieldCleanup
-  (AstFieldCleanup.Fn (ci.intern name)))
+  (AstFieldCleanup.Fn (ast-existing-name-id name)))
 
 (define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
   (AstFieldCleanup.Fn name))
@@ -2578,7 +2623,7 @@
   [name : String]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (AstFieldDef.Def (ci.intern name) ty cleanup))
+  (AstFieldDef.Def (ast-existing-name-id name) ty cleanup))
 
 (define (ast-field-def-id
   [name : i64]
@@ -2749,25 +2794,25 @@
         (set! (struct-get v len) (+ index 1))))))
 
 (define (ast-fn-export [name : String]) : AstFnExport
-  (AstFnExport.Export (ci.intern name)))
+  (AstFnExport.Export (ast-existing-name-id name)))
 
 (define (ast-fn-export-id [name : i64]) : AstFnExport
   (AstFnExport.Export name))
 
 (define (ast-struct-cleanup-fn [name : String]) : AstStructCleanup
-  (AstStructCleanup.Fn (ci.intern name)))
+  (AstStructCleanup.Fn (ast-existing-name-id name)))
 
 (define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
   (AstStructCleanup.Fn name))
 
 (define (ast-enum-cleanup-fn [name : String]) : AstEnumCleanup
-  (AstEnumCleanup.Fn (ci.intern name)))
+  (AstEnumCleanup.Fn (ast-existing-name-id name)))
 
 (define (ast-enum-cleanup-fn-id [name : i64]) : AstEnumCleanup
   (AstEnumCleanup.Fn name))
 
 (define (ast-variant-payload-cleanup-fn [name : String]) : AstVariantPayloadCleanup
-  (AstVariantPayloadCleanup.Fn (ci.intern name)))
+  (AstVariantPayloadCleanup.Fn (ast-existing-name-id name)))
 
 (define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
   (AstVariantPayloadCleanup.Fn name))
@@ -2862,7 +2907,7 @@
   [name : String]
   [fields : AstTypeList]
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
-  (AstVariantDef.Def (ci.intern name) fields cleanups))
+  (AstVariantDef.Def (ast-existing-name-id name) fields cleanups))
 
 (define (ast-variant-def-id
   [name : i64]
@@ -3073,7 +3118,7 @@
       out)))
 
 (define (ast-pat-binding [name : String]) : AstPattern
-  (AstPattern.Binding (ci.intern name)))
+  (AstPattern.Binding (ast-existing-name-id name)))
 
 (define (ast-pat-binding-id [name : i64]) : AstPattern
   (AstPattern.Binding name))
@@ -3082,7 +3127,7 @@
   (AstPattern.Tuple (box items)))
 
 (define (ast-pat-variant [name : String] [items : AstPatternList]) : AstPattern
-  (AstPattern.Variant (ci.intern name) (box items)))
+  (AstPattern.Variant (ast-existing-name-id name) (box items)))
 
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPattern.Variant name (box items)))
@@ -3091,7 +3136,7 @@
   [name : String]
   [maybe-ty : AstMaybeType]
   [value : i64]) : AstLetBinding
-  (AstLetBinding.Binding (ci.intern name) maybe-ty value))
+  (AstLetBinding.Binding (ast-existing-name-id name) maybe-ty value))
 
 (define (ast-let-binding-id
   [name : i64]
@@ -3191,7 +3236,7 @@
       out)))
 
 (define (ast-resource-binding [name : String] [init : i64] [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding.Binding (ci.intern name) init cleanup))
+  (AstResourceBinding.Binding (ast-existing-name-id name) init cleanup))
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding.Binding name init cleanup))
@@ -3603,7 +3648,7 @@
   [ty : i64]
   [init : i64]
   [span : AstSourceSpan]) : AstExprBindingClause
-  (AstExprBindingClause (ci.intern name) has-type ty init span))
+  (AstExprBindingClause (ast-existing-name-id name) has-type ty init span))
 
 (define (ast-expr-binding-clause-id
   [name : i64]
@@ -3780,7 +3825,7 @@
   (ast-node-push (AstExpr.While cond body)))
 
 (define (ast-expr-set [name : String] [value : i64]) : i64
-  (ast-node-push (AstExpr.Set (ci.intern name) value)))
+  (ast-node-push (AstExpr.Set (ast-existing-name-id name) value)))
 
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.Set name value)))
@@ -3808,7 +3853,8 @@
   [body : i64]) : i64
   (ast-node-push
     (AstExpr.Foreach
-      (box (AstForeach.Foreach (ci.intern name) index-ty start end body)))))
+      (box
+        (AstForeach.Foreach (ast-existing-name-id name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id
   [name : i64]
@@ -3830,7 +3876,14 @@
   (ast-node-push
     (AstExpr.SpmdReduce
       (box
-        (AstSpmdReduce.Reduce op (ci.intern name) index-ty start end init value)))))
+        (AstSpmdReduce.Reduce
+          op
+          (ast-existing-name-id name)
+          index-ty
+          start
+          end
+          init
+          value)))))
 
 (define (ast-expr-spmd-reduce-id
   [op : AstReduceOp]
@@ -3860,11 +3913,11 @@
       (box
         (AstSpmdScan.Scan
           op
-          (ci.intern index)
+          (ast-existing-name-id index)
           index-ty
           start
           end
-          (ci.intern prefix)
+          (ast-existing-name-id prefix)
           prefix-ty
           init
           value
@@ -3909,13 +3962,13 @@
   (ast-node-push (AstExpr.SpmdProgramCount)))
 
 (define (ast-expr-struct-get [target : i64] [field : String]) : i64
-  (ast-node-push (AstExpr.StructGet target (ci.intern field))))
+  (ast-node-push (AstExpr.StructGet target (ast-existing-name-id field))))
 
 (define (ast-expr-struct-get-id [target : i64] [field : i64]) : i64
   (ast-node-push (AstExpr.StructGet target field)))
 
 (define (ast-expr-struct-set [target : i64] [field : String] [value : i64]) : i64
-  (ast-node-push (AstExpr.StructSet target (ci.intern field) value)))
+  (ast-node-push (AstExpr.StructSet target (ast-existing-name-id field) value)))
 
 (define (ast-expr-struct-set-id [target : i64] [field : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.StructSet target field value)))
@@ -3985,7 +4038,8 @@
 
 (define (ast-expr-ptr-addr-of [name : String]) : i64
   (ast-node-push
-    (AstExpr.PtrAddrOf (ast-node-push (AstExpr.Var (ci.intern name))))))
+    (AstExpr.PtrAddrOf
+      (ast-node-push (AstExpr.Var (ast-existing-name-id name))))))
 
 (define (ast-expr-ptr-addr-of-id [place : i64]) : i64
   (ast-node-push (AstExpr.PtrAddrOf place)))
@@ -4148,7 +4202,9 @@
   [pools : AstNodePoolContext]
   [name : String]
   [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Set (ci.intern name) value)))
+  (ast-node-pool-context-expr-push
+    pools
+    (AstExpr.Set (ast-existing-name-id name) value)))
 
 (define (ast-expr-set-id-with-pools
   [pools : AstNodePoolContext]
@@ -4193,7 +4249,8 @@
   (ast-node-pool-context-expr-push
     pools
     (AstExpr.Foreach
-      (box (AstForeach.Foreach (ci.intern name) index-ty start end body)))))
+      (box
+        (AstForeach.Foreach (ast-existing-name-id name) index-ty start end body)))))
 
 (define (ast-expr-foreach-id-with-pools
   [pools : AstNodePoolContext]
@@ -4219,7 +4276,14 @@
     pools
     (AstExpr.SpmdReduce
       (box
-        (AstSpmdReduce.Reduce op (ci.intern name) index-ty start end init value)))))
+        (AstSpmdReduce.Reduce
+          op
+          (ast-existing-name-id name)
+          index-ty
+          start
+          end
+          init
+          value)))))
 
 (define (ast-expr-spmd-reduce-id-with-pools
   [pools : AstNodePoolContext]
@@ -4253,11 +4317,11 @@
       (box
         (AstSpmdScan.Scan
           op
-          (ci.intern index)
+          (ast-existing-name-id index)
           index-ty
           start
           end
-          (ci.intern prefix)
+          (ast-existing-name-id prefix)
           prefix-ty
           init
           value
@@ -4315,7 +4379,7 @@
   [field : String]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExpr.StructGet target (ci.intern field))))
+    (AstExpr.StructGet target (ast-existing-name-id field))))
 
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]
@@ -4330,7 +4394,7 @@
   [value : i64]) : i64
   (ast-node-pool-context-expr-push
     pools
-    (AstExpr.StructSet target (ci.intern field) value)))
+    (AstExpr.StructSet target (ast-existing-name-id field) value)))
 
 (define (ast-expr-struct-set-id-with-pools
   [pools : AstNodePoolContext]
@@ -4428,7 +4492,9 @@
   (ast-node-pool-context-expr-push
     pools
     (AstExpr.PtrAddrOf
-      (ast-node-pool-context-expr-push pools (AstExpr.Var (ci.intern name))))))
+      (ast-node-pool-context-expr-push
+        pools
+        (AstExpr.Var (ast-existing-name-id name))))))
 
 (define (ast-expr-ptr-addr-of-id-with-pools
   [pools : AstNodePoolContext]
@@ -4766,19 +4832,19 @@
   (ast-decl-cons head (box-get rest)))
 
 (define (ast-decl-module [name : String]) : AstDecl
-  (AstDecl.Module (ci.intern name)))
+  (AstDecl.Module (ast-existing-name-id name)))
 
 (define (ast-decl-module-id [name : i64]) : AstDecl
   (AstDecl.Module name))
 
 (define (ast-decl-module-body [name : String] [body : AstDeclList]) : AstDecl
-  (AstDecl.ModuleBody (ci.intern name) (box body)))
+  (AstDecl.ModuleBody (ast-existing-name-id name) (box body)))
 
 (define (ast-decl-module-body-id [name : i64] [body : AstDeclList]) : AstDecl
   (AstDecl.ModuleBody name (box body)))
 
 (define (ast-decl-def [name : String] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
-  (AstDecl.Def (ci.intern name) maybe-ty value))
+  (AstDecl.Def (ast-existing-name-id name) maybe-ty value))
 
 (define (ast-decl-def-id [name : i64] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
   (AstDecl.Def name maybe-ty value))
@@ -4788,7 +4854,7 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefFn (ci.intern name) params ret body AstFnExport.No))
+  (AstDecl.DefFn (ast-existing-name-id name) params ret body AstFnExport.No))
 
 (define (ast-decl-def-fn-id
   [name : i64]
@@ -4803,7 +4869,7 @@
   [ret : AstType]
   [body : i64]
   [export : AstFnExport]) : AstDecl
-  (AstDecl.DefFn (ci.intern name) params ret body export))
+  (AstDecl.DefFn (ast-existing-name-id name) params ret body export))
 
 (define (ast-decl-def-fn-export-id
   [name : i64]
@@ -4818,7 +4884,7 @@
   [params : AstMacroParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefMacro (ci.intern name) params ret body))
+  (AstDecl.DefMacro (ast-existing-name-id name) params ret body))
 
 (define (ast-decl-def-macro-id
   [name : i64]
@@ -4832,7 +4898,7 @@
   [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : AstDecl
-  (AstDecl.Extern (ci.intern name) kind metadata ty))
+  (AstDecl.Extern (ast-existing-name-id name) kind metadata ty))
 
 (define (ast-decl-extern-id
   [name : i64]
@@ -4845,7 +4911,7 @@
   [name : String]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnum (ci.intern name) cleanup variants))
+  (AstDecl.DefEnum (ast-existing-name-id name) cleanup variants))
 
 (define (ast-decl-def-enum-id
   [name : i64]
@@ -4858,7 +4924,11 @@
   [lifetimes : AstLifetimeList]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnumLifetimes (ci.intern name) lifetimes cleanup variants))
+  (AstDecl.DefEnumLifetimes
+    (ast-existing-name-id name)
+    lifetimes
+    cleanup
+    variants))
 
 (define (ast-decl-def-enum-lifetimes-id
   [name : i64]
@@ -4872,7 +4942,7 @@
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStruct (ci.intern name) repr cleanup fields))
+  (AstDecl.DefStruct (ast-existing-name-id name) repr cleanup fields))
 
 (define (ast-decl-def-struct-id
   [name : i64]
@@ -4887,7 +4957,12 @@
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStructLifetimes (ci.intern name) lifetimes repr cleanup fields))
+  (AstDecl.DefStructLifetimes
+    (ast-existing-name-id name)
+    lifetimes
+    repr
+    cleanup
+    fields))
 
 (define (ast-decl-def-struct-lifetimes-id
   [name : i64]
@@ -4900,7 +4975,7 @@
 (define (ast-decl-def-dispatch
   [name : String]
   [variants : AstDispatchVariantList]) : AstDecl
-  (AstDecl.DefDispatch (ci.intern name) variants))
+  (AstDecl.DefDispatch (ast-existing-name-id name) variants))
 
 (define (ast-decl-def-dispatch-id
   [name : i64]
@@ -4908,7 +4983,7 @@
   (AstDecl.DefDispatch name variants))
 
 (define (ast-decl-test [name : String] [body : i64] [span : AstSourceSpan]) : AstDecl
-  (AstDecl.Test (ci.intern name) body span))
+  (AstDecl.Test (ast-existing-name-id name) body span))
 
 (define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
   (AstDecl.Test name body span))
@@ -5698,14 +5773,12 @@
   [module-name : AstMaybeModuleName]) : AstMaybeModuleName
   (match module-name
     [(AstMaybeModuleName.No) AstMaybeModuleName.No]
-    [(AstMaybeModuleName.Some name)
-      (AstMaybeModuleName.Some (ast-compaction-copy-string name))]))
+    [(AstMaybeModuleName.Some name) (AstMaybeModuleName.Some name)]))
 
 (define (ast-compaction-remap-maybe-import-alias [alias : AstMaybeImportAlias]) : AstMaybeImportAlias
   (match alias
     [(AstMaybeImportAlias.No) AstMaybeImportAlias.No]
-    [(AstMaybeImportAlias.Some name)
-      (AstMaybeImportAlias.Some (ast-compaction-copy-string name))]))
+    [(AstMaybeImportAlias.Some name) (AstMaybeImportAlias.Some name)]))
 
 (define (ast-compaction-remap-import-spec [spec : AstImportSpec]) : AstImportSpec
   (match spec
@@ -7079,7 +7152,9 @@
         (ast-match-arm variant-pattern begin-expr)
         (ast-match-arm-list-new))]
     [match-expr : i64
-      (ast-expr-match (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-input)) arms)]
+      (ast-expr-match
+        (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-input))
+        arms)]
     [nested : i64
       (ast-expr-let
         bindings
@@ -7098,7 +7173,7 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (and
-          (= name (ci.intern want-name))
+          (= name (ast-existing-name-id want-name))
           (match value
             [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual want-value)]
             [_ false])))]

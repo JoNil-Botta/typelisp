@@ -23,6 +23,7 @@
 (extern (tl_arena_make) : i64)
 (extern (tl_arena_current) : i64)
 (extern (tl_region_mark) : i64)
+(extern (tl_oob_abort) : never)
 
 (unsafe
   (extern (tl_arena_set [arg0 : i64]) : unit))
@@ -160,6 +161,8 @@
   (make-array i64 262144))
 (define intern-pool-count : i64
   0)
+(define intern-generated-next-id : i64
+  (- (intern-capacity) 1))
 
 (define (intern-pool-len) : i64
   intern-pool-count)
@@ -216,6 +219,7 @@
   (pool-module-id-slots (Array i64))
   (pool-base-id-slots (Array i64))
   (pool-count (Array i64))
+  (generated-next-id (Array i64))
   (map-slots (Array InternSlot))
   (map-ready (Array bool))
   (reset-generation (Array i64))
@@ -226,6 +230,7 @@
 (define (intern-compat-state-new) : InternCompatState
   (let
     [pool-count : (Array i64) (make-array i64 1)]
+    [generated-next-id : (Array i64) (make-array i64 1)]
     [map-ready : (Array bool) (make-array bool 1)]
     [reset-generation : (Array i64) (make-array i64 1)]
     [persistent-arena : (Array i64) (make-array i64 1)]
@@ -233,6 +238,7 @@
     [persistent-storage-enabled : (Array bool) (make-array bool 1)]
     (begin
       (array-set! pool-count 0 0)
+      (array-set! generated-next-id 0 (- (intern-capacity) 1))
       (array-set! map-ready 0 false)
       (array-set! reset-generation 0 0)
       (array-set! persistent-arena 0 (tl_arena_make))
@@ -247,6 +253,7 @@
         (make-array i64 262144)
         (make-array i64 262144)
         pool-count
+        generated-next-id
         (make-array InternSlot 262144)
         map-ready
         reset-generation
@@ -279,6 +286,9 @@
     (set! intern-pool-module-id-slots (struct-get state pool-module-id-slots))
     (set! intern-pool-base-id-slots (struct-get state pool-base-id-slots))
     (set! intern-pool-count (array-ref (struct-get state pool-count) 0))
+    (set!
+      intern-generated-next-id
+      (array-ref (struct-get state generated-next-id) 0))
     (set! intern-map-slots (struct-get state map-slots))
     (set! intern-map-ready (array-ref (struct-get state map-ready) 0))
     (set!
@@ -302,6 +312,7 @@
 (define (intern-compat-state-capture-from-globals! [state : InternCompatState]) : unit
   (begin
     (array-set! (struct-get state pool-count) 0 intern-pool-count)
+    (array-set! (struct-get state generated-next-id) 0 intern-generated-next-id)
     (array-set! (struct-get state map-ready) 0 intern-map-ready)
     (array-set! (struct-get state reset-generation) 0 intern-reset-generation)
     (array-set! (struct-get state persistent-arena) 0 intern-persistent-arena)
@@ -393,6 +404,62 @@
   compile-profile
   (define intern-profile-lookup-count : i64
     0))
+(cfg
+  compile-profile
+  (define intern-profile-generated-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-invalid-str-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-invalid-str-last-id : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-invalid-str-detail-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-invalid-str-detail-ids : (Array i64)
+    (make-array i64 256)))
+(cfg
+  compile-profile
+  (define intern-profile-source-bytes-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-source-symbol-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-source-symbol-bytes-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-slice-bytes-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-slice-hit-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-slice-miss-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-id-counts : (Array i64)
+    (make-array i64 262144)))
+(cfg
+  compile-profile
+  (define intern-profile-id-epochs : (Array i64)
+    (make-array i64 262144)))
+(cfg
+  compile-profile
+  (define intern-profile-id-epoch : i64
+    1))
 
 (cfg
   compile-profile
@@ -402,6 +469,17 @@
       (set! intern-profile-intern-count 0)
       (set! intern-profile-slice-count 0)
       (set! intern-profile-lookup-count 0)
+      (set! intern-profile-generated-count 0)
+      (set! intern-profile-invalid-str-count 0)
+      (set! intern-profile-invalid-str-last-id 0)
+      (set! intern-profile-invalid-str-detail-count 0)
+      (set! intern-profile-source-bytes-count 0)
+      (set! intern-profile-source-symbol-count 0)
+      (set! intern-profile-source-symbol-bytes-count 0)
+      (set! intern-profile-slice-bytes-count 0)
+      (set! intern-profile-slice-hit-count 0)
+      (set! intern-profile-slice-miss-count 0)
+      (set! intern-profile-id-epoch (+ intern-profile-id-epoch 1))
       (set! intern-profile-hit-same-obj-count 0)
       (set! intern-profile-hit-diff-obj-count 0)
       (set! intern-profile-miss-count 0))))
@@ -428,12 +506,93 @@
 
 (cfg
   compile-profile
+  (define (intern-profile-generated-value) : i64
+    intern-profile-generated-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-invalid-str-value) : i64
+    intern-profile-invalid-str-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-invalid-str-last-id-value) : i64
+    intern-profile-invalid-str-last-id))
+
+(cfg
+  compile-profile
+  (define (intern-profile-invalid-str-detail-count-value) : i64
+    intern-profile-invalid-str-detail-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-invalid-str-detail-id-at [index : i64]) : i64
+    (array-ref intern-profile-invalid-str-detail-ids index)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-source-bytes-value) : i64
+    intern-profile-source-bytes-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-source-symbol-value) : i64
+    intern-profile-source-symbol-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-source-symbol-bytes-value) : i64
+    intern-profile-source-symbol-bytes-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-bytes-value) : i64
+    intern-profile-slice-bytes-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-hit-value) : i64
+    intern-profile-slice-hit-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-slice-miss-value) : i64
+    intern-profile-slice-miss-count))
+
+(cfg
+  compile-profile
+  (define (intern-profile-id-value [id : i64]) : i64
+    (if (and
+      (>= id 0)
+      (< id (array-length intern-profile-id-counts))
+      (= (array-ref intern-profile-id-epochs id) intern-profile-id-epoch))
+      (array-ref intern-profile-id-counts id)
+      0)))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-id [id : i64]) : unit
+    (if (or (< id 0) (>= id (array-length intern-profile-id-counts)))
+      unit
+      (if (= (array-ref intern-profile-id-epochs id) intern-profile-id-epoch)
+        (array-set!
+          intern-profile-id-counts
+          id
+          (+ (array-ref intern-profile-id-counts id) 1))
+        (begin
+          (array-set! intern-profile-id-epochs id intern-profile-id-epoch)
+          (array-set! intern-profile-id-counts id 1))))))
+
+(cfg
+  compile-profile
   (define (intern-profile-hit-same-obj-value) : i64
     intern-profile-hit-same-obj-count))
+
 (cfg
   compile-profile
   (define (intern-profile-hit-diff-obj-value) : i64
     intern-profile-hit-diff-obj-count))
+
 (cfg
   compile-profile
   (define (intern-profile-miss-value) : i64
@@ -446,8 +605,24 @@
 
 (cfg
   compile-profile
-  (define (intern-profile-note-slice) : unit
-    (set! intern-profile-slice-count (+ intern-profile-slice-count 1))))
+  (define (intern-profile-note-generated) : unit
+    (set! intern-profile-generated-count (+ intern-profile-generated-count 1))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-source-bytes [len : i64]) : unit
+    (set!
+      intern-profile-source-bytes-count
+      (+ intern-profile-source-bytes-count len))))
+
+(cfg
+  compile-profile
+  (define (intern-profile-note-slice [len : i64]) : unit
+    (begin
+      (set! intern-profile-slice-count (+ intern-profile-slice-count 1))
+      (set!
+        intern-profile-slice-bytes-count
+        (+ intern-profile-slice-bytes-count len)))))
 
 (cfg
   compile-profile
@@ -462,13 +637,26 @@
 ;; target. `miss` counts genuine first-time insertions. These cfg-gated counters
 ;; drive the systematic id-threading work: the goal is to drive intern_calls
 ;; (and these hits) toward only the genuine first-time `miss` count.
-(cfg compile-profile (define intern-profile-hit-same-obj-count : i64 0))
-(cfg compile-profile (define intern-profile-hit-diff-obj-count : i64 0))
-(cfg compile-profile (define intern-profile-miss-count : i64 0))
+(cfg
+  compile-profile
+  (define intern-profile-hit-same-obj-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-hit-diff-obj-count : i64
+    0))
+(cfg
+  compile-profile
+  (define intern-profile-miss-count : i64
+    0))
+
 (cfg
   compile-profile
   (define (intern-profile-string-data-ptr [s : String]) : i64
-    (cast (unsafe (ptr->int (string-data (& s)))) : i64)))
+    (cast
+      (unsafe
+        (ptr->int (string-data (& s))))
+      : i64)))
 
 (define (intern-hash-words [src : (Ptr u8)] [start : i64] [len : i64]) : i64
   (let
@@ -480,7 +668,13 @@
         compile-profile
         (set!
           intern-profile-hash-words-count
-          (+ intern-profile-hash-words-count 1)))
+          (+
+            intern-profile-hash-words-count
+            (+
+              (/ len 8)
+              (if (= (% len 8) 0)
+                0
+                1)))))
       (while (< i words)
         (begin
           (set!
@@ -581,6 +775,115 @@
         (__tl_string_length text)
         (intern-private-string-length text)))))
 
+;: Reserve a source id from the low end of the shared pool. Generated ids grow
+;: down from the high end, so neither kind can silently overwrite the other.
+(define (intern-source-id-allocate!) : i64
+  (if (> intern-pool-count intern-generated-next-id)
+    (tl_oob_abort)
+    (let
+      [id : i64 intern-pool-count]
+      (begin
+        (set! intern-pool-count (+ id 1))
+        id))))
+
+(define (intern-generated-id-allocate!) : i64
+  (if (< intern-generated-next-id intern-pool-count)
+    (tl_oob_abort)
+    (let
+      [id : i64 intern-generated-next-id]
+      (begin
+        (set! intern-generated-next-id (- id 1))
+        id))))
+
+(define (intern-private-last-slash [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (intern-private-string-length name)]
+    [slash : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (= (intern-private-string-ref name i) '/')
+            (set! slash i)
+            unit)
+          (set! i (+ i 1))))
+      slash)))
+
+(define (intern-private-first-dot [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (intern-private-string-length name)]
+    [dot : i64 -1]
+    (begin
+      (while (and (< i n) (< dot 0))
+        (begin
+          (if (= (intern-private-string-ref name i) '.')
+            (set! dot i)
+            unit)
+          (set! i (+ i 1))))
+      dot)))
+
+(define (intern-generated-name-store
+  [name : String]
+  [qualified : bool]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (begin
+    (if intern-map-ready
+      unit
+      (intern-reset!))
+    (cfg compile-profile (intern-profile-note-generated))
+    (let
+      [persistent-name : String (intern-persistent-copy name)]
+      [id : i64 (intern-generated-id-allocate!)]
+      (begin
+        (array-set! intern-pool-slots id persistent-name)
+        (array-set! intern-pool-qualified-slots id qualified)
+        (array-set!
+          intern-pool-last-slash-slots
+          id
+          (if qualified
+            (intern-private-last-slash persistent-name)
+            -1))
+        (array-set! intern-pool-first-dot-slots id -1)
+        (array-set! intern-pool-leading-dot-id-slots id -1)
+        (array-set! intern-pool-module-id-slots id module-id)
+        (array-set!
+          intern-pool-base-id-slots
+          id
+          (if qualified
+            base-id
+            id))
+        id))))
+
+;: Allocate an opaque generated symbol. Display punctuation is intentionally
+;: not interpreted: hygiene locals may contain `/` without being qualified.
+(define (intern-generated-name [name : String]) : i64
+  (intern-generated-name-store name false -1 -1))
+
+;: Allocate a generated qualified symbol without hashing its display spelling.
+;: The caller supplies the already-known structural module and base identities.
+(define (intern-generated-qualified-name
+  [name : String]
+  [module-id : i64]
+  [base-id : i64]) : i64
+  (intern-generated-name-store name true module-id base-id))
+
+;: Allocate a generated dotted symbol such as `Type.Variant`. The caller
+;: supplies the source identity for the segment before the first dot, avoiding
+;: a lookup or insertion for either the prefix or the combined spelling.
+(define (intern-generated-dotted-name [name : String] [leading-dot-id : i64]) : i64
+  (let
+    [first-dot : i64 (intern-private-first-dot name)]
+    (if (or (< first-dot 1) (< leading-dot-id 0))
+      (tl_oob_abort)
+      (let
+        [id : i64 (intern-generated-name-store name false -1 -1)]
+        (begin
+          (array-set! intern-pool-first-dot-slots id first-dot)
+          (array-set! intern-pool-leading-dot-id-slots id leading-dot-id)
+          id)))))
+
 (define (intern-persist-range! [index : i64] [count : i64]) : unit
   (if (>= index count)
     unit
@@ -662,24 +965,24 @@
         (begin
           (array-set! intern-pool-qualified-slots id false)
           (array-set! intern-pool-module-id-slots id -1)
-          (array-set! intern-pool-base-id-slots id id))
+          (array-set!
+            intern-pool-base-id-slots
+            id
+            (if (< dot 0)
+              id
+              (intern-slice name (+ dot 1) (- n (+ dot 1))))))
         (let
           [base-start : i64 (+ slash 1)]
-          [module-name : String (intern-substring name 0 slash)]
-          [base-name : String
-            (intern-substring
-              name
-              base-start
-              (-
-                (cfg
-                  feature-compiler-private-string-intrinsics
-                  (__tl_string_length name)
-                  (intern-private-string-length name))
-                base-start))]
           (begin
             (array-set! intern-pool-qualified-slots id true)
-            (array-set! intern-pool-module-id-slots id (intern module-name))
-            (array-set! intern-pool-base-id-slots id (intern base-name))))))))
+            (array-set!
+              intern-pool-module-id-slots
+              id
+              (intern-slice name 0 slash))
+            (array-set!
+              intern-pool-base-id-slots
+              id
+              (intern-slice name base-start (- n base-start)))))))))
 
 ;: Set slots `[index, count)` to InternEmpty.
 (define (intern-fill-empty [index : i64] [count : i64]) : unit
@@ -753,6 +1056,7 @@
 (define (intern-reset!) : unit
   (begin
     (set! intern-pool-count 0)
+    (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-slots))
     (intern-reset-slice-cache!)
     (set! intern-reset-generation (+ intern-reset-generation 1))
@@ -761,6 +1065,7 @@
 (define (intern-reset-to! [mark : i64]) : unit
   (begin
     (set! intern-pool-count mark)
+    (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-slots))
     (intern-map-rebuild-prefix 0 mark)
     (intern-reset-slice-cache!)
@@ -839,7 +1144,7 @@
                   (if intern-persistent-storage-enabled
                     (intern-persistent-copy name)
                     name)]
-                [id : i64 intern-pool-count]
+                [id : i64 (intern-source-id-allocate!)]
                 (begin
                   (cfg
                     compile-profile
@@ -851,7 +1156,6 @@
                     intern-map-slots
                     cursor
                     (InternUsed persistent-name id hash))
-                  (set! intern-pool-count (+ id 1))
                   (intern-record-qualified-metadata id persistent-name)
                   (intern-name-cache-record persistent-name id)
                   (set! out id)
@@ -864,8 +1168,9 @@
                   (intern-name-cache-record slot-key slot-id)
                   (cfg
                     compile-profile
-                    (if (= (intern-profile-string-data-ptr name)
-                          (intern-profile-string-data-ptr slot-key))
+                    (if (=
+                      (intern-profile-string-data-ptr name)
+                      (intern-profile-string-data-ptr slot-key))
                       (set!
                         intern-profile-hit-same-obj-count
                         (+ intern-profile-hit-same-obj-count 1))
@@ -877,7 +1182,9 @@
                 (begin
                   (set! cursor (intern-bucket (+ cursor 1) capacity))
                   (set! steps (+ steps 1))))]))
-        out))))
+        (begin
+          (cfg compile-profile (intern-profile-note-id out))
+          out)))))
 
 ;: Intern a source slice without allocating unless the slice is a new name.
 (define (intern-slice [text : String] [start : i64] [len : i64]) : i64
@@ -885,11 +1192,17 @@
     (if intern-map-ready
       unit
       (intern-reset!))
-    (cfg compile-profile (intern-profile-note-slice))
+    (cfg compile-profile (intern-profile-note-slice len))
     (let
       [cached : i64 (intern-slice-cache-lookup text start len)]
       (if (>= cached 0)
-        cached
+        (begin
+          (cfg
+            compile-profile
+            (set!
+              intern-profile-slice-hit-count
+              (+ intern-profile-slice-hit-count 1)))
+          cached)
         (let
           [capacity : i64 (array-length intern-map-slots)]
           [hash : i64 (intern-hash-slice text start len)]
@@ -908,14 +1221,18 @@
                       (if intern-persistent-storage-enabled
                         (intern-persistent-substring text start len)
                         (intern-substring text start len))]
-                    [id : i64 intern-pool-count]
+                    [id : i64 (intern-source-id-allocate!)]
                     (begin
+                      (cfg
+                        compile-profile
+                        (set!
+                          intern-profile-slice-miss-count
+                          (+ intern-profile-slice-miss-count 1)))
                       (array-set! intern-pool-slots id name)
                       (array-set!
                         intern-map-slots
                         cursor
                         (InternUsed name id hash))
-                      (set! intern-pool-count (+ id 1))
                       (intern-record-qualified-metadata id name)
                       (intern-slice-cache-record name id)
                       (set! out id)
@@ -925,6 +1242,11 @@
                     (intern-string-slice-eq? slot-key text start len)
                     false)
                     (begin
+                      (cfg
+                        compile-profile
+                        (set!
+                          intern-profile-slice-hit-count
+                          (+ intern-profile-slice-hit-count 1)))
                       (intern-slice-cache-record slot-key slot-id)
                       (set! out slot-id)
                       (set! done true))
@@ -932,6 +1254,21 @@
                       (set! cursor (intern-bucket (+ cursor 1) capacity))
                       (set! steps (+ steps 1))))]))
             out))))))
+
+;: Lexer-only entry point. Keeping source-token volume separate from internal
+;: metadata slices makes the expected parse-time intern count measurable.
+(define (intern-source-slice [text : String] [start : i64] [len : i64]) : i64
+  (begin
+    (cfg
+      compile-profile
+      (begin
+        (set!
+          intern-profile-source-symbol-count
+          (+ intern-profile-source-symbol-count 1))
+        (set!
+          intern-profile-source-symbol-bytes-count
+          (+ intern-profile-source-symbol-bytes-count len))))
+    (intern-slice text start len)))
 
 ;: Look up an already-interned name without mutating the table. This lets later
 ;: compiler phases use id-keyed indexes without interning backend-generated
@@ -969,12 +1306,89 @@
           out)))
     (InternLookupMissing)))
 
+;: Preserve the identity of a generated symbol when a compatibility boundary
+;: temporarily exposes only its display String. Generated symbols are not in
+;: the hash table because equal display spellings can intentionally denote
+;: distinct identities, so only pointer identity is valid for this fallback.
+(define (intern-lookup-preserving-generated-id [name : String]) : InternLookup
+  (let
+    [plain : InternLookup (intern-lookup name)]
+    [needle : i64
+      (cast
+        (unsafe
+          (ptr->int (string-data (& name))))
+        : i64)]
+    [id : i64 (+ intern-generated-next-id 1)]
+    [found : i64 -1]
+    (begin
+      ;; Content lookup is sufficient only when the caller holds the exact
+      ;; source-pool String. A generated symbol may intentionally have the same
+      ;; display spelling and must retain its high ID across String adapters.
+      (match plain
+        [(InternLookupFound plain-id)
+          (let
+            [candidate : String (array-ref intern-pool-slots plain-id)]
+            [candidate-ptr : i64
+              (cast
+                (unsafe
+                  (ptr->int (string-data (& candidate))))
+                : i64)]
+            (if (= candidate-ptr needle)
+              (return (InternLookupFound plain-id))
+              unit))]
+        [(InternLookupMissing) unit])
+      (while (and (< id (intern-capacity)) (< found 0))
+        (let
+          [candidate : String (array-ref intern-pool-slots id)]
+          [candidate-ptr : i64
+            (cast
+              (unsafe
+                (ptr->int (string-data (& candidate))))
+              : i64)]
+          (begin
+            (if (= candidate-ptr needle)
+              (set! found id)
+              unit)
+            (set! id (+ id 1)))))
+      (if (< found 0)
+        plain
+        (InternLookupFound found)))))
+
 ;: Recover the original String for an interned id.
 (define (intern-str [id : i64]) : String
-  (array-ref intern-pool-slots id))
+  (cfg
+    compile-profile
+    (if (or (< id 0) (>= id (array-length intern-pool-slots)))
+      (begin
+        (if (<
+          intern-profile-invalid-str-detail-count
+          (array-length intern-profile-invalid-str-detail-ids))
+          (array-set!
+            intern-profile-invalid-str-detail-ids
+            intern-profile-invalid-str-detail-count
+            id)
+          unit)
+        (set!
+          intern-profile-invalid-str-detail-count
+          (+ intern-profile-invalid-str-detail-count 1))
+        (set!
+          intern-profile-invalid-str-count
+          (+ intern-profile-invalid-str-count 1))
+        (set! intern-profile-invalid-str-last-id id)
+        "<invalid-intern-id>")
+      (array-ref intern-pool-slots id))
+    (array-ref intern-pool-slots id)))
 
 (define (intern-generation) : i64
   intern-reset-generation)
+
+;: Identity of the currently installed intern pool. Compat states may have the
+;: same generation, so generation-aware side caches must include this value.
+(define (intern-pool-data-addr) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data intern-pool-slots) : (Ptr u8))))
+    : i64))
 
 (define (intern-qualified? [id : i64]) : bool
   (array-ref intern-pool-qualified-slots id))
@@ -987,6 +1401,39 @@
 
 (define (intern-leading-dot-id [id : i64]) : i64
   (array-ref intern-pool-leading-dot-id-slots id))
+
+;; Source dotted names retain the suffix after their first dot in the base-id
+;; slot. Each suffix is interned while the source token is first recorded, so
+;; later phases can recover every segment without slicing or interning.
+(define (intern-dotted-tail-id [id : i64]) : i64
+  (let
+    [base-id : i64
+      (if (intern-qualified? id)
+        (intern-qualified-base-id id)
+        id)]
+    (if (< (intern-first-dot base-id) 0)
+      -1
+      (let
+        [tail-id : i64 (array-ref intern-pool-base-id-slots base-id)]
+        (if (= tail-id base-id)
+          -1
+          tail-id)))))
+
+(define (intern-dotted-final-id [id : i64]) : i64
+  (let
+    [current : i64
+      (if (intern-qualified? id)
+        (intern-qualified-base-id id)
+        id)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (let
+          [tail-id : i64 (intern-dotted-tail-id current)]
+          (if (< tail-id 0)
+            (set! done true)
+            (set! current tail-id))))
+      current)))
 
 (define (intern-dotted? [id : i64]) : bool
   (>= (intern-first-dot id) 0))
@@ -1036,6 +1483,123 @@
     (= (intern-qualified? id) qualified)
     (intern-private-string-eq (intern-qualified-module id) module-name)
     (intern-private-string-eq (intern-qualified-base id) base-name)))
+
+(define (intern-generated-name-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (let
+      [source-id : i64 (intern "generated-source-anchor")]
+      [module-id : i64 (intern "generated-module")]
+      [base-id : i64 (intern "generated-base")]
+      [source-len : i64 (intern-pool-len)]
+      [home : i64 (tl_arena_current)]
+      [scratch : i64 (tl_arena_make)]
+      [opaque-id : i64
+        (begin
+          (unsafe
+            (tl_arena_set scratch))
+          (let
+            [temporary : String (intern-substring "xxhygiene/localyy" 2 13)]
+            [id : i64 (intern-generated-name temporary)]
+            (begin
+              (unsafe
+                (tl_arena_set home))
+              (unsafe
+                (tl_arena_destroy scratch))
+              id)))]
+      [opaque-again-id : i64 (intern-generated-name "hygiene/local")]
+      [duplicate-display-id : i64
+        (intern-generated-name
+          (intern-substring "xxgenerated-source-anchorzz" 2 23))]
+      [qualified-id : i64
+        (intern-generated-qualified-name
+          "generated-module/generated-base"
+          module-id
+          base-id)]
+      [dotted-id : i64
+        (intern-generated-dotted-name "generated-base.Variant" base-id)]
+      [ok : bool true]
+      (begin
+        (unless (= (intern-pool-len) source-len) (set! ok false))
+        (unless (= opaque-id (- (intern-capacity) 1)) (set! ok false))
+        (unless (= opaque-again-id (- (intern-capacity) 2)) (set! ok false))
+        (unless
+          (= duplicate-display-id (- (intern-capacity) 3))
+          (set! ok false))
+        (unless (= qualified-id (- (intern-capacity) 4)) (set! ok false))
+        (unless (= dotted-id (- (intern-capacity) 5)) (set! ok false))
+        (unless (not (= opaque-id opaque-again-id)) (set! ok false))
+        (unless
+          (intern-private-string-eq (intern-str opaque-id) "hygiene/local")
+          (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok?
+            opaque-id
+            false
+            -1
+            ""
+            "hygiene/local")
+          (set! ok false))
+        (unless
+          (intern-qualified-metadata-case-ok?
+            qualified-id
+            true
+            16
+            "generated-module"
+            "generated-base")
+          (set! ok false))
+        (unless (= (intern-first-dot dotted-id) 14) (set! ok false))
+        (unless (= (intern-leading-dot-id dotted-id) base-id) (set! ok false))
+        (unless (intern-dotted? dotted-id) (set! ok false))
+        (unless (not (intern-qualified? dotted-id)) (set! ok false))
+        (match (intern-lookup "hygiene/local")
+          [(InternLookupMissing) unit]
+          [(InternLookupFound _) (set! ok false)])
+        (match (intern-lookup "generated-module/generated-base")
+          [(InternLookupMissing) unit]
+          [(InternLookupFound _) (set! ok false)])
+        (match (intern-lookup "generated-base.Variant")
+          [(InternLookupMissing) unit]
+          [(InternLookupFound _) (set! ok false)])
+        (match (intern-lookup "generated-source-anchor")
+          [(InternLookupFound found-id)
+            (unless (= found-id source-id) (set! ok false))]
+          [(InternLookupMissing) (set! ok false)])
+        (match (intern-lookup-preserving-generated-id
+          (intern-str duplicate-display-id))
+          [(InternLookupFound found-id)
+            (unless (= found-id duplicate-display-id) (set! ok false))]
+          [(InternLookupMissing) (set! ok false)])
+        (match (intern-lookup-preserving-generated-id (intern-str source-id))
+          [(InternLookupFound found-id)
+            (unless (= found-id source-id) (set! ok false))]
+          [(InternLookupMissing) (set! ok false)])
+        (intern-reset-to! source-len)
+        (let
+          [after-reset-to-id : i64 (intern-generated-name "after/reset-to")]
+          (begin
+            (unless (= (intern-pool-len) source-len) (set! ok false))
+            (unless
+              (= after-reset-to-id (- (intern-capacity) 1))
+              (set! ok false))
+            (unless
+              (intern-private-string-eq
+                (intern-str after-reset-to-id)
+                "after/reset-to")
+              (set! ok false))))
+        (intern-reset!)
+        (let
+          [after-reset-id : i64 (intern-generated-name "after/reset")]
+          (begin
+            (unless (= (intern-pool-len) 0) (set! ok false))
+            (unless (= after-reset-id (- (intern-capacity) 1)) (set! ok false))
+            (unless
+              (intern-private-string-eq
+                (intern-str after-reset-id)
+                "after/reset")
+              (set! ok false))))
+        (intern-reset!)
+        ok))))
 
 (define (intern-slice-tests-ok?) : bool
   (begin
@@ -1189,10 +1753,31 @@
           (set! ok false))
         (unless (= (intern-first-dot dotted) 5) (set! ok false))
         (unless (intern-dotted? dotted) (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-str (intern-dotted-tail-id dotted))
+            "x")
+          (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-str (intern-dotted-final-id dotted))
+            "x")
+          (set! ok false))
         (unless (= (intern-first-dot nested-dotted) 5) (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-str (intern-dotted-tail-id nested-dotted))
+            "inner.x")
+          (set! ok false))
+        (unless
+          (intern-private-string-eq
+            (intern-str (intern-dotted-final-id nested-dotted))
+            "x")
+          (set! ok false))
         (unless (intern-name-dotted? "point.x") (set! ok false))
         (unless (= (intern-name-first-dot "point.x") 5) (set! ok false))
         (unless (intern-slice-tests-ok?) (set! ok false))
+        (unless (intern-generated-name-tests-ok?) (set! ok false))
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))
         (unless (intern-reset-to-tests-ok?) (set! ok false))
         (unless (intern-persistent-floor-reset-tests-ok?) (set! ok false))

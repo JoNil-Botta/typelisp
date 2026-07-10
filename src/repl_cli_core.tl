@@ -268,21 +268,21 @@
           (string.append
             " "
             (string.append (repl-type-render (ty-node-get inner)) ")"))))]
-    [(AstType.Enum name) (intern-str name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name lifetimes)
       (string.append
         "("
         (string.append
-          (intern-str name)
+          (ast-nominal-name-id-display name)
           (string.append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
             ")")))]
-    [(AstType.Struct name) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name lifetimes)
       (string.append
         "("
         (string.append
-          (intern-str name)
+          (ast-nominal-name-id-display name)
           (string.append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
             ")")))]

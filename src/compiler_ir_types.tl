@@ -5,6 +5,7 @@
 ;; contain typed instructions, and instructions use explicit vars/values.
 (import stdlib.string)
 (import stdlib.array)
+(import compiler_intern as ci)
 (import "compiler_ast_types.tl")
 (import stdlib.str_cat_runtime as str_cat)
 
@@ -60,6 +61,41 @@
   (String String)
   (Bytes String)
   (Unit))
+
+;; Logical function/global/callee names may still hold the parser pool's exact
+;; String even though the compatibility IR variants expose no ID field. Recover
+;; that ID without accepting an equal-but-distinct generated spelling. ABI/link
+;; symbols and control-flow labels deliberately do not use this type.
+(defenum CompilerIrMaybeNameId
+  (No)
+  (Some i64))
+
+(define (compiler-ir-logical-name-id [name : String]) : CompilerIrMaybeNameId
+  (match (ci.intern-lookup name)
+    [(InternLookupFound name-id)
+      (let
+        [canonical : String (intern-str name-id)]
+        [name-ptr : i64
+          (cast
+            (unsafe
+              (ptr->int (string-data (& name))))
+            : i64)]
+        [canonical-ptr : i64
+          (cast
+            (unsafe
+              (ptr->int (string-data (& canonical))))
+            : i64)]
+        (if (= name-ptr canonical-ptr)
+          (CompilerIrMaybeNameId.Some name-id)
+          (CompilerIrMaybeNameId.No)))]
+    [(InternLookupMissing) (CompilerIrMaybeNameId.No)]))
+
+;; Preserve exact source intern-pool storage across optimizer escape clones. A
+;; generated or linker-only spelling without an explicit IR ID remains cloned.
+(define (compiler-ir-clone-logical-name [name : String]) : String
+  (match (compiler-ir-logical-name-id name)
+    [(CompilerIrMaybeNameId.Some name-id) (intern-str name-id)]
+    [(CompilerIrMaybeNameId.No) (clone name)]))
 
 (defenum CompilerIrMaybeValue
   (No)
@@ -430,7 +466,9 @@
   (Array CompilerIrGlobalSeq))
 
 (defenum CompilerIrExtern
-  (Extern String AstType AstExternAbi String AstExternLinkInputList bool))
+  ;; `name-id` is language-level logical identity. `symbol` remains the exact
+  ;; ABI/linker spelling and is intentionally not interned.
+  (Extern i64 String AstType AstExternAbi String AstExternLinkInputList bool))
 
 (defstruct CompilerIrExternSeq
   (slots (Array CompilerIrExtern))
@@ -1829,8 +1867,12 @@
       (compiler-ir-extern-list-fill-array-reversed externs slots (- count 1))
       (CompilerIrExternList.Array (CompilerIrExternSeq slots count)))))
 
-(define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
+(define (compiler-ir-extern-default-id
+  [name-id : i64]
+  [name : String]
+  [ty : AstType]) : CompilerIrExtern
   (CompilerIrExtern.Extern
+    name-id
     name
     ty
     (AstExternAbi.C)
@@ -1838,13 +1880,25 @@
     (ast-extern-link-input-list-new)
     false))
 
+(define (compiler-ir-extern-default [name : String] [ty : AstType]) : CompilerIrExtern
+  (compiler-ir-extern-default-id
+    ;; Compatibility constructor for tests and legacy IR producers. Default
+    ;; runtime names use compiler-ir-extern-default-id with explicit builtins.
+    (match (ci.intern-lookup name)
+      [(InternLookupFound name-id) name-id]
+      [(InternLookupMissing) -1])
+    name
+    ty))
+
 (define (compiler-ir-clone-value [value : CompilerIrValue]) : CompilerIrValue
   (match value
     [(CompilerIrValue.Var id) (CompilerIrValue.Var id)]
-    [(CompilerIrValue.Global name) (CompilerIrValue.Global (clone name))]
+    [(CompilerIrValue.Global name)
+      (CompilerIrValue.Global (compiler-ir-clone-logical-name name))]
     [(CompilerIrValue.GlobalAddr name)
-      (CompilerIrValue.GlobalAddr (clone name))]
-    [(CompilerIrValue.Function name) (CompilerIrValue.Function (clone name))]
+      (CompilerIrValue.GlobalAddr (compiler-ir-clone-logical-name name))]
+    [(CompilerIrValue.Function name)
+      (CompilerIrValue.Function (compiler-ir-clone-logical-name name))]
     [(CompilerIrValue.I64 n) (CompilerIrValue.I64 n)]
     [(CompilerIrValue.F64 n) (CompilerIrValue.F64 n)]
     [(CompilerIrValue.Bool b) (CompilerIrValue.Bool b)]
@@ -2376,7 +2430,7 @@
     [(CompilerIrInstr.Call dst name args ty)
       (CompilerIrInstr.Call
         dst
-        (clone name)
+        (compiler-ir-clone-logical-name name)
         (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]
     [(CompilerIrInstr.CallIndirect dst callee args ty)
@@ -2400,7 +2454,7 @@
             slots)
           (ir-instr-call-cabi-store-result
             (compiler-ir-clone-value base)
-            (clone name)
+            (compiler-ir-clone-logical-name name)
             (compiler-ir-clone-call-args args)
             (compiler-ir-clone-c-abi-return-slots slots))])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
@@ -2425,7 +2479,7 @@
             args
             result)
           (ir-instr-spmd-call
-            (clone callee)
+            (compiler-ir-clone-logical-name callee)
             (compiler-ir-clone-spmd-backend backend)
             lanes
             (compiler-ir-clone-value active-mask)
@@ -2433,12 +2487,12 @@
             (compiler-ir-clone-spmd-call-result result))])]
     [(CompilerIrInstr.TailCall name args ty)
       (CompilerIrInstr.TailCall
-        (clone name)
+        (compiler-ir-clone-logical-name name)
         (compiler-ir-clone-call-args args)
         (compiler-ir-clone-type ty))]
     [(CompilerIrInstr.Store name value ty)
       (CompilerIrInstr.Store
-        (clone name)
+        (compiler-ir-clone-logical-name name)
         (compiler-ir-clone-value value)
         (compiler-ir-clone-type ty))]
     [(CompilerIrInstr.Jump label) (CompilerIrInstr.Jump (clone label))]
@@ -2604,7 +2658,7 @@
   (match func
     [(CompilerIrFunction.Function name params ret vars blocks)
       (CompilerIrFunction.Function
-        (clone name)
+        (compiler-ir-clone-logical-name name)
         (compiler-ir-clone-param-list params)
         (compiler-ir-clone-type ret)
         vars
@@ -2648,7 +2702,7 @@
   (match global
     [(CompilerIrGlobal.Global name ty value)
       (CompilerIrGlobal.Global
-        (clone name)
+        (compiler-ir-clone-logical-name name)
         (compiler-ir-clone-type ty)
         (compiler-ir-clone-value value))]))
 
@@ -2687,9 +2741,10 @@
 
 (define (compiler-ir-clone-extern [extern : CompilerIrExtern]) : CompilerIrExtern
   (match extern
-    [(CompilerIrExtern.Extern name ty abi symbol links provided)
+    [(CompilerIrExtern.Extern name-id name ty abi symbol links provided)
       (CompilerIrExtern.Extern
-        (clone name)
+        name-id
+        (compiler-ir-clone-logical-name name)
         (compiler-ir-clone-type ty)
         (clone abi)
         (clone symbol)
@@ -2852,15 +2907,15 @@
         " "
         (compiler-ir-type-render (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstType.Enum name) (intern-str name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
-    [(AstType.Struct name) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
     [(AstType.Var name) (intern-str name)]
     [(AstType.VarArgs name lifetimes)
@@ -4655,15 +4710,15 @@
         " "
         (compiler-ir-type-name (ast-node-pool-reader-type-get inner))
         ")")]
-    [(AstType.Enum name) (intern-str name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
-    [(AstType.Struct name) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name lifetimes)
       (compiler-ir-nominal-lifetime-render
-        (intern-str name)
+        (ast-nominal-name-id-display name)
         (box-get lifetimes))]
     [(AstType.Var name) (str_cat.str-cat "'" (intern-str name) "'")]
     [(AstType.VarArgs name lifetimes)

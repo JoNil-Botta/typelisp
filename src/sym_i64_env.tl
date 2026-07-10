@@ -11,14 +11,19 @@
 (define (sym-i64-empty) : SymI64Env
   SymI64Nil)
 
+(define (sym-i64-existing-id [name : String]) : i64
+  (match (ci.intern-lookup-preserving-generated-id name)
+    [(InternLookupFound name-id) name-id]
+    [(InternLookupMissing) (panic name)]))
+
 (define (sym-i64-bind [e : SymI64Env] [k : String] [v : i64]) : SymI64Env
-  (sym-i64-bind-id e (ci.intern k) v))
+  (sym-i64-bind-id e (sym-i64-existing-id k) v))
 
 (define (sym-i64-bind-id [e : SymI64Env] [k : i64] [v : i64]) : SymI64Env
   (SymI64Bind k v (box e)))
 
 (define (sym-i64-lookup [e : SymI64Env] [k : String]) : option_i64.Option
-  (sym-i64-lookup-id e (ci.intern k)))
+  (sym-i64-lookup-id e (sym-i64-existing-id k)))
 
 (define (sym-i64-lookup-id [e : SymI64Env] [k : i64]) : option_i64.Option
   (let
@@ -38,7 +43,7 @@
       out)))
 
 (define (sym-i64-lookup-or [e : SymI64Env] [k : String] [fallback : i64]) : i64
-  (sym-i64-lookup-id-or e (ci.intern k) fallback))
+  (sym-i64-lookup-id-or e (sym-i64-existing-id k) fallback))
 
 (define (sym-i64-lookup-id-or [e : SymI64Env] [k : i64] [fallback : i64]) : i64
   (let

@@ -291,8 +291,7 @@
             (string-from-bytes (ptr-cast buf : (Ptr u8)) len)))))))
 
 ;: Copy a byte slice into a fresh active-arena string.
-(define (substring [src : (Ptr u8)] [start : i64] [len : i64])
-  (:export-symbol "tl_substring") : String
+(define (tl-runtime-substring [src : (Ptr u8)] [start : i64] [len : i64]) : String
   (let
     [dst : (MutPtr u8) (runtime-alloc len)]
     (begin
@@ -300,6 +299,12 @@
         (runtime-copy-bytes! dst (ptr-offset src start) len))
       (unsafe
         (string-from-bytes (ptr-cast dst : (Ptr u8)) len)))))
+
+;; Keep the historical source name as the stage0 bootstrap boundary. Older
+;; compilers root `substring` for calls to the fixed `tl_substring` ABI symbol.
+(define (substring [src : (Ptr u8)] [start : i64] [len : i64])
+  (:export-symbol "tl_substring") : String
+  (tl-runtime-substring src start len))
 
 ;: Cached process-lifetime arena used for borrowed string views.
 (define runtime-str-view-arena : i64

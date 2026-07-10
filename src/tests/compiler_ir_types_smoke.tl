@@ -157,7 +157,7 @@
     [(CompilerIrExternList.Cons extern rest)
       (if (= index 0)
         (match extern
-          [(CompilerIrExtern.Extern name _ _ _ _ _) (string.eq name want)])
+          [(CompilerIrExtern.Extern _ name _ _ _ _ _) (string.eq name want)])
         (compiler-ir-smoke-extern-list-name-at? (box-get rest) (- index 1) want))]
     [(CompilerIrExternList.Nil) false]
     [(CompilerIrExternList.Array _) false]))

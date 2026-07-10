@@ -21,7 +21,7 @@
     symbol_map.Map
     symbol_map.Map
     (Array AstDecl)
-    (Array String)))
+    (Array i64)))
 
 (defenum ResultCompilerSymbols
   (Ok CompilerSymbols)
@@ -203,6 +203,46 @@
 (define (compiler-symbol-map-missing-handle) : i64
   -1)
 
+(define (compiler-symbol-existing-name-id [name : String]) : option_i64.Option
+  (match (intern-lookup-preserving-generated-id name)
+    [(InternLookupFound name-id) (option_i64.Some name-id)]
+    [(InternLookupMissing) option_i64.None]))
+
+(define (compiler-symbol-require-existing-name-id [name : String]) : i64
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id) name-id]
+    [(option_i64.None)
+      (io.panic
+        (string.append "symbols: name was not interned while parsing: " name))]))
+
+(define (compiler-symbol-existing-name-id-or [name : String] [fallback : i64]) : i64
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id) name-id]
+    [(option_i64.None) fallback]))
+
+;; A generated public declaration may reuse a spelling that was already
+;; assigned a source id by the parser. Keep its generated identity as the
+;; primary symbol, but also expose the declaration under that source id so
+;; parsed references can resolve it without constructing or interning a name.
+(define (compiler-symbol-source-spelling-id-or-self [name-id : i64]) : i64
+  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+    name-id
+    (match (intern-lookup (intern-str name-id))
+      [(InternLookupFound source-id) source-id]
+      [(InternLookupMissing) name-id])))
+
+(define (compiler-symbol-existing-module-id [module : String]) : i64
+  (if (= (string.string-length module) 0)
+    (compiler-symbol-root-module-id)
+    (compiler-symbol-require-existing-name-id module)))
+
+(define (compiler-symbol-existing-module-id-or
+  [module : String]
+  [fallback : i64]) : i64
+  (if (= (string.string-length module) 0)
+    (compiler-symbol-root-module-id)
+    (compiler-symbol-existing-name-id-or module fallback)))
+
 (define (compiler-symbol-map-lookup-id
   [map : (& map symbol_map.Map)]
   [name-id : i64]) : option_i64.Option
@@ -216,7 +256,10 @@
 (define (compiler-symbol-map-lookup
   [map : (& map symbol_map.Map)]
   [name : String]) : option_i64.Option
-  (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id)
+      (compiler-symbol-map-lookup-id map (compiler-symbol-name-id-key name-id))]
+    [(option_i64.None) option_i64.None]))
 
 (define (compiler-symbol-map-contains-id?
   [map : (& map symbol_map.Map)]
@@ -240,7 +283,11 @@
   [map : (&mut map symbol_map.Map)]
   [name : String]
   [handle : i64]) : unit
-  (compiler-symbol-map-bind-id! map (compiler-symbol-name-key-id name) handle))
+  (compiler-symbol-map-bind-id!
+    map
+    (compiler-symbol-name-id-key
+      (compiler-symbol-require-existing-name-id name))
+    handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
   (let
@@ -272,7 +319,7 @@
     (compiler-symbol-map-empty)
     (compiler-symbol-map-empty)
     (make-array AstDecl decl-count)
-    (make-array String decl-count)))
+    (make-array i64 decl-count)))
 
 (define (compiler-symbols-empty) : CompilerSymbols
   (compiler-symbols-empty-with-decls 0))
@@ -283,21 +330,33 @@
 (define (compiler-symbols-lookup-value
   [symbols : CompilerSymbols]
   [name : String]) : option_i64.Option
-  (compiler-symbols-lookup-value-id symbols (intern name)))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id)
+      (compiler-symbols-lookup-value-id symbols name-id)]
+    [(option_i64.None) option_i64.None]))
 
 (define (compiler-symbols-lookup-value-id
   [symbols : CompilerSymbols]
   [name-id : i64]) : option_i64.Option
   (match symbols
     [(CompilerSymbols values _ _ _ _)
-      (compiler-symbol-map-lookup-id
+      (match (compiler-symbol-map-lookup-id
         (& values)
-        (compiler-symbol-name-id-key name-id))]))
+        (compiler-symbol-name-id-key name-id))
+        [(option_i64.Some handle) (option_i64.Some handle)]
+        [(option_i64.None)
+          (match (compiler-symbol-dotted-variant-key-id name-id)
+            [(option_i64.Some key-id)
+              (compiler-symbol-map-lookup-id (& values) key-id)]
+            [(option_i64.None) option_i64.None])])]))
 
 (define (compiler-symbols-lookup-type
   [symbols : CompilerSymbols]
   [name : String]) : option_i64.Option
-  (compiler-symbols-lookup-type-id symbols (intern name)))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id)
+      (compiler-symbols-lookup-type-id symbols name-id)]
+    [(option_i64.None) option_i64.None]))
 
 (define (compiler-symbols-lookup-type-id
   [symbols : CompilerSymbols]
@@ -311,7 +370,10 @@
 (define (compiler-symbols-lookup-macro
   [symbols : CompilerSymbols]
   [name : String]) : option_i64.Option
-  (compiler-symbols-lookup-macro-id symbols (intern name)))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id)
+      (compiler-symbols-lookup-macro-id symbols name-id)]
+    [(option_i64.None) option_i64.None]))
 
 (define (compiler-symbols-lookup-macro-id
   [symbols : CompilerSymbols]
@@ -339,7 +401,9 @@
   [symbols : CompilerSymbols]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-symbols-lookup-value-id-or symbols (intern name) fallback))
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-value symbols name)
+    fallback))
 
 (define (compiler-symbols-lookup-value-id-or
   [symbols : CompilerSymbols]
@@ -353,7 +417,9 @@
   [symbols : CompilerSymbols]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-symbols-lookup-type-id-or symbols (intern name) fallback))
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-type symbols name)
+    fallback))
 
 (define (compiler-symbols-lookup-type-id-or
   [symbols : CompilerSymbols]
@@ -367,7 +433,9 @@
   [symbols : CompilerSymbols]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-symbols-lookup-macro-id-or symbols (intern name) fallback))
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-macro symbols name)
+    fallback))
 
 (define (compiler-symbols-lookup-macro-id-or
   [symbols : CompilerSymbols]
@@ -381,10 +449,10 @@
   (match symbols
     [(CompilerSymbols _ _ _ decls _) decls]))
 
-(define (compiler-symbols-owner-names [symbols : CompilerSymbols]) : (Array
-    String)
+(define (compiler-symbols-owner-module-ids [symbols : CompilerSymbols]) : (Array
+    i64)
   (match symbols
-    [(CompilerSymbols _ _ _ _ owner-names) owner-names]))
+    [(CompilerSymbols _ _ _ _ owner-module-ids) owner-module-ids]))
 
 (define (compiler-symbols-duplicate-value-message [name : String]) : String
   (string.append "symbols: duplicate value declaration " name))
@@ -409,6 +477,17 @@
 (define (compiler-composite-pair-key-id [left-id : i64] [right-id : i64]) : i64
   (+ (intern-capacity) (+ (* left-id (intern-capacity)) right-id)))
 
+(define (compiler-composite-pair-key-id? [key-id : i64]) : bool
+  (and
+    (>= key-id (intern-capacity))
+    (< key-id (+ (intern-capacity) (* (intern-capacity) (intern-capacity))))))
+
+(define (compiler-composite-pair-left-id [key-id : i64]) : i64
+  (/ (- key-id (intern-capacity)) (intern-capacity)))
+
+(define (compiler-composite-pair-right-id [key-id : i64]) : i64
+  (% (- key-id (intern-capacity)) (intern-capacity)))
+
 (define (compiler-composite-triple-key-id
   [left-id : i64]
   [middle-id : i64]
@@ -420,26 +499,67 @@
       (+ stride stride2)
       (+ (* left-id stride2) (+ (* middle-id stride) right-id)))))
 
+(define (compiler-composite-triple-key-id? [key-id : i64]) : bool
+  (let
+    [stride : i64 (intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [offset : i64 (+ stride stride2)]
+    (and (>= key-id offset) (< key-id (+ offset (* stride2 stride))))))
+
+(define (compiler-composite-triple-left-id [key-id : i64]) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [offset : i64 (+ stride stride2)]
+    (/ (- key-id offset) stride2)))
+
+(define (compiler-composite-triple-middle-id [key-id : i64]) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [offset : i64 (+ stride stride2)]
+    (% (/ (- key-id offset) stride) stride)))
+
+(define (compiler-composite-triple-right-id [key-id : i64]) : i64
+  (let
+    [stride : i64 (intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [offset : i64 (+ stride stride2)]
+    (% (- key-id offset) stride)))
+
 (define (compiler-struct-field-key-id-by-id
   [struct-name-id : i64]
   [field-name-id : i64]) : i64
-  (if (intern-qualified? struct-name-id)
+  (if (compiler-composite-pair-key-id? struct-name-id)
     (compiler-composite-triple-key-id
-      (intern-qualified-module-id struct-name-id)
-      (intern-qualified-base-id struct-name-id)
+      (compiler-composite-pair-left-id struct-name-id)
+      (compiler-composite-pair-right-id struct-name-id)
       field-name-id)
-    (compiler-composite-pair-key-id struct-name-id field-name-id)))
+    (if (>= struct-name-id (intern-capacity))
+      (compiler-composite-pair-key-id struct-name-id field-name-id)
+      (if (intern-qualified? struct-name-id)
+        (compiler-composite-triple-key-id
+          (intern-qualified-module-id struct-name-id)
+          (intern-qualified-base-id struct-name-id)
+          field-name-id)
+        (compiler-composite-pair-key-id struct-name-id field-name-id)))))
 
 (define (compiler-struct-field-key-id
   [struct-name : String]
   [field-name : String]) : i64
-  (compiler-struct-field-key-id-by-id (intern struct-name) (intern field-name)))
+  (compiler-struct-field-key-id-by-id
+    (compiler-symbol-require-existing-name-id struct-name)
+    (compiler-symbol-require-existing-name-id field-name)))
 
 (define (compiler-struct-field-key-id-in-module-by-id
   [module-id : i64]
   [struct-name-id : i64]
   [field-name-id : i64]) : i64
-  (if (or (< module-id 0) (= (string.string-length (intern-str module-id)) 0))
+  (if (or
+    (< module-id 0)
+    (and
+      (< module-id (intern-capacity))
+      (= (string.string-length (intern-str module-id)) 0)))
     (compiler-composite-pair-key-id struct-name-id field-name-id)
     (compiler-composite-triple-key-id module-id struct-name-id field-name-id)))
 
@@ -455,6 +575,40 @@
     name
     (string.append module (string.append "/" name))))
 
+(define (compiler-symbol-root-module-id) : i64
+  -1)
+
+(define (compiler-symbol-root-module-id? [module-id : i64]) : bool
+  (or
+    (< module-id 0)
+    (and
+      (< module-id (intern-capacity))
+      (= (string.string-length (intern-str module-id)) 0))))
+
+(define (compiler-symbol-module-key-by-id [module-id : i64] [name-id : i64]) : String
+  (let
+    [name : String
+      (if (compiler-composite-triple-key-id? name-id)
+        (compiler-symbol-module-key
+          (intern-str (compiler-composite-triple-left-id name-id))
+          (compiler-enum-qualified-variant-name
+            (intern-str (compiler-composite-triple-middle-id name-id))
+            (intern-str (compiler-composite-triple-right-id name-id))))
+        (if (compiler-composite-pair-key-id? name-id)
+          (compiler-enum-qualified-variant-name
+            (intern-str (compiler-composite-pair-left-id name-id))
+            (intern-str (compiler-composite-pair-right-id name-id)))
+          (if (and (>= name-id 0) (< name-id (intern-capacity)))
+            (intern-str name-id)
+            "<structural-symbol>")))]
+    (if (or
+      (compiler-composite-triple-key-id? name-id)
+      (compiler-symbol-root-module-id? module-id))
+      name
+      (if (and (>= module-id 0) (< module-id (intern-capacity)))
+        (compiler-symbol-module-key (intern-str module-id) name)
+        name))))
+
 (define (compiler-enum-qualified-variant-name
   [enum-name : String]
   [variant-name : String]) : String
@@ -463,36 +617,138 @@
 (define (compiler-enum-qualified-variant-name-id
   [enum-name-id : i64]
   [variant-name-id : i64]) : i64
-  (intern
-    (compiler-enum-qualified-variant-name
-      (intern-str enum-name-id)
-      (intern-str variant-name-id))))
+  (compiler-composite-pair-key-id enum-name-id variant-name-id))
 
 (define (compiler-qualified-name [module : String] [name : String]) : CompilerQualifiedName
-  (CompilerQualifiedName (intern module) (intern name)))
+  (CompilerQualifiedName
+    (compiler-symbol-require-existing-name-id module)
+    (compiler-symbol-require-existing-name-id name)))
 
 (define (compiler-symbol-module-key-id-by-id [module-id : i64] [name-id : i64]) : i64
-  (if (or (< module-id 0) (= (string.string-length (intern-str module-id)) 0))
+  (if (compiler-symbol-root-module-id? module-id)
     name-id
-    (compiler-composite-pair-key-id module-id name-id)))
+    (if (compiler-composite-pair-key-id? name-id)
+      (compiler-composite-triple-key-id
+        module-id
+        (compiler-composite-pair-left-id name-id)
+        (compiler-composite-pair-right-id name-id))
+      (compiler-composite-pair-key-id module-id name-id))))
 
 (define (compiler-symbol-module-key-id [module : String] [name : String]) : i64
-  (compiler-symbol-module-key-id-by-id (intern module) (intern name)))
+  (compiler-symbol-module-key-id-by-id
+    (compiler-symbol-require-existing-name-id module)
+    (compiler-symbol-require-existing-name-id name)))
 
 (define (compiler-symbol-module-key-id-by-name-id
   [module : String]
   [name-id : i64]) : i64
-  (compiler-symbol-module-key-id-by-id (intern module) name-id))
-
-(define (compiler-symbol-name-id-key [name-id : i64]) : i64
-  (if (intern-qualified? name-id)
-    (compiler-composite-pair-key-id
-      (intern-qualified-module-id name-id)
-      (intern-qualified-base-id name-id))
+  (compiler-symbol-module-key-id-by-id
+    (compiler-symbol-require-existing-name-id module)
     name-id))
 
+(define (compiler-symbol-name-id-key [name-id : i64]) : i64
+  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+    name-id
+    (if (intern-qualified? name-id)
+      (compiler-composite-pair-key-id
+        (intern-qualified-module-id name-id)
+        (intern-qualified-base-id name-id))
+      name-id)))
+
 (define (compiler-symbol-name-key-id [name : String]) : i64
-  (compiler-symbol-name-id-key (intern name)))
+  (compiler-symbol-name-id-key (compiler-symbol-require-existing-name-id name)))
+
+(define (compiler-symbol-existing-name-slice-id
+  [name : String]
+  [start : i64]
+  [len : i64]) : option_i64.Option
+  (compiler-symbol-existing-name-id (string.substring name start len)))
+
+(define (compiler-symbol-dotted-variant-key-id-in-module
+  [name-id : i64]
+  [default-module-id : i64]) : option_i64.Option
+  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+    option_i64.None
+    (let
+      [module-id : i64
+        (if (intern-qualified? name-id)
+          (intern-qualified-module-id name-id)
+          default-module-id)]
+      [base-id : i64
+        (if (intern-qualified? name-id)
+          (intern-qualified-base-id name-id)
+          name-id)]
+      [base : String (intern-str base-id)]
+      [n : i64 (string.string-length base)]
+      [i : i64 0]
+      [previous-dot : i64 -1]
+      [last-dot : i64 -1]
+      (begin
+        (while (< i n)
+          (begin
+            (if (string.char-eq (string.string-ref base i) '.')
+              (begin
+                (set! previous-dot last-dot)
+                (set! last-dot i))
+              unit)
+            (set! i (+ i 1))))
+        (if (< last-dot 0)
+          option_i64.None
+          (let
+            [module-end : i64
+              (if (intern-qualified? name-id)
+                -1
+                previous-dot)]
+            [enum-start : i64
+              (if (>= module-end 0)
+                (+ module-end 1)
+                0)]
+            [enum-len : i64 (- last-dot enum-start)]
+            [variant-start : i64 (+ last-dot 1)]
+            [variant-len : i64 (- n variant-start)]
+            [resolved-module-id : i64
+              (if (>= module-end 0)
+                (compiler-symbol-existing-name-id-or
+                  (string.substring base 0 module-end)
+                  -2)
+                module-id)]
+            (if (or
+              (< resolved-module-id -1)
+              (or (<= enum-len 0) (<= variant-len 0)))
+              option_i64.None
+              (match (compiler-symbol-existing-name-slice-id
+                base
+                enum-start
+                enum-len)
+                [(option_i64.Some enum-name-id)
+                  (match (compiler-symbol-existing-name-slice-id
+                    base
+                    variant-start
+                    variant-len)
+                    [(option_i64.Some variant-name-id)
+                      (option_i64.Some
+                        (compiler-symbol-module-key-id-by-id
+                          resolved-module-id
+                          (compiler-enum-qualified-variant-name-id
+                            enum-name-id
+                            variant-name-id)))]
+                    [(option_i64.None) option_i64.None])]
+                [(option_i64.None) option_i64.None]))))))))
+
+(define (compiler-symbol-dotted-variant-key-id [name-id : i64]) : option_i64.Option
+  (compiler-symbol-dotted-variant-key-id-in-module
+    name-id
+    (compiler-symbol-root-module-id)))
+
+(define (compiler-symbol-dotted-variant-key-id-in-module-or
+  [name-id : i64]
+  [default-module-id : i64]
+  [fallback : i64]) : i64
+  (match (compiler-symbol-dotted-variant-key-id-in-module
+    name-id
+    default-module-id)
+    [(option_i64.Some key-id) key-id]
+    [(option_i64.None) fallback]))
 
 (define (compiler-qualified-name-key-id [name : CompilerQualifiedName]) : i64
   (match name
@@ -511,6 +767,18 @@
           (compiler-symbol-map-bind! (&mut values) name handle)
           (CompilerSymbols values types macros decls owner-names)))]))
 
+(define (compiler-symbols-add-value-alias-key-id
+  [symbols : CompilerSymbols]
+  [key-id : i64]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (if (compiler-symbol-map-contains-id? (& values) key-id)
+        symbols
+        (begin
+          (compiler-symbol-map-bind-id! (&mut values) key-id handle)
+          (CompilerSymbols values types macros decls owner-names)))]))
+
 (define (compiler-symbols-add-type-alias
   [symbols : CompilerSymbols]
   [name : String]
@@ -521,6 +789,18 @@
         symbols
         (begin
           (compiler-symbol-map-bind! (&mut types) name handle)
+          (CompilerSymbols values types macros decls owner-names)))]))
+
+(define (compiler-symbols-add-type-alias-key-id
+  [symbols : CompilerSymbols]
+  [key-id : i64]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (if (compiler-symbol-map-contains-id? (& types) key-id)
+        symbols
+        (begin
+          (compiler-symbol-map-bind-id! (&mut types) key-id handle)
           (CompilerSymbols values types macros decls owner-names)))]))
 
 (define (compiler-symbols-add-macro-alias
@@ -535,19 +815,33 @@
           (compiler-symbol-map-bind! (&mut macros) name handle)
           (CompilerSymbols values types macros decls owner-names)))]))
 
-(define (compiler-symbols-remove-macro-alias-if-handle
+(define (compiler-symbols-add-macro-alias-key-id
   [symbols : CompilerSymbols]
-  [name : String]
+  [key-id : i64]
   [handle : i64]) : CompilerSymbols
   (match symbols
     [(CompilerSymbols values types macros decls owner-names)
-      (match (compiler-symbol-map-lookup (& macros) name)
+      (if (compiler-symbol-map-contains-id? (& macros) key-id)
+        symbols
+        (begin
+          (compiler-symbol-map-bind-id! (&mut macros) key-id handle)
+          (CompilerSymbols values types macros decls owner-names)))]))
+
+(define (compiler-symbols-remove-macro-alias-if-handle
+  [symbols : CompilerSymbols]
+  [name-id : i64]
+  [handle : i64]) : CompilerSymbols
+  (match symbols
+    [(CompilerSymbols values types macros decls owner-names)
+      (match (compiler-symbol-map-lookup-id
+        (& macros)
+        (compiler-symbol-name-id-key name-id))
         [(option_i64.Some existing)
           (if (= existing handle)
             (if (symbol_map.remove-ok?
               (symbol_map.remove-ref!
                 (&mut macros)
-                (compiler-symbol-name-key-id name)))
+                (compiler-symbol-name-id-key name-id)))
               (CompilerSymbols values types macros decls owner-names)
               symbols)
             symbols)]
@@ -563,6 +857,18 @@
         registries
         (begin
           (compiler-symbol-map-bind! (&mut variants) name handle)
+          (CompilerRegistries variants fields)))]))
+
+(define (compiler-registries-add-variant-alias-key-id
+  [registries : CompilerRegistries]
+  [key-id : i64]
+  [handle : i64]) : CompilerRegistries
+  (match registries
+    [(CompilerRegistries variants fields)
+      (if (compiler-symbol-map-contains-id? (& variants) key-id)
+        registries
+        (begin
+          (compiler-symbol-map-bind-id! (&mut variants) key-id handle)
           (CompilerRegistries variants fields)))]))
 
 (define (compiler-symbols-add-value
@@ -708,11 +1014,12 @@
 (define (compiler-symbols-handle-from-nonroot-owner?
   [symbols : CompilerSymbols]
   [handle : i64]) : bool
-  (match (compiler-symbols-owner-name-at-index
-    symbols
-    (compiler-symbol-handle-index handle))
-    [(CompilerSomeString owner-name) (string.contains-char (& owner-name) '/')]
-    [(CompilerNoString) false]))
+  (not
+    (compiler-symbol-root-module-id?
+      (compiler-symbols-owner-module-id-at-index-or
+        symbols
+        (compiler-symbol-handle-index handle)
+        (compiler-symbol-root-module-id)))))
 
 (define (compiler-symbols-add-root-macro-id
   [symbols : CompilerSymbols]
@@ -775,143 +1082,80 @@
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
-  (let
-    [key-id : i64 (compiler-symbol-module-key-id module name)]
-    [display-name : String (compiler-symbol-module-key module name)]
-    (match (if (string.eq module "")
-      (compiler-symbols-add-root-value-id symbols key-id display-name handle)
-      (compiler-symbols-add-value-id symbols key-id display-name handle))
-      [(ResultCompilerSymbols.Ok next)
-        (if (compiler-symbols-comptime-module? module)
-          (ResultCompilerSymbols.Ok next)
-          (ResultCompilerSymbols.Ok
-            (compiler-symbols-add-value-alias next name handle)))]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
-
-(define (compiler-symbols-comptime-module? [module : String]) : bool
-  (string.eq module "stdlib.comptime"))
-
-;; Symbol declaration collection already receives interned declaration names.
-;; Keep those ids through the common non-root module path so successful adds do
-;; not rehash names or construct a diagnostic spelling that will be discarded.
-(define (compiler-symbols-module-key-display-by-id
-  [module-id : i64]
-  [name-id : i64]) : String
-  (compiler-symbol-module-key (intern-str module-id) (intern-str name-id)))
+  (compiler-symbols-add-value-in-module-id
+    symbols
+    (compiler-symbol-existing-module-id module)
+    (compiler-symbol-require-existing-name-id name)
+    handle))
 
 (define (compiler-symbols-add-value-in-module-id
   [symbols : CompilerSymbols]
   [module-id : i64]
   [name-id : i64]
   [handle : i64]) : ResultCompilerSymbols
-  (if (= (string.string-length (intern-str module-id)) 0)
-    (compiler-symbols-add-value-in-module
-      symbols
-      (intern-str module-id)
-      (intern-str name-id)
-      handle)
-    (let
-      [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-      (match symbols
-        [(CompilerSymbols values types macros decls owner-names)
-          (if (compiler-symbol-map-contains-id? (& values) key-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-value-message
-                (compiler-symbols-module-key-display-by-id module-id name-id)))
-            (if (compiler-symbol-map-contains-id? (& macros) key-id)
-              (ResultCompilerSymbols.Err
-                (compiler-symbols-duplicate-macro-value-message
-                  (compiler-symbols-module-key-display-by-id module-id name-id)))
-              (begin
-                (compiler-symbol-map-bind-id! (&mut values) key-id handle)
-                (let
-                  [next : CompilerSymbols
-                    (CompilerSymbols values types macros decls owner-names)]
-                  (if (compiler-symbols-comptime-module? (intern-str module-id))
-                    (ResultCompilerSymbols.Ok next)
-                    (ResultCompilerSymbols.Ok
-                      (compiler-symbols-add-value-alias
-                        next
-                        (intern-str name-id)
-                        handle)))))))]))))
+  (let
+    [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
+    [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
+    (match (if (compiler-symbol-root-module-id? module-id)
+      (compiler-symbols-add-root-value-id symbols key-id display-name handle)
+      (compiler-symbols-add-value-id symbols key-id display-name handle))
+      [(ResultCompilerSymbols.Ok next)
+        (if (compiler-symbols-comptime-module-id? module-id)
+          (ResultCompilerSymbols.Ok next)
+          (ResultCompilerSymbols.Ok
+            (compiler-symbols-add-value-alias-key-id
+              next
+              (compiler-symbol-name-id-key name-id)
+              handle)))]
+      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
-(define (compiler-symbols-add-type-in-module-id
-  [symbols : CompilerSymbols]
-  [module-id : i64]
-  [name-id : i64]
-  [handle : i64]) : ResultCompilerSymbols
-  (if (= (string.string-length (intern-str module-id)) 0)
-    (compiler-symbols-add-type-in-module
-      symbols
-      (intern-str module-id)
-      (intern-str name-id)
-      handle)
-    (let
-      [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-      (match symbols
-        [(CompilerSymbols values types macros decls owner-names)
-          (if (compiler-symbol-map-contains-id? (& types) key-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-type-message
-                (compiler-symbols-module-key-display-by-id module-id name-id)))
-            (begin
-              (compiler-symbol-map-bind-id! (&mut types) key-id handle)
-              (let
-                [next : CompilerSymbols
-                  (CompilerSymbols values types macros decls owner-names)]
-                (if (compiler-symbols-comptime-module? (intern-str module-id))
-                  (ResultCompilerSymbols.Ok next)
-                  (ResultCompilerSymbols.Ok
-                    (compiler-symbols-add-type-alias
-                      next
-                      (intern-str name-id)
-                      handle))))))]))))
+(define (compiler-symbols-comptime-module? [module : String]) : bool
+  (string.eq module "stdlib.comptime"))
 
-(define (compiler-symbols-add-macro-in-module-id
-  [symbols : CompilerSymbols]
-  [module-id : i64]
-  [name-id : i64]
-  [handle : i64]) : ResultCompilerSymbols
-  (if (= (string.string-length (intern-str module-id)) 0)
-    (compiler-symbols-add-macro-in-module
-      symbols
-      (intern-str module-id)
-      (intern-str name-id)
-      handle)
-    (let
-      [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
-      (match symbols
-        [(CompilerSymbols values types macros decls owner-names)
-          (if (compiler-symbol-map-contains-id? (& macros) key-id)
-            (ResultCompilerSymbols.Err
-              (compiler-symbols-duplicate-macro-message
-                (compiler-symbols-module-key-display-by-id module-id name-id)))
-            (if (compiler-symbol-map-contains-id? (& values) key-id)
-              (ResultCompilerSymbols.Err
-                (compiler-symbols-duplicate-macro-value-message
-                  (compiler-symbols-module-key-display-by-id module-id name-id)))
-              (begin
-                (compiler-symbol-map-bind-id! (&mut macros) key-id handle)
-                (ResultCompilerSymbols.Ok
-                  (compiler-symbols-add-macro-alias
-                    (CompilerSymbols values types macros decls owner-names)
-                    (intern-str name-id)
-                    handle)))))]))))
+(define (compiler-symbols-comptime-module-id? [module-id : i64]) : bool
+  (and
+    (not (compiler-symbol-root-module-id? module-id))
+    (and
+      (< module-id (intern-capacity))
+      (compiler-symbols-comptime-module? (intern-str module-id)))))
 
 (define (compiler-symbols-add-type-in-module
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-type-in-module-id
+    symbols
+    (compiler-symbol-existing-module-id module)
+    (compiler-symbol-require-existing-name-id name)
+    handle))
+
+(define (compiler-symbols-add-type-in-module-id
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]
+  [handle : i64]) : ResultCompilerSymbols
   (let
-    [key-id : i64 (compiler-symbol-module-key-id module name)]
-    [display-name : String (compiler-symbol-module-key module name)]
+    [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
+    [source-name-id : i64 (compiler-symbol-source-spelling-id-or-self name-id)]
+    [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
     (match (compiler-symbols-add-type-id symbols key-id display-name handle)
       [(ResultCompilerSymbols.Ok next)
-        (if (compiler-symbols-comptime-module? module)
-          (ResultCompilerSymbols.Ok next)
-          (ResultCompilerSymbols.Ok
-            (compiler-symbols-add-type-alias next name handle)))]
+        (let
+          [with-source-spelling : CompilerSymbols
+            (if (= source-name-id name-id)
+              next
+              (compiler-symbols-add-type-alias-key-id
+                next
+                (compiler-symbol-module-key-id-by-id module-id source-name-id)
+                handle))]
+          (if (compiler-symbols-comptime-module-id? module-id)
+            (ResultCompilerSymbols.Ok with-source-spelling)
+            (ResultCompilerSymbols.Ok
+              (compiler-symbols-add-type-alias-key-id
+                with-source-spelling
+                (compiler-symbol-name-id-key name-id)
+                handle))))]
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (compiler-symbols-add-variant-value-key-in-module-id
@@ -929,21 +1173,15 @@
             (compiler-symbol-kind-enum-variant))
             (ResultCompilerSymbols.Err
               (compiler-registries-duplicate-variant-message
-                (compiler-symbols-module-key-display-by-id
-                  module-id
-                  display-name-id)))
+                (compiler-symbol-module-key-by-id module-id display-name-id)))
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message
-                (compiler-symbols-module-key-display-by-id
-                  module-id
-                  display-name-id))))]
+                (compiler-symbol-module-key-by-id module-id display-name-id))))]
         [(option_i64.None)
           (if (compiler-symbol-map-contains-id? (& macros) key-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message
-                (compiler-symbols-module-key-display-by-id
-                  module-id
-                  display-name-id)))
+                (compiler-symbol-module-key-by-id module-id display-name-id)))
             (begin
               (compiler-symbol-map-bind-id! (&mut values) key-id handle)
               (ResultCompilerSymbols.Ok
@@ -965,20 +1203,31 @@
             (ResultCompilerSymbols.Ok symbols)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-value-message
-                (compiler-symbols-module-key-display-by-id
-                  module-id
-                  display-name-id))))]
+                (compiler-symbol-module-key-by-id module-id display-name-id))))]
         [(option_i64.None)
           (if (compiler-symbol-map-contains-id? (& macros) key-id)
             (ResultCompilerSymbols.Err
               (compiler-symbols-duplicate-macro-value-message
-                (compiler-symbols-module-key-display-by-id
-                  module-id
-                  display-name-id)))
+                (compiler-symbol-module-key-by-id module-id display-name-id)))
             (begin
               (compiler-symbol-map-bind-id! (&mut values) key-id handle)
               (ResultCompilerSymbols.Ok
                 (CompilerSymbols values types macros decls owner-names))))])]))
+
+(define (compiler-symbols-add-variant-value-in-module
+  [symbols : CompilerSymbols]
+  [module : String]
+  [enum-name : String]
+  [name : String]
+  [enum-index : i64]
+  [variant-index : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-variant-value-in-module-id
+    symbols
+    (compiler-symbol-existing-module-id module)
+    (compiler-symbol-require-existing-name-id enum-name)
+    (compiler-symbol-require-existing-name-id name)
+    enum-index
+    variant-index))
 
 (define (compiler-symbols-add-variant-value-in-module-id
   [symbols : CompilerSymbols]
@@ -992,51 +1241,38 @@
       (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
     [qualified-key-id : i64
       (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
+    [qualified-display-name : String
+      (compiler-symbol-module-key-by-id module-id qualified-name-id)]
     [flat-key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
+    [flat-display-name : String
+      (compiler-symbol-module-key-by-id module-id name-id)]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
         enum-index
         variant-index)]
-    (match (compiler-symbols-add-variant-value-key-in-module-id
+    (match (compiler-symbols-add-variant-value-id
       symbols
       qualified-key-id
-      module-id
-      qualified-name-id
+      qualified-display-name
       handle)
       [(ResultCompilerSymbols.Ok next)
-        (match (compiler-symbols-add-variant-flat-value-alias-key-in-module-id
+        (match (compiler-symbols-add-variant-flat-value-alias-id
           next
           flat-key-id
-          module-id
-          name-id
+          flat-display-name
           handle)
           [(ResultCompilerSymbols.Ok with-flat)
-            (if (compiler-symbols-comptime-module? (intern-str module-id))
+            (if (compiler-symbols-comptime-module-id? module-id)
               (ResultCompilerSymbols.Ok with-flat)
               (ResultCompilerSymbols.Ok
-                (compiler-symbols-add-value-alias
+                (compiler-symbols-add-value-alias-key-id
                   with-flat
-                  (intern-str name-id)
+                  (compiler-symbol-name-id-key name-id)
                   handle)))]
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)])]
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
-
-(define (compiler-symbols-add-variant-value-in-module
-  [symbols : CompilerSymbols]
-  [module : String]
-  [enum-name : String]
-  [name : String]
-  [enum-index : i64]
-  [variant-index : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-variant-value-in-module-id
-    symbols
-    (intern module)
-    (intern enum-name)
-    (intern name)
-    enum-index
-    variant-index))
 
 (define (compiler-symbols-add-variant-values-in-module-id
   [symbols : CompilerSymbols]
@@ -1090,25 +1326,42 @@
   [module : String]
   [name : String]
   [handle : i64]) : ResultCompilerSymbols
+  (compiler-symbols-add-macro-in-module-id
+    symbols
+    (compiler-symbol-existing-module-id module)
+    (compiler-symbol-require-existing-name-id name)
+    handle))
+
+(define (compiler-symbols-add-macro-in-module-id
+  [symbols : CompilerSymbols]
+  [module-id : i64]
+  [name-id : i64]
+  [handle : i64]) : ResultCompilerSymbols
   (let
-    [key-id : i64 (compiler-symbol-module-key-id module name)]
-    [display-name : String (compiler-symbol-module-key module name)]
-    (match (if (string.eq module "")
+    [key-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
+    [display-name : String (compiler-symbol-module-key-by-id module-id name-id)]
+    (match (if (compiler-symbol-root-module-id? module-id)
       (compiler-symbols-add-root-macro-id symbols key-id display-name handle)
       (compiler-symbols-add-macro-id symbols key-id display-name handle))
       [(ResultCompilerSymbols.Ok next)
         (ResultCompilerSymbols.Ok
-          (compiler-symbols-add-macro-alias next name handle))]
+          (compiler-symbols-add-macro-alias-key-id
+            next
+            (compiler-symbol-name-id-key name-id)
+            handle))]
       [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
 
 (define (compiler-symbols-lookup-value-in-module
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : option_i64.Option
-  (compiler-symbols-lookup-value-in-module-id
-    symbols
-    (intern module)
-    (intern name)))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
+    (if (or (= module-id missing) (= name-id missing))
+      option_i64.None
+      (compiler-symbols-lookup-value-in-module-id symbols module-id name-id))))
 
 (define (compiler-symbols-lookup-value-in-module-id
   [symbols : CompilerSymbols]
@@ -1124,10 +1377,13 @@
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : option_i64.Option
-  (compiler-symbols-lookup-type-in-module-id
-    symbols
-    (intern module)
-    (intern name)))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
+    (if (or (= module-id missing) (= name-id missing))
+      option_i64.None
+      (compiler-symbols-lookup-type-in-module-id symbols module-id name-id))))
 
 (define (compiler-symbols-lookup-type-in-module-id
   [symbols : CompilerSymbols]
@@ -1143,10 +1399,13 @@
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : option_i64.Option
-  (compiler-symbols-lookup-macro-in-module-id
-    symbols
-    (intern module)
-    (intern name)))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
+    (if (or (= module-id missing) (= name-id missing))
+      option_i64.None
+      (compiler-symbols-lookup-macro-in-module-id symbols module-id name-id))))
 
 (define (compiler-symbols-lookup-macro-in-module-id
   [symbols : CompilerSymbols]
@@ -1163,10 +1422,8 @@
   [module : String]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-symbols-lookup-value-in-module-id-or
-    symbols
-    (intern module)
-    (intern name)
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-value-in-module symbols module name)
     fallback))
 
 (define (compiler-symbols-lookup-value-in-module-id-or
@@ -1183,10 +1440,8 @@
   [module : String]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-symbols-lookup-type-in-module-id-or
-    symbols
-    (intern module)
-    (intern name)
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-type-in-module symbols module name)
     fallback))
 
 (define (compiler-symbols-lookup-type-in-module-id-or
@@ -1203,10 +1458,8 @@
   [module : String]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-symbols-lookup-macro-in-module-id-or
-    symbols
-    (intern module)
-    (intern name)
+  (compiler-symbols-option-or
+    (compiler-symbols-lookup-macro-in-module symbols module name)
     fallback))
 
 (define (compiler-symbols-lookup-macro-in-module-id-or
@@ -1223,11 +1476,21 @@
   [module : String]
   [type-name : String]
   [field-name : String]) : option_i64.Option
-  (compiler-registries-lookup-field-in-module-id
-    registries
-    (intern module)
-    (intern type-name)
-    (intern field-name)))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [type-name-id : i64 (compiler-symbol-existing-name-id-or type-name missing)]
+    [field-name-id : i64
+      (compiler-symbol-existing-name-id-or field-name missing)]
+    (if (or
+      (= module-id missing)
+      (or (= type-name-id missing) (= field-name-id missing)))
+      option_i64.None
+      (compiler-registries-lookup-field-in-module-id
+        registries
+        module-id
+        type-name-id
+        field-name-id))))
 
 (define (compiler-registries-lookup-field-in-module-id
   [registries : CompilerRegistries]
@@ -1249,11 +1512,12 @@
   [type-name : String]
   [field-name : String]
   [fallback : i64]) : i64
-  (compiler-registries-lookup-field-in-module-id-or
-    registries
-    (intern module)
-    (intern type-name)
-    (intern field-name)
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-field-in-module
+      registries
+      module
+      type-name
+      field-name)
     fallback))
 
 (define (compiler-registries-lookup-field-in-module-id-or
@@ -1274,7 +1538,11 @@
   [symbols : CompilerSymbols]
   [decl : AstDecl]
   [index : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-decl-in-module symbols "" decl index))
+  (compiler-symbols-add-decl-in-module
+    symbols
+    (compiler-symbol-root-module-id)
+    decl
+    index))
 
 (define (compiler-symbols-generated-meta-suffix [meta : AstGeneratedDeclMeta]) : String
   (match meta
@@ -1295,52 +1563,22 @@
 
 (define (compiler-symbols-add-struct-cleanup-in-module
   [symbols : CompilerSymbols]
-  [module : String]
+  [module-id : i64]
   [cleanup : AstStructCleanup]
   [index : i64]) : ResultCompilerSymbols
   (match cleanup
     [(AstStructCleanup.No) (ResultCompilerSymbols.Ok symbols)]
     [(AstStructCleanup.Fn cleanup-name)
-      (compiler-symbols-add-value-in-module
+      (compiler-symbols-add-value-in-module-id
         symbols
-        module
-        (intern-str cleanup-name)
+        module-id
+        cleanup-name
         (compiler-symbol-make-handle
           (compiler-symbol-kind-struct-cleanup)
           index))]))
 
 (define (compiler-symbols-add-enum-cleanup-in-module
   [symbols : CompilerSymbols]
-  [module : String]
-  [cleanup : AstEnumCleanup]
-  [index : i64]) : ResultCompilerSymbols
-  (match cleanup
-    [(AstEnumCleanup.No) (ResultCompilerSymbols.Ok symbols)]
-    [(AstEnumCleanup.Fn cleanup-name)
-      (compiler-symbols-add-value-in-module
-        symbols
-        module
-        (intern-str cleanup-name)
-        (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
-
-(define (compiler-symbols-add-struct-cleanup-in-module-id
-  [symbols : CompilerSymbols]
-  [module-id : i64]
-  [cleanup : AstStructCleanup]
-  [index : i64]) : ResultCompilerSymbols
-  (match cleanup
-    [(AstStructCleanup.No) (ResultCompilerSymbols.Ok symbols)]
-    [(AstStructCleanup.Fn cleanup-name)
-      (compiler-symbols-add-value-in-module-id
-        symbols
-        module-id
-        cleanup-name
-        (compiler-symbol-make-handle
-          (compiler-symbol-kind-struct-cleanup)
-          index))]))
-
-(define (compiler-symbols-add-enum-cleanup-in-module-id
-  [symbols : CompilerSymbols]
   [module-id : i64]
   [cleanup : AstEnumCleanup]
   [index : i64]) : ResultCompilerSymbols
@@ -1353,7 +1591,7 @@
         cleanup-name
         (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
-(define (compiler-symbols-add-decl-in-module-id
+(define (compiler-symbols-add-decl-in-module
   [symbols : CompilerSymbols]
   [module-id : i64]
   [decl : AstDecl]
@@ -1406,7 +1644,7 @@
             index
             0)
             [(ResultCompilerSymbols.Ok with-variants)
-              (compiler-symbols-add-enum-cleanup-in-module-id
+              (compiler-symbols-add-enum-cleanup-in-module
                 with-variants
                 module-id
                 cleanup
@@ -1430,7 +1668,7 @@
             index
             0)
             [(ResultCompilerSymbols.Ok with-variants)
-              (compiler-symbols-add-enum-cleanup-in-module-id
+              (compiler-symbols-add-enum-cleanup-in-module
                 with-variants
                 module-id
                 cleanup
@@ -1452,7 +1690,7 @@
             name
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
             [(ResultCompilerSymbols.Ok with-constructor)
-              (compiler-symbols-add-struct-cleanup-in-module-id
+              (compiler-symbols-add-struct-cleanup-in-module
                 with-constructor
                 module-id
                 cleanup
@@ -1474,7 +1712,7 @@
             name
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
             [(ResultCompilerSymbols.Ok with-constructor)
-              (compiler-symbols-add-struct-cleanup-in-module-id
+              (compiler-symbols-add-struct-cleanup-in-module
                 with-constructor
                 module-id
                 cleanup
@@ -1493,17 +1731,16 @@
         (box-get body-box)
         symbols
         index
-        (intern-str name)
         name)]
     [(AstDecl.Test _ _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (compiler-symbols-add-decl-in-module-id symbols module-id inner index))]
+        (compiler-symbols-add-decl-in-module symbols module-id inner index))]
     [(AstDecl.ComptimeDecl meta template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (match (compiler-symbols-add-decl-in-module-id
+        (match (compiler-symbols-add-decl-in-module
           symbols
           module-id
           template
@@ -1512,13 +1749,6 @@
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err
               (compiler-symbols-with-generated-context message meta))]))]))
-
-(define (compiler-symbols-add-decl-in-module
-  [symbols : CompilerSymbols]
-  [module : String]
-  [decl : AstDecl]
-  [index : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-decl-in-module-id symbols (intern module) decl index))
 
 (define (compiler-symbols-add-local-value-in-module
   [symbols : CompilerSymbols]
@@ -1780,8 +2010,8 @@
 
 (define (compiler-symbols-add-variant-value-aliases
   [symbols : CompilerSymbols]
-  [alias : String]
-  [enum-name : String]
+  [alias-id : i64]
+  [enum-name-id : i64]
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : CompilerSymbols
@@ -1793,151 +2023,154 @@
       (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
         (let
-          [variant-name : String (intern-str name)]
-          [qualified-name : String
-            (compiler-enum-qualified-variant-name enum-name variant-name)]
+          [qualified-name-id : i64
+            (compiler-enum-qualified-variant-name-id enum-name-id name)]
           [handle : i64
             (compiler-registry-make-handle
               (compiler-symbol-kind-enum-variant)
               enum-index
               variant-index)]
           (compiler-symbols-add-variant-value-aliases
-            (compiler-symbols-add-value-alias
-              (compiler-symbols-add-value-alias
+            (compiler-symbols-add-value-alias-key-id
+              (compiler-symbols-add-value-alias-key-id
                 symbols
-                (compiler-symbol-module-key alias variant-name)
+                (compiler-symbol-module-key-id-by-id alias-id name)
                 handle)
-              (compiler-symbol-module-key alias qualified-name)
+              (compiler-symbol-module-key-id-by-id alias-id qualified-name-id)
               handle)
-            alias
-            enum-name
+            alias-id
+            enum-name-id
             variants
             enum-index
             (+ variant-index 1)))])))
 
 (define (compiler-symbols-add-struct-cleanup-alias
   [symbols : CompilerSymbols]
-  [alias : String]
+  [alias-id : i64]
   [cleanup : AstStructCleanup]
   [index : i64]) : CompilerSymbols
   (match cleanup
     [(AstStructCleanup.No) symbols]
     [(AstStructCleanup.Fn cleanup-name)
-      (compiler-symbols-add-value-alias
+      (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str cleanup-name))
+        (compiler-symbol-module-key-id-by-id alias-id cleanup-name)
         (compiler-symbol-make-handle
           (compiler-symbol-kind-struct-cleanup)
           index))]))
 
 (define (compiler-symbols-add-enum-cleanup-alias
   [symbols : CompilerSymbols]
-  [alias : String]
+  [alias-id : i64]
   [cleanup : AstEnumCleanup]
   [index : i64]) : CompilerSymbols
   (match cleanup
     [(AstEnumCleanup.No) symbols]
     [(AstEnumCleanup.Fn cleanup-name)
-      (compiler-symbols-add-value-alias
+      (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str cleanup-name))
+        (compiler-symbol-module-key-id-by-id alias-id cleanup-name)
         (compiler-symbol-make-handle (compiler-symbol-kind-enum-cleanup) index))]))
 
 (define (compiler-symbols-add-decl-alias-in-module
   [symbols : CompilerSymbols]
-  [alias : String]
+  [alias-id : i64]
   [decl : AstDecl]
   [index : i64]) : CompilerSymbols
   (match decl
     [(AstDecl.Def name _ _)
-      (compiler-symbols-add-value-alias
+      (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str name))
+        (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-value-define) index))]
     [(AstDecl.DefFn name _ _ _ _)
-      (compiler-symbols-add-value-alias
+      (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str name))
+        (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle
           (compiler-symbol-kind-function-define)
           index))]
     [(AstDecl.DefMacro name _ _ _)
-      (compiler-symbols-add-macro-alias
+      (compiler-symbols-add-macro-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str name))
+        (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDecl.Extern name _ _ _)
-      (compiler-symbols-add-value-alias
+      (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str name))
+        (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-extern) index))]
     [(AstDecl.DefDispatch name _)
-      (compiler-symbols-add-value-alias
+      (compiler-symbols-add-value-alias-key-id
         symbols
-        (compiler-symbol-module-key alias (intern-str name))
+        (compiler-symbol-module-key-id-by-id alias-id name)
         (compiler-symbol-make-handle (compiler-symbol-kind-defdispatch) index))]
     [(AstDecl.DefEnum name cleanup variants)
       (compiler-symbols-add-enum-cleanup-alias
         (compiler-symbols-add-variant-value-aliases
-          (compiler-symbols-add-type-alias
+          (compiler-symbols-add-type-alias-key-id
             symbols
-            (compiler-symbol-module-key alias (intern-str name))
+            (compiler-symbol-module-key-id-by-id alias-id name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
-          alias
-          (intern-str name)
+          alias-id
+          name
           variants
           index
           0)
-        alias
+        alias-id
         cleanup
         index)]
     [(AstDecl.DefEnumLifetimes name _ cleanup variants)
       (compiler-symbols-add-enum-cleanup-alias
         (compiler-symbols-add-variant-value-aliases
-          (compiler-symbols-add-type-alias
+          (compiler-symbols-add-type-alias-key-id
             symbols
-            (compiler-symbol-module-key alias (intern-str name))
+            (compiler-symbol-module-key-id-by-id alias-id name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defenum) index))
-          alias
-          (intern-str name)
+          alias-id
+          name
           variants
           index
           0)
-        alias
+        alias-id
         cleanup
         index)]
     [(AstDecl.DefStruct name _ cleanup _)
       (compiler-symbols-add-struct-cleanup-alias
-        (compiler-symbols-add-value-alias
-          (compiler-symbols-add-type-alias
+        (compiler-symbols-add-value-alias-key-id
+          (compiler-symbols-add-type-alias-key-id
             symbols
-            (compiler-symbol-module-key alias (intern-str name))
+            (compiler-symbol-module-key-id-by-id alias-id name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-          (compiler-symbol-module-key alias (intern-str name))
+          (compiler-symbol-module-key-id-by-id alias-id name)
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-        alias
+        alias-id
         cleanup
         index)]
     [(AstDecl.DefStructLifetimes name _ _ cleanup _)
       (compiler-symbols-add-struct-cleanup-alias
-        (compiler-symbols-add-value-alias
-          (compiler-symbols-add-type-alias
+        (compiler-symbols-add-value-alias-key-id
+          (compiler-symbols-add-type-alias-key-id
             symbols
-            (compiler-symbol-module-key alias (intern-str name))
+            (compiler-symbol-module-key-id-by-id alias-id name)
             (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-          (compiler-symbol-module-key alias (intern-str name))
+          (compiler-symbol-module-key-id-by-id alias-id name)
           (compiler-symbol-make-handle (compiler-symbol-kind-defstruct) index))
-        alias
+        alias-id
         cleanup
         index)]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (compiler-symbols-add-decl-alias-in-module symbols alias template index))]
+        (compiler-symbols-add-decl-alias-in-module
+          symbols
+          alias-id
+          template
+          index))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (compiler-symbols-add-decl-alias-in-module symbols alias inner index))]
+        (compiler-symbols-add-decl-alias-in-module symbols alias-id inner index))]
     [(AstDecl.ModuleBody _ _) symbols]
     [_ symbols]))
 
@@ -1949,7 +2182,7 @@
     [(AstDecl.DefMacro name _ _ _)
       (compiler-symbols-remove-macro-alias-if-handle
         symbols
-        (intern-str name)
+        name
         (compiler-symbol-make-handle (compiler-symbol-kind-defmacro) index))]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
@@ -2017,7 +2250,7 @@
 (define (compiler-symbols-macro-module-set [decls : AstDeclList]) : sym_i64_env.SymI64Env
   (compiler-symbols-macro-module-set-list
     decls
-    cbi.compiler-builtin-id-fix-empty
+    (compiler-symbol-root-module-id)
     (sym_i64_env.sym-i64-empty)))
 
 ;; An explicit `module ... as alias` import resolves dotted uses through the
@@ -2082,7 +2315,7 @@
     [num-modules : i64 0]
     [num-entries : i64 0]
     [real-index : i64 0]
-    [cur-module : i64 cbi.compiler-builtin-id-fix-empty]
+    [cur-module : i64 (compiler-symbol-root-module-id)]
     [position : i64 0]
     (begin
       (while (< position decl-count)
@@ -2173,7 +2406,7 @@
   [decls : AstDeclList]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
-  [alias : String]) : CompilerSymbols
+  [alias-id : i64]) : CompilerSymbols
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
@@ -2188,7 +2421,7 @@
                 cur-symbols
                 (compiler-symbols-add-decl-alias-in-module
                   cur-symbols
-                  alias
+                  alias-id
                   (array-ref slots (+ decl-offset (array-ref ent-pos k)))
                   (array-ref ent-ridx k)))
               (set! k (array-ref ent-next k))))
@@ -2201,15 +2434,22 @@
     importer-module
     alias))
 
+(define (compiler-symbols-import-alias-key-id
+  [importer-module : i64]
+  [alias : i64]) : i64
+  (if (= alias cbi.compiler-builtin-id-fix-empty)
+    importer-module
+    alias))
+
 (define (build-compiler-symbol-aliases-list
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
-  [module : String]
+  [module-id : i64]
   [macro-modules : sym_i64_env.SymI64Env]) : CompilerSymbols
   (let
     [cur-symbols : CompilerSymbols symbols]
-    [cur-module : String module]
+    [cur-module-id : i64 module-id]
     [index : i64 0]
     [decl-count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
@@ -2230,7 +2470,7 @@
                     (AstMaybeImportAlias.Some alias)
                     _))
                 (let
-                  [target-module-id : i64 (intern target-module)]
+                  [target-module-id : i64 target-module]
                   [target-has-macros : bool
                     (sym_i64_env.sym-i64-contains-id
                       macro-modules
@@ -2243,20 +2483,19 @@
                         decl-index
                         target-module-id)
                       cur-symbols)]
-                  (if (string.eq alias "")
+                  (if (= alias cbi.compiler-builtin-id-fix-empty)
                     (compiler-symbols-add-module-aliases-indexed
                       without-bare-macros
                       all-decls
                       decl-index
                       target-module-id
-                      (compiler-symbols-import-alias-key cur-module alias))
+                      cur-module-id)
                     without-bare-macros))]
               [_ cur-symbols])]
           (begin
             (set! cur-symbols next-symbols)
             (match decl
-              [(AstDecl.Module next-module)
-                (set! cur-module (intern-str next-module))]
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_ unit])
             (set! index (+ index 1)))))
       cur-symbols)))
@@ -2270,8 +2509,7 @@
     decls
     symbols
     index
-    ""
-    (intern "")))
+    (compiler-symbol-root-module-id)))
 
 (define (compiler-symbol-decl-counts-for-index? [decl : AstDecl]) : bool
   (match decl
@@ -2359,11 +2597,10 @@
       (string.append " (duplicate in " (string.append duplicate-path ")"))
       "")))
 
-(define (compiler-symbols-duplicate-value-message-with-paths-id
+(define (compiler-symbols-duplicate-value-message-with-paths
   [symbols : CompilerSymbols]
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
-  [module : String]
   [module-id : i64]
   [name-id : i64]
   [_index : i64]
@@ -2371,7 +2608,7 @@
   (match (compiler-symbols-lookup-value-in-module-id symbols module-id name-id)
     [(option_i64.Some existing)
       (if (and
-        (string.eq module "")
+        (compiler-symbol-root-module-id? module-id)
         (compiler-symbols-handle-from-nonroot-owner? symbols existing))
         CompilerNoString
         (let
@@ -2382,77 +2619,54 @@
               (compiler-symbol-handle-index existing)
               0)]
           [display-name : String
-            (compiler-symbols-module-key-display-by-id module-id name-id)]
+            (compiler-symbol-module-key-by-id module-id name-id)]
           (CompilerSomeString
             (string.append
               (compiler-symbols-duplicate-value-message display-name)
               (compiler-symbols-duplicate-location-suffix first-path decl-path)))))]
     [(option_i64.None) CompilerNoString]))
 
-(define (compiler-symbols-duplicate-value-message-with-paths
+(define (compiler-symbols-duplicate-value-message-for-decl-with-paths
   [symbols : CompilerSymbols]
   [all-decls : AstDeclList]
   [all-paths : AstDeclPathList]
-  [module : String]
-  [name : String]
-  [index : i64]
-  [decl-path : String]) : CompilerMaybeString
-  (compiler-symbols-duplicate-value-message-with-paths-id
-    symbols
-    all-decls
-    all-paths
-    module
-    (intern module)
-    (intern name)
-    index
-    decl-path))
-
-(define (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
-  [symbols : CompilerSymbols]
-  [all-decls : AstDeclList]
-  [all-paths : AstDeclPathList]
-  [module : String]
   [module-id : i64]
   [decl : AstDecl]
   [index : i64]
   [decl-path : String]) : CompilerMaybeString
   (match decl
     [(AstDecl.Def name _ _)
-      (compiler-symbols-duplicate-value-message-with-paths-id
+      (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
         all-paths
-        module
         module-id
         name
         index
         decl-path)]
     [(AstDecl.DefFn name _ _ _ _)
-      (compiler-symbols-duplicate-value-message-with-paths-id
+      (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
         all-paths
-        module
         module-id
         name
         index
         decl-path)]
     [(AstDecl.Extern name _ _ _)
-      (compiler-symbols-duplicate-value-message-with-paths-id
+      (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
         all-paths
-        module
         module-id
         name
         index
         decl-path)]
     [(AstDecl.DefDispatch name _)
-      (compiler-symbols-duplicate-value-message-with-paths-id
+      (compiler-symbols-duplicate-value-message-with-paths
         symbols
         all-decls
         all-paths
-        module
         module-id
         name
         index
@@ -2460,11 +2674,10 @@
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
+        (compiler-symbols-duplicate-value-message-for-decl-with-paths
           symbols
           all-decls
           all-paths
-          module
           module-id
           inner
           index
@@ -2472,34 +2685,15 @@
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
+        (compiler-symbols-duplicate-value-message-for-decl-with-paths
           symbols
           all-decls
           all-paths
-          module
           module-id
           template
           index
           decl-path))]
     [_ CompilerNoString]))
-
-(define (compiler-symbols-duplicate-value-message-for-decl-with-paths
-  [symbols : CompilerSymbols]
-  [all-decls : AstDeclList]
-  [all-paths : AstDeclPathList]
-  [module : String]
-  [decl : AstDecl]
-  [index : i64]
-  [decl-path : String]) : CompilerMaybeString
-  (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
-    symbols
-    all-decls
-    all-paths
-    module
-    (intern module)
-    decl
-    index
-    decl-path))
 
 (define (compiler-symbol-indexed-decl [decl : AstDecl]) : AstDecl
   (match decl
@@ -2513,51 +2707,101 @@
         inner)]
     [_ decl]))
 
-(define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module : String]) : String
+(define (compiler-symbol-owner-name-for-decl [decl : AstDecl] [module-id : i64]) : String
+  (match decl
+    [(AstDecl.Def name _ _) (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefFn name _ _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.Extern name _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefMacro name _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefDispatch name _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefEnum name _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefStruct name _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
+      (compiler-symbol-module-key-by-id module-id name)]
+    [_ ""]))
+
+(define (compiler-symbol-owner-id-for-decl [decl : AstDecl] [module-id : i64]) : i64
   (match decl
     [(AstDecl.Def name _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefFn name _ _ _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.Extern name _ _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefMacro name _ _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefDispatch name _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefEnum name _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefEnumLifetimes name _ _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefStruct name _ _ _)
-      (compiler-symbol-module-key module (intern-str name))]
+      (compiler-symbol-module-key-id-by-id module-id name)]
     [(AstDecl.DefStructLifetimes name _ _ _ _)
-      (compiler-symbol-module-key module (intern-str name))]
-    [_ ""]))
+      (compiler-symbol-module-key-id-by-id module-id name)]
+    [_ -1]))
 
 (define (compiler-symbols-index-decl!
   [symbols : CompilerSymbols]
   [decl : AstDecl]
   [index : i64]
-  [module : String]) : unit
+  [module-id : i64]) : unit
   (let
     [indexed : AstDecl (compiler-symbol-indexed-decl decl)]
     (begin
       (array-set! (compiler-symbols-decls symbols) index indexed)
-      (array-set!
-        (compiler-symbols-owner-names symbols)
-        index
-        (compiler-symbol-owner-name-for-decl indexed module)))))
+      (array-set! (compiler-symbols-owner-module-ids symbols) index module-id))))
+
+(define (compiler-symbols-owner-module-id-at-index-or
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [fallback : i64]) : i64
+  (let
+    [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    (if (or (< target 0) (>= target (array-length owner-module-ids)))
+      fallback
+      (array-ref owner-module-ids target))))
+
+(define (compiler-symbols-owner-id-at-index-or
+  [symbols : CompilerSymbols]
+  [target : i64]
+  [fallback : i64]) : i64
+  (let
+    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+    [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    (if (or (< target 0) (>= target (array-length owner-module-ids)))
+      fallback
+      (let
+        [owner-id : i64
+          (compiler-symbol-owner-id-for-decl
+            (array-ref decls target)
+            (array-ref owner-module-ids target))]
+        (if (< owner-id 0)
+          fallback
+          owner-id)))))
 
 (define (compiler-symbols-owner-name-at-index
   [symbols : CompilerSymbols]
   [target : i64]) : CompilerMaybeString
   (let
-    [owner-names : (Array String) (compiler-symbols-owner-names symbols)]
-    (if (or (< target 0) (>= target (array-length owner-names)))
+    [decls : (Array AstDecl) (compiler-symbols-decls symbols)]
+    [owner-module-ids : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    (if (or (< target 0) (>= target (array-length owner-module-ids)))
       (CompilerNoString)
       (let
-        [owner-name : String (array-ref owner-names target)]
+        [owner-name : String
+          (compiler-symbol-owner-name-for-decl
+            (array-ref decls target)
+            (array-ref owner-module-ids target))]
         (if (> (string.string-length owner-name) 0)
           (CompilerSomeString owner-name)
           (CompilerNoString))))))
@@ -2567,7 +2811,6 @@
   [decls : AstDeclList]
   [symbols : CompilerSymbols]
   [index : i64]
-  [module : String]
   [module-id : i64]) : ResultCompilerSymbols
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) (ResultCompilerSymbols.Ok symbols)]
@@ -2581,7 +2824,6 @@
               rest
               symbols
               index
-              module
               module-id)]
           [(AstDecl.IncludeStr _ _)
             (build-compiler-symbol-list-in-module
@@ -2589,7 +2831,6 @@
               rest
               symbols
               index
-              module
               module-id)]
           [(AstDecl.IncludeBin _ _)
             (build-compiler-symbol-list-in-module
@@ -2597,18 +2838,14 @@
               rest
               symbols
               index
-              module
               module-id)]
           [(AstDecl.Module next-module)
-            (let
-              [next-module-name : String (intern-str next-module)]
-              (build-compiler-symbol-list-in-module
-                all-decls
-                rest
-                symbols
-                index
-                next-module-name
-                next-module))]
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              next-module)]
           [(AstDecl.ModuleBody name body-box)
             (let
               [body : AstDeclList (box-get body-box)]
@@ -2618,7 +2855,6 @@
                 body
                 symbols
                 index
-                (intern-str name)
                 name)
                 [(ResultCompilerSymbols.Ok body-symbols)
                   (build-compiler-symbol-list-in-module
@@ -2626,7 +2862,6 @@
                     rest
                     body-symbols
                     (+ index body-count)
-                    module
                     module-id)]
                 [(ResultCompilerSymbols.Err message)
                   (ResultCompilerSymbols.Err message)]))]
@@ -2636,12 +2871,11 @@
               rest
               symbols
               index
-              module
               module-id)]
           [_
             (begin
-              (compiler-symbols-index-decl! symbols decl index module)
-              (match (compiler-symbols-add-decl-in-module-id
+              (compiler-symbols-index-decl! symbols decl index module-id)
+              (match (compiler-symbols-add-decl-in-module
                 symbols
                 module-id
                 decl
@@ -2652,7 +2886,6 @@
                     rest
                     next-symbols
                     (+ index 1)
-                    module
                     module-id)]
                 [(ResultCompilerSymbols.Err message)
                   (ResultCompilerSymbols.Err message)]))]))]))
@@ -2664,14 +2897,12 @@
   [paths : AstDeclPathList]
   [symbols : CompilerSymbols]
   [index : i64]
-  [module : String]
   [module-id : i64]) : ResultCompilerSymbols
   (let
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-symbols : CompilerSymbols symbols]
     [cur-index : i64 index]
-    [cur-module : String module]
     [cur-module-id : i64 module-id]
     [result : ResultCompilerSymbols
       (ResultCompilerSymbols.Err "symbols: internal decls walk")]
@@ -2714,7 +2945,6 @@
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths)
-                    (set! cur-module (intern-str next-module))
                     (set! cur-module-id next-module))]
                 [(AstDecl.ModuleBody name body-box)
                   (let
@@ -2729,7 +2959,6 @@
                       body-paths
                       cur-symbols
                       cur-index
-                      (intern-str name)
                       name)
                       [(ResultCompilerSymbols.Ok next-symbols)
                         (begin
@@ -2746,11 +2975,10 @@
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]
                 [_
-                  (match (compiler-symbols-duplicate-value-message-for-decl-with-paths-id
+                  (match (compiler-symbols-duplicate-value-message-for-decl-with-paths
                     cur-symbols
                     all-decls
                     all-paths
-                    cur-module
                     cur-module-id
                     decl
                     cur-index
@@ -2767,8 +2995,8 @@
                           cur-symbols
                           decl
                           cur-index
-                          cur-module)
-                        (match (compiler-symbols-add-decl-in-module-id
+                          cur-module-id)
+                        (match (compiler-symbols-add-decl-in-module
                           cur-symbols
                           cur-module-id
                           decl
@@ -2804,7 +3032,7 @@
                   decls
                   decls
                   symbols
-                  ""
+                  (compiler-symbol-root-module-id)
                   macro-modules)]
               (ResultCompilerSymbols.Ok aliased))]
           [(ResultCompilerSymbols.Err message)
@@ -2825,15 +3053,14 @@
           (compiler-symbols-empty-with-decls
             (compiler-decl-list-index-count decls))
           0
-          ""
-          (intern ""))
+          (compiler-symbol-root-module-id))
           [(ResultCompilerSymbols.Ok symbols)
             (ResultCompilerSymbols.Ok
               (build-compiler-symbol-aliases-list
                 decls
                 decls
                 symbols
-                ""
+                (compiler-symbol-root-module-id)
                 (compiler-symbols-macro-module-set decls)))]
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
@@ -2858,16 +3085,25 @@
 (define (compiler-registries-lookup-variant
   [registries : CompilerRegistries]
   [name : String]) : option_i64.Option
-  (compiler-registries-lookup-variant-id registries (intern name)))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id)
+      (compiler-registries-lookup-variant-id registries name-id)]
+    [(option_i64.None) option_i64.None]))
 
 (define (compiler-registries-lookup-variant-id
   [registries : CompilerRegistries]
   [name-id : i64]) : option_i64.Option
   (match registries
     [(CompilerRegistries variants _)
-      (compiler-symbol-map-lookup-id
+      (match (compiler-symbol-map-lookup-id
         (& variants)
-        (compiler-symbol-name-id-key name-id))]))
+        (compiler-symbol-name-id-key name-id))
+        [(option_i64.Some handle) (option_i64.Some handle)]
+        [(option_i64.None)
+          (match (compiler-symbol-dotted-variant-key-id name-id)
+            [(option_i64.Some key-id)
+              (compiler-symbol-map-lookup-id (& variants) key-id)]
+            [(option_i64.None) option_i64.None])])]))
 
 (define (compiler-registries-lookup-variant-key-id
   [registries : CompilerRegistries]
@@ -2880,10 +3116,18 @@
   [registries : CompilerRegistries]
   [struct-name : String]
   [field-name : String]) : option_i64.Option
-  (compiler-registries-lookup-struct-field-id
-    registries
-    (intern struct-name)
-    (intern field-name)))
+  (let
+    [missing : i64 -1]
+    [struct-name-id : i64
+      (compiler-symbol-existing-name-id-or struct-name missing)]
+    [field-name-id : i64
+      (compiler-symbol-existing-name-id-or field-name missing)]
+    (if (or (= struct-name-id missing) (= field-name-id missing))
+      option_i64.None
+      (compiler-registries-lookup-struct-field-id
+        registries
+        struct-name-id
+        field-name-id))))
 
 (define (compiler-registries-lookup-struct-field-id
   [registries : CompilerRegistries]
@@ -2899,7 +3143,9 @@
   [registries : CompilerRegistries]
   [name : String]
   [fallback : i64]) : i64
-  (compiler-registries-lookup-variant-id-or registries (intern name) fallback))
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-variant registries name)
+    fallback))
 
 (define (compiler-registries-lookup-variant-id-or
   [registries : CompilerRegistries]
@@ -2922,10 +3168,8 @@
   [struct-name : String]
   [field-name : String]
   [fallback : i64]) : i64
-  (compiler-registries-lookup-struct-field-id-or
-    registries
-    (intern struct-name)
-    (intern field-name)
+  (compiler-symbols-option-or
+    (compiler-registries-lookup-struct-field registries struct-name field-name)
     fallback))
 
 (define (compiler-registries-lookup-struct-field-id-or
@@ -2967,13 +3211,31 @@
   [name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
+  (compiler-registries-add-variant-in-module-id
+    registries
+    (compiler-symbol-existing-module-id module)
+    (compiler-symbol-require-existing-name-id enum-name)
+    (compiler-symbol-require-existing-name-id name)
+    enum-index
+    variant-index))
+
+(define (compiler-registries-add-variant-in-module-id
+  [registries : CompilerRegistries]
+  [module-id : i64]
+  [enum-name-id : i64]
+  [name-id : i64]
+  [enum-index : i64]
+  [variant-index : i64]) : ResultCompilerRegistries
   (let
-    [qualified-name : String
-      (compiler-enum-qualified-variant-name enum-name name)]
+    [source-enum-name-id : i64
+      (compiler-symbol-source-spelling-id-or-self enum-name-id)]
+    [source-name-id : i64 (compiler-symbol-source-spelling-id-or-self name-id)]
+    [qualified-name-id : i64
+      (compiler-enum-qualified-variant-name-id enum-name-id name-id)]
     [qualified-key-id : i64
-      (compiler-symbol-module-key-id module qualified-name)]
+      (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
     [qualified-display-name : String
-      (compiler-symbol-module-key module qualified-name)]
+      (compiler-symbol-module-key-by-id module-id qualified-name-id)]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
@@ -2991,12 +3253,36 @@
               qualified-key-id
               handle)
             (ResultCompilerRegistries.Ok
-              (compiler-registries-add-variant-alias
-                (compiler-registries-add-variant-alias
-                  (CompilerRegistries variants fields)
-                  (compiler-symbol-module-key module name)
+              (compiler-registries-add-variant-alias-key-id
+                (compiler-registries-add-variant-alias-key-id
+                  (compiler-registries-add-variant-alias-key-id
+                    (compiler-registries-add-variant-alias-key-id
+                      (compiler-registries-add-variant-alias-key-id
+                        (compiler-registries-add-variant-alias-key-id
+                          (CompilerRegistries variants fields)
+                          (compiler-symbol-module-key-id-by-id
+                            module-id
+                            name-id)
+                          handle)
+                        (compiler-symbol-name-id-key name-id)
+                        handle)
+                      (compiler-symbol-module-key-id-by-id
+                        module-id
+                        source-name-id)
+                      handle)
+                    (compiler-symbol-name-id-key source-name-id)
+                    handle)
+                  (compiler-symbol-module-key-id-by-id
+                    module-id
+                    (compiler-enum-qualified-variant-name-id
+                      enum-name-id
+                      source-name-id))
                   handle)
-                name
+                (compiler-symbol-module-key-id-by-id
+                  module-id
+                  (compiler-enum-qualified-variant-name-id
+                    source-enum-name-id
+                    source-name-id))
                 handle))))])))
 
 (define (compiler-registries-add-field
@@ -3007,8 +3293,8 @@
   [field-index : i64]) : ResultCompilerRegistries
   (compiler-registries-add-field-id
     registries
-    (intern struct-name)
-    (intern field-name)
+    (compiler-symbol-require-existing-name-id struct-name)
+    (compiler-symbol-require-existing-name-id field-name)
     struct-name
     field-name
     struct-index
@@ -3040,15 +3326,50 @@
                 field-index))
             (ResultCompilerRegistries.Ok (CompilerRegistries variants fields)))))]))
 
+(define (compiler-registries-add-field-in-module-id
+  [registries : CompilerRegistries]
+  [module-id : i64]
+  [struct-name-id : i64]
+  [field-name-id : i64]
+  [struct-index : i64]
+  [field-index : i64]) : ResultCompilerRegistries
+  (match registries
+    [(CompilerRegistries variants fields)
+      (let
+        [key-id : i64
+          (compiler-struct-field-key-id-in-module-by-id
+            module-id
+            struct-name-id
+            field-name-id)]
+        (if (compiler-symbol-map-contains-id? (& fields) key-id)
+          (ResultCompilerRegistries.Err
+            (compiler-registries-duplicate-field-message
+              (compiler-symbol-module-key-by-id module-id struct-name-id)
+              (intern-str field-name-id)))
+          (begin
+            (compiler-symbol-map-bind-id!
+              (&mut fields)
+              key-id
+              (compiler-registry-make-handle
+                (compiler-symbol-kind-struct-field)
+                struct-index
+                field-index))
+            (ResultCompilerRegistries.Ok (CompilerRegistries variants fields)))))]))
+
 (define (compiler-registries-add-field-alias
   [registries : CompilerRegistries]
-  [struct-name : String]
-  [field-name : String]
+  [module-id : i64]
+  [struct-name-id : i64]
+  [field-name-id : i64]
   [handle : i64]) : CompilerRegistries
   (match registries
     [(CompilerRegistries variants fields)
       (let
-        [key-id : i64 (compiler-struct-field-key-id struct-name field-name)]
+        [key-id : i64
+          (compiler-struct-field-key-id-in-module-by-id
+            module-id
+            struct-name-id
+            field-name-id)]
         (if (compiler-symbol-map-contains-id? (& fields) key-id)
           registries
           (begin
@@ -3057,8 +3378,8 @@
 
 (define (compiler-registries-add-variant-aliases-list
   [registries : CompilerRegistries]
-  [alias : String]
-  [enum-name : String]
+  [alias-id : i64]
+  [enum-name-id : i64]
   [variants : AstVariantDefList]
   [enum-index : i64]
   [variant-index : i64]) : CompilerRegistries
@@ -3070,31 +3391,31 @@
       (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
         (let
-          [variant-name : String (intern-str name)]
-          [qualified-name : String
-            (compiler-enum-qualified-variant-name enum-name variant-name)]
+          [qualified-name-id : i64
+            (compiler-enum-qualified-variant-name-id enum-name-id name)]
           [handle : i64
             (compiler-registry-make-handle
               (compiler-symbol-kind-enum-variant)
               enum-index
               variant-index)]
           (compiler-registries-add-variant-aliases-list
-            (compiler-registries-add-variant-alias
-              (compiler-registries-add-variant-alias
+            (compiler-registries-add-variant-alias-key-id
+              (compiler-registries-add-variant-alias-key-id
                 registries
-                (compiler-symbol-module-key alias variant-name)
+                (compiler-symbol-module-key-id-by-id alias-id name)
                 handle)
-              (compiler-symbol-module-key alias qualified-name)
+              (compiler-symbol-module-key-id-by-id alias-id qualified-name-id)
               handle)
-            alias
-            enum-name
+            alias-id
+            enum-name-id
             variants
             enum-index
             (+ variant-index 1)))])))
 
 (define (compiler-registries-add-field-aliases-list
   [registries : CompilerRegistries]
-  [struct-name : String]
+  [module-id : i64]
+  [struct-name-id : i64]
   [fields : AstFieldDefList]
   [struct-index : i64]
   [field-index : i64]) : CompilerRegistries
@@ -3108,50 +3429,54 @@
         (compiler-registries-add-field-aliases-list
           (compiler-registries-add-field-alias
             registries
-            struct-name
-            (intern-str name)
+            module-id
+            struct-name-id
+            name
             (compiler-registry-make-handle
               (compiler-symbol-kind-struct-field)
               struct-index
               field-index))
-          struct-name
+          module-id
+          struct-name-id
           fields
           struct-index
           (+ field-index 1))])))
 
 (define (compiler-registries-add-decl-alias-in-module
   [registries : CompilerRegistries]
-  [alias : String]
+  [alias-id : i64]
   [decl : AstDecl]
   [index : i64]) : CompilerRegistries
   (match decl
     [(AstDecl.DefEnum name _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
-        alias
-        (intern-str name)
+        alias-id
+        name
         variants
         index
         0)]
     [(AstDecl.DefEnumLifetimes name _ _ variants)
       (compiler-registries-add-variant-aliases-list
         registries
-        alias
-        (intern-str name)
+        alias-id
+        name
         variants
         index
         0)]
     [(AstDecl.DefStruct name _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
-        (compiler-symbol-module-key alias (intern-str name))
+        alias-id
+        name
         fields
         index
         0)]
     [(AstDecl.DefStructLifetimes name _ _ _ fields)
       (compiler-registries-add-field-aliases-list
         registries
-        (compiler-symbol-module-key alias (intern-str name))
+        alias-id
+        name
         fields
         index
         0)]
@@ -3160,7 +3485,7 @@
         [template : AstDecl (box-get template-box)]
         (compiler-registries-add-decl-alias-in-module
           registries
-          alias
+          alias-id
           template
           index))]
     [_ registries]))
@@ -3170,7 +3495,7 @@
   [decls : AstDeclList]
   [index : ModuleDeclIndex]
   [target-module-id : i64]
-  [alias : String]) : CompilerRegistries
+  [alias-id : i64]) : CompilerRegistries
   (match index
     [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
       (let
@@ -3185,7 +3510,7 @@
                 cur-registries
                 (compiler-registries-add-decl-alias-in-module
                   cur-registries
-                  alias
+                  alias-id
                   (array-ref slots (+ decl-offset (array-ref ent-pos k)))
                   (array-ref ent-ridx k)))
               (set! k (array-ref ent-next k))))
@@ -3195,7 +3520,7 @@
   [all-decls : AstDeclList]
   [decls : AstDeclList]
   [registries : CompilerRegistries]
-  [module : String]) : CompilerRegistries
+  [module-id : i64]) : CompilerRegistries
   (let
     [enclosing-arena : i64 (arena.tl_arena_current)]
     [index-arena : i64 (arena.tl_arena_make)]
@@ -3211,7 +3536,7 @@
     [result : CompilerRegistries
       (let
         [cur-registries : CompilerRegistries registries]
-        [cur-module : String module]
+        [cur-module-id : i64 module-id]
         [index : i64 0]
         [decl-count : i64 (ast-decl-list-len (& decls))]
         [decl-offset : i64 (struct-get decls offset)]
@@ -3229,20 +3554,22 @@
                         (AstMaybeModuleName.Some target-module)
                         (AstMaybeImportAlias.Some alias)
                         _))
-                    (if (string.eq alias "")
+                    (if (= alias cbi.compiler-builtin-id-fix-empty)
                       (compiler-registries-add-module-aliases-indexed
                         cur-registries
                         all-decls
                         decl-index
-                        (intern target-module)
-                        (compiler-symbols-import-alias-key cur-module alias))
+                        target-module
+                        (compiler-symbols-import-alias-key-id
+                          cur-module-id
+                          alias))
                       cur-registries)]
                   [_ cur-registries])]
               (begin
                 (set! cur-registries next-registries)
                 (match decl
                   [(AstDecl.Module next-module)
-                    (set! cur-module (intern-str next-module))]
+                    (set! cur-module-id next-module)]
                   [_ unit])
                 (set! index (+ index 1)))))
           cur-registries))]
@@ -3251,25 +3578,11 @@
         (arena.tl_arena_destroy index-arena-head))
       result)))
 
-(define (build-compiler-variant-registry-list
-  [variants : AstVariantDefList]
-  [registries : CompilerRegistries]
-  [enum-name : String]
-  [enum-index : i64]
-  [variant-index : i64]) : ResultCompilerRegistries
-  (build-compiler-variant-registry-list-in-module
-    variants
-    registries
-    ""
-    enum-name
-    enum-index
-    variant-index))
-
 (define (build-compiler-variant-registry-list-in-module
   [variants : AstVariantDefList]
   [registries : CompilerRegistries]
-  [module : String]
-  [enum-name : String]
+  [module-id : i64]
+  [enum-name-id : i64]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
   (if (>= variant-index (ast-variant-def-list-len (& variants)))
@@ -3279,19 +3592,19 @@
       variant-index
       (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
-        (match (compiler-registries-add-variant-in-module
+        (match (compiler-registries-add-variant-in-module-id
           registries
-          module
-          enum-name
-          (intern-str name)
+          module-id
+          enum-name-id
+          name
           enum-index
           variant-index)
           [(ResultCompilerRegistries.Ok next-registries)
             (build-compiler-variant-registry-list-in-module
               variants
               next-registries
-              module
-              enum-name
+              module-id
+              enum-name-id
               enum-index
               (+ variant-index 1))]
           [(ResultCompilerRegistries.Err message)
@@ -3301,7 +3614,8 @@
   [fields : AstFieldDefList]
   [registries : CompilerRegistries]
   [seen : sym_i64_env.SymI64Env]
-  [struct-name : String]
+  [module-id : i64]
+  [struct-name-id : i64]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
   (if (>= field-index (ast-field-def-list-len (& fields)))
@@ -3314,12 +3628,13 @@
         (if (sym_i64_env.sym-i64-contains-id seen name)
           (ResultCompilerRegistries.Err
             (compiler-registries-duplicate-field-message
-              struct-name
+              (compiler-symbol-module-key-by-id module-id struct-name-id)
               (intern-str name)))
-          (match (compiler-registries-add-field
+          (match (compiler-registries-add-field-in-module-id
             registries
-            struct-name
-            (intern-str name)
+            module-id
+            struct-name-id
+            name
             struct-index
             field-index)
             [(ResultCompilerRegistries.Ok next-registries)
@@ -3327,7 +3642,8 @@
                 fields
                 next-registries
                 (sym_i64_env.sym-i64-bind-id seen name field-index)
-                struct-name
+                module-id
+                struct-name-id
                 struct-index
                 (+ field-index 1))]
             [(ResultCompilerRegistries.Err message)
@@ -3337,17 +3653,21 @@
   [decls : AstDeclList]
   [registries : CompilerRegistries]
   [index : i64]) : ResultCompilerRegistries
-  (build-compiler-registry-list-in-module decls registries index ""))
+  (build-compiler-registry-list-in-module
+    decls
+    registries
+    index
+    (compiler-symbol-root-module-id)))
 
 (define (build-compiler-registry-list-in-module
   [decls : AstDeclList]
   [registries : CompilerRegistries]
   [index : i64]
-  [module : String]) : ResultCompilerRegistries
+  [module-id : i64]) : ResultCompilerRegistries
   (let
     [cur-registries : CompilerRegistries registries]
     [cur-index : i64 index]
-    [cur-module : String module]
+    [cur-module-id : i64 module-id]
     [position : i64 0]
     [decl-count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
@@ -3370,7 +3690,7 @@
               [(AstDecl.Module next-module)
                 (begin
                   (set! position (+ position 1))
-                  (set! cur-module (intern-str next-module)))]
+                  (set! cur-module-id next-module))]
               [(AstDecl.ModuleBody name body-box)
                 (let
                   [body : AstDeclList (box-get body-box)]
@@ -3379,7 +3699,7 @@
                     body
                     cur-registries
                     cur-index
-                    (intern-str name))
+                    name)
                     [(ResultCompilerRegistries.Ok next-registries)
                       (begin
                         (set! position (+ position 1))
@@ -3394,8 +3714,8 @@
                 (match (build-compiler-variant-registry-list-in-module
                   variants
                   cur-registries
-                  cur-module
-                  (intern-str name)
+                  cur-module-id
+                  name
                   cur-index
                   0)
                   [(ResultCompilerRegistries.Ok next-registries)
@@ -3411,8 +3731,8 @@
                 (match (build-compiler-variant-registry-list-in-module
                   variants
                   cur-registries
-                  cur-module
-                  (intern-str name)
+                  cur-module-id
+                  name
                   cur-index
                   0)
                   [(ResultCompilerRegistries.Ok next-registries)
@@ -3429,7 +3749,8 @@
                   fields
                   cur-registries
                   (sym_i64_env.sym-i64-empty)
-                  (compiler-symbol-module-key cur-module (intern-str name))
+                  cur-module-id
+                  name
                   cur-index
                   0)
                   [(ResultCompilerRegistries.Ok next-registries)
@@ -3446,7 +3767,8 @@
                   fields
                   cur-registries
                   (sym_i64_env.sym-i64-empty)
-                  (compiler-symbol-module-key cur-module (intern-str name))
+                  cur-module-id
+                  name
                   cur-index
                   0)
                   [(ResultCompilerRegistries.Ok next-registries)
@@ -3466,8 +3788,8 @@
                       (match (build-compiler-variant-registry-list-in-module
                         variants
                         cur-registries
-                        cur-module
-                        (intern-str name)
+                        cur-module-id
+                        name
                         cur-index
                         0)
                         [(ResultCompilerRegistries.Ok next-registries)
@@ -3483,8 +3805,8 @@
                       (match (build-compiler-variant-registry-list-in-module
                         variants
                         cur-registries
-                        cur-module
-                        (intern-str name)
+                        cur-module-id
+                        name
                         cur-index
                         0)
                         [(ResultCompilerRegistries.Ok next-registries)
@@ -3501,9 +3823,8 @@
                         fields
                         cur-registries
                         (sym_i64_env.sym-i64-empty)
-                        (compiler-symbol-module-key
-                          cur-module
-                          (intern-str name))
+                        cur-module-id
+                        name
                         cur-index
                         0)
                         [(ResultCompilerRegistries.Ok next-registries)
@@ -3520,9 +3841,8 @@
                         fields
                         cur-registries
                         (sym_i64_env.sym-i64-empty)
-                        (compiler-symbol-module-key
-                          cur-module
-                          (intern-str name))
+                        cur-module-id
+                        name
                         cur-index
                         0)
                         [(ResultCompilerRegistries.Ok next-registries)
@@ -3558,7 +3878,11 @@
           [(ResultCompilerRegistries.Ok registries)
             (let
               [aliased : CompilerRegistries
-                (build-compiler-registry-aliases-list decls decls registries "")]
+                (build-compiler-registry-aliases-list
+                  decls
+                  decls
+                  registries
+                  (compiler-symbol-root-module-id))]
               (ResultCompilerRegistries.Ok aliased))]
           [(ResultCompilerRegistries.Err message)
             (ResultCompilerRegistries.Err message)]))]))
@@ -4534,78 +4858,82 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-self-test) : i64
-  (match (parse-ast-source (compiler-symbols-smoke-source))
-    [(ResultAstProgram.Ok program)
-      (match (build-compiler-symbols program)
-        [(ResultCompilerSymbols.Ok symbols)
-          (match (build-compiler-registries program)
-            [(ResultCompilerRegistries.Ok registries)
-              (let
-                [ok : bool true]
-                (begin
-                  (if (= (compiler-symbols-smoke-score symbols) 10)
-                    unit
-                    (set! ok false))
-                  (if (= (compiler-registries-smoke-score program registries) 8)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-duplicate-value-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-duplicate-type-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-module-duplicate-diagnostics-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-module-duplicate-with-paths-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-variant-value-collisions-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-struct-value-collisions-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-registries-duplicate-variant-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-registries-cross-enum-variant-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-registries-duplicate-field-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-registry-large-owner-handle-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-comptime-decl-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-module-scope-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-structural-id-api-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-direct-qualified-add-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-import-alias-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-comptime-root-helper-alias-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-macro-namespace-ok?)
-                    unit
-                    (set! ok false))
-                  (if (compiler-symbols-duplicate-macro-value-ok?)
-                    unit
-                    (set! ok false))
-                  (if ok
-                    42
-                    (io.panic "symbols: smoke score mismatch"))))]
-            [(ResultCompilerRegistries.Err message) (io.panic message)])]
-        [(ResultCompilerSymbols.Err message) (io.panic message)])]
-    [(ResultAstProgram.Err message) (io.panic message)]))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (match (parse-ast-source (compiler-symbols-smoke-source))
+      [(ResultAstProgram.Ok program)
+        (match (build-compiler-symbols program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries program)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [ok : bool true]
+                  (begin
+                    (if (= (compiler-symbols-smoke-score symbols) 10)
+                      unit
+                      (set! ok false))
+                    (if (=
+                      (compiler-registries-smoke-score program registries)
+                      8)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-duplicate-value-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-duplicate-type-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-module-duplicate-diagnostics-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-module-duplicate-with-paths-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-variant-value-collisions-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-struct-value-collisions-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-registries-duplicate-variant-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-registries-cross-enum-variant-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-registries-duplicate-field-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-registry-large-owner-handle-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-comptime-decl-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-module-scope-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-structural-id-api-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-direct-qualified-add-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-import-alias-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-comptime-root-helper-alias-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-macro-namespace-ok?)
+                      unit
+                      (set! ok false))
+                    (if (compiler-symbols-duplicate-macro-value-ok?)
+                      unit
+                      (set! ok false))
+                    (if ok
+                      42
+                      (io.panic "symbols: smoke score mismatch"))))]
+              [(ResultCompilerRegistries.Err message) (io.panic message)])]
+          [(ResultCompilerSymbols.Err message) (io.panic message)])]
+      [(ResultAstProgram.Err message) (io.panic message)])))

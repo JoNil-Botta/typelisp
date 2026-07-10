@@ -2777,9 +2777,7 @@
               (and
                 (> (tc-lazy-import-summary-backed-stub-count) 0)
                 (not
-                  (tc-name-bound?
-                    env
-                    (compiler-symbol-module-key "vec" "Vec"))))]
+                  (tc-name-bound? env (compiler-symbol-module-key "vec" "Vec"))))]
             [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin

@@ -3,13 +3,13 @@ benchmark/typelisp/arith_loop	1750000086
 benchmark/c/arith_loop	500115543
 benchmark/typelisp/array_sum	3304226345
 benchmark/c/array_sum	2101425108
-benchmark/typelisp/hashmap_churn	14500792
+benchmark/typelisp/hashmap_churn	12505653
 benchmark/c/hashmap_churn	4430221
-benchmark/typelisp/hashmap_get	859501464
+benchmark/typelisp/hashmap_get	711168178
 benchmark/c/hashmap_get	209785338
-benchmark/typelisp/hashmap_grow	9700099
+benchmark/typelisp/hashmap_grow	7822145
 benchmark/c/hashmap_grow	2048611
-benchmark/typelisp/hashmap_insert	187993536
+benchmark/typelisp/hashmap_insert	151788904
 benchmark/c/hashmap_insert	66066561
 benchmark/typelisp/opt_bytecode_vm	1712001640
 benchmark/c/opt_bytecode_vm	716120437

@@ -157,8 +157,15 @@
 (defenum LowerPrunedProgram
   (Program AstProgram AstDeclPathList))
 
-(defenum LowerFilteredReachable
-  (Filtered AstDeclList AstDeclPathList))
+(defstruct LowerDeclKeepPlan
+  (keep (Array i64))
+  (source-count i64))
+
+(defenum LowerPrunedProgramWithPlan
+  (Program AstProgram AstDeclPathList LowerDeclKeepPlan))
+
+(defenum LowerFilteredReachableWithPlan
+  (Filtered AstDeclList AstDeclPathList LowerDeclKeepPlan))
 
 (defenum LowerEntryMainScan
   (Scan i64 String bool))
@@ -8819,61 +8826,38 @@
       dispatch-variants
       decl)))
 
-(define (lower-filter-reachable-in-module
+(define (lower-filter-reachable-decls-paths-and-plan
   [decls : AstDeclList]
   [paths : AstDeclPathList]
   [entry-path : String]
-  [module : String]
   [all-functions : lower_string_i64_map.Map]
   [reachable : lower_i64_i64_map.Map]
   [dispatch-variants : lower_string_i64_map.Map]
-  [used-types : lower_i64_i64_map.Map]) : LowerFilteredReachable
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
-      (LowerFilteredReachable.Filtered
-        (ast-decl-list-new)
-        (ast-decl-path-list-new))]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        [decl-path : String
-          (match (ast-decl-path-list-step paths)
-            [(AstDeclPathListStep.Cons path _) path]
-            [(AstDeclPathListStep.Nil) entry-path])]
-        [rest-paths : AstDeclPathList
-          (match (ast-decl-path-list-step paths)
-            [(AstDeclPathListStep.Cons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList path-rest]
-                path-rest)]
-            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
-        (match decl
-          [(AstDecl.Module next-module)
-            (match (lower-filter-reachable-in-module
-              rest
-              rest-paths
-              entry-path
-              (intern-str next-module)
-              all-functions
-              reachable
-              dispatch-variants
-              used-types)
-              [(LowerFilteredReachable.Filtered rest-decls rest-paths)
-                (LowerFilteredReachable.Filtered
-                  (ast-decl-list-prepend-builder decl rest-decls)
-                  (ast-decl-path-list-prepend-builder decl-path rest-paths))])]
-          [_
-            (match (lower-filter-reachable-in-module
-              rest
-              rest-paths
-              entry-path
-              module
-              all-functions
-              reachable
-              dispatch-variants
-              used-types)
-              [(LowerFilteredReachable.Filtered rest-decls rest-paths)
-                (if (lower-decl-kept-by-reach-or-dispatch?
+  [used-types : lower_i64_i64_map.Map]) : LowerFilteredReachableWithPlan
+  ;; The first reachability walk must materialize a program for clone-root
+  ;; discovery. Record its decision for every source declaration at the same
+  ;; time. Clone augmentation preserves source order and appends helpers, so
+  ;; this dense plan can be applied after whole-program typecheck without
+  ;; rebuilding the function/body/dispatch/type reachability indexes.
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    [out-paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [keep : (Array i64) (make-array i64 count)]
+    [module : String ""]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [decl : AstDecl
+            (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+          [decl-path : String
+            (ast-decl-path-list-get (& paths) index entry-path)]
+          [kept : bool
+            (match decl
+              [(AstDecl.Module _) true]
+              [_
+                (lower-decl-kept-by-reach-or-dispatch?
                   entry-path
                   decl-path
                   module
@@ -8881,31 +8865,134 @@
                   reachable
                   dispatch-variants
                   used-types
-                  decl)
-                  (LowerFilteredReachable.Filtered
-                    (ast-decl-list-prepend-builder decl rest-decls)
-                    (ast-decl-path-list-prepend-builder decl-path rest-paths))
-                  (LowerFilteredReachable.Filtered rest-decls rest-paths))])]))]))
+                  decl)])]
+          (begin
+            (if kept
+              (begin
+                (array-set! keep index 1)
+                (ast-decl-list-push (&mut out) decl)
+                (ast-decl-path-list-push (&mut out-paths) decl-path))
+              unit)
+            (match decl
+              [(AstDecl.Module next-module)
+                (set! module (intern-str next-module))]
+              [_ unit])
+            (set! index (+ index 1)))))
+      (LowerFilteredReachableWithPlan.Filtered
+        out
+        out-paths
+        (LowerDeclKeepPlan keep count)))))
 
-;; Keep decls and paths in lockstep so pruning does not repeat the same
-;; reachability predicate walk over the whole declaration list.
-(define (lower-filter-reachable-decls-and-paths
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
-  [all-functions : lower_string_i64_map.Map]
-  [reachable : lower_i64_i64_map.Map]
-  [dispatch-variants : lower_string_i64_map.Map]
-  [used-types : lower_i64_i64_map.Map]) : LowerFilteredReachable
-  (lower-filter-reachable-in-module
-    decls
-    paths
-    entry-path
-    ""
-    all-functions
-    reachable
-    dispatch-variants
-    used-types))
+(define (lower-decl-keep-plan-all [count : i64]) : LowerDeclKeepPlan
+  (let
+    [keep : (Array i64) (make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! keep index 1)
+          (set! index (+ index 1))))
+      (LowerDeclKeepPlan keep count))))
+
+(define (lower-decl-required-by-clone-roots?
+  [roots : CloneNameSet]
+  [module : String]
+  [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.DefEnum name _ _)
+      (clone-name-set-contains-canonical? roots module (intern-str name))]
+    [(AstDecl.DefStruct name _ _ _)
+      (clone-name-set-contains-canonical? roots module (intern-str name))]
+    [(AstDecl.Unsafe inner-box)
+      (lower-decl-required-by-clone-roots? roots module (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (lower-decl-required-by-clone-roots? roots module (box-get inner-box))]
+    [_ false]))
+
+(define (lower-decl-keep-plan-add-clone-roots
+  [plan : LowerDeclKeepPlan]
+  [program : AstProgram]
+  [clone-roots : CloneNameList]) : LowerDeclKeepPlan
+  ;; Clone-root discovery already computes the exact transitive nominal-type
+  ;; closure required by generated helpers. Merge those type declarations into
+  ;; the retained plan before source-pool compaction can release their AST.
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [keep : (Array i64) (struct-get plan keep)]
+        [source-count : i64 (struct-get plan source-count)]
+        [roots : CloneNameSet
+          (clone-name-list-to-set clone-roots (clone-name-set-empty))]
+        [module : String ""]
+        [index : i64 0]
+        [count : i64 (ast-decl-list-len (& decls))]
+        (begin
+          (while (and (< index count) (< index source-count))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (begin
+                (if (lower-decl-required-by-clone-roots? roots module decl)
+                  (array-set! keep index 1)
+                  unit)
+                (match decl
+                  [(AstDecl.Module next-module)
+                    (set! module (intern-str next-module))]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          (LowerDeclKeepPlan keep source-count)))]))
+
+(define (lower-decl-keep-plan-copy-into-pools
+  [plan : LowerDeclKeepPlan]
+  [pools : AstNodePoolContext]) : LowerDeclKeepPlan
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set base-arena))]
+    [source : (Array i64) (struct-get plan keep)]
+    [count : i64 (struct-get plan source-count)]
+    [keep : (Array i64) (make-array i64 count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set! keep index (array-ref source index))
+          (set! index (+ index 1))))
+      (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set prev-arena))
+      (LowerDeclKeepPlan keep count))))
+
+(define (lower-decl-keep-plan-apply
+  [plan : LowerDeclKeepPlan]
+  [program : AstProgram]) : AstProgram
+  ;; Source declarations retain their indices through clone augmentation;
+  ;; generated clone helpers are appended and all are part of the exact root
+  ;; closure, so retain them without another graph walk.
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [count : i64 (ast-decl-list-len (& decls))]
+        [source-count : i64 (struct-get plan source-count)]
+        [keep : (Array i64) (struct-get plan keep)]
+        [out : AstDeclList (ast-decl-list-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (if (or
+                (>= index source-count)
+                (not (= (array-ref keep index) 0)))
+                (ast-decl-list-push
+                  (&mut out)
+                  (ast-decl-list-get (& decls) index (ast-decl-fallback)))
+                unit)
+              (set! index (+ index 1))))
+          (ast-program out)))]))
 
 ;; The synthesized clone$<T> helpers (compiler_clone.tl) are referenced by
 ;; `(clone x)` forms only after lowering. Seed exactly the helpers needed by
@@ -9029,13 +9116,13 @@
                 state
                 decl))]))]))
 
-(define (lower-prune-unreachable-functions-with-clone-roots
+(define (lower-prune-unreachable-functions-with-clone-roots-and-plan
   [pools : AstNodePoolContext]
   [entry-path : String]
   [program : AstProgram]
   [paths : AstDeclPathList]
   [names : LowerNameEnv]
-  [clone-roots : CloneNameList]) : LowerPrunedProgram
+  [clone-roots : CloneNameList]) : LowerPrunedProgramWithPlan
   (match program
     [(AstProgram.Program decls-box)
       (let
@@ -9089,7 +9176,7 @@
                 paths
                 entry-path
                 name-cache)]
-            [result : LowerPrunedProgram
+            [result : LowerPrunedProgramWithPlan
               (if (lower_string_i64_map.contains? (& all-functions) "main")
                 (begin
                   (set!
@@ -9191,8 +9278,8 @@
                             (unsafe
                               (arena.tl_arena_set prev-arena))
                             (let
-                              [filtered : LowerFilteredReachable
-                                (lower-filter-reachable-decls-and-paths
+                              [filtered : LowerFilteredReachableWithPlan
+                                (lower-filter-reachable-decls-paths-and-plan
                                   decls
                                   paths
                                   entry-path
@@ -9200,14 +9287,16 @@
                                   reachable
                                   dispatch-variants
                                   used-types)]
-                              [pruned : LowerPrunedProgram
+                              [pruned : LowerPrunedProgramWithPlan
                                 (match filtered
-                                  [(LowerFilteredReachable.Filtered
+                                  [(LowerFilteredReachableWithPlan.Filtered
                                       filtered-decls
-                                      filtered-paths)
-                                    (LowerPrunedProgram.Program
+                                      filtered-paths
+                                      keep-plan)
+                                    (LowerPrunedProgramWithPlan.Program
                                       (ast-program filtered-decls)
-                                      filtered-paths)])]
+                                      filtered-paths
+                                      keep-plan)])]
                               [new-prev-arena : i64 (arena.tl_arena_current)]
                               (begin
                                 (unsafe
@@ -9222,13 +9311,33 @@
                       (arena.tl_arena_set scratch-head)
                       (arena.tl_region_reset mark)
                       (arena.tl_arena_set prev-arena))
-                    (LowerPrunedProgram.Program program paths))))]
+                    (LowerPrunedProgramWithPlan.Program
+                      program
+                      paths
+                      (lower-decl-keep-plan-all (ast-decl-list-len (& decls)))))))]
             (begin
               (lower-reach-scratch-globals-reset!)
               (if prev-persist
                 unit
                 (intern-persistent-storage-disable!))
               result))))]))
+
+(define (lower-prune-unreachable-functions-with-clone-roots
+  [pools : AstNodePoolContext]
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [names : LowerNameEnv]
+  [clone-roots : CloneNameList]) : LowerPrunedProgram
+  (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
+    pools
+    entry-path
+    program
+    paths
+    names
+    clone-roots)
+    [(LowerPrunedProgramWithPlan.Program pruned-program pruned-paths _)
+      (LowerPrunedProgram.Program pruned-program pruned-paths)]))
 
 (define (lower-prune-unreachable-functions
   [pools : AstNodePoolContext]
@@ -45917,14 +46026,17 @@
               ;; the emitted code needs, matching pre-P4 behavior); the FULL
               ;; specialized program is what actually flows into clone-augment and
               ;; typecheck below.
-              (match (lower-prune-unreachable-functions-with-clone-roots
+              (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
                 pools
                 entry-path
                 specialized
                 specialized-paths
                 prune-names
                 (CloneNameList.Nil))
-                [(LowerPrunedProgram.Program reach-program reach-paths)
+                [(LowerPrunedProgramWithPlan.Program
+                    reach-program
+                    reach-paths
+                    reach-keep-plan)
                   (begin
                     (cfg
                       compile-profile
@@ -45944,6 +46056,11 @@
                               (compiler-lower-profile-finish "clone_roots"))
                             (cfg compile-profile (compiler-lower-profile-start))
                             (let
+                              [source-keep-plan : LowerDeclKeepPlan
+                                (lower-decl-keep-plan-add-clone-roots
+                                  reach-keep-plan
+                                  specialized
+                                  clone-roots)]
                               ;; P4/C4.2: clone-augment the FULL specialized
                               ;; program (not the reachable subset) so typecheck
                               ;; sees every declaration; clone-roots was scoped to
@@ -45986,6 +46103,12 @@
                                     specialized-paths
                                     checked-pools)
                                   specialized-paths)]
+                              [checked-keep-plan : LowerDeclKeepPlan
+                                (if lower-checked-dest-pools-active
+                                  (lower-decl-keep-plan-copy-into-pools
+                                    source-keep-plan
+                                    checked-pools)
+                                  source-keep-plan)]
                               [escaped-names : LowerNameEnv
                                 (if (and
                                   lower-checked-dest-pools-active
@@ -46060,57 +46183,60 @@
                                       (cfg
                                         compile-profile
                                         (compiler-lower-profile-start))
-                                      ;; P4/C4.2: the whole program was typechecked
-                                      ;; above; run the reachability gate NOW so
-                                      ;; unreachable decls produce no native code
-                                      ;; while every decl is still fully typechecked.
-                                      ;; clone-roots is seeded so the synthesized
-                                      ;; clone$<T> helpers survive the prune; any
-                                      ;; clone helper reachable only from dead code
-                                      ;; is later dropped by the IR-level DCE.
-                                      (match (match (lower-prune-unreachable-functions-with-clone-roots
-                                        checked-pools
-                                        checked-entry-path
-                                        checked-program
-                                        checked-paths
-                                        checked-names
-                                        clone-roots)
-                                        [(LowerPrunedProgram.Program
-                                            pruned-program
-                                            _pruned-paths)
-                                          (lower-compiler-program-checked-with-names-mode
+                                      ;; Whole-program typecheck is complete. Apply
+                                      ;; the declaration decisions retained by the
+                                      ;; first reachability walk; source order is
+                                      ;; stable and clone helpers are appended, so
+                                      ;; this is a dense linear filter rather than
+                                      ;; a second whole-program graph analysis.
+                                      (let
+                                        [pruned-program : AstProgram
+                                          (lower-decl-keep-plan-apply
+                                            checked-keep-plan
+                                            checked-program)]
+                                        (begin
+                                          (cfg
+                                            compile-profile
+                                            (compiler-lower-profile-finish
+                                              "prune_apply"))
+                                          (cfg
+                                            compile-profile
+                                            (compiler-lower-profile-start))
+                                          (match (lower-compiler-program-checked-with-names-mode
                                             ctx
                                             top-env
                                             pruned-program
                                             lower-names
-                                            mode)])
-                                        [(ResultCompilerLower.Ok ir spans)
-                                          (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-lower-profile-finish
-                                                "decls"))
-                                            (cfg
-                                              compile-profile
-                                              (compiler-lower-profile-ir-shape
-                                                "after_decls"
-                                                ir))
-                                            (cfg
-                                              compile-profile
-                                              (compiler-lower-profile-ir-arena
-                                                "after_decls"))
-                                            (ResultCompilerLower.Ok ir spans))]
-                                        [(ResultCompilerLower.Err diag)
-                                          (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-lower-profile-finish
-                                                "decls"))
-                                            (ResultCompilerLower.Err
-                                              (box
-                                                (lower-diagnostic-with-path
-                                                  (box-get diag)
-                                                  checked-entry-path))))]))]
+                                            mode)
+                                            [(ResultCompilerLower.Ok ir spans)
+                                              (begin
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-lower-profile-finish
+                                                    "decls"))
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-lower-profile-ir-shape
+                                                    "after_decls"
+                                                    ir))
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-lower-profile-ir-arena
+                                                    "after_decls"))
+                                                (ResultCompilerLower.Ok
+                                                  ir
+                                                  spans))]
+                                            [(ResultCompilerLower.Err diag)
+                                              (begin
+                                                (cfg
+                                                  compile-profile
+                                                  (compiler-lower-profile-finish
+                                                    "decls"))
+                                                (ResultCompilerLower.Err
+                                                  (box
+                                                    (lower-diagnostic-with-path
+                                                      (box-get diag)
+                                                      checked-entry-path))))]))))]
                                   [(ResultCompilerTypecheckChecked.Err diag)
                                     (begin
                                       (cfg

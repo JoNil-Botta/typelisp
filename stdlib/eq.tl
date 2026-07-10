@@ -10,8 +10,10 @@
 ;#   (i64_eq.eq? left right))
 ;# ```
 ;#
-;# Each `(eq T)` import has a canonical generated-module identity derived from
-;# `type-key T`, so repeated imports share one generated implementation.
+;: Emit an equality module for concrete type `T`.
+;:
+;: Each `(eq T)` import has a canonical generated-module identity derived from
+;: `type-key T`, so repeated imports share one generated implementation.
 (defmacro (eq [T : type]) : Module
   (let
     [module-name : Expr

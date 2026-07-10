@@ -9797,38 +9797,34 @@
   [target-id : i64]
   [module-id : i64]) : bool
   (let
-    [cursor : AstDeclList decls]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [current-module : i64 module-id]
     [found : bool false]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest-box)
-            (let
-              [rest : AstDeclList rest-box]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! current-module next-module)
-                    (set! cursor rest))]
+      (while (and (not found) (< index count))
+        (begin
+          (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _)
+              (match (ast-decl-list-ref decls index)
+                [(AstDecl.Module next-module) (set! current-module next-module)]
+                [_ unit])]
+            [(AstDecl.Import _)
+              ;; Copy only module/import declarations whose scalar and String
+              ;; payloads are consumed. All other declarations stay borrowed.
+              (match (ast-decl-list-ref decls index)
                 [(AstDecl.Import (AstImportSpec.Spec _ _ expected _ _))
-                  (begin
-                    (if (= current-module current-module-id)
-                      (match expected
-                        [(AstMaybeModuleName.Some target)
-                          (if (= (intern target) target-id)
-                            (begin
-                              (set! found true)
-                              (set! done true))
-                            unit)]
-                        [(AstMaybeModuleName.No) unit])
-                      unit)
-                    (if done
-                      unit
-                      (set! cursor rest)))]
-                [_ (set! cursor rest)]))]))
+                  (if (= current-module current-module-id)
+                    (match expected
+                      [(AstMaybeModuleName.Some target)
+                        (if (= (intern target) target-id)
+                          (set! found true)
+                          unit)]
+                      [(AstMaybeModuleName.No) unit])
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
       found)))
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool

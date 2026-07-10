@@ -11514,12 +11514,14 @@
         intervals)]))
 
 ;; Cfg-gated migration path for retiring emission-time scavenging. The first
-;; slice models indirect-call target scratch as per-instruction pseudo-vars:
+;; slices model instruction-selection scratch as per-instruction pseudo-vars:
 ;; the planner records a point -> register home before emission, reserves that
 ;; home in the scavenge context as a synthetic live interval, and the emitter
 ;; uses the planned register when --cfg scratch-vreg is enabled. C ABI
-;; aggregate-return calls reuse the same point scratch for base save/store
-;; staging. Missing or constrained sites fall back to the existing scavenger.
+;; aggregate-return calls reuse the indirect-target point scratch for base
+;; save/store staging. Switch and bounds-check scratch receive short-lived
+;; register-allocator pseudo-vars. Missing or constrained sites fall back to
+;; the existing scavenger.
 (defenum CompilerBackendScratchVregSynth
   (CompilerBackendScratchVregSynth
     i64
@@ -11529,7 +11531,7 @@
     (Array i64)))
 
 (defenum CompilerBackendScratchVregScan
-  (CompilerBackendScratchVregScan i64 i64 i64 i64 i64))
+  (CompilerBackendScratchVregScan i64 i64 i64 i64 i64 i64))
 
 (define compiler-backend-scratch-vreg-call-target-count : i64
   0)
@@ -11544,6 +11546,12 @@
 (define compiler-backend-scratch-vreg-switch-index-regs : (Array String)
   (make-array String 1))
 (define compiler-backend-scratch-vreg-switch-table-regs : (Array String)
+  (make-array String 1))
+(define compiler-backend-scratch-vreg-bounds-count : i64
+  0)
+(define compiler-backend-scratch-vreg-bounds-points : (Array i64)
+  (make-array i64 1))
+(define compiler-backend-scratch-vreg-bounds-length-regs : (Array String)
   (make-array String 1))
 (define compiler-backend-scratch-vreg-empty-i64s : (Array i64)
   (make-array i64 1))
@@ -11582,6 +11590,13 @@
       compiler-backend-scratch-vreg-empty-regs)
     (set!
       compiler-backend-scratch-vreg-switch-table-regs
+      compiler-backend-scratch-vreg-empty-regs)
+    (set! compiler-backend-scratch-vreg-bounds-count 0)
+    (set!
+      compiler-backend-scratch-vreg-bounds-points
+      compiler-backend-scratch-vreg-empty-i64s)
+    (set!
+      compiler-backend-scratch-vreg-bounds-length-regs
       compiler-backend-scratch-vreg-empty-regs)
     (compiler-backend-scratch-vreg-empty)))
 
@@ -11695,6 +11710,7 @@
   [call-target-count : i64]
   [switch-count : i64]
   [switch-slot-count : i64]
+  [bounds-count : i64]
   [point : i64]
   [instr : CompilerIrInstr]
   [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
@@ -11707,7 +11723,8 @@
       count
       call-target-count
       switch-count
-      switch-slot-count)
+      switch-slot-count
+      bounds-count)
     (let
       [exclude : (Array String)
         (compiler-backend-c-abi-stage-exclude-with "%r11")]
@@ -11729,7 +11746,8 @@
           count
           call-target-count
           switch-count
-          switch-slot-count)
+          switch-slot-count
+          bounds-count)
         (begin
           (array-set! points count point)
           (array-set! regs count (string.copy reg))
@@ -11742,7 +11760,8 @@
             (+ count 1)
             (+ call-target-count 1)
             switch-count
-            switch-slot-count))))))
+            switch-slot-count
+            bounds-count))))))
 
 (define (compiler-backend-scratch-vreg-record-switch-success!
   [points : (Array i64)]
@@ -11756,6 +11775,7 @@
   [call-target-count : i64]
   [switch-count : i64]
   [switch-slot-count : i64]
+  [bounds-count : i64]
   [point : i64]
   [need-index-scratch : bool]
   [index-reg : String]
@@ -11785,7 +11805,8 @@
         (+ next-count 1)
         call-target-count
         (+ switch-count 1)
-        (+ switch-slot-count 1)))))
+        (+ switch-slot-count 2)
+        bounds-count))))
 
 (define (compiler-backend-scratch-vreg-record-switch!
   [points : (Array i64)]
@@ -11800,6 +11821,7 @@
   [call-target-count : i64]
   [switch-count : i64]
   [switch-slot-count : i64]
+  [bounds-count : i64]
   [switch-var-base : i64]
   [point : i64]
   [instr : CompilerIrInstr]
@@ -11821,9 +11843,10 @@
             count
             call-target-count
             switch-count
-            (+ switch-slot-count 1))
+            (+ switch-slot-count 2)
+            bounds-count)
           (let
-            [switch-index-var : i64 (+ switch-var-base (* switch-slot-count 2))]
+            [switch-index-var : i64 (+ switch-var-base switch-slot-count)]
             [switch-table-var : i64 (+ switch-index-var 1)]
             [index-reg : String
               (if need-index-scratch
@@ -11848,7 +11871,8 @@
                 count
                 call-target-count
                 switch-count
-                (+ switch-slot-count 1))
+                (+ switch-slot-count 2)
+                bounds-count)
               (compiler-backend-scratch-vreg-record-switch-success!
                 points
                 regs
@@ -11861,6 +11885,7 @@
                 call-target-count
                 switch-count
                 switch-slot-count
+                bounds-count
                 point
                 need-index-scratch
                 index-reg
@@ -11871,7 +11896,81 @@
         count
         call-target-count
         switch-count
-        switch-slot-count)]))
+        switch-slot-count
+        bounds-count)]))
+
+;; Bounds checks only need the planned pseudo-var when the length cannot be
+;; used directly as a register, immediate, or stack operand. The pseudo-var is
+;; still allocated for every BoundsCheck so its stable slot ordinal matches the
+;; regalloc scan; unused slots simply never enter the emitter lookup.
+(define (compiler-backend-scratch-vreg-record-bounds!
+  [points : (Array i64)]
+  [regs : (Array String)]
+  [lo : (Array i64)]
+  [hi : (Array i64)]
+  [bounds-points : (Array i64)]
+  [bounds-length-regs : (Array String)]
+  [cap : i64]
+  [count : i64]
+  [call-target-count : i64]
+  [switch-count : i64]
+  [switch-slot-count : i64]
+  [bounds-count : i64]
+  [scratch-var-base : i64]
+  [point : i64]
+  [instr : CompilerIrInstr]
+  [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
+  (match instr
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (let
+        [next-slot-count : i64 (+ switch-slot-count 1)]
+        [length-operand : String
+          (compiler-backend-bounds-length-operand assignments length)]
+        [scratch-var : i64 (+ scratch-var-base switch-slot-count)]
+        [scratch-reg : String
+          (compiler-backend-value-scalar-register
+            assignments
+            (CompilerIrValue.Var scratch-var))]
+        [index-home : String
+          (compiler-backend-value-scalar-register assignments index)]
+        (if (or
+          (>= count cap)
+          (>= bounds-count cap)
+          (not (string.eq length-operand ""))
+          (string.eq scratch-reg "")
+          (string.eq scratch-reg index-home))
+          (CompilerBackendScratchVregScan
+            point
+            count
+            call-target-count
+            switch-count
+            next-slot-count
+            bounds-count)
+          (begin
+            (array-set! points count point)
+            (array-set! regs count (string.copy scratch-reg))
+            (array-set! lo count point)
+            (array-set! hi count point)
+            (array-set! bounds-points bounds-count point)
+            (array-set!
+              bounds-length-regs
+              bounds-count
+              (string.copy scratch-reg))
+            (CompilerBackendScratchVregScan
+              point
+              (+ count 1)
+              call-target-count
+              switch-count
+              next-slot-count
+              (+ bounds-count 1)))))]
+    [_
+      (CompilerBackendScratchVregScan
+        point
+        count
+        call-target-count
+        switch-count
+        switch-slot-count
+        bounds-count)]))
 
 (define (compiler-backend-scratch-vreg-scan-seq!
   [instrs : CompilerIrInstrSeq]
@@ -11885,11 +11984,14 @@
   [switch-points : (Array i64)]
   [switch-index-regs : (Array String)]
   [switch-table-regs : (Array String)]
+  [bounds-points : (Array i64)]
+  [bounds-length-regs : (Array String)]
   [cap : i64]
   [count : i64]
   [call-target-count : i64]
   [switch-count : i64]
   [switch-slot-count : i64]
+  [bounds-count : i64]
   [switch-var-base : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
   (let
@@ -11901,6 +12003,7 @@
     [c : i64 call-target-count]
     [s : i64 switch-count]
     [t : i64 switch-slot-count]
+    [b : i64 bounds-count]
     (begin
       (while (< i len)
         (begin
@@ -11916,15 +12019,23 @@
             c
             s
             t
+            b
             p
             (array-ref slots i)
             assignments)
-            [(CompilerBackendScratchVregScan _ next-n next-c next-s next-t)
+            [(CompilerBackendScratchVregScan
+                _
+                next-n
+                next-c
+                next-s
+                next-t
+                next-b)
               (begin
                 (set! n next-n)
                 (set! c next-c)
                 (set! s next-s)
-                (set! t next-t))])
+                (set! t next-t)
+                (set! b next-b))])
           (match (compiler-backend-scratch-vreg-record-switch!
             points
             regs
@@ -11938,19 +12049,57 @@
             c
             s
             t
+            b
             switch-var-base
             p
             (array-ref slots i)
             assignments)
-            [(CompilerBackendScratchVregScan _ next-n next-c next-s next-t)
+            [(CompilerBackendScratchVregScan
+                _
+                next-n
+                next-c
+                next-s
+                next-t
+                next-b)
               (begin
                 (set! n next-n)
                 (set! c next-c)
                 (set! s next-s)
-                (set! t next-t))])
+                (set! t next-t)
+                (set! b next-b))])
+          (match (compiler-backend-scratch-vreg-record-bounds!
+            points
+            regs
+            lo
+            hi
+            bounds-points
+            bounds-length-regs
+            cap
+            n
+            c
+            s
+            t
+            b
+            switch-var-base
+            p
+            (array-ref slots i)
+            assignments)
+            [(CompilerBackendScratchVregScan
+                _
+                next-n
+                next-c
+                next-s
+                next-t
+                next-b)
+              (begin
+                (set! n next-n)
+                (set! c next-c)
+                (set! s next-s)
+                (set! t next-t)
+                (set! b next-b))])
           (set! p (+ p 2))
           (set! i (+ i 1))))
-      (CompilerBackendScratchVregScan p n c s t))))
+      (CompilerBackendScratchVregScan p n c s t b))))
 
 (define (compiler-backend-scratch-vreg-scan-blocks!
   [blocks : CompilerIrBlockList]
@@ -11964,11 +12113,14 @@
   [switch-points : (Array i64)]
   [switch-index-regs : (Array String)]
   [switch-table-regs : (Array String)]
+  [bounds-points : (Array i64)]
+  [bounds-length-regs : (Array String)]
   [cap : i64]
   [count : i64]
   [call-target-count : i64]
   [switch-count : i64]
   [switch-slot-count : i64]
+  [bounds-count : i64]
   [switch-var-base : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
   (match blocks
@@ -11978,7 +12130,8 @@
         count
         call-target-count
         switch-count
-        switch-slot-count)]
+        switch-slot-count
+        bounds-count)]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
@@ -11994,11 +12147,14 @@
             switch-points
             switch-index-regs
             switch-table-regs
+            bounds-points
+            bounds-length-regs
             cap
             count
             call-target-count
             switch-count
             switch-slot-count
+            bounds-count
             switch-var-base
             assignments)
             [(CompilerBackendScratchVregScan
@@ -12006,7 +12162,8 @@
                 next-count
                 next-call-target-count
                 next-switch-count
-                next-switch-slot-count)
+                next-switch-slot-count
+                next-bounds-count)
               (compiler-backend-scratch-vreg-scan-blocks!
                 (box-get rest)
                 next-point
@@ -12019,11 +12176,14 @@
                 switch-points
                 switch-index-regs
                 switch-table-regs
+                bounds-points
+                bounds-length-regs
                 cap
                 next-count
                 next-call-target-count
                 next-switch-count
                 next-switch-slot-count
+                next-bounds-count
                 switch-var-base
                 assignments)])])]
     [(CompilerIrBlockList.Array seq)
@@ -12040,11 +12200,14 @@
         switch-points
         switch-index-regs
         switch-table-regs
+        bounds-points
+        bounds-length-regs
         cap
         count
         call-target-count
         switch-count
         switch-slot-count
+        bounds-count
         switch-var-base
         assignments)]))
 
@@ -12061,11 +12224,14 @@
   [switch-points : (Array i64)]
   [switch-index-regs : (Array String)]
   [switch-table-regs : (Array String)]
+  [bounds-points : (Array i64)]
+  [bounds-length-regs : (Array String)]
   [cap : i64]
   [count : i64]
   [call-target-count : i64]
   [switch-count : i64]
   [switch-slot-count : i64]
+  [bounds-count : i64]
   [switch-var-base : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerBackendScratchVregScan
   (if (>= index (compiler-ir-block-seq-count blocks))
@@ -12074,7 +12240,8 @@
       count
       call-target-count
       switch-count
-      switch-slot-count)
+      switch-slot-count
+      bounds-count)
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block _ instrs)
         (match (compiler-backend-scratch-vreg-scan-seq!
@@ -12089,11 +12256,14 @@
           switch-points
           switch-index-regs
           switch-table-regs
+          bounds-points
+          bounds-length-regs
           cap
           count
           call-target-count
           switch-count
           switch-slot-count
+          bounds-count
           switch-var-base
           assignments)
           [(CompilerBackendScratchVregScan
@@ -12101,7 +12271,8 @@
               next-count
               next-call-target-count
               next-switch-count
-              next-switch-slot-count)
+              next-switch-slot-count
+              next-bounds-count)
             (compiler-backend-scratch-vreg-scan-block-seq!
               blocks
               (+ index 1)
@@ -12115,11 +12286,14 @@
               switch-points
               switch-index-regs
               switch-table-regs
+              bounds-points
+              bounds-length-regs
               cap
               next-count
               next-call-target-count
               next-switch-count
               next-switch-slot-count
+              next-bounds-count
               switch-var-base
               assignments)])])))
 
@@ -12149,7 +12323,7 @@
         (+ index 1)
         count))))
 
-(define (compiler-backend-scratch-vreg-build-call-target!
+(define (compiler-backend-scratch-vreg-build!
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
   [switch-var-base : i64]) : CompilerBackendScratchVregSynth
@@ -12167,6 +12341,8 @@
       [switch-points : (Array i64) (make-array i64 cap)]
       [switch-index-regs : (Array String) (make-array String cap)]
       [switch-table-regs : (Array String) (make-array String cap)]
+      [bounds-points : (Array i64) (make-array i64 cap)]
+      [bounds-length-regs : (Array String) (make-array String cap)]
       (match (compiler-backend-scratch-vreg-scan-blocks!
         blocks
         0
@@ -12179,7 +12355,10 @@
         switch-points
         switch-index-regs
         switch-table-regs
+        bounds-points
+        bounds-length-regs
         cap
+        0
         0
         0
         0
@@ -12191,13 +12370,16 @@
             count
             call-target-count
             switch-count
-            _)
+            _
+            bounds-count)
           (let
             [lookup-call-target-points : (Array i64) (make-array i64 cap)]
             [lookup-call-target-regs : (Array String) (make-array String cap)]
             [lookup-switch-points : (Array i64) (make-array i64 cap)]
             [lookup-switch-index-regs : (Array String) (make-array String cap)]
             [lookup-switch-table-regs : (Array String) (make-array String cap)]
+            [lookup-bounds-points : (Array i64) (make-array i64 cap)]
+            [lookup-bounds-length-regs : (Array String) (make-array String cap)]
             (begin
               (compiler-backend-scratch-vreg-copy-i64-range
                 (&mut lookup-call-target-points)
@@ -12224,6 +12406,16 @@
                 (& switch-table-regs)
                 0
                 cap)
+              (compiler-backend-scratch-vreg-copy-i64-range
+                (&mut lookup-bounds-points)
+                (& bounds-points)
+                0
+                cap)
+              (compiler-backend-scratch-vreg-copy-string-range
+                (&mut lookup-bounds-length-regs)
+                (& bounds-length-regs)
+                0
+                cap)
               (set!
                 compiler-backend-scratch-vreg-call-target-count
                 call-target-count)
@@ -12243,6 +12435,13 @@
               (set!
                 compiler-backend-scratch-vreg-switch-table-regs
                 lookup-switch-table-regs)
+              (set! compiler-backend-scratch-vreg-bounds-count bounds-count)
+              (set!
+                compiler-backend-scratch-vreg-bounds-points
+                lookup-bounds-points)
+              (set!
+                compiler-backend-scratch-vreg-bounds-length-regs
+                lookup-bounds-length-regs)
               (CompilerBackendScratchVregSynth count points regs lo hi)))]))
     (compiler-backend-scratch-vreg-disable!)))
 
@@ -12301,6 +12500,25 @@
             compiler-backend-emit-instr-post-base
             compiler-backend-emit-current-count))]
       (compiler-backend-scratch-vreg-switch-table-at point 0))
+    ""))
+
+(define (compiler-backend-scratch-vreg-bounds-length-at [point : i64] [i : i64]) : String
+  (if (>= i compiler-backend-scratch-vreg-bounds-count)
+    ""
+    (if (= (array-ref compiler-backend-scratch-vreg-bounds-points i) point)
+      (array-ref compiler-backend-scratch-vreg-bounds-length-regs i)
+      (compiler-backend-scratch-vreg-bounds-length-at point (+ i 1)))))
+
+(define (compiler-backend-scratch-vreg-bounds-length-here) : String
+  (if (compiler-backend-scratch-vreg-enabled?)
+    (let
+      [point : i64
+        (*
+          2
+          (-
+            compiler-backend-emit-instr-post-base
+            compiler-backend-emit-current-count))]
+      (compiler-backend-scratch-vreg-bounds-length-at point 0))
     ""))
 
 (define (compiler-backend-scratch-vreg-extend-vars
@@ -16487,12 +16705,17 @@
     [index-reg : String
       (compiler-backend-value-scalar-register-home assignments index)]
     ;; Length-load scratch: exclude the index home because the cmp reads index
-    ;; vs length.
+    ;; vs length. The cfg-gated path supplies a short-lived allocator-owned
+    ;; pseudo-var when length staging is required; otherwise retain the proven
+    ;; emission-time scavenger fallback.
+    [planned-len : String (compiler-backend-scratch-vreg-bounds-length-here)]
     [scav-len : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-scavenge-exclude-with index-reg)
-        6
-        "%r9")]
+      (if (string.eq planned-len "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-with index-reg)
+          6
+          "%r9")
+        planned-len)]
     ;; A constant index materializes into a reserved-set-aware scavenged register
     ;; distinct from the length scratch -- NOT a hardcoded %rax, which (now that
     ;; %rax is pooled) collided with a length loaded into %rax: `movq 8(%r10),%rax`
@@ -40473,7 +40696,7 @@
             unit)]
         [scratch-reg-plan : CompilerRegPlan
           (if call-save-enabled
-            (compiler-reg-plan-with-switch-scratch-vregs
+            (compiler-reg-plan-with-scratch-vregs
               fn-abi
               (CompilerIrFunction.Function
                 name
@@ -40642,7 +40865,7 @@
         [scratch-vreg-synth : CompilerBackendScratchVregSynth
           (cfg
             scratch-vreg
-            (compiler-backend-scratch-vreg-build-call-target!
+            (compiler-backend-scratch-vreg-build!
               emit-blocks-list
               assignments
               (match coloring

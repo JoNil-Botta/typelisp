@@ -4524,46 +4524,42 @@
 ;; above the first default-boundary marker. Head-first walk order means a
 ;; name bound both above and below the boundary keeps its head-most (above)
 ;; occurrence, which matches the old any-occurrence-above map exactly.
-(define (tc-env-cache-add
-  [ids : tc_i64_i64_map.Map]
+(define (tc-env-cache-add!
+  [ids : (&mut ids tc_i64_i64_map.Map)]
   [values : (Array AstType)]
   [unsafe-flags : (Array i64)]
   [c-abi-fnptr-flags : (Array i64)]
   [shadow-flags : (Array i64)]
   [name-id : i64]
+  [next : i64]
   [ty : AstType]
   [unsafe : bool]
   [c-abi-fnptr : bool]
-  [shadow : bool]) : tc_i64_i64_map.Map
-  (match (tc_i64_i64_map.get (& ids) name-id)
-    [(tc_i64_i64_map.LookupFound _) ids]
-    [(tc_i64_i64_map.LookupMissing)
-      (let
-        [next : i64 (tc_i64_i64_map.len (& ids))]
-        [out : tc_i64_i64_map.Map ids]
-        (begin
-          (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
-          (array-set! values next ty)
-          (array-set!
-            unsafe-flags
-            next
-            (if unsafe
-              1
-              0))
-          (array-set!
-            c-abi-fnptr-flags
-            next
-            (if c-abi-fnptr
-              1
-              0))
-          (array-set!
-            shadow-flags
-            next
-            (if shadow
-              1
-              0))
-          (tc_i64_i64_map.insert (&mut out) name-id next)
-          out))]))
+  [shadow : bool]) : bool
+  (if (tc_i64_i64_map.insert-if-absent? ids name-id next)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
+      (array-set! values next ty)
+      (array-set!
+        unsafe-flags
+        next
+        (if unsafe
+          1
+          0))
+      (array-set!
+        c-abi-fnptr-flags
+        next
+        (if c-abi-fnptr
+          1
+          0))
+      (array-set!
+        shadow-flags
+        next
+        (if shadow
+          1
+          0))
+      true)
+    false))
 
 (define (tc-env-cache-fill
   [env : TcTypeEnv]
@@ -4576,6 +4572,7 @@
   (let
     [cur : TcTypeEnv env]
     [cur-ids : tc_i64_i64_map.Map ids]
+    [next : i64 0]
     [cur-above-boundary : bool above-boundary]
     [done : bool false]
     (begin
@@ -4592,19 +4589,20 @@
                   (not (= name-id (tc-default-boundary-id)))
                   false)]
               (begin
-                (set!
-                  cur-ids
-                  (tc-env-cache-add
-                    cur-ids
-                    values
-                    unsafe-flags
-                    c-abi-fnptr-flags
-                    shadow-flags
-                    name-id
-                    ty
-                    (tc-binding-unsafe-marker-head-id? rest-env name-id)
-                    (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-                    still-above))
+                (if (tc-env-cache-add!
+                  (&mut cur-ids)
+                  values
+                  unsafe-flags
+                  c-abi-fnptr-flags
+                  shadow-flags
+                  name-id
+                  next
+                  ty
+                  (tc-binding-unsafe-marker-head-id? rest-env name-id)
+                  (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+                  still-above)
+                  (set! next (+ next 1))
+                  unit)
                 (set! cur rest-env)
                 (set! cur-above-boundary still-above)))]
           [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
@@ -4623,6 +4621,7 @@
     [cur : TcTypeEnv env]
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
+    [next : i64 0]
     [cur-above-boundary : bool above-boundary]
     [done : bool false]
     (begin
@@ -4636,19 +4635,20 @@
                   (not (= name-id (tc-default-boundary-id)))
                   false)]
               (begin
-                (set!
-                  cur-ids
-                  (tc-env-cache-add
-                    cur-ids
-                    values
-                    unsafe-flags
-                    c-abi-fnptr-flags
-                    shadow-flags
-                    name-id
-                    ty
-                    (tc-binding-unsafe-marker-head-id? rest-env name-id)
-                    (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-                    still-above))
+                (if (tc-env-cache-add!
+                  (&mut cur-ids)
+                  values
+                  unsafe-flags
+                  c-abi-fnptr-flags
+                  shadow-flags
+                  name-id
+                  next
+                  ty
+                  (tc-binding-unsafe-marker-head-id? rest-env name-id)
+                  (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
+                  still-above)
+                  (set! next (+ next 1))
+                  unit)
                 (set! left (- left 1))
                 (set! cur rest-env)
                 (set! cur-above-boundary still-above)))]

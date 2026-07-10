@@ -651,6 +651,12 @@ Macro bodies can build expression literals with `expr-bool`, `expr-int`,
 field token is computed during macro CTFE, `expr-tuple-ref` builds a tuple
 element access whose index is computed during macro CTFE, and
 `expr-struct-set` builds the matching field assignment expression.
+`expr-mut-borrow` builds an inferred-lifetime `(&mut place)` expression;
+`expr-list-empty` and `expr-list-cons` build ordered argument lists; and
+`expr-call` builds an ordinary call from a callee expression and that list.
+The generated program typechecks the resulting borrow and call normally, so a
+mutable-borrow receiver must still be a caller place and every supplied
+argument is evaluated once in source order.
 `pattern-wildcard`, `pattern-binding`, `pattern-variant`,
 `pattern-list-empty`, `pattern-list-cons`, `pattern-list-bindings`, `match-arm`,
 `match-arm-list-empty`, `match-arm-list-cons`, and `expr-match` build

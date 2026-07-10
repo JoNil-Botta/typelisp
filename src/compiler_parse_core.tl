@@ -720,6 +720,9 @@
 (define (compiler-parse-tag-expr-array-push) : i64
   262)
 
+(define (compiler-parse-tag-expr-array-take) : i64
+  303)
+
 (define (compiler-parse-tag-expr-string-ref) : i64
   242)
 
@@ -1151,6 +1154,18 @@
           out
           "__tl_array-push!"
           (compiler-parse-tag-expr-array-push)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "array-take!"
+          (compiler-parse-tag-expr-array-take)))
+      (set!
+        out
+        (sym_i64_env.sym-i64-bind
+          out
+          "__tl_array-take!"
+          (compiler-parse-tag-expr-array-take)))
       (set!
         out
         (sym_i64_env.sym-i64-bind out "match" (compiler-parse-tag-expr-match)))
@@ -3953,6 +3968,49 @@
         [_ (ResultAstExpr.Err "parse: malformed array-push!")])]
     [_ (ResultAstExpr.Err "parse: malformed array-push!")]))
 
+(define (parse-ast-array-take
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [rest : SpannedSexpr]) : ResultAstExpr
+  (match rest
+    [(SpannedSexpr.Cons array live-tail _)
+      (match (sp-node-get live-tail)
+        [(SpannedSexpr.Cons live index-tail _)
+          (match (sp-node-get index-tail)
+            [(SpannedSexpr.Cons index end _)
+              (match (sp-node-get end)
+                [(SpannedSexpr.Nil _)
+                  (match (parse-ast-expr-with-pools
+                    dispatch
+                    pools
+                    (sp-node-get array))
+                    [(ResultAstExpr.Ok parsed-array)
+                      (match (parse-ast-expr-with-pools
+                        dispatch
+                        pools
+                        (sp-node-get live))
+                        [(ResultAstExpr.Ok parsed-live)
+                          (match (parse-ast-expr-with-pools
+                            dispatch
+                            pools
+                            (sp-node-get index))
+                            [(ResultAstExpr.Ok parsed-index)
+                              (ResultAstExpr.Ok
+                                (ast-expr-array-take-with-pools
+                                  pools
+                                  parsed-array
+                                  parsed-live
+                                  parsed-index))]
+                            [(ResultAstExpr.Err message)
+                              (ResultAstExpr.Err message)])]
+                        [(ResultAstExpr.Err message)
+                          (ResultAstExpr.Err message)])]
+                    [(ResultAstExpr.Err message) (ResultAstExpr.Err message)])]
+                [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
+            [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
+        [_ (ResultAstExpr.Err "parse: malformed array-take!")])]
+    [_ (ResultAstExpr.Err "parse: malformed array-take!")]))
+
 (define (parse-ast-borrow
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -5515,6 +5573,8 @@
       (parse-ast-array-set dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-array-push))
       (parse-ast-array-push dispatch pools rest)]
+    [(= tag (compiler-parse-tag-expr-array-take))
+      (parse-ast-array-take dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-match))
       (parse-ast-match dispatch pools rest)]
     [(= tag (compiler-parse-tag-expr-foreach))

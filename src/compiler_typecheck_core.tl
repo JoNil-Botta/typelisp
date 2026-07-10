@@ -12522,6 +12522,12 @@
         [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tc-source-expr-triple-spmd-broadcast-scope-ok array index value allow))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (tc-source-expr-triple-spmd-broadcast-scope-ok array live index allow))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -12880,6 +12886,12 @@
         [index : AstExpr (ast-node-get index-box)]
         [value : AstExpr (ast-node-get value-box)]
         (tc-source-expr-triple-policy-ok ctx array index value))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (tc-source-expr-triple-policy-ok ctx array live index))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -22871,6 +22883,15 @@
           (tc-ref-closure-local-uses-ok? array name bound)
           (tc-ref-closure-local-uses-ok? index name bound)
           (tc-ref-closure-local-uses-ok? value name bound)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (and
+          (tc-ref-closure-local-uses-ok? array name bound)
+          (tc-ref-closure-local-uses-ok? live name bound)
+          (tc-ref-closure-local-uses-ok? index name bound)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -24491,6 +24512,9 @@
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+    [(AstExpr.ArrayTake _ _ _)
+      (ResultTcUnit.Err
+        "typecheck: array-take! is not supported in masked spmd control flow")]
     [(AstExpr.StructSet receiver-box _ value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -25089,6 +25113,11 @@
         (ast-node-get array-box)
         (ast-node-get index-box)
         (ast-node-get value-box))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (tc-spmd-scan-body-no-nested-triple
+        (ast-node-get array-box)
+        (ast-node-get live-box)
+        (ast-node-get index-box))]
     [(AstExpr.ArrayPush array-box value-box)
       (tc-spmd-scan-body-no-nested-pair
         (ast-node-get array-box)
@@ -25925,6 +25954,9 @@
                     (ResultTcSpmdExprInfo.Err message)])])]
           [(ResultTcSpmdExprInfo.Err message)
             (ResultTcSpmdExprInfo.Err message)]))]
+    [(AstExpr.ArrayTake _ _ _)
+      (ResultTcSpmdExprInfo.Err
+        "typecheck: array-take! is not supported in SPMD")]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -26843,6 +26875,15 @@
           (tc-expr-uses-free-name? array name bound)
           (tc-expr-uses-free-name? index name bound)
           (tc-expr-uses-free-name? value name bound)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (or
+          (tc-expr-uses-free-name? array name bound)
+          (tc-expr-uses-free-name? live name bound)
+          (tc-expr-uses-free-name? index name bound)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -27335,6 +27376,15 @@
           (tc-expr-sets-free-name? array name bound)
           (tc-expr-sets-free-name? index name bound)
           (tc-expr-sets-free-name? value name bound)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (or
+          (tc-expr-sets-free-name? array name bound)
+          (tc-expr-sets-free-name? live name bound)
+          (tc-expr-sets-free-name? index name bound)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -32887,6 +32937,9 @@
     [(AstExpr.ArraySet _ _ _)
       (ResultTcUnit.Err
         "`array-set!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
+    [(AstExpr.ArrayTake _ _ _)
+      (ResultTcUnit.Err
+        "`array-take!` is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
     [(AstExpr.StructSet _ _ _)
       (ResultTcUnit.Err
         "struct field assignment is not allowed inside a spmd-reduce value expression; the value expression must be free of writes and other side effects (SPEC.md 5.15)")]
@@ -34654,6 +34707,60 @@
                   (ResultTcType.Err "typecheck: array index must be integer"))]
               [(ResultTcType.Err message) (ResultTcType.Err message)])]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (match (tc-expr-id ctx env array-box)
+        [(ResultTcType.Ok array-ty)
+          (match (tc-array-set-receiver ctx array-ty)
+            [(ResultTcArrayReceiver.Ok receiver)
+              (match receiver
+                [(TcArrayReceiver container-ty elem-ty)
+                  (match (tc-type-strip-region
+                    (tc-resolve-type ctx container-ty))
+                    [(AstType.DynArray _)
+                      (match (tc-expr-id ctx env live-box)
+                        [(ResultTcType.Ok live-ty)
+                          (match (tc-array-set-receiver ctx live-ty)
+                            [(ResultTcArrayReceiver.Ok live-receiver)
+                              (match live-receiver
+                                [(TcArrayReceiver live-container live-elem)
+                                  (match (tc-type-strip-region
+                                    (tc-resolve-type ctx live-container))
+                                    [(AstType.DynArray _)
+                                      (if (tc-type-eq
+                                        (tc-type-strip-region
+                                          (tc-resolve-type ctx live-elem))
+                                        (AstType.Bool))
+                                        (match (tc-expr-with-expected-or-actual-id
+                                          ctx
+                                          env
+                                          index-box
+                                          (AstType.I64))
+                                          [(ResultTcType.Ok index-ty)
+                                            (if (tc-integer-type? index-ty)
+                                              (ResultTcType.Ok
+                                                (ast-ty-tuple
+                                                  (ast-type-cons
+                                                    (AstType.Bool)
+                                                    (ast-type-cons
+                                                      elem-ty
+                                                      (ast-type-list-new)))))
+                                              (ResultTcType.Err
+                                                "typecheck: array-take! index must be integer"))]
+                                          [(ResultTcType.Err message)
+                                            (ResultTcType.Err message)])
+                                        (ResultTcType.Err
+                                          "typecheck: array-take! liveness bitmap must contain bool"))]
+                                    [_
+                                      (ResultTcType.Err
+                                        "typecheck: array-take! liveness bitmap must be dynamic array")])])]
+                            [(ResultTcArrayReceiver.Err message)
+                              (ResultTcType.Err message)])]
+                        [(ResultTcType.Err message) (ResultTcType.Err message)])]
+                    [_
+                      (ResultTcType.Err
+                        "typecheck: array-take! source must be dynamic array")])])]
+            [(ResultTcArrayReceiver.Err message) (ResultTcType.Err message)])]
+        [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -36047,6 +36154,17 @@
         array
         index
         value)]
+    [(AstExpr.ArrayTake array live index)
+      (tc-comptime-purity-node3-mode
+        ctx
+        env
+        bound
+        chain
+        seen
+        template?
+        array
+        live
+        index)]
     [(AstExpr.ArrayPush array value)
       (tc-comptime-purity-node2-mode
         ctx
@@ -39744,6 +39862,26 @@
                   [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (match (tc-move-check-expr-id ctx env locals loop-carried moved array-box)
+        [(TcMoveResult.Ok moved1)
+          (match (tc-move-check-expr-id
+            ctx
+            env
+            locals
+            loop-carried
+            moved1
+            live-box)
+            [(TcMoveResult.Ok moved2)
+              (tc-move-check-expr-id
+                ctx
+                env
+                locals
+                loop-carried
+                moved2
+                index-box)]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -42286,6 +42424,12 @@
         env
         (ast-node-get array-box)
         lifetime)]
+    [(AstExpr.ArrayTake array-box _ _)
+      (tc-borrow-check-expr-type-contains-lifetime?
+        ctx
+        env
+        (ast-node-get array-box)
+        lifetime)]
     [(AstExpr.ArrayPush array-box _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
@@ -43414,6 +43558,40 @@
                           [(ResultTcUnit.Err message)
                             (TcBorrowCheckResult.Err message)])]
                       [(TcBorrowCheckResult.Err message)
+                        (TcBorrowCheckResult.Err message)])]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])]
+              [(TcBorrowCheckResult.Err message)
+                (TcBorrowCheckResult.Err message)])]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (tc-borrow-check-expr ctx env locals borrowed array)
+          [(TcBorrowCheckResult.Ok borrowed1)
+            (match (tc-borrow-check-expr ctx env locals borrowed1 live)
+              [(TcBorrowCheckResult.Ok borrowed2)
+                (match (tc-borrow-check-expr ctx env locals borrowed2 index)
+                  [(TcBorrowCheckResult.Ok borrowed3)
+                    (match (tc-borrow-check-array-set-conflict
+                      locals
+                      borrowed3
+                      live
+                      index
+                      expr)
+                      [(ResultTcUnit.Ok)
+                        (match (tc-borrow-check-array-set-conflict
+                          locals
+                          borrowed3
+                          array
+                          index
+                          expr)
+                          [(ResultTcUnit.Ok) (TcBorrowCheckResult.Ok borrowed3)]
+                          [(ResultTcUnit.Err message)
+                            (TcBorrowCheckResult.Err message)])]
+                      [(ResultTcUnit.Err message)
                         (TcBorrowCheckResult.Err message)])]
                   [(TcBorrowCheckResult.Err message)
                     (TcBorrowCheckResult.Err message)])]
@@ -47062,6 +47240,18 @@
                 [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
             [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
         [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(AstExpr.ArrayTake array-id live-id index-id)
+      (match (macro-child-to-spanned-sexpr array-id span origin)
+        [(ResultMacroSexpr.Ok sarray)
+          (match (macro-child-to-spanned-sexpr live-id span origin)
+            [(ResultMacroSexpr.Ok slive)
+              (match (macro-child-to-spanned-sexpr index-id span origin)
+                [(ResultMacroSexpr.Ok sindex)
+                  (ResultMacroSexpr.Ok
+                    (macro-form3 "array-take!" sarray slive sindex span))]
+                [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+            [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
     [(AstExpr.ArrayPush array-id value-id)
       (match (macro-child-to-spanned-sexpr array-id span origin)
         [(ResultMacroSexpr.Ok sarray)
@@ -48303,6 +48493,15 @@
           (macro-hygiene-expr array env macro-name depth)
           (macro-hygiene-expr index env macro-name depth)
           (macro-hygiene-expr value env macro-name depth)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (ast-expr-array-take
+          (macro-hygiene-expr array env macro-name depth)
+          (macro-hygiene-expr live env macro-name depth)
+          (macro-hygiene-expr index env macro-name depth)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -52904,6 +53103,22 @@
                     [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
                 [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
             [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+      [(AstExpr.ArrayTake array-box live-box index-box)
+        (let
+          [array : AstExpr (ast-node-get array-box)]
+          [live : AstExpr (ast-node-get live-box)]
+          [index : AstExpr (ast-node-get index-box)]
+          (match (macro-expand-expr ctx env decls depth array)
+            [(ResultMacroExpr.Ok narray)
+              (match (macro-expand-expr ctx env decls depth live)
+                [(ResultMacroExpr.Ok nlive)
+                  (match (macro-expand-expr ctx env decls depth index)
+                    [(ResultMacroExpr.Ok nindex)
+                      (ResultMacroExpr.Ok
+                        (ast-expr-array-take narray nlive nindex))]
+                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
       [(AstExpr.Box inner-box)
         (let
           [inner : AstExpr (ast-node-get inner-box)]
@@ -54603,6 +54818,11 @@
         (macro-node-uses-macro? ctx decls a)
         (macro-node-uses-macro? ctx decls i)
         (macro-node-uses-macro? ctx decls v))]
+    [(AstExpr.ArrayTake a l i)
+      (or
+        (macro-node-uses-macro? ctx decls a)
+        (macro-node-uses-macro? ctx decls l)
+        (macro-node-uses-macro? ctx decls i))]
     [(AstExpr.ArrayPush a v)
       (or
         (macro-node-uses-macro? ctx decls a)
@@ -54897,6 +55117,15 @@
           (macro-expr-might-fire? array)
           (macro-expr-might-fire? index)
           (macro-expr-might-fire? value)))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (or
+          (macro-expr-might-fire? array)
+          (macro-expr-might-fire? live)
+          (macro-expr-might-fire? index)))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -55255,6 +55484,11 @@
         (ctfe-node-has-type-literal? a)
         (ctfe-node-has-type-literal? i)
         (ctfe-node-has-type-literal? v))]
+    [(AstExpr.ArrayTake a l i)
+      (or
+        (ctfe-node-has-type-literal? a)
+        (ctfe-node-has-type-literal? l)
+        (ctfe-node-has-type-literal? i))]
     [(AstExpr.ArrayPush a v)
       (or (ctfe-node-has-type-literal? a) (ctfe-node-has-type-literal? v))]
     [(AstExpr.StringRef a b)

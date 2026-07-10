@@ -1249,6 +1249,12 @@
         (selfhost-lint-dead-expr-refs
           (ast-node-get index)
           (selfhost-lint-dead-expr-refs (ast-node-get array) refs)))]
+    [(AstExpr.ArrayTake array live index)
+      (selfhost-lint-dead-expr-refs
+        (ast-node-get index)
+        (selfhost-lint-dead-expr-refs
+          (ast-node-get live)
+          (selfhost-lint-dead-expr-refs (ast-node-get array) refs)))]
     [(AstExpr.ArrayPush array value)
       (selfhost-lint-dead-expr-refs
         (ast-node-get value)

@@ -9657,6 +9657,42 @@
 ;; identity those passes use for conflict tracking.  This mutates the parsed
 ;; node exactly once, after the current lexical environment has decided that
 ;; the leading segment is a local rather than a module alias.
+(define (tc-normalize-dotted-local-field-direct-node!
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExpr.Var name)
+      (if (< (intern-first-dot name) 0)
+        ResultTcUnit.Ok
+        (if (tc-dotted-local-field-name-id? env name)
+          (match (tc-dotted-local-field-expr-id env (intern-str name))
+            [(ResultTcExprId.Ok projection-id)
+              (begin
+                (ast-node-set! expr-id (ast-node-get projection-id))
+                ResultTcUnit.Ok)]
+            [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
+          ResultTcUnit.Ok))]
+    [(AstExpr.Set name value-box)
+      (if (< (intern-first-dot name) 0)
+        ResultTcUnit.Ok
+        (if (tc-dotted-local-field-name-id? env name)
+          (match (tc-dotted-local-field-set-expr-id
+            env
+            (intern-str name)
+            value-box)
+            [(ResultTcExprId.Ok projection-id)
+              (begin
+                (ast-node-set! expr-id (ast-node-get projection-id))
+                ResultTcUnit.Ok)]
+            [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
+          ResultTcUnit.Ok))]
+    [_ ResultTcUnit.Ok]))
+
+;; Most typecheck entrypoints visit every expression in a program, so their
+;; hot path only dispatches direct `Var` and `Set` nodes above.  Places and
+;; call arguments can be source-span wrappers around those nodes; keep the
+;; recursive walk for those focused paths only.
 (define (tc-normalize-dotted-local-field-node!
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcUnit
@@ -9669,28 +9705,11 @@
       (tc-normalize-dotted-local-field-node! env inner-box)]
     [(AstExpr.Borrow _ _ place-box)
       (tc-normalize-dotted-local-field-node! env place-box)]
-    [(AstExpr.Var name)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-expr-id env (intern-str name))
-          [(ResultTcExprId.Ok projection-id)
-            (begin
-              (ast-node-set! expr-id (ast-node-get projection-id))
-              ResultTcUnit.Ok)]
-          [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
-        ResultTcUnit.Ok)]
-    [(AstExpr.Set name value-box)
-      (if (tc-dotted-local-field-name-id? env name)
-        (match (tc-dotted-local-field-set-expr-id
-          env
-          (intern-str name)
-          value-box)
-          [(ResultTcExprId.Ok projection-id)
-            (begin
-              (ast-node-set! expr-id (ast-node-get projection-id))
-              ResultTcUnit.Ok)]
-          [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
-        ResultTcUnit.Ok)]
-    [_ ResultTcUnit.Ok]))
+    [_
+      (tc-normalize-dotted-local-field-direct-node!
+        env
+        expr-id
+        (ast-node-get expr-id))]))
 
 (define (tc-normalize-dotted-local-field-expr-list!
   [env : TcTypeEnv]
@@ -18390,17 +18409,43 @@
 ;; Id entrypoints keep the original AST node identity available to future
 ;; body-local type caches. The value-based forms above remain necessary for
 ;; synthetic expressions that were never pushed into the node pool.
+(define (tc-expr-id-after-dotted-local-field-normalization
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]) : ResultTcType
+  (let
+    [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
+    (begin
+      (match result
+        [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
+        [(ResultTcType.Err _) unit])
+      result)))
+
 (define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
-  (match (tc-normalize-dotted-local-field-node! env expr-id)
-    [(ResultTcUnit.Ok)
-      (let
-        [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
-        (begin
-          (match result
-            [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
-            [(ResultTcType.Err _) unit])
-          result))]
-    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+  (let
+    [expr : AstExpr (ast-node-get expr-id)]
+    (match expr
+      [(AstExpr.Var name)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-id-after-dotted-local-field-normalization
+                ctx
+                env
+                expr-id)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [(AstExpr.Set name _)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-id-after-dotted-local-field-normalization
+                ctx
+                env
+                expr-id)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [_ (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)])))
 
 (define (tc-body-type-fact-lookup-profiled [_site : String] [expr-id : i64]) : TcBodyTypeFact
   (match (tc-body-type-fact-lookup expr-id)
@@ -18496,15 +18541,50 @@
   [expr-id : i64]
   [expected : AstType]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (match (tc-normalize-dotted-local-field-node! env expr-id)
-    [(ResultTcUnit.Ok)
-      (tc-expr-with-expected-or-actual-core
-        ctx
-        env
-        (ast-node-get expr-id)
-        expected
-        allow-mut-by-value-borrow)]
-    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+  (let
+    [expr : AstExpr (ast-node-get expr-id)]
+    (match expr
+      [(AstExpr.Var name)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-with-expected-or-actual-core
+            ctx
+            env
+            expr
+            expected
+            allow-mut-by-value-borrow)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-with-expected-or-actual-core
+                ctx
+                env
+                (ast-node-get expr-id)
+                expected
+                allow-mut-by-value-borrow)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [(AstExpr.Set name _)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-with-expected-or-actual-core
+            ctx
+            env
+            expr
+            expected
+            allow-mut-by-value-borrow)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-with-expected-or-actual-core
+                ctx
+                env
+                (ast-node-get expr-id)
+                expected
+                allow-mut-by-value-borrow)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [_
+        (tc-expr-with-expected-or-actual-core
+          ctx
+          env
+          expr
+          expected
+          allow-mut-by-value-borrow)])))
 
 (define (tc-expr-with-expected-or-actual-id
   [ctx : TcContext]

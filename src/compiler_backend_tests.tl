@@ -5370,6 +5370,87 @@
       0
       (string.string-length asm))))
 
+;; The grouped TextBuf path must preserve pairs that cross arbitrary physical
+;; chunks, while splitting safely at the following function's `.globl` chunk.
+(define (compiler-backend-chunked-peephole-equivalent?) : bool
+  (let
+    [chunks : text_buf.TextBuf
+      (text_buf.append
+        (text_buf.append
+          (text_buf.append
+            (text_buf.append
+              (text_buf.empty)
+              ".text\n.globl first\nfirst:\n    movq %rax, %r")
+            "10\n    movq 8(%r10), %r8\n")
+          ".globl second\nsecond:\n    movq %rax, -8(%rbp)\n")
+        "    movq -8(%rbp), %r9\n")]
+    [input : String (text_buf.render chunks)]
+    [legacy : String (compiler-backend-peephole-asm-once input)]
+    [chunked : String
+      (text_buf.render (compiler-backend-peephole-text-buf-once chunks))]
+    (string.eq legacy chunked)))
+
+;; Compare the final streaming path against the former raw-buffer -> whole
+;; peephole -> sweep sequence on the same lowered program. Re-lowering resets
+;; the recorded FPO sweep metadata before the streaming run.
+(define (compiler-backend-streamed-final-output-equivalent-source?
+  [src : String]) : bool
+  (match (lower-compiler-source src)
+    [(ResultCompilerLower.Ok first-program first-spans)
+      (match (compiler-backend-emit-program-target-with-mode-buffer
+        first-program
+        (CompilerBackendTarget.Linux)
+        (CompilerBackendMode.Scalar)
+        first-spans
+        true)
+        [(ResultCompilerBackendBuffer.Ok raw)
+          (let
+            [legacy : String
+              (compiler-backend-peephole-asm (text_buf.render raw))]
+            (match (lower-compiler-source src)
+              [(ResultCompilerLower.Ok second-program second-spans)
+                (match (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
+                  second-program
+                  (CompilerBackendTarget.Linux)
+                  (CompilerBackendMode.Scalar)
+                  second-spans
+                  true
+                  false)
+                  [(ResultCompilerBackendBuffer.Ok streamed)
+                    (string.eq legacy (text_buf.render streamed))]
+                  [(ResultCompilerBackendBuffer.Err _) false])]
+              [(ResultCompilerLower.Err _) false]))]
+        [(ResultCompilerBackendBuffer.Err _) false])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-backend-streamed-final-output-equivalent?) : bool
+  (compiler-backend-streamed-final-output-equivalent-source?
+    (compiler-backend-smoke-source)))
+
+;; 65 functions crosses the production 64-function raw batch boundary.
+(define (compiler-backend-streamed-final-batch-equivalent?) : bool
+  (let
+    [buf : text_buf.TextBuf (text_buf.empty)]
+    [i : i64 0]
+    (begin
+      (while (< i 65)
+        (begin
+          (set!
+            buf
+            (text_buf.append
+              buf
+              (string.append
+                "(define (f"
+                (string.append
+                  (string.int->string i)
+                  (string.append
+                    ") : i64 "
+                    (string.append (string.int->string i) ")\n"))))))
+          (set! i (+ i 1))))
+      (compiler-backend-streamed-final-output-equivalent-source?
+        (text_buf.render
+          (text_buf.append buf "(define (main) : i64 (+ (f0) (f64)))\n"))))))
+
 (define (compiler-backend-rax-forward-chain-instrs) : CompilerIrInstrList
   (compiler-ir-instr-cons
     (CompilerIrInstr.BinOp
@@ -5911,6 +5992,9 @@
     (compiler-backend-post-regalloc-peephole-ok?)
     (compiler-backend-deadstore-sweep-win64-ok?)
     (compiler-backend-r10-dead-scan-long-gap-ok?)
+    (compiler-backend-chunked-peephole-equivalent?)
+    (compiler-backend-streamed-final-output-equivalent?)
+    (compiler-backend-streamed-final-batch-equivalent?)
     (compiler-backend-rax-forwarding-ok?)
     (compiler-backend-call-arg-rax-forwarding-ok?)
     (compiler-backend-long-normal-block-ok?)

@@ -16675,29 +16675,29 @@
                     (set! cur-module-id next-module)
                     (set! cur next))]
                 [_
-                  (let
-                    [slot : i64 0]
-                    [existing : AstDeclList (ast-decl-list-new)]
-                    (begin
-                      (match (tc_i64_i64_map.get (& modules) cur-module-id)
-                        [(tc_i64_i64_map.LookupFound found-slot)
-                          (begin
-                            (set! slot found-slot)
-                            (set! existing (array-ref decls slot)))]
-                        [(tc_i64_i64_map.LookupMissing)
-                          (begin
-                            (set! slot slot-count)
-                            (tc_i64_i64_map.insert
-                              (&mut modules)
-                              cur-module-id
-                              slot)
-                            (array-set! decls slot (ast-decl-list-new))
-                            (set! slot-count (+ slot-count 1)))])
-                      (array-set!
-                        decls
-                        slot
-                        (ast-decl-list-prepend-builder decl existing))
-                      (set! cur next)))]))]))
+                  (begin
+                    (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                      [(tc_i64_i64_map.LookupFound slot)
+                        (array-set!
+                          decls
+                          slot
+                          (ast-decl-list-prepend-builder
+                            decl
+                            (array-ref decls slot)))]
+                      [(tc_i64_i64_map.LookupMissing)
+                        (begin
+                          (tc_i64_i64_map.insert
+                            (&mut modules)
+                            cur-module-id
+                            slot-count)
+                          (array-set!
+                            decls
+                            slot-count
+                            (ast-decl-list-prepend-builder
+                              decl
+                              (ast-decl-list-new)))
+                          (set! slot-count (+ slot-count 1)))])
+                    (set! cur next))]))]))
       (tc-import-alias-summary-index-reverse-slots! decls slot-count)
       (TcImportAliasSummaryIndex modules decls slot-count))))
 

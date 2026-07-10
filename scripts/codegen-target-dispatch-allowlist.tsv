@@ -35,7 +35,6 @@ src/compiler_backend.tl	compiler-backend-emit-windows-seh-stackalloc	object-form
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endprologue	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH prologue terminators.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endproc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure terminators.
 src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.
-src/compiler_backend.tl	compiler-backend-outgoing-frame-space	abi	CompilerBackendTarget[.](Linux|Windows)	2	Frame outgoing space includes Win64 shadow and stack-argument reservations.
 src/compiler_backend.tl	compiler-backend-varargs-pre-call	abi	CompilerBackendTarget[.](Linux|Windows)	2	System V and Win64 varargs setup are different ABIs.
 src/compiler_backend.tl	compiler-backend-atomic-ptr-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's first integer argument register.
 src/compiler_backend.tl	compiler-backend-atomic-value-reg	abi	compiler-backend-target-windows[?]	1	Inline raw-pointer atomic intrinsics consume the target ABI's second integer argument register.

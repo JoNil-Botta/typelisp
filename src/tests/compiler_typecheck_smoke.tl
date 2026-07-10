@@ -2379,6 +2379,22 @@
     (compiler-typecheck-smoke-lazy-summary-macro-comptime-source)
     1))
 
+(define (compiler-typecheck-smoke-nested-dotted-nominal-source) : String
+  "(module shared.types)
+(defstruct Item (value i64))
+(module bridge.api)
+(import shared.types as shared)
+(define (round-trip [item : shared.Item]) : shared.Item item)
+(module app.main)
+(import shared.types as item)
+(import bridge.api as bridge)
+(define (main) : i64
+  (struct-get (bridge.round-trip (item.Item 42)) value))")
+
+(define (compiler-typecheck-smoke-nested-dotted-nominal-ok?) : bool
+  (compiler-typecheck-ok?
+    (compiler-typecheck-smoke-nested-dotted-nominal-source)))
+
 (define (compiler-typecheck-smoke-qualified-array-source) : String
   "(import stdlib.array)
 (define (take-array-ref [r : (& items i64)]) : i64 1)
@@ -3000,6 +3016,9 @@
     (unless
       (compiler-typecheck-smoke-qualified-array-ok?)
       (io.panic "typecheck: qualified array smoke failed"))
+    (unless
+      (compiler-typecheck-smoke-nested-dotted-nominal-ok?)
+      (io.panic "typecheck: nested dotted nominal smoke failed"))
     (unless
       (compiler-typecheck-smoke-lazy-import-explicit-alias-no-fanout-ok?)
       (io.panic "typecheck: lazy import alias fanout smoke failed"))

@@ -37,6 +37,8 @@ borrow_if_branch_local_after_join_ok|check-ok|tests/safety/borrow_if_branch_loca
 borrow_match_branch_local_after_join_ok|check-ok|tests/safety/borrow_match_branch_local_after_join_ok.tl|-|-
 borrow_while_body_after_last_use_ok|check-ok|tests/safety/borrow_while_body_after_last_use_ok.tl|-|-
 borrow_foreach_body_after_last_use_ok|check-ok|tests/safety/borrow_foreach_body_after_last_use_ok.tl|-|-
+lending_iterator_after_last_use_ok|check-ok|tests/safety/lending_iterator_after_last_use_ok.tl|-|-
+lending_iterator_loop_after_last_use_ok|check-ok|tests/safety/lending_iterator_loop_after_last_use_ok.tl|-|-
 
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
@@ -69,6 +71,7 @@ two_phase_mutable_call_escape_reject|check-fail|tests/safety/two_phase_mutable_c
 two_phase_mutable_call_mutate_reject|check-fail|tests/safety/two_phase_mutable_call_mutate_reject.tl|-|cannot assign to borrowed place `items`
 lifetime_tagged_iterator_escape_reject|check-fail|tests/safety/lifetime_tagged_iterator_escape_reject.tl|-|reference value would escape lexical scope
 lifetime_tagged_iterator_live_mut_reject|check-fail|tests/safety/lifetime_tagged_iterator_live_mut_reject.tl|-|cannot assign to borrowed place `iter.index`
+lending_iterator_second_next_live_reject|check-fail|tests/safety/lending_iterator_second_next_live_reject.tl|-|cannot read mutably borrowed place `iter`
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`

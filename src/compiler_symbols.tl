@@ -5,6 +5,7 @@
 ;; no top-level symbol name here and do not consume an index.
 (import stdlib.io)
 (import "compiler_parse_core.tl")
+(import "compiler_diagnostic.tl")
 (import sym_i64_env)
 (import stdlib.hashmap)
 (import stdlib.string)
@@ -24,6 +25,17 @@
   (Ok CompilerSymbols)
   (Err String))
 
+;; Keep the compact String result for symbol-table helpers, but offer a
+;; source-facing adapter for callers that have declaration paths. Symbol
+;; construction itself is deliberately used by small internal probes too.
+(defenum ResultCompilerSymbolsDiagnostic
+  (Ok CompilerSymbols)
+  (Err (Box CompilerDiagnostic)))
+
+(defenum CompilerSymbolsMaybeSpan
+  (No)
+  (Some AstSourceSpan))
+
 (defenum CompilerMaybeString
   (CompilerNoString)
   (CompilerSomeString String))
@@ -37,6 +49,81 @@
 (defenum ResultCompilerRegistries
   (Ok CompilerRegistries)
   (Err String))
+
+;; `build-compiler-symbols-with-paths` is single-threaded and reports its
+;; failure immediately to a caller. Retain the current declaration only for
+;; that short handoff so the public diagnostic adapter can keep its source
+;; path and expression-derived span without widening every internal helper.
+(define compiler-symbols-last-error-decl : AstDecl
+  (ast-decl-module ""))
+(define compiler-symbols-last-error-path : String
+  "")
+(define compiler-symbols-last-error-span : AstSourceSpan
+  (ast-decl-span-fallback))
+(define compiler-symbols-last-error-has-span : bool
+  false)
+
+(define (compiler-symbols-clear-last-error!) : unit
+  (begin
+    (set! compiler-symbols-last-error-decl (ast-decl-module ""))
+    (set! compiler-symbols-last-error-path "")
+    (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
+    (set! compiler-symbols-last-error-has-span false)))
+
+(define (compiler-symbols-note-last-error!
+  [decl : AstDecl]
+  [path : String]
+  [span : AstSourceSpan]) : unit
+  (let
+    [has-span : bool (> (ast-source-span-start-line span) 0)]
+    (begin
+      (set! compiler-symbols-last-error-decl decl)
+      (set! compiler-symbols-last-error-path path)
+      (set! compiler-symbols-last-error-span span)
+      (set! compiler-symbols-last-error-has-span has-span))))
+
+(define (compiler-symbols-expr-maybe-span [expr : AstExpr]) : CompilerSymbolsMaybeSpan
+  (match expr
+    [(AstExpr.Spanned _ span) (CompilerSymbolsMaybeSpan.Some span)]
+    [(AstExpr.Unary _ inner)
+      (compiler-symbols-expr-maybe-span (ast-node-get inner))]
+    [(AstExpr.Ann inner _)
+      (compiler-symbols-expr-maybe-span (ast-node-get inner))]
+    [(AstExpr.Cast inner _)
+      (compiler-symbols-expr-maybe-span (ast-node-get inner))]
+    [(AstExpr.Borrow _ _ inner)
+      (compiler-symbols-expr-maybe-span (ast-node-get inner))]
+    [_ CompilerSymbolsMaybeSpan.No]))
+
+(define (compiler-symbols-decl-maybe-span [decl : AstDecl]) : CompilerSymbolsMaybeSpan
+  (match decl
+    [(AstDecl.Def _ _ body)
+      (compiler-symbols-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.DefFn _ _ _ body _)
+      (compiler-symbols-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.DefMacro _ _ _ body)
+      (compiler-symbols-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.Test _ _ span) (CompilerSymbolsMaybeSpan.Some span)]
+    [(AstDecl.Unsafe inner-box)
+      (compiler-symbols-decl-maybe-span (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (compiler-symbols-decl-maybe-span (box-get template-box))]
+    [_ CompilerSymbolsMaybeSpan.No]))
+
+(define (compiler-symbols-last-error-diagnostic [message : String]) : CompilerDiagnostic
+  (if compiler-symbols-last-error-has-span
+    (compiler-diagnostic-from-ast-span
+      compiler-symbols-last-error-path
+      compiler-symbols-last-error-span
+      message)
+    (match (compiler-symbols-decl-maybe-span compiler-symbols-last-error-decl)
+      [(CompilerSymbolsMaybeSpan.Some span)
+        (compiler-diagnostic-from-ast-span
+          compiler-symbols-last-error-path
+          span
+          message)]
+      [(CompilerSymbolsMaybeSpan.No)
+        (compiler-diagnostic-at-start compiler-symbols-last-error-path message)])))
 
 (define (compiler-symbol-kind-value-define) : i64
   1)
@@ -2602,6 +2689,11 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList rest]
+              [decl-span : AstSourceSpan
+                (ast-decl-list-span-get
+                  (& cur-decls)
+                  0
+                  (ast-decl-span-fallback))]
               [decl-path : String
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
@@ -2673,10 +2765,18 @@
                     decl-path)
                     [(CompilerSomeString message)
                       (begin
+                        (compiler-symbols-note-last-error!
+                          decl
+                          decl-path
+                          decl-span)
                         (set! result (ResultCompilerSymbols.Err message))
                         (set! done true))]
                     [CompilerNoString
                       (begin
+                        (compiler-symbols-note-last-error!
+                          decl
+                          decl-path
+                          decl-span)
                         (compiler-symbols-index-decl!
                           cur-symbols
                           decl
@@ -2751,6 +2851,18 @@
                 (compiler-symbols-macro-module-set decls)))]
           [(ResultCompilerSymbols.Err message)
             (ResultCompilerSymbols.Err message)]))]))
+
+(define (build-compiler-symbols-diagnostic-with-paths
+  [program : AstProgram]
+  [paths : AstDeclPathList]) : ResultCompilerSymbolsDiagnostic
+  (begin
+    (compiler-symbols-clear-last-error!)
+    (match (build-compiler-symbols-with-paths program paths)
+      [(ResultCompilerSymbols.Ok symbols)
+        (ResultCompilerSymbolsDiagnostic.Ok symbols)]
+      [(ResultCompilerSymbols.Err message)
+        (ResultCompilerSymbolsDiagnostic.Err
+          (box (compiler-symbols-last-error-diagnostic message)))])))
 
 (define (build-compiler-symbols-from-source [src : String]) : ResultCompilerSymbols
   (match (parse-ast-source src)

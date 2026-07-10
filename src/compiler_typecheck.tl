@@ -127,6 +127,21 @@
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerTypecheck.Ok _) false]))
 
+(define (compiler-typecheck-error-location-ok?
+  [src : String]
+  [want : String]
+  [want-line : i64]
+  [want-col : i64]) : bool
+  (match (typecheck-compiler-source src)
+    [(ResultCompilerTypecheck.Err diag)
+      (let
+        [value : CompilerDiagnostic (box-get diag)]
+        (and
+          (string.eq (compiler-diagnostic-message value) want)
+          (= (compiler-diagnostic-line value) want-line)
+          (= (compiler-diagnostic-col value) want-col)))]
+    [(ResultCompilerTypecheck.Ok _) false]))
+
 (define (compiler-typecheck-error-code-ok?
   [src : String]
   [want-code : String]
@@ -868,6 +883,9 @@
   "(defstruct Point (x i64) (y i64))
 (define (main [p : Point]) : i64
   (struct-get p z))")
+
+(define (compiler-typecheck-unknown-nominal-source) : String
+  "(define (main [value : Missing]) : i64 0)")
 
 (define (compiler-typecheck-aggregate-global-source) : String
   "(defstruct Point (x i64) (y i64))
@@ -9486,7 +9504,8 @@
         (compiler-typecheck-dup-extern-paths))
         [(ResultCompilerTypecheck.Err diag)
           (let
-            [message : String (compiler-diagnostic-message (box-get diag))]
+            [value : CompilerDiagnostic (box-get diag)]
+            [message : String (compiler-diagnostic-message value)]
             [duplicate-needle : String "symbols: duplicate value declaration f"]
             [main-path : String "src/main.tl"]
             [assets-path : String "src/assets.tl"]
@@ -9496,6 +9515,43 @@
               (string.contains (& message) (& assets-path))))]
         [(ResultCompilerTypecheck.Ok _) false])]
     [(ResultAstProgram.Err _) false]))
+
+(define (compiler-typecheck-dup-function-paths-ok?) : bool
+  (match (parse-ast-source (compiler-typecheck-dup-function-source))
+    [(ResultAstProgram.Ok program)
+      (match (typecheck-compiler-program-with-paths
+        program
+        (compiler-typecheck-dup-extern-paths))
+        [(ResultCompilerTypecheck.Err diag)
+          (let
+            [value : CompilerDiagnostic (box-get diag)]
+            (and
+              (string.contains
+                (compiler-diagnostic-message value)
+                "symbols: duplicate value declaration foo")
+              (string.eq (compiler-diagnostic-path value) "src/assets.tl")
+              (= (compiler-diagnostic-line value) 2)
+              (= (compiler-diagnostic-col value) 31)))]
+        [(ResultCompilerTypecheck.Ok _) false])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-typecheck-semantic-diagnostic-spans-ok?) : bool
+  (and
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-unknown-nominal-source)
+      "typecheck: unknown type Missing; TypeLisp has no source-level type parameters; use comptime-generated concrete declarations instead"
+      1
+      1)
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-unknown-field-source)
+      "typecheck: unknown struct field Point.z"
+      3
+      3)
+    (compiler-typecheck-error-location-ok?
+      (compiler-typecheck-unknown-variant-source)
+      "typecheck: unknown variant Other"
+      3
+      3)))
 
 (define (compiler-typecheck-cross-module-mismatch-source) : String
   "(module left)
@@ -9527,6 +9583,8 @@
       (compiler-typecheck-dup-extern-source)
       "symbols: duplicate value declaration f")
     (compiler-typecheck-dup-extern-paths-ok?)
+    (compiler-typecheck-dup-function-paths-ok?)
+    (compiler-typecheck-semantic-diagnostic-spans-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-variant-function-collision-source)
       "symbols: duplicate value declaration Foo")

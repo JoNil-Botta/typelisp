@@ -2061,6 +2061,7 @@
 
 (defstruct AstDeclList
   (slots (Array AstDecl))
+  (spans (Array AstSourceSpan))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -4587,13 +4588,21 @@
 (define (ast-decl-fallback) : AstDecl
   (AstDecl.Module (ci.intern "<ast-decl-list-fallback>")))
 
+(define (ast-decl-span-fallback) : AstSourceSpan
+  (ast-source-span 0 0 0 0))
+
 (define (ast-decl-list-with-capacity [capacity : i64]) : AstDeclList
   (let
     [cap : i64
       (if (< capacity 1)
         1
         capacity)]
-    (AstDeclList (array.make-array AstDecl cap) 0 0 true)))
+    (AstDeclList
+      (array.make-array AstDecl cap)
+      (array.make-array AstSourceSpan cap)
+      0
+      0
+      true)))
 
 (define (ast-decl-list-new) : AstDeclList
   (ast-decl-list-with-capacity 4))
@@ -4623,6 +4632,14 @@
     AstDecl)
   (& (array-ref (struct-get v slots) (+ (struct-get v offset) index))))
 
+(define (ast-decl-list-span-get
+  [v : (& v AstDeclList)]
+  [index : i64]
+  [fallback : AstSourceSpan]) : AstSourceSpan
+  (if (and (>= index 0) (< index (ast-decl-list-len v)))
+    (array-ref (struct-get v spans) (+ (struct-get v offset) index))
+    fallback))
+
 (define (ast-decl-list-copy-range
   [dst : (&mut dst (Array AstDecl))]
   [src : (& src (Array AstDecl))]
@@ -4648,6 +4665,37 @@
       (array-set! dst (+ dst-offset index) (array-ref src (+ src-offset index)))
       (ast-decl-list-copy-to dst src src-offset dst-offset (+ index 1) count))))
 
+(define (ast-decl-list-span-copy-range
+  [dst : (&mut dst (Array AstSourceSpan))]
+  [src : (& src (Array AstSourceSpan))]
+  [src-offset : i64]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst index (array-ref src (+ src-offset index)))
+      (ast-decl-list-span-copy-range dst src src-offset (+ index 1) count))))
+
+(define (ast-decl-list-span-copy-to
+  [dst : (&mut dst (Array AstSourceSpan))]
+  [src : (& src (Array AstSourceSpan))]
+  [src-offset : i64]
+  [dst-offset : i64]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! dst (+ dst-offset index) (array-ref src (+ src-offset index)))
+      (ast-decl-list-span-copy-to
+        dst
+        src
+        src-offset
+        dst-offset
+        (+ index 1)
+        count))))
+
 (define (ast-decl-list-grow [v : (&mut v AstDeclList)]) : unit
   (let
     [n : i64 (struct-get v len)]
@@ -4658,6 +4706,8 @@
         1
         (* old-cap 2))]
     [bigger : (Array AstDecl) (array.make-array AstDecl new-cap)]
+    [bigger-spans : (Array AstSourceSpan)
+      (array.make-array AstSourceSpan new-cap)]
     (begin
       (ast-decl-list-copy-range
         (&mut bigger)
@@ -4665,11 +4715,21 @@
         (struct-get v offset)
         0
         n)
+      (ast-decl-list-span-copy-range
+        (&mut bigger-spans)
+        (& (struct-get v spans))
+        (struct-get v offset)
+        0
+        n)
       (set! (struct-get v slots) bigger)
+      (set! (struct-get v spans) bigger-spans)
       (set! (struct-get v offset) 0)
       (set! (struct-get v prependable) true))))
 
-(define (ast-decl-list-push [v : (&mut v AstDeclList)] [value : AstDecl]) : unit
+(define (ast-decl-list-push-with-span
+  [v : (&mut v AstDeclList)]
+  [value : AstDecl]
+  [span : AstSourceSpan]) : unit
   (begin
     (if (<
       (struct-get v len)
@@ -4680,13 +4740,18 @@
       [index : i64 (+ (struct-get v offset) (struct-get v len))]
       (begin
         (array-set! (struct-get v slots) index value)
+        (array-set! (struct-get v spans) index span)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
+
+(define (ast-decl-list-push [v : (&mut v AstDeclList)] [value : AstDecl]) : unit
+  (ast-decl-list-push-with-span v value (ast-decl-span-fallback)))
 
 (define (ast-decl-list-tail [items : AstDeclList]) : AstDeclList
   (if (<= (ast-decl-list-len (& items)) 0)
     (ast-decl-list-new)
     (AstDeclList
       (struct-get items slots)
+      (struct-get items spans)
       (+ (struct-get items offset) 1)
       (- (struct-get items len) 1)
       false)))
@@ -4699,7 +4764,12 @@
       (AstDeclListStep.Nil)
       (AstDeclListStep.Cons
         (array-ref (struct-get items slots) offset)
-        (AstDeclList (struct-get items slots) (+ offset 1) (- len 1) false)))))
+        (AstDeclList
+          (struct-get items slots)
+          (struct-get items spans)
+          (+ offset 1)
+          (- len 1)
+          false)))))
 
 (define (ast-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -4708,19 +4778,25 @@
   (if (>= index (ast-decl-list-len items))
     unit
     (begin
-      (ast-decl-list-push
+      (ast-decl-list-push-with-span
         out
-        (ast-decl-list-get items index (ast-decl-fallback)))
+        (ast-decl-list-get items index (ast-decl-fallback))
+        (ast-decl-list-span-get items index (ast-decl-span-fallback)))
       (ast-decl-list-append-from out items (+ index 1)))))
 
-(define (ast-decl-list-prepend-builder [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+(define (ast-decl-list-prepend-builder-with-span
+  [head : AstDecl]
+  [span : AstSourceSpan]
+  [rest : AstDeclList]) : AstDeclList
   (if (and (> (struct-get rest offset) 0) (struct-get rest prependable))
     (let
       [new-offset : i64 (- (struct-get rest offset) 1)]
       (begin
         (array-set! (struct-get rest slots) new-offset head)
+        (array-set! (struct-get rest spans) new-offset span)
         (AstDeclList
           (struct-get rest slots)
+          (struct-get rest spans)
           new-offset
           (+ (struct-get rest len) 1)
           true)))
@@ -4733,8 +4809,10 @@
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
       [slots : (Array AstDecl) (array.make-array AstDecl new-cap)]
+      [spans : (Array AstSourceSpan) (array.make-array AstSourceSpan new-cap)]
       (begin
         (array-set! slots new-offset head)
+        (array-set! spans new-offset span)
         (ast-decl-list-copy-to
           (&mut slots)
           (& (struct-get rest slots))
@@ -4742,7 +4820,17 @@
           (+ new-offset 1)
           0
           rest-len)
-        (AstDeclList slots new-offset new-len true)))))
+        (ast-decl-list-span-copy-to
+          (&mut spans)
+          (& (struct-get rest spans))
+          (struct-get rest offset)
+          (+ new-offset 1)
+          0
+          rest-len)
+        (AstDeclList slots spans new-offset new-len true)))))
+
+(define (ast-decl-list-prepend-builder [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+  (ast-decl-list-prepend-builder-with-span head (ast-decl-span-fallback) rest))
 
 (define (ast-decl-cons [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (let
@@ -6364,9 +6452,10 @@
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
             (begin
-              (ast-decl-list-push
+              (ast-decl-list-push-with-span
                 (&mut out)
-                (ast-compaction-remap-decl remap decl))
+                (ast-compaction-remap-decl remap decl)
+                (ast-decl-list-span-get (& cursor) 0 (ast-decl-span-fallback)))
               (set! cursor rest))]))
       out)))
 

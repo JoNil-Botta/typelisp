@@ -1383,7 +1383,7 @@
   [env : CtfeEnv]) : ResultGenDecls
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [cursor : AstDeclList decls]
+    [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     [cur-registry : GenRegistry registry]
     [cur-module : String module]
@@ -1398,23 +1398,37 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil)
-            (begin
-              (set! result (ResultGenDecls.Ok out cur-registry cur-module))
-              (set! done true))]
-          [(AstDeclListStep.Cons decl rest)
+        (if (>= index count)
+          (begin
+            (set! result (ResultGenDecls.Ok out cur-registry cur-module))
+            (set! done true))
+          (let
+            [decl : AstDecl
+              (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+            [decl-span : AstSourceSpan (ast-decl-list-span (& decls) index)]
             (match (gen-rewrite-decl decl cur-module cur-registry env)
               [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
-                (begin
-                  (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
-                  (set! cur-registry decl-registry)
-                  (set! cur-module decl-module)
-                  (set! cursor rest))]
+                (let
+                  [rewritten-cursor : AstDeclList rewritten-decls]
+                  [copying : bool true]
+                  (begin
+                    (while copying
+                      (match (ast-decl-list-step rewritten-cursor)
+                        [(AstDeclListStep.Nil) (set! copying false)]
+                        [(AstDeclListStep.Cons rewritten-decl rewritten-rest)
+                          (begin
+                            (ast-decl-list-push-spanned
+                              (&mut out)
+                              rewritten-decl
+                              decl-span)
+                            (set! rewritten-cursor rewritten-rest))]))
+                    (set! cur-registry decl-registry)
+                    (set! cur-module decl-module)
+                    (set! index (+ index 1))))]
               [(ResultGenDecl.Err diag)
                 (begin
                   (set! result (ResultGenDecls.Err diag))
-                  (set! done true))])]))
+                  (set! done true))]))))
       result)))
 
 (define (gen-path-list-head-or [paths : AstDeclPathList] [fallback : String]) : String
@@ -1470,8 +1484,7 @@
   [env : CtfeEnv]) : ResultGenDeclsWithPaths
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [decl-cursor : AstDeclList decls]
-    [path-cursor : AstDeclPathList paths]
+    [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     [out-paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
     [cur-registry : GenRegistry registry]
@@ -1487,38 +1500,42 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast-decl-list-step decl-cursor)
-          [(AstDeclListStep.Nil)
-            (begin
-              (set!
-                result
-                (ResultGenDeclsWithPaths.Ok
-                  out
-                  out-paths
-                  cur-registry
-                  cur-module))
-              (set! done true))]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [decl-path : String
-                (gen-path-list-head-or path-cursor fallback-path)]
-              (match (gen-rewrite-decl decl cur-module cur-registry env)
-                [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
+        (if (>= index count)
+          (begin
+            (set!
+              result
+              (ResultGenDeclsWithPaths.Ok out out-paths cur-registry cur-module))
+            (set! done true))
+          (let
+            [decl : AstDecl
+              (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+            [decl-span : AstSourceSpan (ast-decl-list-span (& decls) index)]
+            [decl-path : String
+              (ast-decl-path-list-get (& paths) index fallback-path)]
+            (match (gen-rewrite-decl decl cur-module cur-registry env)
+              [(ResultGenDecl.Ok rewritten-decls decl-registry decl-module)
+                (let
+                  [rewritten-cursor : AstDeclList rewritten-decls]
+                  [copying : bool true]
                   (begin
-                    (ast-decl-list-append-from (&mut out) (& rewritten-decls) 0)
-                    (gen-path-list-push-for-decls
-                      (&mut out-paths)
-                      rewritten-decls
-                      decl-path
-                      0)
+                    (while copying
+                      (match (ast-decl-list-step rewritten-cursor)
+                        [(AstDeclListStep.Nil) (set! copying false)]
+                        [(AstDeclListStep.Cons rewritten-decl rewritten-rest)
+                          (begin
+                            (ast-decl-list-push-spanned
+                              (&mut out)
+                              rewritten-decl
+                              decl-span)
+                            (ast-decl-path-list-push (&mut out-paths) decl-path)
+                            (set! rewritten-cursor rewritten-rest))]))
                     (set! cur-registry decl-registry)
                     (set! cur-module decl-module)
-                    (set! decl-cursor rest)
-                    (set! path-cursor (gen-path-list-tail path-cursor)))]
-                [(ResultGenDecl.Err diag)
-                  (begin
-                    (set! result (ResultGenDeclsWithPaths.Err diag))
-                    (set! done true))]))]))
+                    (set! index (+ index 1))))]
+              [(ResultGenDecl.Err diag)
+                (begin
+                  (set! result (ResultGenDeclsWithPaths.Err diag))
+                  (set! done true))]))))
       result)))
 
 (define (gen-normalize-program-active [program : AstProgram]) : ResultGenProgram
@@ -5122,7 +5139,7 @@
   [state : SpecState]) : ResultSpecDecls
   (let
     [count : i64 (ast-decl-list-len (& decls))]
-    [cursor : AstDeclList decls]
+    [index : i64 0]
     [out : AstDeclList (ast-decl-list-with-capacity count)]
     [cur-state : SpecState state]
     [result : ResultSpecDecls
@@ -5136,12 +5153,14 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil)
-            (begin
-              (set! result (ResultSpecDecls.Ok out cur-state))
-              (set! done true))]
-          [(AstDeclListStep.Cons decl rest)
+        (if (>= index count)
+          (begin
+            (set! result (ResultSpecDecls.Ok out cur-state))
+            (set! done true))
+          (let
+            [decl : AstDecl
+              (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+            [decl-span : AstSourceSpan (ast-decl-list-span (& decls) index)]
             (match (spec-rewrite-decl decl templates cur-state)
               [(ResultSpecDecl.Ok maybe-decl decl-state)
                 (begin
@@ -5152,12 +5171,12 @@
                       (ast-decl-list-push-spanned
                         (&mut out)
                         rewritten-decl
-                        (ast-decl-list-head-span cursor))])
-                  (set! cursor rest))]
+                        decl-span)])
+                  (set! index (+ index 1)))]
               [(ResultSpecDecl.Err diag)
                 (begin
                   (set! result (ResultSpecDecls.Err diag))
-                  (set! done true))])]))
+                  (set! done true))]))))
       result)))
 
 (define (spec-rewrite-decls-with-paths

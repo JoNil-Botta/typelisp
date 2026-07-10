@@ -7800,13 +7800,14 @@
         [(ResultSpannedSexpr.Ok form)
           (match (parse-ast-decl-maybe-with-pools dispatch pools form)
             [(ResultAstMaybeDecl.SomeDecl decl)
-              (begin
-                (sp-node-pool-truncate! mark)
-                (parse-ast-decl-vec-push-spanned
-                  out
-                  decl
-                  (parse-ast-decl-primary-source-span form))
-                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
+              (let
+                [decl-span : AstSourceSpan
+                  (parse-ast-decl-primary-source-span form)]
+                (begin
+                  ;; Read the form span before releasing its sp-node slot.
+                  (sp-node-pool-truncate! mark)
+                  (parse-ast-decl-vec-push-spanned out decl decl-span)
+                  (parse-ast-program-forms-into-vec dispatch pools toks cur out)))]
             [(ResultAstMaybeDecl.Decls decls)
               (begin
                 (sp-node-pool-truncate! mark)
@@ -7984,19 +7985,20 @@
             (parse-ast-error-span-clear!)
             (match (parse-ast-decl-maybe-with-pools dispatch pools spanned-form)
               [(ResultAstMaybeDecl.SomeDecl decl)
-                (begin
-                  (sp-node-pool-truncate! mark)
-                  (parse-ast-decl-vec-push-spanned
-                    out
-                    decl
-                    (parse-ast-decl-primary-source-span spanned-form))
-                  (parse-ast-program-forms-diagnostic-into-vec
-                    path
-                    dispatch
-                    pools
-                    toks
-                    cur
-                    out))]
+                (let
+                  [decl-span : AstSourceSpan
+                    (parse-ast-decl-primary-source-span spanned-form)]
+                  (begin
+                    ;; Read the form span before releasing its sp-node slot.
+                    (sp-node-pool-truncate! mark)
+                    (parse-ast-decl-vec-push-spanned out decl decl-span)
+                    (parse-ast-program-forms-diagnostic-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out)))]
               [(ResultAstMaybeDecl.Decls decls)
                 (begin
                   (sp-node-pool-truncate! mark)

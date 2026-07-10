@@ -821,7 +821,11 @@
     "typecheck"))
 
 (define (tc-diag-at-start [message : String]) : CompilerDiagnostic
-  (tc-canonical-diagnostic (compiler-diagnostic-at-start "" message)))
+  (if (tc-rich-error? message)
+    (tc-rich-error-diag message)
+    (if (tc-located-error? message)
+      (tc-located-error-diag message)
+      (tc-canonical-diagnostic (compiler-diagnostic-at-start "" message)))))
 
 (define (tc-located-error-prefix) : String
   "__tl_tc_loc|")
@@ -1026,6 +1030,15 @@
           (string.>int
             (tc-located-error-field message end-col-start end-col-end)))
         clean-message))))
+
+;; Top-environment construction returns errors as strings. Preserve structured
+;; location payloads when that boundary turns the string into a diagnostic.
+(define (tc-message-diagnostic [message : String]) : CompilerDiagnostic
+  (if (tc-rich-error? message)
+    (tc-rich-error-diag message)
+    (if (tc-located-error? message)
+      (tc-located-error-diag message)
+      (tc-diag-at-start message))))
 
 (define (tc-ty-node-pool-exhausted-diagnostic) : CompilerDiagnostic
   (tc-diag-at-start (ty-node-pool-exhausted-message)))
@@ -13332,7 +13345,11 @@
               decl)
               [(ResultTcUnit.Ok)
                 (tc-source-decl-list-policy-ok-in-module ctx rest module)]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]))]))
+              [(ResultTcUnit.Err message)
+                (ResultTcUnit.Err
+                  (tc-locate-error-at-decl-span
+                    (ast-decl-list-head-span decls)
+                    message))])]))]))
 
 (define (tc-program-source-types-policy-ok
   [ctx : TcContext]
@@ -16551,40 +16568,41 @@
   [env : TcTypeEnv]
   [module : String]) : ResultTcEnv
   (let
-    [cursor : AstDeclList decls]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [current-env : TcTypeEnv env]
     [current-module : String module]
     [message : String ""]
     [ok : bool true]
     (begin
       (while ok
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! ok false)]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              [decl-span : AstSourceSpan (ast-decl-list-head-span cursor)]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! current-module (intern-str next-module))
-                    (set! cursor rest))]
-                [_
-                  (match (tc-build-top-env-bind-decl-in-module
-                    ctx
-                    current-env
-                    current-module
-                    decl)
-                    [(ResultTcEnv.Ok next-env)
-                      (begin
-                        (set! current-env next-env)
-                        (set! cursor rest))]
-                    [(ResultTcEnv.Err step-message)
-                      (begin
-                        (set!
-                          message
-                          (tc-locate-error-at-decl-span decl-span step-message))
-                        (set! ok false))])]))]))
+        (if (>= index count)
+          (set! ok false)
+          (let
+            [decl : AstDecl
+              (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+            [decl-span : AstSourceSpan (ast-decl-list-span (& decls) index)]
+            (match decl
+              [(AstDecl.Module next-module)
+                (begin
+                  (set! current-module (intern-str next-module))
+                  (set! index (+ index 1)))]
+              [_
+                (match (tc-build-top-env-bind-decl-in-module
+                  ctx
+                  current-env
+                  current-module
+                  decl)
+                  [(ResultTcEnv.Ok next-env)
+                    (begin
+                      (set! current-env next-env)
+                      (set! index (+ index 1)))]
+                  [(ResultTcEnv.Err step-message)
+                    (begin
+                      (set!
+                        message
+                        (tc-locate-error-at-decl-span decl-span step-message))
+                      (set! ok false))])]))))
       (if (string.eq message "")
         (ResultTcEnv.Ok current-env)
         (ResultTcEnv.Err message)))))
@@ -45110,9 +45128,10 @@
     [count : i64 (ast-decl-list-len items)]
     (while (< index count)
       (begin
-        (ast-decl-list-push
+        (ast-decl-list-push-spanned
           out
-          (ast-decl-list-get items index (ast-decl-fallback)))
+          (ast-decl-list-get items index (ast-decl-fallback))
+          (ast-decl-list-span items index))
         (set! index (+ index 1))))))
 
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
@@ -45139,30 +45158,34 @@
         (match (ast-decl-list-step cursor)
           [(AstDeclListStep.Nil) (set! done true)]
           [(AstDeclListStep.Cons decl rest)
-            (begin
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (ast-decl-list-push (&mut result) decl)
-                    (set! current-module (intern-str next-module)))]
-                [(AstDecl.ModuleBody target-module-id body-box)
-                  (let
-                    [target-module : String (intern-str target-module-id)]
+            (let
+              [decl-span : AstSourceSpan (ast-decl-list-head-span cursor)]
+              (begin
+                (match decl
+                  [(AstDecl.Module next-module)
                     (begin
-                      (ast-decl-list-push
-                        (&mut result)
-                        (ast-decl-module target-module))
-                      (set!
-                        result
-                        (macro-flatten-module-body-decls-into
-                          (box-get body-box)
-                          target-module
-                          result))
-                      (ast-decl-list-push
-                        (&mut result)
-                        (ast-decl-module current-module))))]
-                [_ (ast-decl-list-push (&mut result) decl)])
-              (set! cursor rest))]))
+                      (ast-decl-list-push-spanned (&mut result) decl decl-span)
+                      (set! current-module (intern-str next-module)))]
+                  [(AstDecl.ModuleBody target-module-id body-box)
+                    (let
+                      [target-module : String (intern-str target-module-id)]
+                      (begin
+                        (ast-decl-list-push-spanned
+                          (&mut result)
+                          (ast-decl-module target-module)
+                          decl-span)
+                        (set!
+                          result
+                          (macro-flatten-module-body-decls-into
+                            (box-get body-box)
+                            target-module
+                            result))
+                        (ast-decl-list-push-spanned
+                          (&mut result)
+                          (ast-decl-module current-module)
+                          decl-span)))]
+                  [_ (ast-decl-list-push-spanned (&mut result) decl decl-span)])
+                (set! cursor rest)))]))
       result)))
 
 (define (macro-flatten-module-body-decls-in-module
@@ -56131,6 +56154,7 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList rest]
+              [decl-span : AstSourceSpan (ast-decl-list-head-span cur-decls)]
               [decl-path : String
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
@@ -56145,7 +56169,12 @@
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
-                    (set! out-rev (ast-decl-list-prepend-builder decl out-rev))
+                    (set!
+                      out-rev
+                      (ast-decl-list-prepend-builder-spanned
+                        decl
+                        decl-span
+                        out-rev))
                     (set!
                       out-paths-rev
                       (ast-decl-path-list-prepend-builder
@@ -56471,7 +56500,10 @@
                           (compiler-tc-macro-profile-note-walk-decl-shared))
                         (set!
                           out-rev
-                          (ast-decl-list-prepend-builder decl out-rev))
+                          (ast-decl-list-prepend-builder-spanned
+                            decl
+                            decl-span
+                            out-rev))
                         (set!
                           out-paths-rev
                           (ast-decl-path-list-prepend-builder
@@ -58361,8 +58393,8 @@
   ;; Keep it iterative so a large program does not consume one native stack frame
   ;; per declaration on Windows selfhost binaries.
   (let
-    [cur-decls : AstDeclList decls]
-    [cur-paths : AstDeclPathList paths]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [cur-summary : CompilerTypecheckSummary summary]
     [cur-module : String module]
     [cur-cache : TcModuleLocalEnvCache cache]
@@ -58374,27 +58406,17 @@
     [done : bool false]
     (begin
       (while (not done)
-        (match (ast-decl-list-step cur-decls)
-          [(AstDeclListStep.Nil)
+        (begin
+          (if (>= index count)
             (begin
               (cfg compile-profile (compiler-tc-decl-profile-finish))
               (set! result (ResultCompilerTypecheck.Ok cur-summary))
-              (set! done true))]
-          [(AstDeclListStep.Cons decl rest)
+              (set! done true))
             (let
-              [rest : AstDeclList rest]
-              [decl-span : AstSourceSpan (ast-decl-list-head-span cur-decls)]
-              [decl-path : String
-                (match (ast-decl-path-list-step cur-paths)
-                  [(AstDeclPathListStep.Cons path _) path]
-                  [(AstDeclPathListStep.Nil) ""])]
-              [rest-paths : AstDeclPathList
-                (match (ast-decl-path-list-step cur-paths)
-                  [(AstDeclPathListStep.Cons _ path-rest)
-                    (let
-                      [path-rest : AstDeclPathList path-rest]
-                      path-rest)]
-                  [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              [decl-span : AstSourceSpan (ast-decl-list-span (& decls) index)]
+              [decl-path : String (ast-decl-path-list-get (& paths) index "")]
               (match decl
                 [(AstDecl.Module next-module)
                   (begin
@@ -58418,8 +58440,7 @@
                               (cfg
                                 compile-profile
                                 (compiler-tc-decl-profile-add-local-env))
-                              (set! cur-decls rest)
-                              (set! cur-paths rest-paths)
+                              (set! index (+ index 1))
                               (set! cur-module (intern-str next-module))
                               (set! cur-cache next-cache)
                               (set!
@@ -58459,8 +58480,7 @@
                 [_
                   (if (tc-generated-clone-decl-with-path? decl decl-path)
                     (begin
-                      (set! cur-decls rest)
-                      (set! cur-paths rest-paths)
+                      (set! index (+ index 1))
                       (set! cur-summary (tc-summary-add-decl cur-summary decl)))
                     (let
                       [decl-ctx : TcContext
@@ -58483,8 +58503,7 @@
                               (cfg
                                 compile-profile
                                 (compiler-tc-decl-profile-record decl))
-                              (set! cur-decls rest)
-                              (set! cur-paths rest-paths)
+                              (set! index (+ index 1))
                               (set!
                                 cur-summary
                                 (tc-summary-add-decl cur-summary decl)))]
@@ -58500,7 +58519,8 @@
                                       decl-span
                                       decl-path
                                       message))))
-                              (set! done true))]))))]))]))
+                              (set! done true))]))))])))
+          unit))
       result)))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner-with-pools
@@ -58552,10 +58572,10 @@
                                       (ResultCompilerTypecheckChecked.Err diag)])))])]
                         [(ResultTcEnv.Err message)
                           (ResultCompilerTypecheckChecked.Err
-                            (box (tc-diag-at-start message)))])]
+                            (box (tc-message-diagnostic message)))])]
                     [(ResultTcUnit.Err message)
                       (ResultCompilerTypecheckChecked.Err
-                        (box (tc-diag-at-start message)))])]
+                        (box (tc-message-diagnostic message)))])]
                 [(ResultTcUnit.Err message)
                   (ResultCompilerTypecheckChecked.Err
                     (box (tc-diag-at-start message)))]))]

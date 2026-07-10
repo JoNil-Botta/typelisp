@@ -11259,14 +11259,10 @@
 (define (tc-qualified-lookup-owner-name
   [lookup-name : String]
   [owner-name : String]) : String
-  ;; Intern `lookup-name` once and read both id-keyed slots. Refs #4427.
-  (let
-    [lookup-id : i64 (intern lookup-name)]
-    (if (and
-      (or (tc-name-qualified-id? lookup-id) (>= (intern-first-dot lookup-id) 0))
-      (not (tc-name-qualified? owner-name)))
-      lookup-name
-      owner-name)))
+  ;; Import aliases are lookup syntax, never part of a nominal type's identity.
+  ;; Once symbol lookup identified the owner, use its canonical module-qualified
+  ;; name so a direct import and a nested aliased import share one public type.
+  owner-name)
 
 (define tc-nominal-owner-cache-handle : i64
   0)

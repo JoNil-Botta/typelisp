@@ -1,12 +1,14 @@
 ;; run_cli_core.tl - Selfhost run command logic.
 ;;
 ;; Source-file runs build and execute in-process through stdlib fs/process
-;; helpers. `--direct` remains accepted as a compatibility no-op.
+;; helpers. Package runs reuse the package build path, then execute the emitted
+;; binary artifact. `--direct` remains accepted as a compatibility no-op.
 (import stdlib.io)
 (import stdlib.process)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import "build_run_core.tl")
+(import "build_cli_core.tl")
 (import "doc_test.tl")
 (import "test_cli_core.tl")
 (import stdlib.string)
@@ -21,7 +23,8 @@
     SourceToolCfgNames
     process.ProcessStringList
     i64
-    SourceToolLinkInputs))
+    SourceToolLinkInputs)
+  (Package BuildConfig process.ProcessStringList))
 
 (defenum ResultRunCliConfig
   (Ok RunCliConfig)
@@ -32,6 +35,51 @@
 
 (define (run-cli-unknown-opt-level [value : String]) : String
   (str_cat.str-cat "run: unknown opt level " value "; expected 0, 1, or 2"))
+
+(define (run-cli-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [prefix-len : i64 (string.string-length prefix)]
+    (and
+      (>= (string.string-length text) prefix-len)
+      (string.eq (string.substring text 0 prefix-len) prefix))))
+
+(define (run-cli-rewrite-build-error [message : String]) : String
+  (let
+    [prefix : String "build: "]
+    [prefix-len : i64 (string.string-length prefix)]
+    (if (run-cli-string-prefix? message prefix)
+      (str_cat.str-cat
+        "run: "
+        (string.substring
+          message
+          prefix-len
+          (- (string.string-length message) prefix-len)))
+      message)))
+
+(define (run-cli-runtime-separator-index [idx : i64] [count : i64]) : i64
+  (if (>= idx count)
+    count
+    (if (string.eq (io.arg idx) "--")
+      idx
+      (run-cli-runtime-separator-index (+ idx 1) count))))
+
+(define (run-cli-package-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
+  (let
+    [separator : i64 (run-cli-runtime-separator-index idx count)]
+    [runtime-args : process.ProcessStringList
+      (if (< separator count)
+        (source-tool-args-from-argv (+ separator 1) count (process.args-empty))
+        (process.args-empty))]
+    (match (build-config-from idx separator)
+      [(ResultBuildConfig.Err message)
+        (ResultRunCliConfig.Err (run-cli-rewrite-build-error message))]
+      [(ResultBuildConfig.Ok config)
+        (match config
+          [(BuildConfig.Package _ _ _ _ _ _ _ _ _ _)
+            (ResultRunCliConfig.Ok (RunCliConfig.Package config runtime-args))]
+          [(BuildConfig.Source _ _ _ _ _ _ _ _)
+            (ResultRunCliConfig.Err
+              "run: source file arguments must appear before run options; use -- before package runtime args")])])))
 
 (define (run-cli-parse-options
   [idx : i64]
@@ -218,23 +266,21 @@
               link-inputs))]))))
 
 (define (run-cli-config-from [idx : i64] [count : i64]) : ResultRunCliConfig
-  (if (<= count idx)
-    (ResultRunCliConfig.Err "run: expected source path")
+  (if (or (<= count idx) (source-tool-flag? (io.arg idx)))
+    (run-cli-package-config-from idx count)
     (let
       [source : String (io.arg idx)]
-      (if (source-tool-flag? source)
-        (ResultRunCliConfig.Err "run: expected source path before flags")
-        (run-cli-parse-options
-          (+ idx 1)
-          count
-          source
-          (source-tool-default-target)
-          (CompilerBackendMode.Scalar)
-          (cli_svec.new)
-          (source-tool-cfg-names-empty)
-          (process.args-empty)
-          (compiler-optimize-default-level)
-          (source-tool-link-inputs-empty))))))
+      (run-cli-parse-options
+        (+ idx 1)
+        count
+        source
+        (source-tool-default-target)
+        (CompilerBackendMode.Scalar)
+        (cli_svec.new)
+        (source-tool-cfg-names-empty)
+        (process.args-empty)
+        (compiler-optimize-default-level)
+        (source-tool-link-inputs-empty)))))
 
 (define (run-cli-typecheck-doctests
   [source : String]
@@ -287,6 +333,136 @@
           inline-test-status))
       doctest-status)))
 
+(define (run-cli-run-package-artifact
+  [bin-path : String]
+  [target : CompilerBackendTarget]
+  [runtime-args : process.ProcessStringList]) : i64
+  (match (source-tool-run-executable bin-path target runtime-args)
+    [(process.OkProcessOutput output)
+      (let
+        [status : i64 (process.output-status output)]
+        (begin
+          (source-tool-forward-output output)
+          status))]
+    [(process.ErrProcessOutput error)
+      (begin
+        (io.print-error
+          (str_cat.str-cat
+            "Error: failed to run executable '"
+            bin-path
+            "' for target "
+            (source-tool-target-name target)
+            ": "
+            (process.error-message error)))
+        1)]))
+
+(define (run-cli-package-artifact-path
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]
+  [profile : BuildProfile]
+  [target : CompilerBackendTarget]) : String
+  (let
+    [normalized-path : String
+      (build-package-normalize-manifest-path manifest-path)]
+    [manifest-dir : String (compiler-load-dirname normalized-path)]
+    [artifacts : BuildPackageArtifactPaths
+      (build-package-artifact-paths
+        manifest-dir
+        (struct-get manifest name)
+        (struct-get manifest kind)
+        profile
+        target)]
+    (build-package-runtime-artifact-path artifacts)))
+
+(define (run-cli-run-package-from-path
+  [manifest-path : String]
+  [target-text : String]
+  [has-target : bool]
+  [mode : String]
+  [profile : BuildProfile]
+  [opt-level : i64]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : cli_svec.Vec]
+  [runtime-args : process.ProcessStringList]) : i64
+  (match (build-parse-target target-text)
+    [(ResultBuildTarget.Err message)
+      (begin
+        (io.print-error (run-cli-rewrite-build-error message))
+        1)]
+    [(ResultBuildTarget.Ok target)
+      (match (build-load-manifest manifest-path)
+        [(ResultBuildManifest.Err message)
+          (begin
+            (io.print-error (str_cat.str-cat "Error: " message))
+            1)]
+        [(ResultBuildManifest.Ok manifest)
+          (if (not (build-package-kind-entry? (struct-get manifest kind)))
+            (begin
+              (io.print-error
+                "run: package manifest kind must be bin to execute")
+              1)
+            (let
+              [build-status : i64
+                (build-package-from-path-announce
+                  manifest-path
+                  target-text
+                  has-target
+                  mode
+                  opt-level
+                  profile
+                  lock-policy
+                  stdlib-roots
+                  false)]
+              (if (= build-status 0)
+                (run-cli-run-package-artifact
+                  (run-cli-package-artifact-path
+                    manifest-path
+                    manifest
+                    profile
+                    target)
+                  target
+                  runtime-args)
+                build-status)))])]))
+
+(define (run-cli-run-package
+  [config : BuildConfig]
+  [runtime-args : process.ProcessStringList]) : i64
+  (match config
+    [(BuildConfig.Package
+        manifest-path
+        has-manifest
+        target-text
+        has-target
+        mode
+        profile
+        _
+        opt-level
+        lock-policy
+        stdlib-roots)
+      (let
+        [resolved-manifest : CompilerLoadMaybePath
+          (if has-manifest
+            (CompilerLoadSomePath manifest-path)
+            (build-discover-manifest-up "" 256))]
+        (match resolved-manifest
+          [(CompilerLoadNoPath)
+            (begin
+              (io.print-error
+                "could not find typelisp.pkg from '.' or any parent directory")
+              1)]
+          [(CompilerLoadSomePath path)
+            (run-cli-run-package-from-path
+              path
+              target-text
+              has-target
+              mode
+              profile
+              opt-level
+              lock-policy
+              stdlib-roots
+              runtime-args)]))]
+    [_ 1]))
+
 (define (run-direct-from [idx : i64] [count : i64]) : i64
   (match (run-cli-config-from idx count)
     [(ResultRunCliConfig.Ok config)
@@ -308,7 +484,9 @@
             runtime-args
             opt-level
             mode
-            link-inputs)])]
+            link-inputs)]
+        [(RunCliConfig.Package package-config runtime-args)
+          (run-cli-run-package package-config runtime-args)])]
     [(ResultRunCliConfig.Err message)
       (begin
         (io.print-error message)

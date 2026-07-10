@@ -3077,16 +3077,19 @@
 (define (build-package-finish-built-artifact
   [artifact-path : String]
   [tlci-path : String]
-  [tlci-text : String]) : i64
+  [tlci-text : String]
+  [announce : bool]) : i64
   (match (build-package-write-tlci tlci-path tlci-text)
     [(SourceToolCommandStatus.Err message)
       (begin
         (io.print-error message)
         1)]
     [(SourceToolCommandStatus.Ok)
-      (begin
-        (io.print-string (str_cat.str-cat "Built " artifact-path "\n"))
-        (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
+      (if announce
+        (begin
+          (io.print-string (str_cat.str-cat "Built " artifact-path "\n"))
+          (io.print-string (str_cat.str-cat "Built " tlci-path "\n"))
+          0)
         0)]))
 
 (define (build-package-write-assembly
@@ -3126,7 +3129,8 @@
   [tlci-path : String]
   [tlci-text : String]
   [asm : String]
-  [direct-object : ResultSourceToolString]) : i64
+  [direct-object : ResultSourceToolString]
+  [announce : bool]) : i64
   (match (build-package-write-assembly asm-path asm target)
     [(SourceToolCommandStatus.Err message)
       (begin
@@ -3162,7 +3166,8 @@
             (build-package-finish-built-artifact
               artifact-path
               tlci-path
-              tlci-text)]))]))
+              tlci-text
+              announce)]))]))
 
 (define (build-package-emit-assembly-fallback
   [kind : CompilerPkgKind]
@@ -3179,7 +3184,8 @@
   [effective-link-inputs : SourceToolLinkInputs]
   [tlci-path : String]
   [tlci-text : String]
-  [direct-message : String]) : i64
+  [direct-message : String]
+  [announce : bool]) : i64
   (match (compiler-driver-emit-package-loaded
     ""
     target
@@ -3208,7 +3214,8 @@
           tlci-path
           tlci-text
           asm
-          (ResultSourceToolString.Err direct-message)))]))
+          (ResultSourceToolString.Err direct-message)
+          announce))]))
 
 (define (build-package-write-side-assembly
   [target : CompilerBackendTarget]
@@ -3303,7 +3310,8 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
-  [dep-libs : process.ProcessStringList]) : i64
+  [dep-libs : process.ProcessStringList]
+  [announce : bool]) : i64
   (let
     ;; Windows package DAG nodes are serial same-process compiles; keep only
     ;; persistent cache floors between dependency and root emits.
@@ -3459,7 +3467,8 @@
                                     (build-package-finish-built-artifact
                                       artifact-path
                                       tlci-path
-                                      tlci-text))])]
+                                      tlci-text
+                                      announce))])]
                             [(SourceToolDirectObjectStatus.Err message)
                               (begin
                                 (io.print-error message)
@@ -3480,12 +3489,15 @@
                                 effective-link-inputs
                                 tlci-path
                                 tlci-text
-                                message)]))]))])
+                                message
+                                announce)]))]))])
               pre-emit-doctest-status))
           inline-test-status)))))
 
 (define (build-package-worker-unified-cli?) : bool
-  (and (> (arg-count) 1) (string.eq (io.arg 1) "build")))
+  (and
+    (> (arg-count) 1)
+    (or (string.eq (io.arg 1) "build") (string.eq (io.arg 1) "run"))))
 
 (define (build-package-worker-command-prefix [args : process.ProcessStringList]) : process.ProcessStringList
   (if (build-package-worker-unified-cli?)
@@ -3775,7 +3787,8 @@
                       (struct-get config mode)
                       (struct-get config lock-policy)
                       (struct-get config stdlib-roots)
-                      (process.args-empty))
+                      (process.args-empty)
+                      true)
                     (begin
                       (io.print-error
                         "build: package worker can only build staticlib packages")
@@ -4069,6 +4082,7 @@
 (define (build-package-wait-workers-with
   [workers : BuildPackageGraphWorkerVec]
   [built : build_string_i64_map.Map]
+  [announce : bool]
   [failed-status : i64]) : ResultBuildPackageWait
   (let
     [index : i64 0]
@@ -4091,7 +4105,9 @@
             (match result
               [(process.OkProcessOutput output)
                 (begin
-                  (source-tool-forward-output output)
+                  (if (or announce (not (process.success? output)))
+                    (source-tool-forward-output output)
+                    unit)
                   (if (process.success? output)
                     (let
                       [runtime-path : String (struct-get artifacts runtime)]
@@ -4163,8 +4179,9 @@
 
 (define (build-package-wait-workers
   [workers : BuildPackageGraphWorkerVec]
-  [built : build_string_i64_map.Map]) : ResultBuildPackageWait
-  (build-package-wait-workers-with workers built 0))
+  [built : build_string_i64_map.Map]
+  [announce : bool]) : ResultBuildPackageWait
+  (build-package-wait-workers-with workers built announce 0))
 
 (define (build-package-emit-graph-nodes-parallel-loop
   [nodes : BuildPackageGraphNodeVec]
@@ -4174,6 +4191,7 @@
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
   [stdlib-roots : cli_svec.Vec]
+  [announce : bool]
   [scheduled : build_string_i64_map.Map]
   [built : build_string_i64_map.Map]) : i64
   (if (build-package-all-built? nodes built)
@@ -4202,7 +4220,7 @@
               (io.print-error
                 "build: package dependency scheduler made no progress")
               1)
-            (match (build-package-wait-workers workers built)
+            (match (build-package-wait-workers workers built announce)
               [(ResultBuildPackageWait.Err status) status]
               [(ResultBuildPackageWait.Ok next-built)
                 (build-package-emit-graph-nodes-parallel-loop
@@ -4213,6 +4231,7 @@
                   mode
                   lock-policy
                   stdlib-roots
+                  announce
                   (struct-get pass scheduled)
                   next-built)])))])))
 
@@ -4223,6 +4242,7 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
+  [announce : bool]
   [stdlib-roots : cli_svec.Vec]) : i64
   (build-package-emit-graph-nodes-parallel-loop
     nodes
@@ -4232,6 +4252,7 @@
     mode
     lock-policy
     stdlib-roots
+    announce
     (build_string_i64_map.with-capacity 32)
     (build_string_i64_map.with-capacity 32)))
 
@@ -4242,7 +4263,8 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [announce : bool]) : i64
   (let
     [index : i64 0]
     [count : i64 (build-package-graph-node-vec-len nodes)]
@@ -4264,7 +4286,8 @@
               mode
               lock-policy
               stdlib-roots
-              (process.args-empty))]
+              (process.args-empty)
+              announce)]
           (if (= node-status 0)
             (set! index (+ index 1))
             (begin
@@ -4284,7 +4307,8 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [announce : bool]) : i64
   (if (and
     (build-package-async-process-supported?)
     (build-package-worker-spawn-supported?))
@@ -4295,6 +4319,7 @@
       profile
       mode
       lock-policy
+      announce
       stdlib-roots)
     (build-package-emit-graph-nodes-serial
       nodes
@@ -4303,7 +4328,8 @@
       profile
       mode
       lock-policy
-      stdlib-roots)))
+      stdlib-roots
+      announce)))
 
 (define (build-doctest-report [report : DocTestRunReport]) : i64
   (if (doc-test-run-report-ok? report)
@@ -4376,7 +4402,8 @@
   [profile : BuildProfile]
   [mode : CompilerBackendMode]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [announce : bool]) : i64
   (match (build-parse-target target-text)
     [(ResultBuildTarget.Err message)
       (begin
@@ -4414,7 +4441,8 @@
                       profile
                       mode
                       lock-policy
-                      stdlib-roots)]
+                      stdlib-roots
+                      announce)]
                   (if (= dep-status 0)
                     (build-package-emit-one
                       normalized-path
@@ -4425,10 +4453,11 @@
                       mode
                       lock-policy
                       stdlib-roots
-                      (build-package-graph-link-libs nodes profile target))
+                      (build-package-graph-link-libs nodes profile target)
+                      announce)
                     dep-status))])]))]))
 
-(define (build-package-from-path
+(define (build-package-from-path-announce
   [manifest-path : String]
   [target-text : String]
   [has-target : bool]
@@ -4436,7 +4465,8 @@
   [opt-level : i64]
   [profile : BuildProfile]
   [lock-policy : BuildPackageLockPolicy]
-  [stdlib-roots : cli_svec.Vec]) : i64
+  [stdlib-roots : cli_svec.Vec]
+  [announce : bool]) : i64
   (match (source-tool-backend-mode "build" mode)
     [(ResultSourceToolBackendMode.Err message)
       (begin
@@ -4458,7 +4488,28 @@
             profile
             backend-mode
             lock-policy
-            stdlib-roots)])]))
+            stdlib-roots
+            announce)])]))
+
+(define (build-package-from-path
+  [manifest-path : String]
+  [target-text : String]
+  [has-target : bool]
+  [mode : String]
+  [opt-level : i64]
+  [profile : BuildProfile]
+  [lock-policy : BuildPackageLockPolicy]
+  [stdlib-roots : cli_svec.Vec]) : i64
+  (build-package-from-path-announce
+    manifest-path
+    target-text
+    has-target
+    mode
+    opt-level
+    profile
+    lock-policy
+    stdlib-roots
+    true))
 
 (define (build-package [config : BuildConfig]) : i64
   (match config

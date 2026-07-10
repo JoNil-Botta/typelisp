@@ -101,6 +101,7 @@ $tl run     examples/hello.tl
 $tl test --check examples/hello.tl
 $tl run     examples/hello.tl --target windows-x86_64
 $tl build                         # builds nearest typelisp.pkg
+$tl run                           # builds/runs nearest binary typelisp.pkg
 ```
 
 ## Example
@@ -438,6 +439,9 @@ inferred from `src/main.tl` and `staticlib` from `src/lib.tl`. Package
 builds also emit a metadata-only comptime image `<name>.tlci` beside the
 native artifact; `typelisp inspect <file.tlci>` renders its header,
 sections, and package metadata.
+`typelisp run [--manifest-path <typelisp.pkg>]` uses the same package
+resolution and build profile rules, then executes `bin` package artifacts;
+runtime arguments are passed after `--`.
 
 Dependencies may be local paths or git/GitHub pins (`rev`, `tag`, or
 `branch`). Remote pins resolve through `typelisp.lock` — a deterministic
@@ -584,7 +588,7 @@ Commands:
     typelisp lsp            Start stdio LSP diagnostics server
     typelisp new            Scaffold a new package directory
     typelisp repl           Start minimal stdio REPL
-    typelisp run            Compile, link, and run a source file
+    typelisp run            Compile, link, and run a source file or package
     typelisp test           Run or check inline tests
 ```
 

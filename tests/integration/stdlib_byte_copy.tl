@@ -145,6 +145,27 @@
       (byte-copy-assert-range buf 3 10 0 "overlap copied payload")
       (byte-copy-assert-at buf 13 13 "overlap suffix remains"))))
 
+(define (byte-copy-medium-overlap-dst-after-src-case) : unit
+  (let
+    [buf : (Array u8) (array.make-array u8 160)]
+    [base : (MutPtr u8) (byte-copy-base buf)]
+    (begin
+      (byte-copy-fill! buf 160 0)
+      (string.str-copy-bytes-into (byte-copy-source-at base 0) base 17 120)
+      (byte-copy-assert-range buf 0 17 0 "medium overlap prefix remains")
+      (byte-copy-assert-range buf 17 120 0 "medium overlap copied payload")
+      (byte-copy-assert-at buf 137 137 "medium overlap suffix remains"))))
+
+(define (byte-copy-medium-overlap-dst-before-src-case) : unit
+  (let
+    [buf : (Array u8) (array.make-array u8 160)]
+    [base : (MutPtr u8) (byte-copy-base buf)]
+    (begin
+      (byte-copy-fill! buf 160 0)
+      (string.str-copy-bytes-into (byte-copy-source-at base 17) base 0 120)
+      (byte-copy-assert-range buf 0 120 17 "medium forward overlap payload")
+      (byte-copy-assert-at buf 120 120 "medium forward overlap suffix remains"))))
+
 (define (main) : i64
   (begin
     (byte-copy-zero-length-case)
@@ -152,4 +173,6 @@
     (byte-copy-tail-cases)
     (byte-copy-medium-dynamic-case)
     (byte-copy-overlap-dst-after-src-case)
+    (byte-copy-medium-overlap-dst-after-src-case)
+    (byte-copy-medium-overlap-dst-before-src-case)
     42))

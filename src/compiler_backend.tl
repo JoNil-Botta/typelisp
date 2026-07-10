@@ -45656,15 +45656,11 @@ tl_profile_alloc_reset_peak:
 ;; value. Copy backward (std) for the overlapping dst>src case; DF is restored
 ;; before returning per the ABI.
 ;;
-;; The forward (common, non-overlapping) path copies word-at-a-time: `rep movsq`
-;; for the len/8 qword bulk, then `rep movsb` for the <8-byte tail. The 64 B
-;; inline-copy ceiling (lower-inline-copy-threshold) routes only LARGE copies
-;; here -- by-value `CompilerIrInstr` (~96-120 B) is the dominant caller (every
-;; IR instr cons/array fill/seq ref) -- and at those small multiples of 8 a
-;; byte-granular `rep movsb` pays its per-byte iteration count where a qword copy
-;; does 8x less work. r11 is caller-saved on both SysV and Win64, so it is a free
-;; scratch for the saved length. The backward path stays byte-granular: it is the
-;; rare aliasing case and correctness, not speed, governs it.
+;; On Win64 the dominant calls copy 88-120 B by-value compiler aggregates.
+;; Copy those medium ranges in unrolled 64/32/16 B baseline-SSE2 blocks; this
+;; avoids the host's fast-string setup. Both directions use the same chunking so
+;; overlapping dst>src copies stay memmove-safe. Linux retains rep movsq: its
+;; deterministic instruction-count gate favors the microcoded qword loop.
 (define (compiler-backend-runtime-memcpy-functions
   [target : CompilerBackendTarget]) : String
   (if (compiler-backend-target-windows? target)
@@ -45681,20 +45677,80 @@ tl_memcpy:
     addq %rcx, %r9
     cmpq %r9, %rdi
     jae .Ltl_memcpy_fwd
+.Ltl_memcpy_bwd_64:
+    cmpq $64, %rcx
+    jb .Ltl_memcpy_bwd_32
+    subq $64, %rcx
+    movups (%rsi,%rcx), %xmm0
+    movups 16(%rsi,%rcx), %xmm1
+    movups 32(%rsi,%rcx), %xmm2
+    movups 48(%rsi,%rcx), %xmm3
+    movups %xmm0, (%rdi,%rcx)
+    movups %xmm1, 16(%rdi,%rcx)
+    movups %xmm2, 32(%rdi,%rcx)
+    movups %xmm3, 48(%rdi,%rcx)
+    jmp .Ltl_memcpy_bwd_64
+.Ltl_memcpy_bwd_32:
+    cmpq $32, %rcx
+    jb .Ltl_memcpy_bwd_16
+    subq $32, %rcx
+    movups (%rsi,%rcx), %xmm0
+    movups 16(%rsi,%rcx), %xmm1
+    movups %xmm0, (%rdi,%rcx)
+    movups %xmm1, 16(%rdi,%rcx)
+.Ltl_memcpy_bwd_16:
+    cmpq $16, %rcx
+    jb .Ltl_memcpy_bwd_tail
+    subq $16, %rcx
+    movups (%rsi,%rcx), %xmm0
+    movups %xmm0, (%rdi,%rcx)
+.Ltl_memcpy_bwd_tail:
+    testq %rcx, %rcx
+    je .Ltl_memcpy_done
     leaq -1(%rdi,%rcx), %rdi
     leaq -1(%rsi,%rcx), %rsi
     std
     rep movsb
     cld
+.Ltl_memcpy_done:
     movq %rax, %rdi
     movq %r10, %rsi
     ret
 .Ltl_memcpy_fwd:
-    movq %rcx, %r11
-    shrq $3, %rcx
-    rep movsq
-    movq %r11, %rcx
-    andq $7, %rcx
+.Ltl_memcpy_fwd_64:
+    cmpq $64, %rcx
+    jb .Ltl_memcpy_fwd_32
+    movups (%rsi), %xmm0
+    movups 16(%rsi), %xmm1
+    movups 32(%rsi), %xmm2
+    movups 48(%rsi), %xmm3
+    movups %xmm0, (%rdi)
+    movups %xmm1, 16(%rdi)
+    movups %xmm2, 32(%rdi)
+    movups %xmm3, 48(%rdi)
+    addq $64, %rsi
+    addq $64, %rdi
+    subq $64, %rcx
+    jmp .Ltl_memcpy_fwd_64
+.Ltl_memcpy_fwd_32:
+    cmpq $32, %rcx
+    jb .Ltl_memcpy_fwd_16
+    movups (%rsi), %xmm0
+    movups 16(%rsi), %xmm1
+    movups %xmm0, (%rdi)
+    movups %xmm1, 16(%rdi)
+    addq $32, %rsi
+    addq $32, %rdi
+    subq $32, %rcx
+.Ltl_memcpy_fwd_16:
+    cmpq $16, %rcx
+    jb .Ltl_memcpy_fwd_tail
+    movups (%rsi), %xmm0
+    movups %xmm0, (%rdi)
+    addq $16, %rsi
+    addq $16, %rdi
+    subq $16, %rcx
+.Ltl_memcpy_fwd_tail:
     rep movsb
     movq %rax, %rdi
     movq %r10, %rsi

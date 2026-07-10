@@ -185,6 +185,7 @@ compile_pass() {
                 echo "[$pass_name] $source -> $out (compile-manifest invocation)"
                 "$COMPILER" compile "$(compiler_input_path "$ROOT/$source")" -o "$out" \
                     --target linux-x86_64 \
+                    --cfg selfhost-compile-manifest \
                     --stdlib-root "$(compiler_input_path "$ROOT/stdlib")"
             fi
             continue

@@ -238,7 +238,9 @@ use.
   helper aliases. The checked toy format exercises the hook contract, and
   `json.tl` provides the JSON integration strategy.
 - `process.tl`: process command/output/error data model and the public
-  `output`/`start`/`wait` wrappers for selfhost tools.
+  `output`/`inherit`/`start`/`wait` wrappers for selfhost tools. `inherit`
+  leaves child stdout/stderr connected to the caller for live output; `output`
+  retains the captured-output contract.
   `ProcessCommand` keeps the existing list-backed argv/env runtime boundary and
   also exposes `StringVec` argv conversion helpers plus `ProcessEnvVec`, a
   parallel-`StringVec` env builder surface. Vector argv helpers convert once
@@ -248,7 +250,7 @@ use.
   Import it with
   `(import stdlib.process)`.
 - `process_runtime.tl`: TypeLisp implementation of the process-execution runtime
-  (`tl_process_output`/`tl_process_start`/`tl_process_wait`) that `process.tl`
+  (`tl_process_output`/`tl_process_inherit`/`tl_process_start`/`tl_process_wait`) that `process.tl`
   calls — Linux uses raw syscalls (fork/execve with memfd-captured output),
   Windows uses kernel32 `CreateProcessA` with temp-file redirection. Replaces the
   former backend assembly (#2142 slice 4); imported transitively via `process.tl`.

@@ -499,6 +499,7 @@
                   (compiler-optimize-default-level)
                   (CompilerBackendMode.Scalar)
                   (source-tool-link-inputs-empty)
+                  false
                   temp-dir)]
               (begin
                 (repl-clean-scratch-source temp-dir source-path)

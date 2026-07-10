@@ -1996,6 +1996,17 @@
       target
       (process.command bin-path runtime-args))))
 
+;: Run a user-facing executable while leaving child stdout/stderr connected to
+;: the caller for live progress output.
+(define (source-tool-run-executable-inherit
+  [bin-path : String]
+  [target : CompilerBackendTarget]
+  [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
+  (process.inherit
+    (source-tool-command-for-target
+      target
+      (process.command bin-path runtime-args))))
+
 (define (source-tool-run-source-in-temp
   [source : String]
   [target : CompilerBackendTarget]
@@ -2005,6 +2016,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
+  [stream-output : bool]
   [temp-dir : String]) : i64
   (let
     [asm-path : String (source-tool-asm-path temp-dir source)]
@@ -2050,12 +2062,19 @@
                     true)
                   1)]
               [(SourceToolCommandStatus.Ok)
-                (match (source-tool-run-executable bin-path target runtime-args)
+                (match (if stream-output
+                  (source-tool-run-executable-inherit
+                    bin-path
+                    target
+                    runtime-args)
+                  (source-tool-run-executable bin-path target runtime-args))
                   [(process.OkProcessOutput output)
                     (let
                       [status : i64 (process.output-status output)]
                       (begin
-                        (source-tool-forward-output output)
+                        (if stream-output
+                          unit
+                          (source-tool-forward-output output))
                         (source-tool-clean-temp
                           temp-dir
                           asm-path
@@ -2089,7 +2108,8 @@
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : i64
+  [link-inputs : SourceToolLinkInputs]
+  [stream-output : bool]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
     [(ResultSourceToolString.Ok temp-dir)
       (source-tool-run-source-in-temp
@@ -2101,6 +2121,7 @@
         opt-level
         mode
         link-inputs
+        stream-output
         temp-dir)]
     [(ResultSourceToolString.Err message)
       (begin

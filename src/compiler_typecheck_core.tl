@@ -9797,38 +9797,34 @@
   [target-id : i64]
   [module-id : i64]) : bool
   (let
-    [cursor : AstDeclList decls]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [current-module : i64 module-id]
     [found : bool false]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest-box)
-            (let
-              [rest : AstDeclList rest-box]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! current-module next-module)
-                    (set! cursor rest))]
+      (while (and (not found) (< index count))
+        (begin
+          (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _)
+              (match (ast-decl-list-ref decls index)
+                [(AstDecl.Module next-module) (set! current-module next-module)]
+                [_ unit])]
+            [(AstDecl.Import _)
+              ;; Copy only module/import declarations whose scalar and String
+              ;; payloads are consumed. All other declarations stay borrowed.
+              (match (ast-decl-list-ref decls index)
                 [(AstDecl.Import (AstImportSpec.Spec _ _ expected _ _))
-                  (begin
-                    (if (= current-module current-module-id)
-                      (match expected
-                        [(AstMaybeModuleName.Some target)
-                          (if (= (intern target) target-id)
-                            (begin
-                              (set! found true)
-                              (set! done true))
-                            unit)]
-                        [(AstMaybeModuleName.No) unit])
-                      unit)
-                    (if done
-                      unit
-                      (set! cursor rest)))]
-                [_ (set! cursor rest)]))]))
+                  (if (= current-module current-module-id)
+                    (match expected
+                      [(AstMaybeModuleName.Some target)
+                        (if (= (intern target) target-id)
+                          (set! found true)
+                          unit)]
+                      [(AstMaybeModuleName.No) unit])
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
       found)))
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
@@ -16622,87 +16618,38 @@
   [name-id : i64]) : ResultTcType
   (tc-lookup-id env (tc-module-name-id module name-id)))
 
-(define (tc-import-alias-ast-decl-list-reverse-into
-  [items : AstDeclList]
-  [out : AstDeclList]) : AstDeclList
-  (let
-    [cursor : AstDeclList items]
-    [result : AstDeclList out]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder decl result))
-              (set! cursor rest))]))
-      result)))
-
-(define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (tc-import-alias-ast-decl-list-reverse-into items (ast-decl-list-new)))
-
-(define (tc-import-alias-summary-index-reverse-slots!
-  [decls : (Array AstDeclList)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (array-set!
-            decls
-            index
-            (tc-import-alias-ast-decl-list-reverse (array-ref decls index)))
-          (set! index (+ index 1))))
-      unit)))
-
 (define (tc-import-alias-summary-index-build-current [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
   (let
     [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
     [decls : (Array AstDeclList) (array.make-array AstDeclList capacity)]
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
     [slot-count : i64 0]
-    [cur : AstDeclList all-decls]
+    [count : i64 (ast-decl-list-len (& all-decls))]
+    [index : i64 0]
     [cur-module-id : i64 (intern "")]
-    [ok : bool true]
     (begin
-      (while ok
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) (set! ok false)]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [next : AstDeclList rest]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-module-id next-module)
-                    (set! cur next))]
-                [_
-                  (let
-                    [slot : i64 0]
-                    [existing : AstDeclList (ast-decl-list-new)]
+      (while (< index count)
+        (begin
+          (let
+            [decl : AstDecl (ast-decl-list-ref all-decls index)]
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                  [(tc_i64_i64_map.LookupFound slot)
+                    (ast-decl-list-push (&mut (array-ref decls slot)) decl)]
+                  [(tc_i64_i64_map.LookupMissing)
                     (begin
-                      (match (tc_i64_i64_map.get (& modules) cur-module-id)
-                        [(tc_i64_i64_map.LookupFound found-slot)
-                          (begin
-                            (set! slot found-slot)
-                            (set! existing (array-ref decls slot)))]
-                        [(tc_i64_i64_map.LookupMissing)
-                          (begin
-                            (set! slot slot-count)
-                            (tc_i64_i64_map.insert
-                              (&mut modules)
-                              cur-module-id
-                              slot)
-                            (array-set! decls slot (ast-decl-list-new))
-                            (set! slot-count (+ slot-count 1)))])
-                      (array-set!
-                        decls
-                        slot
-                        (ast-decl-list-prepend-builder decl existing))
-                      (set! cur next)))]))]))
-      (tc-import-alias-summary-index-reverse-slots! decls slot-count)
+                      (tc_i64_i64_map.insert
+                        (&mut modules)
+                        cur-module-id
+                        slot-count)
+                      (array-set! decls slot-count (ast-decl-list-new))
+                      (ast-decl-list-push
+                        (&mut (array-ref decls slot-count))
+                        decl)
+                      (set! slot-count (+ slot-count 1)))])]))
+          (set! index (+ index 1))))
       (TcImportAliasSummaryIndex modules decls slot-count))))
 
 (define (tc-import-alias-summary-index-build [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
@@ -29943,109 +29890,112 @@
       with-key
       (tc-ctfe-layout-add-alias with-key info name))))
 
+(define (tc-ctfe-layouts-add-struct
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [name : i64]) : CtfeLayoutInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String (compiler-symbol-module-key module name-str)]
+    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
+    (tc-ctfe-layout-add-names layouts info name-str module)))
+
+(define (tc-ctfe-layouts-add-enum
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [name : i64]) : CtfeLayoutInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String (compiler-symbol-module-key module name-str)]
+    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
+    (tc-ctfe-layout-add-names layouts info name-str module)))
+
+(define (tc-ctfe-layouts-add-template
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [template : AstDecl]) : CtfeLayoutInfoList
+  (match template
+    [(AstDecl.DefStruct name _ _ _)
+      (tc-ctfe-layouts-add-struct ctx layouts module name)]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
+      (tc-ctfe-layouts-add-struct ctx layouts module name)]
+    [(AstDecl.DefEnum name _ _)
+      (tc-ctfe-layouts-add-enum ctx layouts module name)]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
+      (tc-ctfe-layouts-add-enum ctx layouts module name)]
+    [_ layouts]))
+
 (define (tc-ctfe-layouts-from-decls
   [ctx : TcContext]
   [decls : AstDeclList]
   [module : String]
   [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) layouts]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-ctfe-layouts-from-decls
-              ctx
-              rest
-              (intern-str next-module)
-              layouts)]
-          [(AstDecl.DefStruct name _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefStructLifetimes name _ _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefEnum name _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefEnumLifetimes name _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct name _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefStructLifetimes name _ _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefEnum name _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefEnumLifetimes name _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]
-          [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [current-module : String module]
+    [current-layouts : CtfeLayoutInfoList layouts]
+    (begin
+      (while (< index count)
+        (begin
+          (if (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _) true]
+            [(AstDecl.DefStruct _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+            [(AstDecl.DefEnum _ _ _) true]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+            [(AstDecl.ComptimeDecl _ _) true]
+            [_ false])
+            (match (ast-decl-list-ref decls index)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefStruct name _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-struct
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefStructLifetimes name _ _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-struct
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefEnum name _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-enum
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefEnumLifetimes name _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-enum
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.ComptimeDecl _ template-box)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-template
+                    ctx
+                    current-layouts
+                    current-module
+                    (box-get template-box)))]
+              [_ unit])
+            unit)
+          (set! index (+ index 1))))
+      current-layouts)))
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
@@ -45046,17 +44996,18 @@
 
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
-    [cursor : AstDeclList items]
+    [count : i64 (ast-decl-list-len (& items))]
+    [index : i64 0]
     [result : AstDeclList out]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons head rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder head result))
-              (set! cursor rest))]))
+      (while (< index count)
+        (begin
+          (set!
+            result
+            (ast-decl-list-prepend-builder
+              (ast-decl-list-ref items index)
+              result))
+          (set! index (+ index 1))))
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
@@ -47867,9 +47818,7 @@
     [cur-module : String ""]
     [out : TcStringList acc]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
@@ -48319,9 +48268,7 @@
     [cur-module-id : i64 (intern module)]
     [out : TcStringList acc]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)

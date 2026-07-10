@@ -1898,6 +1898,37 @@
   "(defstruct CloneRootA (text String))
 (define (use-clone [x : CloneRootA]) : CloneRootA (clone x))")
 
+(define (compiler-driver-state-smoke-collect-clone-roots
+  [ctx : TcContext]
+  [_top-env : TcTypeEnv]
+  [_names : LowerNameEnv]
+  [program : AstProgram]) : CloneNameList
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [cursor : AstDeclList (box-get decls-box)]
+        [done : bool false]
+        (begin
+          (tc-clone-root-collection-use! program)
+          (while (not done)
+            (match (ast-decl-list-step cursor)
+              [(AstDeclListStep.Nil) (set! done true)]
+              [(AstDeclListStep.Cons decl rest)
+                (begin
+                  (match (ast-decl-unwrapped decl)
+                    [(AstDecl.DefFn name _ _ _ _)
+                      (if (string.eq (intern-str name) "use-clone")
+                        (begin
+                          (tc-clone-root-collection-select-decl! decl "")
+                          (set! done true))
+                        unit)]
+                    [_ unit])
+                  (set! cursor rest))]))
+          (tc-clone-root-collection-note!
+            ctx
+            (AstType.Struct (intern "CloneRootA")))
+          (tc-clone-root-collection-finish! ctx)))]))
+
 (define (compiler-driver-state-smoke-lower-reachability-source-a) : String
   "(define (helper) : i64 41)
 (define (main) : i64 (helper))
@@ -2025,7 +2056,7 @@
                                   (ast-node-pool-context-install! pools-b)]
                                 [active-before : i64 (ast-node-pool-len)]
                                 [roots : CloneNameList
-                                  (lower-clone-roots-program
+                                  (compiler-driver-state-smoke-collect-clone-roots
                                     ctx
                                     top-env
                                     names
@@ -2037,7 +2068,12 @@
                                     (ast-node-pool-context-expr-len pools-b))
                                   (= active-after active-before)
                                   (match roots
-                                    [(CloneNameList.Nil) true]
+                                    [(CloneNameList.Cons name rest)
+                                      (and
+                                        (string.eq name "CloneRootA")
+                                        (match (box-get rest)
+                                          [(CloneNameList.Nil) true]
+                                          [_ false]))]
                                     [_ false])))]
                             [(ResultTcEnv.Err _) false]))]
                       [(ResultCompilerRegistries.Err _) false])]

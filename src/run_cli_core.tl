@@ -321,7 +321,7 @@
         (if (= inline-test-status 0)
           (begin
             (compiler-driver-reset-file-state!)
-            (source-tool-run-source-inherit
+            (source-tool-run-source
               source
               target
               stdlib-roots
@@ -329,7 +329,8 @@
               runtime-args
               opt-level
               mode
-              link-inputs))
+              link-inputs
+              true))
           inline-test-status))
       doctest-status)))
 

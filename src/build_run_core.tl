@@ -2108,7 +2108,8 @@
   [runtime-args : process.ProcessStringList]
   [opt-level : i64]
   [mode : CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : i64
+  [link-inputs : SourceToolLinkInputs]
+  [stream-output : bool]) : i64
   (match (source-tool-create-temp-dir "typelisp-run")
     [(ResultSourceToolString.Ok temp-dir)
       (source-tool-run-source-in-temp
@@ -2120,38 +2121,7 @@
         opt-level
         mode
         link-inputs
-        false
-        temp-dir)]
-    [(ResultSourceToolString.Err message)
-      (begin
-        (io.print-error
-          (string.append "run: failed to create temp dir: " message))
-        1)]))
-
-;: Build and run a source program with child stdout/stderr inherited by the
-;: caller. Used only by the interactive `run` command; doctests, tests, and
-;: REPL evaluation retain captured output through `source-tool-run-source`.
-(define (source-tool-run-source-inherit
-  [source : String]
-  [target : CompilerBackendTarget]
-  [stdlib-roots : cli_svec.Vec]
-  [cfg-names : SourceToolCfgNames]
-  [runtime-args : process.ProcessStringList]
-  [opt-level : i64]
-  [mode : CompilerBackendMode]
-  [link-inputs : SourceToolLinkInputs]) : i64
-  (match (source-tool-create-temp-dir "typelisp-run")
-    [(ResultSourceToolString.Ok temp-dir)
-      (source-tool-run-source-in-temp
-        source
-        target
-        stdlib-roots
-        cfg-names
-        runtime-args
-        opt-level
-        mode
-        link-inputs
-        true
+        stream-output
         temp-dir)]
     [(ResultSourceToolString.Err message)
       (begin

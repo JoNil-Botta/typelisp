@@ -6,6 +6,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
+(import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck
@@ -591,7 +592,7 @@
                       symbols
                       registries
                       ""
-                      (intern "")
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
@@ -725,18 +726,18 @@
     (compiler-check-implicit-core-prelude-source)))
 
 (define (compiler-check-seen-root-ok?) : bool
-  (match (compiler-load-source
-    "src/already_loaded.tl"
-    "(define answer : i64 1)"
-    (sym_i64_env.sym-i64-bind
-      (sym_i64_env.sym-i64-empty)
-      "src.already_loaded"
-      1))
-    [(ResultCompilerLoad.Ok decls _)
-      (match (ast-decl-list-step decls)
-        [(AstDeclListStep.Nil) true]
-        [_ false])]
-    [(ResultCompilerLoad.Err _) false]))
+  (let
+    [path : String "src/already_loaded.tl"]
+    [source : String "(define answer : i64 1)"]
+    (match (compiler-load-source path source (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoad.Ok _ seen)
+        (match (compiler-load-source path source seen)
+          [(ResultCompilerLoad.Ok decls _)
+            (match (ast-decl-list-step decls)
+              [(AstDeclListStep.Nil) true]
+              [_ false])]
+          [(ResultCompilerLoad.Err _) false])]
+      [(ResultCompilerLoad.Err _) false])))
 
 (define (compiler-check-pool-reset-ok?) : bool
   (let

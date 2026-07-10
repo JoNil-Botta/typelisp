@@ -345,7 +345,7 @@
 
 (define (doc-import-alias-string [alias : AstMaybeImportAlias]) : String
   (match alias
-    [(AstMaybeImportAlias.Some name) name]
+    [(AstMaybeImportAlias.Some name) (intern-str name)]
     [(AstMaybeImportAlias.No) ""]))
 
 (define (doc-ast-type-id-source [ty-id : i64]) : String
@@ -550,7 +550,12 @@
 (define (doc-macro-import-form [call-id : i64] [alias : AstMaybeImportAlias]) : String
   (match alias
     [(AstMaybeImportAlias.Some name)
-      (doc-cat5 "(import " (doc-ast-expr-source call-id) " as " name ")")]
+      (doc-cat5
+        "(import "
+        (doc-ast-expr-source call-id)
+        " as "
+        (intern-str name)
+        ")")]
     [(AstMaybeImportAlias.No)
       (doc-cat3 "(import " (doc-ast-expr-source call-id) ")")]))
 
@@ -673,7 +678,10 @@
                   (doc-macro-import-example-find
                     macro-examples
                     (doc-import-alias-string alias))]
-                (doc-generated-target-example-add! targets target-module form))]
+                (doc-generated-target-example-add!
+                  targets
+                  (intern-str target-module)
+                  form))]
             [(AstMaybeModuleName.No) unit])]
         [_ unit])]
     [(AstDecl.ComptimeDecl _ inner-box)

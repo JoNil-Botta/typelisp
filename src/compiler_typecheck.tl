@@ -5,6 +5,7 @@
 (import "compiler_load.tl")
 (import stdlib.string)
 (import sym_i64_env)
+(import compiler_builtin_ids as cbi)
 
 (define (compiler-typecheck-with-io-source [src : String]) : String
   (string.append
@@ -1201,7 +1202,7 @@
                       symbols
                       registries
                       ""
-                      (intern "")
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Packet")
                     [(ResultTcReprCLayout.Ok packet)
@@ -1259,7 +1260,7 @@
                       symbols
                       registries
                       ""
-                      (intern "")
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Vec2")
                     [(ResultTcReprCLayout.Ok layout)
@@ -1351,7 +1352,7 @@
                       symbols
                       registries
                       ""
-                      (intern "")
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx name)
                     [(ResultTcReprCLayout.Ok _) false]
@@ -1376,7 +1377,7 @@
                       symbols
                       registries
                       ""
-                      (intern "")
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (match (tc-repr-c-struct-layout ctx "Mixed")
                     [(ResultTcReprCLayout.Ok layout)
@@ -1441,7 +1442,7 @@
                     symbols
                     registries
                     ""
-                    (intern "")
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
                 (tc-inline-aggregate-layout-finite-ok ctx name))]
             [(ResultCompilerRegistries.Err message) (ResultTcUnit.Err message)])]
@@ -1470,7 +1471,7 @@
                     symbols
                     registries
                     ""
-                    (intern "")
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
                 (match (tc-inline-aggregate-layout-for ctx name)
                   [(ResultTcInlineAggregateLayout.Ok layout)
@@ -1520,7 +1521,7 @@
                     symbols
                     registries
                     ""
-                    (intern "")
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]
                 (begin

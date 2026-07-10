@@ -13358,10 +13358,10 @@
 ;; compiler-backend-aggregate-type-name); empty for non-aggregate types.
 (define (compiler-reg-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstType.Struct name) (intern-str name)]
-    [(AstType.StructArgs name _) (intern-str name)]
-    [(AstType.Enum name) (intern-str name)]
-    [(AstType.EnumArgs name _) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
+    [(AstType.StructArgs name _) (ast-nominal-name-id-display name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
+    [(AstType.EnumArgs name _) (ast-nominal-name-id-display name)]
     [(AstType.Region _ inner)
       (compiler-reg-aggregate-type-name (ast-node-pool-reader-type-get inner))]
     [_ ""]))

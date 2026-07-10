@@ -172,8 +172,8 @@ check_group_pair_home() {
     _asm=$(compile_gate group_pair_home tests/integration/group_pair_home.tl)
     _body=$(function_body "$_asm" _tl_group_pair_home_probe)
     assert_contains "$_body" 'call _tl_group_pair_home_mk' group-pair-home
-    assert_matches "$_body" '^[[:space:]]+movq %rax, %(r8|r9|rsi|rdi)$' group-pair-home
-    assert_matches "$_body" '^[[:space:]]+movq %rdx, %(r8|r9|rsi|rdi)$' group-pair-home
+    assert_matches "$_body" '^[[:space:]]+movq %rax, %(r8|r9)$' group-pair-home
+    assert_matches "$_body" '^[[:space:]]+movq %rdx, %(r8|r9)$' group-pair-home
     assert_not_matches "$_body" '\(%rsp\)|\(%rbp\)' group-pair-home
 }
 
@@ -184,8 +184,8 @@ check_group_pair_phi_home() {
     # The call result uses a caller-saved pair, while the loop Phi itself is
     # carried in a CSR pair across the next call. The old phi exclusion kept
     # both words in frame slots and reloaded them into rax:rdx every iteration.
-    assert_matches "$_body" '^[[:space:]]+movq %rax, %(r8|r9|rsi|rdi)$' group-pair-phi-home
-    assert_matches "$_body" '^[[:space:]]+movq %rdx, %(r8|r9|rsi|rdi)$' group-pair-phi-home
+    assert_matches "$_body" '^[[:space:]]+movq %rax, %(r8|r9)$' group-pair-phi-home
+    assert_matches "$_body" '^[[:space:]]+movq %rdx, %(r8|r9)$' group-pair-phi-home
     assert_matches "$_body" '^[[:space:]]+movq %rax, %r(12|13|14|15|bx)$' group-pair-phi-home
     assert_matches "$_body" '^[[:space:]]+movq %rdx, %r(12|13|14|15|bx)$' group-pair-phi-home
     assert_not_matches "$_body" '^[[:space:]]+movq [0-9]+\(%rsp\), %r(ax|dx)$' group-pair-phi-home

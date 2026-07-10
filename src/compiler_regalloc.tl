@@ -15211,11 +15211,13 @@
 ;; scalar homes are final.
 ;;
 ;; Candidate soundness gates:
-;;  * A clobber-free component first tries the stable caller-saved pool
-;;    {r8,r9,rsi,rdi}. These registers avoid growing the prologue save set and
-;;    have no div/shift fixed-use role. A component that crosses a kind-0
-;;    clobber only sees the CSR pool {r12,r13,r14,r15,rbx}; %rbp stays out of
-;;    this late pass because the FPO/scavenger plan owns its admission.
+;;  * A clobber-free component first tries the stable caller-saved pair
+;;    {r8,r9}. It avoids growing the prologue save set and has no div/shift
+;;    fixed-use role. Group values marshalled by a normal call only see the CSR
+;;    pool until that multiword ABI path participates in the pair parallel-move
+;;    solver. A component that crosses a kind-0 clobber also only sees
+;;    {r12,r13,r14,r15,rbx}; %rbp stays out because the FPO/scavenger plan owns
+;;    its admission.
 ;;  * Per-call-region scalar shadows also use the caller-saved pool. A pair
 ;;    candidate rejects an overlapping shadow region, so the later rewrite can
 ;;    never mint a scalar home into either pair half.
@@ -15235,10 +15237,12 @@
 ;;    safe and admits phi-adjacent group values.
 ;;  * NOT tail-call args (restore-order analysis kept out of v1), NOT params
 ;;    (entry marshalling), NOT address-taken/memory-targeted vars.
-;;  * Ordinary call args/results, returns, Pack/Word and switch dispatch all
-;;    read through compiler-backend-group-word-operand, which is pair-aware;
-;;    a CSR pair is preserved across calls by the callee, so call-spanning
-;;    group values are admitted.
+;;  * Call results, returns, Pack/Word and switch dispatch all read through
+;;    compiler-backend-group-word-operand, which is pair-aware. Group arguments
+;;    to ordinary direct and indirect calls may use a CSR pair, but not r8:r9,
+;;    until their multiword ABI marshalling participates in the pair
+;;    parallel-move solver. A CSR pair is preserved across calls by the callee,
+;;    so call-spanning group values are admitted.
 ;; Interference: per-var segment-precise (the same
 ;; compiler-reg-vars-interfere-segmented-index? the greedy trusts) against
 ;; every var holding the probed register (scalar home or either pair half),
@@ -15273,6 +15277,64 @@
                 (compiler-reg-group-pair-add-value-var acc (array-ref arr i)))
               (set! i (+ i 1))))
           acc))]))
+
+;; The ordinary call marshaller emits its group-word moves independently. A
+;; source already in r8:r9 can therefore overlap an earlier argument
+;; destination. Keep the affected component eligible for a CSR pair, but bar
+;; it from the caller-saved pair until call marshalling uses the pair
+;; parallel-move solver.
+(define (compiler-reg-group-pair-caller-unsafe-instr
+  [set : CompilerLiveI64Set]
+  [instr : CompilerIrInstr]) : CompilerLiveI64Set
+  (match instr
+    [(CompilerIrInstr.Call _ _ args _)
+      (compiler-reg-group-pair-add-call-args set args)]
+    [(CompilerIrInstr.CallIndirect _ _ args _)
+      (compiler-reg-group-pair-add-call-args set args)]
+    [(CompilerIrInstr.CallIndirectC _ _ args _)
+      (compiler-reg-group-pair-add-call-args set args)]
+    [_ set]))
+
+(define (compiler-reg-group-pair-caller-unsafe-instrs
+  [set : CompilerLiveI64Set]
+  [instrs : CompilerIrInstrList]) : CompilerLiveI64Set
+  (match instrs
+    [(CompilerIrInstrList.Nil) set]
+    [(CompilerIrInstrList.Cons instr rest)
+      (compiler-reg-group-pair-caller-unsafe-instrs
+        (compiler-reg-group-pair-caller-unsafe-instr set instr)
+        (box-get rest))]))
+
+(define (compiler-reg-group-pair-caller-unsafe-blocks
+  [set : CompilerLiveI64Set]
+  [blocks : CompilerIrBlockList]) : CompilerLiveI64Set
+  (match blocks
+    [(CompilerIrBlockList.Nil) set]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-group-pair-caller-unsafe-blocks
+            (compiler-reg-group-pair-caller-unsafe-instrs
+              set
+              (compiler-ir-instr-seq-to-list instrs))
+            (box-get rest))])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [i : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [out : CompilerLiveI64Set set]
+        (begin
+          (while (< i count)
+            (begin
+              (match (compiler-ir-block-seq-ref seq i)
+                [(CompilerIrBlock.Block _ instrs)
+                  (set!
+                    out
+                    (compiler-reg-group-pair-caller-unsafe-instrs
+                      out
+                      (compiler-ir-instr-seq-to-list instrs)))])
+              (set! i (+ i 1))))
+          out))]))
 
 (define (compiler-reg-group-pair-excluded-instr
   [set : CompilerLiveI64Set]
@@ -15372,24 +15434,26 @@
     [(= idx 3) "%r15"]
     [else "%rbx"]))
 
-;; The late pair pass deliberately uses the same stable caller-saved subset as
-;; the clobber-free loop/call-region rescues. rax/rcx/rdx have fixed ABI or
-;; div/shift roles; r10/r11 are the scavenger's preferred emergency choices.
+;; The late pair pass reserves only the non-argument caller-saved pair. rax,
+;; rcx and rdx have fixed ABI or div/shift roles; r10/r11 are scavenger scratch;
+;; rsi/rdi stay with ordinary argument marshalling.
 (define (compiler-reg-group-pair-caller-saved [idx : i64]) : String
-  (cond [(= idx 0) "%r8"] [(= idx 1) "%r9"] [(= idx 2) "%rsi"] [else "%rdi"]))
+  (if (= idx 0)
+    "%r8"
+    "%r9"))
 
 (define (compiler-reg-group-pair-candidate-count [caller-saved-ok? : bool]) : i64
   (if caller-saved-ok?
-    9
+    7
     5))
 
 (define (compiler-reg-group-pair-candidate
   [caller-saved-ok? : bool]
   [idx : i64]) : String
   (if caller-saved-ok?
-    (if (< idx 4)
+    (if (< idx 2)
       (compiler-reg-group-pair-caller-saved idx)
-      (compiler-reg-group-pair-csr (- idx 4)))
+      (compiler-reg-group-pair-csr (- idx 2)))
     (compiler-reg-group-pair-csr idx)))
 
 ;; A caller-saved pair must not overlap a scalar shadow that the per-call-region
@@ -15492,6 +15556,22 @@
             unit)
           (set! i (+ i 1))))
       ok)))
+
+(define (compiler-reg-group-pair-component-contains?
+  [set : CompilerLiveI64Set]
+  [members : (Array i64)]
+  [count : i64]) : bool
+  (let
+    [i : i64 0]
+    [hit : bool false]
+    (begin
+      (while (and (< i count) (not hit))
+        (begin
+          (if (compiler-live-set-contains? set (array-ref members i))
+            (set! hit true)
+            unit)
+          (set! i (+ i 1))))
+      hit)))
 
 ;; A pair component may evict only scalar register occupants that are strictly
 ;; colder than the component's hottest member. An overlapping pair occupying
@@ -15886,6 +15966,10 @@
               (compiler-reg-ineligible-params params (compiler-live-set-empty)))
             blocks
             group-vars)]
+        [caller-unsafe : CompilerLiveI64Set
+          (compiler-reg-group-pair-caller-unsafe-blocks
+            (compiler-live-set-empty)
+            blocks)]
         [def-counts : (Array i64) (compiler-reg-function-def-counts func)]
         [parents : (Array i64) (array.make-array i64 vars)]
         [poisoned : (Array bool) (array.make-array bool vars)]
@@ -15924,6 +16008,7 @@
                   type-info
                   group-vars
                   excluded
+                  caller-unsafe
                   starts
                   ends
                   poisoned
@@ -15950,6 +16035,7 @@
   [type-info : CompilerRegVarTypes]
   [group-vars : CompilerLiveI64Set]
   [excluded : CompilerLiveI64Set]
+  [caller-unsafe : CompilerLiveI64Set]
   [starts : (Array i64)]
   ;; lint-allow: unused-variable
   [ends : (Array i64)]
@@ -15993,11 +16079,17 @@
       (if (and ok (> component-weight 0) (> count 0))
         (let
           [caller-saved-ok? : bool
-            (compiler-reg-group-pair-component-clobber-free?
-              interval-index
-              call-points
-              members
-              count)]
+            (and
+              (not
+                (compiler-reg-group-pair-component-contains?
+                  caller-unsafe
+                  members
+                  count))
+              (compiler-reg-group-pair-component-clobber-free?
+                interval-index
+                call-points
+                members
+                count))]
           [candidate-count : i64
             (compiler-reg-group-pair-candidate-count caller-saved-ok?)]
           [best0 : i64 (- 0 1)]
@@ -16019,7 +16111,7 @@
                     count
                     weights
                     component-weight
-                    (and caller-saved-ok? (< i0 4))
+                    (and caller-saved-ok? (< i0 2))
                     split
                     reg0
                     vars)]
@@ -16041,7 +16133,7 @@
                               count
                               weights
                               component-weight
-                              (and caller-saved-ok? (< i1 4))
+                              (and caller-saved-ok? (< i1 2))
                               split
                               reg1
                               vars)]
@@ -27790,7 +27882,7 @@
     [assignments : CompilerRegAssignmentTable]
     [var : i64]
     [vars : i64]) : unit
-    (if (>= var vars)
+    (if (or (>= var vars) (>= var 6))
       unit
       (let
         [_inserted : CompilerRegAssignmentTable
@@ -27798,14 +27890,16 @@
             assignments
             var
             (CompilerRegLocation.Register
-              (compiler-reg-group-pair-candidate true (- var 1))))]
+              (compiler-reg-group-pair-csr (- var 1))))]
         (compiler-reg-group-pair-test-fill-homes! assignments (+ var 1) vars)))))
 
 ;; Keep the late pair pass honest without depending on an incidental whole
-;; program's pressure shape. Every candidate register begins occupied by a cold
-;; scalar, so the component must select the first caller-saved pair and evict
-;; its two scalar occupants. A synthetic call-save shadow reserves %r8 over the
-;; same range and proves that pair placement rejects the later rewrite's home.
+;; program's pressure shape. Cold scalars occupy every CSR so a call-spanning
+;; component must evict two of them, while a clobber-free component keeps the
+;; r8:r9 pair. A cold scalar in r8 proves caller-pair eviction, while a
+;; synthetic call-save shadow reserves r8 over the same range. A normal-call
+;; group argument stays eligible for a CSR pair, but not the caller pair,
+;; until the multiword ABI marshaller can use the pair parallel-move solver.
 (cfg
   test
   (define (compiler-reg-group-pair-widening-ok?) : bool
@@ -27841,6 +27935,10 @@
       [weights : (Array i64) (array.make-array i64 vars)]
       [assignments : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make vars)]
+      [csr-assignments : CompilerRegAssignmentTable
+        (compiler-reg-assignment-table-make vars)]
+      [caller-occupied : CompilerRegAssignmentTable
+        (compiler-reg-assignment-table-make vars)]
       [nonoccupying : CompilerRegAssignmentTable
         (compiler-reg-assignment-table-make vars)]
       [shadow-regs : (Array String) (array.make-array String 2)]
@@ -27857,6 +27955,8 @@
               (set! v (+ v 1)))))
         (array-set! shadow-regs 1 "%r8")
         (compiler-reg-group-pair-test-fill-homes! assignments 1 vars)
+        (compiler-reg-group-pair-test-fill-homes! csr-assignments 1 vars)
+        (compiler-reg-group-pair-test-fill-homes! caller-occupied 1 vars)
         (let
           [_nonoccupying-spill : CompilerRegAssignmentTable
             (compiler-reg-assignment-table-insert
@@ -27868,6 +27968,16 @@
               nonoccupying
               2
               (CompilerRegLocation.RegisterPair "%r12" "%r13"))]
+          [_caller-occupied-r8 : CompilerRegAssignmentTable
+            (compiler-reg-assignment-table-insert
+              caller-occupied
+              1
+              (CompilerRegLocation.Register "%r8"))]
+          [_caller-occupied-r12 : CompilerRegAssignmentTable
+            (compiler-reg-assignment-table-insert
+              caller-occupied
+              6
+              (CompilerRegLocation.Register "%r12"))]
           [empty-split : CompilerRegCallSplit (compiler-reg-call-split-empty)]
           [shadow-split : CompilerRegCallSplit
             (CompilerRegCallSplit
@@ -27884,6 +27994,30 @@
                 CompilerIrPhiInputList.Nil
                 (AstType.Struct (intern "Pair")))
               (compiler-live-set1 0))]
+          [call-caller-unsafe : CompilerLiveI64Set
+            (compiler-reg-group-pair-caller-unsafe-instr
+              (compiler-live-set-empty)
+              (CompilerIrInstr.Call
+                1
+                "callee"
+                (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+                (AstType.I64)))]
+          [indirect-call-caller-unsafe : CompilerLiveI64Set
+            (compiler-reg-group-pair-caller-unsafe-instr
+              (compiler-live-set-empty)
+              (CompilerIrInstr.CallIndirect
+                1
+                (CompilerIrValue.Var 2)
+                (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+                (AstType.I64)))]
+          [indirect-c-call-caller-unsafe : CompilerLiveI64Set
+            (compiler-reg-group-pair-caller-unsafe-instr
+              (compiler-live-set-empty)
+              (CompilerIrInstr.CallIndirectC
+                1
+                (CompilerIrValue.Var 2)
+                (CompilerIrCallArgs.One (CompilerIrValue.Var 0))
+                (AstType.I64)))]
           [shadow-cost : i64
             (compiler-reg-group-pair-component-register-cost
               assignments
@@ -27908,6 +28042,30 @@
               empty-split
               "%r8"
               vars)]
+          [occupied-r8-cost : i64
+            (compiler-reg-group-pair-component-register-cost
+              caller-occupied
+              interval-index
+              members
+              1
+              weights
+              10
+              true
+              empty-split
+              "%r8"
+              vars)]
+          [csr-evict-cost : i64
+            (compiler-reg-group-pair-component-register-cost
+              assignments
+              interval-index
+              members
+              1
+              weights
+              10
+              false
+              empty-split
+              "%r12"
+              vars)]
           [blocked-r12-cost : i64
             (compiler-reg-group-pair-component-register-cost
               nonoccupying
@@ -27921,12 +28079,49 @@
               "%r12"
               vars)]
           (let
+            [_caller-placed : unit
+              (compiler-reg-assign-group-pair-component
+                0
+                vars
+                (compiler-reg-coalesce-test-i64-types vars)
+                (compiler-live-set1 0)
+                (compiler-live-set-empty)
+                (compiler-live-set-empty)
+                (struct-get interval-index starts)
+                (struct-get interval-index ends)
+                poisoned
+                parents
+                members
+                interval-index
+                caller-occupied
+                weights
+                (compiler-live-set-empty)
+                empty-split)]
+            [_csr-placed : unit
+              (compiler-reg-assign-group-pair-component
+                0
+                vars
+                (compiler-reg-coalesce-test-i64-types vars)
+                (compiler-live-set1 0)
+                (compiler-live-set-empty)
+                (compiler-live-set1 0)
+                (struct-get interval-index starts)
+                (struct-get interval-index ends)
+                poisoned
+                parents
+                members
+                interval-index
+                csr-assignments
+                weights
+                (compiler-live-set-empty)
+                empty-split)]
             [_placed : unit
               (compiler-reg-assign-group-pair-component
                 0
                 vars
                 (compiler-reg-coalesce-test-i64-types vars)
                 (compiler-live-set1 0)
+                (compiler-live-set-empty)
                 (compiler-live-set-empty)
                 (struct-get interval-index starts)
                 (struct-get interval-index ends)
@@ -27939,17 +28134,35 @@
                 (compiler-live-set-empty)
                 empty-split)]
             (and
-              (= (compiler-reg-group-pair-candidate-count true) 9)
+              (= (compiler-reg-group-pair-candidate-count true) 7)
               (string.eq (compiler-reg-group-pair-candidate true 0) "%r8")
               (string.eq (compiler-reg-group-pair-candidate true 1) "%r9")
+              (string.eq (compiler-reg-group-pair-candidate true 2) "%r12")
+              (= (compiler-reg-group-pair-candidate-count false) 5)
+              (string.eq (compiler-reg-group-pair-candidate false 0) "%r12")
               (compiler-reg-group-pair-component-clobber-free?
                 interval-index
                 (compiler-live-set-empty)
                 members
                 1)
+              (not
+                (compiler-reg-group-pair-component-clobber-free?
+                  interval-index
+                  (compiler-live-set1 5)
+                  members
+                  1))
               (not (compiler-live-set-contains? phi-excluded 0))
+              (compiler-live-set-contains? call-caller-unsafe 0)
+              (compiler-live-set-contains? indirect-call-caller-unsafe 0)
+              (compiler-live-set-contains? indirect-c-call-caller-unsafe 0)
+              (compiler-reg-group-pair-component-contains?
+                call-caller-unsafe
+                members
+                1)
               (= shadow-cost (- 0 1))
               (= free-r8-cost 0)
+              (> occupied-r8-cost 0)
+              (> csr-evict-cost 0)
               (= blocked-r12-cost (- 0 1))
               (match (compiler-reg-assignment-table-lookup assignments 0)
                 [(CompilerRegMaybeLocation.Some location)
@@ -27961,10 +28174,36 @@
               (match (compiler-reg-assignment-table-lookup assignments 1)
                 [(CompilerRegMaybeLocation.Some location)
                   (match location
+                    [(CompilerRegLocation.Register reg) (string.eq reg "%r12")]
+                    [_ false])]
+                [(CompilerRegMaybeLocation.No) false])
+              (match (compiler-reg-assignment-table-lookup caller-occupied 0)
+                [(CompilerRegMaybeLocation.Some location)
+                  (match location
+                    [(CompilerRegLocation.RegisterPair first second)
+                      (and (string.eq first "%r8") (string.eq second "%r9"))]
+                    [_ false])]
+                [(CompilerRegMaybeLocation.No) false])
+              (match (compiler-reg-assignment-table-lookup caller-occupied 1)
+                [(CompilerRegMaybeLocation.Some location)
+                  (match location
                     [(CompilerRegLocation.Spill _) true]
                     [_ false])]
                 [(CompilerRegMaybeLocation.No) false])
-              (match (compiler-reg-assignment-table-lookup assignments 2)
+              (match (compiler-reg-assignment-table-lookup csr-assignments 0)
+                [(CompilerRegMaybeLocation.Some location)
+                  (match location
+                    [(CompilerRegLocation.RegisterPair first second)
+                      (and (string.eq first "%r12") (string.eq second "%r13"))]
+                    [_ false])]
+                [(CompilerRegMaybeLocation.No) false])
+              (match (compiler-reg-assignment-table-lookup csr-assignments 1)
+                [(CompilerRegMaybeLocation.Some location)
+                  (match location
+                    [(CompilerRegLocation.Spill _) true]
+                    [_ false])]
+                [(CompilerRegMaybeLocation.No) false])
+              (match (compiler-reg-assignment-table-lookup csr-assignments 2)
                 [(CompilerRegMaybeLocation.Some location)
                   (match location
                     [(CompilerRegLocation.Spill _) true]

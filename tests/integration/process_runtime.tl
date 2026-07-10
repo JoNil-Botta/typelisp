@@ -145,6 +145,15 @@
       (svec.push (&mut argv) "echo argv-vec=ok")
       (process.command-from-argv-vec "C:\\Windows\\System32\\cmd.exe" (& argv)))))
 
+(define (windows-inherit-command) : process.ProcessCommand
+  (process.command
+    "C:\\Windows\\System32\\cmd.exe"
+    (process.args-cons
+      "/C"
+      (process.args-cons
+        "echo inherit-stdout&& 1>&2 echo inherit-stderr&& exit /b 9"
+        (process.args-empty)))))
+
 (define (windows-borrowed-argv-output [exe : String] [argv : String]) : process.ResultProcessOutput
   (let
     [args : (process_borrowed.ProcessBorrowedStringList argv)
@@ -192,6 +201,15 @@
       (svec.push (&mut argv) "argv")
       (svec.push (&mut argv) "vec")
       (process.command-from-argv-vec "/usr/bin/printf" (& argv)))))
+
+(define (linux-inherit-command) : process.ProcessCommand
+  (process.command
+    "/bin/sh"
+    (process.args-cons
+      "-c"
+      (process.args-cons
+        "echo inherit-stdout; echo inherit-stderr >&2; exit 9"
+        (process.args-empty)))))
 
 (define (linux-borrowed-argv-output [exe : String] [argv : String]) : process.ResultProcessOutput
   (let
@@ -247,6 +265,11 @@
         0
         "borrowed-argv=ok\r\n"
         "")
+      (assert-process-output-result
+        (process.inherit (windows-inherit-command))
+        9
+        ""
+        "")
       (assert-process-spawn-failed (process.output (windows-missing-command)))
       (assert-process-child-unsupported
         (process.start (windows-process-command)))
@@ -283,6 +306,11 @@
         (linux-borrowed-process-output "/usr/bin/printf" "borrowed-stdout=ok")
         0
         "borrowed-stdout=ok"
+        "")
+      (assert-process-output-result
+        (process.inherit (linux-inherit-command))
+        9
+        ""
         "")
       (assert-process-spawn-failed (process.output (linux-missing-command)))
       (let

@@ -1996,6 +1996,17 @@
       target
       (process.command bin-path runtime-args))))
 
+;: Run a user-facing executable while leaving child stdout/stderr connected to
+;: the caller for live progress output.
+(define (source-tool-run-executable-inherit
+  [bin-path : String]
+  [target : CompilerBackendTarget]
+  [runtime-args : process.ProcessStringList]) : process.ResultProcessOutput
+  (process.inherit
+    (source-tool-command-for-target
+      target
+      (process.command bin-path runtime-args))))
+
 (define (source-tool-run-source-in-temp
   [source : String]
   [target : CompilerBackendTarget]
@@ -2005,6 +2016,7 @@
   [opt-level : i64]
   [mode : CompilerBackendMode]
   [link-inputs : SourceToolLinkInputs]
+  [stream-output : bool]
   [temp-dir : String]) : i64
   (let
     [asm-path : String (source-tool-asm-path temp-dir source)]
@@ -2050,12 +2062,19 @@
                     true)
                   1)]
               [(SourceToolCommandStatus.Ok)
-                (match (source-tool-run-executable bin-path target runtime-args)
+                (match (if stream-output
+                  (source-tool-run-executable-inherit
+                    bin-path
+                    target
+                    runtime-args)
+                  (source-tool-run-executable bin-path target runtime-args))
                   [(process.OkProcessOutput output)
                     (let
                       [status : i64 (process.output-status output)]
                       (begin
-                        (source-tool-forward-output output)
+                        (if stream-output
+                          unit
+                          (source-tool-forward-output output))
                         (source-tool-clean-temp
                           temp-dir
                           asm-path
@@ -2101,6 +2120,38 @@
         opt-level
         mode
         link-inputs
+        false
+        temp-dir)]
+    [(ResultSourceToolString.Err message)
+      (begin
+        (io.print-error
+          (string.append "run: failed to create temp dir: " message))
+        1)]))
+
+;: Build and run a source program with child stdout/stderr inherited by the
+;: caller. Used only by the interactive `run` command; doctests, tests, and
+;: REPL evaluation retain captured output through `source-tool-run-source`.
+(define (source-tool-run-source-inherit
+  [source : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : cli_svec.Vec]
+  [cfg-names : SourceToolCfgNames]
+  [runtime-args : process.ProcessStringList]
+  [opt-level : i64]
+  [mode : CompilerBackendMode]
+  [link-inputs : SourceToolLinkInputs]) : i64
+  (match (source-tool-create-temp-dir "typelisp-run")
+    [(ResultSourceToolString.Ok temp-dir)
+      (source-tool-run-source-in-temp
+        source
+        target
+        stdlib-roots
+        cfg-names
+        runtime-args
+        opt-level
+        mode
+        link-inputs
+        true
         temp-dir)]
     [(ResultSourceToolString.Err message)
       (begin

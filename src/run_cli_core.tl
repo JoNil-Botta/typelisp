@@ -321,7 +321,7 @@
         (if (= inline-test-status 0)
           (begin
             (compiler-driver-reset-file-state!)
-            (source-tool-run-source
+            (source-tool-run-source-inherit
               source
               target
               stdlib-roots
@@ -337,13 +337,11 @@
   [bin-path : String]
   [target : CompilerBackendTarget]
   [runtime-args : process.ProcessStringList]) : i64
-  (match (source-tool-run-executable bin-path target runtime-args)
+  (match (source-tool-run-executable-inherit bin-path target runtime-args)
     [(process.OkProcessOutput output)
       (let
         [status : i64 (process.output-status output)]
-        (begin
-          (source-tool-forward-output output)
-          status))]
+        status)]
     [(process.ErrProcessOutput error)
       (begin
         (io.print-error

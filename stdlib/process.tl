@@ -2,7 +2,8 @@
 ;#
 ;# Defines the canonical process command/output/error data model for selfhost
 ;# tools. Runtime process execution is provided by `process_runtime.tl` through
-;# `tl_process_output`, `tl_process_start`, and `tl_process_wait`;
+;# `tl_process_output`, `tl_process_inherit`, `tl_process_start`, and
+;# `tl_process_wait`;
 ;# unsupported target/runtime combinations return structured errors instead of
 ;# routing through Rust host actions or shell-tokenized command strings.
 ;# Linux execution preserves inherited environment entries except names
@@ -700,8 +701,9 @@
     [(= kind 3) (ProcessUnsupported message)]
     [else (ProcessInvalidCommand message)]))
 
-;: The process-execution runtime (`tl_process_output`, `tl_process_start`,
-;: `tl_process_wait`) is implemented in TypeLisp in `process_runtime.tl`,
+;: The process-execution runtime (`tl_process_output`, `tl_process_inherit`,
+;: `tl_process_start`, `tl_process_wait`) is implemented in TypeLisp in
+;: `process_runtime.tl`,
 ;: replacing the former backend assembly. The public wrappers
 ;: validate first, then call those functions. Keep this import after the shared
 ;: data model and validation helpers so the runtime sees a complete module.
@@ -794,6 +796,21 @@
         (error-from-runtime-kind 0 (maybe-string-info-value info)))
       (output-from-runtime
         (process_runtime.tl_process_output (runtime-command command))))))
+
+;: Run a command while inheriting the caller's stdout and stderr streams.
+;:
+;: Child output is visible as it is written instead of being captured until
+;: process exit. The successful result carries the exit status and empty
+;: captured-output strings.
+(define (inherit [command : ProcessCommand]) : ResultProcessOutput
+  (let
+    [validation : ProcessMaybeString (command-validation-error command)]
+    [info : ProcessMaybeStringInfo (maybe-string-info validation)]
+    (if (maybe-string-info-present? info)
+      (output-error-public
+        (error-from-runtime-kind 0 (maybe-string-info-value info)))
+      (output-from-runtime
+        (process_runtime.tl_process_inherit (runtime-command command))))))
 
 ;: Run a command using the same captured-output path as `output`.
 (define (run [command : ProcessCommand]) : ResultProcessOutput

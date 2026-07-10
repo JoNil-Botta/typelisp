@@ -1,7 +1,8 @@
 ;# stdlib/process_runtime.tl - Process-execution runtime for TypeLisp.
 ;#
-;# Pure-TypeLisp implementations of the `tl_process_output`, `tl_process_start`,
-;# and `tl_process_wait` runtime helpers that the `tl` API surface calls.
+;# Pure-TypeLisp implementations of the `tl_process_output`,
+;# `tl_process_inherit`, `tl_process_start`, and `tl_process_wait` runtime
+;# helpers that the `tl` API surface calls.
 ;# These replace the former hand-written backend assembly
 ;# (`compiler-backend-runtime-process-output-functions` and
 ;# `compiler-backend-runtime-windows-process-output-functions`): the bodies below
@@ -14,6 +15,8 @@
 ;# (CreateProcessA with temp-file stdout/stderr redirection) for the captured
 ;# `output` path and reports the asynchronous `start`/`wait` pair as unsupported,
 ;# matching the previous backend behavior.
+;# `inherit` leaves a child attached to the caller's stdout/stderr streams while
+;# still waiting for and returning its exit status.
 ;#
 ;# Usage: imported by `tl` (which provides the public wrappers).
 (import stdlib.array)
@@ -474,6 +477,19 @@
 (cfg
   windows
   (extern (win-get-std-handle [arg0 : i32]) : i64 (:symbol "GetStdHandle")))
+(cfg
+  windows
+  (extern (win-get-current-process) : i64 (:symbol "GetCurrentProcess")))
+(cfg
+  windows
+  (extern (win-duplicate-handle
+    [source-process : i64]
+    [source-handle : i64]
+    [target-process : i64]
+    [target-handle : (MutPtr i64)]
+    [desired-access : i64]
+    [inherit-handle : i32]
+    [options : i32]) : i32 (:symbol "DuplicateHandle")))
 
 ;: Shared spawn-failure result for the captured-output path.
 (define (spawn-error) : ResultProcessRuntimeOutput
@@ -688,6 +704,24 @@
   (stdin-w i64)
   (stdout-fd i64)
   (stderr-fd i64)
+  (exec-r i64)
+  (exec-w i64)
+  (failed bool))
+
+;: Spawn state for a child that inherits the caller's stdout and stderr.
+;: It omits capture descriptors while retaining the stdin and exec-failure
+;: plumbing needed by the regular Linux process path.
+(defstruct ProcessLinuxInheritedSpawn
+  (exec-addr i64)
+  (argv-addr i64)
+  (envp-addr i64)
+  (cwd-addr i64)
+  (marker-addr i64)
+  (has-stdin bool)
+  (stdin-data i64)
+  (stdin-len i64)
+  (stdin-r i64)
+  (stdin-w i64)
   (exec-r i64)
   (exec-w i64)
   (failed bool))
@@ -997,6 +1031,81 @@
           exec-w
           failed)))))
 
+;: Assemble the Linux inherited-stream spawn state. This has the same command,
+;: cwd, environment, stdin, and exec-failure setup as `linux-prepare`, but
+;: deliberately creates no stdout/stderr capture descriptors.
+(define (linux-prepare-inherit [command : ProcessRuntimeCommand]) : ProcessLinuxInheritedSpawn
+  (cfg
+    windows
+    (ProcessLinuxInheritedSpawn 0 0 0 0 0 false 0 0 -1 -1 -1 -1 true)
+    (let
+      [exec-addr : i64
+        (stdlib.process_runtime.array-u8-addr
+          (io.c-string (stdlib.process_runtime.command-executable command)))]
+      [argv-addr : i64
+        (stdlib.process_runtime.linux-build-argv
+          exec-addr
+          (stdlib.process_runtime.command-argv command))]
+      [envp-addr : i64
+        (stdlib.process_runtime.linux-build-envp
+          (stdlib.process_runtime.command-env command))]
+      [cwd-addr : i64
+        (stdlib.process_runtime.maybe-cstring-addr
+          (stdlib.process_runtime.command-cwd command))]
+      [marker-addr : i64
+        (stdlib.process_runtime.array-u8-addr (io.c-string "exec"))]
+      [has-stdin : bool
+        (stdlib.process_runtime.maybe-present?
+          (stdlib.process_runtime.command-stdin command))]
+      [stdin-data : i64
+        (stdlib.process_runtime.maybe-data-addr
+          (stdlib.process_runtime.command-stdin command))]
+      [stdin-len : i64
+        (stdlib.process_runtime.maybe-len
+          (stdlib.process_runtime.command-stdin command))]
+      [stdin-r : i64 -1]
+      [stdin-w : i64 -1]
+      [exec-r : i64 -1]
+      [exec-w : i64 -1]
+      [failed : bool false]
+      [pbuf : (Array i32) (array.make-array i32 2)]
+      [ebuf : (Array i32) (array.make-array i32 2)]
+      (begin
+        (if has-stdin
+          (if (<
+            (unsafe
+              (syscall 293 (stdlib.process_runtime.array-i32-addr pbuf) 524288))
+            0)
+            (set! failed true)
+            (begin
+              (set! stdin-r (cast (array-ref pbuf 0) : i64))
+              (set! stdin-w (cast (array-ref pbuf 1) : i64))))
+          unit)
+        (if (not failed)
+          (if (<
+            (unsafe
+              (syscall 293 (stdlib.process_runtime.array-i32-addr ebuf) 524288))
+            0)
+            (set! failed true)
+            (begin
+              (set! exec-r (cast (array-ref ebuf 0) : i64))
+              (set! exec-w (cast (array-ref ebuf 1) : i64))))
+          unit)
+        (ProcessLinuxInheritedSpawn
+          exec-addr
+          argv-addr
+          envp-addr
+          cwd-addr
+          marker-addr
+          has-stdin
+          stdin-data
+          stdin-len
+          stdin-r
+          stdin-w
+          exec-r
+          exec-w
+          failed)))))
+
 ;: Close every descriptor recorded in a spawn struct (pre-fork cleanup).
 (define (linux-cleanup-spawn [spawn : ProcessLinuxSpawn]) : unit
   (begin
@@ -1004,6 +1113,16 @@
     (stdlib.process_runtime.linux-close-if (struct-get spawn stdin-w))
     (stdlib.process_runtime.linux-close-if (struct-get spawn stdout-fd))
     (stdlib.process_runtime.linux-close-if (struct-get spawn stderr-fd))
+    (stdlib.process_runtime.linux-close-if (struct-get spawn exec-r))
+    (stdlib.process_runtime.linux-close-if (struct-get spawn exec-w))
+    unit))
+
+;: Close every descriptor in an inherited-stream spawn state before a failed
+;: Linux spawn returns to its caller.
+(define (linux-cleanup-inherited-spawn [spawn : ProcessLinuxInheritedSpawn]) : unit
+  (begin
+    (stdlib.process_runtime.linux-close-if (struct-get spawn stdin-r))
+    (stdlib.process_runtime.linux-close-if (struct-get spawn stdin-w))
     (stdlib.process_runtime.linux-close-if (struct-get spawn exec-r))
     (stdlib.process_runtime.linux-close-if (struct-get spawn exec-w))
     unit))
@@ -1054,6 +1173,51 @@
         (syscall 3 (struct-get spawn stdout-fd)))
       (unsafe
         (syscall 3 (struct-get spawn stderr-fd)))
+      (if (not (= (struct-get spawn cwd-addr) 0))
+        (if (<
+          (unsafe
+            (syscall 80 (struct-get spawn cwd-addr)))
+          0)
+          (stdlib.process_runtime.linux-child-fail
+            (struct-get spawn exec-w)
+            (struct-get spawn marker-addr))
+          unit)
+        unit)
+      (unsafe
+        (syscall
+          59
+          (struct-get spawn exec-addr)
+          (struct-get spawn argv-addr)
+          (struct-get spawn envp-addr)))
+      (stdlib.process_runtime.linux-child-fail
+        (struct-get spawn exec-w)
+        (struct-get spawn marker-addr)))))
+
+;: Child path after vfork for inherited stdout/stderr: wire only an explicitly
+;: supplied stdin pipe, leave descriptors 1 and 2 untouched, then execve.
+(define (linux-exec-child-inherit [spawn : ProcessLinuxInheritedSpawn]) : never
+  (cfg
+    windows
+    (stdlib.process_runtime.linux-exec-child-inherit spawn)
+    (begin
+      (unsafe
+        (syscall 3 (struct-get spawn exec-r)))
+      (if (>= (struct-get spawn stdin-w) 0)
+        (begin
+          (unsafe
+            (syscall 3 (struct-get spawn stdin-w)))
+          (if (<
+            (unsafe
+              (syscall 33 (struct-get spawn stdin-r) 0))
+            0)
+            (stdlib.process_runtime.linux-child-fail
+              (struct-get spawn exec-w)
+              (struct-get spawn marker-addr))
+            (begin
+              (unsafe
+                (syscall 3 (struct-get spawn stdin-r)))
+              unit)))
+        unit)
       (if (not (= (struct-get spawn cwd-addr) 0))
         (if (<
           (unsafe
@@ -1229,6 +1393,82 @@
             (if (= pid 0)
               (stdlib.process_runtime.linux-exec-child spawn)
               (stdlib.process_runtime.linux-output-parent spawn pid))))))))
+
+;: Parent path for an inherited-stream child: feed explicit stdin, wait for the
+;: child, detect an exec failure, and return only its exit status. Stdout and
+;: stderr stay connected to the caller throughout execution.
+(define (linux-inherit-parent [spawn : ProcessLinuxInheritedSpawn] [pid : i64]) : ResultProcessRuntimeOutput
+  (cfg
+    windows
+    (stdlib.process_runtime.wait-error)
+    (begin
+      (stdlib.process_runtime.linux-close-if (struct-get spawn exec-w))
+      (let
+        [stdin-status : i64
+          (stdlib.process_runtime.linux-feed-stdin
+            (struct-get spawn has-stdin)
+            (struct-get spawn stdin-r)
+            (struct-get spawn stdin-w)
+            (struct-get spawn stdin-data)
+            (struct-get spawn stdin-len))]
+        (if (= stdin-status 1)
+          (begin
+            (unsafe
+              (syscall
+                61
+                pid
+                (stdlib.process_runtime.array-i32-addr (array.make-array i32 1))
+                0
+                0))
+            (stdlib.process_runtime.linux-close-if (struct-get spawn exec-r))
+            (stdlib.process_runtime.wait-error))
+          (let
+            [statusbuf : (Array i32) (array.make-array i32 1)]
+            [waited : i64
+              (unsafe
+                (syscall
+                  61
+                  pid
+                  (stdlib.process_runtime.array-i32-addr statusbuf)
+                  0
+                  0))]
+            (if (< waited 0)
+              (begin
+                (stdlib.process_runtime.linux-close-if
+                  (struct-get spawn exec-r))
+                (stdlib.process_runtime.wait-error))
+              (if (stdlib.process_runtime.linux-exec-failed?
+                (struct-get spawn exec-r))
+                (stdlib.process_runtime.spawn-error)
+                (stdlib.process_runtime.output-ok
+                  (stdlib.process_runtime.decode-status (array-ref statusbuf 0))
+                  ""
+                  "")))))))))
+
+;: Linux inherited-stream runtime: prepare without output capture, vfork, and
+;: keep child stdout/stderr attached to the caller until it exits.
+(define (linux-inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
+  (cfg
+    windows
+    (stdlib.process_runtime.spawn-error)
+    (let
+      [spawn : ProcessLinuxInheritedSpawn
+        (stdlib.process_runtime.linux-prepare-inherit command)]
+      (if (struct-get spawn failed)
+        (begin
+          (stdlib.process_runtime.linux-cleanup-inherited-spawn spawn)
+          (stdlib.process_runtime.spawn-error))
+        (let
+          [pid : i64
+            (unsafe
+              (syscall 58))]
+          (if (< pid 0)
+            (begin
+              (stdlib.process_runtime.linux-cleanup-inherited-spawn spawn)
+              (stdlib.process_runtime.spawn-error))
+            (if (= pid 0)
+              (stdlib.process_runtime.linux-exec-child-inherit spawn)
+              (stdlib.process_runtime.linux-inherit-parent spawn pid))))))))
 
 ;: Linux asynchronous start runtime: prepare, vfork, and dispatch parent/child.
 (define (linux-start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild
@@ -1419,6 +1659,32 @@
         (stdlib.process_runtime.win-close-handle handle)
         unit))))
 
+;: Duplicate one caller standard handle as an inheritable child handle, or -1
+;: when no usable standard handle is available. Keeping the duplication local
+;: avoids changing inheritable flags on the caller's own console or pipe.
+(cfg
+  windows
+  (define (windows-duplicate-standard-handle [which : i32]) : i64
+    (let
+      [source : i64 (stdlib.process_runtime.win-get-std-handle which)]
+      [current : i64 (stdlib.process_runtime.win-get-current-process)]
+      [copy : (Array i64) (array.make-array i64 1)]
+      (if (or (= source 0) (= source -1))
+        -1
+        (if (=
+          (stdlib.process_runtime.win-duplicate-handle
+            current
+            source
+            current
+            (unsafe
+              (ptr-cast (array-data copy) : (MutPtr i64)))
+            0
+            (cast 1 : i32)
+            (cast 2 : i32))
+          (cast 0 : i32))
+          -1
+          (array-ref copy 0))))))
+
 ;: Create an inheritable, delete-on-close temp file and return its HANDLE, or -1.
 (cfg
   windows
@@ -1519,6 +1785,77 @@
                 (stdlib.process_runtime.win-close-handle process-handle)
                 (stdlib.process_runtime.win-close-handle worker-handle)
                 (cast (array-ref codebuf 0) : i64)))))))))
+
+;: Launch a process with duplicated caller standard handles, wait for its exit,
+;: and return the exit code. The child writes directly to the caller's stdout
+;: and stderr instead of temporary capture files.
+(cfg
+  windows
+  (define (windows-create-and-wait-inherit
+    [appname-addr : i64]
+    [cmdline-addr : i64]
+    [env-addr : i64]
+    [cwd-addr : i64]) : i64
+    (let
+      [startup : (Array u64) (array.make-array u64 13)]
+      [procinfo : (Array u64) (array.make-array u64 3)]
+      [stdin-handle : i64
+        (stdlib.process_runtime.windows-duplicate-standard-handle
+          (cast -10 : i32))]
+      [stdout-handle : i64
+        (stdlib.process_runtime.windows-duplicate-standard-handle
+          (cast -11 : i32))]
+      [stderr-handle : i64
+        (stdlib.process_runtime.windows-duplicate-standard-handle
+          (cast -12 : i32))]
+      (if (or
+        (= stdin-handle -1)
+        (or (= stdout-handle -1) (= stderr-handle -1)))
+        (begin
+          (stdlib.process_runtime.windows-close-if stdin-handle)
+          (stdlib.process_runtime.windows-close-if stdout-handle)
+          (stdlib.process_runtime.windows-close-if stderr-handle)
+          -1)
+        (begin
+          (array-set! startup 0 (cast 104 : u64))
+          (array-set! startup 7 (shl (cast 0x100 : u64) 32))
+          (array-set! startup 10 (cast stdin-handle : u64))
+          (array-set! startup 11 (cast stdout-handle : u64))
+          (array-set! startup 12 (cast stderr-handle : u64))
+          (let
+            [created : i32
+              (stdlib.process_runtime.win-create-process
+                appname-addr
+                cmdline-addr
+                0
+                0
+                (cast 1 : i32)
+                0
+                env-addr
+                cwd-addr
+                (stdlib.process_runtime.array-u64-addr startup)
+                (stdlib.process_runtime.array-u64-addr procinfo))]
+            (begin
+              (stdlib.process_runtime.windows-close-if stdin-handle)
+              (stdlib.process_runtime.windows-close-if stdout-handle)
+              (stdlib.process_runtime.windows-close-if stderr-handle)
+              (if (= created (cast 0 : i32))
+                -1
+                (let
+                  [codebuf : (Array i32) (array.make-array i32 1)]
+                  [process-handle : i64 (cast (array-ref procinfo 0) : i64)]
+                  [worker-handle : i64 (cast (array-ref procinfo 1) : i64)]
+                  (begin
+                    (stdlib.process_runtime.win-wait-single
+                      process-handle
+                      (cast -1 : i32))
+                    (stdlib.process_runtime.win-get-exit-code
+                      process-handle
+                      (unsafe
+                        (ptr-cast (array-data codebuf) : (MutPtr i32))))
+                    (stdlib.process_runtime.win-close-handle process-handle)
+                    (stdlib.process_runtime.win-close-handle worker-handle)
+                    (cast (array-ref codebuf 0) : i64)))))))))))
 
 ;: Seek a raw Windows file HANDLE and return the resulting offset.
 (cfg
@@ -1657,6 +1994,37 @@
                       stdout-text
                       stderr-text)))))))))))
 
+;: Windows inherited-stream runtime: launch with duplicated caller standard
+;: handles so stdout/stderr remain live, then return the child exit status.
+(cfg
+  windows
+  (define (windows-inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
+    (let
+      [appname-addr : i64
+        (stdlib.process_runtime.array-u8-addr
+          (io.c-string (stdlib.process_runtime.command-executable command)))]
+      [cmdline-addr : i64
+        (stdlib.process_runtime.array-u8-addr
+          (io.c-string (stdlib.process_runtime.windows-cmdline command)))]
+      [env-addr : i64
+        (stdlib.process_runtime.windows-build-env
+          (stdlib.process_runtime.command-env command))]
+      [cwd-addr : i64
+        (stdlib.process_runtime.maybe-cstring-addr
+          (stdlib.process_runtime.command-cwd command))]
+      [status : i64 -1]
+      (begin
+        (set!
+          status
+          (stdlib.process_runtime.windows-create-and-wait-inherit
+            appname-addr
+            cmdline-addr
+            env-addr
+            cwd-addr))
+        (if (< status 0)
+          (stdlib.process_runtime.spawn-error)
+          (stdlib.process_runtime.output-ok status "" ""))))))
+
 ;; ---------------------------------------------------------------------------
 ;; Cross-target runtime entry points consumed by tl.
 ;; ---------------------------------------------------------------------------
@@ -1666,6 +2034,14 @@
     windows
     (stdlib.process_runtime.windows-output command)
     (stdlib.process_runtime.linux-output command)))
+
+;: Run a command with child stdout/stderr inherited from the caller and return
+;: its status with no captured output payload.
+(define (tl_process_inherit [command : ProcessRuntimeCommand]) : ResultProcessRuntimeOutput
+  (cfg
+    windows
+    (stdlib.process_runtime.windows-inherit command)
+    (stdlib.process_runtime.linux-inherit command)))
 
 ;: Start a command without waiting; Windows reports async as unsupported.
 (define (tl_process_start [command : ProcessRuntimeCommand]) : ResultProcessRuntimeChild

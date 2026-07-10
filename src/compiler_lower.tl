@@ -380,14 +380,15 @@
   (Ok LowerState sym_i64_env.SymI64Env TcTypeEnv)
   (Err (Box CompilerDiagnostic)))
 
-;; The Ok variant carries, in order, the full module-local type
-;; env (top-env + module-local type decls), the full module-local name env, the
-;; module-local-ONLY type env, and the module-local-ONLY name env (just the
-;; module's own type/name bindings, on empty bases). The last two build small
-;; per-module type/name cache overlays over the shared global caches instead of
-;; re-walking the global env at every module boundary.
+;; The Ok variant carries the full module-local type env (top-env + local type
+;; decls), the module-local-only type env, and the module-local-only name env.
+;; The local-only envs build small cache overlays over the shared global caches.
 (defenum ResultLowerModuleLocalEnv
-  (Ok TcTypeEnv LowerNameEnv TcTypeEnv LowerNameEnv)
+  (Ok TcTypeEnv TcTypeEnv LowerNameEnv)
+  (Err String))
+
+(defenum ResultLowerModuleTypeEnvs
+  (Ok TcTypeEnv TcTypeEnv)
   (Err String))
 
 (defenum ResultLowerValue
@@ -3335,195 +3336,222 @@
   [decl : AstDecl]) : LowerNameEnv
   (lower-name-env-add-local-decl-resolve names names name-cache module decl))
 
-(define (lower-module-local-type-env-bind-qualified
+(define (lower-module-local-type-envs-bind-qualified
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [module : String]
-  [name : String]) : ResultTcEnv
+  [name : String]) : ResultLowerModuleTypeEnvs
   (match (tc-lookup top-env (compiler-symbol-module-key module name))
-    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind env name ty))]
-    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
+    [(ResultTcType.Ok ty)
+      (ResultLowerModuleTypeEnvs.Ok
+        (tc-bind env name ty)
+        (tc-bind local-env name ty))]
+    [(ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
 
-(define (lower-module-local-type-env-bind-qualified-if-free
+(define (lower-module-local-type-envs-bind-qualified-id-if-free
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [module : String]
-  [name : String]) : ResultTcEnv
-  (match (tc-lookup top-env (compiler-symbol-module-key module name))
-    [(ResultTcType.Ok ty) (ResultTcEnv.Ok (tc-bind-alias-if-free env name ty))]
-    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
-
-(define (lower-module-local-type-env-bind-qualified-id-if-free
-  [top-env : TcTypeEnv]
-  [env : TcTypeEnv]
-  [module : String]
-  [name-id : i64]) : ResultTcEnv
+  [name-id : i64]) : ResultLowerModuleTypeEnvs
   (match (tc-lookup-id top-env (tc-module-name-id module name-id))
     [(ResultTcType.Ok ty)
-      (ResultTcEnv.Ok (tc-bind-alias-id-if-free env name-id ty))]
-    [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
+      (ResultLowerModuleTypeEnvs.Ok
+        (tc-bind-alias-id-if-free env name-id ty)
+        (tc-bind-alias-id-if-free local-env name-id ty))]
+    [(ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
 
-(define (lower-module-local-type-env-add-variants
+(define (lower-module-local-type-envs-add-variants
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [module : String]
-  [enum-name : String]
-  [variants : AstVariantDefList]) : ResultTcEnv
-  (lower-module-local-type-env-add-variants-at
+  [variants : AstVariantDefList]) : ResultLowerModuleTypeEnvs
+  (lower-module-local-type-envs-add-variants-at
     top-env
     env
+    local-env
     module
-    enum-name
     (& variants)
     0))
 
-(define (lower-module-local-type-env-add-variants-at
+(define (lower-module-local-type-envs-add-variants-at
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [module : String]
-  [enum-name : String]
   [variants : (& variants AstVariantDefList)]
-  [index : i64]) : ResultTcEnv
+  [index : i64]) : ResultLowerModuleTypeEnvs
   (if (>= index (struct-get variants len))
-    (ResultTcEnv.Ok env)
+    (ResultLowerModuleTypeEnvs.Ok env local-env)
     (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
       [(AstVariantDef.Def name _ _)
-        (match (lower-module-local-type-env-bind-qualified-id-if-free
+        (match (lower-module-local-type-envs-bind-qualified-id-if-free
           top-env
           env
+          local-env
           module
           name)
-          [(ResultTcEnv.Ok next-env)
-            (lower-module-local-type-env-add-variants-at
+          [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
+            (lower-module-local-type-envs-add-variants-at
               top-env
               next-env
+              next-local-env
               module
-              enum-name
               variants
               (+ index 1))]
-          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])])))
+          [(ResultLowerModuleTypeEnvs.Err message)
+            (ResultLowerModuleTypeEnvs.Err message)])])))
 
-(define (lower-module-local-type-env-add-decl
+(define (lower-module-local-type-envs-add-decl
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
+  [local-env : TcTypeEnv]
   [module : String]
-  [decl : AstDecl]) : ResultTcEnv
+  [decl : AstDecl]) : ResultLowerModuleTypeEnvs
   (match decl
     [(AstDecl.Def name _ _)
-      (lower-module-local-type-env-bind-qualified
+      (lower-module-local-type-envs-bind-qualified
         top-env
         env
+        local-env
         module
         (intern-str name))]
     [(AstDecl.DefFn name _ _ _ _)
-      (lower-module-local-type-env-bind-qualified
+      (lower-module-local-type-envs-bind-qualified
         top-env
         env
+        local-env
         module
         (intern-str name))]
     [(AstDecl.DefDispatch name _)
-      (lower-module-local-type-env-bind-qualified
+      (lower-module-local-type-envs-bind-qualified
         top-env
         env
+        local-env
         module
         (intern-str name))]
     [(AstDecl.Extern name _ _ _)
-      (lower-module-local-type-env-bind-qualified
+      (lower-module-local-type-envs-bind-qualified
         top-env
         env
+        local-env
         module
         (intern-str name))]
-    [(AstDecl.DefEnum name cleanup variants)
-      (match (lower-module-local-type-env-add-variants
+    [(AstDecl.DefEnum _ cleanup variants)
+      (match (lower-module-local-type-envs-add-variants
         top-env
         env
+        local-env
         module
-        (intern-str name)
         variants)
-        [(ResultTcEnv.Ok next-env)
+        [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
           (match cleanup
-            [(AstEnumCleanup.No) (ResultTcEnv.Ok next-env)]
+            [(AstEnumCleanup.No)
+              (ResultLowerModuleTypeEnvs.Ok next-env next-local-env)]
             [(AstEnumCleanup.Fn cleanup-name)
-              (lower-module-local-type-env-bind-qualified
+              (lower-module-local-type-envs-bind-qualified
                 top-env
                 next-env
+                next-local-env
                 module
                 (intern-str cleanup-name))])]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
-    [(AstDecl.DefEnumLifetimes name _ cleanup variants)
-      (match (lower-module-local-type-env-add-variants
+        [(ResultLowerModuleTypeEnvs.Err message)
+          (ResultLowerModuleTypeEnvs.Err message)])]
+    [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+      (match (lower-module-local-type-envs-add-variants
         top-env
         env
+        local-env
         module
-        (intern-str name)
         variants)
-        [(ResultTcEnv.Ok next-env)
+        [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
           (match cleanup
-            [(AstEnumCleanup.No) (ResultTcEnv.Ok next-env)]
+            [(AstEnumCleanup.No)
+              (ResultLowerModuleTypeEnvs.Ok next-env next-local-env)]
             [(AstEnumCleanup.Fn cleanup-name)
-              (lower-module-local-type-env-bind-qualified
+              (lower-module-local-type-envs-bind-qualified
                 top-env
                 next-env
+                next-local-env
                 module
                 (intern-str cleanup-name))])]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+        [(ResultLowerModuleTypeEnvs.Err message)
+          (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.DefStruct name _ cleanup _)
-      (match (lower-module-local-type-env-bind-qualified
+      (match (lower-module-local-type-envs-bind-qualified
         top-env
         env
+        local-env
         module
         (intern-str name))
-        [(ResultTcEnv.Ok next-env)
+        [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
           (match cleanup
-            [(AstStructCleanup.No) (ResultTcEnv.Ok next-env)]
+            [(AstStructCleanup.No)
+              (ResultLowerModuleTypeEnvs.Ok next-env next-local-env)]
             [(AstStructCleanup.Fn cleanup-name)
-              (lower-module-local-type-env-bind-qualified
+              (lower-module-local-type-envs-bind-qualified
                 top-env
                 next-env
+                next-local-env
                 module
                 (intern-str cleanup-name))])]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+        [(ResultLowerModuleTypeEnvs.Err message)
+          (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.DefStructLifetimes name _ _ cleanup _)
-      (match (lower-module-local-type-env-bind-qualified
+      (match (lower-module-local-type-envs-bind-qualified
         top-env
         env
+        local-env
         module
         (intern-str name))
-        [(ResultTcEnv.Ok next-env)
+        [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
           (match cleanup
-            [(AstStructCleanup.No) (ResultTcEnv.Ok next-env)]
+            [(AstStructCleanup.No)
+              (ResultLowerModuleTypeEnvs.Ok next-env next-local-env)]
             [(AstStructCleanup.Fn cleanup-name)
-              (lower-module-local-type-env-bind-qualified
+              (lower-module-local-type-envs-bind-qualified
                 top-env
                 next-env
+                next-local-env
                 module
                 (intern-str cleanup-name))])]
-        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+        [(ResultLowerModuleTypeEnvs.Err message)
+          (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
-        (lower-module-local-type-env-add-decl top-env env module template))]
+        (lower-module-local-type-envs-add-decl
+          top-env
+          env
+          local-env
+          module
+          template))]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
-        (lower-module-local-type-env-add-decl top-env env module inner))]
-    [_ (ResultTcEnv.Ok env)]))
+        (lower-module-local-type-envs-add-decl
+          top-env
+          env
+          local-env
+          module
+          inner))]
+    [_ (ResultLowerModuleTypeEnvs.Ok env local-env)]))
 
 (define (lower-module-local-envs-list
   [top-env : TcTypeEnv]
   [decls : AstDeclList]
   [type-env : TcTypeEnv]
   [local-type-env : TcTypeEnv]
-  [names : LowerNameEnv]
+  [resolve-names : LowerNameEnv]
   [local-names : LowerNameEnv]
   [name-cache : LowerNameCache]
   [target-module : String]
-  [target-module-id : i64]
-  [_module-id : i64]) : ResultLowerModuleLocalEnv
+  [target-module-id : i64]) : ResultLowerModuleLocalEnv
   (let
     [cur-type-env : TcTypeEnv type-env]
     [cur-local-type-env : TcTypeEnv local-type-env]
-    [cur-names : LowerNameEnv names]
     [cur-local-names : LowerNameEnv local-names]
     [_ensure : unit (lower-module-decl-index-ensure! decls)]
     [slot : i64 (lower-module-decl-index-slot target-module-id)]
@@ -3552,42 +3580,28 @@
             (match decl
               [(AstDecl.Module _) unit]
               [_
-                (match (lower-module-local-type-env-add-decl
+                (match (lower-module-local-type-envs-add-decl
                   top-env
                   cur-type-env
+                  cur-local-type-env
                   target-module
                   decl)
-                  [(ResultTcEnv.Ok next-type-env)
-                    (match (lower-module-local-type-env-add-decl
-                      top-env
-                      cur-local-type-env
-                      target-module
-                      decl)
-                      [(ResultTcEnv.Ok next-local-type-env)
-                        (let
-                          [next-names : LowerNameEnv
-                            (lower-name-env-add-local-decl
-                              cur-names
-                              name-cache
-                              target-module
-                              decl)]
-                          [next-local-names : LowerNameEnv
-                            (lower-name-env-add-local-decl-resolve
-                              cur-local-names
-                              cur-names
-                              name-cache
-                              target-module
-                              decl)]
-                          (begin
-                            (set! cur-type-env next-type-env)
-                            (set! cur-local-type-env next-local-type-env)
-                            (set! cur-names next-names)
-                            (set! cur-local-names next-local-names)))]
-                      [(ResultTcEnv.Err message)
-                        (begin
-                          (set! result (ResultLowerModuleLocalEnv.Err message))
-                          (set! done true))])]
-                  [(ResultTcEnv.Err message)
+                  [(ResultLowerModuleTypeEnvs.Ok
+                      next-type-env
+                      next-local-type-env)
+                    (let
+                      [next-local-names : LowerNameEnv
+                        (lower-name-env-add-local-decl-resolve
+                          cur-local-names
+                          resolve-names
+                          name-cache
+                          target-module
+                          decl)]
+                      (begin
+                        (set! cur-type-env next-type-env)
+                        (set! cur-local-type-env next-local-type-env)
+                        (set! cur-local-names next-local-names)))]
+                  [(ResultLowerModuleTypeEnvs.Err message)
                     (begin
                       (set! result (ResultLowerModuleLocalEnv.Err message))
                       (set! done true))])])
@@ -3596,7 +3610,6 @@
         result
         (ResultLowerModuleLocalEnv.Ok
           cur-type-env
-          cur-names
           cur-local-type-env
           cur-local-names)))))
 
@@ -3607,21 +3620,11 @@
   [name-cache : LowerNameCache]
   [module : String]) : ResultLowerModuleLocalEnv
   (if (string.eq module "")
-    (ResultLowerModuleLocalEnv.Ok
-      top-env
-      names
-      (TcTypeEnv.Nil)
-      (LowerNameEnv.Nil))
+    (ResultLowerModuleLocalEnv.Ok top-env (TcTypeEnv.Nil) (LowerNameEnv.Nil))
     (match (tc-context-program ctx)
       [(AstProgram.Program decls-box)
         (let
           [decls : AstDeclList (box-get decls-box)]
-          [module-names : LowerNameEnv
-            (lower-name-env-with-import-aliases-in-module-cache
-              decls
-              names
-              name-cache
-              module)]
           ;; The module's import aliases resolve against the global
           ;; name-cache (not the env base), so building them on an empty base
           ;; yields the module-local-only alias env -- the starting point for the
@@ -3638,12 +3641,11 @@
             decls
             top-env
             (TcTypeEnv.Nil)
-            module-names
+            names
             local-alias-names
             name-cache
             module
-            (intern module)
-            (intern "")))])))
+            (intern module)))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -44450,7 +44452,6 @@
                       next-module-str)
                       [(ResultLowerModuleLocalEnv.Ok
                           next-local-top-env
-                          _
                           local-type-env
                           local-name-only)
                         (begin

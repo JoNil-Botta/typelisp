@@ -12,6 +12,7 @@ ptr_offset_inline_aggregate_stride|tests/integration/ptr_offset_inline_aggregate
 ptr_addr_of_places|tests/integration/ptr_addr_of_places.tl|0|-|-|-
 raw_pointer_register_addr_of|tests/integration/raw_pointer_register_addr_of.tl|0|-|-|-
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
+borrow_reborrow_stored_reference|tests/integration/borrow_reborrow_stored_reference.tl|0|-|-|-
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-

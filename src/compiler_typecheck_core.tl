@@ -30629,6 +30629,26 @@
     [(AstType.String) (AstType.Str)]
     [_ (tc-type-without-regions ty)]))
 
+;; Projecting a field or tuple element that already stores a reference reborrows
+;; its referent. The stored reference owns the provenance lifetime; retaining
+;; the enclosing place lifetime would make `(& (array-ref iter.slots i))`
+;; appear to borrow the iterator state rather than the source array.
+(define (tc-borrow-place-projected-type
+  [fallback-lifetime : String]
+  [projected-ty : AstType]) : TcBorrowPlace
+  ;; Field and tuple declarations are already resolved before projection; the
+  ;; enclosing place has had any transient region tag stripped as well.
+  (match projected-ty
+    [(AstType.Ref lifetime referent-ty)
+      (TcBorrowPlace
+        lifetime
+        (tc-borrow-referent-type (ty-node-get referent-ty)))]
+    [(AstType.MutRef lifetime referent-ty)
+      (TcBorrowPlace
+        lifetime
+        (tc-borrow-referent-type (ty-node-get referent-ty)))]
+    [_ (TcBorrowPlace fallback-lifetime (tc-borrow-referent-type projected-ty))]))
+
 (define (tc-borrow-place-struct-field
   [ctx : TcContext]
   [place : TcBorrowPlace]
@@ -30640,7 +30660,7 @@
           (match (tc-struct-field-type ctx (intern-str struct-name) field)
             [(ResultTcType.Ok field-ty)
               (ResultTcBorrowPlace.Ok
-                (TcBorrowPlace lifetime (tc-borrow-referent-type field-ty)))]
+                (tc-borrow-place-projected-type lifetime field-ty))]
             [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
         [(AstType.StructArgs struct-name lifetimes)
           (match (tc-struct-field-type-with-args
@@ -30650,7 +30670,7 @@
             field)
             [(ResultTcType.Ok field-ty)
               (ResultTcBorrowPlace.Ok
-                (TcBorrowPlace lifetime (tc-borrow-referent-type field-ty)))]
+                (tc-borrow-place-projected-type lifetime field-ty))]
             [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
         [_
           (ResultTcBorrowPlace.Err
@@ -30667,7 +30687,7 @@
           (match (tc-type-list-ref (box-get elems) index)
             [(ResultTcType.Ok elem-ty)
               (ResultTcBorrowPlace.Ok
-                (TcBorrowPlace lifetime (tc-borrow-referent-type elem-ty)))]
+                (tc-borrow-place-projected-type lifetime elem-ty))]
             [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
         [_
           (ResultTcBorrowPlace.Err

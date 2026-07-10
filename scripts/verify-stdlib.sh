@@ -209,6 +209,7 @@ io.tl
 io_caller_result.tl
 iterator.tl
 env.tl
+eq.tl
 cpu.tl
 fs.tl
 ffi.tl

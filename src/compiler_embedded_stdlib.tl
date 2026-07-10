@@ -18,6 +18,7 @@
 (include-str compiler-embedded-stdlib-comptime "stdlib/comptime.tl")
 (include-str compiler-embedded-stdlib-core-macros "stdlib/core_macros.tl")
 (include-str compiler-embedded-stdlib-env "stdlib/env.tl")
+(include-str compiler-embedded-stdlib-eq "stdlib/eq.tl")
 (include-str compiler-embedded-stdlib-ffi "stdlib/ffi.tl")
 (include-str compiler-embedded-stdlib-fs "stdlib/fs.tl")
 (include-str compiler-embedded-stdlib-hash "stdlib/hash.tl")
@@ -131,6 +132,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
     [(embedded-eq? suffix "vector_slice.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-slice)]
+    [(embedded-eq? suffix "eq.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-eq)]
     [else (CompilerEmbeddedStdlibNoSource)]))
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource

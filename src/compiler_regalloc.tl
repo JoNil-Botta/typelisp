@@ -92,6 +92,93 @@
 (defenum CompilerRegIntervalSelection
   (Selection CompilerRegIntervalList CompilerRegIntervalIndex))
 
+;; A liveness handle belongs to exactly one immutable CompilerIrFunction value.
+;; Regalloc creates a fresh handle after every IR rewrite, then shares its
+;; baseline analysis through all read-only planning helpers for that version.
+;; The edge-precise result is populated only for the scalar coalescer, which is
+;; the sole consumer.  Keeping both analyses here makes the version boundary
+;; explicit and prevents accidental cross-function reuse.
+(defenum CompilerRegMaybeLiveness
+  (No)
+  (Some CompilerFunctionLiveness))
+
+(defstruct CompilerRegLivenessHandle
+  (baseline CompilerFunctionLiveness)
+  (edge-precise CompilerRegMaybeLiveness))
+
+(cfg
+  (any regalloc-liveness-census test)
+  (define compiler-reg-liveness-census-baseline : i64
+    0))
+(cfg
+  (any regalloc-liveness-census test)
+  (define compiler-reg-liveness-census-edge-precise : i64
+    0))
+
+(define (compiler-reg-liveness-census-reset!) : unit
+  (cfg
+    (any regalloc-liveness-census test)
+    (begin
+      (set! compiler-reg-liveness-census-baseline 0)
+      (set! compiler-reg-liveness-census-edge-precise 0))
+    unit))
+
+(define (compiler-reg-liveness-census-baseline-count) : i64
+  (cfg
+    (any regalloc-liveness-census test)
+    compiler-reg-liveness-census-baseline
+    0))
+
+(define (compiler-reg-liveness-census-edge-precise-count) : i64
+  (cfg
+    (any regalloc-liveness-census test)
+    compiler-reg-liveness-census-edge-precise
+    0))
+
+(define (compiler-reg-liveness-handle-make
+  [func : CompilerIrFunction]
+  [need-edge-precise : bool]) : CompilerRegLivenessHandle
+  (let
+    [baseline : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    (begin
+      (cfg
+        (any regalloc-liveness-census test)
+        (set!
+          compiler-reg-liveness-census-baseline
+          (+ compiler-reg-liveness-census-baseline 1))
+        unit)
+      (cfg
+        regalloc-liveness-census
+        (io.print-error
+          (if need-edge-precise
+            "regalloc-liveness-census|baseline=1|edge-precise=1\n"
+            "regalloc-liveness-census|baseline=1|edge-precise=0\n"))
+        unit)
+      (if need-edge-precise
+        (let
+          [edge-precise : CompilerFunctionLiveness
+            (compiler-live-analyze-function-edge-precise func)]
+          (begin
+            (cfg
+              (any regalloc-liveness-census test)
+              (set!
+                compiler-reg-liveness-census-edge-precise
+                (+ compiler-reg-liveness-census-edge-precise 1))
+              unit)
+            (CompilerRegLivenessHandle
+              baseline
+              (CompilerRegMaybeLiveness.Some edge-precise))))
+        (CompilerRegLivenessHandle baseline (CompilerRegMaybeLiveness.No))))))
+
+(define (compiler-reg-liveness-handle-edge-precise
+  [handle : CompilerRegLivenessHandle]) : CompilerFunctionLiveness
+  (match (struct-get handle edge-precise)
+    [(CompilerRegMaybeLiveness.Some liveness) liveness]
+    [(CompilerRegMaybeLiveness.No)
+      ;; Callers requesting this accessor are scalar coalescer paths and must
+      ;; request edge-precise analysis when constructing their handle.
+      (io.panic "regalloc: missing edge-precise liveness handle")]))
+
 (defenum CompilerRegActive
   (Active i64 i64 String))
 
@@ -8643,6 +8730,35 @@
     ty
     members))
 
+(define (compiler-reg-edge-copy-plan-for-region-group-with-liveness
+  [liveness : CompilerFunctionLiveness]
+  [region-labels : CompilerRegStringList]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
+  (compiler-reg-edge-copy-plan-for-region-members-with-liveness
+    liveness
+    region-labels
+    stack-var
+    region-var
+    ty
+    members))
+
+(define (compiler-reg-edge-copy-plan-for-region-with-liveness
+  [liveness : CompilerFunctionLiveness]
+  [region-labels : CompilerRegStringList]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]) : CompilerRegEdgeCopyPlan
+  (compiler-reg-edge-copy-plan-for-region-members-with-liveness
+    liveness
+    region-labels
+    stack-var
+    region-var
+    ty
+    (compiler-live-set-empty)))
+
 (define (compiler-reg-edge-copy-plan-for-region-members
   [func : CompilerIrFunction]
   [region-labels : CompilerRegStringList]
@@ -8650,24 +8766,37 @@
   [region-var : i64]
   [ty : AstType]
   [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
-  (let
-    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
-    (match liveness
-      [(CompilerFunctionLiveness.Liveness _ blocks)
-        (let
-          [pred-counts : (Array i64)
-            (compiler-reg-edge-copy-pred-counts liveness blocks)]
-          (compiler-reg-edge-copy-boundary-blocks
-            liveness
-            blocks
-            pred-counts
-            (compiler-reg-region-label-map region-labels)
-            stack-var
-            region-var
-            ty
-            members
-            0
-            CompilerRegEdgeCopyList.Nil))])))
+  (compiler-reg-edge-copy-plan-for-region-members-with-liveness
+    (compiler-live-analyze-function func)
+    region-labels
+    stack-var
+    region-var
+    ty
+    members))
+
+(define (compiler-reg-edge-copy-plan-for-region-members-with-liveness
+  [liveness : CompilerFunctionLiveness]
+  [region-labels : CompilerRegStringList]
+  [stack-var : i64]
+  [region-var : i64]
+  [ty : AstType]
+  [members : CompilerLiveI64Set]) : CompilerRegEdgeCopyPlan
+  (match liveness
+    [(CompilerFunctionLiveness.Liveness _ blocks)
+      (let
+        [pred-counts : (Array i64)
+          (compiler-reg-edge-copy-pred-counts liveness blocks)]
+        (compiler-reg-edge-copy-boundary-blocks
+          liveness
+          blocks
+          pred-counts
+          (compiler-reg-region-label-map region-labels)
+          stack-var
+          region-var
+          ty
+          members
+          0
+          CompilerRegEdgeCopyList.Nil))]))
 
 (define (compiler-reg-edge-copy-instr [copy : CompilerRegEdgeCopy]) : CompilerIrInstr
   (match copy
@@ -9891,7 +10020,8 @@
 
 (define (compiler-reg-loop-split-try-var
   [_abi : CompilerRegTargetAbi]
-  [func : CompilerIrFunction]
+  [_func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [region-label : String]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
@@ -9987,15 +10117,15 @@
                         region-start
                         region-end)]
                     (match (if phi-carried?
-                      (compiler-reg-edge-copy-plan-for-region-group
-                        func
+                      (compiler-reg-edge-copy-plan-for-region-group-with-liveness
+                        liveness
                         labels
                         var
                         vars
                         ty
                         members)
-                      (compiler-reg-edge-copy-plan-for-region
-                        func
+                      (compiler-reg-edge-copy-plan-for-region-with-liveness
+                        liveness
                         labels
                         var
                         vars
@@ -10088,6 +10218,7 @@
 (define (compiler-reg-loop-split-select-var
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [region-label : String]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
@@ -10109,6 +10240,7 @@
     (match (compiler-reg-loop-split-try-var
       abi
       func
+      liveness
       region-label
       block
       instrs
@@ -10129,6 +10261,7 @@
         (compiler-reg-loop-split-select-var
           abi
           func
+          liveness
           region-label
           block
           instrs
@@ -10210,6 +10343,7 @@
               (match (compiler-reg-loop-split-select-var
                 abi
                 func
+                liveness
                 label
                 (array-ref live-blocks block-index)
                 instrs
@@ -10348,6 +10482,7 @@
                     (match (compiler-reg-loop-split-select-var
                       abi
                       func
+                      liveness
                       label
                       (array-ref live-blocks b)
                       instrs
@@ -10540,7 +10675,8 @@
 
 ;; Try to home coalesce-root `var`'s phi-carried group across the 2-block region.
 (define (compiler-reg-loop-phi-mb-try-var
-  [func : CompilerIrFunction]
+  [_func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [block-array : (Array CompilerIrBlock)]
   [h : i64]
   [end-idx : i64]
@@ -10582,8 +10718,8 @@
                       vars
                       region-start
                       region-end)]
-                  (match (compiler-reg-edge-copy-plan-for-region-group
-                    func
+                  (match (compiler-reg-edge-copy-plan-for-region-group-with-liveness
+                    liveness
                     region-labels
                     var
                     vars
@@ -10647,6 +10783,7 @@
 
 (define (compiler-reg-loop-phi-mb-select-var
   [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [block-array : (Array CompilerIrBlock)]
   [h : i64]
   [end-idx : i64]
@@ -10668,6 +10805,7 @@
     (CompilerRegLoopSplitCandidate.NoCandidate)
     (match (compiler-reg-loop-phi-mb-try-var
       func
+      liveness
       block-array
       h
       end-idx
@@ -10688,6 +10826,7 @@
       [(CompilerRegLoopSplitCandidate.NoCandidate)
         (compiler-reg-loop-phi-mb-select-var
           func
+          liveness
           block-array
           h
           end-idx
@@ -10713,6 +10852,7 @@
 ;; to home one of its phi-carried groups.
 (define (compiler-reg-loop-phi-mb-select-headers
   [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [block-array : (Array CompilerIrBlock)]
   [points : (Array i64)]
   [loop-ends : (Array i64)]
@@ -10761,6 +10901,7 @@
                 region-end))]
           (match (compiler-reg-loop-phi-mb-select-var
             func
+            liveness
             block-array
             h
             end-idx
@@ -10782,6 +10923,7 @@
             [(CompilerRegLoopSplitCandidate.NoCandidate)
               (compiler-reg-loop-phi-mb-select-headers
                 func
+                liveness
                 block-array
                 points
                 loop-ends
@@ -10799,6 +10941,7 @@
               (CompilerRegLoopSplitCandidate.Candidate sv lbls ty reg copies ev)]))
         (compiler-reg-loop-phi-mb-select-headers
           func
+          liveness
           block-array
           points
           loop-ends
@@ -10838,6 +10981,7 @@
       (CompilerRegLoopSplitCandidate.NoCandidate)
       (compiler-reg-loop-phi-mb-select-headers
         func
+        liveness
         block-array
         (compiler-reg-loop-phi-mb-block-points block-array)
         (compiler-reg-preheader-loop-ends-seq seq count)
@@ -10874,18 +11018,23 @@
     (CompilerRegLoopSplitRewriteResult.Result
       (compiler-reg-loop-split-noop blocks vars)
       "")
-    (compiler-reg-loop-split-rewrite-fueled
-      abi
-      func
-      blocks
-      vars
-      type-info
-      plan
-      (compiler-reg-callee-saved-integer-register-count-for-abi abi))))
+    (let
+      [liveness-handle : CompilerRegLivenessHandle
+        (compiler-reg-liveness-handle-make func false)]
+      (compiler-reg-loop-split-rewrite-fueled
+        abi
+        func
+        liveness-handle
+        blocks
+        vars
+        type-info
+        plan
+        (compiler-reg-callee-saved-integer-register-count-for-abi abi)))))
 
 (define (compiler-reg-loop-split-rewrite-fueled
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]
+  [liveness-handle : CompilerRegLivenessHandle]
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [type-info : CompilerRegVarTypes]
@@ -10897,7 +11046,7 @@
       "")
     (let
       [liveness : CompilerFunctionLiveness
-        (compiler-live-analyze-function func)]
+        (struct-get liveness-handle baseline)]
       [selection : CompilerRegIntervalSelection
         (compiler-reg-live-interval-selection func liveness)]
       [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
@@ -11039,6 +11188,9 @@
                                   (compiler-reg-loop-split-rewrite-fueled
                                     abi
                                     new-func
+                                    (compiler-reg-liveness-handle-make
+                                      new-func
+                                      false)
                                     new-blocks
                                     new-vars
                                     type-info
@@ -11076,7 +11228,8 @@
 ;; (a) does not skip phi-blocks and (b) acts on the EdgeCopyRefused branch.
 ;; ---------------------------------------------------------------------------
 (define (compiler-reg-loop-split-refused-try-var
-  [func : CompilerIrFunction]
+  [_func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [region-label : String]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
@@ -11136,15 +11289,15 @@
                         region-start
                         region-end)]
                     (match (if phi-carried?
-                      (compiler-reg-edge-copy-plan-for-region-group
-                        func
+                      (compiler-reg-edge-copy-plan-for-region-group-with-liveness
+                        liveness
                         labels
                         var
                         vars
                         ty
                         members)
-                      (compiler-reg-edge-copy-plan-for-region
-                        func
+                      (compiler-reg-edge-copy-plan-for-region-with-liveness
+                        liveness
                         labels
                         var
                         vars
@@ -11170,6 +11323,7 @@
 
 (define (compiler-reg-loop-split-refused-select-var
   [func : CompilerIrFunction]
+  [liveness : CompilerFunctionLiveness]
   [region-label : String]
   [block : CompilerLiveBlock]
   [instrs : CompilerIrInstrSeq]
@@ -11191,6 +11345,7 @@
       [r : String
         (compiler-reg-loop-split-refused-try-var
           func
+          liveness
           region-label
           block
           instrs
@@ -11209,6 +11364,7 @@
       (if (string.eq r "")
         (compiler-reg-loop-split-refused-select-var
           func
+          liveness
           region-label
           block
           instrs
@@ -11270,6 +11426,7 @@
                 [r : String
                   (compiler-reg-loop-split-refused-select-var
                     func
+                    liveness
                     label
                     (array-ref live-blocks block-index)
                     instrs
@@ -11410,6 +11567,7 @@
               [r : String
                 (compiler-reg-loop-split-refused-select-var
                   func
+                  liveness
                   label
                   (array-ref live-blocks block-index)
                   instrs
@@ -15756,6 +15914,7 @@
 
 (define (compiler-reg-plan-from
   [func : CompilerIrFunction]
+  [liveness-handle : CompilerRegLivenessHandle]
   [type-info : CompilerRegVarTypes]
   [types : CompilerRegVarTypeList]
   [intervals : CompilerRegIntervalList]
@@ -15843,7 +16002,7 @@
         ;; by the coalescing segment index AND the live-out-input phi exclusion.
         (let
           [ep-liveness : CompilerFunctionLiveness
-            (compiler-live-analyze-function-edge-precise func)]
+            (compiler-reg-liveness-handle-edge-precise liveness-handle)]
           (compiler-reg-hybrid-coalesce-index
             interval-index
             (compiler-reg-live-interval-selection-ep func ep-liveness)
@@ -16216,7 +16375,9 @@
 ;; golden output byte-identical.
 (define (compiler-reg-plan-function [func : CompilerIrFunction]) : CompilerRegPlan
   (let
-    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false)]
+    [liveness : CompilerFunctionLiveness (struct-get liveness-handle baseline)]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [intervals : CompilerRegIntervalList
@@ -16228,6 +16389,7 @@
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     (compiler-reg-plan-from
       func
+      liveness-handle
       type-info
       types
       intervals
@@ -16241,7 +16403,9 @@
 
 (define (compiler-reg-plan-function-avx2 [func : CompilerIrFunction]) : CompilerRegPlan
   (let
-    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false)]
+    [liveness : CompilerFunctionLiveness (struct-get liveness-handle baseline)]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [intervals : CompilerRegIntervalList
@@ -16253,6 +16417,7 @@
         [(CompilerIrFunction.Function _ _ _ function-vars _) function-vars])]
     (compiler-reg-plan-from
       func
+      liveness-handle
       type-info
       types
       intervals
@@ -16398,6 +16563,8 @@
   [abi : CompilerRegTargetAbi]
   [func : CompilerIrFunction]) : CompilerRegPlan
   (let
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func true)]
     [type-info : CompilerRegVarTypes (compiler-reg-function-var-types func)]
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [vars : i64
@@ -16407,7 +16574,7 @@
       (if (compiler-reg-scalar-full-intervals? func)
         (compiler-reg-live-interval-selection
           func
-          (compiler-live-analyze-function func))
+          (struct-get liveness-handle baseline))
         (let
           [block-intervals : CompilerRegIntervalList
             (compiler-reg-block-intervals func)]
@@ -16453,6 +16620,7 @@
             [(CompilerRegParamAssignPlan.Plan preassignments ineligible blocked)
               (compiler-reg-plan-from
                 func
+                liveness-handle
                 type-info
                 types
                 intervals
@@ -19374,10 +19542,12 @@
                 (compiler-reg-plan-types plan)]
               [base-type-info : CompilerRegVarTypes
                 (compiler-reg-var-types-from-list base-types _vars)]
+              [liveness-handle : CompilerRegLivenessHandle
+                (compiler-reg-liveness-handle-make _func false)]
               [base-interval-selection : CompilerRegIntervalSelection
                 (compiler-reg-live-interval-selection
                   _func
-                  (compiler-live-analyze-function _func))]
+                  (struct-get liveness-handle baseline))]
               (match base-interval-selection
                 [(CompilerRegIntervalSelection.Selection _ base-index)
                   (let
@@ -20637,7 +20807,9 @@
     [types : CompilerRegVarTypeList (compiler-reg-var-types-list type-info)]
     [group-vars : CompilerLiveI64Set
       (compiler-reg-function-group-vars func types)]
-    [liveness : CompilerFunctionLiveness (compiler-live-analyze-function func)]
+    [liveness-handle : CompilerRegLivenessHandle
+      (compiler-reg-liveness-handle-make func false)]
+    [liveness : CompilerFunctionLiveness (struct-get liveness-handle baseline)]
     (match (compiler-reg-live-interval-selection func liveness)
       [(CompilerRegIntervalSelection.Selection intervals interval-index)
         (let
@@ -27216,6 +27388,39 @@
           (<= (+ (array-ref remap group-var) 1) slots))]
       [(CompilerRegColoring.None) false])))
 
+(cfg
+  test
+  (define (compiler-reg-liveness-handle-ok?) : bool
+    (let
+      [func : CompilerIrFunction (compiler-reg-edge-copy-linear-function)]
+      [region : CompilerRegStringList
+        (compiler-reg-string-cons "hot" CompilerRegStringList.Nil)]
+      (begin
+        (compiler-reg-liveness-census-reset!)
+        (let
+          [handle : CompilerRegLivenessHandle
+            (compiler-reg-liveness-handle-make func true)]
+          [liveness : CompilerFunctionLiveness (struct-get handle baseline)]
+          (and
+            (match (compiler-reg-edge-copy-plan-for-region-with-liveness
+              liveness
+              region
+              0
+              10
+              (compiler-reg-i64-ty))
+              [(CompilerRegEdgeCopyPlan.Plan _) true]
+              [(CompilerRegEdgeCopyPlan.Refused _) false])
+            (match (compiler-reg-edge-copy-plan-for-region-with-liveness
+              liveness
+              region
+              0
+              11
+              (compiler-reg-i64-ty))
+              [(CompilerRegEdgeCopyPlan.Plan _) true]
+              [(CompilerRegEdgeCopyPlan.Refused _) false])
+            (= (compiler-reg-liveness-census-baseline-count) 1)
+            (= (compiler-reg-liveness-census-edge-precise-count) 1)))))))
+
 (define (compiler-regalloc-core-self-test?) : bool
   (and
     (compiler-reg-reuse-ok?)
@@ -27230,6 +27435,7 @@
     (compiler-reg-target-clobbers-ok?)
     (compiler-reg-xmm-clobbers-ok?)
     (compiler-reg-coalesce-ok?)
+    (cfg test (compiler-reg-liveness-handle-ok?) true)
     (compiler-reg-vector-mask-homes-ok?)
     (compiler-reg-segmented-interference-ok?)
     (compiler-reg-hole-aware-register-reuse-ok?)))

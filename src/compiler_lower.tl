@@ -6114,19 +6114,25 @@
                         (let
                           [ctx : TcContext
                             (TcContext program symbols registries "" pools)]
-                          (match (tc-build-top-env ctx program)
-                            [(ResultTcEnv.Ok top-env)
-                              (let
-                                [roots : CloneNameList
-                                  (lower-clone-roots-program
-                                    ctx
-                                    top-env
-                                    names
-                                    program)]
-                                (ResultLowerCloneRoots.Ok roots))]
-                            [(ResultTcEnv.Err message)
-                              (ResultLowerCloneRoots.Err
-                                (box (lower-diagnostic message)))]))]
+                          (begin
+                            ;; Clone-root discovery asks tc-expr to validate every
+                            ;; reachable clone call. Publish the whole-program
+                            ;; cloneability fixpoint once for those queries;
+                            ;; otherwise each call rebuilds it independently.
+                            (tc-clone-able-cache-populate! ctx)
+                            (match (tc-build-top-env ctx program)
+                              [(ResultTcEnv.Ok top-env)
+                                (let
+                                  [roots : CloneNameList
+                                    (lower-clone-roots-program
+                                      ctx
+                                      top-env
+                                      names
+                                      program)]
+                                  (ResultLowerCloneRoots.Ok roots))]
+                              [(ResultTcEnv.Err message)
+                                (ResultLowerCloneRoots.Err
+                                  (box (lower-diagnostic message)))])))]
                       [(ResultCompilerRegistries.Err message)
                         (ResultLowerCloneRoots.Err
                           (box (lower-diagnostic message)))])]
@@ -6146,6 +6152,10 @@
           ;; still live, then rewind the scratch arena.
           (unsafe
             (arena.tl_arena_set prev-arena))
+          ;; The populated cloneability cache lives in the scratch arena. Reset
+          ;; it while the persistent arena is active so the empty replacement
+          ;; remains valid after the scratch rewind below.
+          (tc-clone-able-cache-reset!)
           (let
             [result : ResultLowerCloneRoots
               (lower-clone-roots-result-escape raw)]

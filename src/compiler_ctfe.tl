@@ -1147,49 +1147,58 @@
     (begin
       (while (< index count)
         (begin
-          (match (ast-decl-list-ref decls index)
-            [(AstDecl.Module next-module)
-              (set! current-module (intern-str next-module))]
-            [(AstDecl.DefStruct name _ _ fields)
-              (set!
-                current-infos
-                (ctfe-reflections-add-struct
+          (if (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _) true]
+            [(AstDecl.DefStruct _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+            [(AstDecl.DefEnum _ _ _) true]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+            [(AstDecl.ComptimeDecl _ _) true]
+            [_ false])
+            (match (ast-decl-list-ref decls index)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefStruct name _ _ fields)
+                (set!
                   current-infos
-                  current-module
-                  name
-                  fields))]
-            [(AstDecl.DefStructLifetimes name _ _ _ fields)
-              (set!
-                current-infos
-                (ctfe-reflections-add-struct
+                  (ctfe-reflections-add-struct
+                    current-infos
+                    current-module
+                    name
+                    fields))]
+              [(AstDecl.DefStructLifetimes name _ _ _ fields)
+                (set!
                   current-infos
-                  current-module
-                  name
-                  fields))]
-            [(AstDecl.DefEnum name _ variants)
-              (set!
-                current-infos
-                (ctfe-reflections-add-enum
+                  (ctfe-reflections-add-struct
+                    current-infos
+                    current-module
+                    name
+                    fields))]
+              [(AstDecl.DefEnum name _ variants)
+                (set!
                   current-infos
-                  current-module
-                  name
-                  variants))]
-            [(AstDecl.DefEnumLifetimes name _ _ variants)
-              (set!
-                current-infos
-                (ctfe-reflections-add-enum
+                  (ctfe-reflections-add-enum
+                    current-infos
+                    current-module
+                    name
+                    variants))]
+              [(AstDecl.DefEnumLifetimes name _ _ variants)
+                (set!
                   current-infos
-                  current-module
-                  name
-                  variants))]
-            [(AstDecl.ComptimeDecl _ template-box)
-              (set!
-                current-infos
-                (ctfe-reflections-add-template
+                  (ctfe-reflections-add-enum
+                    current-infos
+                    current-module
+                    name
+                    variants))]
+              [(AstDecl.ComptimeDecl _ template-box)
+                (set!
                   current-infos
-                  current-module
-                  (box-get template-box)))]
-            [_ unit])
+                  (ctfe-reflections-add-template
+                    current-infos
+                    current-module
+                    (box-get template-box)))]
+              [_ unit])
+            unit)
           (set! index (+ index 1))))
       current-infos)))
 

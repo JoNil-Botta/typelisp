@@ -44777,28 +44777,22 @@
             source-top-env
             source-decl-count
             checked-program)]
-        [checked-names : LowerNameEnv
+        [lower-names : LowerNameEnv
           (match checked-program
             [(AstProgram.Program decls-box)
               (let
                 [decls : AstDeclList (box-get decls-box)]
-                (lower-name-env-from-decls
-                  decls
-                  paths
-                  entry-path
-                  LowerNameEnv.Nil))])]
-        [lower-names : LowerNameEnv
-          (if needs-specialization
-            (match checked-program
-              [(AstProgram.Program decls-box)
-                (let
-                  [decls : AstDeclList (box-get decls-box)]
+                (if needs-specialization
                   (lower-name-env-add-clone-decls
                     decls
                     paths
                     entry-path
-                    escaped-names))])
-            checked-names)]
+                    escaped-names)
+                  (lower-name-env-from-decls
+                    decls
+                    paths
+                    entry-path
+                    LowerNameEnv.Nil)))])]
         (begin
           (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
           (cfg compile-profile (compiler-lower-profile-start))

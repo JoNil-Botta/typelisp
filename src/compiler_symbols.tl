@@ -4,6 +4,7 @@
 ;; source-order position among supported declarations. Import declarations have
 ;; no top-level symbol name here and do not consume an index.
 (import stdlib.io)
+(import stdlib.arena)
 (import "compiler_parse_core.tl")
 (import sym_i64_env)
 (import stdlib.hashmap)
@@ -3067,62 +3068,31 @@
           index))]
     [_ registries]))
 
-(define (compiler-registries-add-module-aliases-list
+(define (compiler-registries-add-module-aliases-indexed
   [registries : CompilerRegistries]
   [decls : AstDeclList]
-  [target-module : String]
-  [alias : String]
-  [index : i64]
-  [module : String]) : CompilerRegistries
-  (let
-    [cur-registries : CompilerRegistries registries]
-    [cur-index : i64 index]
-    [cur-module : String module]
-    [position : i64 0]
-    [decl-count : i64 (ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
-    (begin
-      (while (< position decl-count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset position))]
-          (begin
-            (match decl
-              [(AstDecl.Import _) unit]
-              [(AstDecl.IncludeStr _ _) unit]
-              [(AstDecl.IncludeBin _ _) unit]
-              [(AstDecl.Module next-module)
-                (set! cur-module (intern-str next-module))]
-              [(AstDecl.Test _ _ _) unit]
-              [_
-                (let
-                  [in-target : bool (string.eq cur-module target-module)]
-                  [next-registries : CompilerRegistries
-                    (if in-target
-                      (compiler-registries-add-decl-alias-in-module
-                        cur-registries
-                        alias
-                        decl
-                        cur-index)
-                      cur-registries)]
-                  (begin
-                    (set! cur-registries next-registries)
-                    (set! cur-index (+ cur-index 1))))])
-            (set! position (+ position 1)))))
-      cur-registries)))
-
-(define (compiler-registries-add-module-aliases
-  [registries : CompilerRegistries]
-  [decls : AstDeclList]
-  [target-module : String]
+  [index : ModuleDeclIndex]
+  [target-module-id : i64]
   [alias : String]) : CompilerRegistries
-  (compiler-registries-add-module-aliases-list
-    registries
-    decls
-    target-module
-    alias
-    0
-    ""))
+  (match index
+    [(ModuleDeclIndex _ _ _ ent-pos ent-ridx ent-next)
+      (let
+        [decl-offset : i64 (struct-get decls offset)]
+        [slots : (Array AstDecl) (struct-get decls slots)]
+        [cur-registries : CompilerRegistries registries]
+        [k : i64 (compiler-module-decl-index-head index target-module-id)]
+        (begin
+          (while (>= k 0)
+            (begin
+              (set!
+                cur-registries
+                (compiler-registries-add-decl-alias-in-module
+                  cur-registries
+                  alias
+                  (array-ref slots (+ decl-offset (array-ref ent-pos k)))
+                  (array-ref ent-ridx k)))
+              (set! k (array-ref ent-next k))))
+          cur-registries))]))
 
 (define (build-compiler-registry-aliases-list
   [all-decls : AstDeclList]
@@ -3130,41 +3100,59 @@
   [registries : CompilerRegistries]
   [module : String]) : CompilerRegistries
   (let
-    [cur-registries : CompilerRegistries registries]
-    [cur-module : String module]
-    [index : i64 0]
-    [decl-count : i64 (ast-decl-list-len (& decls))]
-    [decl-offset : i64 (struct-get decls offset)]
+    [enclosing-arena : i64 (arena.tl_arena_current)]
+    [index-arena : i64 (arena.tl_arena_make)]
+    [_switch-to-index : unit
+      (unsafe
+        (arena.tl_arena_set index-arena))]
+    [decl-index : ModuleDeclIndex
+      (compiler-symbols-build-module-decl-index all-decls)]
+    [index-arena-head : i64 (arena.tl_arena_current)]
+    [_restore-enclosing : unit
+      (unsafe
+        (arena.tl_arena_set enclosing-arena))]
+    [result : CompilerRegistries
+      (let
+        [cur-registries : CompilerRegistries registries]
+        [cur-module : String module]
+        [index : i64 0]
+        [decl-count : i64 (ast-decl-list-len (& decls))]
+        [decl-offset : i64 (struct-get decls offset)]
+        (begin
+          (while (< index decl-count)
+            (let
+              [decl : AstDecl
+                (array-ref (struct-get decls slots) (+ decl-offset index))]
+              [next-registries : CompilerRegistries
+                (match decl
+                  [(AstDecl.Import
+                      (AstImportSpec.Spec
+                        _
+                        _
+                        (AstMaybeModuleName.Some target-module)
+                        (AstMaybeImportAlias.Some alias)
+                        _))
+                    (if (string.eq alias "")
+                      (compiler-registries-add-module-aliases-indexed
+                        cur-registries
+                        all-decls
+                        decl-index
+                        (intern target-module)
+                        (compiler-symbols-import-alias-key cur-module alias))
+                      cur-registries)]
+                  [_ cur-registries])]
+              (begin
+                (set! cur-registries next-registries)
+                (match decl
+                  [(AstDecl.Module next-module)
+                    (set! cur-module (intern-str next-module))]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          cur-registries))]
     (begin
-      (while (< index decl-count)
-        (let
-          [decl : AstDecl
-            (array-ref (struct-get decls slots) (+ decl-offset index))]
-          [next-registries : CompilerRegistries
-            (match decl
-              [(AstDecl.Import
-                  (AstImportSpec.Spec
-                    _
-                    _
-                    (AstMaybeModuleName.Some target-module)
-                    (AstMaybeImportAlias.Some alias)
-                    _))
-                (if (string.eq alias "")
-                  (compiler-registries-add-module-aliases
-                    cur-registries
-                    all-decls
-                    target-module
-                    (compiler-symbols-import-alias-key cur-module alias))
-                  cur-registries)]
-              [_ cur-registries])]
-          (begin
-            (set! cur-registries next-registries)
-            (match decl
-              [(AstDecl.Module next-module)
-                (set! cur-module (intern-str next-module))]
-              [_ unit])
-            (set! index (+ index 1)))))
-      cur-registries)))
+      (unsafe
+        (arena.tl_arena_destroy index-arena-head))
+      result)))
 
 (define (build-compiler-variant-registry-list
   [variants : AstVariantDefList]

@@ -1238,27 +1238,36 @@
           [_ (ctfe-reflections-from-decls rest module infos)]))]))
 
 (define (ctfe-metadata-decl-capacity [decls : AstDeclList]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) 1]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        [rest-capacity : i64 (ctfe-metadata-decl-capacity rest)]
-        (match decl
-          [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.DefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.DefEnum _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.DefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
-                [(AstDecl.DefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
-                [(AstDecl.DefEnum _ _ _) (+ rest-capacity 2)]
-                [(AstDecl.DefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
-                [_ rest-capacity]))]
-          [_ rest-capacity]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [capacity : i64 1]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.DefStruct _ _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _)
+              (set! capacity (+ capacity 2))]
+            [(AstDecl.DefEnum _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.ComptimeDecl _ _)
+              ;; Borrow the common declaration cases. Copy only the uncommon
+              ;; boxed template whose payload must be dereferenced.
+              (match (ast-decl-list-ref decls index)
+                [(AstDecl.ComptimeDecl _ template-box)
+                  (match (box-get template-box)
+                    [(AstDecl.DefStruct _ _ _ _) (set! capacity (+ capacity 2))]
+                    [(AstDecl.DefStructLifetimes _ _ _ _ _)
+                      (set! capacity (+ capacity 2))]
+                    [(AstDecl.DefEnum _ _ _) (set! capacity (+ capacity 2))]
+                    [(AstDecl.DefEnumLifetimes _ _ _ _)
+                      (set! capacity (+ capacity 2))]
+                    [_ unit])]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      capacity)))
 
 (define (ctfe-reflections-from-program [program : AstProgram]) : CtfeReflectInfoList
   (match program

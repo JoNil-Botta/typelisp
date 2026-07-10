@@ -4618,6 +4618,11 @@
 (define (ast-decl-list-ref [v : AstDeclList] [index : i64]) : AstDecl
   (array-ref (struct-get v slots) (+ (struct-get v offset) index)))
 
+(define (ast-decl-list-ref-borrowed [v : (& v AstDeclList)] [index : i64]) : (&
+    v
+    AstDecl)
+  (& (array-ref (struct-get v slots) (+ (struct-get v offset) index))))
+
 (define (ast-decl-list-copy-range
   [dst : (&mut dst (Array AstDecl))]
   [src : (& src (Array AstDecl))]

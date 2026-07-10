@@ -18,6 +18,7 @@
 (include-str compiler-embedded-stdlib-comptime "stdlib/comptime.tl")
 (include-str compiler-embedded-stdlib-core-macros "stdlib/core_macros.tl")
 (include-str compiler-embedded-stdlib-env "stdlib/env.tl")
+(include-str compiler-embedded-stdlib-eq "stdlib/eq.tl")
 (include-str compiler-embedded-stdlib-ffi "stdlib/ffi.tl")
 (include-str compiler-embedded-stdlib-fs "stdlib/fs.tl")
 (include-str compiler-embedded-stdlib-hash "stdlib/hash.tl")
@@ -70,6 +71,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)]
     [(embedded-eq? suffix "env.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)]
+    [(embedded-eq? suffix "eq.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-eq)]
     [(embedded-eq? suffix "ffi.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)]
     [(embedded-eq? suffix "fs.tl")

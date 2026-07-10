@@ -92,6 +92,10 @@ use.
   wrappers; new append-heavy callers should use the `StringVec` variants
   `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it
   with `(import stdlib.env)`.
+- `eq.tl`: generated concrete equality modules. Import `stdlib.eq`, then
+  import `(eq.eq T)` for type-specific `eq` / `eq?` functions. The first
+  implementation supports scalar values and `String`; aggregate equality is
+  added in follow-up work.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
   wrappers over backend runtime symbols (#1167). `runs-avx2?` /
   `runs-avx512f?` / `runs-avx512bw?` report an ISA as runnable only when both

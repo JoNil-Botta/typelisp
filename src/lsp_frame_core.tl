@@ -5860,6 +5860,19 @@
 (define (lsp-stdlib-roots [idx : i64]) : lsp_svec.Vec
   (lsp-stdlib-roots-from idx (arg-count)))
 
+(define (lsp-prefix-cache-stats-from [idx : i64] [count : i64]) : bool
+  (let
+    [i : i64 idx]
+    [enabled : bool false]
+    (begin
+      (while (< i count)
+        (begin
+          (if (string.eq (io.arg i) "--prefix-cache-stats")
+            (set! enabled true)
+            unit)
+          (set! i (+ i 1))))
+      enabled)))
+
 (define (lsp-frame-session-cache-enable!) : unit
   (compiler-load-session-cache-enable!))
 
@@ -5879,6 +5892,7 @@
     [status : i64 0]
     [docs : LspDocuments (lsp-documents-new)]
     [stdlib-roots : lsp_svec.Vec (lsp-stdlib-roots-from idx count)]
+    [prefix-cache-stats : bool (lsp-prefix-cache-stats-from idx count)]
     (begin
       (lsp-frame-session-cache-enable!)
       (while (not done)
@@ -5902,6 +5916,9 @@
               (lsp-frame-stderr-write message)
               (set! status 1)
               (set! done true))]))
+      (if prefix-cache-stats
+        (tc-prefix-snapshot-cache-print-stats "lsp")
+        unit)
       status)))
 
 (define (lsp-frame-run) : i64

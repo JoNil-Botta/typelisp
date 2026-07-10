@@ -44125,7 +44125,7 @@
       ;; are small overlays that fall through to them. The initial cur caches are
       ;; empty overlays (everything resolves via the global caches) for decls in
       ;; the leading "" module before the first (module ...) marker.
-      (set! lower-active-global-name-cache (lower-name-cache-from-env names))
+      (set! lower-active-global-name-cache dispatch-name-cache)
       (set! lower-decls-global-type-cache (lower-type-cache-from-env top-env))
       (set!
         lower-rvo-early-return-functions

@@ -40445,6 +40445,70 @@
 (define (tc-borrow-check-mut-path [path : String]) : String
   (string.append "#mut." path))
 
+;; Lending borrows retain the ordinary place path for conflict checks and add
+;; a non-conflicting marker that identifies the result binding for NLL pruning.
+(define (tc-borrow-check-lending-marker-prefix [path : String]) : String
+  (string.append (string.append "#lending." path) "."))
+
+(define (tc-borrow-check-lending-path? [path : String]) : bool
+  (tc-move-string-prefix? path "#lending."))
+
+(define (tc-borrow-check-lending-binding-at
+  [map : (& map tc_string_i64_map.Map)]
+  [path : String]
+  [index : i64]) : TcMaybeString
+  (if (>= index (tc_string_i64_map.capacity map))
+    TcMaybeString.No
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key _)
+        (let
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
+          (if (tc-moved-path-key? key)
+            (let
+              [display : String (tc-moved-conflict-display-path key)]
+              [prefix : String (tc-borrow-check-lending-marker-prefix path)]
+              (if (tc-move-string-prefix? display prefix)
+                (TcMaybeString.Some
+                  (string.substring
+                    display
+                    (string.string-length prefix)
+                    (-
+                      (string.string-length display)
+                      (string.string-length prefix))))
+                (tc-borrow-check-lending-binding-at map path next)))
+            (tc-borrow-check-lending-binding-at map path next)))]
+      [(tc_string_i64_map.EntryNone)
+        (tc-borrow-check-lending-binding-at
+          map
+          path
+          (tc_string_i64_map.next-occupied map (+ index 1)))])))
+
+(define (tc-borrow-check-lending-binding
+  [map : (& map tc_string_i64_map.Map)]
+  [path : String]) : TcMaybeString
+  (tc-borrow-check-lending-binding-at
+    map
+    path
+    (tc_string_i64_map.next-occupied map 0)))
+
+(define (tc-borrow-check-lending-binding?
+  [map : (& map tc_string_i64_map.Map)]
+  [path : String]) : bool
+  (match (tc-borrow-check-lending-binding map path)
+    [(TcMaybeString.Some _) true]
+    [(TcMaybeString.No) false]))
+
+(define (tc-borrow-check-add-lending-marker
+  [borrowed : TcMovedSet]
+  [path : String]
+  [binding : String]
+  [origin : AstExpr]) : TcMovedSet
+  (tc-moved-add-origin
+    borrowed
+    (tc-moved-path-key
+      (string.append (tc-borrow-check-lending-marker-prefix path) binding))
+    origin))
+
 (define (tc-borrow-check-two-phase-mut-prefix) : String
   "#two-phase-mut.")
 
@@ -40464,20 +40528,24 @@
 (define (tc-borrow-check-remove-root-state
   [borrowed : TcMovedSet]
   [name : String]) : TcMovedSet
-  (tc-moved-remove-root-state
+  (tc-moved-remove-prefix
     (tc-moved-remove-root-state
-      (tc-moved-remove-root-state borrowed name)
-      (tc-borrow-check-mut-path name))
-    (tc-borrow-check-two-phase-mut-path name)))
+      (tc-moved-remove-root-state
+        (tc-moved-remove-root-state borrowed name)
+        (tc-borrow-check-mut-path name))
+      (tc-borrow-check-two-phase-mut-path name))
+    (tc-moved-path-key (string.append (string.append "#lending." name) "."))))
 
 (define (tc-borrow-check-remove-borrow-path
   [borrowed : TcMovedSet]
   [path : String]) : TcMovedSet
-  (tc-moved-remove
+  (tc-moved-remove-prefix
     (tc-moved-remove
-      (tc-moved-remove borrowed (tc-moved-path-key path))
-      (tc-moved-path-key (tc-borrow-check-mut-path path)))
-    (tc-moved-path-key (tc-borrow-check-two-phase-mut-path path))))
+      (tc-moved-remove
+        (tc-moved-remove borrowed (tc-moved-path-key path))
+        (tc-moved-path-key (tc-borrow-check-mut-path path)))
+      (tc-moved-path-key (tc-borrow-check-two-phase-mut-path path)))
+    (tc-moved-path-key (tc-borrow-check-lending-marker-prefix path))))
 
 (define (tc-borrow-check-two-phase-mut-conflict
   [borrowed : TcMovedSet]
@@ -40623,18 +40691,30 @@
                 [path : String (tc-moved-conflict-display-path key)]
                 (if (or
                   (tc-borrow-check-mut-path? path)
-                  (tc-borrow-check-protected-path? protected path))
+                  (tc-borrow-check-lending-path? path)
+                  (and
+                    (not (tc-borrow-check-lending-binding? map path))
+                    (tc-borrow-check-protected-path? protected path)))
                   out
-                  (let
-                    [lifetime : String
-                      (tc-borrow-check-path-lifetime ctx env path)]
-                    (if (tc-borrow-check-lifetime-used-in-exprs?
-                      ctx
-                      env
-                      exprs
-                      lifetime)
-                      out
-                      (tc-borrow-check-remove-borrow-path out path)))))
+                  (match (tc-borrow-check-lending-binding map path)
+                    [(TcMaybeString.Some lending-binding)
+                      (if (tc-expr-list-uses-free-name?
+                        exprs
+                        lending-binding
+                        TcStringList.Nil)
+                        out
+                        (tc-borrow-check-remove-borrow-path out path))]
+                    [(TcMaybeString.No)
+                      (let
+                        [lifetime : String
+                          (tc-borrow-check-path-lifetime ctx env path)]
+                        (if (tc-borrow-check-lifetime-used-in-exprs?
+                          ctx
+                          env
+                          exprs
+                          lifetime)
+                          out
+                          (tc-borrow-check-remove-borrow-path out path)))])))
               out)]
           (tc-borrow-check-prune-before-exprs-loop
             ctx
@@ -40951,11 +41031,154 @@
             (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
           [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])])))
 
+(define (tc-borrow-check-call-constructor?
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]) : bool
+  (match (tc-expr-var-name func)
+    [(TcMaybeString.Some name) (tc-constructor-name? ctx name)]
+    [(TcMaybeString.No) false]))
+
+;; The ordinary returned-call effect uses the inferred result type, which can
+;; retain a symbolic lifetime for a lending call. At an annotated binding we
+;; have the concrete caller lifetime, so attach a result-binding marker to the
+;; direct mutable borrow for precise NLL pruning.
+(define (tc-borrow-check-first-overlapping-lifetime
+  [type-lifetimes : TcStringList]
+  [result-lifetimes : TcStringList]) : TcMaybeString
+  (match result-lifetimes
+    [(TcStringList.Nil) TcMaybeString.No]
+    [(TcStringList.Cons lifetime rest)
+      (if (tc-string-list-contains type-lifetimes lifetime)
+        (TcMaybeString.Some lifetime)
+        (tc-borrow-check-first-overlapping-lifetime
+          type-lifetimes
+          (box-get rest)))]))
+
+(define (tc-borrow-check-add-bound-returned-call-arg-borrow
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [binding-name : String]
+  [arg : AstExpr]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (match (ast-expr-unspan arg)
+    [(AstExpr.Borrow true _ place-box)
+      (let
+        [place : AstExpr (ast-node-get place-box)]
+        (match (tc-borrow-check-local-place-path locals place)
+          [(TcMaybeString.Some path)
+            (let
+              [without-temporary : TcMovedSet
+                (tc-borrow-check-remove-borrow-path borrowed path)]
+              (match (tc-expr ctx env place)
+                [(ResultTcType.Ok place-ty)
+                  (match (tc-borrow-check-first-overlapping-lifetime
+                    (tc-type-collect-reference-lifetimes
+                      (tc-resolve-type ctx place-ty))
+                    result-lifetimes)
+                    [(TcMaybeString.Some lifetime)
+                      (match (tc-borrow-check-add-place-with-mutability
+                        locals
+                        without-temporary
+                        true
+                        place
+                        arg)
+                        [(TcBorrowCheckResult.Ok borrowed1)
+                          (TcBorrowCheckResult.Ok
+                            (tc-borrow-check-add-lending-marker
+                              borrowed1
+                              path
+                              binding-name
+                              arg))]
+                        [(TcBorrowCheckResult.Err message)
+                          (TcBorrowCheckResult.Err message)])]
+                    [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])]
+                [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)]))]
+          [(TcMaybeString.No)
+            (tc-borrow-check-add-returned-call-arg-borrow
+              ctx
+              env
+              locals
+              borrowed
+              arg
+              result-lifetimes)]))]
+    [(AstExpr.Ann inner-box _)
+      (tc-borrow-check-add-bound-returned-call-arg-borrow
+        ctx
+        env
+        locals
+        borrowed
+        binding-name
+        (ast-node-get inner-box)
+        result-lifetimes)]
+    [(AstExpr.Cast inner-box _)
+      (tc-borrow-check-add-bound-returned-call-arg-borrow
+        ctx
+        env
+        locals
+        borrowed
+        binding-name
+        (ast-node-get inner-box)
+        result-lifetimes)]
+    [_ (TcBorrowCheckResult.Ok borrowed)]))
+
+(define (tc-borrow-check-add-bound-returned-call-borrows-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [binding-name : String]
+  [args : (& args AstExprList)]
+  [index : i64]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (if (>= index (struct-get args len))
+    (TcBorrowCheckResult.Ok borrowed)
+    (match (tc-borrow-check-add-bound-returned-call-arg-borrow
+      ctx
+      env
+      locals
+      borrowed
+      binding-name
+      (ast-node-get (ast-expr-list-get args index 0))
+      result-lifetimes)
+      [(TcBorrowCheckResult.Ok borrowed1)
+        (tc-borrow-check-add-bound-returned-call-borrows-at
+          ctx
+          env
+          locals
+          borrowed1
+          binding-name
+          args
+          (+ index 1)
+          result-lifetimes)]
+      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
+
+(define (tc-borrow-check-add-bound-returned-call-borrows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [binding-name : String]
+  [args : AstExprList]
+  [result-lifetimes : TcStringList]) : TcBorrowCheckResult
+  (tc-borrow-check-add-bound-returned-call-borrows-at
+    ctx
+    env
+    locals
+    borrowed
+    binding-name
+    (& args)
+    0
+    result-lifetimes))
+
 (define (tc-borrow-check-after-bind-known-type-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [locals : TcMovedSet]
   [borrowed : TcMovedSet]
+  [binding-name : String]
   [init-id : i64]
   [init-ty : AstType]) : TcBorrowCheckResult
   (let
@@ -40970,7 +41193,37 @@
             [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
           (TcBorrowCheckResult.Ok borrowed))]
       [(TcMaybeString.No)
-        (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)])))
+        (match (ast-expr-unspan init)
+          [(AstExpr.Call func-box args)
+            (let
+              [func : AstExpr (ast-node-get func-box)]
+              (if (tc-borrow-check-call-constructor? ctx env func)
+                (tc-borrow-check-after-bind-typed
+                  ctx
+                  locals
+                  borrowed
+                  init
+                  init-ty)
+                (match (tc-borrow-check-add-bound-returned-call-borrows
+                  ctx
+                  env
+                  locals
+                  borrowed
+                  binding-name
+                  args
+                  (tc-type-collect-reference-lifetimes
+                    (tc-resolve-type ctx init-ty)))
+                  [(TcBorrowCheckResult.Ok borrowed1)
+                    (tc-borrow-check-after-bind-typed
+                      ctx
+                      locals
+                      borrowed1
+                      init
+                      init-ty)]
+                  [(TcBorrowCheckResult.Err message)
+                    (TcBorrowCheckResult.Err message)])))]
+          [_
+            (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)])])))
 
 (define (tc-borrow-check-assignment
   [locals : TcMovedSet]
@@ -43009,6 +43262,7 @@
                   env
                   locals
                   borrowed1
+                  (intern-str name)
                   init-box
                   binding-ty)
                   [(TcBorrowCheckResult.Ok borrowed2)

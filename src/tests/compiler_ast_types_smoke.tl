@@ -745,6 +745,22 @@
       (compiler-ast-decl-list-module-name? right 0 "right")
       (compiler-ast-decl-list-module-name? right 1 "tail"))))
 
+;; Rewriters select an owned AST-pool context while the process-global active
+;; pool may hold an unrelated compilation. `ast-node-set!` must update that
+;; selected context just like `ast-node-get` and `ast-node-push` do.
+(define (compiler-ast-compat-context-set-smoke?) : bool
+  (let
+    [pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    (begin
+      (ast.ast-node-pool-compat-context-use! pools)
+      (let
+        [id : i64 (ast.ast-node-push (ast.AstExpr.Literal (ast.ast-lit-int 7)))]
+        (begin
+          (ast.ast-node-set! id (ast.AstExpr.Literal (ast.ast-lit-int 42)))
+          (ast.ast-node-pool-compat-context-clear!)
+          (and (= id 0) (compiler-ast-context-expr-int-lit? pools id 42)))))))
+
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
@@ -754,4 +770,5 @@
     (unless (compiler-ast-decl-cons-growth-smoke?) (return 6))
     (unless (compiler-ast-decl-cons-pure-smoke?) (return 7))
     (unless (compiler-ast-program-compaction-string-payloads-smoke?) (return 8))
+    (unless (compiler-ast-compat-context-set-smoke?) (return 9))
     42))

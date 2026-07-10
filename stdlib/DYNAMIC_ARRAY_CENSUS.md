@@ -9,18 +9,13 @@ of a file or module.
 These are the uses that should move to generated vectors or vector/slice-style
 borrowed APIs.
 
-- `stdlib/vector.tl`: legacy `I64Vec` and `StringVec` helpers are still
-  threaded owned-value compatibility APIs, with private dynamic-buffer backing
-  selected by compiler cfg where available. New code should prefer
-  `(import stdlib.vector)` plus generated modules such as
+- `stdlib/vector.tl`: public growable sequences use generated modules such as
+  `(import stdlib.vector)` plus
   `(import (vector.vector i64) as ivec)`, whose reads take `&` and mutators take
   `&mut`.
 - `stdlib/process.tl`, `stdlib/msvc.tl`, `stdlib/env.tl`, `stdlib/fs.tl`,
-  `stdlib/random.tl`, CLI drivers, doc tooling, and LSP tooling use
-  `StringVec`/`I64Vec` as public or tool-facing growable sequences. They should
-  be migrated after the remaining legacy vector helpers have borrowed
-  equivalents or after local modules switch directly to generated `(vector T)`
-  imports.
+  `stdlib/random.tl`, CLI drivers, doc tooling, and LSP tooling use local
+  generated `(vector T)` aliases for public or tool-facing growable sequences.
 - `examples/lexer.tl` and `examples/calc.tl` now use generated token vectors
   instead of exposing token streams as public dynamic arrays.
 - `examples/parser.tl` still uses small dynamic arrays as parser cursor and
@@ -52,8 +47,8 @@ surfaces replace them.
 
 ## Feature Coverage That Must Remain
 
-These files intentionally exercise unsized arrays while the compatibility
-surface exists.
+These files intentionally exercise unsized arrays while generated vectors retain
+array-backed storage.
 
 - `tests/integration/array_*.tl`, `tests/integration/make_array*.tl`,
   `tests/integration/mutable_reference_array.tl`,

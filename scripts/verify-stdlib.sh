@@ -272,6 +272,7 @@ stdlib/tests/result_api.tl|42|-|-|-
 stdlib/tests/sync_api.tl|42|-|-
 stdlib/tests/thread_api.tl|42|-|-|-
 stdlib/tests/test_assert_failure.tl|134|-|literal:stdlib test failure message
+stdlib/tests/vector_api.tl|42|-|-|-
 EOF
 }
 

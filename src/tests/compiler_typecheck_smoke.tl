@@ -2779,7 +2779,7 @@
                 (not
                   (tc-name-bound?
                     env
-                    (compiler-symbol-module-key "vec" "I64Vec"))))]
+                    (compiler-symbol-module-key "vec" "Vec"))))]
             [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin

@@ -22373,6 +22373,165 @@
 (define tc-clone-able-cache : CloneNameSet
   (clone-name-set-empty))
 
+;; Clone helper discovery is a semantic observation of the real declaration
+;; typecheck, not a reason to run a second partial typechecker. Lowering installs
+;; the reachability pass's retained value/function names before checking the
+;; specialized source program. Stable canonical names, rather than declaration
+;; positions, survive pool compaction and generated-module reshaping. While a
+;; retained declaration is checked, clone/with-scratch forms fold their resolved
+;; result type directly into the nominal root closure. The root list and name set
+;; live in a dedicated arena because function bodies use rewindable scratch.
+(define tc-clone-root-collection-active : bool
+  false)
+(define tc-clone-root-collection-current-decl : bool
+  false)
+(define tc-clone-root-collection-selected : tc_i64_i64_map.Map
+  (tc_i64_i64_map.with-capacity 8))
+(define tc-clone-root-collection-roots : CloneNameList
+  (CloneNameList.Nil))
+(define tc-clone-root-collection-arena : i64
+  0)
+
+(define (tc-clone-root-collection-decl-key [module : String] [decl : AstDecl]) : i64
+  (match (ast-decl-unwrapped decl)
+    [(AstDecl.Def name _ _)
+      (compiler-symbol-module-key-id-by-name-id module name)]
+    [(AstDecl.DefFn name _ _ _ _)
+      (compiler-symbol-module-key-id-by-name-id module name)]
+    [_ -1]))
+
+(define (tc-clone-root-collection-selected-from-program [program : AstProgram]) : tc_i64_i64_map.Map
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [selected : tc_i64_i64_map.Map
+          (tc_i64_i64_map.with-capacity
+            (if (< (ast-decl-list-len (& decls)) 8)
+              8
+              (ast-decl-list-len (& decls))))]
+        [module : String ""]
+        [index : i64 0]
+        [count : i64 (ast-decl-list-len (& decls))]
+        (begin
+          (while (< index count)
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              [key : i64 (tc-clone-root-collection-decl-key module decl)]
+              (begin
+                (if (>= key 0)
+                  (tc_i64_i64_map.insert (&mut selected) key 1)
+                  unit)
+                (match (ast-decl-unwrapped decl)
+                  [(AstDecl.Module next-module)
+                    (set! module (intern-str next-module))]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          selected))]))
+
+(define (tc-clone-root-collection-use! [retained : AstProgram]) : unit
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [arena-handle : i64 (arena.tl_arena_make)]
+    [_switch : unit
+      (unsafe
+        (arena.tl_arena_set arena-handle))]
+    [selected : tc_i64_i64_map.Map
+      (tc-clone-root-collection-selected-from-program retained)]
+    (begin
+      (set! tc-clone-root-collection-selected selected)
+      (set! tc-clone-root-collection-roots (CloneNameList.Nil))
+      (set! tc-clone-root-collection-current-decl false)
+      (set! tc-clone-root-collection-arena (arena.tl_arena_current))
+      (set! tc-clone-root-collection-active true)
+      (unsafe
+        (arena.tl_arena_set prev-arena)))))
+
+(define (tc-clone-root-collection-select-decl!
+  [decl : AstDecl]
+  [module : String]) : unit
+  (if tc-clone-root-collection-active
+    (let
+      [key : i64 (tc-clone-root-collection-decl-key module decl)]
+      [selected : bool
+        (and
+          (>= key 0)
+          (tc_i64_i64_map.contains? (& tc-clone-root-collection-selected) key))]
+      (set! tc-clone-root-collection-current-decl selected))
+    unit))
+
+(define (tc-clone-root-collection-note! [ctx : TcContext] [ty : AstType]) : unit
+  (if (and
+    tc-clone-root-collection-active
+    tc-clone-root-collection-current-decl)
+    (match (tc-context-program ctx)
+      [(AstProgram.Program decls-box)
+        (let
+          [prev-arena : i64 (arena.tl_arena_current)]
+          [_switch : unit
+            (unsafe
+              (arena.tl_arena_set tc-clone-root-collection-arena))]
+          [resolved : AstType
+            (tc-type-without-regions (tc-resolve-type ctx ty))]
+          (begin
+            ;; Resolve the nominal closure while `ty` and all nested type-pool
+            ;; ids are still live in this function's semantic scratch scope.
+            ;; Retaining the shallow AstType until the declaration walk ends
+            ;; would leave those nested ids pointing past a pool rewind.
+            (set!
+              tc-clone-root-collection-roots
+              (clone-root-add-type
+                (tc-context-pools ctx)
+                (box-get decls-box)
+                (tc-clone-able-set ctx)
+                tc-clone-root-collection-roots
+                resolved
+                ""))
+            (set! tc-clone-root-collection-arena (arena.tl_arena_current))
+            (unsafe
+              (arena.tl_arena_set prev-arena))))])
+    unit))
+
+(define (tc-clone-root-collection-copy-roots [roots : CloneNameList]) : CloneNameList
+  (match roots
+    [(CloneNameList.Nil) (CloneNameList.Nil)]
+    [(CloneNameList.Cons name rest)
+      (CloneNameList.Cons
+        (intern-str (intern name))
+        (box (tc-clone-root-collection-copy-roots (box-get rest))))]))
+
+(define (tc-clone-root-collection-clear-state!) : unit
+  (begin
+    (set! tc-clone-root-collection-active false)
+    (set! tc-clone-root-collection-current-decl false)
+    (set! tc-clone-root-collection-roots (CloneNameList.Nil))))
+
+(define (tc-clone-root-collection-finish! [_ctx : TcContext]) : CloneNameList
+  (if tc-clone-root-collection-active
+    (let
+      [roots : CloneNameList
+        (tc-clone-root-collection-copy-roots tc-clone-root-collection-roots)]
+      [arena-handle : i64 tc-clone-root-collection-arena]
+      (begin
+        (tc-clone-root-collection-clear-state!)
+        (set! tc-clone-root-collection-arena 0)
+        (unsafe
+          (arena.tl_arena_destroy arena-handle))
+        roots))
+    (CloneNameList.Nil)))
+
+(define (tc-clone-root-collection-abort!) : unit
+  (if tc-clone-root-collection-active
+    (let
+      [arena-handle : i64 tc-clone-root-collection-arena]
+      (begin
+        (tc-clone-root-collection-clear-state!)
+        (set! tc-clone-root-collection-arena 0)
+        (unsafe
+          (arena.tl_arena_destroy arena-handle))))
+    unit))
+
 (define (tc-clone-able-cache-reset!) : unit
   (begin
     (set! tc-clone-able-cache-ready false)
@@ -22419,7 +22578,9 @@
           (let
             [clone-ty : AstType (tc-type-without-regions arg-ty)]
             (if (tc-clone-able-type? ctx clone-ty)
-              (ResultTcType.Ok clone-ty)
+              (begin
+                (tc-clone-root-collection-note! ctx clone-ty)
+                (ResultTcType.Ok clone-ty))
               (ResultTcType.Err
                 (string.append
                   "typecheck: clone unsupported type "
@@ -34127,7 +34288,11 @@
         (match (tc-begin-list ctx env body)
           [(ResultTcType.Ok body-ty)
             (if (tc-clone-able-type? ctx body-ty)
-              (ResultTcType.Ok (tc-type-without-regions body-ty))
+              (let
+                [clone-ty : AstType (tc-type-without-regions body-ty)]
+                (begin
+                  (tc-clone-root-collection-note! ctx clone-ty)
+                  (ResultTcType.Ok clone-ty)))
               (ResultTcType.Err
                 (tc-with-escape-unsupported-message ctx body-ty)))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
@@ -34146,7 +34311,11 @@
         (match (tc-begin-list-with-expected ctx env body expected)
           [(ResultTcType.Ok body-ty)
             (if (tc-clone-able-type? ctx body-ty)
-              (ResultTcType.Ok (tc-type-without-regions body-ty))
+              (let
+                [clone-ty : AstType (tc-type-without-regions body-ty)]
+                (begin
+                  (tc-clone-root-collection-note! ctx clone-ty)
+                  (ResultTcType.Ok clone-ty)))
               (ResultTcType.Err
                 (tc-with-escape-unsupported-message ctx body-ty)))]
           [(ResultTcType.Err message) (ResultTcType.Err message)])
@@ -34160,7 +34329,11 @@
   (match (tc-begin-list ctx env body)
     [(ResultTcType.Ok body-ty)
       (if (tc-clone-able-type? ctx body-ty)
-        (ResultTcType.Ok (tc-type-without-regions body-ty))
+        (let
+          [clone-ty : AstType (tc-type-without-regions body-ty)]
+          (begin
+            (tc-clone-root-collection-note! ctx clone-ty)
+            (ResultTcType.Ok clone-ty)))
         (ResultTcType.Err (tc-with-scratch-unsupported-message ctx body-ty)))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
@@ -34172,7 +34345,11 @@
   (match (tc-begin-list-with-expected ctx env body expected)
     [(ResultTcType.Ok body-ty)
       (if (tc-clone-able-type? ctx body-ty)
-        (ResultTcType.Ok (tc-type-without-regions body-ty))
+        (let
+          [clone-ty : AstType (tc-type-without-regions body-ty)]
+          (begin
+            (tc-clone-root-collection-note! ctx clone-ty)
+            (ResultTcType.Ok clone-ty)))
         (ResultTcType.Err (tc-with-scratch-unsupported-message ctx body-ty)))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
@@ -58332,7 +58509,12 @@
   [summary : CompilerTypecheckSummary]
   [stdlib-roots : svec.Vec]
   [cache-scope : String]) : ResultCompilerTypecheck
-  (if (tc-prefix-snapshot-cache-active?)
+  ;; A cached prefix contains only its summary, not semantic observations from
+  ;; the declarations it skipped. Clone-root collection therefore takes the
+  ;; ordinary declaration walk even when the interactive prefix cache is on.
+  (if (and
+    (tc-prefix-snapshot-cache-active?)
+    (not tc-clone-root-collection-active))
     (match (tc-prefix-candidate decls paths stdlib-roots cache-scope)
       [(TcPrefixCandidate.Some key count module)
         (match (tc-prefix-snapshot-cache-lookup key)
@@ -58480,6 +58662,8 @@
                       [path-rest : AstDeclPathList path-rest]
                       path-rest)]
                   [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
+              [_select-clone-root-decl : unit
+                (tc-clone-root-collection-select-decl! decl cur-module)]
               (match decl
                 [(AstDecl.Module next-module)
                   (begin

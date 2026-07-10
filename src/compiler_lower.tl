@@ -146,9 +146,6 @@
   (No)
   (Some String AstParamList AstExpr))
 
-(defenum LowerCloneRootEnv
-  (Env CloneNameList TcTypeEnv))
-
 (defstruct LowerFunctionBodyIndex
   (ids lower_string_i64_map.Map)
   (bodies (Array LowerMaybeFunctionBody))
@@ -174,9 +171,9 @@
   (No)
   (Some String))
 
-(defenum ResultLowerCloneRoots
-  (Ok CloneNameList)
-  (Err (Box CompilerDiagnostic)))
+(defenum ResultLowerCheckedContext
+  (Ok TcContext TcTypeEnv)
+  (Err String))
 
 (defenum CompilerLowerMode
   (Scalar)
@@ -4560,256 +4557,6 @@
     ""
     (lower_string_i64_map.with-capacity 8192)))
 
-(define (lower-clone-root-add-type-list
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [types : AstTypeList]
-  [module : String]) : CloneNameList
-  (lower-clone-root-add-type-list-at ctx decls able roots (& types) module 0))
-
-(define (lower-clone-root-add-type-list-at
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [types : (& types AstTypeList)]
-  [module : String]
-  [index : i64]) : CloneNameList
-  (if (>= index (ast-type-list-len types))
-    roots
-    (lower-clone-root-add-type-list-at
-      ctx
-      decls
-      able
-      (lower-clone-root-add-type
-        (tc-context-with-module ctx module)
-        decls
-        able
-        roots
-        (tc-context-type-get
-          ctx
-          (ast-type-list-get types index (ast-type-id-fallback))))
-      types
-      module
-      (+ index 1))))
-
-(define (lower-clone-root-add-field-list
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [fields : AstFieldDefList]
-  [module : String]) : CloneNameList
-  (lower-clone-root-add-field-list-at ctx decls able roots (& fields) module 0))
-
-(define (lower-clone-root-add-field-list-at
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [fields : (& fields AstFieldDefList)]
-  [module : String]
-  [index : i64]) : CloneNameList
-  (if (>= index (struct-get fields len))
-    roots
-    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
-      [(AstFieldDef.Def _ ty _)
-        (lower-clone-root-add-field-list-at
-          ctx
-          decls
-          able
-          (lower-clone-root-add-type
-            (tc-context-with-module ctx module)
-            decls
-            able
-            roots
-            ty)
-          fields
-          module
-          (+ index 1))])))
-
-(define (lower-clone-root-add-variant-list
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [variants : AstVariantDefList]
-  [module : String]) : CloneNameList
-  (lower-clone-root-add-variant-list-at
-    ctx
-    decls
-    able
-    roots
-    (& variants)
-    module
-    0))
-
-(define (lower-clone-root-add-variant-list-at
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [variants : (& variants AstVariantDefList)]
-  [module : String]
-  [index : i64]) : CloneNameList
-  (if (>= index (struct-get variants len))
-    roots
-    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-      [(AstVariantDef.Def _ fields _)
-        (lower-clone-root-add-variant-list-at
-          ctx
-          decls
-          able
-          (lower-clone-root-add-type-list ctx decls able roots fields module)
-          variants
-          module
-          (+ index 1))])))
-
-(define (lower-clone-root-add-named-deps-in-module
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [name : String]
-  [module : String]) : CloneNameList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) roots]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (lower-clone-root-add-named-deps-in-module
-              ctx
-              rest
-              able
-              roots
-              name
-              (intern-str next-module))]
-          [(AstDecl.DefEnum decl-name _ variants)
-            (if (string.eq
-              (clone-type-name-canonical module (intern-str decl-name))
-              name)
-              (lower-clone-root-add-variant-list
-                ctx
-                decls
-                able
-                roots
-                variants
-                module)
-              (lower-clone-root-add-named-deps-in-module
-                ctx
-                rest
-                able
-                roots
-                name
-                module))]
-          [(AstDecl.DefStruct decl-name _ _ fields)
-            (if (string.eq
-              (clone-type-name-canonical module (intern-str decl-name))
-              name)
-              (lower-clone-root-add-field-list
-                ctx
-                decls
-                able
-                roots
-                fields
-                module)
-              (lower-clone-root-add-named-deps-in-module
-                ctx
-                rest
-                able
-                roots
-                name
-                module))]
-          [_
-            (lower-clone-root-add-named-deps-in-module
-              ctx
-              rest
-              able
-              roots
-              name
-              module)]))]))
-
-(define (lower-clone-root-add-named-deps
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [name : String]) : CloneNameList
-  (lower-clone-root-add-named-deps-in-module ctx decls able roots name ""))
-
-(define (lower-clone-root-add-named
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [name : String]) : CloneNameList
-  (let
-    [helper-name : String name]
-    (if (clone-name-set-contains? able helper-name)
-      (if (clone-name-list-contains? roots helper-name)
-        roots
-        (lower-clone-root-add-named-deps
-          ctx
-          decls
-          able
-          (CloneNameList.Cons helper-name (box roots))
-          helper-name))
-      roots)))
-
-(define (lower-clone-root-add-type
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [ty : AstType]) : CloneNameList
-  (let
-    [resolved : AstType (tc-type-without-regions (tc-resolve-type ctx ty))]
-    (match resolved
-      [(AstType.Tuple elems)
-        (lower-clone-root-add-type-list
-          ctx
-          decls
-          able
-          roots
-          (box-get elems)
-          (tc-context-module ctx))]
-      [(AstType.Array elem _)
-        (lower-clone-root-add-type
-          ctx
-          decls
-          able
-          roots
-          (tc-context-type-get ctx elem))]
-      [(AstType.DynArray elem)
-        (lower-clone-root-add-type
-          ctx
-          decls
-          able
-          roots
-          (tc-context-type-get ctx elem))]
-      [(AstType.Box elem)
-        (lower-clone-root-add-type
-          ctx
-          decls
-          able
-          roots
-          (tc-context-type-get ctx elem))]
-      [(AstType.Enum name)
-        (lower-clone-root-add-named ctx decls able roots (intern-str name))]
-      [(AstType.Struct name)
-        (lower-clone-root-add-named ctx decls able roots (intern-str name))]
-      [(AstType.Var name)
-        (lower-clone-root-add-named ctx decls able roots (intern-str name))]
-      [_ roots])))
-
-;; Resolve `logical-name` to its dense `all-functions` slot with a single probe
-;; (the membership gate this always did), then dedup / insert into `reachable` by
-;; that i64 slot -- no per-reference string_eq on the reachable set. The worklist
-;; still carries the name so lower-reach-process can resolve the body by name.
 (define (lower-reach-add-logical
   [all-functions : lower_string_i64_map.Map]
   [state : LowerReachState]
@@ -5158,1078 +4905,25 @@
             bindings
             (+ index 1)))])))
 
-(define (lower-clone-roots-expr-list
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [exprs : AstExprList]) : CloneNameList
-  (lower-clone-roots-expr-list-at ctx env decls able roots (& exprs) 0))
-
-(define (lower-clone-roots-expr-list-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [exprs : (& exprs AstExprList)]
-  [index : i64]) : CloneNameList
-  (if (>= index (struct-get exprs len))
-    roots
-    (let
-      [expr-id : i64 (ast-expr-list-get exprs index 0)]
-      [expr : AstExpr (tc-context-expr-get ctx expr-id)]
-      (lower-clone-roots-expr-list-at
-        ctx
-        env
-        decls
-        able
-        (lower-clone-roots-expr ctx env decls able roots expr)
-        exprs
-        (+ index 1)))))
-
-(define (lower-clone-roots-bind-let
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : i64]
-  [maybe-ty : AstMaybeType]
-  [init : AstExpr]) : TcTypeEnv
-  (match maybe-ty
-    [(AstMaybeType.Some want) (tc-bind-id env name (tc-resolve-type ctx want))]
-    [(AstMaybeType.No)
-      (match (tc-expr ctx env init)
-        [(ResultTcType.Ok init-ty) (tc-bind-id env name init-ty)]
-        [(ResultTcType.Err _) env])]))
-
-(define (lower-clone-roots-let-bindings
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [bindings : AstLetBindingList]) : LowerCloneRootEnv
-  (lower-clone-roots-let-bindings-at ctx env decls able roots (& bindings) 0))
-
-(define (lower-clone-roots-let-bindings-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [bindings : (& bindings AstLetBindingList)]
-  [index : i64]) : LowerCloneRootEnv
-  (if (>= index (ast-let-binding-list-len bindings))
-    (LowerCloneRootEnv.Env roots env)
-    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
-      [(AstLetBinding.Binding name maybe-ty init-box)
-        (let
-          [init : AstExpr (tc-context-expr-get ctx init-box)]
-          [next-roots : CloneNameList
-            (lower-clone-roots-expr ctx env decls able roots init)]
-          [next-env : TcTypeEnv
-            (lower-clone-roots-bind-let ctx env name maybe-ty init)]
-          (lower-clone-roots-let-bindings-at
-            ctx
-            next-env
-            decls
-            able
-            next-roots
-            bindings
-            (+ index 1)))])))
-
-(define (lower-clone-roots-match-arms
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [scrut-ty : AstType]
-  [arms : AstMatchArmList]) : CloneNameList
-  (lower-clone-roots-match-arms-at ctx env decls able roots scrut-ty (& arms) 0))
-
-(define (lower-clone-roots-match-arms-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [scrut-ty : AstType]
-  [arms : (& arms AstMatchArmList)]
-  [index : i64]) : CloneNameList
-  (if (>= index (struct-get arms len))
-    roots
-    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
-      [(AstMatchArm.Arm pattern body-box)
-        (let
-          [body : AstExpr (tc-context-expr-get ctx body-box)]
-          [arm-env : TcTypeEnv
-            (match (tc-bind-match-pattern ctx env scrut-ty pattern)
-              [(ResultTcEnv.Ok next-env) next-env]
-              [(ResultTcEnv.Err _) env])]
-          (lower-clone-roots-match-arms-at
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr ctx arm-env decls able roots body)
-            scrut-ty
-            arms
-            (+ index 1)))])))
-
-(define (lower-clone-roots-resource-bindings
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [bindings : AstResourceBindingList]) : CloneNameList
-  (lower-clone-roots-resource-bindings-at
-    ctx
-    env
-    decls
-    able
-    roots
-    (& bindings)
-    0))
-
-(define (lower-clone-roots-resource-bindings-at
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [bindings : (& bindings AstResourceBindingList)]
-  [index : i64]) : CloneNameList
-  (if (>= index (ast-resource-binding-list-len bindings))
-    roots
-    (match (ast-resource-binding-list-get
-      bindings
-      index
-      (ast-resource-binding-fallback))
-      [(AstResourceBinding.Binding _ acquire-box cleanup-box)
-        (let
-          [acquire : AstExpr (tc-context-expr-get ctx acquire-box)]
-          [cleanup : AstExpr (tc-context-expr-get ctx cleanup-box)]
-          (lower-clone-roots-resource-bindings-at
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr
-              ctx
-              env
-              decls
-              able
-              (lower-clone-roots-expr ctx env decls able roots acquire)
-              cleanup)
-            bindings
-            (+ index 1)))])))
-
-(define (lower-clone-roots-call
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [callee : AstExpr]
-  [args : AstExprList]) : CloneNameList
-  (let
-    [walked : CloneNameList
-      (lower-clone-roots-expr-list
-        ctx
-        env
-        decls
-        able
-        (lower-clone-roots-expr ctx env decls able roots callee)
-        args)]
-    (match (ast-expr-unspan-with-pools (tc-context-pools ctx) callee)
-      [(AstExpr.Var name)
-        (let
-          [raw-name : String (intern-str name)]
-          [lookup-name : String (tc-hygiene-global-call-name raw-name)]
-          [lookup-id : i64 (intern lookup-name)]
-          [bound : bool
-            (if (tc-hygiene-global-name? raw-name)
-              false
-              (tc-name-bound? env lookup-name))]
-          (if (and
-            (cbi.compiler-builtin-lower-clone-id? lookup-id)
-            (not bound)
-            (not (lower-top-level-value-defined-id? ctx lookup-id)))
-            (if (= (struct-get (& args) len) 1)
-              (match (tc-expr
-                ctx
-                env
-                (tc-context-expr-get
-                  ctx
-                  (ast-expr-call-with-pools
-                    (tc-context-pools ctx)
-                    (ast-node-pool-context-expr-push
-                      (tc-context-pools ctx)
-                      callee)
-                    args)))
-                [(ResultTcType.Ok clone-ty)
-                  (lower-clone-root-add-type ctx decls able walked clone-ty)]
-                [(ResultTcType.Err _) walked])
-              walked)
-            walked))]
-      [_ walked])))
-
-(define (lower-clone-roots-expr
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [expr : AstExpr]) : CloneNameList
-  (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Literal _) roots]
-    [(AstExpr.Var _) roots]
-    [(AstExpr.Binary _ lhs-box rhs-box)
-      (let
-        [lhs : AstExpr (tc-context-expr-get ctx lhs-box)]
-        [rhs : AstExpr (tc-context-expr-get ctx rhs-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots lhs)
-          rhs))]
-    [(AstExpr.Unary _ inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Call callee-box args)
-      (let
-        [callee : AstExpr (tc-context-expr-get ctx callee-box)]
-        (lower-clone-roots-call ctx env decls able roots callee args))]
-    [(AstExpr.If cond-box then-box else-box)
-      (let
-        [cond : AstExpr (tc-context-expr-get ctx cond-box)]
-        [then-expr : AstExpr (tc-context-expr-get ctx then-box)]
-        [else-expr : AstExpr (tc-context-expr-get ctx else-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr ctx env decls able roots cond)
-            then-expr)
-          else-expr))]
-    [(AstExpr.Let let-box)
-      (match (box-get let-box)
-        [(AstLet.Let bindings body-box)
-          (let
-            [body : AstExpr (tc-context-expr-get ctx body-box)]
-            (match (lower-clone-roots-let-bindings
-              ctx
-              env
-              decls
-              able
-              roots
-              bindings)
-              [(LowerCloneRootEnv.Env binding-roots body-env)
-                (lower-clone-roots-expr
-                  ctx
-                  body-env
-                  decls
-                  able
-                  binding-roots
-                  body)]))])]
-    [(AstExpr.Lambda lambda-box)
-      (match (box-get lambda-box)
-        [(AstLambda.Lambda params _ body-box)
-          (let
-            [body : AstExpr (tc-context-expr-get ctx body-box)]
-            (lower-clone-roots-expr
-              ctx
-              (tc-bind-params ctx env params)
-              decls
-              able
-              roots
-              body))])]
-    [(AstExpr.Tuple values)
-      (lower-clone-roots-expr-list ctx env decls able roots values)]
-    [(AstExpr.TupleRef value-box _)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.Array values)
-      (lower-clone-roots-expr-list ctx env decls able roots values)]
-    [(AstExpr.DynArray values)
-      (lower-clone-roots-expr-list ctx env decls able roots values)]
-    [(AstExpr.MakeArray _ len-box)
-      (let
-        [len : AstExpr (tc-context-expr-get ctx len-box)]
-        (lower-clone-roots-expr ctx env decls able roots len))]
-    [(AstExpr.ArrayRef array-box index-box)
-      (let
-        [array : AstExpr (tc-context-expr-get ctx array-box)]
-        [index : AstExpr (tc-context-expr-get ctx index-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots array)
-          index))]
-    [(AstExpr.ArraySet array-box index-box value-box)
-      (let
-        [array : AstExpr (tc-context-expr-get ctx array-box)]
-        [index : AstExpr (tc-context-expr-get ctx index-box)]
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr ctx env decls able roots array)
-            index)
-          value))]
-    [(AstExpr.StructSet receiver-box _ value-box)
-      (let
-        [receiver : AstExpr (tc-context-expr-get ctx receiver-box)]
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots receiver)
-          value))]
-    [(AstExpr.ArrayTake array-box live-box index-box)
-      (let
-        [array : AstExpr (tc-context-expr-get ctx array-box)]
-        [live : AstExpr (tc-context-expr-get ctx live-box)]
-        [index : AstExpr (tc-context-expr-get ctx index-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr ctx env decls able roots array)
-            live)
-          index))]
-    [(AstExpr.ArrayPush array-box value-box)
-      (let
-        [array : AstExpr (tc-context-expr-get ctx array-box)]
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots array)
-          value))]
-    [(AstExpr.StringRef text-box index-box)
-      (let
-        [text : AstExpr (tc-context-expr-get ctx text-box)]
-        [index : AstExpr (tc-context-expr-get ctx index-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots text)
-          index))]
-    [(AstExpr.While cond-box body-box)
-      (let
-        [cond : AstExpr (tc-context-expr-get ctx cond-box)]
-        [body : AstExpr (tc-context-expr-get ctx body-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots cond)
-          body))]
-    [(AstExpr.Begin exprs)
-      (lower-clone-roots-expr-list ctx env decls able roots exprs)]
-    [(AstExpr.Unsafe exprs)
-      (lower-clone-roots-expr-list ctx env decls able roots exprs)]
-    [(AstExpr.Set _ value-box)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Borrow _ _ inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Match match-box)
-      (match (box-get match-box)
-        [(AstMatch.Match value-box arms)
-          (let
-            [value : AstExpr (tc-context-expr-get ctx value-box)]
-            [value-roots : CloneNameList
-              (lower-clone-roots-expr ctx env decls able roots value)]
-            (match (tc-expr ctx env value)
-              [(ResultTcType.Ok scrut-ty)
-                (lower-clone-roots-match-arms
-                  ctx
-                  env
-                  decls
-                  able
-                  value-roots
-                  scrut-ty
-                  arms)]
-              [(ResultTcType.Err _) value-roots]))])]
-    [(AstExpr.Foreach fe-box)
-      (match (box-get fe-box)
-        [(AstForeach.Foreach index index-ty start-box end-box body-box)
-          (let
-            [start : AstExpr (tc-context-expr-get ctx start-box)]
-            [end : AstExpr (tc-context-expr-get ctx end-box)]
-            [body : AstExpr (tc-context-expr-get ctx body-box)]
-            [body-env : TcTypeEnv
-              (tc-bind-id env index (tc-resolve-type ctx index-ty))]
-            (lower-clone-roots-expr
-              ctx
-              body-env
-              decls
-              able
-              (lower-clone-roots-expr
-                ctx
-                env
-                decls
-                able
-                (lower-clone-roots-expr ctx env decls able roots start)
-                end)
-              body))])]
-    [(AstExpr.SpmdReduce reduce-box)
-      (match (box-get reduce-box)
-        [(AstSpmdReduce.Reduce
-            _
-            index
-            index-ty
-            start-box
-            end-box
-            init-box
-            value-box)
-          (let
-            [start : AstExpr (tc-context-expr-get ctx start-box)]
-            [end : AstExpr (tc-context-expr-get ctx end-box)]
-            [init : AstExpr (tc-context-expr-get ctx init-box)]
-            [value : AstExpr (tc-context-expr-get ctx value-box)]
-            [value-env : TcTypeEnv
-              (tc-bind-id env index (tc-resolve-type ctx index-ty))]
-            (lower-clone-roots-expr
-              ctx
-              value-env
-              decls
-              able
-              (lower-clone-roots-expr
-                ctx
-                env
-                decls
-                able
-                (lower-clone-roots-expr
-                  ctx
-                  env
-                  decls
-                  able
-                  (lower-clone-roots-expr ctx env decls able roots start)
-                  end)
-                init)
-              value))])]
-    [(AstExpr.SpmdScan scan-box)
-      (match (box-get scan-box)
-        [(AstSpmdScan.Scan
-            _
-            index
-            index-ty
-            start-box
-            end-box
-            prefix
-            prefix-ty
-            init-box
-            value-box
-            body-box)
-          (let
-            [start : AstExpr (tc-context-expr-get ctx start-box)]
-            [end : AstExpr (tc-context-expr-get ctx end-box)]
-            [init : AstExpr (tc-context-expr-get ctx init-box)]
-            [value : AstExpr (tc-context-expr-get ctx value-box)]
-            [body : AstExpr (tc-context-expr-get ctx body-box)]
-            [value-env : TcTypeEnv
-              (tc-bind-id env index (tc-resolve-type ctx index-ty))]
-            [body-env : TcTypeEnv
-              (tc-bind-id value-env prefix (tc-resolve-type ctx prefix-ty))]
-            (lower-clone-roots-expr
-              ctx
-              body-env
-              decls
-              able
-              (lower-clone-roots-expr
-                ctx
-                value-env
-                decls
-                able
-                (lower-clone-roots-expr
-                  ctx
-                  env
-                  decls
-                  able
-                  (lower-clone-roots-expr
-                    ctx
-                    env
-                    decls
-                    able
-                    (lower-clone-roots-expr ctx env decls able roots start)
-                    end)
-                  init)
-                value)
-              body))])]
-    [(AstExpr.SpmdBroadcast value-box lane-box)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        [lane : AstExpr (tc-context-expr-get ctx lane-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots value)
-          lane))]
-    [(AstExpr.SpmdShuffle value-box lane-box)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        [lane : AstExpr (tc-context-expr-get ctx lane-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots value)
-          lane))]
-    [(AstExpr.StructGet value-box _)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.WithRegion region exprs)
-      (lower-clone-roots-expr-list
-        ctx
-        (tc-push-region env region)
-        decls
-        able
-        roots
-        exprs)]
-    [(AstExpr.WithEscape scratch-box exprs)
-      (let
-        [scratch : AstExpr (tc-context-expr-get ctx scratch-box)]
-        [walked : CloneNameList
-          (lower-clone-roots-expr-list
-            ctx
-            env
-            decls
-            able
-            (lower-clone-roots-expr ctx env decls able roots scratch)
-            exprs)]
-        (match (tc-with-escape-expr ctx env scratch exprs)
-          [(ResultTcType.Ok result-ty)
-            (lower-clone-root-add-type ctx decls able walked result-ty)]
-          [(ResultTcType.Err _) walked]))]
-    [(AstExpr.WithScratch exprs)
-      (let
-        [walked : CloneNameList
-          (lower-clone-roots-expr-list ctx env decls able roots exprs)]
-        (match (tc-with-scratch-expr ctx env exprs)
-          [(ResultTcType.Ok result-ty)
-            (lower-clone-root-add-type ctx decls able walked result-ty)]
-          [(ResultTcType.Err _) walked]))]
-    [(AstExpr.InArena arena-box exprs)
-      (let
-        [arena : AstExpr (tc-context-expr-get ctx arena-box)]
-        (lower-clone-roots-expr-list
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots arena)
-          exprs))]
-    [(AstExpr.WithResource wr-box)
-      (match (box-get wr-box)
-        [(AstWithResource.WithResource bindings body)
-          (let
-            [binding-roots : CloneNameList
-              (lower-clone-roots-resource-bindings
-                ctx
-                env
-                decls
-                able
-                roots
-                bindings)]
-            [body-env : TcTypeEnv
-              (match (tc-resource-bindings ctx env bindings)
-                [(ResultTcEnv.Ok next-env) next-env]
-                [(ResultTcEnv.Err _) env])]
-            (lower-clone-roots-expr-list
-              ctx
-              body-env
-              decls
-              able
-              binding-roots
-              body))])]
-    [(AstExpr.Box inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.BoxGet inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.BoxTake inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.BoxSet inner-box value-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots inner)
-          value))]
-    [(AstExpr.TypeLiteral _) roots]
-    [(AstExpr.Init _) roots]
-    [(AstExpr.Comptime inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Quote _) roots]
-    [(AstExpr.Quasiquote _) roots]
-    [(AstExpr.Unquote inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.UnquoteSplicing inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.BracketClause items)
-      (lower-clone-roots-expr-list ctx env decls able roots items)]
-    [(AstExpr.Try inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Return inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.Break) roots]
-    [(AstExpr.Continue) roots]
-    [(AstExpr.PtrNull _) roots]
-    [(AstExpr.PtrNullCheck value-box)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.PtrAddrOf place-box)
-      (let
-        [place : AstExpr (tc-context-expr-get ctx place-box)]
-        (lower-clone-roots-expr ctx env decls able roots place))]
-    [(AstExpr.PtrRead ptr-box)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        (lower-clone-roots-expr ctx env decls able roots ptr))]
-    [(AstExpr.PtrWrite ptr-box value-box)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots ptr)
-          value))]
-    [(AstExpr.PtrOffset ptr-box offset-box)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        [offset : AstExpr (tc-context-expr-get ctx offset-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots ptr)
-          offset))]
-    [(AstExpr.PtrCast ptr-box _)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        (lower-clone-roots-expr ctx env decls able roots ptr))]
-    [(AstExpr.PtrToInt ptr-box)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        (lower-clone-roots-expr ctx env decls able roots ptr))]
-    [(AstExpr.IntToPtr value-box _)
-      (let
-        [value : AstExpr (tc-context-expr-get ctx value-box)]
-        (lower-clone-roots-expr ctx env decls able roots value))]
-    [(AstExpr.StringData inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.StringFromBytes ptr-box len-box)
-      (let
-        [ptr : AstExpr (tc-context-expr-get ctx ptr-box)]
-        [len : AstExpr (tc-context-expr-get ctx len-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots ptr)
-          len))]
-    [(AstExpr.ArrayData inner-box)
-      (let
-        [inner : AstExpr (tc-context-expr-get ctx inner-box)]
-        (lower-clone-roots-expr ctx env decls able roots inner))]
-    [(AstExpr.BinaryData _) roots]
-    [(AstExpr.SpmdProgramIndex) roots]
-    [(AstExpr.SpmdProgramCount) roots]
-    [(AstExpr.ProgramArgc) roots]
-    [(AstExpr.ProgramArgv) roots]
-    [(AstExpr.ProgramEnvp) roots]
-    [(AstExpr.CpuIdEax leaf-box subleaf-box)
-      (let
-        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots leaf)
-          subleaf))]
-    [(AstExpr.CpuIdEbx leaf-box subleaf-box)
-      (let
-        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots leaf)
-          subleaf))]
-    [(AstExpr.CpuIdEcx leaf-box subleaf-box)
-      (let
-        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots leaf)
-          subleaf))]
-    [(AstExpr.CpuIdEdx leaf-box subleaf-box)
-      (let
-        [leaf : AstExpr (tc-context-expr-get ctx leaf-box)]
-        [subleaf : AstExpr (tc-context-expr-get ctx subleaf-box)]
-        (lower-clone-roots-expr
-          ctx
-          env
-          decls
-          able
-          (lower-clone-roots-expr ctx env decls able roots leaf)
-          subleaf))]
-    [(AstExpr.Xgetbv index-box)
-      (let
-        [index : AstExpr (tc-context-expr-get ctx index-box)]
-        (lower-clone-roots-expr ctx env decls able roots index))]
-    [(AstExpr.Syscall args)
-      (lower-clone-roots-expr-list ctx env decls able roots args)]))
-
-;; `name-cache` is the LowerNameCache built once from the
-;; whole-program `names` env. It is invariant across every module of a single
-;; clone-roots pass (the global name env never changes mid-pass), so it is
-;; threaded as a parameter instead of being rebuilt from `names` at each
-;; `(module ...)` boundary. Rebuilding it per module made this pass
-;; O(modules x global-names); the self-compile hit ~2.3M redundant name-cache
-;; entries across ~190 rebuilds in the clone-roots phase alone.
-(define (lower-clone-roots-decls-in-module
+(define (lower-extend-checked-context-with-clone-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
-  [local-env : TcTypeEnv]
-  [decls : AstDeclList]
-  [all-decls : AstDeclList]
-  [able : CloneNameSet]
-  [roots : CloneNameList]
-  [names : LowerNameEnv]
-  [name-cache : LowerNameCache]
-  [module : String]) : CloneNameList
-  (let
-    [cur : AstDeclList decls]
-    [cur-local-env : TcTypeEnv local-env]
-    [cur-roots : CloneNameList roots]
-    [cur-module : String module]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-unwrapped decl)
-                [(AstDecl.Def _ _ expr-box)
-                  (let
-                    [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
-                    [expr : AstExpr (tc-context-expr-get decl-ctx expr-box)]
-                    (begin
-                      (set!
-                        cur-roots
-                        (lower-clone-roots-expr
-                          decl-ctx
-                          cur-local-env
-                          all-decls
-                          able
-                          cur-roots
-                          expr))
-                      (set! cur rest)))]
-                [(AstDecl.DefFn _ params ret body-box _)
-                  (let
-                    [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
-                    [body : AstExpr (tc-context-expr-get decl-ctx body-box)]
-                    [fn-env : TcTypeEnv
-                      (tc-bind-return-type
-                        (tc-bind-params decl-ctx cur-local-env params)
-                        (tc-resolve-type decl-ctx ret))]
-                    (begin
-                      (set!
-                        cur-roots
-                        (lower-clone-roots-expr
-                          decl-ctx
-                          fn-env
-                          all-decls
-                          able
-                          cur-roots
-                          body))
-                      (set! cur rest)))]
-                [(AstDecl.Module next-module)
-                  (let
-                    [next-module-str : String (intern-str next-module)]
-                    (begin
-                      (match (lower-module-local-envs
-                        ctx
-                        top-env
-                        names
-                        name-cache
-                        next-module-str)
-                        [(ResultLowerModuleLocalEnv.Ok next-local-env _ _ _)
-                          (set! cur-local-env next-local-env)]
-                        [(ResultLowerModuleLocalEnv.Err _) unit])
-                      (set! cur-module next-module-str)
-                      (set! cur rest)))]
-                [_ (set! cur rest)]))]))
-      cur-roots)))
-
-(define (lower-clone-roots-program
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [names : LowerNameEnv]
-  [program : AstProgram]) : CloneNameList
+  [source-decl-count : i64]
+  [program : AstProgram]) : ResultLowerCheckedContext
   (match program
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        [name-cache : LowerNameCache (lower-name-cache-from-env names)]
-        (lower-clone-roots-decls-in-module
-          ctx
-          top-env
-          top-env
-          decls
-          decls
-          (clone-fixpoint
-            (tc-context-pools ctx)
-            decls
-            (clone-all-type-names decls (clone-name-set-empty)))
-          (CloneNameList.Nil)
-          names
-          name-cache
-          ""))]))
-
-;; Copy a clone-root name list into the active (persistent) arena. The
-;; clone-helper names are re-interned (so they live in the persistent intern
-;; arena) and the cons cells are rebuilt, so the result is independent of the
-;; scratch arena the original list was discovered in.
-(define (lower-clone-name-list-escape [names : CloneNameList]) : CloneNameList
-  (match names
-    [(CloneNameList.Nil) (CloneNameList.Nil)]
-    [(CloneNameList.Cons name rest)
-      (CloneNameList.Cons
-        (intern-str (intern name))
-        (box (lower-clone-name-list-escape (box-get rest))))]))
-
-;; Copy a clone-roots result into the active (persistent) arena. On the
-;; (program-valid) Ok path this re-homes the name list; the rare Err path
-;; rebuilds the diagnostic with a persistent copy of its message so neither
-;; references the rewound scratch arena.
-(define (lower-clone-roots-result-escape [result : ResultLowerCloneRoots]) : ResultLowerCloneRoots
-  (match result
-    [(ResultLowerCloneRoots.Ok names)
-      (ResultLowerCloneRoots.Ok (lower-clone-name-list-escape names))]
-    [(ResultLowerCloneRoots.Err diag)
-      (let
-        [message : String (compiler-diagnostic-message (box-get diag))]
-        (ResultLowerCloneRoots.Err
-          (box (lower-diagnostic (string.copy (& message))))))]))
-
-(define (lower-reachable-clone-roots
-  [pools : AstNodePoolContext]
-  [program : AstProgram]
-  [_paths : AstDeclPathList]
-  [names : LowerNameEnv]) : ResultLowerCloneRoots
-  (lower-reachable-clone-roots-impl pools program _paths names))
-
-(define (lower-reachable-clone-roots-impl
-  [pools : AstNodePoolContext]
-  [program : AstProgram]
-  [_paths : AstDeclPathList]
-  [names : LowerNameEnv]) : ResultLowerCloneRoots
-  ;; Clone-root discovery rebuilds the whole-program symbols, registries
-  ;; and top-env plus the clone-ability fixpoint -- ~132MB of the opt1 lower
-  ;; peak that adds only a couple dozen AST/type pool nodes, i.e. almost pure
-  ;; transient scratch. Build it inside the dedicated lower scratch arena and
-  ;; rewind it once the clone-root names are copied back into the persistent
-  ;; arena. The only escaping value is the CloneNameList (interned clone-helper
-  ;; names), copied by lower-clone-roots-result-escape; the only global cache
-  ;; clone-root discovery can leave pointing at the scratch arena is the
-  ;; nominal-owner cache, reset on entry and after the rewind (mirrors
-  ;; lower-function-escaping and the real typecheck, which also resets it before
-  ;; reuse). Persistent intern storage is enabled across the region so names
-  ;; interned during discovery never dangle the global intern table.
-  (let
-    [prev-arena : i64 (arena.tl_arena_current)]
-    [prev-persist : bool (intern-persistent-storage-on?)]
-    [prev-reader-active : bool (ast-node-pool-reader-active?)]
-    [prev-reader : AstNodePoolContext
-      (if prev-reader-active
-        (ast-node-pool-reader-current)
-        pools)]
-    [prev-compat-active : bool (ast-node-pool-compat-context-active?)]
-    [prev-compat : AstNodePoolContext
-      (if prev-compat-active
-        (ast-node-pool-compat-context-current)
-        pools)]
-    [scratch : i64 (lower-scratch-arena-get)]
-    (begin
-      (tc-nominal-owner-cache-reset!)
-      (intern-persistent-storage-enable!)
-      (unsafe
-        (arena.tl_arena_set scratch))
-      (let
-        [mark : i64 (arena.tl_region_mark)]
-        [raw : ResultLowerCloneRoots
-          (begin
-            ;; Clone-root discovery calls compatibility AST/type helpers;
-            ;; route both explicit reader helpers and raw compatibility reads through
-            ;; the state-owned pools instead of mutating active pool state.
-            (ast-node-pool-reader-use! pools)
-            (ast-node-pool-compat-context-use! pools)
-            (let
-              [result : ResultLowerCloneRoots
-                (match (build-compiler-symbols program)
-                  [(ResultCompilerSymbols.Ok symbols)
-                    (match (build-compiler-registries-with-symbols
-                      program
-                      symbols)
-                      [(ResultCompilerRegistries.Ok registries)
-                        (let
-                          [ctx : TcContext
-                            (TcContext program symbols registries "" pools)]
-                          (begin
-                            ;; Clone-root discovery asks tc-expr to validate every
-                            ;; reachable clone call. Publish the whole-program
-                            ;; cloneability fixpoint once for those queries;
-                            ;; otherwise each call rebuilds it independently.
-                            (tc-clone-able-cache-populate! ctx)
-                            (match (tc-build-top-env ctx program)
-                              [(ResultTcEnv.Ok top-env)
-                                (let
-                                  [roots : CloneNameList
-                                    (lower-clone-roots-program
-                                      ctx
-                                      top-env
-                                      names
-                                      program)]
-                                  (ResultLowerCloneRoots.Ok roots))]
-                              [(ResultTcEnv.Err message)
-                                (ResultLowerCloneRoots.Err
-                                  (box (lower-diagnostic message)))])))]
-                      [(ResultCompilerRegistries.Err message)
-                        (ResultLowerCloneRoots.Err
-                          (box (lower-diagnostic message)))])]
-                  [(ResultCompilerSymbols.Err message)
-                    (ResultLowerCloneRoots.Err (box (lower-diagnostic message)))])]
-              (begin
-                (if prev-reader-active
-                  (ast-node-pool-reader-use! prev-reader)
-                  (ast-node-pool-reader-clear!))
-                (if prev-compat-active
-                  (ast-node-pool-compat-context-use! prev-compat)
-                  (ast-node-pool-compat-context-clear!))
-                result)))]
-        [scratch-head : i64 (arena.tl_arena_current)]
-        (begin
-          ;; Re-home the result in the persistent arena while the scratch is
-          ;; still live, then rewind the scratch arena.
-          (unsafe
-            (arena.tl_arena_set prev-arena))
-          ;; The populated cloneability cache lives in the scratch arena. Reset
-          ;; it while the persistent arena is active so the empty replacement
-          ;; remains valid after the scratch rewind below.
-          (tc-clone-able-cache-reset!)
-          (let
-            [result : ResultLowerCloneRoots
-              (lower-clone-roots-result-escape raw)]
+        [clone-decls : AstDeclList (tc-decl-list-drop decls source-decl-count)]
+        [next-ctx : TcContext (tc-context-with-program ctx program)]
+        (match (env-extend-with-module next-ctx top-env clone-decls)
+          [(ResultTcEnv.Ok next-env)
             (begin
-              (unsafe
-                (arena.tl_arena_set scratch-head)
-                (arena.tl_region_reset mark)
-                (arena.tl_arena_set prev-arena))
-              ;; The nominal-owner cache may now hold name strings allocated in
-              ;; the rewound scratch arena; clear them so no slot compares
-              ;; against freed memory before the real typecheck repopulates it.
-              (tc-nominal-owner-cache-reset!)
-              (if prev-persist
-                unit
-                (intern-persistent-storage-disable!))
-              result)))))))
+              (tc-context-capture-active-pools! next-ctx)
+              (tc-hygiene-reset-active-top-env! next-env)
+              (tc-macro-helper-env-cache-reset!)
+              (ResultLowerCheckedContext.Ok next-ctx next-env))]
+          [(ResultTcEnv.Err message) (ResultLowerCheckedContext.Err message)]))]))
 
 (define (lower-reach-call-callee
   [pools : AstNodePoolContext]
@@ -46000,6 +44694,150 @@
     program
     (CompilerLowerMode.Scalar)))
 
+;; Check source declarations once, collect clone-helper roots as a side effect
+;; of that real semantic walk, then append the generated helpers and extend the
+;; checked context with only the appended function signatures. Generated clone
+;; declarations have never been checked by tc-check-decls (they are trusted
+;; compiler output), so building them before typecheck only forced a redundant
+;; symbols/registries/top-env construction and a shadow expression typecheck.
+(define (lower-typecheck-clone-and-lower
+  [entry-path : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
+  [keep-plan : LowerDeclKeepPlan]
+  [escaped-names : LowerNameEnv]
+  [needs-specialization : bool]
+  [mode : CompilerLowerMode]
+  [stdlib-roots : svec.Vec]
+  [cache-scope : String]
+  [pools : AstNodePoolContext]) : ResultCompilerLower
+  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+    program
+    paths
+    stdlib-roots
+    cache-scope
+    pools)
+    [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env)
+      (let
+        [clone-roots : CloneNameList
+          (tc-clone-root-collection-finish! source-ctx)]
+        [source-decl-count : i64
+          (match program
+            [(AstProgram.Program decls-box)
+              (ast-decl-list-len (& (box-get decls-box)))])]
+        [checked-keep-plan : LowerDeclKeepPlan
+          (lower-decl-keep-plan-add-clone-roots keep-plan program clone-roots)]
+        [clone-able : CloneNameSet (tc-clone-able-set source-ctx)]
+        [_install-clone-pools : unit (ast-node-pool-context-install! pools)]
+        [checked-program : AstProgram
+          (clone-augment-program-with-roots-and-able-and-pools
+            pools
+            program
+            clone-able
+            clone-roots)]
+        [_install-augmented-pools : unit (ast-node-pool-context-install! pools)]
+        [checked-context : ResultLowerCheckedContext
+          (lower-extend-checked-context-with-clone-decls
+            source-ctx
+            source-top-env
+            source-decl-count
+            checked-program)]
+        [checked-names : LowerNameEnv
+          (match checked-program
+            [(AstProgram.Program decls-box)
+              (let
+                [decls : AstDeclList (box-get decls-box)]
+                (lower-name-env-from-decls
+                  decls
+                  paths
+                  entry-path
+                  LowerNameEnv.Nil))])]
+        [lower-names : LowerNameEnv
+          (if needs-specialization
+            (match checked-program
+              [(AstProgram.Program decls-box)
+                (let
+                  [decls : AstDeclList (box-get decls-box)]
+                  (lower-name-env-add-clone-decls
+                    decls
+                    paths
+                    entry-path
+                    escaped-names))])
+            checked-names)]
+        (begin
+          (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+          (cfg compile-profile (compiler-lower-profile-start))
+          (match checked-context
+            [(ResultLowerCheckedContext.Ok ctx top-env)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-finish "clone_augment_names"))
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-pools "typecheck" pools))
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-pools "pre_decls" pools))
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-program-counts
+                    "pre_decls"
+                    checked-program))
+                (cfg compile-profile (compiler-lower-profile-start))
+                ;; Whole-program source typecheck is complete. Apply the
+                ;; declaration decisions retained by reachability; clone
+                ;; helpers are appended and marked by add-clone-roots.
+                (let
+                  [pruned-program : AstProgram
+                    (lower-decl-keep-plan-apply
+                      checked-keep-plan
+                      checked-program)]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-finish "prune_apply"))
+                    (cfg compile-profile (compiler-lower-profile-start))
+                    (match (lower-compiler-program-checked-with-names-mode
+                      ctx
+                      top-env
+                      pruned-program
+                      lower-names
+                      mode)
+                      [(ResultCompilerLower.Ok ir spans)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-finish "decls"))
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-ir-shape "after_decls" ir))
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-ir-arena "after_decls"))
+                          (ResultCompilerLower.Ok ir spans))]
+                      [(ResultCompilerLower.Err diag)
+                        (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-finish "decls"))
+                          (ResultCompilerLower.Err
+                            (box
+                              (lower-diagnostic-with-path
+                                (box-get diag)
+                                entry-path))))]))))]
+            [(ResultLowerCheckedContext.Err message)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-lower-profile-finish "clone_augment_names"))
+                (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
+    [(ResultCompilerTypecheckChecked.Err diag)
+      (begin
+        (tc-clone-root-collection-abort!)
+        (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
+        (ResultCompilerLower.Err diag))]))
+
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
   [entry-path : String]
   [program : AstProgram]
@@ -46047,14 +44885,10 @@
                           entry-path
                           LowerNameEnv.Nil))])
                   names)]
-              ;; P4/C4.1-C4.2: the reachability gate has moved AFTER typecheck
-              ;; (see below) so typecheck stays complete and whole-program while
-              ;; lower/optimize/codegen are still gated on reachability. This
-              ;; up-front prune is retained ONLY to scope clone-root discovery to
-              ;; the reachable set (so we synthesize exactly the clone$<T> helpers
-              ;; the emitted code needs, matching pre-P4 behavior); the FULL
-              ;; specialized program is what actually flows into clone-augment and
-              ;; typecheck below.
+              ;; Typecheck remains complete and whole-program while lower,
+              ;; optimize, and codegen are gated on reachability. This up-front
+              ;; walk records the dense declaration selection consumed both by
+              ;; typecheck's clone-root observer and by the final linear prune.
               (match (lower-prune-unreachable-functions-with-clone-roots-and-plan
                 pools
                 entry-path
@@ -46064,221 +44898,75 @@
                 (CloneNameList.Nil))
                 [(LowerPrunedProgramWithPlan.Program
                     reach-program
-                    reach-paths
+                    _reach-paths
                     reach-keep-plan)
                   (begin
                     (cfg
                       compile-profile
                       (compiler-lower-profile-finish "prune"))
                     (cfg compile-profile (compiler-lower-profile-start))
+                    ;; Capture stable retained declaration keys before optional
+                    ;; pool compaction releases the reach-program AST.
+                    (tc-clone-root-collection-use! reach-program)
                     (let
-                      [clone-pools : AstNodePoolContext pools]
-                      (match (lower-reachable-clone-roots
-                        clone-pools
-                        reach-program
-                        reach-paths
-                        prune-names)
-                        [(ResultLowerCloneRoots.Ok clone-roots)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-lower-profile-finish "clone_roots"))
-                            (cfg compile-profile (compiler-lower-profile-start))
-                            (let
-                              [source-keep-plan : LowerDeclKeepPlan
-                                (lower-decl-keep-plan-add-clone-roots
-                                  reach-keep-plan
-                                  specialized
-                                  clone-roots)]
-                              ;; P4/C4.2: clone-augment the FULL specialized
-                              ;; program (not the reachable subset) so typecheck
-                              ;; sees every declaration; clone-roots was scoped to
-                              ;; the reachable set above so only the needed
-                              ;; clone$<T> helpers are synthesized.
-                              [checked-compaction : AstProgramCompaction
-                                (if lower-checked-dest-pools-active
-                                  (clone-augment-program-with-roots-from-pools
-                                    clone-pools
-                                    lower-checked-dest-pools-context
-                                    specialized
-                                    clone-roots)
-                                  (AstProgramCompaction
-                                    (clone-augment-program-with-roots-and-pools
-                                      clone-pools
-                                      specialized
-                                      clone-roots)
-                                    clone-pools))]
-                              [checked-program : AstProgram
-                                (match checked-compaction
-                                  [(AstProgramCompaction out _) out])]
-                              [checked-pools : AstNodePoolContext
-                                (match checked-compaction
-                                  [(AstProgramCompaction _ out-pools) out-pools])]
-                              [checked-entry-path : String
-                                (if lower-checked-dest-pools-active
-                                  (lower-copy-string-into-pools
-                                    entry-path
-                                    checked-pools)
-                                  entry-path)]
-                              [checked-cache-scope : String
-                                (if lower-checked-dest-pools-active
-                                  (lower-copy-string-into-pools
-                                    cache-scope
-                                    checked-pools)
-                                  cache-scope)]
-                              [checked-paths : AstDeclPathList
-                                (if lower-checked-dest-pools-active
-                                  (lower-copy-paths-into-pools
-                                    specialized-paths
-                                    checked-pools)
-                                  specialized-paths)]
-                              [checked-keep-plan : LowerDeclKeepPlan
-                                (if lower-checked-dest-pools-active
-                                  (lower-decl-keep-plan-copy-into-pools
-                                    source-keep-plan
-                                    checked-pools)
-                                  source-keep-plan)]
-                              [escaped-names : LowerNameEnv
-                                (if (and
-                                  lower-checked-dest-pools-active
-                                  needs-specialization)
-                                  (lower-name-env-copy-into-pools
-                                    names
-                                    checked-pools)
-                                  names)]
-                              [_commit-dest : unit
-                                (lower-checked-dest-pools-commit! checked-pools)]
-                              [checked-names : LowerNameEnv
-                                (match checked-program
-                                  [(AstProgram.Program decls-box)
-                                    (let
-                                      [decls : AstDeclList (box-get decls-box)]
-                                      (lower-name-env-from-decls
-                                        decls
-                                        checked-paths
-                                        checked-entry-path
-                                        LowerNameEnv.Nil))])]
-                              [lower-names : LowerNameEnv
-                                (if needs-specialization
-                                  (match checked-program
-                                    [(AstProgram.Program decls-box)
-                                      (let
-                                        [decls : AstDeclList
-                                          (box-get decls-box)]
-                                        (lower-name-env-add-clone-decls
-                                          decls
-                                          checked-paths
-                                          checked-entry-path
-                                          escaped-names))])
-                                  checked-names)]
-                              (begin
-                                (cfg
-                                  compile-profile
-                                  (compiler-lower-profile-finish
-                                    "clone_augment_names"))
-                                (cfg
-                                  compile-profile
-                                  (compiler-lower-profile-start))
-                                (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
-                                  checked-program
-                                  checked-paths
-                                  stdlib-roots
-                                  checked-cache-scope
-                                  checked-pools)
-                                  [(ResultCompilerTypecheckChecked.Ok
-                                      _
-                                      ctx
-                                      top-env)
-                                    (begin
-                                      (cfg
-                                        compile-profile
-                                        (compiler-lower-profile-finish
-                                          "typecheck"))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-lower-profile-pools
-                                          "typecheck"
-                                          checked-pools))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-lower-profile-pools
-                                          "pre_decls"
-                                          checked-pools))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-lower-profile-program-counts
-                                          "pre_decls"
-                                          checked-program))
-                                      (cfg
-                                        compile-profile
-                                        (compiler-lower-profile-start))
-                                      ;; Whole-program typecheck is complete. Apply
-                                      ;; the declaration decisions retained by the
-                                      ;; first reachability walk; source order is
-                                      ;; stable and clone helpers are appended, so
-                                      ;; this is a dense linear filter rather than
-                                      ;; a second whole-program graph analysis.
-                                      (let
-                                        [pruned-program : AstProgram
-                                          (lower-decl-keep-plan-apply
-                                            checked-keep-plan
-                                            checked-program)]
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-lower-profile-finish
-                                              "prune_apply"))
-                                          (cfg
-                                            compile-profile
-                                            (compiler-lower-profile-start))
-                                          (match (lower-compiler-program-checked-with-names-mode
-                                            ctx
-                                            top-env
-                                            pruned-program
-                                            lower-names
-                                            mode)
-                                            [(ResultCompilerLower.Ok ir spans)
-                                              (begin
-                                                (cfg
-                                                  compile-profile
-                                                  (compiler-lower-profile-finish
-                                                    "decls"))
-                                                (cfg
-                                                  compile-profile
-                                                  (compiler-lower-profile-ir-shape
-                                                    "after_decls"
-                                                    ir))
-                                                (cfg
-                                                  compile-profile
-                                                  (compiler-lower-profile-ir-arena
-                                                    "after_decls"))
-                                                (ResultCompilerLower.Ok
-                                                  ir
-                                                  spans))]
-                                            [(ResultCompilerLower.Err diag)
-                                              (begin
-                                                (cfg
-                                                  compile-profile
-                                                  (compiler-lower-profile-finish
-                                                    "decls"))
-                                                (ResultCompilerLower.Err
-                                                  (box
-                                                    (lower-diagnostic-with-path
-                                                      (box-get diag)
-                                                      checked-entry-path))))]))))]
-                                  [(ResultCompilerTypecheckChecked.Err diag)
-                                    (begin
-                                      (cfg
-                                        compile-profile
-                                        (compiler-lower-profile-finish
-                                          "typecheck"))
-                                      (ResultCompilerLower.Err diag))]))))]
-                        [(ResultLowerCloneRoots.Err diag)
-                          (begin
-                            (cfg
-                              compile-profile
-                              (compiler-lower-profile-finish "clone_roots"))
-                            (ResultCompilerLower.Err diag))])))])))]
+                      [detach-source? : bool lower-checked-dest-pools-active]
+                      [source-compaction : AstProgramCompaction
+                        (if detach-source?
+                          (ast-program-compact-with-pools
+                            pools
+                            lower-checked-dest-pools-context
+                            specialized)
+                          (AstProgramCompaction specialized pools))]
+                      [source-program : AstProgram
+                        (match source-compaction
+                          [(AstProgramCompaction out _) out])]
+                      [source-pools : AstNodePoolContext
+                        (match source-compaction
+                          [(AstProgramCompaction _ out-pools) out-pools])]
+                      [source-entry-path : String
+                        (if detach-source?
+                          (lower-copy-string-into-pools entry-path source-pools)
+                          entry-path)]
+                      [source-cache-scope : String
+                        (if detach-source?
+                          (lower-copy-string-into-pools
+                            cache-scope
+                            source-pools)
+                          cache-scope)]
+                      [source-paths : AstDeclPathList
+                        (if detach-source?
+                          (lower-copy-paths-into-pools
+                            specialized-paths
+                            source-pools)
+                          specialized-paths)]
+                      [source-keep-plan : LowerDeclKeepPlan
+                        (if detach-source?
+                          (lower-decl-keep-plan-copy-into-pools
+                            reach-keep-plan
+                            source-pools)
+                          reach-keep-plan)]
+                      [escaped-names : LowerNameEnv
+                        (if (and detach-source? needs-specialization)
+                          (lower-name-env-copy-into-pools names source-pools)
+                          names)]
+                      [_clear-source-derived-caches : unit
+                        (if detach-source?
+                          (lower-clear-macro-expanded-source-caches-into-pools!
+                            source-pools)
+                          unit)]
+                      [_commit-dest : unit
+                        (lower-checked-dest-pools-commit! source-pools)]
+                      (lower-typecheck-clone-and-lower
+                        source-entry-path
+                        source-program
+                        source-paths
+                        source-keep-plan
+                        escaped-names
+                        needs-specialization
+                        mode
+                        stdlib-roots
+                        source-cache-scope
+                        source-pools)))])))]
         [(ResultSpecProgram.Err diag)
           (begin
             (cfg compile-profile (compiler-lower-profile-finish "specialize"))

@@ -1459,6 +1459,18 @@
         pools
         decls
         (clone-all-type-names decls (clone-name-set-empty)))]
+    (clone-augment-decls-with-roots-and-able-and-pools pools decls able roots)))
+
+;; Typechecking already computes the whole-program cloneability fixpoint for
+;; `(clone ...)` validation. The lowering pipeline can pass that exact set here
+;; when it synthesizes helpers after typecheck instead of rebuilding the same
+;; type graph during clone augmentation.
+(define (clone-augment-decls-with-roots-and-able-and-pools
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]) : AstDeclList
+  (let
     [expanded : CloneNameList (clone-root-expand pools decls able roots roots)]
     (clone-decl-list-append
       decls
@@ -1506,6 +1518,22 @@
         [decls : AstDeclList (box-get decls-box)]
         (ast-program
           (clone-augment-decls-with-roots-and-pools pools decls roots)))]))
+
+(define (clone-augment-program-with-roots-and-able-and-pools
+  [pools : AstNodePoolContext]
+  [program : AstProgram]
+  [able : CloneNameSet]
+  [roots : CloneNameList]) : AstProgram
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        (ast-program
+          (clone-augment-decls-with-roots-and-able-and-pools
+            pools
+            decls
+            able
+            roots)))]))
 
 (define (clone-augment-program-with-roots-from-pools
   [source-pools : AstNodePoolContext]

@@ -87,10 +87,10 @@
                           (begin
                             (ast-node-pool-context-install! pools)
                             (if (compiler-specialize-needed? normalized)
-                              (match (build-compiler-symbols-with-paths
+                              (match (build-compiler-symbols-diagnostic-with-paths
                                 normalized
                                 normalized-paths)
-                                [(ResultCompilerSymbols.Ok _)
+                                [(ResultCompilerSymbolsDiagnostic.Ok _)
                                   (begin
                                     (ast-node-pool-context-capture-active!
                                       pools)
@@ -112,9 +112,8 @@
                                           pools)]
                                       [(ResultSpecProgramWithPaths.Err diag)
                                         (ResultCompilerTypecheck.Err diag)]))]
-                                [(ResultCompilerSymbols.Err message)
-                                  (ResultCompilerTypecheck.Err
-                                    (box (tc-diag-at-start message)))])
+                                [(ResultCompilerSymbolsDiagnostic.Err diag)
+                                  (ResultCompilerTypecheck.Err diag)])
                               (typecheck-compiler-specialized-program-with-paths-cache-and-pools
                                 normalized
                                 normalized-paths
@@ -234,10 +233,10 @@
                           (begin
                             (ast-node-pool-context-install! pools)
                             (if (compiler-specialize-needed? normalized)
-                              (match (build-compiler-symbols-with-paths
+                              (match (build-compiler-symbols-diagnostic-with-paths
                                 normalized
                                 normalized-paths)
-                                [(ResultCompilerSymbols.Ok _)
+                                [(ResultCompilerSymbolsDiagnostic.Ok _)
                                   (begin
                                     (ast-node-pool-context-capture-active!
                                       pools)
@@ -260,9 +259,8 @@
                                       [(ResultSpecProgramWithPaths.Err diag)
                                         (ResultCompilerTypecheckChecked.Err
                                           diag)]))]
-                                [(ResultCompilerSymbols.Err message)
-                                  (ResultCompilerTypecheckChecked.Err
-                                    (box (tc-diag-at-start message)))])
+                                [(ResultCompilerSymbolsDiagnostic.Err diag)
+                                  (ResultCompilerTypecheckChecked.Err diag)])
                               (typecheck-compiler-specialized-program-with-paths-checked-cache-and-pools
                                 normalized
                                 normalized-paths

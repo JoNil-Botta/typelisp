@@ -44961,8 +44961,8 @@
   [paths : AstDeclPathList]) : ResultCompilerSymbols
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-note-live-rebuild))
-    (match (build-compiler-symbols-with-paths program paths)
-      [(ResultCompilerSymbols.Ok symbols)
+    (match (build-compiler-symbols-diagnostic-with-paths program paths)
+      [(ResultCompilerSymbolsDiagnostic.Ok symbols)
         (match (macro-live-registries-build-current program symbols)
           [(ResultCompilerRegistries.Ok registries)
             (begin
@@ -44973,7 +44973,8 @@
               (ResultCompilerSymbols.Ok macro-live-symbols-value))]
           [(ResultCompilerRegistries.Err message)
             (ResultCompilerSymbols.Err message)])]
-      [(ResultCompilerSymbols.Err message) (ResultCompilerSymbols.Err message)])))
+      [(ResultCompilerSymbolsDiagnostic.Err diag)
+        (ResultCompilerSymbols.Err (compiler-diagnostic-message (box-get diag)))])))
 
 (define (macro-live-symbols-build-fresh
   [program : AstProgram]
@@ -56137,7 +56138,8 @@
                   (ResultMacroSpliceRebuild.Err
                     (box (tc-diag-at-start message)))])))]
         [(ResultCompilerSymbols.Err message)
-          (ResultMacroSpliceRebuild.Err (box (tc-diag-at-start message)))]))))
+          (ResultMacroSpliceRebuild.Err
+            (box (compiler-symbols-last-error-diagnostic message)))]))))
 
 (define (macro-decl-generated-normal-import? [decl : AstDecl]) : bool
   (match (macro-generated-normal-import decl)
@@ -56851,7 +56853,8 @@
                               (ResultMacroExpand.Err
                                 (box (tc-diag-at-start message)))]))))]
                   [(ResultCompilerSymbols.Err message)
-                    (ResultMacroExpand.Err (box (tc-diag-at-start message)))]))
+                    (ResultMacroExpand.Err
+                      (box (compiler-symbols-last-error-diagnostic message)))]))
               (ResultMacroExpand.Ok program paths))))])))
 
 (defenum MacroMaybeGeneratedNormalImport
@@ -58561,8 +58564,8 @@
   (begin
     (tc-nominal-owner-cache-reset!)
     (tc-install-pools! pools)
-    (match (build-compiler-symbols-with-paths program paths)
-      [(ResultCompilerSymbols.Ok symbols)
+    (match (build-compiler-symbols-diagnostic-with-paths program paths)
+      [(ResultCompilerSymbolsDiagnostic.Ok symbols)
         (match (build-compiler-registries-with-symbols program symbols)
           [(ResultCompilerRegistries.Ok registries)
             (let
@@ -58611,8 +58614,8 @@
           [(ResultCompilerRegistries.Err message)
             (ResultCompilerTypecheckChecked.Err
               (box (tc-diag-at-start message)))])]
-      [(ResultCompilerSymbols.Err message)
-        (ResultCompilerTypecheckChecked.Err (box (tc-diag-at-start message)))])))
+      [(ResultCompilerSymbolsDiagnostic.Err diag)
+        (ResultCompilerTypecheckChecked.Err diag)])))
 
 (define (typecheck-compiler-specialized-program-with-paths-checked-inner
   [program : AstProgram]

@@ -4590,6 +4590,11 @@
 (define (ast-decl-fallback) : AstDecl
   (AstDecl.Module (ci.intern "<ast-decl-list-fallback>")))
 
+;; Synthetic declaration helpers may still need a neutral source-span value;
+;; this does not imply storage alongside every AstDeclList element.
+(define (ast-decl-span-fallback) : AstSourceSpan
+  (ast-source-span 0 0 0 0))
+
 (define (ast-decl-list-with-capacity [capacity : i64]) : AstDeclList
   (let
     [cap : i64

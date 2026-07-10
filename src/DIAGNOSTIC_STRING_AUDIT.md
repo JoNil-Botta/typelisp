@@ -81,7 +81,9 @@ one boundary at a time.
 Issue #4417 status: expression-origin lowering diagnostics that pass through
 `lower-diagnostic-at-expr` now recover spans through wrappers, unary forms, and
 common compound/generated forms by selecting the first source-carrying child.
-The remaining semantic-location gaps are source-facing symbol/registry failures,
-declaration-shape diagnostics that do not yet carry declaration spans, and
-internal/synthetic macro or generated rebuild errors that still cross string
-boundaries before a concrete origin span is available.
+Source-facing symbol failures now adapt their string boundary to
+`CompilerDiagnostic`, preserving their source path and expression-derived span
+when one is available. The remaining semantic-location gaps include
+declaration-shape and registry-member failures without a concrete source span,
+plus internal/synthetic macro or generated rebuild errors that still cross string
+boundaries before a concrete origin is available.

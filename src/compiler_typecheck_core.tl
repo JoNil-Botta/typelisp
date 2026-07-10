@@ -41031,10 +41031,7 @@
             (tc-borrow-check-after-bind-typed ctx locals borrowed init init-ty)]
           [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])])))
 
-(define (tc-borrow-check-call-constructor?
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [func : AstExpr]) : bool
+(define (tc-borrow-check-call-constructor? [ctx : TcContext] [func : AstExpr]) : bool
   (match (tc-expr-var-name func)
     [(TcMaybeString.Some name) (tc-constructor-name? ctx name)]
     [(TcMaybeString.No) false]))
@@ -41197,7 +41194,7 @@
           [(AstExpr.Call func-box args)
             (let
               [func : AstExpr (ast-node-get func-box)]
-              (if (tc-borrow-check-call-constructor? ctx env func)
+              (if (tc-borrow-check-call-constructor? ctx func)
                 (tc-borrow-check-after-bind-typed
                   ctx
                   locals

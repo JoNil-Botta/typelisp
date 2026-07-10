@@ -71,8 +71,6 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-core-macros)]
     [(embedded-eq? suffix "env.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-env)]
-    [(embedded-eq? suffix "eq.tl")
-      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-eq)]
     [(embedded-eq? suffix "ffi.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)]
     [(embedded-eq? suffix "fs.tl")
@@ -134,6 +132,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector)]
     [(embedded-eq? suffix "vector_slice.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-vector-slice)]
+    [(embedded-eq? suffix "eq.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-eq)]
     [else (CompilerEmbeddedStdlibNoSource)]))
 
 (define (compiler-embedded-stdlib-lookup [suffix : String]) : CompilerEmbeddedStdlibSource

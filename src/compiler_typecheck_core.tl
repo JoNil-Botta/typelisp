@@ -7288,6 +7288,39 @@
           out
           "expr-struct-set"
           (tc-fn3 expr (AstType.String) expr expr)))
+      (set! out (tc-bind out "expr-mut-borrow" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-mut-borrow"
+          (tc-fn1 expr expr)))
+      (set! out (tc-bind out "expr-call" (tc-fn2 expr (AstType.ExprList) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-call"
+          (tc-fn2 expr (AstType.ExprList) expr)))
+      (set! out (tc-bind out "expr-list-empty" (tc-fn0 (AstType.ExprList))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-empty"
+          (tc-fn0 (AstType.ExprList))))
+      (set!
+        out
+        (tc-bind
+          out
+          "expr-list-cons"
+          (tc-fn2 expr (AstType.ExprList) (AstType.ExprList))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-cons"
+          (tc-fn2 expr (AstType.ExprList) (AstType.ExprList))))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set!
         out
@@ -9701,6 +9734,84 @@
             "typecheck: internal dotted field target mismatch")])]
     [(ResultTcExprId.Err message) (ResultTcExprId.Err message)]))
 
+;; Local dotted fields must become ordinary projection nodes before the
+;; move/borrow/lower passes see them.  Keeping `root.field` as a raw Var and
+;; teaching each later pass to rebuild it independently loses the rooted place
+;; identity those passes use for conflict tracking.  This mutates the parsed
+;; node exactly once, after the current lexical environment has decided that
+;; the leading segment is a local rather than a module alias.
+(define (tc-normalize-dotted-local-field-direct-node!
+  [env : TcTypeEnv]
+  [expr-id : i64]
+  [expr : AstExpr]) : ResultTcUnit
+  (match expr
+    [(AstExpr.Var name)
+      (if (< (intern-first-dot name) 0)
+        ResultTcUnit.Ok
+        (if (tc-dotted-local-field-name-id? env name)
+          (match (tc-dotted-local-field-expr-id env (intern-str name))
+            [(ResultTcExprId.Ok projection-id)
+              (begin
+                (ast-node-set! expr-id (ast-node-get projection-id))
+                ResultTcUnit.Ok)]
+            [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
+          ResultTcUnit.Ok))]
+    [(AstExpr.Set name value-box)
+      (if (< (intern-first-dot name) 0)
+        ResultTcUnit.Ok
+        (if (tc-dotted-local-field-name-id? env name)
+          (match (tc-dotted-local-field-set-expr-id
+            env
+            (intern-str name)
+            value-box)
+            [(ResultTcExprId.Ok projection-id)
+              (begin
+                (ast-node-set! expr-id (ast-node-get projection-id))
+                ResultTcUnit.Ok)]
+            [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
+          ResultTcUnit.Ok))]
+    [_ ResultTcUnit.Ok]))
+
+;; Most typecheck entrypoints visit every expression in a program, so their
+;; hot path only dispatches direct `Var` and `Set` nodes above.  Places and
+;; call arguments can be source-span wrappers around those nodes; keep the
+;; recursive walk for those focused paths only.
+(define (tc-normalize-dotted-local-field-node!
+  [env : TcTypeEnv]
+  [expr-id : i64]) : ResultTcUnit
+  (match (ast-node-get expr-id)
+    [(AstExpr.Spanned inner-box _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(AstExpr.Ann inner-box _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(AstExpr.Cast inner-box _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(AstExpr.Borrow _ _ place-box)
+      (tc-normalize-dotted-local-field-node! env place-box)]
+    [_
+      (tc-normalize-dotted-local-field-direct-node!
+        env
+        expr-id
+        (ast-node-get expr-id))]))
+
+(define (tc-normalize-dotted-local-field-expr-list!
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcUnit
+  (tc-normalize-dotted-local-field-expr-list-at! env (& exprs) 0))
+
+(define (tc-normalize-dotted-local-field-expr-list-at!
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-normalize-dotted-local-field-node!
+      env
+      (ast-expr-list-get exprs index 0))
+      [(ResultTcUnit.Ok)
+        (tc-normalize-dotted-local-field-expr-list-at! env exprs (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
 (define tc-imported-module-identity-cache-capacity : i64
   8192)
 (define tc-imported-module-identity-cache-module-keys : (Array i64)
@@ -9847,38 +9958,34 @@
   [target-id : i64]
   [module-id : i64]) : bool
   (let
-    [cursor : AstDeclList decls]
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
     [current-module : i64 module-id]
     [found : bool false]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest-box)
-            (let
-              [rest : AstDeclList rest-box]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! current-module next-module)
-                    (set! cursor rest))]
+      (while (and (not found) (< index count))
+        (begin
+          (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _)
+              (match (ast-decl-list-ref decls index)
+                [(AstDecl.Module next-module) (set! current-module next-module)]
+                [_ unit])]
+            [(AstDecl.Import _)
+              ;; Copy only module/import declarations whose scalar and String
+              ;; payloads are consumed. All other declarations stay borrowed.
+              (match (ast-decl-list-ref decls index)
                 [(AstDecl.Import (AstImportSpec.Spec _ _ expected _ _))
-                  (begin
-                    (if (= current-module current-module-id)
-                      (match expected
-                        [(AstMaybeModuleName.Some target)
-                          (if (= (intern target) target-id)
-                            (begin
-                              (set! found true)
-                              (set! done true))
-                            unit)]
-                        [(AstMaybeModuleName.No) unit])
-                      unit)
-                    (if done
-                      unit
-                      (set! cursor rest)))]
-                [_ (set! cursor rest)]))]))
+                  (if (= current-module current-module-id)
+                    (match expected
+                      [(AstMaybeModuleName.Some target)
+                        (if (= (intern target) target-id)
+                          (set! found true)
+                          unit)]
+                      [(AstMaybeModuleName.No) unit])
+                    unit)]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
       found)))
 
 (define (tc-imported-module-identity-id? [ctx : TcContext] [target-id : i64]) : bool
@@ -16680,87 +16787,38 @@
   [name-id : i64]) : ResultTcType
   (tc-lookup-id env (tc-module-name-id module name-id)))
 
-(define (tc-import-alias-ast-decl-list-reverse-into
-  [items : AstDeclList]
-  [out : AstDeclList]) : AstDeclList
-  (let
-    [cursor : AstDeclList items]
-    [result : AstDeclList out]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder decl result))
-              (set! cursor rest))]))
-      result)))
-
-(define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (tc-import-alias-ast-decl-list-reverse-into items (ast-decl-list-new)))
-
-(define (tc-import-alias-summary-index-reverse-slots!
-  [decls : (Array AstDeclList)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (array-set!
-            decls
-            index
-            (tc-import-alias-ast-decl-list-reverse (array-ref decls index)))
-          (set! index (+ index 1))))
-      unit)))
-
 (define (tc-import-alias-summary-index-build-current [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
   (let
     [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
     [decls : (Array AstDeclList) (array.make-array AstDeclList capacity)]
     [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity capacity)]
     [slot-count : i64 0]
-    [cur : AstDeclList all-decls]
+    [count : i64 (ast-decl-list-len (& all-decls))]
+    [index : i64 0]
     [cur-module-id : i64 (intern "")]
-    [ok : bool true]
     (begin
-      (while ok
-        (match (ast-decl-list-step cur)
-          [(AstDeclListStep.Nil) (set! ok false)]
-          [(AstDeclListStep.Cons decl rest)
-            (let
-              [next : AstDeclList rest]
-              (match decl
-                [(AstDecl.Module next-module)
-                  (begin
-                    (set! cur-module-id next-module)
-                    (set! cur next))]
-                [_
-                  (let
-                    [slot : i64 0]
-                    [existing : AstDeclList (ast-decl-list-new)]
+      (while (< index count)
+        (begin
+          (let
+            [decl : AstDecl (ast-decl-list-ref all-decls index)]
+            (match decl
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
+              [_
+                (match (tc_i64_i64_map.get (& modules) cur-module-id)
+                  [(tc_i64_i64_map.LookupFound slot)
+                    (ast-decl-list-push (&mut (array-ref decls slot)) decl)]
+                  [(tc_i64_i64_map.LookupMissing)
                     (begin
-                      (match (tc_i64_i64_map.get (& modules) cur-module-id)
-                        [(tc_i64_i64_map.LookupFound found-slot)
-                          (begin
-                            (set! slot found-slot)
-                            (set! existing (array-ref decls slot)))]
-                        [(tc_i64_i64_map.LookupMissing)
-                          (begin
-                            (set! slot slot-count)
-                            (tc_i64_i64_map.insert
-                              (&mut modules)
-                              cur-module-id
-                              slot)
-                            (array-set! decls slot (ast-decl-list-new))
-                            (set! slot-count (+ slot-count 1)))])
-                      (array-set!
-                        decls
-                        slot
-                        (ast-decl-list-prepend-builder decl existing))
-                      (set! cur next)))]))]))
-      (tc-import-alias-summary-index-reverse-slots! decls slot-count)
+                      (tc_i64_i64_map.insert
+                        (&mut modules)
+                        cur-module-id
+                        slot-count)
+                      (array-set! decls slot-count (ast-decl-list-new))
+                      (ast-decl-list-push
+                        (&mut (array-ref decls slot-count))
+                        decl)
+                      (set! slot-count (+ slot-count 1)))])]))
+          (set! index (+ index 1))))
       (TcImportAliasSummaryIndex modules decls slot-count))))
 
 (define (tc-import-alias-summary-index-build [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
@@ -18348,11 +18406,14 @@
         [(AstWithResource.WithResource bindings body)
           (tc-with-resource-expr-with-expected ctx env bindings body expected)])]
     [(AstExpr.Borrow mutable lifetime place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (if (and mutable allow-mut-by-value-borrow)
-          (tc-borrow-expr-with-policy ctx env mutable lifetime place true)
-          (tc-expr ctx env expr)))]
+      (match (tc-normalize-dotted-local-field-node! env place-box)
+        [(ResultTcUnit.Ok)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (if (and mutable allow-mut-by-value-borrow)
+              (tc-borrow-expr-with-policy ctx env mutable lifetime place true)
+              (tc-expr ctx env expr)))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -18439,7 +18500,10 @@
 ;; Id entrypoints keep the original AST node identity available to future
 ;; body-local type caches. The value-based forms above remain necessary for
 ;; synthetic expressions that were never pushed into the node pool.
-(define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
+(define (tc-expr-id-after-dotted-local-field-normalization
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr-id : i64]) : ResultTcType
   (let
     [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
     (begin
@@ -18447,6 +18511,32 @@
         [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
         [(ResultTcType.Err _) unit])
       result)))
+
+(define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
+  (let
+    [expr : AstExpr (ast-node-get expr-id)]
+    (match expr
+      [(AstExpr.Var name)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-id-after-dotted-local-field-normalization
+                ctx
+                env
+                expr-id)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [(AstExpr.Set name _)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-id-after-dotted-local-field-normalization
+                ctx
+                env
+                expr-id)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [_ (tc-expr-id-after-dotted-local-field-normalization ctx env expr-id)])))
 
 (define (tc-body-type-fact-lookup-profiled [_site : String] [expr-id : i64]) : TcBodyTypeFact
   (match (tc-body-type-fact-lookup expr-id)
@@ -18542,12 +18632,50 @@
   [expr-id : i64]
   [expected : AstType]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (tc-expr-with-expected-or-actual-core
-    ctx
-    env
-    (ast-node-get expr-id)
-    expected
-    allow-mut-by-value-borrow))
+  (let
+    [expr : AstExpr (ast-node-get expr-id)]
+    (match expr
+      [(AstExpr.Var name)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-with-expected-or-actual-core
+            ctx
+            env
+            expr
+            expected
+            allow-mut-by-value-borrow)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-with-expected-or-actual-core
+                ctx
+                env
+                (ast-node-get expr-id)
+                expected
+                allow-mut-by-value-borrow)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [(AstExpr.Set name _)
+        (if (< (intern-first-dot name) 0)
+          (tc-expr-with-expected-or-actual-core
+            ctx
+            env
+            expr
+            expected
+            allow-mut-by-value-borrow)
+          (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
+            [(ResultTcUnit.Ok)
+              (tc-expr-with-expected-or-actual-core
+                ctx
+                env
+                (ast-node-get expr-id)
+                expected
+                allow-mut-by-value-borrow)]
+            [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+      [_
+        (tc-expr-with-expected-or-actual-core
+          ctx
+          env
+          expr
+          expected
+          allow-mut-by-value-borrow)])))
 
 (define (tc-expr-with-expected-or-actual-id
   [ctx : TcContext]
@@ -21222,16 +21350,19 @@
   [constructor-target : AstMaybeType]
   [arity-msg : TcArityMessage]
   [c-abi-args : bool]) : ResultTcUnit
-  (tc-check-call-args-with-message-at
-    ctx
-    env
-    (& args)
-    (& params)
-    0
-    allow-region-args
-    constructor-target
-    arity-msg
-    c-abi-args))
+  (match (tc-normalize-dotted-local-field-expr-list! env args)
+    [(ResultTcUnit.Ok)
+      (tc-check-call-args-with-message-at
+        ctx
+        env
+        (& args)
+        (& params)
+        0
+        allow-region-args
+        constructor-target
+        arity-msg
+        c-abi-args)]
+    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-check-call-args-with-message-at
   [ctx : TcContext]
@@ -21355,7 +21486,9 @@
   [env : TcTypeEnv]
   [args : AstExprList]
   [params : AstTypeList]) : ResultTcUnit
-  (tc-check-args-at ctx env (& args) (& params) 0))
+  (match (tc-normalize-dotted-local-field-expr-list! env args)
+    [(ResultTcUnit.Ok) (tc-check-args-at ctx env (& args) (& params) 0)]
+    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-check-args-at
   [ctx : TcContext]
@@ -30001,109 +30134,112 @@
       with-key
       (tc-ctfe-layout-add-alias with-key info name))))
 
+(define (tc-ctfe-layouts-add-struct
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [name : i64]) : CtfeLayoutInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String (compiler-symbol-module-key module name-str)]
+    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
+    (tc-ctfe-layout-add-names layouts info name-str module)))
+
+(define (tc-ctfe-layouts-add-enum
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [name : i64]) : CtfeLayoutInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String (compiler-symbol-module-key module name-str)]
+    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
+    (tc-ctfe-layout-add-names layouts info name-str module)))
+
+(define (tc-ctfe-layouts-add-template
+  [ctx : TcContext]
+  [layouts : CtfeLayoutInfoList]
+  [module : String]
+  [template : AstDecl]) : CtfeLayoutInfoList
+  (match template
+    [(AstDecl.DefStruct name _ _ _)
+      (tc-ctfe-layouts-add-struct ctx layouts module name)]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
+      (tc-ctfe-layouts-add-struct ctx layouts module name)]
+    [(AstDecl.DefEnum name _ _)
+      (tc-ctfe-layouts-add-enum ctx layouts module name)]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
+      (tc-ctfe-layouts-add-enum ctx layouts module name)]
+    [_ layouts]))
+
 (define (tc-ctfe-layouts-from-decls
   [ctx : TcContext]
   [decls : AstDeclList]
   [module : String]
   [layouts : CtfeLayoutInfoList]) : CtfeLayoutInfoList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) layouts]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-ctfe-layouts-from-decls
-              ctx
-              rest
-              (intern-str next-module)
-              layouts)]
-          [(AstDecl.DefStruct name _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefStructLifetimes name _ _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefEnum name _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.DefEnumLifetimes name _ _ _)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String (compiler-symbol-module-key module name-str)]
-              [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-              (tc-ctfe-layouts-from-decls
-                ctx
-                rest
-                module
-                (tc-ctfe-layout-add-names layouts info name-str module)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct name _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefStructLifetimes name _ _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-struct-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefEnum name _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [(AstDecl.DefEnumLifetimes name _ _ _)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String (compiler-symbol-module-key module name-str)]
-                    [info : CtfeLayoutInfo (tc-ctfe-type-layout-info ctx key)]
-                    (tc-ctfe-layouts-from-decls
-                      ctx
-                      rest
-                      module
-                      (tc-ctfe-layout-add-names layouts info name-str module)))]
-                [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]
-          [_ (tc-ctfe-layouts-from-decls ctx rest module layouts)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [current-module : String module]
+    [current-layouts : CtfeLayoutInfoList layouts]
+    (begin
+      (while (< index count)
+        (begin
+          (if (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _) true]
+            [(AstDecl.DefStruct _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+            [(AstDecl.DefEnum _ _ _) true]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+            [(AstDecl.ComptimeDecl _ _) true]
+            [_ false])
+            (match (ast-decl-list-ref decls index)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefStruct name _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-struct
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefStructLifetimes name _ _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-struct
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefEnum name _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-enum
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.DefEnumLifetimes name _ _ _)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-enum
+                    ctx
+                    current-layouts
+                    current-module
+                    name))]
+              [(AstDecl.ComptimeDecl _ template-box)
+                (set!
+                  current-layouts
+                  (tc-ctfe-layouts-add-template
+                    ctx
+                    current-layouts
+                    current-module
+                    (box-get template-box)))]
+              [_ unit])
+            unit)
+          (set! index (+ index 1))))
+      current-layouts)))
 
 (define (tc-ctfe-layouts [ctx : TcContext]) : CtfeLayoutInfoList
   (match ctx
@@ -34929,9 +35065,10 @@
                   "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Borrow mutable lifetime place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-borrow-expr ctx env mutable lifetime place))]
+      (match (tc-normalize-dotted-local-field-node! env place-box)
+        [(ResultTcUnit.Ok)
+          (tc-borrow-expr ctx env mutable lifetime (ast-node-get place-box))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Unary op inner-box)
       (match (tc-expr-id ctx env inner-box)
         [(ResultTcType.Ok ty) (tc-unop-type op ty)]
@@ -45104,17 +45241,18 @@
 
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
-    [cursor : AstDeclList items]
+    [count : i64 (ast-decl-list-len (& items))]
+    [index : i64 0]
     [result : AstDeclList out]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons head rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder head result))
-              (set! cursor rest))]))
+      (while (< index count)
+        (begin
+          (set!
+            result
+            (ast-decl-list-prepend-builder
+              (ast-decl-list-ref items index)
+              result))
+          (set! index (+ index 1))))
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
@@ -47957,9 +48095,7 @@
     [cur-module : String ""]
     [out : TcStringList acc]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)
@@ -48409,9 +48545,7 @@
     [cur-module-id : i64 (intern module)]
     [out : TcStringList acc]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)

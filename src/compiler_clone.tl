@@ -1054,9 +1054,7 @@
     [out : AstDeclList acc]
     [current-module : String module]
     (begin
-      (while (match (ast-decl-list-step cur)
-        [(AstDeclListStep.Nil) false]
-        [_ true])
+      (while (not (ast-decl-list-empty? (& cur)))
         (match (ast-decl-list-step cur)
           [(AstDeclListStep.Nil) unit]
           [(AstDeclListStep.Cons decl rest)

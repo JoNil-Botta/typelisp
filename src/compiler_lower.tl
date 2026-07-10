@@ -2821,57 +2821,59 @@
   [names : LowerNameEnv]
   [target-module : String]
   [alias : String]
-  [module : String]
+  [_module : String]
   [path-aware : bool]) : LowerNameEnv
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [index : i64 0]
     [cur-names : LowerNameEnv names]
     [target-module-id : i64 (intern target-module)]
-    [cur-module-id : i64 (intern module)]
-    (begin
-      (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
-          [decl-path : String
-            (ast-decl-path-list-get (& paths) index entry-path)]
-          (begin
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [(AstDecl.Import _) unit]
-              [(AstDecl.IncludeStr _ _) unit]
-              [(AstDecl.IncludeBin _ _) unit]
-              [(AstDecl.Test _ _ _) unit]
-              [_
-                (if (= cur-module-id target-module-id)
-                  (set!
-                    cur-names
-                    (lower-name-env-add-decl-alias-in-module
+    [_ensure : unit (lower-module-decl-index-ensure! decls)]
+    [slot : i64 (lower-module-decl-index-slot target-module-id)]
+    (if (< slot 0)
+      cur-names
+      (let
+        [index : i64 (array-ref lower-module-decl-index-starts slot)]
+        [end : i64 (array-ref lower-module-decl-index-ends slot)]
+        [decl-offset : i64 (struct-get decls offset)]
+        [decl-slots : (Array AstDecl) (struct-get decls slots)]
+        (begin
+          (while (< index end)
+            (let
+              [position : i64
+                (array-ref lower-module-decl-index-positions index)]
+              [decl : AstDecl (array-ref decl-slots (+ decl-offset position))]
+              [decl-path : String
+                (ast-decl-path-list-get (& paths) position entry-path)]
+              (begin
+                (match decl
+                  [(AstDecl.Module _) unit]
+                  [(AstDecl.Import _) unit]
+                  [(AstDecl.IncludeStr _ _) unit]
+                  [(AstDecl.IncludeBin _ _) unit]
+                  [(AstDecl.Test _ _ _) unit]
+                  [_
+                    (set!
                       cur-names
-                      entry-path
-                      decl-path
-                      alias
-                      (intern-str cur-module-id)
-                      decl
-                      path-aware))
-                  unit)])
-            (set! index (+ index 1)))))
-      cur-names)))
+                      (lower-name-env-add-decl-alias-in-module
+                        cur-names
+                        entry-path
+                        decl-path
+                        alias
+                        target-module
+                        decl
+                        path-aware))])
+                (set! index (+ index 1)))))
+          cur-names)))))
 
 ;; --- per-program module -> decl-position index ------------------
-;; lower-name-env-add-module-aliases-cache, lower-name-env-from-import-aliases-
-;; in-module-cache, and lower-module-local-envs-list all filter the whole-program
-;; decl list down to one module's declarations by scanning every declaration and
-;; tracking `(module NAME)` markers. lower-module-local-envs runs per module
-;; marker and every import alias fanout rescans the list again, so a
-;; self-compile pays O(module markers x imports x program) AstDecl array-ref
-;; copies. This CSR-shaped index maps each module id to the program-order
-;; positions of its declarations (module markers excluded) so those walks touch
-;; only the target module's rows. Built lazily per program over the checked
-;; decl list, which is immutable for the whole lower run;
+;; Import-alias fanout, its cache-backed module-local variant, and
+;; lower-module-local-envs-list all need to filter the whole-program decl list
+;; down to one module. Scanning every declaration and tracking `(module NAME)`
+;; markers for each target made a self-compile pay O(imports x program) work in
+;; the initial name-env build, plus repeated module-local scans later. This
+;; CSR-shaped index maps each module id to the program-order positions of its
+;; declarations (module markers excluded) so all of those consumers touch only
+;; the target module's rows. Built lazily per program over the checked decl list,
+;; which is immutable for the whole lower run;
 ;; lower-reset-file-state! drops it between programs and the (len, offset)
 ;; stamp re-checks the list shape on every ensure.
 (define lower-module-decl-index-ready : bool
@@ -5369,7 +5371,7 @@
           (if (and
             (cbi.compiler-builtin-lower-clone-id? lookup-id)
             (not bound)
-            (not (lower-top-level-value-defined? ctx lookup-name)))
+            (not (lower-top-level-value-defined-id? ctx lookup-id)))
             (if (= (struct-get (& args) len) 1)
               (match (tc-expr
                 ctx
@@ -11633,7 +11635,7 @@
         [(AstExpr.Var name)
           (if (and
             (lower-string-concat-builtin-name? (intern-str name))
-            (lower-builtin-call-available? ctx env (intern-str name)))
+            (lower-builtin-call-available-id? ctx env name))
             (if (= (struct-get (& args) len) 2)
               (let
                 [left : AstExpr
@@ -16781,30 +16783,39 @@
                     "typecheck: try operand must be Result-like enum")))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
+(define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
     [(TcContext _ symbols _ module _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
-          (not (tc-name-qualified? name)))
-          (compiler-symbols-lookup-value-in-module-or
+          (not (tc-name-qualified-id? name-id)))
+          (compiler-symbols-lookup-value-in-module-id-or
             symbols
-            module
-            name
+            (intern module)
+            name-id
             (compiler-symbols-missing-handle))
-          (compiler-symbols-lookup-value-or
+          (compiler-symbols-lookup-value-id-or
             symbols
-            name
+            name-id
             (compiler-symbols-missing-handle))))]))
+
+(define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
+  (lower-top-level-value-defined-id? ctx (intern name)))
+
+(define (lower-builtin-call-available-id?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [name-id : i64]) : bool
+  (and
+    (not (sym_i64_env.sym-i64-contains-id env name-id))
+    (not (lower-top-level-value-defined-id? ctx name-id))))
 
 (define (lower-builtin-call-available?
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
-  (and
-    (not (sym_i64_env.sym-i64-contains env name))
-    (not (lower-top-level-value-defined? ctx name))))
+  (lower-builtin-call-available-id? ctx env (intern name)))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (let
@@ -19198,7 +19209,7 @@
                 (ResultTcType.Err
                   "lower: call result type is not fast-pathable")])]
           [(ResultTcType.Err message)
-            (if (lower-builtin-call-available? ctx env name-text)
+            (if (lower-builtin-call-available-id? ctx env name)
               (cond
                 [(cbi.compiler-builtin-lower-array-length-id? name)
                   (ResultTcType.Ok (AstType.I64))]
@@ -25875,7 +25886,7 @@
                           raw-name)]
                       [name-id : i64 (intern name)]
                       [builtin-available : bool
-                        (not (lower-top-level-value-defined? ctx name))]
+                        (not (lower-top-level-value-defined-id? ctx name-id))]
                       [atomic-symbol : String
                         (lower-atomic-extern-symbol-for-name ctx name)]
                       (cond

@@ -25,7 +25,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 94))
+  (array.make-array i64 98))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -133,6 +133,10 @@
       (ctfe-builtin-set! 91 "expr-string?")
       (ctfe-builtin-set! 92 "expr-string-value")
       (ctfe-builtin-set! 93 "string-slice")
+      (ctfe-builtin-set! 94 "expr-mut-borrow")
+      (ctfe-builtin-set! 95 "expr-call")
+      (ctfe-builtin-set! 96 "expr-list-empty")
+      (ctfe-builtin-set! 97 "expr-list-cons")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -1082,183 +1086,157 @@
       with-key
       (ctfe-reflect-info-add-alias with-key info name))))
 
+(define (ctfe-reflections-add-struct
+  [infos : CtfeReflectInfoList]
+  [module : String]
+  [name : i64]
+  [fields : AstFieldDefList]) : CtfeReflectInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String
+      (if (= (string.string-length module) 0)
+        name-str
+        (string.append module (string.append "/" name-str)))]
+    [info : CtfeReflectInfo
+      (CtfeReflectInfo.Struct
+        key
+        module
+        name-str
+        (ctfe-reflect-field-list-from-fields fields))]
+    (ctfe-reflect-info-add-names infos info name-str module)))
+
+(define (ctfe-reflections-add-enum
+  [infos : CtfeReflectInfoList]
+  [module : String]
+  [name : i64]
+  [variants : AstVariantDefList]) : CtfeReflectInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String
+      (if (= (string.string-length module) 0)
+        name-str
+        (string.append module (string.append "/" name-str)))]
+    [info : CtfeReflectInfo
+      (CtfeReflectInfo.Enum
+        key
+        module
+        name-str
+        (ctfe-reflect-variant-list-from-variants variants))]
+    (ctfe-reflect-info-add-names infos info name-str module)))
+
+(define (ctfe-reflections-add-template
+  [infos : CtfeReflectInfoList]
+  [module : String]
+  [template : AstDecl]) : CtfeReflectInfoList
+  (match template
+    [(AstDecl.DefStruct name _ _ fields)
+      (ctfe-reflections-add-struct infos module name fields)]
+    [(AstDecl.DefStructLifetimes name _ _ _ fields)
+      (ctfe-reflections-add-struct infos module name fields)]
+    [(AstDecl.DefEnum name _ variants)
+      (ctfe-reflections-add-enum infos module name variants)]
+    [(AstDecl.DefEnumLifetimes name _ _ variants)
+      (ctfe-reflections-add-enum infos module name variants)]
+    [_ infos]))
+
 (define (ctfe-reflections-from-decls
   [decls : AstDeclList]
   [module : String]
   [infos : CtfeReflectInfoList]) : CtfeReflectInfoList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) infos]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (ctfe-reflections-from-decls rest (intern-str next-module) infos)]
-          [(AstDecl.DefStruct name _ _ fields)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Struct
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-field-list-from-fields fields))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.DefStructLifetimes name _ _ _ fields)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Struct
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-field-list-from-fields fields))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.DefEnum name _ variants)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Enum
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-variant-list-from-variants variants))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.DefEnumLifetimes name _ _ variants)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Enum
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-variant-list-from-variants variants))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct name _ _ fields)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Struct
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-field-list-from-fields fields))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDecl.DefStructLifetimes name _ _ _ fields)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Struct
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-field-list-from-fields fields))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDecl.DefEnum name _ variants)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Enum
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-variant-list-from-variants variants))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDecl.DefEnumLifetimes name _ _ variants)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Enum
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-variant-list-from-variants variants))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [_ (ctfe-reflections-from-decls rest module infos)]))]
-          [_ (ctfe-reflections-from-decls rest module infos)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [current-module : String module]
+    [current-infos : CtfeReflectInfoList infos]
+    (begin
+      (while (< index count)
+        (begin
+          (if (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.Module _) true]
+            [(AstDecl.DefStruct _ _ _ _) true]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+            [(AstDecl.DefEnum _ _ _) true]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+            [(AstDecl.ComptimeDecl _ _) true]
+            [_ false])
+            (match (ast-decl-list-ref decls index)
+              [(AstDecl.Module next-module)
+                (set! current-module (intern-str next-module))]
+              [(AstDecl.DefStruct name _ _ fields)
+                (set!
+                  current-infos
+                  (ctfe-reflections-add-struct
+                    current-infos
+                    current-module
+                    name
+                    fields))]
+              [(AstDecl.DefStructLifetimes name _ _ _ fields)
+                (set!
+                  current-infos
+                  (ctfe-reflections-add-struct
+                    current-infos
+                    current-module
+                    name
+                    fields))]
+              [(AstDecl.DefEnum name _ variants)
+                (set!
+                  current-infos
+                  (ctfe-reflections-add-enum
+                    current-infos
+                    current-module
+                    name
+                    variants))]
+              [(AstDecl.DefEnumLifetimes name _ _ variants)
+                (set!
+                  current-infos
+                  (ctfe-reflections-add-enum
+                    current-infos
+                    current-module
+                    name
+                    variants))]
+              [(AstDecl.ComptimeDecl _ template-box)
+                (set!
+                  current-infos
+                  (ctfe-reflections-add-template
+                    current-infos
+                    current-module
+                    (box-get template-box)))]
+              [_ unit])
+            unit)
+          (set! index (+ index 1))))
+      current-infos)))
 
 (define (ctfe-metadata-decl-capacity [decls : AstDeclList]) : i64
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) 1]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        [rest-capacity : i64 (ctfe-metadata-decl-capacity rest)]
-        (match decl
-          [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.DefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.DefEnum _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.DefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct _ _ _ _) (+ rest-capacity 2)]
-                [(AstDecl.DefStructLifetimes _ _ _ _ _) (+ rest-capacity 2)]
-                [(AstDecl.DefEnum _ _ _) (+ rest-capacity 2)]
-                [(AstDecl.DefEnumLifetimes _ _ _ _) (+ rest-capacity 2)]
-                [_ rest-capacity]))]
-          [_ rest-capacity]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [capacity : i64 1]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ast-decl-list-ref-borrowed (& decls) index)
+            [(AstDecl.DefStruct _ _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.DefStructLifetimes _ _ _ _ _)
+              (set! capacity (+ capacity 2))]
+            [(AstDecl.DefEnum _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.DefEnumLifetimes _ _ _ _) (set! capacity (+ capacity 2))]
+            [(AstDecl.ComptimeDecl _ _)
+              ;; Borrow the common declaration cases. Copy only the uncommon
+              ;; boxed template whose payload must be dereferenced.
+              (match (ast-decl-list-ref decls index)
+                [(AstDecl.ComptimeDecl _ template-box)
+                  (match (box-get template-box)
+                    [(AstDecl.DefStruct _ _ _ _) (set! capacity (+ capacity 2))]
+                    [(AstDecl.DefStructLifetimes _ _ _ _ _)
+                      (set! capacity (+ capacity 2))]
+                    [(AstDecl.DefEnum _ _ _) (set! capacity (+ capacity 2))]
+                    [(AstDecl.DefEnumLifetimes _ _ _ _)
+                      (set! capacity (+ capacity 2))]
+                    [_ unit])]
+                [_ unit])]
+            [_ unit])
+          (set! index (+ index 1))))
+      capacity)))
 
 (define (ctfe-reflections-from-program [program : AstProgram]) : CtfeReflectInfoList
   (match program
@@ -4360,6 +4338,10 @@
       [(= lookup-id (ctfe-builtin-ref 31)) "expr-struct-get"]
       [(= lookup-id (ctfe-builtin-ref 32)) "expr-tuple-ref"]
       [(= lookup-id (ctfe-builtin-ref 33)) "expr-struct-set"]
+      [(= lookup-id (ctfe-builtin-ref 94)) "expr-mut-borrow"]
+      [(= lookup-id (ctfe-builtin-ref 95)) "expr-call"]
+      [(= lookup-id (ctfe-builtin-ref 96)) "expr-list-empty"]
+      [(= lookup-id (ctfe-builtin-ref 97)) "expr-list-cons"]
       [(= lookup-id (ctfe-builtin-ref 34)) "expr-splice"]
       [(= lookup-id (ctfe-builtin-ref 35)) "expr-if"]
       [(= lookup-id (ctfe-builtin-ref 36)) "pattern-wildcard"]
@@ -4848,6 +4830,129 @@
         (ctfe-diagnostic-at-expr
           expr
           "expr-struct-set expects exactly three args")))))
+
+;; `(expr-mut-borrow place)` builds an explicit inferred-lifetime `(&mut place)`
+;; syntax node. The generated program owns the ordinary place and borrow checks.
+(define (ctfe-eval-expr-mut-borrow-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 1)
+    (let
+      [place-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      (match (compiler-ctfe-eval place-arg env fuel)
+        [(ResultCtfe.Ok place-value place-fuel)
+          (match place-value
+            [(CompilerCtfeValue.Expr place-node _)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Expr
+                  (ast-expr-borrow-with-pools
+                    (ctfe-env-pools env)
+                    true
+                    AstBorrowLifetime.Inferred
+                    place-node)
+                  (ctfe-untyped-expr-type))
+                place-fuel)]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr expr "expr-mut-borrow expects Expr")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr expr "expr-mut-borrow expects exactly one arg")))))
+
+;; Build the ordered, persistent syntax-list values used by expression calls.
+(define (ctfe-eval-expr-list-empty-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 0)
+    (ResultCtfe.Ok (CompilerCtfeValue.ExprList (ast-expr-list-new)) fuel)
+    (ResultCtfe.Err
+      (box (ctfe-diagnostic-at-expr expr "expr-list-empty expects no args")))))
+
+(define (ctfe-eval-expr-list-cons-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [head-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [tail-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval head-arg env fuel)
+        [(ResultCtfe.Ok head-value head-fuel)
+          (match head-value
+            [(CompilerCtfeValue.Expr head-node _)
+              (match (compiler-ctfe-eval tail-arg env head-fuel)
+                [(ResultCtfe.Ok tail-value tail-fuel)
+                  (match tail-value
+                    [(CompilerCtfeValue.ExprList tail)
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.ExprList
+                          (ast-expr-cons head-node tail))
+                        tail-fuel)]
+                    [_
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-list-cons tail expects ExprList")))])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-list-cons head expects Expr")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr expr "expr-list-cons expects exactly two args")))))
+
+;; `(expr-call callee args)` preserves the supplied argument order and builds
+;; ordinary call syntax. Typechecking of that call happens after macro expansion.
+(define (ctfe-eval-expr-call-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 2)
+    (let
+      [callee-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [args-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval callee-arg env fuel)
+        [(ResultCtfe.Ok callee-value callee-fuel)
+          (match callee-value
+            [(CompilerCtfeValue.Expr callee-node _)
+              (match (compiler-ctfe-eval args-arg env callee-fuel)
+                [(ResultCtfe.Ok args-value args-fuel)
+                  (match args-value
+                    [(CompilerCtfeValue.ExprList call-args)
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.Expr
+                          (ast-expr-call-with-pools
+                            (ctfe-env-pools env)
+                            callee-node
+                            call-args)
+                          (ctfe-untyped-expr-type))
+                        args-fuel)]
+                    [_
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-call args expects ExprList")))])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr expr "expr-call callee expects Expr")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box (ctfe-diagnostic-at-expr expr "expr-call expects exactly two args")))))
 
 (define (ctfe-eval-expr-type-call
   [args : AstExprList]
@@ -5891,6 +5996,14 @@
             (ctfe-eval-expr-tuple-ref-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 33))
             (ctfe-eval-expr-struct-set-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 94))
+            (ctfe-eval-expr-mut-borrow-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 95))
+            (ctfe-eval-expr-call-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 96))
+            (ctfe-eval-expr-list-empty-call args expr fuel)]
+          [(= call-id (ctfe-builtin-ref 97))
+            (ctfe-eval-expr-list-cons-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 34))
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 35))
@@ -12179,6 +12292,33 @@
         point-expr
         field-name-lit
         true-expr)]
+    [helper-name-lit : i64
+      (ctfe-ast-push
+        env
+        (AstExpr.Literal (AstLiteral.String "counter.push-ref")))]
+    [helper-expr : i64
+      (compiler-ctfe-call1-in-env env "expr-var" helper-name-lit)]
+    [mut-borrow-expr : i64
+      (compiler-ctfe-call1-in-env env "expr-mut-borrow" point-expr)]
+    [empty-call-args : i64
+      (ast-expr-call-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (AstExpr.Var (intern "expr-list-empty")))
+        (ast-expr-list-new))]
+    [value-tail : i64
+      (compiler-ctfe-call2-in-env
+        env
+        "expr-list-cons"
+        true-expr
+        empty-call-args)]
+    [call-args : i64
+      (compiler-ctfe-call2-in-env
+        env
+        "expr-list-cons"
+        mut-borrow-expr
+        value-tail)]
+    [built-call : i64
+      (compiler-ctfe-call2-in-env env "expr-call" helper-expr call-args)]
     [expected-field : i64
       (ast-expr-struct-get-with-pools
         (ctfe-env-pools env)
@@ -12195,6 +12335,19 @@
         (ctfe-ast-push env (AstExpr.Var (intern "point")))
         "x"
         true-lit)]
+    [expected-mut-borrow : i64
+      (ast-expr-borrow-with-pools
+        (ctfe-env-pools env)
+        true
+        AstBorrowLifetime.Inferred
+        (ctfe-ast-push env (AstExpr.Var (intern "point"))))]
+    [expected-call : i64
+      (ast-expr-call-with-pools
+        (ctfe-env-pools env)
+        (ctfe-ast-push env (AstExpr.Var (intern "counter.push-ref")))
+        (ast-expr-cons
+          expected-mut-borrow
+          (ast-expr-cons true-lit (ast-expr-list-new))))]
     (and
       (match (compiler-ctfe-eval
         (ctfe-ast-get env if-expr)
@@ -12254,6 +12407,30 @@
               (and
                 (ctfe-type-eq checked-ty (AstType.Unit))
                 (ctfe-test-expr-eq-in-env env node expected-field-set))]
+            [_ false])]
+        [(ResultCtfe.Err _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env mut-borrow-expr)
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.Expr node checked-ty)
+              (and
+                (ctfe-untyped-expr-type? checked-ty)
+                (ctfe-test-expr-eq-in-env env node expected-mut-borrow))]
+            [_ false])]
+        [(ResultCtfe.Err _) false])
+      (match (compiler-ctfe-eval
+        (ctfe-ast-get env built-call)
+        env
+        (ctfe-fuel-limit))
+        [(ResultCtfe.Ok value _)
+          (match value
+            [(CompilerCtfeValue.Expr node checked-ty)
+              (and
+                (ctfe-untyped-expr-type? checked-ty)
+                (ctfe-test-expr-eq-in-env env node expected-call))]
             [_ false])]
         [(ResultCtfe.Err _) false]))))
 

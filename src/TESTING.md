@@ -273,6 +273,29 @@ integer `hit-rate-per-mille` from the compiler's `--prefix-cache-stats` report.
 The repeated compile-batch and doctest workloads also fail when they do not
 produce the expected cache hits.
 
+`scripts/measure-lsp-check-latency.sh` is the local interactive LSP latency
+harness for repeated `tl/check` requests. It starts one `typelisp lsp` process,
+opens generated roughly 500-line and 6000-line documents with a shared stdlib
+import, checks invalid syntax, repeats the unchanged check, replaces the text
+with valid source, and checks again:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp scripts/measure-lsp-check-latency.sh
+```
+
+The harness needs Python 3 from the host only to drive framed stdio JSON-RPC;
+it uses no third-party modules. It writes generated sources and captured LSP
+stderr under `target/lsp-check-latency/` by default. Each line reports the
+request/response elapsed time for `invalid_check`, `unchanged_check`, and
+`edited_check`. The unchanged request demonstrates the per-document result
+cache; the final stderr-derived `typecheck-prefix-cache|lsp|...` line reports
+the compiler's existing shared-import prefix-cache evidence. The printed
+targets are informational local comparison points: under 500 ms for the
+roughly 500-line edited check, and under 3 s for the roughly 6000-line edited
+check. They deliberately do not fail on wall-clock noise. Use
+`TYPELISP_LSP_CHECK_SMALL_LINES`, `TYPELISP_LSP_CHECK_LARGE_LINES`, or
+`TYPELISP_LSP_CHECK_WORKDIR` to adjust a local run.
+
 `scripts/measure-unused-import-cost.sh` is the paired #3803 diagnostic harness
 for the unused legacy-string import experiment. It copies `src/*.tl` into two
 same-length scratch source trees under `target/`, injects only the

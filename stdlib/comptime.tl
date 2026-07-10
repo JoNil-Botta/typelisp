@@ -172,6 +172,23 @@
 (define (expr-struct-set [target : Expr] [field : String] [value : Expr]) : Expr
   (expr-struct-set target field value))
 
+;: Build an explicit inferred-lifetime mutable borrow expression during macro CTFE.
+;: The expanded program validates that `place` is a mutable borrowable place.
+(define (expr-mut-borrow [place : Expr]) : Expr
+  (expr-mut-borrow place))
+
+;: Build an ordered empty expression argument list during macro CTFE.
+(define (expr-list-empty) : ExprList
+  (expr-list-empty))
+
+;: Prepend `head` to an ordered expression argument list during macro CTFE.
+(define (expr-list-cons [head : Expr] [tail : ExprList]) : ExprList
+  (expr-list-cons head tail))
+
+;: Build an ordinary call expression from a callee expression and ordered arguments.
+(define (expr-call [callee : Expr] [args : ExprList]) : Expr
+  (expr-call callee args))
+
 ;: Concatenate two strings during macro CTFE.
 (define (string-concat [left : String] [_right : String]) : String
   left)

@@ -173,7 +173,7 @@
   (expr-struct-set target field value))
 
 ;: Build an explicit inferred-lifetime mutable borrow expression during macro CTFE.
-;; The expanded program validates that `place` is a mutable borrowable place.
+;: The expanded program validates that `place` is a mutable borrowable place.
 (define (expr-mut-borrow [place : Expr]) : Expr
   (expr-mut-borrow place))
 

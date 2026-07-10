@@ -70,6 +70,7 @@ target_asm_loop_divmod_parity|tests/integration/target_asm_loop_divmod_parity.tl
 csr_push_prologue|tests/integration/csr_push_prologue.tl|42|-|-|stdlib/io.tl
 group_copy_direct|tests/integration/group_copy_direct.tl|42|-|-|stdlib/io.tl
 group_pair_home|tests/integration/group_pair_home.tl|42|-|-|stdlib/io.tl
+group_pair_phi_home|tests/integration/group_pair_phi_home.tl|42|-|-|stdlib/io.tl
 param_shift_pin|tests/integration/param_shift_pin.tl|42|-|-|stdlib/io.tl
 handle_param_pin|tests/integration/handle_param_pin.tl|42|-|-|stdlib/io.tl
 param_pin_interval|tests/integration/param_pin_interval.tl|42|-|-|stdlib/io.tl

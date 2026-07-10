@@ -659,6 +659,11 @@
                   [(LookupMissing) false]))
               (define (insert [map : (&mut map Map)] [key : i64] [value : i64]) : unit
                 (base.i64-i64-map-put! (inner-mut map) key value))
+              (define (insert-if-absent?
+                [map : (&mut map Map)]
+                [key : i64]
+                [value : i64]) : bool
+                (base.i64-i64-map-insert-if-absent! (inner-mut map) key value))
               (define (insert-or-update
                 [map : (&mut map Map)]
                 [key : i64]
@@ -5237,6 +5242,83 @@
                   (set! (struct-get map len) (+ (struct-get map len) 1))
                   (set! (struct-get map deleted) (- (struct-get map deleted) 1)))
                 unit))))))))
+
+;: Insert through a mutable i64 -> i64 map reference only when the key is absent.
+(define (i64-i64-map-insert-if-absent!
+  [map : (&mut map I64I64Map)]
+  [key : i64]
+  [value : i64]) : bool
+  (let
+    [capacity-before : i64 (array-length (struct-get map slots))]
+    [used-before : i64 (+ (struct-get map len) (struct-get map deleted))]
+    (begin
+      (if (if (<= capacity-before 0)
+        true
+        (>= (* used-before 4) (* capacity-before 3)))
+        (i64-i64-map-resize! map (i64-i64-map-grow-capacity capacity-before))
+        unit)
+      (let
+        [slots : (&mut map (Array I64I64MapSlot)) (&mut (struct-get map slots))]
+        [capacity : i64 (array-length slots)]
+        [hash : i64 (i64-i64-map-hash-key key)]
+        [cursor : i64 (i64-i64-map-normalized-bucket-index hash capacity)]
+        [walked : i64 0]
+        [first-tombstone : i64 -1]
+        (begin
+          (while (< walked capacity)
+            (match (array-ref slots cursor)
+              [(I64I64MapEmpty)
+                (let
+                  [index : i64
+                    (if (>= first-tombstone 0)
+                      first-tombstone
+                      cursor)]
+                  (begin
+                    (array-set! slots index (I64I64MapOccupied key value hash))
+                    (set! (struct-get map len) (+ (struct-get map len) 1))
+                    (if (>= first-tombstone 0)
+                      (set!
+                        (struct-get map deleted)
+                        (- (struct-get map deleted) 1))
+                      unit)
+                    (return true)))]
+              [(I64I64MapTombstone)
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (if (< first-tombstone 0)
+                      (set! first-tombstone cursor)
+                      unit)
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1))))]
+              [(I64I64MapOccupied slot-key _ slot-hash)
+                (if (if (= slot-hash hash)
+                  (= slot-key key)
+                  false)
+                  (return false)
+                  (let
+                    [next : i64 (+ cursor 1)]
+                    (begin
+                      (set!
+                        cursor
+                        (if (>= next capacity)
+                          0
+                          next))
+                      (set! walked (+ walked 1)))))]))
+          (if (>= first-tombstone 0)
+            (begin
+              (array-set!
+                slots
+                first-tombstone
+                (I64I64MapOccupied key value hash))
+              (set! (struct-get map len) (+ (struct-get map len) 1))
+              (set! (struct-get map deleted) (- (struct-get map deleted) 1))
+              true)
+            false))))))
 
 ;: Remove an i64 key from i64 -> i64 through a mutable map reference.
 (define (i64-i64-map-remove! [map : (&mut map I64I64Map)] [key : i64]) : bool
@@ -11694,4 +11776,29 @@
           (test.assert-true
             (> (stdlib.hashmap.i64-i64-map-capacity iiu8) 2)
             "I64I64 insert-or-update grows")))
+      (let
+        [map : I64I64Map (stdlib.hashmap.i64-i64-map-with-capacity 8)]
+        (begin
+          (test.assert-true
+            (stdlib.hashmap.i64-i64-map-insert-if-absent! (&mut map) 1 10)
+            "I64I64 insert-if-absent inserts missing key")
+          (test.assert-false
+            (stdlib.hashmap.i64-i64-map-insert-if-absent! (&mut map) 1 99)
+            "I64I64 insert-if-absent preserves existing key")
+          (test.assert-i64-eq
+            (stdlib.hashmap.i64-i64-lookup-value-or
+              (stdlib.hashmap.i64-i64-map-get-ref (& map) 1)
+              -1)
+            10
+            "I64I64 insert-if-absent preserves existing value")
+          (test.assert-true
+            (stdlib.hashmap.i64-i64-map-remove! (&mut map) 1)
+            "I64I64 insert-if-absent setup removes key")
+          (test.assert-true
+            (stdlib.hashmap.i64-i64-map-insert-if-absent! (&mut map) 1 70)
+            "I64I64 insert-if-absent reuses tombstone")
+          (test.assert-i64-eq
+            (stdlib.hashmap.i64-i64-map-deleted map)
+            0
+            "I64I64 insert-if-absent clears reused tombstone")))
       unit)))

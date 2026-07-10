@@ -46,8 +46,6 @@
 ;#       (svec.push (&mut words) "x")
 ;#       (+ (ivec.len (& v)) (svec.len (& words))))))
 ;# ```
-(import stdlib.array)
-
 ;: Local string equality fallback used when bootstrapping with a compiler that
 ;: does not yet expose private string intrinsics.
 (cfg

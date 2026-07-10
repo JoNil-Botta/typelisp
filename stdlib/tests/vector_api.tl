@@ -18,13 +18,10 @@
         [(strvec.Pop.Ok word)
           (if (and
             (= (i64vec.len (& numbers)) 2)
-            (and
-              (= (i64vec.get (& numbers) 0 0) 32)
-              (and
-                (i64vec.contains? (& numbers) 11)
-                (and
-                  (string.eq word "beta")
-                  (string.eq (strvec.get (& words) 0 "") "alpha")))))
+            (= (i64vec.get (& numbers) 0 0) 32)
+            (i64vec.contains? (& numbers) 11)
+            (string.eq word "beta")
+            (string.eq (strvec.get (& words) 0 "") "alpha"))
             42
             1)]
         [(strvec.Pop.Empty) 1]))))

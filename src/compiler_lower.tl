@@ -18387,67 +18387,79 @@
   [struct-name : String]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (lower-struct-fields ctx struct-name)
-    [(ResultAstFieldDefList.Ok fields)
-      (let
-        [struct-ty : AstType
-          (tc-type-without-regions (tc-resolve-type ctx result-ty))]
-        [field-types : AstTypeList
-          (lower-struct-constructor-field-types-for-result
-            ctx
-            struct-name
-            struct-ty
-            fields)]
-        (match (lower-args-as ctx state env type-env args field-types)
-          [(ResultLowerArgs.Ok args-state values)
-            (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
-              (lower-construct-struct-inline-from-values
-                ctx
-                args-state
+  ;; Field annotations are scoped to the declaring module. Resolve them there
+  ;; before lowering arguments or storage so a dotted imported aggregate keeps
+  ;; the layout of its nested nominal fields.
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx struct-name)]
+    (match (lower-struct-fields field-ctx struct-name)
+      [(ResultAstFieldDefList.Ok fields)
+        (let
+          [struct-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+          [field-types : AstTypeList
+            (tc-resolve-type-list
+              field-ctx
+              (lower-struct-constructor-field-types-for-result
+                field-ctx
                 struct-name
-                values
-                fields
-                struct-ty)
-              (if (lower-struct-repr-c? ctx struct-name)
-                (match (tc-repr-c-struct-layout ctx struct-name)
-                  [(ResultTcReprCLayout.Ok layout)
+                struct-ty
+                fields))]
+          (match (lower-args-as ctx state env type-env args field-types)
+            [(ResultLowerArgs.Ok args-state values)
+              (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
+                (lower-construct-struct-inline-from-values
+                  field-ctx
+                  args-state
+                  struct-name
+                  values
+                  fields
+                  struct-ty)
+                (if (lower-struct-repr-c? field-ctx struct-name)
+                  (match (tc-repr-c-struct-layout field-ctx struct-name)
+                    [(ResultTcReprCLayout.Ok layout)
+                      (match (lower-reserve-heap-storage
+                        args-state
+                        (tc-repr-c-layout-size layout)
+                        struct-ty)
+                        [(LowerExpr.Expr base-state base _)
+                          (match (lower-store-repr-c-values
+                            field-ctx
+                            base-state
+                            base
+                            values
+                            (tc-repr-c-layout-fields layout))
+                            [(ResultLowerState.Ok done-state)
+                              (ResultLowerExpr.Ok
+                                (LowerExpr.Expr done-state base struct-ty))]
+                            [(ResultLowerState.Err message)
+                              (ResultLowerExpr.Err message)])])]
+                    [(ResultTcReprCLayout.Err message)
+                      (ResultLowerExpr.Err (box (lower-diagnostic message)))])
+                  (let
+                    [size : i64
+                      (lower-type-list-storage-size field-ctx field-types)]
                     (match (lower-reserve-heap-storage
                       args-state
-                      (tc-repr-c-layout-size layout)
+                      size
                       struct-ty)
                       [(LowerExpr.Expr base-state base _)
-                        (match (lower-store-repr-c-values
-                          ctx
+                        (match (lower-store-values
+                          field-ctx
                           base-state
                           base
                           values
-                          (tc-repr-c-layout-fields layout))
+                          field-types
+                          0)
                           [(ResultLowerState.Ok done-state)
                             (ResultLowerExpr.Ok
                               (LowerExpr.Expr done-state base struct-ty))]
                           [(ResultLowerState.Err message)
-                            (ResultLowerExpr.Err message)])])]
-                  [(ResultTcReprCLayout.Err message)
-                    (ResultLowerExpr.Err (box (lower-diagnostic message)))])
-                (let
-                  [size : i64 (lower-type-list-storage-size ctx field-types)]
-                  (match (lower-reserve-heap-storage args-state size struct-ty)
-                    [(LowerExpr.Expr base-state base _)
-                      (match (lower-store-values
-                        ctx
-                        base-state
-                        base
-                        values
-                        field-types
-                        0)
-                        [(ResultLowerState.Ok done-state)
-                          (ResultLowerExpr.Ok
-                            (LowerExpr.Expr done-state base struct-ty))]
-                        [(ResultLowerState.Err message)
-                          (ResultLowerExpr.Err message)])]))))]
-          [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))]
-    [(ResultAstFieldDefList.Err message)
-      (ResultLowerExpr.Err (box (lower-diagnostic message)))]))
+                            (ResultLowerExpr.Err message)])]))))]
+            [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))]
+      [(ResultAstFieldDefList.Err message)
+        (ResultLowerExpr.Err (box (lower-diagnostic message)))])))
 
 (define (lower-construct-struct-into
   [ctx : TcContext]
@@ -18458,34 +18470,39 @@
   [struct-name : String]
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerState
-  (match (lower-struct-fields ctx struct-name)
-    [(ResultAstFieldDefList.Ok fields)
-      (let
-        [struct-ty : AstType
-          (tc-type-without-regions (tc-resolve-type ctx result-ty))]
-        [field-types : AstTypeList
-          (lower-struct-constructor-field-types-for-result
-            ctx
-            struct-name
-            struct-ty
-            fields)]
-        (match (lower-args-as ctx state env type-env args field-types)
-          [(ResultLowerArgs.Ok args-state values)
-            (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
-              (lower-construct-struct-inline-into-from-values
-                ctx
-                args-state
-                dst
+  (let
+    [field-ctx : TcContext
+      (lower-context-with-nominal-owner-module ctx struct-name)]
+    (match (lower-struct-fields field-ctx struct-name)
+      [(ResultAstFieldDefList.Ok fields)
+        (let
+          [struct-ty : AstType
+            (tc-type-without-regions (tc-resolve-type ctx result-ty))]
+          [field-types : AstTypeList
+            (tc-resolve-type-list
+              field-ctx
+              (lower-struct-constructor-field-types-for-result
+                field-ctx
                 struct-name
-                values
-                fields)
-              (ResultLowerState.Err
-                (box
-                  (lower-diagnostic
-                    "lower: struct destination construction requires inline aggregates"))))]
-          [(ResultLowerArgs.Err message) (ResultLowerState.Err message)]))]
-    [(ResultAstFieldDefList.Err message)
-      (ResultLowerState.Err (box (lower-diagnostic message)))]))
+                struct-ty
+                fields))]
+          (match (lower-args-as ctx state env type-env args field-types)
+            [(ResultLowerArgs.Ok args-state values)
+              (if (lower-mode-inline-aggregates? (lower-state-mode args-state))
+                (lower-construct-struct-inline-into-from-values
+                  field-ctx
+                  args-state
+                  dst
+                  struct-name
+                  values
+                  fields)
+                (ResultLowerState.Err
+                  (box
+                    (lower-diagnostic
+                      "lower: struct destination construction requires inline aggregates"))))]
+            [(ResultLowerArgs.Err message) (ResultLowerState.Err message)]))]
+      [(ResultAstFieldDefList.Err message)
+        (ResultLowerState.Err (box (lower-diagnostic message)))])))
 
 (define (lower-init-expr-list-from-types
   [ctx : TcContext]

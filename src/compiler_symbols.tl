@@ -70,17 +70,12 @@
     (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
     (set! compiler-symbols-last-error-has-span false)))
 
-(define (compiler-symbols-note-last-error!
-  [decl : AstDecl]
-  [path : String]
-  [span : AstSourceSpan]) : unit
-  (let
-    [has-span : bool (> (ast-source-span-start-line span) 0)]
-    (begin
-      (set! compiler-symbols-last-error-decl decl)
-      (set! compiler-symbols-last-error-path path)
-      (set! compiler-symbols-last-error-span span)
-      (set! compiler-symbols-last-error-has-span has-span))))
+(define (compiler-symbols-note-last-error! [decl : AstDecl] [path : String]) : unit
+  (begin
+    (set! compiler-symbols-last-error-decl decl)
+    (set! compiler-symbols-last-error-path path)
+    (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
+    (set! compiler-symbols-last-error-has-span false)))
 
 (define (compiler-symbols-expr-maybe-span [expr : AstExpr]) : CompilerSymbolsMaybeSpan
   (match expr
@@ -2689,11 +2684,6 @@
           [(AstDeclListStep.Cons decl rest)
             (let
               [rest : AstDeclList rest]
-              [decl-span : AstSourceSpan
-                (ast-decl-list-span-get
-                  (& cur-decls)
-                  0
-                  (ast-decl-span-fallback))]
               [decl-path : String
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
@@ -2765,18 +2755,12 @@
                     decl-path)
                     [(CompilerSomeString message)
                       (begin
-                        (compiler-symbols-note-last-error!
-                          decl
-                          decl-path
-                          decl-span)
+                        (compiler-symbols-note-last-error! decl decl-path)
                         (set! result (ResultCompilerSymbols.Err message))
                         (set! done true))]
                     [CompilerNoString
                       (begin
-                        (compiler-symbols-note-last-error!
-                          decl
-                          decl-path
-                          decl-span)
+                        (compiler-symbols-note-last-error! decl decl-path)
                         (compiler-symbols-index-decl!
                           cur-symbols
                           decl

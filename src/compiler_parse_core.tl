@@ -7735,10 +7735,7 @@
     [(AstDeclListStep.Nil) unit]
     [(AstDeclListStep.Cons head rest)
       (begin
-        (parse-ast-decl-vec-push-with-span
-          out
-          head
-          (ast-decl-list-span-get (& decls) 0 (ast-decl-span-fallback)))
+        (parse-ast-decl-vec-push out head)
         (parse-ast-decl-vec-push-list! out rest))]))
 
 (define (parse-ast-decl-vec-copy-to-list
@@ -7748,10 +7745,9 @@
   (if (>= index (parse-ast-decl-vec-len items))
     unit
     (begin
-      (ast-decl-list-push-with-span
+      (ast-decl-list-push
         out
-        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback))
-        (parse-ast-decl-vec-span-get items index (ast-decl-span-fallback)))
+        (parse-ast-decl-vec-get items index (parse-ast-decl-vec-fallback)))
       (parse-ast-decl-vec-copy-to-list items (+ index 1) out))))
 
 (define (parse-ast-decl-vec-to-list [items : (& items ParseAstDeclVec)]) : AstDeclList
@@ -8560,28 +8556,6 @@
                 [_ false]))]
           [_ false]))]
     [_ false]))
-
-(define (compiler-parse-decl-span-ok?) : bool
-  (match (parse-ast-source
-    "(define (first) : i64 0)\n(define (second) : i64 0)")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [first-span : AstSourceSpan
-          (ast-decl-list-span-get (& decls) 0 (ast-decl-span-fallback))]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons _ rest)
-            (let
-              [rest : AstDeclList rest]
-              [second-span : AstSourceSpan
-                (ast-decl-list-span-get (& rest) 0 (ast-decl-span-fallback))]
-              (and
-                (= (ast-source-span-start-line first-span) 1)
-                (= (ast-source-span-start-col first-span) 1)
-                (= (ast-source-span-start-line second-span) 2)
-                (= (ast-source-span-start-col second-span) 1)))]
-          [(AstDeclListStep.Nil) false]))]
-    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-parse-error-span-ok?) : bool
   (let
@@ -11165,7 +11139,6 @@
   (and
     (= (compiler-parse-smoke-score program) 36)
     (compiler-parse-nested-expr-span-ok?)
-    (compiler-parse-decl-span-ok?)
     (compiler-parse-error-span-ok?)
     (compiler-parse-float-literal-ok?)
     (compiler-parse-region-ok?)
@@ -11300,7 +11273,6 @@
       (if (and
         (= (compiler-parse-smoke-score program) 36)
         (compiler-parse-nested-expr-span-ok?)
-        (compiler-parse-decl-span-ok?)
         (compiler-parse-error-span-ok?)
         (compiler-parse-reader-delimiter-diagnostics-ok?)
         (compiler-parse-float-literal-ok?)

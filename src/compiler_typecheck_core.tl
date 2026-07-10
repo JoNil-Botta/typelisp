@@ -45138,7 +45138,7 @@
           (array-set!
             (struct-get rest spans)
             head-offset
-            (ast-decl-span-fallback))
+            (ast-decl-span-pack (ast-decl-span-fallback)))
           (AstDeclList
             (struct-get rest slots)
             (struct-get rest spans)
@@ -45185,10 +45185,11 @@
                   (array-set!
                     (struct-get suffix spans)
                     write-index
-                    (ast-decl-list-span-get
-                      (& cursor)
-                      0
-                      (ast-decl-span-fallback)))
+                    (ast-decl-span-pack
+                      (ast-decl-list-span-get
+                        (& cursor)
+                        0
+                        (ast-decl-span-fallback))))
                   (set! write-index (- write-index 1))
                   (set! cursor rest))]))
           (AstDeclList

@@ -595,27 +595,28 @@
   (if (>= index (struct-get seq len))
     (compiler-live-set-empty)
     (match (array-ref (struct-get seq slots) index)
-      [(IrSpmdCallArg _ value _)
+      [(CompilerIrSpmdCallArg.Arg _ value _)
         (compiler-live-value-vars-into
           (compiler-live-spmd-call-args-seq-vars seq (+ index 1))
           value)])))
 
 (define (compiler-live-spmd-call-args-vars [args : CompilerIrSpmdCallArgList]) : CompilerLiveI64Set
   (match args
-    [(IrSpmdCallArgNil) (compiler-live-set-empty)]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) (compiler-live-set-empty)]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match arg
-        [(IrSpmdCallArg _ value _)
+        [(CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-live-value-vars-into
             (compiler-live-spmd-call-args-vars (box-get rest))
             value)])]
-    [(IrSpmdCallArgArray seq) (compiler-live-spmd-call-args-seq-vars seq 0)]))
+    [(CompilerIrSpmdCallArgList.Array seq)
+      (compiler-live-spmd-call-args-seq-vars seq 0)]))
 
 (define (compiler-live-spmd-call-result-defs
   [result : CompilerIrSpmdCallResult]) : CompilerLiveI64Set
   (match result
-    [(IrSpmdCallResultUnit) (compiler-live-set-empty)]
-    [(IrSpmdCallResultValue dst _ _) (compiler-live-set1 dst)]))
+    [(CompilerIrSpmdCallResult.Unit) (compiler-live-set-empty)]
+    [(CompilerIrSpmdCallResult.Value dst _ _) (compiler-live-set1 dst)]))
 
 (define (compiler-live-maybe-value-vars [value : CompilerIrMaybeValue]) : CompilerLiveI64Set
   (match value
@@ -735,9 +736,9 @@
               (compiler-live-call-args-vars args)
               base)
             func)])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
           (compiler-live-value-vars-into
             (compiler-live-spmd-call-args-vars args)
             active-mask)])]
@@ -797,9 +798,9 @@
     [(CompilerIrInstr.Call dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.CallIndirect dst _ _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.CallIndirectC dst _ _ _) (compiler-live-set1 dst)]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (compiler-live-spmd-call-result-defs result)])]
     [(CompilerIrInstr.Phi dst _ _) (compiler-live-set1 dst)]
     [(CompilerIrInstr.Pack dst _ _) (compiler-live-set1 dst)]

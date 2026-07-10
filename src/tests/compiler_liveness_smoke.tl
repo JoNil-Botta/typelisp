@@ -6,24 +6,27 @@
   (let
     [args : CompilerIrSpmdCallArgList
       (ir-spmd-call-arg-cons
-        (IrSpmdCallArg
-          (IrSpmdValueUniform)
+        (CompilerIrSpmdCallArg.Arg
+          (CompilerIrSpmdValueClass.Uniform)
           (CompilerIrValue.Var 21)
           (compiler-live-i64-ty))
         (ir-spmd-call-arg-cons
-          (IrSpmdCallArg
-            (IrSpmdValueVarying)
+          (CompilerIrSpmdCallArg.Arg
+            (CompilerIrSpmdValueClass.Varying)
             (CompilerIrValue.Var 22)
             (compiler-live-i64-ty))
-          IrSpmdCallArgNil))]
+          CompilerIrSpmdCallArgList.Nil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call
         "helper"
-        (IrSpmdBackendAvx512)
+        (CompilerIrSpmdBackend.Avx512)
         8
         (CompilerIrValue.Var 20)
         args
-        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (compiler-live-i64-ty)))]
+        (CompilerIrSpmdCallResult.Value
+          6
+          (CompilerIrSpmdValueClass.Varying)
+          (compiler-live-i64-ty)))]
     (and
       (compiler-live-set-eq?
         (compiler-live-instr-uses instr)

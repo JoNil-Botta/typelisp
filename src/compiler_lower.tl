@@ -11186,54 +11186,19 @@
     (lower-state-type-cache state)
     arr)
     [(ResultTcType.Ok arr-ty)
-      (match (tc-type-strip-region arr-ty)
-        [(AstType.DynArray elem-ty)
-          (match (lower-expr ctx state env type-env arr)
-            [(ResultLowerExpr.Ok arr-lowered)
-              (match arr-lowered
-                [(LowerExpr.Expr arr-state arr-value _)
-                  (match (lower-index-result-type-or-check
-                    ctx
-                    env
-                    type-env
-                    (lower-state-type-cache arr-state)
-                    index)
-                    [(ResultTcType.Ok idx-ty)
-                      (match (lower-expr-expected
-                        ctx
-                        arr-state
-                        env
-                        type-env
-                        index
-                        idx-ty
-                        index)
-                        [(ResultLowerExpr.Ok idx-lowered)
-                          (match idx-lowered
-                            [(LowerExpr.Expr idx-state idx-value idx-value-ty)
-                              (match (lower-array-element-addr
-                                ctx
-                                idx-state
-                                arr-value
-                                idx-value
-                                idx-value-ty
-                                (tc-type-without-regions
-                                  (tc-context-type-get ctx elem-ty)))
-                                [(LowerExpr.Expr addr-state elem-ptr _)
-                                  (ResultLowerExpr.Ok
-                                    (LowerExpr.Expr
-                                      addr-state
-                                      elem-ptr
-                                      result-ty))])])]
-                        [(ResultLowerExpr.Err message)
-                          (ResultLowerExpr.Err message)])]
-                    [(ResultTcType.Err message)
-                      (ResultLowerExpr.Err
-                        (box (lower-diagnostic-at-expr index message)))])])]
-            [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
-        [(AstType.Array elem-ty elem-count)
-          (let
-            [fixed-elem-ty : AstType
-              (tc-type-without-regions (tc-context-type-get ctx elem-ty))]
+      ;; A reference-valued iterator field is already an address of its array
+      ;; storage. Its element borrow has been typechecked against the stored
+      ;; referent, so lower the same dynamic/fixed-array address computation
+      ;; instead of requiring the field projection itself to be an Array value.
+      (let
+        [container-ty : AstType
+          (match (tc-type-strip-region (tc-resolve-type ctx arr-ty))
+            [(AstType.Ref _ referent-ty) (tc-context-type-get ctx referent-ty)]
+            [(AstType.MutRef _ referent-ty)
+              (tc-context-type-get ctx referent-ty)]
+            [_ arr-ty])]
+        (match (tc-type-strip-region (tc-resolve-type ctx container-ty))
+          [(AstType.DynArray elem-ty)
             (match (lower-expr ctx state env type-env arr)
               [(ResultLowerExpr.Ok arr-lowered)
                 (match arr-lowered
@@ -11256,14 +11221,14 @@
                           [(ResultLowerExpr.Ok idx-lowered)
                             (match idx-lowered
                               [(LowerExpr.Expr idx-state idx-value idx-value-ty)
-                                (match (lower-fixed-array-element-addr
+                                (match (lower-array-element-addr
                                   ctx
                                   idx-state
                                   arr-value
                                   idx-value
                                   idx-value-ty
-                                  fixed-elem-ty
-                                  elem-count)
+                                  (tc-type-without-regions
+                                    (tc-context-type-get ctx elem-ty)))
                                   [(LowerExpr.Expr addr-state elem-ptr _)
                                     (ResultLowerExpr.Ok
                                       (LowerExpr.Expr
@@ -11275,13 +11240,62 @@
                       [(ResultTcType.Err message)
                         (ResultLowerExpr.Err
                           (box (lower-diagnostic-at-expr index message)))])])]
-              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
-        [_
-          (ResultLowerExpr.Err
-            (box
-              (lower-diagnostic-at-expr
-                origin
-                "lower: array-ref borrow requires array place")))])]
+              [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+          [(AstType.Array elem-ty elem-count)
+            (let
+              [fixed-elem-ty : AstType
+                (tc-type-without-regions (tc-context-type-get ctx elem-ty))]
+              (match (lower-expr ctx state env type-env arr)
+                [(ResultLowerExpr.Ok arr-lowered)
+                  (match arr-lowered
+                    [(LowerExpr.Expr arr-state arr-value _)
+                      (match (lower-index-result-type-or-check
+                        ctx
+                        env
+                        type-env
+                        (lower-state-type-cache arr-state)
+                        index)
+                        [(ResultTcType.Ok idx-ty)
+                          (match (lower-expr-expected
+                            ctx
+                            arr-state
+                            env
+                            type-env
+                            index
+                            idx-ty
+                            index)
+                            [(ResultLowerExpr.Ok idx-lowered)
+                              (match idx-lowered
+                                [(LowerExpr.Expr
+                                    idx-state
+                                    idx-value
+                                    idx-value-ty)
+                                  (match (lower-fixed-array-element-addr
+                                    ctx
+                                    idx-state
+                                    arr-value
+                                    idx-value
+                                    idx-value-ty
+                                    fixed-elem-ty
+                                    elem-count)
+                                    [(LowerExpr.Expr addr-state elem-ptr _)
+                                      (ResultLowerExpr.Ok
+                                        (LowerExpr.Expr
+                                          addr-state
+                                          elem-ptr
+                                          result-ty))])])]
+                            [(ResultLowerExpr.Err message)
+                              (ResultLowerExpr.Err message)])]
+                        [(ResultTcType.Err message)
+                          (ResultLowerExpr.Err
+                            (box (lower-diagnostic-at-expr index message)))])])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))]
+          [_
+            (ResultLowerExpr.Err
+              (box
+                (lower-diagnostic-at-expr
+                  origin
+                  "lower: array-ref borrow requires array place")))]))]
     [(ResultTcType.Err message)
       (ResultLowerExpr.Err (box (lower-diagnostic-at-expr arr message)))]))
 

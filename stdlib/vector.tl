@@ -75,7 +75,22 @@
     [pop-name : Expr (expr-var "Pop")]
     [pop-empty-name : Expr (expr-var "Pop.Empty")]
     [pop-ok-name : Expr (expr-var "Pop.Ok")]
+    [iter-mut-name : Expr (expr-var "IterMut")]
+    [iter-mut-next-name : Expr (expr-var "IterMutNext")]
+    [iter-mut-done-name : Expr (expr-var "IterMutNext.Done")]
+    [iter-mut-item-name : Expr (expr-var "IterMutNext.Item")]
     [kind : String (type-kind T)]
+    ;; String elements are immutable by language policy, so their iterator
+    ;; item is the ordinary borrowed `str` view. Other element kinds yield an
+    ;; exclusive reference to their concrete element type.
+    [iter-mut-borrow-name : Expr
+      (match kind
+        ["string" (expr-var "&")]
+        [_ (expr-var "&mut")])]
+    [iter-mut-item-type : Expr
+      (match kind
+        ["string" (expr-var "str")]
+        [_ `,T])]
     [eq-body : Expr
       (match kind
         ["string"
@@ -159,6 +174,20 @@
       (defenum ,pop-name
         (Empty)
         (Ok ,T))
+      ;; This state owns the vector's exclusive source borrow. `next-mut`
+      ;; reborrows one element from that stored reference, so the item keeps
+      ;; the vector lifetime rather than the short borrow of the state.
+      (defstruct ,iter-mut-name
+        (:lifetimes source)
+        (slots (&mut source (Array ,T)))
+        (len i64)
+        (index i64))
+      ;; Mutable iteration is lending: an Item keeps the source borrow live,
+      ;; so callers must finish with it before asking for the next item.
+      (defenum ,iter-mut-next-name
+        (:lifetimes source)
+        (Done)
+        (Item (,iter-mut-borrow-name source ,iter-mut-item-type)))
       (define (slots [v : (& v ,vec-name)]) : (& v (Array ,T))
         (& (struct-get v slots)))
       (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut v (Array ,T))
@@ -180,6 +209,20 @@
           (,vec-name (make-array ,T cap) 0)))
       (define (new) : ,vec-name
         (with-capacity 4))
+      (define (iterator-mut [v : (&mut source ,vec-name)]) : (,iter-mut-name
+          source)
+        (,iter-mut-name (&mut (struct-get v slots)) (struct-get v len) 0))
+      (define (next-mut [iter : (&mut state (,iter-mut-name source))]) : (,iter-mut-next-name
+          source)
+        (let
+          [index : i64 (struct-get iter index)]
+          (if (>= index (struct-get iter len))
+            (,iter-mut-done-name)
+            (begin
+              (set! (struct-get iter index) (+ index 1))
+              (,iter-mut-item-name
+                (,iter-mut-borrow-name
+                  (array-ref (struct-get iter slots) index)))))))
       (define (get [v : (& v ,vec-name)] [index : i64] [fallback : ,T]) : ,T
         (if (if (>= index 0)
           (< index (len v))

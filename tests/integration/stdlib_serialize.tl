@@ -1,8 +1,33 @@
 (import stdlib.serialize)
 (import stdlib.array)
+(import stdlib.comptime)
+(import stdlib.option)
+(import stdlib.result)
 (import stdlib.string)
 (import serialize_toy_format as toy)
 (import serialize_enum_fixture as enum_fixture)
+(import (option i64) as option_i64)
+(import (result i64 String) as result_i64_string)
+
+(defmacro (enum-type-info [T : type]) : Module
+  (let
+    [module-name : comptime.Expr
+      (comptime.expr-var
+        (comptime.string-append "generated.enum_type_info." (type-key T)))]
+    (match (type-info T)
+      [(comptime.TypeInfoEnum _ _)
+        `(begin
+          (module ,module-name)
+          (define (score) : i64
+            1))]
+      [_
+        `(begin
+          (module ,module-name)
+          (define (score) : i64
+            0))])))
+
+(import (enum-type-info option_i64.Option) as option_type_info)
+(import (enum-type-info result_i64_string.Result) as result_type_info)
 
 (defstruct Address
   (zip i64)
@@ -14,6 +39,8 @@
 (import (serialize.serialize toy (Array i64)) as dyn_i64_ser)
 (import (serialize.serialize toy (Array Address 2)) as address_array_ser)
 (import (serialize.serialize toy enum_fixture.Status) as status_ser)
+(import (serialize.serialize toy option_i64.Option) as option_i64_ser)
+(import (serialize.serialize toy result_i64_string.Result) as result_i64_string_ser)
 
 (defstruct Person
   (name String)
@@ -483,6 +510,27 @@
     [(status_ser.Ok _) false]
     [(status_ser.Err _) true]))
 
+(define (serialize-option-root-roundtrip-ok?) : bool
+  (and
+    (match (option_i64_ser.decode (option_i64_ser.encode (option_i64.none)))
+      [(option_i64_ser.Ok parsed) (option_i64.is-none? (& parsed))]
+      [(option_i64_ser.Err _) false])
+    (match (option_i64_ser.decode (option_i64_ser.encode (option_i64.some 41)))
+      [(option_i64_ser.Ok parsed) (= (option_i64.value-or parsed 0) 41)]
+      [(option_i64_ser.Err _) false])))
+
+(define (serialize-result-root-roundtrip-ok?) : bool
+  (and
+    (match (result_i64_string_ser.decode
+      (result_i64_string_ser.encode (result_i64_string.ok 7)))
+      [(result_i64_string_ser.Ok parsed)
+        (= (result_i64_string.value-or parsed 0) 7)]
+      [(result_i64_string_ser.Err _) false])
+    (match (result_i64_string_ser.decode
+      (result_i64_string_ser.encode (result_i64_string.err "bad")))
+      [(result_i64_string_ser.Ok parsed) (result_i64_string.is-err? (& parsed))]
+      [(result_i64_string_ser.Err _) false])))
+
 (define (serialize-missing-field-value) : toy.Value
   (toy.Object (box (toy.FieldCons "name" (toy.Text "Ada") (box toy.FieldNil)))))
 
@@ -567,4 +615,8 @@
     (unless (serialize-status-missing-payload-ok?) (return 15))
     (unless (serialize-status-payload-length-ok?) (return 16))
     (unless (serialize-status-wide-roundtrip-ok?) (return 17))
+    (unless (serialize-option-root-roundtrip-ok?) (return 18))
+    (unless (serialize-result-root-roundtrip-ok?) (return 19))
+    (unless (= (option_type_info.score) 1) (return 20))
+    (unless (= (result_type_info.score) 1) (return 21))
     42))

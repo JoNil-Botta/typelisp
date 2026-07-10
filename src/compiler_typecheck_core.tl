@@ -9651,6 +9651,65 @@
             "typecheck: internal dotted field target mismatch")])]
     [(ResultTcExprId.Err message) (ResultTcExprId.Err message)]))
 
+;; Local dotted fields must become ordinary projection nodes before the
+;; move/borrow/lower passes see them.  Keeping `root.field` as a raw Var and
+;; teaching each later pass to rebuild it independently loses the rooted place
+;; identity those passes use for conflict tracking.  This mutates the parsed
+;; node exactly once, after the current lexical environment has decided that
+;; the leading segment is a local rather than a module alias.
+(define (tc-normalize-dotted-local-field-node!
+  [env : TcTypeEnv]
+  [expr-id : i64]) : ResultTcUnit
+  (match (ast-node-get expr-id)
+    [(AstExpr.Spanned inner-box _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(AstExpr.Ann inner-box _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(AstExpr.Cast inner-box _)
+      (tc-normalize-dotted-local-field-node! env inner-box)]
+    [(AstExpr.Borrow _ _ place-box)
+      (tc-normalize-dotted-local-field-node! env place-box)]
+    [(AstExpr.Var name)
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-expr-id env (intern-str name))
+          [(ResultTcExprId.Ok projection-id)
+            (begin
+              (ast-node-set! expr-id (ast-node-get projection-id))
+              ResultTcUnit.Ok)]
+          [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
+        ResultTcUnit.Ok)]
+    [(AstExpr.Set name value-box)
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-set-expr-id
+          env
+          (intern-str name)
+          value-box)
+          [(ResultTcExprId.Ok projection-id)
+            (begin
+              (ast-node-set! expr-id (ast-node-get projection-id))
+              ResultTcUnit.Ok)]
+          [(ResultTcExprId.Err message) (ResultTcUnit.Err message)])
+        ResultTcUnit.Ok)]
+    [_ ResultTcUnit.Ok]))
+
+(define (tc-normalize-dotted-local-field-expr-list!
+  [env : TcTypeEnv]
+  [exprs : AstExprList]) : ResultTcUnit
+  (tc-normalize-dotted-local-field-expr-list-at! env (& exprs) 0))
+
+(define (tc-normalize-dotted-local-field-expr-list-at!
+  [env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : ResultTcUnit
+  (if (>= index (struct-get exprs len))
+    ResultTcUnit.Ok
+    (match (tc-normalize-dotted-local-field-node!
+      env
+      (ast-expr-list-get exprs index 0))
+      [(ResultTcUnit.Ok)
+        (tc-normalize-dotted-local-field-expr-list-at! env exprs (+ index 1))]
+      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+
 (define tc-imported-module-identity-cache-capacity : i64
   8192)
 (define tc-imported-module-identity-cache-module-keys : (Array i64)
@@ -18237,11 +18296,14 @@
         [(AstWithResource.WithResource bindings body)
           (tc-with-resource-expr-with-expected ctx env bindings body expected)])]
     [(AstExpr.Borrow mutable lifetime place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (if (and mutable allow-mut-by-value-borrow)
-          (tc-borrow-expr-with-policy ctx env mutable lifetime place true)
-          (tc-expr ctx env expr)))]
+      (match (tc-normalize-dotted-local-field-node! env place-box)
+        [(ResultTcUnit.Ok)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (if (and mutable allow-mut-by-value-borrow)
+              (tc-borrow-expr-with-policy ctx env mutable lifetime place true)
+              (tc-expr ctx env expr)))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Box inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -18329,13 +18391,16 @@
 ;; body-local type caches. The value-based forms above remain necessary for
 ;; synthetic expressions that were never pushed into the node pool.
 (define (tc-expr-id [ctx : TcContext] [env : TcTypeEnv] [expr-id : i64]) : ResultTcType
-  (let
-    [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
-    (begin
-      (match result
-        [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
-        [(ResultTcType.Err _) unit])
-      result)))
+  (match (tc-normalize-dotted-local-field-node! env expr-id)
+    [(ResultTcUnit.Ok)
+      (let
+        [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
+        (begin
+          (match result
+            [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
+            [(ResultTcType.Err _) unit])
+          result))]
+    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-body-type-fact-lookup-profiled [_site : String] [expr-id : i64]) : TcBodyTypeFact
   (match (tc-body-type-fact-lookup expr-id)
@@ -18431,12 +18496,15 @@
   [expr-id : i64]
   [expected : AstType]
   [allow-mut-by-value-borrow : bool]) : ResultTcType
-  (tc-expr-with-expected-or-actual-core
-    ctx
-    env
-    (ast-node-get expr-id)
-    expected
-    allow-mut-by-value-borrow))
+  (match (tc-normalize-dotted-local-field-node! env expr-id)
+    [(ResultTcUnit.Ok)
+      (tc-expr-with-expected-or-actual-core
+        ctx
+        env
+        (ast-node-get expr-id)
+        expected
+        allow-mut-by-value-borrow)]
+    [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
 
 (define (tc-expr-with-expected-or-actual-id
   [ctx : TcContext]
@@ -21111,16 +21179,19 @@
   [constructor-target : AstMaybeType]
   [arity-msg : TcArityMessage]
   [c-abi-args : bool]) : ResultTcUnit
-  (tc-check-call-args-with-message-at
-    ctx
-    env
-    (& args)
-    (& params)
-    0
-    allow-region-args
-    constructor-target
-    arity-msg
-    c-abi-args))
+  (match (tc-normalize-dotted-local-field-expr-list! env args)
+    [(ResultTcUnit.Ok)
+      (tc-check-call-args-with-message-at
+        ctx
+        env
+        (& args)
+        (& params)
+        0
+        allow-region-args
+        constructor-target
+        arity-msg
+        c-abi-args)]
+    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-check-call-args-with-message-at
   [ctx : TcContext]
@@ -21244,7 +21315,9 @@
   [env : TcTypeEnv]
   [args : AstExprList]
   [params : AstTypeList]) : ResultTcUnit
-  (tc-check-args-at ctx env (& args) (& params) 0))
+  (match (tc-normalize-dotted-local-field-expr-list! env args)
+    [(ResultTcUnit.Ok) (tc-check-args-at ctx env (& args) (& params) 0)]
+    [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))
 
 (define (tc-check-args-at
   [ctx : TcContext]
@@ -34821,9 +34894,10 @@
                   "typecheck: cast requires scalar numeric (integer/char/float) source and target"))))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Borrow mutable lifetime place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (tc-borrow-expr ctx env mutable lifetime place))]
+      (match (tc-normalize-dotted-local-field-node! env place-box)
+        [(ResultTcUnit.Ok)
+          (tc-borrow-expr ctx env mutable lifetime (ast-node-get place-box))]
+        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Unary op inner-box)
       (match (tc-expr-id ctx env inner-box)
         [(ResultTcType.Ok ty) (tc-unop-type op ty)]

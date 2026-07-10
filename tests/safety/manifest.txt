@@ -168,6 +168,13 @@ spmd_masked_if_lane_type_reject|check-fail|tests/safety/spmd_masked_if_lane_type
 spmd_masked_if_allocation_reject|check-fail|tests/safety/spmd_masked_if_allocation_reject.tl|-|SPMD masked if does not support allocations that can escape masked branches
 invalid_struct_field_reject|check-fail|tests/safety/invalid_struct_field_reject.tl|-|unknown struct field Point.z
 dotted_field_numeric_reject|check-fail|tests/safety/dotted_field_numeric_reject.tl|-|cannot use numeric field segments; use tuple-ref or array-ref
+dotted_field_mut_borrow_dotted_dotted_reject|check-fail|tests/safety/dotted_field_mut_borrow_dotted_dotted_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+dotted_field_mut_borrow_dotted_spelled_reject|check-fail|tests/safety/dotted_field_mut_borrow_dotted_spelled_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+dotted_field_mut_borrow_spelled_dotted_reject|check-fail|tests/safety/dotted_field_mut_borrow_spelled_dotted_reject.tl|-|cannot mutably borrow borrowed place `pair.left`
+dotted_field_mut_borrow_bound_reject|check-fail|tests/safety/dotted_field_mut_borrow_bound_reject.tl|-|cannot read mutably borrowed place `pair.left`
+dotted_field_shared_borrow_write_reject|check-fail|tests/safety/dotted_field_shared_borrow_write_reject.tl|-|cannot assign to borrowed place `pair.left.x`
+dotted_field_cleanup_move_reject|check-fail|tests/safety/dotted_field_cleanup_move_reject.tl|-|cleanup owner `h` moved before with scope exit
+dotted_field_disjoint_mut_borrow_ok|check-ok|tests/safety/dotted_field_disjoint_mut_borrow_ok.tl|-|-
 struct_field_set_immutable_ref_reject|check-fail|tests/safety/struct_field_set_immutable_ref_reject.tl|-|set! struct field requires mutable struct access
 struct_field_set_temporary_reject|check-fail|tests/safety/struct_field_set_temporary_reject.tl|-|expression is not a storage place
 box_take_use_after_move_reject|check-fail|tests/safety/box_take_use_after_move_reject.tl|-|use of moved value `cell`

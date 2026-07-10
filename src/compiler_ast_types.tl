@@ -676,9 +676,12 @@
     (ast-node-pool-context-expr-get ast-node-pool-compat-context id)
     (ast-node-get-active id)))
 
-;: Overwrite the node at `id` in place (used when a node is rewritten in place).
+;: Overwrite the node at `id` in the selected AST pool (used when a node is
+;; rewritten in place).
 (define (ast-node-set! [id : i64] [node : AstExpr]) : unit
-  (array-set! ast-node-pool-slots id node))
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pool-context-expr-set! ast-node-pool-compat-context id node)
+    (array-set! ast-node-pool-slots id node)))
 
 ;: Truncate the pool back to `mark` nodes (used to discard nodes from a failed
 ;: parse). Reset to 0 between compiles so a fresh compile reuses the array.

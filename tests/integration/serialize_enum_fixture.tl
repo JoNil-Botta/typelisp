@@ -1,5 +1,3 @@
-(module serialize_enum_fixture)
-
 (defenum Status
   (Idle)
   (Scored i64)

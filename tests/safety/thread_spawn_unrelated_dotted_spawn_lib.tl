@@ -1,3 +1,5 @@
+;; This intentional dotted identity is unrelated to the filename; the safety
+;; fixture verifies that spawned imports preserve the declared module path.
 (module local.worker)
 
 (defenum SpawnResult

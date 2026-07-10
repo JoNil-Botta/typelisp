@@ -1,5 +1,3 @@
-(module serialize_toy_format)
-
 (import stdlib.string)
 
 (defenum Value

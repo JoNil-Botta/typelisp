@@ -1,5 +1,3 @@
-(module serialize_missing_sequence_hook_format)
-
 (defenum Value
   (ValueObject FieldList))
 

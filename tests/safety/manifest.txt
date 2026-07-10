@@ -196,7 +196,7 @@ serialize_missing_sequence_hook_reject|check-fail|tests/safety/serialize_missing
 serialize_missing_extra_decls_hook_reject|check-fail|tests/safety/serialize_missing_extra_decls_hook_reject.tl|-|typecheck: strategy module serialize_missing_extra_decls_hook_format does not export hook extra-decls
 serialize_bad_object_finish_hook_reject|check-fail|tests/safety/serialize_bad_object_finish_hook_reject.tl|-|typecheck: return type mismatch
 serialize_unsupported_tuple_root_reject|check-fail|tests/safety/serialize_unsupported_tuple_root_reject.tl|-|serialize: unsupported root type
-import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:7:14: typecheck: argument type mismatch
+import_arg_mismatch_diagnostic|check-fail|tests/safety/import_arg_mismatch_root.tl|-|tests/safety/import_arg_mismatch_lib.tl:5:14: typecheck: argument type mismatch
 sync_mutex_guard_let_reject|check-fail|tests/safety/sync_mutex_guard_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
 sync_mutex_guard_return_reject|check-fail|tests/safety/sync_mutex_guard_return_reject.tl|-|cleanup-required resource would escape with scope
 sync_mutex_guard_capture_reject|check-fail|tests/safety/sync_mutex_guard_capture_reject.tl|-|lambda cannot capture cleanup-required resource; resource value would escape

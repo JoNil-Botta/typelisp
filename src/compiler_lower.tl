@@ -44078,15 +44078,21 @@
               [(AstDecl.Module next-module)
                 (set! cur-module (intern-str next-module))]
               [(AstDecl.DefFn name _ _ body-box _)
-                (if (lower-rvo-node-has-early-return? ctx body-box)
-                  (lower_string_i64_map.insert-ref!
-                    (&mut cur-out)
-                    (lower-current-decl-logical-name
-                      names
-                      cur-module
-                      (intern-str name))
-                    1)
-                  unit)]
+                (let
+                  [has-early-return : bool
+                    (match (tc-body-early-exit-fact body-box)
+                      [(TcBodyEarlyExitFact.Known value) value]
+                      [(TcBodyEarlyExitFact.Unknown)
+                        (lower-rvo-node-has-early-return? ctx body-box)])]
+                  (if has-early-return
+                    (lower_string_i64_map.insert-ref!
+                      (&mut cur-out)
+                      (lower-current-decl-logical-name
+                        names
+                        cur-module
+                        (intern-str name))
+                      1)
+                    unit))]
               [_ unit])
             (set! index (+ index 1)))))
       cur-out)))
@@ -44746,14 +44752,17 @@
   [stdlib-roots : svec.Vec]
   [cache-scope : String]
   [pools : AstNodePoolContext]) : ResultCompilerLower
-  (match (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
-    program
-    paths
-    stdlib-roots
-    cache-scope
-    pools)
+  (match (let
+    [_start-early-exit-facts : unit (tc-body-early-exit-facts-start! pools)]
+    (typecheck-compiler-specialized-program-with-paths-checked-cache-with-pools
+      program
+      paths
+      stdlib-roots
+      cache-scope
+      pools))
     [(ResultCompilerTypecheckChecked.Ok _ source-ctx source-top-env)
       (let
+        [_finish-early-exit-facts : unit (tc-body-early-exit-facts-finish!)]
         [clone-roots : CloneNameList
           (tc-clone-root-collection-finish! source-ctx)]
         [source-decl-count : i64
@@ -44863,6 +44872,7 @@
                 (ResultCompilerLower.Err (box (lower-diagnostic message))))])))]
     [(ResultCompilerTypecheckChecked.Err diag)
       (begin
+        (tc-body-early-exit-facts-abort!)
         (tc-clone-root-collection-abort!)
         (cfg compile-profile (compiler-lower-profile-finish "typecheck"))
         (ResultCompilerLower.Err diag))]))

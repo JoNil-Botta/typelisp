@@ -195,6 +195,10 @@
   (Hit AstType)
   (Miss))
 
+(defenum TcBodyEarlyExitFact
+  (Known bool)
+  (Unknown))
+
 (define tc-body-type-facts-recording : bool
   false)
 (define tc-body-type-facts-consuming : bool
@@ -205,6 +209,107 @@
   (array.make-array AstType 16))
 (define tc-body-type-fact-count : i64
   0)
+
+;; Lower's call-slot RVO needs one semantic fact per function body: whether a
+;; runtime `return` or `try` occurs anywhere in it. The move checker already
+;; visits the complete runtime body (including nested lambdas), so recording the
+;; bit there avoids a second recursive AST walk in lower. Facts are keyed by the
+;; stable body node id. Bodies synthesized after source typecheck are absent and
+;; lower falls back to its conservative scanner for those only.
+(define tc-body-early-exit-facts-collecting : bool
+  false)
+(define tc-body-early-exit-facts-ready : bool
+  false)
+(define tc-body-early-exit-current : bool
+  false)
+(define tc-body-early-exit-suppress-depth : i64
+  0)
+(define tc-body-early-exit-source-expr-limit : i64
+  -1)
+(define tc-body-early-exit-facts : (Array i64)
+  (array.make-array i64 1))
+
+(define (tc-body-early-exit-facts-start! [pools : AstNodePoolContext]) : unit
+  (let
+    [expr-limit : i64 (ast-node-pool-context-expr-len pools)]
+    (begin
+      (set!
+        tc-body-early-exit-facts
+        (array.make-array i64 (/ (+ expr-limit 63) 64)))
+      (set! tc-body-early-exit-current false)
+      (set! tc-body-early-exit-suppress-depth 0)
+      (set! tc-body-early-exit-source-expr-limit expr-limit)
+      (set! tc-body-early-exit-facts-ready false)
+      (set! tc-body-early-exit-facts-collecting true))))
+
+(define (tc-body-early-exit-facts-finish!) : unit
+  (begin
+    (set! tc-body-early-exit-facts-collecting false)
+    (set! tc-body-early-exit-facts-ready true)))
+
+(define (tc-body-early-exit-facts-abort!) : unit
+  (begin
+    (set! tc-body-early-exit-facts-collecting false)
+    (set! tc-body-early-exit-facts-ready false)
+    (set! tc-body-early-exit-current false)
+    (set! tc-body-early-exit-suppress-depth 0)
+    (set! tc-body-early-exit-source-expr-limit -1)))
+
+(define (tc-body-early-exit-function-start!) : unit
+  (if tc-body-early-exit-facts-collecting
+    (begin
+      (set! tc-body-early-exit-current false)
+      (set! tc-body-early-exit-suppress-depth 0))
+    unit))
+
+(define (tc-body-early-exit-function-finish! [body-id : i64]) : unit
+  (if (and
+    tc-body-early-exit-facts-collecting
+    tc-body-early-exit-current
+    (>= body-id 0)
+    (< body-id tc-body-early-exit-source-expr-limit))
+    (let
+      [word-index : i64 (/ body-id 64)]
+      [bit-index : i64 (% body-id 64)]
+      [old-bits : i64 (array.ref tc-body-early-exit-facts word-index)]
+      (array-set!
+        tc-body-early-exit-facts
+        word-index
+        (bit-or old-bits (shl 1 bit-index))))
+    unit))
+
+(define (tc-body-early-exit-note!) : unit
+  (if (and
+    tc-body-early-exit-facts-collecting
+    (= tc-body-early-exit-suppress-depth 0))
+    (set! tc-body-early-exit-current true)
+    unit))
+
+(define (tc-body-early-exit-suppress-push!) : unit
+  (if tc-body-early-exit-facts-collecting
+    (set!
+      tc-body-early-exit-suppress-depth
+      (+ tc-body-early-exit-suppress-depth 1))
+    unit))
+
+(define (tc-body-early-exit-suppress-pop!) : unit
+  (if tc-body-early-exit-facts-collecting
+    (set!
+      tc-body-early-exit-suppress-depth
+      (- tc-body-early-exit-suppress-depth 1))
+    unit))
+
+(define (tc-body-early-exit-fact [body-id : i64]) : TcBodyEarlyExitFact
+  (if (and
+    tc-body-early-exit-facts-ready
+    (>= body-id 0)
+    (< body-id tc-body-early-exit-source-expr-limit))
+    (let
+      [word-index : i64 (/ body-id 64)]
+      [bit-index : i64 (% body-id 64)]
+      [bits : i64 (array.ref tc-body-early-exit-facts word-index)]
+      (TcBodyEarlyExitFact.Known (not (= (bit-and bits (shl 1 bit-index)) 0))))
+    (TcBodyEarlyExitFact.Unknown)))
 
 (define (tc-body-type-fact-initial-capacity) : i64
   1024)
@@ -40704,25 +40809,35 @@
               [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
           [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.ArrayTake array-box live-box index-box)
-      (match (tc-move-check-expr-id ctx env locals loop-carried moved array-box)
-        [(TcMoveResult.Ok moved1)
-          (match (tc-move-check-expr-id
-            ctx
-            env
-            locals
-            loop-carried
-            moved1
-            live-box)
-            [(TcMoveResult.Ok moved2)
-              (tc-move-check-expr-id
-                ctx
-                env
-                locals
-                loop-carried
-                moved2
-                index-box)]
-            [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+      (begin
+        ;; The legacy lower scan conservatively classified ArrayTake as an
+        ;; early-exit body through its unknown-node fallback.
+        (tc-body-early-exit-note!)
+        (match (tc-move-check-expr-id
+          ctx
+          env
+          locals
+          loop-carried
+          moved
+          array-box)
+          [(TcMoveResult.Ok moved1)
+            (match (tc-move-check-expr-id
+              ctx
+              env
+              locals
+              loop-carried
+              moved1
+              live-box)
+              [(TcMoveResult.Ok moved2)
+                (tc-move-check-expr-id
+                  ctx
+                  env
+                  locals
+                  loop-carried
+                  moved2
+                  index-box)]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -41117,7 +41232,16 @@
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        (begin
+          ;; Compile-time code cannot cause a runtime early exit in the
+          ;; containing function; mirror lower's existing RVO scanner.
+          (tc-body-early-exit-suppress-push!)
+          (let
+            [result : TcMoveResult
+              (tc-move-check-expr ctx env locals loop-carried moved inner)]
+            (begin
+              (tc-body-early-exit-suppress-pop!)
+              result))))]
     [(AstExpr.Quote _) (TcMoveResult.Ok moved)]
     [(AstExpr.Quasiquote _) (TcMoveResult.Ok moved)]
     [(AstExpr.Unquote _) (TcMoveResult.Ok moved)]
@@ -41125,26 +41249,36 @@
     [(AstExpr.Try inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (tc-move-check-expr ctx env locals loop-carried moved inner))]
+        (begin
+          (tc-body-early-exit-note!)
+          (tc-move-check-expr ctx env locals loop-carried moved inner)))]
     [(AstExpr.Return inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (match (tc-move-check-expr ctx env locals loop-carried moved inner)
-          [(TcMoveResult.Ok moved1)
-            (match (tc-current-return-type env)
-              [(ResultTcType.Ok return-ty)
-                (tc-move-after-consuming-value
-                  ctx
-                  env
-                  locals
-                  loop-carried
-                  moved1
-                  inner
-                  return-ty)]
-              [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
-          [(TcMoveResult.Err message) (TcMoveResult.Err message)]))]
-    [(AstExpr.Break) (TcMoveResult.Ok moved)]
-    [(AstExpr.Continue) (TcMoveResult.Ok moved)]
+        (begin
+          (tc-body-early-exit-note!)
+          (match (tc-move-check-expr ctx env locals loop-carried moved inner)
+            [(TcMoveResult.Ok moved1)
+              (match (tc-current-return-type env)
+                [(ResultTcType.Ok return-ty)
+                  (tc-move-after-consuming-value
+                    ctx
+                    env
+                    locals
+                    loop-carried
+                    moved1
+                    inner
+                    return-ty)]
+                [(ResultTcType.Err _) (TcMoveResult.Ok moved1)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])))]
+    [(AstExpr.Break)
+      (begin
+        (tc-body-early-exit-note!)
+        (TcMoveResult.Ok moved))]
+    [(AstExpr.Continue)
+      (begin
+        (tc-body-early-exit-note!)
+        (TcMoveResult.Ok moved))]
     [(AstExpr.PtrNull _) (TcMoveResult.Ok moved)]
     [(AstExpr.PtrNullCheck inner-box)
       (let
@@ -58433,6 +58567,7 @@
         (tc-resolve-type ctx ret))]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     (begin
+      (tc-body-early-exit-function-start!)
       (tc-body-type-facts-start-recording!)
       (match (tc-expr-with-expected-or-actual-id
         ctx
@@ -58459,6 +58594,10 @@
                           [result : ResultTcUnit
                             (tc-borrow-check-body-id ctx env params body-box)]
                           (begin
+                            (match result
+                              [(ResultTcUnit.Ok)
+                                (tc-body-early-exit-function-finish! body-box)]
+                              [(ResultTcUnit.Err _) unit])
                             (tc-body-type-facts-clear!)
                             result))]
                       [(ResultTcUnit.Err message)
@@ -59545,6 +59684,7 @@
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
     (tc-fn-scratch-arena-release!)
+    (tc-body-early-exit-facts-abort!)
     (tc-clone-able-cache-reset!)
     (tc-macro-helper-env-cache-reset!)
     (tc-spmd-inline-helper-stack-reset!)

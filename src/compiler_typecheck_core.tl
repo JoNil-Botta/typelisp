@@ -7238,6 +7238,39 @@
           out
           "expr-struct-set"
           (tc-fn3 expr (AstType.String) expr expr)))
+      (set! out (tc-bind out "expr-mut-borrow" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-mut-borrow"
+          (tc-fn1 expr expr)))
+      (set! out (tc-bind out "expr-call" (tc-fn2 expr (AstType.ExprList) expr)))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-call"
+          (tc-fn2 expr (AstType.ExprList) expr)))
+      (set! out (tc-bind out "expr-list-empty" (tc-fn0 (AstType.ExprList))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-empty"
+          (tc-fn0 (AstType.ExprList))))
+      (set!
+        out
+        (tc-bind
+          out
+          "expr-list-cons"
+          (tc-fn2 expr (AstType.ExprList) (AstType.ExprList))))
+      (set!
+        out
+        (tc-bind-comptime-helper-aliases
+          out
+          "expr-list-cons"
+          (tc-fn2 expr (AstType.ExprList) (AstType.ExprList))))
       (set! out (tc-bind out "expr-if" (tc-fn3 expr expr expr expr)))
       (set!
         out

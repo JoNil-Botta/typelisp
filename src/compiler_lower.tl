@@ -5353,7 +5353,7 @@
           (if (and
             (cbi.compiler-builtin-lower-clone-id? lookup-id)
             (not bound)
-            (not (lower-top-level-value-defined? ctx lookup-name)))
+            (not (lower-top-level-value-defined-id? ctx lookup-id)))
             (if (= (struct-get (& args) len) 1)
               (match (tc-expr
                 ctx
@@ -11594,7 +11594,7 @@
         [(AstExpr.Var name)
           (if (and
             (lower-string-concat-builtin-name? (intern-str name))
-            (lower-builtin-call-available? ctx env (intern-str name)))
+            (lower-builtin-call-available-id? ctx env name))
             (if (= (struct-get (& args) len) 2)
               (let
                 [left : AstExpr
@@ -16742,30 +16742,39 @@
                     "typecheck: try operand must be Result-like enum")))])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
+(define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
     [(TcContext _ symbols _ module _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
-          (not (tc-name-qualified? name)))
-          (compiler-symbols-lookup-value-in-module-or
+          (not (tc-name-qualified-id? name-id)))
+          (compiler-symbols-lookup-value-in-module-id-or
             symbols
-            module
-            name
+            (intern module)
+            name-id
             (compiler-symbols-missing-handle))
-          (compiler-symbols-lookup-value-or
+          (compiler-symbols-lookup-value-id-or
             symbols
-            name
+            name-id
             (compiler-symbols-missing-handle))))]))
+
+(define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
+  (lower-top-level-value-defined-id? ctx (intern name)))
+
+(define (lower-builtin-call-available-id?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [name-id : i64]) : bool
+  (and
+    (not (sym_i64_env.sym-i64-contains-id env name-id))
+    (not (lower-top-level-value-defined-id? ctx name-id))))
 
 (define (lower-builtin-call-available?
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
-  (and
-    (not (sym_i64_env.sym-i64-contains env name))
-    (not (lower-top-level-value-defined? ctx name))))
+  (lower-builtin-call-available-id? ctx env (intern name)))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (let
@@ -19159,7 +19168,7 @@
                 (ResultTcType.Err
                   "lower: call result type is not fast-pathable")])]
           [(ResultTcType.Err message)
-            (if (lower-builtin-call-available? ctx env name-text)
+            (if (lower-builtin-call-available-id? ctx env name)
               (cond
                 [(cbi.compiler-builtin-lower-array-length-id? name)
                   (ResultTcType.Ok (AstType.I64))]
@@ -25836,7 +25845,7 @@
                           raw-name)]
                       [name-id : i64 (intern name)]
                       [builtin-available : bool
-                        (not (lower-top-level-value-defined? ctx name))]
+                        (not (lower-top-level-value-defined-id? ctx name-id))]
                       [atomic-symbol : String
                         (lower-atomic-extern-symbol-for-name ctx name)]
                       (cond

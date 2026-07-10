@@ -45042,17 +45042,18 @@
 
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
-    [cursor : AstDeclList items]
+    [count : i64 (ast-decl-list-len (& items))]
+    [index : i64 0]
     [result : AstDeclList out]
-    [done : bool false]
     (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons head rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder head result))
-              (set! cursor rest))]))
+      (while (< index count)
+        (begin
+          (set!
+            result
+            (ast-decl-list-prepend-builder
+              (ast-decl-list-ref items index)
+              result))
+          (set! index (+ index 1))))
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList

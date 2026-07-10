@@ -852,12 +852,12 @@
       (compiler-reg-var-type-insert types dst (AstType.I64))]
     [(CompilerIrInstr.Call dst _ _ ty)
       (compiler-reg-var-type-insert types dst ty)]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (match result
-            [(IrSpmdCallResultUnit) types]
-            [(IrSpmdCallResultValue dst _ ty)
+            [(CompilerIrSpmdCallResult.Unit) types]
+            [(CompilerIrSpmdCallResult.Value dst _ ty)
               (compiler-reg-var-type-insert types dst ty)])])]
     [(CompilerIrInstr.Phi dst _ ty) (compiler-reg-var-type-insert types dst ty)]
     [(CompilerIrInstr.Pack dst _ ty)
@@ -930,12 +930,12 @@
       (compiler-reg-var-type-array-set! present types dst (AstType.Bool))]
     [(CompilerIrInstr.Call dst _ _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (match result
-            [(IrSpmdCallResultUnit) unit]
-            [(IrSpmdCallResultValue dst _ ty)
+            [(CompilerIrSpmdCallResult.Unit) unit]
+            [(CompilerIrSpmdCallResult.Value dst _ ty)
               (compiler-reg-var-type-array-set! present types dst ty)])])]
     [(CompilerIrInstr.Phi dst _ ty)
       (compiler-reg-var-type-array-set! present types dst ty)]
@@ -3606,9 +3606,9 @@
                     (compiler-live-set-union
                       out
                       (compiler-live-after liveness label instr-index))])]
-              [(IrInstrSpmdCall payload-box)
+              [(CompilerIrInstr.SpmdCall payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                  [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
                     (compiler-live-set-union
                       out
                       (compiler-live-after liveness label instr-index))])]
@@ -3703,9 +3703,15 @@
                           (compiler-live-call-args-vars args)
                           base)
                         func))])]
-              [(IrInstrSpmdCall payload-box)
+              [(CompilerIrInstr.SpmdCall payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+                  [(CompilerIrInstrSpmdCallPayload.Payload
+                      _
+                      _
+                      _
+                      active-mask
+                      args
+                      _)
                     (compiler-live-set-union
                       out
                       (compiler-live-value-vars-into
@@ -5106,12 +5112,12 @@
     [(CompilerIrInstr.Call dst _ _ _) dst]
     [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
     [(CompilerIrInstr.CallIndirectC dst _ _ _) dst]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (match result
-            [(IrSpmdCallResultUnit) (- 0 1)]
-            [(IrSpmdCallResultValue dst _ _) dst])])]
+            [(CompilerIrSpmdCallResult.Unit) (- 0 1)]
+            [(CompilerIrSpmdCallResult.Value dst _ _) dst])])]
     [(CompilerIrInstr.Phi dst _ _) dst]
     [(CompilerIrInstr.Pack dst _ _) dst]
     [(CompilerIrInstr.Word dst _ _ _) dst]
@@ -6667,9 +6673,9 @@
                       _
                       _)
                     (compiler-live-set-insert out p)])]
-              [(IrInstrSpmdCall payload-box)
+              [(CompilerIrInstr.SpmdCall payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                  [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
                     (compiler-live-set-insert out p)])]
               [(CompilerIrInstr.TailCall _ _ _)
                 (compiler-live-set-insert out p)]
@@ -6742,9 +6748,9 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
           true])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _) true])]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [(CompilerIrInstr.Syscall _ _) true]
@@ -7369,9 +7375,9 @@
             out
             (match (array-ref slots index)
               [(CompilerIrInstr.Call _ _ _ _) (compiler-live-set-insert out p)]
-              [(IrInstrSpmdCall payload-box)
+              [(CompilerIrInstr.SpmdCall payload-box)
                 (match (box-get payload-box)
-                  [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+                  [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
                     (compiler-live-set-insert out p)])]
               [_ out]))
           (set! p (+ p 2))
@@ -17539,17 +17545,17 @@
   [invalid : (Array bool)]
   [args : CompilerIrSpmdCallArgList]) : unit
   (match args
-    [(IrSpmdCallArgNil) unit]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) unit]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match arg
-        [(IrSpmdCallArg _ value _)
+        [(CompilerIrSpmdCallArg.Arg _ value _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid value)
             (compiler-reg-color-invalidate-spmd-call-args!
               roots
               invalid
               (box-get rest)))])]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (let
         [i : i64 0]
         [count : i64 (struct-get seq len)]
@@ -17557,7 +17563,7 @@
         (while (< i count)
           (begin
             (match (array-ref slots i)
-              [(IrSpmdCallArg _ value _)
+              [(CompilerIrSpmdCallArg.Arg _ value _)
                 (compiler-reg-color-invalidate-value! roots invalid value)])
             (set! i (+ i 1)))))]))
 
@@ -17749,9 +17755,9 @@
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid callee)
             (compiler-reg-color-invalidate-call-args! roots invalid args))])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
           (begin
             (compiler-reg-color-invalidate-value! roots invalid active-mask)
             (compiler-reg-color-invalidate-spmd-call-args! roots invalid args))])]
@@ -18656,19 +18662,22 @@
   [remap : (Array i64)]
   [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
   (match arg
-    [(IrSpmdCallArg class value ty)
-      (IrSpmdCallArg class (compiler-reg-remap-value remap value) ty)]))
+    [(CompilerIrSpmdCallArg.Arg class value ty)
+      (CompilerIrSpmdCallArg.Arg
+        class
+        (compiler-reg-remap-value remap value)
+        ty)]))
 
 (define (compiler-reg-remap-spmd-call-args
   [remap : (Array i64)]
   [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
   (match args
-    [(IrSpmdCallArgNil) IrSpmdCallArgNil]
-    [(IrSpmdCallArgCons arg rest)
-      (IrSpmdCallArgCons
+    [(CompilerIrSpmdCallArgList.Nil) CompilerIrSpmdCallArgList.Nil]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
+      (CompilerIrSpmdCallArgList.Cons
         (compiler-reg-remap-spmd-call-arg remap arg)
         (box (compiler-reg-remap-spmd-call-args remap (box-get rest))))]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (let
         [count : i64 (struct-get seq len)]
         [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
@@ -18683,15 +18692,18 @@
                 i
                 (compiler-reg-remap-spmd-call-arg remap (array-ref slots i)))
               (set! i (+ i 1))))
-          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq out count))))]))
+          (CompilerIrSpmdCallArgList.Array (CompilerIrSpmdCallArgSeq out count))))]))
 
 (define (compiler-reg-remap-spmd-call-result
   [remap : (Array i64)]
   [result : CompilerIrSpmdCallResult]) : CompilerIrSpmdCallResult
   (match result
-    [(IrSpmdCallResultUnit) IrSpmdCallResultUnit]
-    [(IrSpmdCallResultValue dst class ty)
-      (IrSpmdCallResultValue (compiler-reg-remap-id remap dst) class ty)]))
+    [(CompilerIrSpmdCallResult.Unit) CompilerIrSpmdCallResult.Unit]
+    [(CompilerIrSpmdCallResult.Value dst class ty)
+      (CompilerIrSpmdCallResult.Value
+        (compiler-reg-remap-id remap dst)
+        class
+        ty)]))
 
 (define (compiler-reg-remap-phi-inputs
   [remap : (Array i64)]
@@ -18967,9 +18979,9 @@
             (compiler-reg-remap-value remap callee)
             (compiler-reg-remap-call-args remap args)
             slots)])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload
+        [(CompilerIrInstrSpmdCallPayload.Payload
             callee
             backend
             lanes

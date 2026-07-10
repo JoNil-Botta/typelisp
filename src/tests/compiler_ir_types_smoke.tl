@@ -359,24 +359,27 @@
   (let
     [args : CompilerIrSpmdCallArgList
       (ir-spmd-call-arg-cons
-        (IrSpmdCallArg
-          (IrSpmdValueUniform)
+        (CompilerIrSpmdCallArg.Arg
+          (CompilerIrSpmdValueClass.Uniform)
           (CompilerIrValue.Var 21)
           (AstType.I64))
         (ir-spmd-call-arg-cons
-          (IrSpmdCallArg
-            (IrSpmdValueVarying)
+          (CompilerIrSpmdCallArg.Arg
+            (CompilerIrSpmdValueClass.Varying)
             (CompilerIrValue.Var 22)
             (AstType.I64))
-          IrSpmdCallArgNil))]
+          CompilerIrSpmdCallArgList.Nil))]
     [instr : CompilerIrInstr
       (ir-instr-spmd-call
         "helper"
-        (IrSpmdBackendAvx2)
+        (CompilerIrSpmdBackend.Avx2)
         8
         (CompilerIrValue.Var 20)
         args
-        (IrSpmdCallResultValue 6 (IrSpmdValueVarying) (AstType.I64)))]
+        (CompilerIrSpmdCallResult.Value
+          6
+          (CompilerIrSpmdValueClass.Varying)
+          (AstType.I64)))]
     [span : AstSourceSpan (ast-source-span 3 4 3 9)]
     [spans : CompilerSourceSpans
       (compiler-source-spans-insert-instr
@@ -392,11 +395,12 @@
         (compiler-ir-instr-describe instr)
         "  spmd_call helper backend avx2 lanes 8 mask %20(uniform %21 : i64, varying %22 : i64) -> %6 : varying i64")
       (match instr
-        [(IrInstrSpmdCall payload-box)
+        [(CompilerIrInstr.SpmdCall payload-box)
           (match (box-get payload-box)
-            [(CompilerIrInstrSpmdCallPayload _ _ _ _ stored-args _)
+            [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ stored-args _)
               (match stored-args
-                [(IrSpmdCallArgArray seq) (= (struct-get seq len) 2)]
+                [(CompilerIrSpmdCallArgList.Array seq)
+                  (= (struct-get seq len) 2)]
                 [_ false])])]
         [_ false])
       (compiler-ir-effect-is? instr CompilerIrEffect.Unknown)

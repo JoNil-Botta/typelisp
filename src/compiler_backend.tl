@@ -22469,9 +22469,9 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
           true])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) true])]
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _) true])]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
@@ -28766,9 +28766,9 @@
         (compiler-backend-emit-xgetbv assignments dst index)]
       [(CompilerIrInstr.Syscall dst args)
         (compiler-backend-emit-syscall target assignments dst args)]
-      [(IrInstrSpmdCall payload-box)
+      [(CompilerIrInstr.SpmdCall payload-box)
         (match (box-get payload-box)
-          [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _)
+          [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
             (compiler-backend-spmd-call-unimplemented instr-diag)])]
       [(CompilerIrInstr.Call dst name args ty)
         (compiler-backend-emit-direct-call-with-arg-assignments
@@ -29147,14 +29147,14 @@
   [counts : (Array i64)]
   [args : CompilerIrSpmdCallArgList]) : unit
   (match args
-    [(IrSpmdCallArgNil) unit]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) unit]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match arg
-        [(IrSpmdCallArg _ value _)
+        [(CompilerIrSpmdCallArg.Arg _ value _)
           (begin
             (compiler-backend-count-value-use counts value)
             (compiler-backend-count-spmd-call-args-uses counts (box-get rest)))])]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (let
         [i : i64 0]
         [count : i64 (struct-get seq len)]
@@ -29162,7 +29162,7 @@
         (while (< i count)
           (begin
             (match (array-ref slots i)
-              [(IrSpmdCallArg _ value _)
+              [(CompilerIrSpmdCallArg.Arg _ value _)
                 (compiler-backend-count-value-use counts value)])
             (set! i (+ i 1)))))]))
 
@@ -29320,9 +29320,9 @@
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts callee)
             (compiler-backend-count-call-args-uses counts args))])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
           (begin
             (compiler-backend-count-value-use counts active-mask)
             (compiler-backend-count-spmd-call-args-uses counts args))])]
@@ -42101,14 +42101,14 @@
   [collections : CompilerBackendProgramCollections]
   [args : CompilerIrSpmdCallArgList]) : CompilerBackendProgramCollections
   (match args
-    [(IrSpmdCallArgNil) collections]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) collections]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match arg
-        [(IrSpmdCallArg _ value _)
+        [(CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-backend-collect-spmd-call-args-collections
             (compiler-backend-collect-value-collections collections value)
             (box-get rest))])]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (let
         [out : CompilerBackendProgramCollections collections]
         [i : i64 0]
@@ -42118,7 +42118,7 @@
           (while (< i count)
             (begin
               (match (array-ref slots i)
-                [(IrSpmdCallArg _ value _)
+                [(CompilerIrSpmdCallArg.Arg _ value _)
                   (set!
                     out
                     (compiler-backend-collect-value-collections out value))])
@@ -42187,9 +42187,9 @@
               (compiler-backend-collect-value-collections collections base)
               func)
             args)])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
           (compiler-backend-collect-spmd-call-args-collections
             (compiler-backend-collect-value-collections collections active-mask)
             args)])]
@@ -47334,15 +47334,15 @@ tl_tlci_call_image_entry:
   [site : String]
   [args : CompilerIrSpmdCallArgList]) : CompilerBackendObjectParts
   (match args
-    [(IrSpmdCallArgNil) parts]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) parts]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match arg
-        [(IrSpmdCallArg _ value _)
+        [(CompilerIrSpmdCallArg.Arg _ value _)
           (compiler-backend-object-spmd-call-args
             (compiler-backend-object-value-ref parts site value)
             site
             (box-get rest))])]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (let
         [out : CompilerBackendObjectParts parts]
         [i : i64 0]
@@ -47352,7 +47352,7 @@ tl_tlci_call_image_entry:
           (while (< i count)
             (begin
               (match (array-ref slots i)
-                [(IrSpmdCallArg _ value _)
+                [(CompilerIrSpmdCallArg.Arg _ value _)
                   (set! out (compiler-backend-object-value-ref out site value))])
               (set! i (+ i 1))))
           out))]))
@@ -48493,9 +48493,9 @@ tl_tlci_call_image_entry:
       (compiler-backend-object-value-ref parts function index)]
     [(CompilerIrInstr.Syscall _ args)
       (compiler-backend-object-call-args parts function args 0)]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ active-mask args _)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active-mask args _)
           (compiler-backend-object-spmd-call-args
             (compiler-backend-object-value-ref parts function active-mask)
             function

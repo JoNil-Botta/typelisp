@@ -81,30 +81,30 @@
   (Array (Array CompilerIrValue)))
 
 (defenum CompilerIrSpmdBackend
-  (IrSpmdBackendScalar)
-  (IrSpmdBackendAvx2)
-  (IrSpmdBackendAvx512))
+  (Scalar)
+  (Avx2)
+  (Avx512))
 
 (defenum CompilerIrSpmdValueClass
-  (IrSpmdValueUniform)
-  (IrSpmdValueVarying)
-  (IrSpmdValueMask))
+  (Uniform)
+  (Varying)
+  (Mask))
 
 (defenum CompilerIrSpmdCallArg
-  (IrSpmdCallArg CompilerIrSpmdValueClass CompilerIrValue AstType))
+  (Arg CompilerIrSpmdValueClass CompilerIrValue AstType))
 
 (defstruct CompilerIrSpmdCallArgSeq
   (slots (Array CompilerIrSpmdCallArg))
   (len i64))
 
 (defenum CompilerIrSpmdCallArgList
-  (IrSpmdCallArgNil)
-  (IrSpmdCallArgCons CompilerIrSpmdCallArg (Box CompilerIrSpmdCallArgList))
-  (IrSpmdCallArgArray CompilerIrSpmdCallArgSeq))
+  (Nil)
+  (Cons CompilerIrSpmdCallArg (Box CompilerIrSpmdCallArgList))
+  (Array CompilerIrSpmdCallArgSeq))
 
 (defenum CompilerIrSpmdCallResult
-  (IrSpmdCallResultUnit)
-  (IrSpmdCallResultValue i64 CompilerIrSpmdValueClass AstType))
+  (Unit)
+  (Value i64 CompilerIrSpmdValueClass AstType))
 
 (defenum CompilerIrCAbiReturnSlot
   (Slot AstType i64))
@@ -182,7 +182,7 @@
     CompilerIrCAbiReturnSlotList))
 
 (defenum CompilerIrInstrSpmdCallPayload
-  (CompilerIrInstrSpmdCallPayload
+  (Payload
     String
     CompilerIrSpmdBackend
     i64
@@ -234,7 +234,7 @@
   (CallCAbiStoreResult (Box CompilerIrInstrCallCAbiStoreResultPayload))
   (CallIndirectCAbiStoreResult
     (Box CompilerIrInstrCallIndirectCAbiStoreResultPayload))
-  (IrInstrSpmdCall (Box CompilerIrInstrSpmdCallPayload))
+  (SpmdCall (Box CompilerIrInstrSpmdCallPayload))
   (TailCall String CompilerIrCallArgs AstType)
   (Store String CompilerIrValue AstType)
   (Jump String)
@@ -354,7 +354,7 @@
 (define (ir-spmd-call-arg-cons
   [arg : CompilerIrSpmdCallArg]
   [rest : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
-  (IrSpmdCallArgCons arg (box rest)))
+  (CompilerIrSpmdCallArgList.Cons arg (box rest)))
 
 (define (ir-instr-spmd-call
   [callee : String]
@@ -363,9 +363,9 @@
   [active-mask : CompilerIrValue]
   [args : CompilerIrSpmdCallArgList]
   [result : CompilerIrSpmdCallResult]) : CompilerIrInstr
-  (IrInstrSpmdCall
+  (CompilerIrInstr.SpmdCall
     (box
-      (CompilerIrInstrSpmdCallPayload
+      (CompilerIrInstrSpmdCallPayload.Payload
         callee
         backend
         lanes
@@ -1910,20 +1910,20 @@
 
 (define (compiler-ir-clone-spmd-backend [backend : CompilerIrSpmdBackend]) : CompilerIrSpmdBackend
   (match backend
-    [(IrSpmdBackendScalar) (IrSpmdBackendScalar)]
-    [(IrSpmdBackendAvx2) (IrSpmdBackendAvx2)]
-    [(IrSpmdBackendAvx512) (IrSpmdBackendAvx512)]))
+    [(CompilerIrSpmdBackend.Scalar) (CompilerIrSpmdBackend.Scalar)]
+    [(CompilerIrSpmdBackend.Avx2) (CompilerIrSpmdBackend.Avx2)]
+    [(CompilerIrSpmdBackend.Avx512) (CompilerIrSpmdBackend.Avx512)]))
 
 (define (compiler-ir-clone-spmd-value-class [class : CompilerIrSpmdValueClass]) : CompilerIrSpmdValueClass
   (match class
-    [(IrSpmdValueUniform) (IrSpmdValueUniform)]
-    [(IrSpmdValueVarying) (IrSpmdValueVarying)]
-    [(IrSpmdValueMask) (IrSpmdValueMask)]))
+    [(CompilerIrSpmdValueClass.Uniform) (CompilerIrSpmdValueClass.Uniform)]
+    [(CompilerIrSpmdValueClass.Varying) (CompilerIrSpmdValueClass.Varying)]
+    [(CompilerIrSpmdValueClass.Mask) (CompilerIrSpmdValueClass.Mask)]))
 
 (define (compiler-ir-clone-spmd-call-arg [arg : CompilerIrSpmdCallArg]) : CompilerIrSpmdCallArg
   (match arg
-    [(IrSpmdCallArg class value ty)
-      (IrSpmdCallArg
+    [(CompilerIrSpmdCallArg.Arg class value ty)
+      (CompilerIrSpmdCallArg.Arg
         (compiler-ir-clone-spmd-value-class class)
         (compiler-ir-clone-value value)
         (compiler-ir-clone-type ty))]))
@@ -1954,19 +1954,20 @@
 
 (define (compiler-ir-clone-spmd-call-args [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
   (match args
-    [(IrSpmdCallArgNil) (IrSpmdCallArgNil)]
-    [(IrSpmdCallArgCons arg rest)
-      (IrSpmdCallArgCons
+    [(CompilerIrSpmdCallArgList.Nil) (CompilerIrSpmdCallArgList.Nil)]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
+      (CompilerIrSpmdCallArgList.Cons
         (compiler-ir-clone-spmd-call-arg arg)
         (box (compiler-ir-clone-spmd-call-args (box-get rest))))]
-    [(IrSpmdCallArgArray seq)
-      (IrSpmdCallArgArray (compiler-ir-clone-spmd-call-arg-seq seq))]))
+    [(CompilerIrSpmdCallArgList.Array seq)
+      (CompilerIrSpmdCallArgList.Array
+        (compiler-ir-clone-spmd-call-arg-seq seq))]))
 
 (define (compiler-ir-clone-spmd-call-result [result : CompilerIrSpmdCallResult]) : CompilerIrSpmdCallResult
   (match result
-    [(IrSpmdCallResultUnit) (IrSpmdCallResultUnit)]
-    [(IrSpmdCallResultValue dst class ty)
-      (IrSpmdCallResultValue
+    [(CompilerIrSpmdCallResult.Unit) (CompilerIrSpmdCallResult.Unit)]
+    [(CompilerIrSpmdCallResult.Value dst class ty)
+      (CompilerIrSpmdCallResult.Value
         dst
         (compiler-ir-clone-spmd-value-class class)
         (compiler-ir-clone-type ty))]))
@@ -2414,9 +2415,9 @@
             (compiler-ir-clone-value callee)
             (compiler-ir-clone-call-args args)
             (compiler-ir-clone-c-abi-return-slots slots))])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload
+        [(CompilerIrInstrSpmdCallPayload.Payload
             callee
             backend
             lanes
@@ -3044,19 +3045,19 @@
 
 (define (compiler-ir-spmd-backend-render [backend : CompilerIrSpmdBackend]) : String
   (match backend
-    [(IrSpmdBackendScalar) "scalar"]
-    [(IrSpmdBackendAvx2) "avx2"]
-    [(IrSpmdBackendAvx512) "avx512"]))
+    [(CompilerIrSpmdBackend.Scalar) "scalar"]
+    [(CompilerIrSpmdBackend.Avx2) "avx2"]
+    [(CompilerIrSpmdBackend.Avx512) "avx512"]))
 
 (define (compiler-ir-spmd-value-class-render [class : CompilerIrSpmdValueClass]) : String
   (match class
-    [(IrSpmdValueUniform) "uniform"]
-    [(IrSpmdValueVarying) "varying"]
-    [(IrSpmdValueMask) "mask"]))
+    [(CompilerIrSpmdValueClass.Uniform) "uniform"]
+    [(CompilerIrSpmdValueClass.Varying) "varying"]
+    [(CompilerIrSpmdValueClass.Mask) "mask"]))
 
 (define (compiler-ir-spmd-call-arg-render [arg : CompilerIrSpmdCallArg]) : String
   (match arg
-    [(IrSpmdCallArg class value ty)
+    [(CompilerIrSpmdCallArg.Arg class value ty)
       (str_cat.str-cat
         (compiler-ir-spmd-value-class-render class)
         " "
@@ -3082,38 +3083,39 @@
 
 (define (compiler-ir-spmd-call-args-render [args : CompilerIrSpmdCallArgList]) : String
   (match args
-    [(IrSpmdCallArgNil) ""]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) ""]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match (box-get rest)
-        [(IrSpmdCallArgNil) (compiler-ir-spmd-call-arg-render arg)]
+        [(CompilerIrSpmdCallArgList.Nil) (compiler-ir-spmd-call-arg-render arg)]
         [_
           (str_cat.str-cat
             (compiler-ir-spmd-call-arg-render arg)
             ", "
             (compiler-ir-spmd-call-args-render (box-get rest)))])]
-    [(IrSpmdCallArgArray seq) (compiler-ir-spmd-call-arg-seq-render-from seq 0)]))
+    [(CompilerIrSpmdCallArgList.Array seq)
+      (compiler-ir-spmd-call-arg-seq-render-from seq 0)]))
 
 (define (compiler-ir-spmd-call-arg-count [args : CompilerIrSpmdCallArgList]) : i64
   (match args
-    [(IrSpmdCallArgNil) 0]
-    [(IrSpmdCallArgCons _ rest)
+    [(CompilerIrSpmdCallArgList.Nil) 0]
+    [(CompilerIrSpmdCallArgList.Cons _ rest)
       (+ 1 (compiler-ir-spmd-call-arg-count (box-get rest)))]
-    [(IrSpmdCallArgArray seq) (struct-get seq len)]))
+    [(CompilerIrSpmdCallArgList.Array seq) (struct-get seq len)]))
 
 (define (compiler-ir-spmd-call-arg-list-fill-array
   [args : CompilerIrSpmdCallArgList]
   [slots : (Array CompilerIrSpmdCallArg)]
   [index : i64]) : unit
   (match args
-    [(IrSpmdCallArgNil) unit]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) unit]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (begin
         (array-set! slots index arg)
         (compiler-ir-spmd-call-arg-list-fill-array
           (box-get rest)
           slots
           (+ index 1)))]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (compiler-ir-spmd-call-arg-seq-fill-array seq slots 0 index)]))
 
 (define (compiler-ir-spmd-call-arg-seq-fill-array
@@ -3136,21 +3138,22 @@
 
 (define (compiler-ir-spmd-call-args-compact [args : CompilerIrSpmdCallArgList]) : CompilerIrSpmdCallArgList
   (match args
-    [(IrSpmdCallArgNil) args]
-    [(IrSpmdCallArgArray _) args]
-    [(IrSpmdCallArgCons _ _)
+    [(CompilerIrSpmdCallArgList.Nil) args]
+    [(CompilerIrSpmdCallArgList.Array _) args]
+    [(CompilerIrSpmdCallArgList.Cons _ _)
       (let
         [count : i64 (compiler-ir-spmd-call-arg-count args)]
         [slots : (Array CompilerIrSpmdCallArg)
           (array.make-array CompilerIrSpmdCallArg count)]
         (begin
           (compiler-ir-spmd-call-arg-list-fill-array args slots 0)
-          (IrSpmdCallArgArray (CompilerIrSpmdCallArgSeq slots count))))]))
+          (CompilerIrSpmdCallArgList.Array
+            (CompilerIrSpmdCallArgSeq slots count))))]))
 
 (define (compiler-ir-spmd-result-render [result : CompilerIrSpmdCallResult]) : String
   (match result
-    [(IrSpmdCallResultUnit) "unit"]
-    [(IrSpmdCallResultValue _ class ty)
+    [(CompilerIrSpmdCallResult.Unit) "unit"]
+    [(CompilerIrSpmdCallResult.Value _ class ty)
       (str_cat.str-cat
         (compiler-ir-spmd-value-class-render class)
         " "
@@ -3207,9 +3210,9 @@
       (compiler-ir-tail-call-render name args ty)]
     [(CompilerIrInstr.TailCallIndirect callee args ty)
       (compiler-ir-tail-call-indirect-render callee args ty)]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload
+        [(CompilerIrInstrSpmdCallPayload.Payload
             callee
             backend
             lanes
@@ -3379,9 +3382,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
           CompilerIrEffect.Unknown])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ _) CompilerIrEffect.Unknown])]
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _)
+          CompilerIrEffect.Unknown])]
     [(CompilerIrInstr.BoundsCheck _ _ _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.TailCall _ _ _) CompilerIrEffect.ControlFlow]
     [(CompilerIrInstr.Jump _) CompilerIrEffect.ControlFlow]
@@ -3798,12 +3802,12 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
           spans])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
           (match result
-            [(IrSpmdCallResultUnit) spans]
-            [(IrSpmdCallResultValue dst _ _)
+            [(CompilerIrSpmdCallResult.Unit) spans]
+            [(CompilerIrSpmdCallResult.Value dst _ _)
               (compiler-source-spans-insert-instr-entry
                 spans
                 (compiler-source-spans-value-key function dst)
@@ -3975,12 +3979,12 @@
           (match (box-get payload-box)
             [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ _ _)
               (CompilerMaybeSourceSpan.No)])]
-        [(IrInstrSpmdCall payload-box)
+        [(CompilerIrInstr.SpmdCall payload-box)
           (match (box-get payload-box)
-            [(CompilerIrInstrSpmdCallPayload _ _ _ _ _ result)
+            [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ result)
               (match result
-                [(IrSpmdCallResultUnit) (CompilerMaybeSourceSpan.No)]
-                [(IrSpmdCallResultValue dst _ _)
+                [(CompilerIrSpmdCallResult.Unit) (CompilerMaybeSourceSpan.No)]
+                [(CompilerIrSpmdCallResult.Value dst _ _)
                   (compiler-source-spans-entry-list-lookup
                     instr-entries
                     (compiler-source-spans-value-key function dst))])])]
@@ -4128,9 +4132,9 @@
       (match (box-get payload-box)
         [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload _ _ args _)
           (compiler-ir-call-args-count args)])]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload _ _ _ _ args _)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ args _)
           (compiler-ir-spmd-call-arg-count args)])]
     [(CompilerIrInstr.TailCall _ args _) (compiler-ir-call-args-count args)]
     [(CompilerIrInstr.TailCallIndirect _ args _)
@@ -4757,7 +4761,7 @@
 
 (define (compiler-ir-spmd-call-arg-describe [arg : CompilerIrSpmdCallArg]) : String
   (match arg
-    [(IrSpmdCallArg class value ty)
+    [(CompilerIrSpmdCallArg.Arg class value ty)
       (str_cat.str-cat
         (compiler-ir-spmd-value-class-render class)
         " "
@@ -4783,23 +4787,24 @@
 
 (define (compiler-ir-spmd-call-args-describe [args : CompilerIrSpmdCallArgList]) : String
   (match args
-    [(IrSpmdCallArgNil) ""]
-    [(IrSpmdCallArgCons arg rest)
+    [(CompilerIrSpmdCallArgList.Nil) ""]
+    [(CompilerIrSpmdCallArgList.Cons arg rest)
       (match (box-get rest)
-        [(IrSpmdCallArgNil) (compiler-ir-spmd-call-arg-describe arg)]
+        [(CompilerIrSpmdCallArgList.Nil)
+          (compiler-ir-spmd-call-arg-describe arg)]
         [_
           (str_cat.str-cat
             (compiler-ir-spmd-call-arg-describe arg)
             ", "
             (compiler-ir-spmd-call-args-describe (box-get rest)))])]
-    [(IrSpmdCallArgArray seq)
+    [(CompilerIrSpmdCallArgList.Array seq)
       (compiler-ir-spmd-call-arg-seq-describe-from seq 0)]))
 
 (define (compiler-ir-spmd-call-result-describe
   [result : CompilerIrSpmdCallResult]) : String
   (match result
-    [(IrSpmdCallResultUnit) "unit"]
-    [(IrSpmdCallResultValue dst class ty)
+    [(CompilerIrSpmdCallResult.Unit) "unit"]
+    [(CompilerIrSpmdCallResult.Value dst class ty)
       (str_cat.str-cat
         (compiler-ir-value-describe (CompilerIrValue.Var dst))
         " : "
@@ -5041,9 +5046,9 @@
         (compiler-ir-value-describe len)
         " : "
         (string.int->string lanes))]
-    [(IrInstrSpmdCall payload-box)
+    [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload
+        [(CompilerIrInstrSpmdCallPayload.Payload
             callee
             backend
             lanes

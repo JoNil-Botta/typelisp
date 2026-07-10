@@ -6,16 +6,16 @@
   (let
     [spmd-args : CompilerIrSpmdCallArgList
       (ir-spmd-call-arg-cons
-        (IrSpmdCallArg
-          (IrSpmdValueUniform)
+        (CompilerIrSpmdCallArg.Arg
+          (CompilerIrSpmdValueClass.Uniform)
           (CompilerIrValue.Var 1)
           (compiler-reg-i64-ty))
         (ir-spmd-call-arg-cons
-          (IrSpmdCallArg
-            (IrSpmdValueVarying)
+          (CompilerIrSpmdCallArg.Arg
+            (CompilerIrSpmdValueClass.Varying)
             (CompilerIrValue.Var 2)
             (compiler-reg-i64-ty))
-          IrSpmdCallArgNil))]
+          CompilerIrSpmdCallArgList.Nil))]
     (CompilerIrFunction.Function
       "spmd_call"
       CompilerIrParamList.Nil
@@ -42,13 +42,13 @@
                 (compiler-ir-instr-cons
                   (ir-instr-spmd-call
                     "spmd_helper"
-                    (IrSpmdBackendAvx512)
+                    (CompilerIrSpmdBackend.Avx512)
                     8
                     (CompilerIrValue.Var 0)
                     spmd-args
-                    (IrSpmdCallResultValue
+                    (CompilerIrSpmdCallResult.Value
                       3
-                      (IrSpmdValueVarying)
+                      (CompilerIrSpmdValueClass.Varying)
                       (compiler-reg-i64-ty)))
                   (compiler-ir-instr-cons
                     (CompilerIrInstr.Mov

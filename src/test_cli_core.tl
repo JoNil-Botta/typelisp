@@ -1246,6 +1246,14 @@
         (tltest-reach-mark-expr
           value
           (tltest-reach-mark-expr index (tltest-reach-mark-expr array names))))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (tltest-reach-mark-expr
+          index
+          (tltest-reach-mark-expr live (tltest-reach-mark-expr array names))))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]

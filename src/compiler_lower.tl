@@ -890,6 +890,8 @@
     [(AstExpr.ArrayRef target index) (lower-expr-id-first-span2 target index)]
     [(AstExpr.ArraySet target index value)
       (lower-expr-id-first-span3 target index value)]
+    [(AstExpr.ArrayTake target live index)
+      (lower-expr-id-first-span3 target live index)]
     [(AstExpr.ArrayPush target value) (lower-expr-id-first-span2 target value)]
     [(AstExpr.StringRef target index) (lower-expr-id-first-span2 target index)]
     [(AstExpr.While cond body) (lower-expr-id-first-span2 cond body)]
@@ -4282,6 +4284,34 @@
                   [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
               [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
           [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (lower-context-expr-get ctx array-box)]
+        [live : AstExpr (lower-context-expr-get ctx live-box)]
+        [index : AstExpr (lower-context-expr-get ctx index-box)]
+        (match (lower-spmd-inline-expr ctx env type-env array subst shadowed)
+          [(ResultLowerAstExpr.Ok rewritten-array)
+            (match (lower-spmd-inline-expr ctx env type-env live subst shadowed)
+              [(ResultLowerAstExpr.Ok rewritten-live)
+                (match (lower-spmd-inline-expr
+                  ctx
+                  env
+                  type-env
+                  index
+                  subst
+                  shadowed)
+                  [(ResultLowerAstExpr.Ok rewritten-index)
+                    (ResultLowerAstExpr.Ok
+                      (lower-context-expr-get
+                        ctx
+                        (ast-expr-array-take-with-pools
+                          (tc-context-pools ctx)
+                          (lower-context-expr-push ctx rewritten-array)
+                          (lower-context-expr-push ctx rewritten-live)
+                          (lower-context-expr-push ctx rewritten-index))))]
+                  [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+              [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)])]
+          [(ResultLowerAstExpr.Err diag) (ResultLowerAstExpr.Err diag)]))]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -5473,6 +5503,24 @@
           able
           (lower-clone-roots-expr ctx env decls able roots receiver)
           value))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (tc-context-expr-get ctx array-box)]
+        [live : AstExpr (tc-context-expr-get ctx live-box)]
+        [index : AstExpr (tc-context-expr-get ctx index-box)]
+        (lower-clone-roots-expr
+          ctx
+          env
+          decls
+          able
+          (lower-clone-roots-expr
+            ctx
+            env
+            decls
+            able
+            (lower-clone-roots-expr ctx env decls able roots array)
+            live)
+          index))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (tc-context-expr-get ctx array-box)]
@@ -6316,6 +6364,22 @@
             (lower-reach-expr pools all-functions names state array)
             index)
           value))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-pool-context-expr-get pools array-box)]
+        [live : AstExpr (ast-node-pool-context-expr-get pools live-box)]
+        [index : AstExpr (ast-node-pool-context-expr-get pools index-box)]
+        (lower-reach-expr
+          pools
+          all-functions
+          names
+          (lower-reach-expr
+            pools
+            all-functions
+            names
+            (lower-reach-expr pools all-functions names state array)
+            live)
+          index))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-pool-context-expr-get pools array-box)]
@@ -7921,6 +7985,16 @@
           index-box)
         module
         value-box)]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (lower-used-types-add-expr-id
+        pools
+        (lower-used-types-add-expr-id
+          pools
+          (lower-used-types-add-expr-id pools used module array-box)
+          module
+          live-box)
+        module
+        index-box)]
     [(AstExpr.ArrayPush array-box value-box)
       (lower-used-types-add-expr-id
         pools
@@ -20584,6 +20658,12 @@
         [index : AstExpr (lower-context-expr-get ctx index-box)]
         [value : AstExpr (lower-context-expr-get ctx value-box)]
         (lower-array-set ctx state env type-env arr index value))]
+    [(AstExpr.ArrayTake arr-box live-box index-box)
+      (let
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [live : AstExpr (lower-context-expr-get ctx live-box)]
+        [index : AstExpr (lower-context-expr-get ctx index-box)]
+        (lower-array-take ctx state env type-env arr live index expr-ty))]
     [(AstExpr.ArrayPush arr-box value-box)
       (let
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
@@ -27817,6 +27897,324 @@
       (match (lower-emit-load addr-state elem-ptr elem-ir-ty)
         [(LowerExpr.Expr load-state load-value _)
           (ResultLowerExpr.Ok (LowerExpr.Expr load-state load-value elem-ir-ty))]))))
+
+(define (lower-array-take-length
+  [state : LowerState]
+  [array-value : CompilerIrValue]) : LowerExpr
+  (match (lower-emit-gep
+    state
+    array-value
+    (CompilerIrValue.I64 1)
+    (AstType.I64))
+    [(LowerExpr.Expr gep-state gep-value _)
+      (lower-emit-load gep-state gep-value (AstType.I64))]))
+
+(define (lower-array-take-store-result
+  [ctx : TcContext]
+  [state : LowerState]
+  [result-base : CompilerIrValue]
+  [elem-offset : i64]
+  [elem-ty : AstType]
+  [available : CompilerIrValue]
+  [value : CompilerIrValue]) : LowerState
+  (lower-store-inline-value-at-offset
+    ctx
+    (lower-store-at-offset state result-base 0 available (AstType.Bool))
+    result-base
+    elem-offset
+    value
+    elem-ty
+    (lower-type-size ctx elem-ty)))
+
+;; Finish a checked dynamic-array extraction once its availability flag is
+;; initialized to false. The payload is meaningful only when that flag is true.
+;; Both dynamic lengths are checked before either element address is formed;
+;; clearing the bitmap precedes the payload load, making a repeated extraction
+;; observe false instead of moving again.
+(define (lower-array-take-after-result-flag
+  [ctx : TcContext]
+  [state : LowerState]
+  [array-value : CompilerIrValue]
+  [live-value : CompilerIrValue]
+  [index-value : CompilerIrValue]
+  [index-ty : AstType]
+  [elem-ty : AstType]
+  [result-base : CompilerIrValue]
+  [result-ty : AstType]
+  [elem-offset : i64]) : ResultLowerExpr
+  (match (lower-array-take-length state array-value)
+    [(LowerExpr.Expr array-len-state array-len _)
+      (match (lower-array-take-length array-len-state live-value)
+        [(LowerExpr.Expr live-len-state live-len _)
+          (match (lower-emit-cast
+            live-len-state
+            index-value
+            index-ty
+            (AstType.U64))
+            [(LowerExpr.Expr index-state index-u _)
+              (match (lower-emit-cast
+                index-state
+                array-len
+                (AstType.I64)
+                (AstType.U64))
+                [(LowerExpr.Expr array-len-state2 array-len-u _)
+                  (match (lower-emit-cast
+                    array-len-state2
+                    live-len
+                    (AstType.I64)
+                    (AstType.U64))
+                    [(LowerExpr.Expr live-len-state2 live-len-u _)
+                      (match (lower-emit-binop
+                        live-len-state2
+                        CompilerIrBinOp.Lt
+                        index-u
+                        array-len-u
+                        (AstType.Bool))
+                        [(LowerExpr.Expr array-ok-state array-ok _)
+                          (match (lower-emit-binop
+                            array-ok-state
+                            CompilerIrBinOp.Lt
+                            index-u
+                            live-len-u
+                            (AstType.Bool))
+                            [(LowerExpr.Expr live-ok-state live-ok _)
+                              (match (lower-emit-binop
+                                live-ok-state
+                                CompilerIrBinOp.And
+                                array-ok
+                                live-ok
+                                (AstType.Bool))
+                                [(LowerExpr.Expr bounds-state bounds-ok _)
+                                  (match (lower-state-fresh-label
+                                    bounds-state
+                                    "array_take_live")
+                                    [(LowerLabel.Label
+                                        live-label-state
+                                        live-label)
+                                      (match (lower-state-fresh-label
+                                        live-label-state
+                                        "array_take_value")
+                                        [(LowerLabel.Label
+                                            take-label-state
+                                            take-label)
+                                          (match (lower-state-fresh-label
+                                            take-label-state
+                                            "array_take_done")
+                                            [(LowerLabel.Label
+                                                done-label-state
+                                                done-label)
+                                              (let
+                                                [live-start : LowerState
+                                                  (lower-state-finish-block
+                                                    (lower-state-emit
+                                                      done-label-state
+                                                      (CompilerIrInstr.Branch
+                                                        bounds-ok
+                                                        live-label
+                                                        done-label))
+                                                    live-label)]
+                                                (match (lower-array-element-addr
+                                                  ctx
+                                                  live-start
+                                                  live-value
+                                                  index-value
+                                                  index-ty
+                                                  (AstType.Bool))
+                                                  [(LowerExpr.Expr
+                                                      live-addr-state
+                                                      live-ptr
+                                                      _)
+                                                    (match (lower-array-elem-ref-result
+                                                      ctx
+                                                      live-addr-state
+                                                      live-ptr
+                                                      (AstType.Bool))
+                                                      [(ResultLowerExpr.Ok
+                                                          live-read)
+                                                        (match live-read
+                                                          [(LowerExpr.Expr
+                                                              live-read-state
+                                                              live-bit
+                                                              _)
+                                                            (let
+                                                              [take-start : LowerState
+                                                                (lower-state-finish-block
+                                                                  (lower-state-emit
+                                                                    live-read-state
+                                                                    (CompilerIrInstr.Branch
+                                                                      live-bit
+                                                                      take-label
+                                                                      done-label))
+                                                                  take-label)]
+                                                              (match (lower-array-element-addr
+                                                                ctx
+                                                                take-start
+                                                                array-value
+                                                                index-value
+                                                                index-ty
+                                                                elem-ty)
+                                                                [(LowerExpr.Expr
+                                                                    elem-addr-state
+                                                                    elem-ptr
+                                                                    _)
+                                                                  (match (lower-array-elem-ref-result
+                                                                    ctx
+                                                                    elem-addr-state
+                                                                    elem-ptr
+                                                                    elem-ty)
+                                                                    [(ResultLowerExpr.Ok
+                                                                        value-read)
+                                                                      (match value-read
+                                                                        [(LowerExpr.Expr
+                                                                            value-state
+                                                                            value
+                                                                            _)
+                                                                          (let
+                                                                            [cleared-state : LowerState
+                                                                              (lower-array-elem-store-state
+                                                                                ctx
+                                                                                value-state
+                                                                                live-ptr
+                                                                                (CompilerIrValue.Bool
+                                                                                  false)
+                                                                                (AstType.Bool))]
+                                                                            [stored-state : LowerState
+                                                                              (lower-array-take-store-result
+                                                                                ctx
+                                                                                cleared-state
+                                                                                result-base
+                                                                                elem-offset
+                                                                                elem-ty
+                                                                                (CompilerIrValue.Bool
+                                                                                  true)
+                                                                                value)]
+                                                                            (ResultLowerExpr.Ok
+                                                                              (LowerExpr.Expr
+                                                                                (lower-state-finish-block
+                                                                                  (lower-state-emit
+                                                                                    stored-state
+                                                                                    (CompilerIrInstr.Jump
+                                                                                      done-label))
+                                                                                  done-label)
+                                                                                result-base
+                                                                                result-ty)))])]
+                                                                    [(ResultLowerExpr.Err
+                                                                        message)
+                                                                      (ResultLowerExpr.Err
+                                                                        message)])]))])]
+                                                      [(ResultLowerExpr.Err
+                                                          message)
+                                                        (ResultLowerExpr.Err
+                                                          message)])]))])])])])])])])])])])]))
+
+(define (lower-array-take
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [array : AstExpr]
+  [live : AstExpr]
+  [index : AstExpr]
+  [result-ty : AstType]) : ResultLowerExpr
+  (match (lower-expr-result-type-or-check
+    ctx
+    env
+    type-env
+    (lower-state-type-cache state)
+    array)
+    [(ResultTcType.Ok array-ty)
+      (match (tc-array-set-receiver ctx array-ty)
+        [(ResultTcArrayReceiver.Ok receiver)
+          (match receiver
+            [(TcArrayReceiver container-ty elem-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx container-ty))
+                [(AstType.DynArray _)
+                  (let
+                    [elem-ir-ty : AstType
+                      (tc-type-without-regions (tc-resolve-type ctx elem-ty))]
+                    (match (lower-expr ctx state env type-env array)
+                      [(ResultLowerExpr.Ok array-lowered)
+                        (match array-lowered
+                          [(LowerExpr.Expr array-state array-value _)
+                            (match (lower-expr
+                              ctx
+                              array-state
+                              env
+                              type-env
+                              live)
+                              [(ResultLowerExpr.Ok live-lowered)
+                                (match live-lowered
+                                  [(LowerExpr.Expr live-state live-value _)
+                                    (match (lower-integer-expr-with-expected-or-actual
+                                      ctx
+                                      live-state
+                                      env
+                                      type-env
+                                      index
+                                      (AstType.I64)
+                                      "lower: array-take! index must be integer")
+                                      [(ResultLowerExpr.Ok index-lowered)
+                                        (match index-lowered
+                                          [(LowerExpr.Expr
+                                              index-state
+                                              index-value
+                                              index-ty)
+                                            (let
+                                              [elem-offset : i64
+                                                (lower-align-up
+                                                  1
+                                                  (lower-type-align
+                                                    ctx
+                                                    elem-ir-ty))]
+                                              [result-storage-size : i64
+                                                (lower-type-list-storage-size
+                                                  ctx
+                                                  (ast-type-cons
+                                                    (AstType.Bool)
+                                                    (ast-type-cons
+                                                      elem-ir-ty
+                                                      (ast-type-list-new))))]
+                                              (match (lower-reserve-heap-storage
+                                                index-state
+                                                result-storage-size
+                                                result-ty)
+                                                [(LowerExpr.Expr
+                                                    result-state
+                                                    result-base
+                                                    _)
+                                                  (lower-array-take-after-result-flag
+                                                    ctx
+                                                    (lower-store-at-offset
+                                                      result-state
+                                                      result-base
+                                                      0
+                                                      (CompilerIrValue.Bool
+                                                        false)
+                                                      (AstType.Bool))
+                                                    array-value
+                                                    live-value
+                                                    index-value
+                                                    index-ty
+                                                    elem-ir-ty
+                                                    result-base
+                                                    result-ty
+                                                    elem-offset)]))])]
+                                      [(ResultLowerExpr.Err message)
+                                        (ResultLowerExpr.Err message)])])]
+                              [(ResultLowerExpr.Err message)
+                                (ResultLowerExpr.Err message)])])]
+                      [(ResultLowerExpr.Err message)
+                        (ResultLowerExpr.Err message)]))]
+                [_
+                  (ResultLowerExpr.Err
+                    (box
+                      (lower-diagnostic-at-expr
+                        array
+                        "lower: array-take! requires dynamic array storage")))])])]
+        [(ResultTcArrayReceiver.Err message)
+          (ResultLowerExpr.Err (box (lower-diagnostic-at-expr array message)))])]
+    [(ResultTcType.Err message)
+      (ResultLowerExpr.Err (box (lower-diagnostic-at-expr array message)))]))
 
 (define (lower-array-ref
   [ctx : TcContext]
@@ -47011,6 +47409,24 @@
 (define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
 (define (main) : i64 0)")
 
+;; `array-take!` moves an element only when its companion liveness slot is
+;; still true. The primitive returns a false availability flag for exhausted,
+;; invalid, or already-taken positions instead of forming an out-of-bounds
+;; address; its payload is then intentionally unspecified.
+(define (compiler-lower-array-take-source) : String
+  "(define (close-fd [fd : i64]) : unit unit)
+(defstruct FileHandle
+  (:cleanup cleanup-file-handle)
+  (fd i64 (:cleanup close-fd)))
+(define (take-item [items : (Array i64)] [live : (Array bool)] [i : i64]) : (Tuple bool i64)
+  (array-take! items live i))
+(define (take-handle [items : (Array FileHandle)] [live : (Array bool)] [i : i64]) : (Tuple bool FileHandle)
+  (array-take! items live i))
+(define (main [items : (Array i64)] [live : (Array bool)] [handles : (Array FileHandle)] [handle-live : (Array bool)] [i : i64]) : i64
+  (begin
+    (take-item items live i)
+    (if (tuple-ref (take-handle handles handle-live i) 0) 1 0)))")
+
 ;; Fixed-array access lowers against inline array storage rather than the
 ;; dynamic-array fat `{ptr, len}` layout.
 (define (compiler-lower-fixed-array-access-source) : String
@@ -53033,6 +53449,18 @@
             (> (lower-test-function-bounds-count functions "put") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-array-take-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-array-take-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (>= (lower-test-function-bounds-count functions "take-item") 2)
+            (>= (lower-test-function-branch-count functions "take-item") 2)
+            (>= (lower-test-function-store-ptr-count functions "take-item") 3)
+            (>= (lower-test-function-load-count functions "take-item") 3))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-mut-ref-array-field-access-shape-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-mut-ref-array-field-access-source))
@@ -56432,6 +56860,9 @@
         (set! ok false))
       (if (compiler-lower-array-access-shape-ok?
         (compiler-lower-array-access-source))
+        unit
+        (set! ok false))
+      (if (compiler-lower-array-take-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-fixed-array-access-shape-ok?

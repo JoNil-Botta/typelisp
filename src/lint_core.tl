@@ -656,6 +656,7 @@
         (lint-side-effect-branch? inner))]
     [(AstExpr.Set _ _) true]
     [(AstExpr.ArraySet _ _ _) true]
+    [(AstExpr.ArrayTake _ _ _) true]
     [(AstExpr.ArrayPush _ _) true]
     [(AstExpr.StructSet _ _ _) true]
     [(AstExpr.Begin exprs) (lint-expr-list-has-side-effect? exprs)]
@@ -698,6 +699,7 @@
     [(AstExpr.Continue) true]
     [(AstExpr.Set _ _) true]
     [(AstExpr.ArraySet _ _ _) true]
+    [(AstExpr.ArrayTake _ _ _) true]
     [(AstExpr.ArrayPush _ _) true]
     [(AstExpr.StructSet _ _ _) true]
     [(AstExpr.Begin exprs) (lint-expr-list-last-guard-branch? exprs)]
@@ -1922,6 +1924,12 @@
         (if (lint-expr-uses-import? (ast-node-get index) alias module-name)
           true
           (lint-expr-uses-import? (ast-node-get value) alias module-name)))]
+    [(AstExpr.ArrayTake array live index)
+      (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
+        true
+        (if (lint-expr-uses-import? (ast-node-get live) alias module-name)
+          true
+          (lint-expr-uses-import? (ast-node-get index) alias module-name)))]
     [(AstExpr.ArrayPush array value)
       (if (lint-expr-uses-import? (ast-node-get array) alias module-name)
         true
@@ -3197,6 +3205,14 @@
           (lint-copy-on-update-expr (ast-node-get array) state span)
           span)
         span)]
+    [(AstExpr.ArrayTake array live index)
+      (lint-copy-on-update-expr
+        (ast-node-get index)
+        (lint-copy-on-update-expr
+          (ast-node-get live)
+          (lint-copy-on-update-expr (ast-node-get array) state span)
+          span)
+        span)]
     [(AstExpr.ArrayPush array value)
       (lint-copy-on-update-expr
         (ast-node-get value)
@@ -3682,6 +3698,17 @@
             (ast-node-get array)
             (lint-no-span)
             acc)))]
+    [(AstExpr.ArrayTake array live index)
+      (lint-prefer-dotted-field-expr
+        (ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-expr
+          (ast-node-get live)
+          (lint-no-span)
+          (lint-prefer-dotted-field-expr
+            (ast-node-get array)
+            (lint-no-span)
+            acc)))]
     [(AstExpr.ArrayPush array value)
       (lint-prefer-dotted-field-expr
         (ast-node-get value)
@@ -4065,6 +4092,17 @@
         (lint-no-span)
         (lint-prefer-dotted-field-quasiquote-expr
           (ast-node-get index)
+          (lint-no-span)
+          (lint-prefer-dotted-field-quasiquote-expr
+            (ast-node-get array)
+            (lint-no-span)
+            acc)))]
+    [(AstExpr.ArrayTake array live index)
+      (lint-prefer-dotted-field-quasiquote-expr
+        (ast-node-get index)
+        (lint-no-span)
+        (lint-prefer-dotted-field-quasiquote-expr
+          (ast-node-get live)
           (lint-no-span)
           (lint-prefer-dotted-field-quasiquote-expr
             (ast-node-get array)
@@ -4955,6 +4993,23 @@
             (lint-single-element-array-expr
               (ast-node-get index)
               (lint-single-element-array-expr (ast-node-get array) state)))))]
+    [(AstExpr.ArrayTake array live index)
+      (let
+        [name : String
+          (lint-single-element-array-var-name (ast-node-get array))]
+        (if (and
+          (lint-single-element-array-candidate-tracked?
+            (struct-get state candidates)
+            name)
+          (lint-single-element-array-int-literal? (ast-node-get index) 0))
+          (lint-single-element-array-expr
+            (ast-node-get live)
+            (lint-single-element-array-note-use state name))
+          (lint-single-element-array-expr
+            (ast-node-get index)
+            (lint-single-element-array-expr
+              (ast-node-get live)
+              (lint-single-element-array-expr (ast-node-get array) state)))))]
     [(AstExpr.ArrayPush array value)
       (lint-single-element-array-expr
         (ast-node-get value)
@@ -5403,6 +5458,12 @@
         (ast-node-get value)
         (lint-unused-assignment-note-reads
           (ast-node-get index)
+          (lint-unused-assignment-note-reads (ast-node-get array) state)))]
+    [(AstExpr.ArrayTake array live index)
+      (lint-unused-assignment-note-reads
+        (ast-node-get index)
+        (lint-unused-assignment-note-reads
+          (ast-node-get live)
           (lint-unused-assignment-note-reads (ast-node-get array) state)))]
     [(AstExpr.ArrayPush array value)
       (lint-unused-assignment-note-reads
@@ -6883,6 +6944,12 @@
         (lint-unused-variable-quasiquote-expr
           (ast-node-get index)
           (lint-unused-variable-quasiquote-expr (ast-node-get array) state)))]
+    [(AstExpr.ArrayTake array live index)
+      (lint-unused-variable-quasiquote-expr
+        (ast-node-get index)
+        (lint-unused-variable-quasiquote-expr
+          (ast-node-get live)
+          (lint-unused-variable-quasiquote-expr (ast-node-get array) state)))]
     [(AstExpr.ArrayPush array value)
       (lint-unused-variable-quasiquote-expr
         (ast-node-get value)
@@ -7300,6 +7367,14 @@
         (ast-node-get value)
         (lint-unused-variable-expr
           (ast-node-get index)
+          (lint-unused-variable-expr (ast-node-get array) state span)
+          span)
+        span)]
+    [(AstExpr.ArrayTake array live index)
+      (lint-unused-variable-expr
+        (ast-node-get index)
+        (lint-unused-variable-expr
+          (ast-node-get live)
           (lint-unused-variable-expr (ast-node-get array) state span)
           span)
         span)]
@@ -8602,6 +8677,15 @@
           value
           threshold
           (lint-walk-expr index threshold (lint-walk-expr array threshold acc))))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (lint-walk-expr
+          index
+          threshold
+          (lint-walk-expr live threshold (lint-walk-expr array threshold acc))))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]

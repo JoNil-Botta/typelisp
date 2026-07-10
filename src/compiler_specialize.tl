@@ -2747,6 +2747,26 @@
                   [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
               [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
           [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (spec-rewrite-expr array templates state)
+          [(ResultSpecExpr.Ok rewritten-array array-state)
+            (match (spec-rewrite-expr live templates array-state)
+              [(ResultSpecExpr.Ok rewritten-live live-state)
+                (match (spec-rewrite-expr index templates live-state)
+                  [(ResultSpecExpr.Ok rewritten-index index-state)
+                    (ResultSpecExpr.Ok
+                      (ast-expr-array-take
+                        rewritten-array
+                        rewritten-live
+                        rewritten-index)
+                      index-state)]
+                  [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+              [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)])]
+          [(ResultSpecExpr.Err diag) (ResultSpecExpr.Err diag)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -3344,6 +3364,25 @@
           [(ResultSpecSubExpr.Ok rewritten)
             (ResultSpecSubExpr.Ok (ast-expr-spanned rewritten span))]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (spec-substitute-values-expr array subs)
+          [(ResultSpecSubExpr.Ok rewritten-array)
+            (match (spec-substitute-values-expr live subs)
+              [(ResultSpecSubExpr.Ok rewritten-live)
+                (match (spec-substitute-values-expr index subs)
+                  [(ResultSpecSubExpr.Ok rewritten-index)
+                    (ResultSpecSubExpr.Ok
+                      (ast-expr-array-take
+                        rewritten-array
+                        rewritten-live
+                        rewritten-index))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
     [(AstExpr.Var name)
       (let
         [name-str : String (intern-str name)]
@@ -3487,6 +3526,25 @@
                         rewritten-array
                         rewritten-index
                         rewritten-value))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (spec-substitute-values-expr array subs)
+          [(ResultSpecSubExpr.Ok rewritten-array)
+            (match (spec-substitute-values-expr live subs)
+              [(ResultSpecSubExpr.Ok rewritten-live)
+                (match (spec-substitute-values-expr index subs)
+                  [(ResultSpecSubExpr.Ok rewritten-index)
+                    (ResultSpecSubExpr.Ok
+                      (ast-expr-array-take
+                        rewritten-array
+                        rewritten-live
+                        rewritten-index))]
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
@@ -4479,6 +4537,25 @@
                         rewritten-array
                         rewritten-index
                         rewritten-value))]
+                  [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+              [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
+          [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ast-node-get array-box)]
+        [live : AstExpr (ast-node-get live-box)]
+        [index : AstExpr (ast-node-get index-box)]
+        (match (spec-substitute-types-expr array subs)
+          [(ResultSpecSubExpr.Ok rewritten-array)
+            (match (spec-substitute-types-expr live subs)
+              [(ResultSpecSubExpr.Ok rewritten-live)
+                (match (spec-substitute-types-expr index subs)
+                  [(ResultSpecSubExpr.Ok rewritten-index)
+                    (ResultSpecSubExpr.Ok
+                      (ast-expr-array-take
+                        rewritten-array
+                        rewritten-live
+                        rewritten-index))]
                   [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
               [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)])]
           [(ResultSpecSubExpr.Err diag) (ResultSpecSubExpr.Err diag)]))]

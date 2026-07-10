@@ -1370,6 +1370,7 @@
     [(AstExpr.MakeArray _ _) "make-array"]
     [(AstExpr.ArrayRef _ _) "array-ref"]
     [(AstExpr.ArraySet _ _ _) "array-set!"]
+    [(AstExpr.ArrayTake _ _ _) "array-take!"]
     [(AstExpr.ArrayPush _ _) "array-push!"]
     [(AstExpr.StringRef _ _) "string-ref"]
     [(AstExpr.While _ _) "while"]
@@ -8312,6 +8313,29 @@
                     (ResultCtfeQuoteExpr.Err diag)])]
               [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
+    [(AstExpr.ArrayTake array-box live-box index-box)
+      (let
+        [array : AstExpr (ctfe-ast-get env array-box)]
+        [live : AstExpr (ctfe-ast-get env live-box)]
+        [index : AstExpr (ctfe-ast-get env index-box)]
+        (match (ctfe-quote-expr array env fuel quasiquote)
+          [(ResultCtfeQuoteExpr.Ok quoted-array _ array-fuel)
+            (match (ctfe-quote-expr live env array-fuel quasiquote)
+              [(ResultCtfeQuoteExpr.Ok quoted-live _ live-fuel)
+                (match (ctfe-quote-expr index env live-fuel quasiquote)
+                  [(ResultCtfeQuoteExpr.Ok quoted-index _ index-fuel)
+                    (ResultCtfeQuoteExpr.Ok
+                      (ast-expr-array-take-with-pools
+                        (ctfe-env-pools env)
+                        quoted-array
+                        quoted-live
+                        quoted-index)
+                      (AstType.Expr)
+                      index-fuel)]
+                  [(ResultCtfeQuoteExpr.Err diag)
+                    (ResultCtfeQuoteExpr.Err diag)])]
+              [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)])]
+          [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.ArrayPush array-box value-box)
       (let
         [array : AstExpr (ctfe-ast-get env array-box)]
@@ -9263,6 +9287,22 @@
                 (ctfe-expr-eq-in-env env a-target b-target)
                 (ctfe-expr-eq-in-env env a-index b-index)
                 (ctfe-expr-eq-in-env env a-value b-value)))]
+          [_ false]))]
+    [(AstExpr.ArrayTake a-target-box a-live-box a-index-box)
+      (let
+        [a-target : AstExpr (ctfe-ast-get env a-target-box)]
+        [a-live : AstExpr (ctfe-ast-get env a-live-box)]
+        [a-index : AstExpr (ctfe-ast-get env a-index-box)]
+        (match b
+          [(AstExpr.ArrayTake b-target-box b-live-box b-index-box)
+            (let
+              [b-target : AstExpr (ctfe-ast-get env b-target-box)]
+              [b-live : AstExpr (ctfe-ast-get env b-live-box)]
+              [b-index : AstExpr (ctfe-ast-get env b-index-box)]
+              (and
+                (ctfe-expr-eq-in-env env a-target b-target)
+                (ctfe-expr-eq-in-env env a-live b-live)
+                (ctfe-expr-eq-in-env env a-index b-index)))]
           [_ false]))]
     [(AstExpr.ArrayPush a-target-box a-value-box)
       (let

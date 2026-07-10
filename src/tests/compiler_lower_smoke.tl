@@ -532,6 +532,9 @@
         (compiler-lower-array-access-source))
       (panic "lower: array access smoke mismatch"))
     (unless
+      (compiler-lower-array-take-shape-ok?)
+      (panic "lower: array take smoke mismatch"))
+    (unless
       (compiler-lower-fixed-array-access-shape-ok?
         (compiler-lower-fixed-array-access-source))
       (panic "lower: fixed array access smoke mismatch"))

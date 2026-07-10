@@ -41,16 +41,30 @@
   (sym-i64-lookup-id-or e (ci.intern k) fallback))
 
 (define (sym-i64-lookup-id-or [e : SymI64Env] [k : i64] [fallback : i64]) : i64
-  (match (sym-i64-lookup-id e k)
-    [(option_i64.Some value) value]
-    [option_i64.None fallback]))
+  (let
+    [cursor : SymI64Env e]
+    (begin
+      (while true
+        (match cursor
+          [(SymI64Nil) (return fallback)]
+          [(SymI64Bind kk vv rest)
+            (if (= kk k)
+              (return vv)
+              (set! cursor (box-get rest)))]))
+      fallback)))
 
 (define (sym-i64-contains [e : SymI64Env] [k : String]) : bool
-  (match (sym-i64-lookup e k)
-    [(option_i64.Some _) true]
-    [option_i64.None false]))
+  (sym-i64-contains-id e (ci.intern k)))
 
 (define (sym-i64-contains-id [e : SymI64Env] [k : i64]) : bool
-  (match (sym-i64-lookup-id e k)
-    [(option_i64.Some _) true]
-    [option_i64.None false]))
+  (let
+    [cursor : SymI64Env e]
+    (begin
+      (while true
+        (match cursor
+          [(SymI64Nil) (return false)]
+          [(SymI64Bind kk _ rest)
+            (if (= kk k)
+              (return true)
+              (set! cursor (box-get rest)))]))
+      false)))

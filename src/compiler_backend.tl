@@ -265,6 +265,53 @@
   (buf (text_buf_borrowed.TextBufBorrowed asm))
   (owners CompilerBackendPeepholeOwners))
 
+;; One raw-assembly group plus already-optimized output chunks. A group ends at
+;; a function-level `.globl` chunk, where peephole owner state is
+;; conservatively reset by the legacy pass anyway.
+(defstruct CompilerBackendPeepholeChunkState
+  (out text_buf.TextBuf)
+  (group text_buf.TextBuf))
+
+;; State carried while sweeping chunked peephole output. Metadata is recorded
+;; in function emission order, so the next entry is the only candidate to
+;; match in each following assembly group.
+(defstruct CompilerBackendDeadstoreSweepChunkResult
+  (buf text_buf.TextBuf)
+  (cursor i64))
+
+(defstruct CompilerBackendPeepholeSweepChunkState
+  (out text_buf.TextBuf)
+  (group text_buf.TextBuf)
+  (sweep-cursor i64))
+
+;; Final-buffer emission uses these scoped stream fields only while the final
+;; backend wrapper is active. Primitive inactive defaults avoid relying on a
+;; module-global heap value before compiler global initialization runs.
+(define compiler-backend-assembly-stream-active : bool
+  false)
+(define compiler-backend-assembly-stream-raw-arena : arena.Arena
+  (arena.Arena 0))
+(define compiler-backend-assembly-stream-raw-mark : arena.ArenaMark
+  (arena.ArenaMark 0))
+(define compiler-backend-assembly-stream-peephole-arena : arena.Arena
+  (arena.Arena 0))
+(define compiler-backend-assembly-stream-peephole-mark : arena.ArenaMark
+  (arena.ArenaMark 0))
+(define compiler-backend-assembly-stream-home-arena : arena.Arena
+  (arena.Arena 0))
+(define compiler-backend-assembly-stream-out : text_buf.TextBuf
+  (text_buf.empty))
+(define compiler-backend-assembly-stream-sweep-cursor : i64
+  0)
+(define compiler-backend-assembly-stream-batch : text_buf.TextBuf
+  (text_buf.empty))
+(define compiler-backend-assembly-stream-batch-count : i64
+  0)
+(define compiler-backend-assembly-stream-raw-ready : bool
+  false)
+(define compiler-backend-assembly-stream-batch-function-limit : i64
+  64)
+
 (defenum CompilerBackendUnsignedDivMagic
   (No)
   (RoundUp u64 i64)
@@ -39701,13 +39748,16 @@
 (define (compiler-backend-string-copy-to-buffer [asm : String]) : text_buf.TextBuf
   (compiler-backend-borrowed-copy-to-owned (text_buf_borrowed.single (& asm))))
 
-;; The whole-program sweep driver: walk the final text, match each metadata
-;; symbol's label IN EMISSION ORDER (buffer order == record order), and sweep
-;; its region ([label+1, next .globl)). Unmatched metadata degrades gracefully
-;; (the remaining text is appended verbatim).
-(define (compiler-backend-deadstore-sweep-buffer [asm : String]) : text_buf.TextBuf
-  (if (= compiler-backend-sweep-count 0)
-    (compiler-backend-string-copy-to-buffer asm)
+;; Sweep one independently rendered assembly group, resuming at the next
+;; metadata entry from an earlier group. The caller owns the cursor and resets
+;; global sweep metadata only after the final group.
+(define (compiler-backend-deadstore-sweep-buffer-from-cursor
+  [asm : String]
+  [start-cursor : i64]) : CompilerBackendDeadstoreSweepChunkResult
+  (if (>= start-cursor compiler-backend-sweep-count)
+    (CompilerBackendDeadstoreSweepChunkResult
+      (compiler-backend-string-copy-to-buffer asm)
+      start-cursor)
     (let
       [n : i64 (string.string-length asm)]
       [data : (Ptr u8)
@@ -39716,7 +39766,7 @@
       [out : (text_buf_borrowed.TextBufBorrowed asm)
         (text_buf_borrowed.empty-like (& asm))]
       [flush : i64 0]
-      [cursor : i64 0]
+      [cursor : i64 start-cursor]
       [matched : bool false]
       [i : i64 0]
       (begin
@@ -39766,22 +39816,6 @@
                   (if (< end n)
                     (+ end 1)
                     end))))))
-        (cfg
-          regalloc-census
-          (io.print-error
-            (str_cat.str-cat
-              "deadstore-sweep|funcs="
-              (string.int->string compiler-backend-sweep-swept-funcs)
-              "|stores="
-              (string.int->string compiler-backend-sweep-swept-stores)
-              "|dropped="
-              (string.int->string compiler-backend-sweep-dropped-funcs)
-              "|table-cap-drops="
-              (string.int->string compiler-backend-sweep-dropped-table-cap)
-              "|bytes-cap-drops="
-              (string.int->string compiler-backend-sweep-dropped-bytes-cap)
-              "\n"
-              "")))
         (let
           [result : text_buf.TextBuf
             (if (not matched)
@@ -39796,9 +39830,36 @@
                     n
                     false))
                 (compiler-backend-borrowed-copy-to-owned out)))]
-          (begin
-            (compiler-backend-sweep-reset!)
-            result))))))
+          (CompilerBackendDeadstoreSweepChunkResult result cursor))))))
+
+(define (compiler-backend-deadstore-sweep-report-and-reset!) : unit
+  (begin
+    (cfg
+      regalloc-census
+      (io.print-error
+        (str_cat.str-cat
+          "deadstore-sweep|funcs="
+          (string.int->string compiler-backend-sweep-swept-funcs)
+          "|stores="
+          (string.int->string compiler-backend-sweep-swept-stores)
+          "|dropped="
+          (string.int->string compiler-backend-sweep-dropped-funcs)
+          "|table-cap-drops="
+          (string.int->string compiler-backend-sweep-dropped-table-cap)
+          "|bytes-cap-drops="
+          (string.int->string compiler-backend-sweep-dropped-bytes-cap)
+          "\n"
+          "")))
+    (compiler-backend-sweep-reset!)))
+
+;; Whole-string compatibility wrapper for callers that do not stream groups.
+(define (compiler-backend-deadstore-sweep-buffer [asm : String]) : text_buf.TextBuf
+  (let
+    [result : CompilerBackendDeadstoreSweepChunkResult
+      (compiler-backend-deadstore-sweep-buffer-from-cursor asm 0)]
+    (begin
+      (compiler-backend-deadstore-sweep-report-and-reset!)
+      (struct-get result buf))))
 
 (define (compiler-backend-deadstore-sweep [asm : String]) : String
   (text_buf.render (compiler-backend-deadstore-sweep-buffer asm)))
@@ -41536,7 +41597,7 @@
       functions)
     functions))
 
-(define (compiler-backend-emit-functions-buffer-into
+(define (compiler-backend-emit-functions-buffer-raw-into
   [target : CompilerBackendTarget]
   [mode : CompilerBackendMode]
   [functions : CompilerIrFunctionList]
@@ -41577,7 +41638,7 @@
                 (compiler-backend-profile-detail-finish
                   "function"
                   (compiler-backend-profile-function-name func)))
-              (compiler-backend-emit-functions-buffer-into
+              (compiler-backend-emit-functions-buffer-raw-into
                 target
                 mode
                 (box-get rest)
@@ -41685,6 +41746,224 @@
                   "function"
                   (compiler-backend-profile-function-name func)))
               (ResultCompilerBackendBuffer.Err message))])))))
+
+;; Final-buffer streaming emits each function into a rewindable raw arena, then
+;; immediately moves its optimized bytes into the home-owned output stream.
+(define (compiler-backend-emit-functions-stream-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionList]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
+  (match functions
+    [(CompilerIrFunctionList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(CompilerIrFunctionList.Cons func rest)
+      (let
+        [caller-arena : arena.Arena (arena.current)]
+        (begin
+          (compiler-backend-assembly-stream-begin-raw!)
+          (cfg compile-profile (compiler-backend-profile-detail-start))
+          (match (compiler-backend-emit-function-escaping
+            target
+            (compiler-backend-effective-function-mode mode func)
+            func
+            all-functions
+            globals
+            global-types
+            externs
+            plan
+            program-index
+            spans
+            span-index
+            emit-entry
+            crt-entry)
+            [(ResultCompilerBackend.Ok head)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-detail-finish
+                    "function"
+                    (compiler-backend-profile-function-name func)))
+                (compiler-backend-assembly-stream-process-string!
+                  (compiler-backend-emergency-wrap head))
+                (compiler-backend-assembly-stream-rewind-raw!)
+                (unsafe
+                  (arena.set! caller-arena))
+                (compiler-backend-emit-functions-stream-into
+                  target
+                  mode
+                  (box-get rest)
+                  all-functions
+                  globals
+                  global-types
+                  externs
+                  plan
+                  program-index
+                  spans
+                  span-index
+                  emit-entry
+                  crt-entry
+                  buf))]
+            [(ResultCompilerBackend.Err message)
+              (begin
+                (cfg
+                  compile-profile
+                  (compiler-backend-profile-detail-finish
+                    "function"
+                    (compiler-backend-profile-function-name func)))
+                (unsafe
+                  (arena.set! caller-arena))
+                (ResultCompilerBackendBuffer.Err message))])))]
+    [(CompilerIrFunctionList.Array seq)
+      (compiler-backend-emit-function-seq-stream-into
+        target
+        mode
+        seq
+        0
+        all-functions
+        globals
+        global-types
+        externs
+        plan
+        program-index
+        spans
+        span-index
+        emit-entry
+        crt-entry
+        buf)]))
+
+(define (compiler-backend-emit-function-seq-stream-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionSeq]
+  [index : i64]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
+  (if (>= index (compiler-ir-function-seq-count functions))
+    (ResultCompilerBackendBuffer.Ok buf)
+    (let
+      [func : CompilerIrFunction (compiler-ir-function-seq-ref functions index)]
+      [caller-arena : arena.Arena (arena.current)]
+      (begin
+        (compiler-backend-assembly-stream-begin-raw!)
+        (cfg compile-profile (compiler-backend-profile-detail-start))
+        (match (compiler-backend-emit-function-escaping
+          target
+          (compiler-backend-effective-function-mode mode func)
+          func
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry)
+          [(ResultCompilerBackend.Ok head)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (compiler-backend-assembly-stream-process-string!
+                (compiler-backend-emergency-wrap head))
+              (compiler-backend-assembly-stream-rewind-raw!)
+              (unsafe
+                (arena.set! caller-arena))
+              (compiler-backend-emit-function-seq-stream-into
+                target
+                mode
+                functions
+                (+ index 1)
+                all-functions
+                globals
+                global-types
+                externs
+                plan
+                program-index
+                spans
+                span-index
+                emit-entry
+                crt-entry
+                buf))]
+          [(ResultCompilerBackend.Err message)
+            (begin
+              (cfg
+                compile-profile
+                (compiler-backend-profile-detail-finish
+                  "function"
+                  (compiler-backend-profile-function-name func)))
+              (unsafe
+                (arena.set! caller-arena))
+              (ResultCompilerBackendBuffer.Err message))])))))
+
+(define (compiler-backend-emit-functions-buffer-into
+  [target : CompilerBackendTarget]
+  [mode : CompilerBackendMode]
+  [functions : CompilerIrFunctionList]
+  [all-functions : CompilerIrFunctionList]
+  [globals : CompilerIrGlobalList]
+  [global-types : CompilerBackendGlobalTypeList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [spans : CompilerSourceSpans]
+  [span-index : CompilerBackendSourceSpanIndex]
+  [emit-entry : bool]
+  [crt-entry : bool]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
+  (if (compiler-backend-assembly-stream-active?)
+    (compiler-backend-emit-functions-stream-into
+      target
+      mode
+      functions
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      emit-entry
+      crt-entry
+      buf)
+    (compiler-backend-emit-functions-buffer-raw-into
+      target
+      mode
+      functions
+      all-functions
+      globals
+      global-types
+      externs
+      plan
+      program-index
+      spans
+      span-index
+      emit-entry
+      crt-entry
+      buf)))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (str_cat.str-cat
@@ -41907,7 +42186,7 @@
     [(ResultCompilerBackendBuffer.Err message)
       (ResultCompilerBackend.Err message)]))
 
-(define (compiler-backend-emit-closure-entry-adapters-buffer-into
+(define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
   [target : CompilerBackendTarget]
   [names : BackendStringList]
   [functions : CompilerIrFunctionList]
@@ -41930,7 +42209,7 @@
             externs
             program-index)
             [(ResultCompilerBackend.Ok head)
-              (compiler-backend-emit-closure-entry-adapters-buffer-into
+              (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
                 target
                 (box-get rest)
                 functions
@@ -41941,7 +42220,7 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackendBuffer.Err message)])]
         [(CompilerBackendMaybeSignature.No)
-          (compiler-backend-emit-closure-entry-adapters-buffer-into
+          (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
             target
             (box-get rest)
             functions
@@ -41949,6 +42228,88 @@
             plan
             program-index
             buf)])]))
+
+(define (compiler-backend-emit-closure-entry-adapters-stream-into
+  [target : CompilerBackendTarget]
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
+  (match names
+    [(BackendStringList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(BackendStringList.Cons name rest)
+      (match (compiler-backend-index-signature program-index name)
+        [(CompilerBackendMaybeSignature.Some param-types ret-ty)
+          (let
+            [caller-arena : arena.Arena (arena.current)]
+            (begin
+              (compiler-backend-assembly-stream-begin-raw!)
+              (match (compiler-backend-emit-closure-entry-adapter
+                target
+                name
+                param-types
+                ret-ty
+                plan
+                functions
+                externs
+                program-index)
+                [(ResultCompilerBackend.Ok head)
+                  (begin
+                    (compiler-backend-assembly-stream-process-string!
+                      (compiler-backend-emergency-wrap head))
+                    (compiler-backend-assembly-stream-rewind-raw!)
+                    (unsafe
+                      (arena.set! caller-arena))
+                    (compiler-backend-emit-closure-entry-adapters-stream-into
+                      target
+                      (box-get rest)
+                      functions
+                      externs
+                      plan
+                      program-index
+                      buf))]
+                [(ResultCompilerBackend.Err message)
+                  (begin
+                    (unsafe
+                      (arena.set! caller-arena))
+                    (ResultCompilerBackendBuffer.Err message))])))]
+        [(CompilerBackendMaybeSignature.No)
+          (compiler-backend-emit-closure-entry-adapters-stream-into
+            target
+            (box-get rest)
+            functions
+            externs
+            plan
+            program-index
+            buf)])]))
+
+(define (compiler-backend-emit-closure-entry-adapters-buffer-into
+  [target : CompilerBackendTarget]
+  [names : BackendStringList]
+  [functions : CompilerIrFunctionList]
+  [externs : CompilerIrExternList]
+  [plan : CompilerBackendRuntimePlan]
+  [program-index : CompilerBackendProgramIndex]
+  [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
+  (if (compiler-backend-assembly-stream-active?)
+    (compiler-backend-emit-closure-entry-adapters-stream-into
+      target
+      names
+      functions
+      externs
+      plan
+      program-index
+      buf)
+    (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
+      target
+      names
+      functions
+      externs
+      plan
+      program-index
+      buf)))
 
 (define (compiler-backend-string-list-reverse-into
   [strings : BackendStringList]
@@ -46743,6 +47104,12 @@ tl_tlci_call_image_entry:
             globals-buf
             emit-entry
             crt-entry)]
+        [function-input : text_buf.TextBuf
+          (if (compiler-backend-assembly-stream-active?)
+            (begin
+              (compiler-backend-assembly-stream-process-buffer! prefix-buf)
+              (text_buf.empty))
+            prefix-buf)]
         (begin
           ;; This window previously started at the "collect" finish and was
           ;; overwritten by the next start without ever being reported,
@@ -46763,7 +47130,7 @@ tl_tlci_call_image_entry:
             span-index
             emit-entry
             crt-entry
-            prefix-buf)
+            function-input)
             [(ResultCompilerBackendBuffer.Ok with-functions)
               (begin
                 (cfg
@@ -46847,7 +47214,13 @@ tl_tlci_call_image_entry:
                           (cfg
                             scavenge-census
                             (compiler-backend-scavenge-census-print!))
-                          (ResultCompilerBackendBuffer.Ok buf))))]
+                          (ResultCompilerBackendBuffer.Ok
+                            (if (compiler-backend-assembly-stream-active?)
+                              (begin
+                                (compiler-backend-assembly-stream-process-buffer!
+                                  buf)
+                                (compiler-backend-assembly-stream-output))
+                              buf)))))]
                   [(ResultCompilerBackendBuffer.Err message)
                     (begin
                       (cfg
@@ -52441,6 +52814,262 @@ tl_tlci_call_image_entry:
       (string.string-length line))
     (compiler-backend-peephole-line-noreturn-abort? asm-data start end)))
 
+;; User-function chunks begin with `.globl`; processing either side separately
+;; preserves the legacy pass because that directive/function-entry boundary
+;; clears pending pair and owner state.  Chunks that split a function remain in
+;; the same group and are rendered together.
+(define (compiler-backend-peephole-chunk-starts-global? [chunk : String]) : bool
+  (let
+    [data : (Ptr u8)
+      (unsafe
+        (string-data chunk))]
+    [n : i64 (string.string-length chunk)]
+    [i : i64 0]
+    (begin
+      (while (and
+        (< i n)
+        (or
+          (= (compiler-backend-peephole-byte-at data i) 32)
+          (= (compiler-backend-peephole-byte-at data i) 9)
+          (= (compiler-backend-peephole-byte-at data i) 10)
+          (= (compiler-backend-peephole-byte-at data i) 13)))
+        (set! i (+ i 1)))
+      (and
+        (<= (+ i 6) n)
+        (compiler-backend-peephole-range-eq? data i (+ i 6) ".globl")))))
+
+;; Render and optimize only the accumulated function group.  The raw rendered
+;; String is scoped to its own arena; the complete peephole result is allocated
+;; in the caller arena before that raw arena is released.
+(define (compiler-backend-peephole-chunk-state-flush
+  [state : CompilerBackendPeepholeChunkState]) : CompilerBackendPeepholeChunkState
+  (if (text_buf.empty? (struct-get state group))
+    state
+    (let
+      [output-arena : arena.Arena (arena.current)]
+      [render-arena : arena.Arena (arena.make)]
+      (begin
+        (unsafe
+          (arena.set! render-arena))
+        (let
+          [raw-asm : String (text_buf.render (struct-get state group))]
+          (begin
+            (unsafe
+              (arena.set! output-arena))
+            (let
+              [peepholed-asm : String
+                (compiler-backend-peephole-asm-once raw-asm)]
+              (begin
+                (unsafe
+                  (arena.destroy render-arena))
+                (CompilerBackendPeepholeChunkState
+                  (text_buf.append (struct-get state out) peepholed-asm)
+                  (text_buf.empty))))))))))
+
+(define (compiler-backend-peephole-text-buf-once-in-arena
+  [buf : text_buf.TextBuf]
+  [group-arena : arena.Arena]) : text_buf.TextBuf
+  (let
+    [chunks : text_buf.TextBufChunkList (struct-get buf chunks)]
+    [chunk-count : i64 (text_buf.chunk-count chunks 0)]
+    [items : (Array String) (array.make-array String chunk-count)]
+    [initial : CompilerBackendPeepholeChunkState
+      (CompilerBackendPeepholeChunkState (text_buf.empty) (text_buf.empty))]
+    (begin
+      (text_buf.chunks-fill-array-rev chunks items (- chunk-count 1))
+      (let
+        [state : CompilerBackendPeepholeChunkState initial]
+        [i : i64 0]
+        (begin
+          (while (< i chunk-count)
+            (let
+              [chunk : String (array-ref items i)]
+              [at-boundary : CompilerBackendPeepholeChunkState
+                (if (and
+                  (compiler-backend-peephole-chunk-starts-global? chunk)
+                  (not (text_buf.empty? (struct-get state group))))
+                  (compiler-backend-peephole-chunk-state-flush state)
+                  state)]
+              [group : text_buf.TextBuf
+                (in-arena
+                  group-arena
+                  (text_buf.append (struct-get at-boundary group) chunk))]
+              (begin
+                (set!
+                  state
+                  (CompilerBackendPeepholeChunkState
+                    (struct-get at-boundary out)
+                    group))
+                (set! i (+ i 1)))))
+          (let
+            [flushed : CompilerBackendPeepholeChunkState
+              (compiler-backend-peephole-chunk-state-flush state)]
+            (struct-get flushed out)))))))
+
+(define (compiler-backend-peephole-text-buf-once [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  (compiler-backend-peephole-text-buf-once-in-arena buf (arena.current)))
+
+;; Flush one raw function group through both text passes. `scratch` is active
+;; on entry and rewound before return; only the final copied group string
+;; escapes into `home`. This keeps neither a whole raw assembly String nor a
+;; whole peepholed String alive beside the retained output.
+(define (compiler-backend-peephole-sweep-chunk-state-flush
+  [state : CompilerBackendPeepholeSweepChunkState]
+  [scratch-mark : arena.ArenaMark]
+  [home-arena : arena.Arena]) : CompilerBackendPeepholeSweepChunkState
+  (if (text_buf.empty? (struct-get state group))
+    state
+    (let
+      [raw-asm : String (text_buf.render (struct-get state group))]
+      [peepholed-asm : String (compiler-backend-peephole-asm-once raw-asm)]
+      [swept : CompilerBackendDeadstoreSweepChunkResult
+        (compiler-backend-deadstore-sweep-buffer-from-cursor
+          peepholed-asm
+          (struct-get state sweep-cursor))]
+      [swept-asm : String (text_buf.render (struct-get swept buf))]
+      [finished : CompilerBackendPeepholeSweepChunkState
+        (in-arena
+          home-arena
+          (let
+            [kept : String
+              (string.substring swept-asm 0 (string.string-length swept-asm))]
+            (CompilerBackendPeepholeSweepChunkState
+              (text_buf.append (struct-get state out) kept)
+              (text_buf.empty)
+              (struct-get swept cursor))))]
+      (begin
+        (unsafe
+          (arena.rewind scratch-mark))
+        finished))))
+
+(define (compiler-backend-assembly-stream-active?) : bool
+  compiler-backend-assembly-stream-active)
+
+(define (compiler-backend-assembly-stream-start!
+  [raw-arena : arena.Arena]
+  [raw-mark : arena.ArenaMark]
+  [peephole-arena : arena.Arena]
+  [peephole-mark : arena.ArenaMark]
+  [home-arena : arena.Arena]) : unit
+  (let
+    [batch : text_buf.TextBuf (in-arena raw-arena (text_buf.empty))]
+    (begin
+      (set! compiler-backend-assembly-stream-raw-arena raw-arena)
+      (set! compiler-backend-assembly-stream-raw-mark raw-mark)
+      (set! compiler-backend-assembly-stream-peephole-arena peephole-arena)
+      (set! compiler-backend-assembly-stream-peephole-mark peephole-mark)
+      (set!
+        compiler-backend-assembly-stream-out
+        (in-arena home-arena (text_buf.empty)))
+      (set! compiler-backend-assembly-stream-home-arena home-arena)
+      (set! compiler-backend-assembly-stream-sweep-cursor 0)
+      (set! compiler-backend-assembly-stream-batch batch)
+      (set! compiler-backend-assembly-stream-batch-count 0)
+      (set! compiler-backend-assembly-stream-raw-ready false)
+      (set! compiler-backend-assembly-stream-active true))))
+
+(define (compiler-backend-assembly-stream-begin-raw!) : unit
+  (when
+    compiler-backend-assembly-stream-active
+    (begin
+      (unsafe
+        (arena.set! compiler-backend-assembly-stream-raw-arena))
+      (unless
+        compiler-backend-assembly-stream-raw-ready
+        (begin
+          (unsafe
+            (arena.rewind compiler-backend-assembly-stream-raw-mark))
+          (compiler-backend-clear-function-emit-state!)
+          (set! compiler-backend-assembly-stream-raw-ready true))))))
+
+(define (compiler-backend-assembly-stream-rewind-raw!) : unit
+  ;; Raw function text stays until a bounded batch has passed peephole/sweep.
+  unit)
+
+;; Flush the current bounded raw batch, then reclaim its arena before the next
+;; batch. The emitted output and sweep cursor are copied into the home-owned
+;; stream state, so no references into the rewound raw arena remain.
+(define (compiler-backend-assembly-stream-flush-batch!) : unit
+  (unless
+    (or
+      (not compiler-backend-assembly-stream-active)
+      (text_buf.empty? compiler-backend-assembly-stream-batch))
+    (let
+      [source-arena : arena.Arena (arena.current)]
+      [state : CompilerBackendPeepholeSweepChunkState
+        (CompilerBackendPeepholeSweepChunkState
+          compiler-backend-assembly-stream-out
+          compiler-backend-assembly-stream-batch
+          compiler-backend-assembly-stream-sweep-cursor)]
+      (begin
+        (unsafe
+          (arena.set! compiler-backend-assembly-stream-peephole-arena))
+        (let
+          [flushed : CompilerBackendPeepholeSweepChunkState
+            (compiler-backend-peephole-sweep-chunk-state-flush
+              state
+              compiler-backend-assembly-stream-peephole-mark
+              compiler-backend-assembly-stream-home-arena)]
+          (begin
+            (set! compiler-backend-assembly-stream-out (struct-get flushed out))
+            (set!
+              compiler-backend-assembly-stream-sweep-cursor
+              (struct-get flushed sweep-cursor))
+            (set! compiler-backend-assembly-stream-batch-count 0)
+            (unsafe
+              (arena.set! compiler-backend-assembly-stream-raw-arena))
+            (unsafe
+              (arena.rewind compiler-backend-assembly-stream-raw-mark))
+            (set! compiler-backend-assembly-stream-batch (text_buf.empty))
+            (compiler-backend-clear-function-emit-state!)
+            (set! compiler-backend-assembly-stream-raw-ready true)
+            (unsafe
+              (arena.set! source-arena))))))))
+
+;; Append one function/adapter emission. A batch boundary is also a `.globl`
+;; boundary, so flushing it preserves the legacy whole-stream peephole output.
+(define (compiler-backend-assembly-stream-process-string! [raw-asm : String]) : unit
+  (when
+    compiler-backend-assembly-stream-active
+    (begin
+      (set!
+        compiler-backend-assembly-stream-batch
+        (text_buf.append compiler-backend-assembly-stream-batch raw-asm))
+      (set!
+        compiler-backend-assembly-stream-batch-count
+        (+ compiler-backend-assembly-stream-batch-count 1))
+      (when
+        (>=
+          compiler-backend-assembly-stream-batch-count
+          compiler-backend-assembly-stream-batch-function-limit)
+        (compiler-backend-assembly-stream-flush-batch!)))))
+
+(define (compiler-backend-assembly-stream-process-buffer!
+  [raw : text_buf.TextBuf]) : unit
+  (unless
+    (or (not compiler-backend-assembly-stream-active) (text_buf.empty? raw))
+    (begin
+      (compiler-backend-assembly-stream-flush-batch!)
+      (compiler-backend-assembly-stream-process-string! (text_buf.render raw))
+      (compiler-backend-assembly-stream-flush-batch!))))
+
+(define (compiler-backend-assembly-stream-output) : text_buf.TextBuf
+  (if compiler-backend-assembly-stream-active
+    compiler-backend-assembly-stream-out
+    (text_buf.empty)))
+
+(define (compiler-backend-assembly-stream-finish!) : text_buf.TextBuf
+  (begin
+    (compiler-backend-assembly-stream-flush-batch!)
+    (let
+      [out : text_buf.TextBuf (compiler-backend-assembly-stream-output)]
+      (begin
+        (set! compiler-backend-assembly-stream-active false)
+        out))))
+
+(define (compiler-backend-assembly-stream-abort!) : unit
+  (set! compiler-backend-assembly-stream-active false))
+
 (define (compiler-backend-peephole-asm-once [asm : String]) : String
   (let
     [n : i64 (string.string-length asm)]
@@ -52621,86 +53250,77 @@ tl_tlci_call_image_entry:
   [spans : CompilerSourceSpans]
   [emit-entry : bool]
   [crt-entry : bool]) : ResultCompilerBackendBuffer
-  ;; Emit raw chunks, render the raw assembly, and run the peephole in separate
-  ;; temporary arenas. The sweep metadata is copied into fixed global arrays
-  ;; during emission, so raw chunks can be destroyed after render and raw text
-  ;; can be destroyed after the peephole creates its independent output.
+  ;; Stream prefix/function/adapter/tail emission through peephole and sweep.
+  ;; Each function's raw arena is rewound as soon as its final output chunk is
+  ;; copied home, so the backend never retains the program's raw function text.
   (let
     [home-arena : arena.Arena (arena.current)]
     [emit-arena : arena.Arena (arena.make)]
-    [render-arena : arena.Arena (arena.make)]
+    [raw-arena : arena.Arena (arena.make)]
     [peephole-arena : arena.Arena (arena.make)]
     (begin
       (unsafe
-        (arena.set! emit-arena))
+        (arena.set! raw-arena))
       (let
-        [emitted : ResultCompilerBackendBuffer
-          (if crt-entry
-            (compiler-backend-emit-program-target-with-mode-buffer-and-crt
-              program
-              target
-              mode
-              spans
-              emit-entry
-              crt-entry)
-            (compiler-backend-emit-program-target-with-mode-buffer
-              program
-              target
-              mode
-              spans
-              emit-entry))]
-        (match emitted
-          [(ResultCompilerBackendBuffer.Ok buf)
+        [raw-mark : arena.ArenaMark (arena.mark)]
+        (begin
+          (unsafe
+            (arena.set! peephole-arena))
+          (let
+            [peephole-mark : arena.ArenaMark (arena.mark)]
             (begin
               (unsafe
-                (arena.set! render-arena))
+                (arena.set! emit-arena))
+              (compiler-backend-assembly-stream-start!
+                raw-arena
+                raw-mark
+                peephole-arena
+                peephole-mark
+                home-arena)
               (let
-                [raw-asm : String
-                  (begin
-                    (cfg compile-profile (compiler-backend-profile-start))
+                [emitted : ResultCompilerBackendBuffer
+                  (if crt-entry
+                    (compiler-backend-emit-program-target-with-mode-buffer-and-crt
+                      program
+                      target
+                      mode
+                      spans
+                      emit-entry
+                      crt-entry)
+                    (compiler-backend-emit-program-target-with-mode-buffer
+                      program
+                      target
+                      mode
+                      spans
+                      emit-entry))]
+                (match emitted
+                  [(ResultCompilerBackendBuffer.Ok _)
                     (let
-                      [rendered : String (text_buf.render buf)]
+                      [final : text_buf.TextBuf
+                        (compiler-backend-assembly-stream-finish!)]
                       (begin
-                        (cfg
-                          compile-profile
-                          (compiler-backend-profile-finish "render"))
-                        rendered)))]
-                (begin
-                  (unsafe
-                    (arena.destroy emit-arena))
-                  (unsafe
-                    (arena.set! peephole-arena))
-                  (cfg compile-profile (compiler-backend-profile-start))
-                  (let
-                    [peepholed-asm : String
-                      (compiler-backend-peephole-asm-once raw-asm)]
+                        (unsafe
+                          (arena.destroy emit-arena))
+                        (unsafe
+                          (arena.destroy raw-arena))
+                        (unsafe
+                          (arena.set! home-arena))
+                        (compiler-backend-deadstore-sweep-report-and-reset!)
+                        (unsafe
+                          (arena.destroy peephole-arena))
+                        (compiler-backend-clear-scratch-escaped-emit-state!)
+                        (ResultCompilerBackendBuffer.Ok final)))]
+                  [(ResultCompilerBackendBuffer.Err message)
                     (begin
-                      (unsafe
-                        (arena.destroy render-arena))
+                      ;; Preserve arenas that may own the diagnostic, matching
+                      ;; the legacy error lifetime contract.
+                      (compiler-backend-assembly-stream-abort!)
                       (unsafe
                         (arena.set! home-arena))
-                      (let
-                        [peepholed : text_buf.TextBuf
-                          (compiler-backend-deadstore-sweep-buffer
-                            peepholed-asm)]
-                        (begin
-                          (cfg
-                            compile-profile
-                            (compiler-backend-profile-finish "peephole"))
-                          (unsafe
-                            (arena.destroy peephole-arena))
-                          (compiler-backend-clear-scratch-escaped-emit-state!)
-                          (ResultCompilerBackendBuffer.Ok peepholed))))))))]
-          [(ResultCompilerBackendBuffer.Err message)
-            (begin
-              (unsafe
-                (arena.set! home-arena))
-              (unsafe
-                (arena.destroy render-arena))
-              (unsafe
-                (arena.destroy peephole-arena))
-              (compiler-backend-clear-scratch-escaped-emit-state!)
-              (ResultCompilerBackendBuffer.Err message))])))))
+                      (unsafe
+                        (arena.destroy peephole-arena))
+                      (compiler-backend-clear-scratch-escaped-emit-state!)
+                      (ResultCompilerBackendBuffer.Err message))])))))))))
 
 (define (compiler-backend-emit-program-target-with-mode-and-crt
   [program : CompilerIrProgram]

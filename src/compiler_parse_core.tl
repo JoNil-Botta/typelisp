@@ -7659,7 +7659,7 @@
 
 (defstruct ParseAstDeclVec
   (slots (Array AstDecl))
-  (spans (Array AstSourceSpan))
+  (spans (Array i64))
   (len i64))
 
 (define (parse-ast-decl-vec-fallback) : AstDecl
@@ -7671,7 +7671,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (ParseAstDeclVec (make-array AstDecl cap) (make-array AstSourceSpan cap) 0)))
+    (ParseAstDeclVec (make-array AstDecl cap) (make-array i64 cap) 0)))
 
 (define (parse-ast-decl-vec-new) : ParseAstDeclVec
   (parse-ast-decl-vec-with-capacity 16))
@@ -7692,7 +7692,7 @@
 
 (define (parse-ast-decl-vec-span [v : (& v ParseAstDeclVec)] [index : i64]) : AstSourceSpan
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array-ref (struct-get v spans) index)
+    (ast-decl-span-unpack (array-ref (struct-get v spans) index))
     (ast-source-span-none)))
 
 (define (parse-ast-decl-vec-copy-range
@@ -7715,7 +7715,7 @@
         1
         (* old-cap 2))]
     [bigger : (Array AstDecl) (make-array AstDecl new-cap)]
-    [bigger-spans : (Array AstSourceSpan) (make-array AstSourceSpan new-cap)]
+    [bigger-spans : (Array i64) (make-array i64 new-cap)]
     (begin
       (parse-ast-decl-vec-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (ast-decl-list-copy-spans
@@ -7740,7 +7740,7 @@
       [index : i64 (struct-get v len)]
       (begin
         (array-set! (struct-get v slots) index value)
-        (array-set! (struct-get v spans) index span)
+        (array-set! (struct-get v spans) index (ast-decl-span-pack span))
         (set! (struct-get v len) (+ index 1))))))
 
 (define (parse-ast-decl-vec-push

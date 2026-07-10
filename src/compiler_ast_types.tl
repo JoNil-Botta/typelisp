@@ -53,6 +53,28 @@
 (define (ast-source-span-present? [span : AstSourceSpan]) : bool
   (> (ast-source-span-start-line span) 0))
 
+;; Declaration diagnostics only need the primary source location. Keep the
+;; sidecar compact because expanded programs can retain many declaration lists
+;; at once during self-hosting. The reconstructed point span preserves the
+;; line/column reported to users without storing four i32 values per entry.
+(define ast-decl-span-col-mask : i64
+  4294967295)
+
+(define (ast-decl-span-pack [span : AstSourceSpan]) : i64
+  (if (ast-source-span-present? span)
+    (+
+      (shl (ast-source-span-start-line span) 32)
+      (bit-and (ast-source-span-start-col span) ast-decl-span-col-mask))
+    0))
+
+(define (ast-decl-span-unpack [packed : i64]) : AstSourceSpan
+  (if (= packed 0)
+    (ast-source-span-none)
+    (let
+      [line : i64 (bit-and (shr packed 32) ast-decl-span-col-mask)]
+      [col : i64 (bit-and packed ast-decl-span-col-mask)]
+      (ast-source-span line col line col))))
+
 (defenum AstLiteral
   (Int i64 String)
   (Float String)
@@ -2067,13 +2089,13 @@
 
 (defstruct AstDeclList
   (slots (Array AstDecl))
-  (spans (Array AstSourceSpan))
+  (spans (Array i64))
   (offset i64)
   (len i64)
   (prependable bool))
 
-(define ast-decl-empty-spans : (Array AstSourceSpan)
-  (array.make-array AstSourceSpan 0))
+(define ast-decl-empty-spans : (Array i64)
+  (array.make-array i64 0))
 
 (defenum AstDeclListStep
   (Nil)
@@ -4598,8 +4620,8 @@
   (AstDecl.Module (ci.intern "<ast-decl-list-fallback>")))
 
 (define (ast-decl-list-copy-spans
-  [dst : (&mut dst (Array AstSourceSpan))]
-  [src : (& src (Array AstSourceSpan))]
+  [dst : (&mut dst (Array i64))]
+  [src : (& src (Array i64))]
   [src-offset : i64]
   [dst-offset : i64]
   [index : i64]
@@ -4637,8 +4659,8 @@
   (if (ast-decl-list-has-spans? (& v))
     unit
     (let
-      [spans : (Array AstSourceSpan)
-        (array.make-array AstSourceSpan (array-length (struct-get v slots)))]
+      [spans : (Array i64)
+        (array.make-array i64 (array-length (struct-get v slots)))]
       (set! (struct-get v spans) spans))))
 
 (define (ast-decl-list-get
@@ -4697,8 +4719,7 @@
       (set! (struct-get v slots) bigger)
       (if (ast-decl-list-has-spans? (& v))
         (let
-          [bigger-spans : (Array AstSourceSpan)
-            (array.make-array AstSourceSpan new-cap)]
+          [bigger-spans : (Array i64) (array.make-array i64 new-cap)]
           (begin
             (ast-decl-list-copy-spans
               (&mut bigger-spans)
@@ -4730,7 +4751,7 @@
       (begin
         (array-set! (struct-get v slots) index value)
         (if (ast-decl-list-has-spans? (& v))
-          (array-set! (struct-get v spans) index span)
+          (array-set! (struct-get v spans) index (ast-decl-span-pack span))
           unit)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
 
@@ -4752,7 +4773,8 @@
     (ast-decl-list-has-spans? items)
     (>= index 0)
     (< index (ast-decl-list-len items)))
-    (array-ref (struct-get items spans) (+ (struct-get items offset) index))
+    (ast-decl-span-unpack
+      (array-ref (struct-get items spans) (+ (struct-get items offset) index)))
     (ast-source-span-none)))
 
 (define (ast-decl-list-head-span [items : AstDeclList]) : AstSourceSpan
@@ -4833,7 +4855,10 @@
           [new-offset : i64 (- (struct-get rest offset) 1)]
           (begin
             (array-set! (struct-get rest slots) new-offset head)
-            (array-set! (struct-get rest spans) new-offset span)
+            (array-set!
+              (struct-get rest spans)
+              new-offset
+              (ast-decl-span-pack span))
             (AstDeclList
               (struct-get rest slots)
               (struct-get rest spans)
@@ -4849,11 +4874,10 @@
               (* new-len 2))]
           [new-offset : i64 (- new-cap new-len)]
           [slots : (Array AstDecl) (array.make-array AstDecl new-cap)]
-          [spans : (Array AstSourceSpan)
-            (array.make-array AstSourceSpan new-cap)]
+          [spans : (Array i64) (array.make-array i64 new-cap)]
           (begin
             (array-set! slots new-offset head)
-            (array-set! spans new-offset span)
+            (array-set! spans new-offset (ast-decl-span-pack span))
             (ast-decl-list-copy-to
               (&mut slots)
               (& (struct-get rest slots))

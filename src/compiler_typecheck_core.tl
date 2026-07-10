@@ -16618,41 +16618,6 @@
   [name-id : i64]) : ResultTcType
   (tc-lookup-id env (tc-module-name-id module name-id)))
 
-(define (tc-import-alias-ast-decl-list-reverse-into
-  [items : AstDeclList]
-  [out : AstDeclList]) : AstDeclList
-  (let
-    [cursor : AstDeclList items]
-    [result : AstDeclList out]
-    [done : bool false]
-    (begin
-      (while (not done)
-        (match (ast-decl-list-step cursor)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons decl rest)
-            (begin
-              (set! result (ast-decl-list-prepend-builder decl result))
-              (set! cursor rest))]))
-      result)))
-
-(define (tc-import-alias-ast-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (tc-import-alias-ast-decl-list-reverse-into items (ast-decl-list-new)))
-
-(define (tc-import-alias-summary-index-reverse-slots!
-  [decls : (Array AstDeclList)]
-  [count : i64]) : unit
-  (let
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (array-set!
-            decls
-            index
-            (tc-import-alias-ast-decl-list-reverse (array-ref decls index)))
-          (set! index (+ index 1))))
-      unit)))
-
 (define (tc-import-alias-summary-index-build-current [all-decls : AstDeclList]) : TcImportAliasSummaryIndex
   (let
     [capacity : i64 (+ (ast-decl-list-count all-decls) 1)]
@@ -16678,27 +16643,19 @@
                   (begin
                     (match (tc_i64_i64_map.get (& modules) cur-module-id)
                       [(tc_i64_i64_map.LookupFound slot)
-                        (array-set!
-                          decls
-                          slot
-                          (ast-decl-list-prepend-builder
-                            decl
-                            (array-ref decls slot)))]
+                        (ast-decl-list-push (&mut (array-ref decls slot)) decl)]
                       [(tc_i64_i64_map.LookupMissing)
                         (begin
                           (tc_i64_i64_map.insert
                             (&mut modules)
                             cur-module-id
                             slot-count)
-                          (array-set!
-                            decls
-                            slot-count
-                            (ast-decl-list-prepend-builder
-                              decl
-                              (ast-decl-list-new)))
+                          (array-set! decls slot-count (ast-decl-list-new))
+                          (ast-decl-list-push
+                            (&mut (array-ref decls slot-count))
+                            decl)
                           (set! slot-count (+ slot-count 1)))])
                     (set! cur next))]))]))
-      (tc-import-alias-summary-index-reverse-slots! decls slot-count)
       (TcImportAliasSummaryIndex modules decls slot-count))))
 
 (define (tc-import-alias-summary-index-build [all-decls : AstDeclList]) : TcImportAliasSummaryIndex

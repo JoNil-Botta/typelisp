@@ -40498,6 +40498,13 @@
     [(TcMaybeString.Some _) true]
     [(TcMaybeString.No) false]))
 
+(define (tc-borrow-check-has-lending-binding?
+  [borrowed : TcMovedSet]
+  [path : String]) : bool
+  (let
+    [map : tc_string_i64_map.Map (tc-moved-map borrowed)]
+    (tc-borrow-check-lending-binding? (& map) path)))
+
 (define (tc-borrow-check-add-lending-marker
   [borrowed : TcMovedSet]
   [path : String]
@@ -41074,13 +41081,20 @@
         (match (tc-borrow-check-local-place-path locals place)
           [(TcMaybeString.Some path)
             (let
-              [without-temporary : TcMovedSet
-                (tc-borrow-check-remove-borrow-path borrowed path)]
-              (match (tc-expr ctx env place)
-                [(ResultTcType.Ok place-ty)
+              [without-temporary
+                : TcMovedSet
+                ;; A second binding of the same lending borrow must not erase
+                ;; the first binding's live marker while discarding its own
+                ;; transient call effect. Keeping it makes the ordinary
+                ;; mutable-borrow check report the aliasing conflict.
+                (if (tc-borrow-check-has-lending-binding? borrowed path)
+                  borrowed
+                  (tc-borrow-check-remove-borrow-path borrowed path))]
+              (match (tc-expr ctx env arg)
+                [(ResultTcType.Ok borrow-ty)
                   (match (tc-borrow-check-first-overlapping-lifetime
                     (tc-type-collect-reference-lifetimes
-                      (tc-resolve-type ctx place-ty))
+                      (tc-resolve-type ctx borrow-ty))
                     result-lifetimes)
                     [(TcMaybeString.Some lifetime)
                       (match (tc-borrow-check-add-place-with-mutability

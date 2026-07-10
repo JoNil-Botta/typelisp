@@ -36927,7 +36927,9 @@
               (AstType.Expr)
               "typecheck: macro body must return Expr")
               [(ResultTcUnit.Ok)
-                (if (tc-macro-param-list-needs-call-context? params)
+                (if (or
+                  (tc-macro-param-list-needs-call-context? params)
+                  (macro-expr-uses-expr-type? body))
                   ResultTcUnit.Ok
                   (begin
                     (tc-context-capture-active-pools! ctx)
@@ -48243,7 +48245,52 @@
     (tc-expr-uses-free-name? expr "stdlib.comptime.expr-type" TcStringList.Nil)
     (tc-expr-uses-free-name? expr "stdlib.comptime/expr-type" TcStringList.Nil)
     (tc-expr-uses-free-name? expr "stdlib/comptime.expr-type" TcStringList.Nil)
-    (tc-expr-uses-free-name? expr "stdlib/comptime/expr-type" TcStringList.Nil)))
+    (tc-expr-uses-free-name? expr "stdlib/comptime/expr-type" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "expr-string?" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "comptime.expr-string?" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "comptime/expr-string?" TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime.expr-string?"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime/expr-string?"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib/comptime.expr-string?"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "expr-string-value" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "comptime.expr-string-value" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "comptime/expr-string-value" TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime.expr-string-value"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime/expr-string-value"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib/comptime.expr-string-value"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "string-slice" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "comptime.string-slice" TcStringList.Nil)
+    (tc-expr-uses-free-name? expr "comptime/string-slice" TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime.string-slice"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib.comptime/string-slice"
+      TcStringList.Nil)
+    (tc-expr-uses-free-name?
+      expr
+      "stdlib/comptime.string-slice"
+      TcStringList.Nil)))
 
 (define (macro-collect-expr-type-decl-name
   [decl : AstDecl]
@@ -51103,6 +51150,31 @@
               (CompilerCtfeValue.ExprList args)))]
         [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
 
+;; A direct caller string literal is the one `Expr` shape that public macro
+;; code can inspect without evaluating. Keep its literal node in the active
+;; CTFE pool instead of passing a transient macro-expansion proxy variable.
+;; Other expressions retain their original node and hygiene unchanged.
+(define (macro-captured-expr-node
+  [ctx : TcContext]
+  [arg-id : i64]
+  [arg-expr : AstExpr]) : i64
+  (match arg-expr
+    [(AstExpr.Spanned inner span)
+      (match (ast-node-get inner)
+        [(AstExpr.Literal (AstLiteral.String text))
+          (ast-expr-spanned-with-pools
+            (tc-context-pools ctx)
+            (ast-node-pool-context-expr-push
+              (tc-context-pools ctx)
+              (AstExpr.Literal (AstLiteral.String text)))
+            span)]
+        [_ arg-id])]
+    [(AstExpr.Literal (AstLiteral.String text))
+      (ast-node-pool-context-expr-push
+        (tc-context-pools ctx)
+        (AstExpr.Literal (AstLiteral.String text)))]
+    [_ arg-id]))
+
 (define (macro-bind-fixed-param
   [ctx : TcContext]
   [decls : AstDeclList]
@@ -51166,7 +51238,11 @@
                 env
                 (intern-str name)
                 (CompilerCtfeValue.Expr
-                  arg-id
+                  (if (and
+                    capture-expr-types
+                    (tc-type-eq resolved-expected (AstType.Expr)))
+                    (macro-captured-expr-node ctx arg-id arg-expr)
+                    arg-id)
                   (macro-captured-expr-produced-type
                     ctx
                     type-env

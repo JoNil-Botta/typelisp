@@ -25,7 +25,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 91))
+  (array.make-array i64 94))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -130,6 +130,9 @@
       (ctfe-builtin-set! 88 "function-param-type")
       (ctfe-builtin-set! 89 "function-return-type")
       (ctfe-builtin-set! 90 "pattern-list-bindings")
+      (ctfe-builtin-set! 91 "expr-string?")
+      (ctfe-builtin-set! 92 "expr-string-value")
+      (ctfe-builtin-set! 93 "string-slice")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -4091,6 +4094,53 @@
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "string-append expects two strings")))))
 
+;; `comptime.string-slice` is the bounded byte-range operation needed by
+;; literal-parsing macros. It operates only on comptime strings, never on a
+;; runtime String value.
+(define (ctfe-eval-comptime-string-slice-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 3)
+    (let
+      [text-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [start-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      [len-arg : AstExpr (ctfe-expr-arg args 2 env)]
+      (match (ctfe-eval-string-arg text-arg expr env fuel "string-slice")
+        [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
+        [(ResultCtfeStringArg.Ok text text-fuel)
+          (match (ctfe-eval-i64-arg start-arg expr env text-fuel "string-slice")
+            [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+            [(result_ctfe_i64_arg.Ok start-value)
+              (match (ctfe-eval-i64-arg
+                len-arg
+                expr
+                env
+                (struct-get start-value fuel)
+                "string-slice")
+                [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
+                [(result_ctfe_i64_arg.Ok len-value)
+                  (let
+                    [start : i64 (struct-get start-value value)]
+                    [len : i64 (struct-get len-value value)]
+                    [text-len : i64 (string.string-length text)]
+                    (if (or (< start 0) (< len 0) (> (+ start len) text-len))
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "string-slice range out of bounds")))
+                      (ResultCtfe.Ok
+                        (CompilerCtfeValue.String
+                          (string.substring text start len))
+                        (struct-get len-value fuel))))])])]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "string-slice expects a string, start, and length")))))
+
 (define (ctfe-eval-string-length-call
   [name : String]
   [args : AstExprList]
@@ -4323,6 +4373,8 @@
       [(= lookup-id (ctfe-builtin-ref 43)) "match-arm-list-cons"]
       [(= lookup-id (ctfe-builtin-ref 44)) "expr-match"]
       [(= lookup-id (ctfe-builtin-ref 45)) "expr-type"]
+      [(= lookup-id (ctfe-builtin-ref 91)) "expr-string?"]
+      [(= lookup-id (ctfe-builtin-ref 92)) "expr-string-value"]
       [(= lookup-id (ctfe-builtin-ref 46)) "type-info"]
       [(= lookup-id (ctfe-builtin-ref 47)) "module-name"]
       [(= lookup-id (ctfe-builtin-ref 48)) "module-export-macro?"]
@@ -4353,6 +4405,7 @@
       [(ctfe-stdlib-string-helper-name? lookup-name "append") "string-append"]
       [(= lookup-id (ctfe-builtin-ref 15)) "string-concat"]
       [(ctfe-stdlib-string-helper-name? lookup-name "concat") "string-concat"]
+      [(= lookup-id (ctfe-builtin-ref 93)) "string-slice"]
       [(= lookup-id (ctfe-builtin-ref 16)) "int->string"]
       [(ctfe-stdlib-string-helper-name? lookup-name "int->string")
         "int->string"]
@@ -4475,6 +4528,52 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-string expects exactly one arg")))))
+
+;; String-literal inspection intentionally uses helpers instead of growing the
+;; verified public `Expr` enum. This keeps older stage0 compilers able to read
+;; the declaration while exposing only the stable literal surface macros need.
+(define (ctfe-eval-expr-string-inspector-call
+  [extract? : bool]
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 1)
+    (let
+      [arg : AstExpr (ctfe-expr-arg args 0 env)]
+      (match (compiler-ctfe-eval arg env fuel)
+        [(ResultCtfe.Ok value arg-fuel)
+          (match value
+            [(CompilerCtfeValue.String text)
+              (if extract?
+                (ResultCtfe.Ok (CompilerCtfeValue.String text) arg-fuel)
+                (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel))]
+            [(CompilerCtfeValue.Expr node _)
+              (match (ctfe-expr-unspan env (ctfe-ast-get env node))
+                [(AstExpr.Literal (AstLiteral.String text))
+                  (if extract?
+                    (ResultCtfe.Ok (CompilerCtfeValue.String text) arg-fuel)
+                    (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel))]
+                [_
+                  (if extract?
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "expr-string-value expects a string literal Expr")))
+                    (ResultCtfe.Ok (CompilerCtfeValue.Bool false) arg-fuel))])]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-string inspector expects Expr")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-string inspector expects exactly one arg")))))
 
 ;; `(expr-var name)` builds a variable-reference Expr from a comptime string.
 (define (ctfe-eval-expr-var-call
@@ -5758,6 +5857,8 @@
             (ctfe-eval-string-eq-call lookup-name args expr env fuel)]
           [(ctfe-builtin-string-build-id? call-id)
             (ctfe-eval-string-append-call call-name args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 93))
+            (ctfe-eval-comptime-string-slice-call args expr env fuel)]
           [(and
               string-helper-candidate
               (ctfe-string-length-helper-name? lookup-name))
@@ -5778,6 +5879,10 @@
             (ctfe-eval-expr-int-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 29))
             (ctfe-eval-expr-string-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 91))
+            (ctfe-eval-expr-string-inspector-call false args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 92))
+            (ctfe-eval-expr-string-inspector-call true args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 30))
             (ctfe-eval-expr-var-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 31))

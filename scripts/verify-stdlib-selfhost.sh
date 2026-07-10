@@ -39,6 +39,8 @@ reject_diag() {
             printf 'region-tagged value cannot escape with-arena' ;;
         stdlib/tests/arena_policy_escape_text_buf_borrowed.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
+        stdlib/tests/comptime_string_literal_reject.tl)
+            printf 'expr-string-value expects a string literal Expr' ;;
         stdlib/tests/core_macros_cond_flat_reject.tl)
             printf 'typecheck: ExprClause macro operand expects bracket syntax' ;;
         stdlib/tests/core_macros_cond_missing_else.tl)
@@ -49,6 +51,14 @@ reject_diag() {
             printf 'typecheck: if branches must match' ;;
         stdlib/tests/core_macros_cond_non_bool.tl)
             printf 'typecheck: if condition must be bool' ;;
+        stdlib/tests/format_nonliteral_template_reject.tl)
+            printf 'format: template must be a string literal' ;;
+        stdlib/tests/format_specifier_reject.tl)
+            printf 'format: format specifiers are not supported' ;;
+        stdlib/tests/format_too_few_args_reject.tl)
+            printf 'format: not enough arguments for placeholders' ;;
+        stdlib/tests/format_too_many_args_reject.tl)
+            printf 'format: not enough placeholders for arguments' ;;
         stdlib/tests/io_caller_result_escape.tl)
             printf 'typecheck: reference value would escape lexical scope' ;;
         stdlib/tests/hashmap_value_borrow_escape.tl)

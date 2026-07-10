@@ -303,7 +303,7 @@ and the CPU instruction intrinsics. Array and string indexing is
 bounds-checked at runtime. Everything else lives in stdlib modules imported
 with dotted imports: printing and `panic`/`error` in `stdlib.io`, string
 inspection/parsing in `stdlib.string`, files and processes in `stdlib.io`
-and `stdlib.fs`, string building in `stdlib.str_cat` and `stdlib.text_buf`,
+and `stdlib.fs`, string building in `stdlib.str_cat`, `stdlib.format`, and `stdlib.text_buf`,
 binary buffers in `stdlib.byte_buf`, arenas in `stdlib.arena`, and threading
 in `stdlib.thread` / `stdlib.sync`.
 

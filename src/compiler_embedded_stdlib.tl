@@ -21,6 +21,7 @@
 (include-str compiler-embedded-stdlib-eq "stdlib/eq.tl")
 (include-str compiler-embedded-stdlib-ffi "stdlib/ffi.tl")
 (include-str compiler-embedded-stdlib-fs "stdlib/fs.tl")
+(include-str compiler-embedded-stdlib-format "stdlib/format.tl")
 (include-str compiler-embedded-stdlib-hash "stdlib/hash.tl")
 (include-str compiler-embedded-stdlib-hashmap "stdlib/hashmap.tl")
 (include-str compiler-embedded-stdlib-io-core "stdlib/io_core.tl")
@@ -75,6 +76,8 @@
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-ffi)]
     [(embedded-eq? suffix "fs.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-fs)]
+    [(embedded-eq? suffix "format.tl")
+      (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-format)]
     [(embedded-eq? suffix "hash.tl")
       (CompilerEmbeddedStdlibSomeSource compiler-embedded-stdlib-hash)]
     [(embedded-eq? suffix "hashmap.tl")

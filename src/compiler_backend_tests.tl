@@ -19858,6 +19858,27 @@
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r12"))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-scratch-vreg-bounds-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          "ok")
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-bounds-test-assignments) : CompilerRegAssignmentList
+  ;; Var 1 intentionally has no location: the emitter must stage it, so the
+  ;; pseudo-var at base+0 (var 2) is the planned bounds-length scratch.
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r10"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 2 (CompilerRegLocation.Register "%r12"))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-scratch-vreg-call-target-plan-ok?) : bool
   (cfg
     scratch-vreg
@@ -19891,7 +19912,7 @@
           3
           ctx-blocks
           ctx-assignments)
-        (match (compiler-backend-scratch-vreg-build-call-target!
+        (match (compiler-backend-scratch-vreg-build!
           plan-blocks
           plan-assignments
           0)
@@ -19959,7 +19980,7 @@
           3
           ctx-blocks
           ctx-assignments)
-        (match (compiler-backend-scratch-vreg-build-call-target!
+        (match (compiler-backend-scratch-vreg-build!
           plan-blocks
           plan-assignments
           1)
@@ -20037,7 +20058,7 @@
           2
           ctx-blocks
           ctx-assignments)
-        (match (compiler-backend-scratch-vreg-build-call-target!
+        (match (compiler-backend-scratch-vreg-build!
           plan-blocks
           plan-assignments
           0)
@@ -20064,6 +20085,77 @@
                     (string.eq
                       (compiler-backend-scavenge-c-abi-return-store-base-reg)
                       planned)))))])
+        (compiler-backend-set-scavenge-ctx-ready!
+          prev-starts
+          prev-ends
+          prev-assignment-index
+          prev-plan-mask
+          prev-occupied-masks
+          prev-vars)
+        (set! compiler-backend-emit-instr-post-base prev-post-base)
+        (set! compiler-backend-emit-current-count prev-current-count)
+        (if prev-win64
+          (compiler-backend-set-current-fn-win64!)
+          (compiler-backend-set-current-fn-linux!))
+        (compiler-backend-scratch-vreg-disable!)
+        ok))
+    true))
+
+(define (compiler-backend-scratch-vreg-bounds-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [prev-starts : (Array i64) compiler-backend-scavenge-ctx-starts]
+      [prev-ends : (Array i64) compiler-backend-scavenge-ctx-ends]
+      [prev-assignment-index : CompilerRegAssignmentIndex
+        compiler-backend-scavenge-ctx-assignment-index]
+      [prev-plan-mask : i64 compiler-backend-scavenge-ctx-plan-reg-mask]
+      [prev-occupied-masks : (Array i64)
+        compiler-backend-scavenge-ctx-occupied-masks]
+      [prev-vars : i64 compiler-backend-scavenge-ctx-vars]
+      [prev-post-base : i64 compiler-backend-emit-instr-post-base]
+      [prev-current-count : i64 compiler-backend-emit-current-count]
+      [prev-win64 : bool (compiler-backend-current-fn-win64?)]
+      [ctx-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-bounds-test-blocks)]
+      [plan-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-bounds-test-blocks)]
+      [ctx-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-bounds-test-assignments)]
+      [plan-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-bounds-test-assignments)]
+      [ok : bool false]
+      (begin
+        (compiler-backend-set-current-fn-linux!)
+        (compiler-backend-test-scavenge-install-ctx!
+          "scratch_vreg_bounds"
+          CompilerIrParamList.Nil
+          (AstType.I64)
+          3
+          ctx-blocks
+          ctx-assignments)
+        (match (compiler-backend-scratch-vreg-build!
+          plan-blocks
+          plan-assignments
+          2)
+          [(CompilerBackendScratchVregSynth n _ regs lo hi)
+            (begin
+              (set! compiler-backend-emit-instr-post-base 1)
+              (set! compiler-backend-emit-current-count 1)
+              (let
+                [planned : String
+                  (compiler-backend-scratch-vreg-bounds-length-here)]
+                (set!
+                  ok
+                  (and
+                    (= n 1)
+                    (= compiler-backend-scratch-vreg-call-target-count 0)
+                    (= compiler-backend-scratch-vreg-switch-count 0)
+                    (= compiler-backend-scratch-vreg-bounds-count 1)
+                    (string.eq planned "%r12")
+                    (string.eq (array-ref regs 0) planned)
+                    (= (array-ref lo 0) 0)
+                    (= (array-ref hi 0) 0)))))])
         (compiler-backend-set-scavenge-ctx-ready!
           prev-starts
           prev-ends
@@ -20113,7 +20205,7 @@
           3
           ctx-blocks
           ctx-assignments)
-        (match (compiler-backend-scratch-vreg-build-call-target!
+        (match (compiler-backend-scratch-vreg-build!
           plan-blocks
           plan-assignments
           0)
@@ -20488,6 +20580,7 @@
         (compiler-backend-scratch-vreg-call-target-plan-ok?)
         (compiler-backend-scratch-vreg-switch-plan-ok?)
         (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
+        (compiler-backend-scratch-vreg-bounds-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)

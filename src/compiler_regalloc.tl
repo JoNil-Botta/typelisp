@@ -19203,15 +19203,16 @@
           assignments
           (compiler-reg-plan-var-count-intervals intervals min-vars)))]))
 
-(define (compiler-reg-scratch-vreg-switch-slots [_instr : CompilerIrInstr]) : i64
+(define (compiler-reg-scratch-vreg-slots [_instr : CompilerIrInstr]) : i64
   (cfg
     scratch-vreg
     (match _instr
-      ;; Keep two deterministic pseudo slots per switch: index scratch first,
-      ;; table scratch second. The index slot may be unused for base-0 switches
-      ;; whose index already has a register home, but fixed-width slots make the
-      ;; backend lookup stable across fallback decisions.
+      ;; Keep deterministic pseudo slots for the cfg-gated isel-scratch path.
+      ;; Switch gets index then table. BoundsCheck gets one length-load slot.
+      ;; Some slots may be unused after homes are known, but fixed-width slots
+      ;; keep the backend lookup stable across fallback decisions.
       [(CompilerIrInstr.Switch _ _ _ _) 2]
+      [(CompilerIrInstr.BoundsCheck _ _ _) 1]
       [_ 0])
     0))
 
@@ -19228,7 +19229,7 @@
         (begin
           (set!
             out
-            (+ out (compiler-reg-scratch-vreg-switch-slots (array-ref slots i))))
+            (+ out (compiler-reg-scratch-vreg-slots (array-ref slots i))))
           (set! i (+ i 1))))
       out)))
 
@@ -19355,6 +19356,38 @@
       (array-set! present var 1)
       (array-set! types var (AstType.I64)))))
 
+(define (compiler-reg-scratch-vreg-mark-slots!
+  [starts : (Array i64)]
+  [ends : (Array i64)]
+  [segments : (Array CompilerRegIntervalList)]
+  [present : (Array i64)]
+  [types : (Array AstType)]
+  [slots : i64]
+  [slot : i64]
+  [next-var : i64]
+  [point : i64]) : i64
+  (if (>= slot slots)
+    next-var
+    (begin
+      (compiler-reg-scratch-vreg-mark-one!
+        starts
+        ends
+        segments
+        present
+        types
+        next-var
+        point)
+      (compiler-reg-scratch-vreg-mark-slots!
+        starts
+        ends
+        segments
+        present
+        types
+        slots
+        (+ slot 1)
+        (+ next-var 1)
+        point))))
+
 (define (compiler-reg-scratch-vreg-fill-seq!
   [instrs : CompilerIrInstrSeq]
   [point : i64]
@@ -19374,28 +19407,20 @@
       (while (< i len)
         (let
           [scratch-slots : i64
-            (compiler-reg-scratch-vreg-switch-slots (array-ref slots i))]
+            (compiler-reg-scratch-vreg-slots (array-ref slots i))]
           (begin
-            (if (= scratch-slots 2)
-              (begin
-                (compiler-reg-scratch-vreg-mark-one!
-                  starts
-                  ends
-                  segments
-                  present
-                  types
-                  v
-                  p)
-                (compiler-reg-scratch-vreg-mark-one!
-                  starts
-                  ends
-                  segments
-                  present
-                  types
-                  (+ v 1)
-                  p)
-                (set! v (+ v 2)))
-              unit)
+            (set!
+              v
+              (compiler-reg-scratch-vreg-mark-slots!
+                starts
+                ends
+                segments
+                present
+                types
+                scratch-slots
+                0
+                v
+                p))
             (set! p (+ p 2))
             (set! i (+ i 1)))))
       v)))
@@ -19522,7 +19547,7 @@
       (compiler-reg-assignment-table-fill! table assignments)
       table)))
 
-(define (compiler-reg-plan-with-switch-scratch-vregs
+(define (compiler-reg-plan-with-scratch-vregs
   [_abi : CompilerRegTargetAbi]
   [_func : CompilerIrFunction]
   [plan : CompilerRegPlan]
@@ -20944,7 +20969,7 @@
       [func : CompilerIrFunction (compiler-reg-switch-scratch-test-function)]
       [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
       [out : CompilerRegPlan
-        (compiler-reg-plan-with-switch-scratch-vregs
+        (compiler-reg-plan-with-scratch-vregs
           (CompilerRegTargetAbi.Linux)
           func
           plan
@@ -20962,6 +20987,48 @@
         (not (string.eq index-reg table-reg))
         (not (string.eq index-reg "%r9"))
         (not (string.eq table-reg "%r9"))))
+    true))
+
+(define (compiler-reg-bounds-scratch-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.BoundsCheck
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.I64 8)
+          "ok")
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-reg-bounds-scratch-test-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "bounds_scratch_vregs"
+    CompilerIrParamList.Nil
+    (AstType.I64)
+    1
+    (compiler-reg-bounds-scratch-test-blocks)))
+
+(define (compiler-reg-bounds-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [func : CompilerIrFunction (compiler-reg-bounds-scratch-test-function)]
+      [plan : CompilerRegPlan (compiler-reg-switch-scratch-test-plan)]
+      [out : CompilerRegPlan
+        (compiler-reg-plan-with-scratch-vregs
+          (CompilerRegTargetAbi.Linux)
+          func
+          plan
+          1)]
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-plan-assignments out)]
+      [scratch-reg : String
+        (compiler-reg-assignment-primary-register assignments 1)]
+      (and
+        (= (compiler-reg-plan-var-count out 1) 2)
+        (not (string.eq scratch-reg ""))
+        (not (string.eq scratch-reg "%r9"))))
     true))
 
 (define (compiler-reg-i64-ty) : AstType
@@ -27499,6 +27566,7 @@
     (cfg test (compiler-reg-call-span-counts-ok?) true)
     (cfg test (compiler-reg-call-span-census-ok?) true)
     (compiler-reg-switch-scratch-vregs-ok?)
+    (compiler-reg-bounds-scratch-vregs-ok?)
     (compiler-reg-indexed-lookups-ok?)
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)

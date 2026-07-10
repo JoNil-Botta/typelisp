@@ -1082,160 +1082,116 @@
       with-key
       (ctfe-reflect-info-add-alias with-key info name))))
 
+(define (ctfe-reflections-add-struct
+  [infos : CtfeReflectInfoList]
+  [module : String]
+  [name : i64]
+  [fields : AstFieldDefList]) : CtfeReflectInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String
+      (if (= (string.string-length module) 0)
+        name-str
+        (string.append module (string.append "/" name-str)))]
+    [info : CtfeReflectInfo
+      (CtfeReflectInfo.Struct
+        key
+        module
+        name-str
+        (ctfe-reflect-field-list-from-fields fields))]
+    (ctfe-reflect-info-add-names infos info name-str module)))
+
+(define (ctfe-reflections-add-enum
+  [infos : CtfeReflectInfoList]
+  [module : String]
+  [name : i64]
+  [variants : AstVariantDefList]) : CtfeReflectInfoList
+  (let
+    [name-str : String (intern-str name)]
+    [key : String
+      (if (= (string.string-length module) 0)
+        name-str
+        (string.append module (string.append "/" name-str)))]
+    [info : CtfeReflectInfo
+      (CtfeReflectInfo.Enum
+        key
+        module
+        name-str
+        (ctfe-reflect-variant-list-from-variants variants))]
+    (ctfe-reflect-info-add-names infos info name-str module)))
+
+(define (ctfe-reflections-add-template
+  [infos : CtfeReflectInfoList]
+  [module : String]
+  [template : AstDecl]) : CtfeReflectInfoList
+  (match template
+    [(AstDecl.DefStruct name _ _ fields)
+      (ctfe-reflections-add-struct infos module name fields)]
+    [(AstDecl.DefStructLifetimes name _ _ _ fields)
+      (ctfe-reflections-add-struct infos module name fields)]
+    [(AstDecl.DefEnum name _ variants)
+      (ctfe-reflections-add-enum infos module name variants)]
+    [(AstDecl.DefEnumLifetimes name _ _ variants)
+      (ctfe-reflections-add-enum infos module name variants)]
+    [_ infos]))
+
 (define (ctfe-reflections-from-decls
   [decls : AstDeclList]
   [module : String]
   [infos : CtfeReflectInfoList]) : CtfeReflectInfoList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) infos]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (ctfe-reflections-from-decls rest (intern-str next-module) infos)]
-          [(AstDecl.DefStruct name _ _ fields)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Struct
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-field-list-from-fields fields))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.DefStructLifetimes name _ _ _ fields)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Struct
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-field-list-from-fields fields))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.DefEnum name _ variants)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Enum
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-variant-list-from-variants variants))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.DefEnumLifetimes name _ _ variants)
-            (let
-              [name-str : String (intern-str name)]
-              [key : String
-                (if (= (string.string-length module) 0)
-                  name-str
-                  (string.append module (string.append "/" name-str)))]
-              [info : CtfeReflectInfo
-                (CtfeReflectInfo.Enum
-                  key
-                  module
-                  name-str
-                  (ctfe-reflect-variant-list-from-variants variants))]
-              (ctfe-reflections-from-decls
-                rest
-                module
-                (ctfe-reflect-info-add-names infos info name-str module)))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefStruct name _ _ fields)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Struct
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-field-list-from-fields fields))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDecl.DefStructLifetimes name _ _ _ fields)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Struct
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-field-list-from-fields fields))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDecl.DefEnum name _ variants)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Enum
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-variant-list-from-variants variants))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [(AstDecl.DefEnumLifetimes name _ _ variants)
-                  (let
-                    [name-str : String (intern-str name)]
-                    [key : String
-                      (if (= (string.string-length module) 0)
-                        name-str
-                        (string.append module (string.append "/" name-str)))]
-                    [info : CtfeReflectInfo
-                      (CtfeReflectInfo.Enum
-                        key
-                        module
-                        name-str
-                        (ctfe-reflect-variant-list-from-variants variants))]
-                    (ctfe-reflections-from-decls
-                      rest
-                      module
-                      (ctfe-reflect-info-add-names infos info name-str module)))]
-                [_ (ctfe-reflections-from-decls rest module infos)]))]
-          [_ (ctfe-reflections-from-decls rest module infos)]))]))
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    [index : i64 0]
+    [current-module : String module]
+    [current-infos : CtfeReflectInfoList infos]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ast-decl-list-ref decls index)
+            [(AstDecl.Module next-module)
+              (set! current-module (intern-str next-module))]
+            [(AstDecl.DefStruct name _ _ fields)
+              (set!
+                current-infos
+                (ctfe-reflections-add-struct
+                  current-infos
+                  current-module
+                  name
+                  fields))]
+            [(AstDecl.DefStructLifetimes name _ _ _ fields)
+              (set!
+                current-infos
+                (ctfe-reflections-add-struct
+                  current-infos
+                  current-module
+                  name
+                  fields))]
+            [(AstDecl.DefEnum name _ variants)
+              (set!
+                current-infos
+                (ctfe-reflections-add-enum
+                  current-infos
+                  current-module
+                  name
+                  variants))]
+            [(AstDecl.DefEnumLifetimes name _ _ variants)
+              (set!
+                current-infos
+                (ctfe-reflections-add-enum
+                  current-infos
+                  current-module
+                  name
+                  variants))]
+            [(AstDecl.ComptimeDecl _ template-box)
+              (set!
+                current-infos
+                (ctfe-reflections-add-template
+                  current-infos
+                  current-module
+                  (box-get template-box)))]
+            [_ unit])
+          (set! index (+ index 1))))
+      current-infos)))
 
 (define (ctfe-metadata-decl-capacity [decls : AstDeclList]) : i64
   (let

@@ -22254,47 +22254,6 @@
     [(CompilerIrInstr.BoundsCheck _ _ _) true]
     [_ false]))
 
-(define (compiler-backend-instr-seq-need-outgoing-space?
-  [instrs : CompilerIrInstrSeq]) : bool
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< index count) (not found))
-        (begin
-          (if (compiler-backend-instr-needs-outgoing-space?
-            (array-ref slots index))
-            (set! found true)
-            unit)
-          (set! index (+ index 1))))
-      found)))
-
-(define (compiler-backend-blocks-need-outgoing-space?
-  [blocks : CompilerIrBlockList]) : bool
-  (match blocks
-    [(CompilerIrBlockList.Nil) false]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
-            true
-            (compiler-backend-blocks-need-outgoing-space? (box-get rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (compiler-backend-block-seq-needs-outgoing-space? seq 0)]))
-
-(define (compiler-backend-block-seq-needs-outgoing-space?
-  [blocks : CompilerIrBlockSeq]
-  [index : i64]) : bool
-  (if (>= index (compiler-ir-block-seq-count blocks))
-    false
-    (match (compiler-ir-block-seq-ref blocks index)
-      [(CompilerIrBlock.Block _ instrs)
-        (if (compiler-backend-instr-seq-need-outgoing-space? instrs)
-          true
-          (compiler-backend-block-seq-needs-outgoing-space? blocks (+ index 1)))])))
-
 (define (compiler-backend-instr-outgoing-stack-space
   [target : CompilerBackendTarget]
   [instr : CompilerIrInstr]
@@ -22387,75 +22346,86 @@
           (compiler-backend-windows-closure-stack-arg-space args)]
         [_ 0])]))
 
-(define (compiler-backend-instr-seq-outgoing-stack-space
+(defstruct CompilerBackendOutgoingFrameScan
+  (needed bool)
+  (max-space i64))
+
+(define (compiler-backend-outgoing-frame-scan-instrs
   [target : CompilerBackendTarget]
   [instrs : CompilerIrInstrSeq]
-  [max-space : i64]
-  [program-index : CompilerBackendProgramIndex]) : i64
+  [scan : CompilerBackendOutgoingFrameScan]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
     [count : i64 (struct-get instrs len)]
     [index : i64 0]
-    [out : i64 max-space]
+    [needed : bool (struct-get scan needed)]
+    [max-space : i64 (struct-get scan max-space)]
     (begin
       (while (< index count)
-        (begin
-          (set!
-            out
-            (compiler-reg-max
-              out
-              (compiler-backend-instr-outgoing-stack-space
-                target
-                (array-ref slots index)
-                program-index)))
-          (set! index (+ index 1))))
-      out)))
+        (let
+          [instr : CompilerIrInstr (array-ref slots index)]
+          (begin
+            (if (compiler-backend-instr-needs-outgoing-space? instr)
+              (begin
+                (set! needed true)
+                (set!
+                  max-space
+                  (compiler-reg-max
+                    max-space
+                    (compiler-backend-instr-outgoing-stack-space
+                      target
+                      instr
+                      program-index))))
+              unit)
+            (set! index (+ index 1)))))
+      (CompilerBackendOutgoingFrameScan needed max-space))))
 
-(define (compiler-backend-blocks-outgoing-stack-space
+(define (compiler-backend-outgoing-frame-scan-blocks
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
-  [max-space : i64]
-  [program-index : CompilerBackendProgramIndex]) : i64
+  [scan : CompilerBackendOutgoingFrameScan]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (match blocks
-    [(CompilerIrBlockList.Nil) max-space]
+    [(CompilerIrBlockList.Nil) scan]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (compiler-backend-blocks-outgoing-stack-space
+          (compiler-backend-outgoing-frame-scan-blocks
             target
             (box-get rest)
-            (compiler-backend-instr-seq-outgoing-stack-space
+            (compiler-backend-outgoing-frame-scan-instrs
               target
               instrs
-              max-space
+              scan
               program-index)
             program-index)])]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-block-seq-outgoing-stack-space
+      (compiler-backend-outgoing-frame-scan-block-seq
         target
         seq
         0
-        max-space
+        scan
         program-index)]))
 
-(define (compiler-backend-block-seq-outgoing-stack-space
+(define (compiler-backend-outgoing-frame-scan-block-seq
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
-  [max-space : i64]
-  [program-index : CompilerBackendProgramIndex]) : i64
+  [scan : CompilerBackendOutgoingFrameScan]
+  [program-index : CompilerBackendProgramIndex]) : CompilerBackendOutgoingFrameScan
   (if (>= index (compiler-ir-block-seq-count blocks))
-    max-space
+    scan
     (match (compiler-ir-block-seq-ref blocks index)
       [(CompilerIrBlock.Block _ instrs)
-        (compiler-backend-block-seq-outgoing-stack-space
+        (compiler-backend-outgoing-frame-scan-block-seq
           target
           blocks
           (+ index 1)
-          (compiler-backend-instr-seq-outgoing-stack-space
+          (compiler-backend-outgoing-frame-scan-instrs
             target
             instrs
-            max-space
+            scan
             program-index)
           program-index)])))
 
@@ -22463,29 +22433,21 @@
   [target : CompilerBackendTarget]
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]) : i64
-  (if (compiler-backend-blocks-need-outgoing-space? blocks)
-    (match target
-      [(CompilerBackendTarget.Windows)
-        (compiler-backend-round-up-16
-          (+
-            (compiler-backend-outgoing-shadow-space target)
-            (compiler-backend-blocks-outgoing-stack-space
-              target
-              blocks
-              0
-              program-index)))]
+  (let
+    [scan : CompilerBackendOutgoingFrameScan
+      (compiler-backend-outgoing-frame-scan-blocks
+        target
+        blocks
+        (CompilerBackendOutgoingFrameScan false 0)
+        program-index)]
+    (if (struct-get scan needed)
       ;; Reserve the max outgoing stack-arg space in the frame so calls need no
-      ;; per-call %rsp dip (mirrors Windows).
-      [(CompilerBackendTarget.Linux)
-        (compiler-backend-round-up-16
-          (+
-            (compiler-backend-outgoing-shadow-space target)
-            (compiler-backend-blocks-outgoing-stack-space
-              target
-              blocks
-              0
-              program-index)))])
-    0))
+      ;; per-call %rsp dip. Windows additionally contributes its shadow space.
+      (compiler-backend-round-up-16
+        (+
+          (compiler-backend-outgoing-shadow-space target)
+          (struct-get scan max-space)))
+      0)))
 
 (define (compiler-backend-emit-scalar-stack-call-arg
   [target : CompilerBackendTarget]
@@ -40757,16 +40719,18 @@
                     (set!
                       compiler-backend-identity-tail-forwarder-active
                       identity-tail-forwarder?)]
+                  [outgoing-frame-space : i64
+                    (compiler-backend-outgoing-frame-space
+                      target
+                      emit-blocks-list
+                      program-index)]
                   [dynamic-frame-base : i64
                     (+
                       (compiler-backend-frame-size
                         (compiler-backend-frame-slots-emergency-max
                           slot-vars
                           has-group-vars))
-                      (compiler-backend-outgoing-frame-space
-                        target
-                        emit-blocks-list
-                        program-index))]
+                      outgoing-frame-space)]
                   [_emergency-init : unit
                     (begin
                       (set! compiler-backend-cycle-temp-used-count 0)
@@ -40829,11 +40793,6 @@
                                 compiler-backend-emergency-used)
                               (compiler-backend-emergency-frame-extra
                                 compiler-backend-emergency-used-count))]
-                          [outgoing-frame-space : i64
-                            (compiler-backend-outgoing-frame-space
-                              target
-                              emit-blocks-list
-                              program-index)]
                           [frame : i64
                             (+
                               (+
@@ -52320,42 +52279,15 @@ tl_tlci_call_image_entry:
         unit)
       (text_buf_borrowed.render out))))
 
-;; Iterate the peephole to a fixpoint. A rewrite in one pass can expose further
-;; rewrites a single pass misses (an into-%r10 fold creating a new adjacency, a
-;; reload->reg-reg rewrite exposing an adjacent redundant/self move). Every
-;; peephole rule only ever SHORTENS the output, so "length stopped shrinking" =
-;; converged. Bounded to 4 passes (cascades converge in 1-2 in practice; the cap
-;; prevents any pathological loop). asm-once is self-contained (fresh owner map
-;; per call), so re-running on its own output needs no state reset.
-(define (compiler-backend-peephole-asm-iter
-  [asm : String]
-  [prev-len : i64]
-  [prev-shrink : i64]
-  [pass : i64]) : String
-  (if (>= pass 4)
-    asm
-    (let
-      [next : String (compiler-backend-peephole-asm-once asm)]
-      [next-len : i64 (string.string-length next)]
-      [shrink : i64 (- prev-len next-len)]
-      ;; The rewrite chain only ever shortens, so a pass that no longer shrinks
-      ;; the output has converged. Stop one pass earlier once the cascade has
-      ;; decayed past 1/16 of the previous pass's removal: the first 1-2 passes
-      ;; do the real work (a 40MB self-compile removes ~910KB then ~10KB), and a
-      ;; later pass that removes only a few hundred bytes is not worth another
-      ;; full 40MB walk. The pass>=4 cap stays as a pathological-loop backstop.
-      (if (or (<= shrink 0) (and (>= pass 1) (< shrink (shr prev-shrink 4))))
-        next
-        (compiler-backend-peephole-asm-iter next next-len shrink (+ pass 1))))))
-
 (define (compiler-backend-peephole-asm-buffer [asm : String]) : text_buf.TextBuf
-  ;; GAP5: after the owner-map peephole fixpoint has forwarded every
-  ;; register-forwardable frame READ, sweep never-read local frame STORES
-  ;; (recorded per FPO function during emission). Whole-program input; with an
-  ;; empty metadata table (Windows, unit tests on hand-written text) the sweep
-  ;; returns its input unchanged.
+  ;; The streaming pass runs the complete rule set while each line pair and its
+  ;; owner state are hot. Re-running it used to parse and copy the whole ~40MB
+  ;; self-compile assembly again to remove only ~1% as many bytes as the first
+  ;; pass (~10KB after ~910KB). Keep that marginal reapplication out of the
+  ;; compile path; the missed cascades are optional code-size rewrites.
+  ;; GAP5 then sweeps never-read local frame stores recorded during emission.
   (compiler-backend-deadstore-sweep-buffer
-    (compiler-backend-peephole-asm-iter asm (string.string-length asm) 0 0)))
+    (compiler-backend-peephole-asm-once asm)))
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm)))
@@ -52452,11 +52384,7 @@ tl_tlci_call_image_entry:
                   (cfg compile-profile (compiler-backend-profile-start))
                   (let
                     [peepholed-asm : String
-                      (compiler-backend-peephole-asm-iter
-                        raw-asm
-                        (string.string-length raw-asm)
-                        0
-                        0)]
+                      (compiler-backend-peephole-asm-once raw-asm)]
                     (begin
                       (unsafe
                         (arena.destroy render-arena))

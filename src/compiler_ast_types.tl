@@ -57,22 +57,40 @@
 ;; sidecar compact because expanded programs can retain many declaration lists
 ;; at once during self-hosting. The reconstructed point span preserves the
 ;; line/column reported to users without storing four i32 values per entry.
+;;
+;; A signed i32 holds 19 bits of line and 12 bits of column: enough for source
+;; files with up to 524287 lines and 4095 columns, including the self-hosting
+;; compiler. Coordinates beyond that deliberately retain the existing
+;; no-location fallback rather than growing every declaration sidecar.
+(define ast-decl-span-line-bits : i64
+  19)
+(define ast-decl-span-col-bits : i64
+  12)
+(define ast-decl-span-line-mask : i64
+  524287)
 (define ast-decl-span-col-mask : i64
-  4294967295)
+  4095)
 
-(define (ast-decl-span-pack [span : AstSourceSpan]) : i64
-  (if (ast-source-span-present? span)
-    (+
-      (shl (ast-source-span-start-line span) 32)
-      (bit-and (ast-source-span-start-col span) ast-decl-span-col-mask))
-    0))
+(define (ast-decl-span-pack [span : AstSourceSpan]) : i32
+  (if (and
+    (ast-source-span-present? span)
+    (<= (ast-source-span-start-line span) ast-decl-span-line-mask)
+    (<= (ast-source-span-start-col span) ast-decl-span-col-mask))
+    (cast
+      (+
+        (shl (ast-source-span-start-line span) ast-decl-span-col-bits)
+        (bit-and (ast-source-span-start-col span) ast-decl-span-col-mask))
+      : i32)
+    (cast 0 : i32)))
 
-(define (ast-decl-span-unpack [packed : i64]) : AstSourceSpan
+(define (ast-decl-span-unpack [packed : i32]) : AstSourceSpan
   (if (= packed 0)
     (ast-source-span-none)
     (let
-      [line : i64 (bit-and (shr packed 32) ast-decl-span-col-mask)]
-      [col : i64 (bit-and packed ast-decl-span-col-mask)]
+      [value : i64 (cast packed : i64)]
+      [line : i64
+        (bit-and (shr value ast-decl-span-col-bits) ast-decl-span-line-mask)]
+      [col : i64 (bit-and value ast-decl-span-col-mask)]
       (ast-source-span line col line col))))
 
 (defenum AstLiteral
@@ -2089,13 +2107,13 @@
 
 (defstruct AstDeclList
   (slots (Array AstDecl))
-  (spans (Array i64))
+  (spans (Array i32))
   (offset i64)
   (len i64)
   (prependable bool))
 
-(define ast-decl-empty-spans : (Array i64)
-  (array.make-array i64 0))
+(define ast-decl-empty-spans : (Array i32)
+  (array.make-array i32 0))
 
 (defenum AstDeclListStep
   (Nil)
@@ -4620,8 +4638,8 @@
   (AstDecl.Module (ci.intern "<ast-decl-list-fallback>")))
 
 (define (ast-decl-list-copy-spans
-  [dst : (&mut dst (Array i64))]
-  [src : (& src (Array i64))]
+  [dst : (&mut dst (Array i32))]
+  [src : (& src (Array i32))]
   [src-offset : i64]
   [dst-offset : i64]
   [index : i64]
@@ -4659,8 +4677,8 @@
   (if (ast-decl-list-has-spans? (& v))
     unit
     (let
-      [spans : (Array i64)
-        (array.make-array i64 (array-length (struct-get v slots)))]
+      [spans : (Array i32)
+        (array.make-array i32 (array-length (struct-get v slots)))]
       (set! (struct-get v spans) spans))))
 
 (define (ast-decl-list-get
@@ -4719,7 +4737,7 @@
       (set! (struct-get v slots) bigger)
       (if (ast-decl-list-has-spans? (& v))
         (let
-          [bigger-spans : (Array i64) (array.make-array i64 new-cap)]
+          [bigger-spans : (Array i32) (array.make-array i32 new-cap)]
           (begin
             (ast-decl-list-copy-spans
               (&mut bigger-spans)
@@ -4874,7 +4892,7 @@
               (* new-len 2))]
           [new-offset : i64 (- new-cap new-len)]
           [slots : (Array AstDecl) (array.make-array AstDecl new-cap)]
-          [spans : (Array i64) (array.make-array i64 new-cap)]
+          [spans : (Array i32) (array.make-array i32 new-cap)]
           (begin
             (array-set! slots new-offset head)
             (array-set! spans new-offset (ast-decl-span-pack span))

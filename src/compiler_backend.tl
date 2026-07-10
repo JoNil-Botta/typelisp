@@ -45666,6 +45666,12 @@ tl_profile_alloc_reset_peak:
   (if (compiler-backend-target-windows? target)
     "    .globl tl_memcpy
 tl_memcpy:
+    cmpq $1, %r8
+    jne .Ltl_memcpy_setup
+    movzbl (%rdx), %eax
+    movb %al, (%rcx)
+    ret
+.Ltl_memcpy_setup:
     movq %rdi, %rax
     movq %rsi, %r10
     movq %rcx, %rdi

@@ -29251,7 +29251,8 @@
           [_ (- 0 1)])]
       [_ (- 0 1)])))
 
-(define (compiler-backend-fuse-free-seq
+(define (compiler-backend-count-instr-seq-use-facts
+  [counts : (Array i64)]
   [free : (Array i64)]
   [instrs : CompilerIrInstrSeq]) : unit
   (let
@@ -29260,6 +29261,7 @@
     [j : i64 0]
     (while (< j n)
       (begin
+        (compiler-backend-count-instr-uses counts (array-ref slots j))
         (let
           [v : i64 (compiler-backend-fuse-free-branch-var slots j)]
           (if (and (>= v 0) (< v (array-length free)))
@@ -29267,7 +29269,8 @@
             unit))
         (set! j (+ j 1))))))
 
-(define (compiler-backend-fuse-free-blocks
+(define (compiler-backend-count-block-use-facts
+  [counts : (Array i64)]
   [free : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
   (match blocks
@@ -29276,12 +29279,13 @@
       (begin
         (match block
           [(CompilerIrBlock.Block _ instrs)
-            (compiler-backend-fuse-free-seq free instrs)])
-        (compiler-backend-fuse-free-blocks free (box-get rest)))]
+            (compiler-backend-count-instr-seq-use-facts counts free instrs)])
+        (compiler-backend-count-block-use-facts counts free (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
-      (compiler-backend-fuse-free-block-seq free seq)]))
+      (compiler-backend-count-block-seq-use-facts counts free seq)]))
 
-(define (compiler-backend-fuse-free-block-seq
+(define (compiler-backend-count-block-seq-use-facts
+  [counts : (Array i64)]
   [free : (Array i64)]
   [blocks : CompilerIrBlockSeq]) : unit
   (let
@@ -29292,21 +29296,17 @@
         (begin
           (match (compiler-ir-block-seq-ref blocks index)
             [(CompilerIrBlock.Block _ instrs)
-              (compiler-backend-fuse-free-seq free instrs)])
+              (compiler-backend-count-instr-seq-use-facts counts free instrs)])
           (set! index (+ index 1))))
       unit)))
 
 (define (compiler-backend-fuse-need-enable!
-  [vars : i64]
   [use-counts : (Array i64)]
-  [blocks : CompilerIrBlockList]) : unit
-  (let
-    [free : (Array i64) (array.make-array i64 vars)]
-    (begin
-      (compiler-backend-fuse-free-blocks free blocks)
-      (set! compiler-backend-fuse-use-counts use-counts)
-      (set! compiler-backend-fuse-free-counts free)
-      (set! compiler-backend-fuse-need-ready true))))
+  [free-counts : (Array i64)]) : unit
+  (begin
+    (set! compiler-backend-fuse-use-counts use-counts)
+    (set! compiler-backend-fuse-free-counts free-counts)
+    (set! compiler-backend-fuse-need-ready true)))
 
 (define (compiler-backend-fuse-need-disable!) : unit
   (begin
@@ -40582,8 +40582,13 @@
               addressable-group-vars))]
         [symbol : String
           (compiler-backend-function-symbol-index program-index name)]
-        [use-counts : (Array i64)
-          (compiler-backend-function-use-counts scratch-vars emit-blocks-list)]
+        [use-counts : (Array i64) (array.make-array i64 scratch-vars)]
+        [fuse-free-counts : (Array i64) (array.make-array i64 scratch-vars)]
+        [_use-facts : unit
+          (compiler-backend-count-block-use-facts
+            use-counts
+            fuse-free-counts
+            emit-blocks-list)]
         [identity-tail-forwarder? : bool
           (compiler-backend-identity-tail-forwarder?
             target
@@ -40712,9 +40717,8 @@
                       use-counts)]
                   [_fuse-need : unit
                     (compiler-backend-fuse-need-enable!
-                      scratch-vars
                       use-counts
-                      emit-blocks-list)]
+                      fuse-free-counts)]
                   [_identity-tail-forwarder : unit
                     (set!
                       compiler-backend-identity-tail-forwarder-active

@@ -17,7 +17,15 @@
     [registration-addr : i64]) : i64 (:symbol "tl_tlci_call_image_entry")))
 
 (defstruct TlciLoadedImage
-  (image-region pages.TlciPageRegion)
+  ;; Keep the page region flattened at this cross-module boundary. The
+  ;; published stage0 predates imported nominal aggregate layout resolution,
+  ;; while this loader must remain directly buildable by that seed compiler.
+  ;; Reconstruct the pages-owned value only at its release call.
+  (image-region-addr i64)
+  (image-region-size i64)
+  (image-region-code bool)
+  (image-region-writable bool)
+  (image-region-executable bool)
   (entry-addr i64)
   (host-table-storage (Array i64))
   (registration-storage (Array i64))
@@ -346,8 +354,16 @@
     [(pages.ResultTlciPageRegion.Err message)
       (ResultTlciLoaderUnit.Err message)]))
 
+(define (tlci-loader-loaded-image-region [loaded : TlciLoadedImage]) : pages.TlciPageRegion
+  (pages.TlciPageRegion
+    (struct-get loaded image-region-addr)
+    (struct-get loaded image-region-size)
+    (struct-get loaded image-region-code)
+    (struct-get loaded image-region-writable)
+    (struct-get loaded image-region-executable)))
+
 (define (tlci-loader-release [loaded : TlciLoadedImage]) : ResultTlciLoaderUnit
-  (match (pages.tlci-pages-release (struct-get loaded image-region))
+  (match (pages.tlci-pages-release (tlci-loader-loaded-image-region loaded))
     [(pages.ResultTlciPageUnit.Ok) (ResultTlciLoaderUnit.Ok)]
     [(pages.ResultTlciPageUnit.Err message) (ResultTlciLoaderUnit.Err message)]))
 
@@ -363,7 +379,11 @@
   [entry-count : i64]
   [symbol-count : i64]) : TlciLoadedImage
   (TlciLoadedImage
-    image-region
+    (struct-get image-region addr)
+    (struct-get image-region size)
+    (struct-get image-region code)
+    (struct-get image-region writable)
+    (struct-get image-region executable)
     (+ image-base (+ code-offset entry-code-offset))
     (make-array i64 0)
     (make-array i64 0)
@@ -388,7 +408,11 @@
   [registration-addr : i64]
   [registration : tlci.TlciImageRegistration]) : TlciLoadedImage
   (TlciLoadedImage
-    (struct-get loaded image-region)
+    (struct-get loaded image-region-addr)
+    (struct-get loaded image-region-size)
+    (struct-get loaded image-region-code)
+    (struct-get loaded image-region-writable)
+    (struct-get loaded image-region-executable)
     (struct-get loaded entry-addr)
     host-table-storage
     registration-storage
@@ -674,7 +698,7 @@
 (define (tlci-loader-test-image-with-code
   [fixup-offset : i64]
   [code : (Array u8)]) : tlci.TlciImage
-  (tlci.TlciImage
+  (tlci.tlci-make-image
     tlci.tlci-host-arch-x86-64
     tlci.tlci-callback-abi-version
     "abcdef0"
@@ -733,8 +757,7 @@
         [(ResultTlciLoadedImage.Err _) 11]
         [(ResultTlciLoadedImage.Ok loaded)
           (let
-            [image-base : i64
-              (struct-get (struct-get loaded image-region) addr)]
+            [image-base : i64 (struct-get loaded image-region-addr)]
             [slot : i64
               (tlci-loader-read-mapped-i64 (struct-get loaded rodata-addr))]
             [entry-ok : bool

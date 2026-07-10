@@ -42,6 +42,13 @@ lending_iterator_loop_after_last_use_ok|check-ok|tests/safety/lending_iterator_l
 
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
+stdlib_eq_box_reject|check-fail|tests/safety/stdlib_eq_box_reject.tl|-|eq: unsupported type
+stdlib_eq_recursive_box_reject|check-fail|tests/safety/stdlib_eq_recursive_box_reject.tl|-|eq: unsupported type
+stdlib_eq_dynamic_array_reject|check-fail|tests/safety/stdlib_eq_dynamic_array_reject.tl|-|eq: unsupported type
+stdlib_eq_reference_reject|check-fail|tests/safety/stdlib_eq_reference_reject.tl|-|eq: unsupported type
+stdlib_eq_ptr_reject|check-fail|tests/safety/stdlib_eq_ptr_reject.tl|-|eq: unsupported type
+stdlib_eq_mut_ptr_reject|check-fail|tests/safety/stdlib_eq_mut_ptr_reject.tl|-|eq: unsupported type
+stdlib_eq_function_reject|check-fail|tests/safety/stdlib_eq_function_reject.tl|-|eq: unsupported type
 unbound_variable_reject|check-fail|tests/safety/unbound_variable_reject.tl|-|unbound name missing
 unimported_print_reject|check-fail|tests/safety/unimported_print_reject.tl|-|unbound name print
 unimported_panic_reject|check-fail|tests/safety/unimported_panic_reject.tl|-|unbound name panic

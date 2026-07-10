@@ -41036,6 +41036,13 @@
     [(TcMaybeString.Some name) (tc-constructor-name? ctx name)]
     [(TcMaybeString.No) false]))
 
+(define (tc-borrow-check-lending-result-type? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region (tc-resolve-type ctx ty))
+    [(AstType.EnumArgs _ _) true]
+    [(AstType.StructArgs _ _) true]
+    [(AstType.Tuple elems) (tc-type-list-contains-reference? (box-get elems))]
+    [_ false]))
+
 ;; The ordinary returned-call effect uses the inferred result type, which can
 ;; retain a symbolic lifetime for a lending call. At an annotated binding we
 ;; have the concrete caller lifetime, so attach a result-binding marker to the
@@ -41194,7 +41201,9 @@
           [(AstExpr.Call func-box args)
             (let
               [func : AstExpr (ast-node-get func-box)]
-              (if (tc-borrow-check-call-constructor? ctx func)
+              (if (or
+                (tc-borrow-check-call-constructor? ctx func)
+                (not (tc-borrow-check-lending-result-type? ctx init-ty)))
                 (tc-borrow-check-after-bind-typed
                   ctx
                   locals

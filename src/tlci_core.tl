@@ -36,6 +36,30 @@
   (entries (Array u8))
   (symbols (Array u8)))
 
+;; Construct the aggregate in its declaring module. Besides keeping the tlci
+;; API concise, this lets the published stage0 compile dotted importers before
+;; its imported-nominal constructor lowering is bootstrapped forward.
+(define (tlci-make-image
+  [host-arch : i64]
+  [callback-abi-version : i64]
+  [compiler-build-hash : String]
+  [metadata : TlciMetadata]
+  [rodata : (Array u8)]
+  [code : (Array u8)]
+  [fixups : (Array u8)]
+  [entries : (Array u8)]
+  [symbols : (Array u8)]) : TlciImage
+  (TlciImage
+    host-arch
+    callback-abi-version
+    compiler-build-hash
+    metadata
+    rodata
+    code
+    fixups
+    entries
+    symbols))
+
 (defenum ResultTlciString
   (Ok String)
   (Err String))

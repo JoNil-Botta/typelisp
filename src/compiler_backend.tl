@@ -51846,36 +51846,43 @@ tl_tlci_call_image_entry:
 ;; flags, never a GP register or memory, so they need no owner invalidation.
 ;; cmpxchg, cmps, and similar (which DO write registers/memory) are excluded by
 ;; the strict token-length / suffix check.
+(define (compiler-backend-peephole-cmp-or-test-token?
+  [data : (Ptr u8)]
+  [i : i64]
+  [tlen : i64]) : bool
+  (or
+    (and
+      (>= tlen 3)
+      (= (compiler-backend-peephole-byte-at data i) 99)
+      (= (compiler-backend-peephole-byte-at data (+ i 1)) 109)
+      (= (compiler-backend-peephole-byte-at data (+ i 2)) 112)
+      (or
+        (= tlen 3)
+        (and
+          (= tlen 4)
+          (compiler-backend-peephole-size-suffix-byte?
+            (compiler-backend-peephole-byte-at data (+ i 3))))))
+    (and
+      (>= tlen 4)
+      (= (compiler-backend-peephole-byte-at data i) 116)
+      (= (compiler-backend-peephole-byte-at data (+ i 1)) 101)
+      (= (compiler-backend-peephole-byte-at data (+ i 2)) 115)
+      (= (compiler-backend-peephole-byte-at data (+ i 3)) 116)
+      (or
+        (= tlen 4)
+        (and
+          (= tlen 5)
+          (compiler-backend-peephole-size-suffix-byte?
+            (compiler-backend-peephole-byte-at data (+ i 4))))))))
+
 (define (compiler-backend-peephole-cmp-or-test?
   [data : (Ptr u8)]
   [i : i64]
   [end : i64]) : bool
-  (let
-    [tlen : i64 (compiler-backend-peephole-token-len data i end)]
-    (or
-      (and
-        (>= tlen 3)
-        (= (compiler-backend-peephole-byte-at data i) 99)
-        (= (compiler-backend-peephole-byte-at data (+ i 1)) 109)
-        (= (compiler-backend-peephole-byte-at data (+ i 2)) 112)
-        (or
-          (= tlen 3)
-          (and
-            (= tlen 4)
-            (compiler-backend-peephole-size-suffix-byte?
-              (compiler-backend-peephole-byte-at data (+ i 3))))))
-      (and
-        (>= tlen 4)
-        (= (compiler-backend-peephole-byte-at data i) 116)
-        (= (compiler-backend-peephole-byte-at data (+ i 1)) 101)
-        (= (compiler-backend-peephole-byte-at data (+ i 2)) 115)
-        (= (compiler-backend-peephole-byte-at data (+ i 3)) 116)
-        (or
-          (= tlen 4)
-          (and
-            (= tlen 5)
-            (compiler-backend-peephole-size-suffix-byte?
-              (compiler-backend-peephole-byte-at data (+ i 4)))))))))
+  (compiler-backend-peephole-cmp-or-test-token?
+    data
+    i
+    (compiler-backend-peephole-token-len data i end)))
 
 ;; SCAV2: true iff line [start,end) is `call <F>` where F is a runtime NORETURN
 ;; abort helper (tl_oob_abort / tl_shift_abort / tl_div_abort / tl_region_abort /
@@ -52000,11 +52007,13 @@ tl_tlci_call_image_entry:
   [data : (Ptr u8)]
   [i : i64]
   [mlen : i64]) : bool
-  (let
-    [e : i64 (+ i mlen)]
-    (or
-      (compiler-backend-peephole-range-eq? data i e "call")
-      (compiler-backend-peephole-range-eq? data i e "callq"))))
+  (and
+    (or (= mlen 4) (= mlen 5))
+    (= (compiler-backend-peephole-byte-at data i) 99)
+    (= (compiler-backend-peephole-byte-at data (+ i 1)) 97)
+    (= (compiler-backend-peephole-byte-at data (+ i 2)) 108)
+    (= (compiler-backend-peephole-byte-at data (+ i 3)) 108)
+    (or (= mlen 4) (= (compiler-backend-peephole-byte-at data (+ i 4)) 113))))
 
 ;; True iff the byte range [s,e) of `data` equals the literal `lit` exactly.
 (define (compiler-backend-peephole-range-eq?
@@ -52263,6 +52272,21 @@ tl_tlci_call_image_entry:
     asm)
   (compiler-backend-peephole-append-parsed-line buf asm line))
 
+(define (compiler-backend-peephole-mnemonic-zext?
+  [data : (Ptr u8)]
+  [i : i64]
+  [mlen : i64]) : bool
+  (and
+    (= mlen 6)
+    (= (compiler-backend-peephole-byte-at data i) 109)
+    (= (compiler-backend-peephole-byte-at data (+ i 1)) 111)
+    (= (compiler-backend-peephole-byte-at data (+ i 2)) 118)
+    (= (compiler-backend-peephole-byte-at data (+ i 3)) 122)
+    (= (compiler-backend-peephole-byte-at data (+ i 4)) 98)
+    (let
+      [suffix : i64 (compiler-backend-peephole-byte-at data (+ i 5))]
+      (or (= suffix 113) (= suffix 108)))))
+
 (define (compiler-backend-peephole-parse-line
   [src : String]
   [data : (Ptr u8)]
@@ -52281,56 +52305,50 @@ tl_tlci_call_image_entry:
         [has-operands : bool false]
         [op-src : String ""]
         [op-dst : String ""]
-        [comma : i64 0]
+        [comma : i64 -1]
+        [movq-prefix? : bool
+          (compiler-backend-peephole-movq-prefix-at-range? data start end)]
+        [zext? : bool (compiler-backend-peephole-mnemonic-zext? data ms mlen)]
         (begin
-          (while (and
-            (< operand-start end)
-            (= (compiler-backend-peephole-byte-at data operand-start) 32))
-            (set! operand-start (+ operand-start 1)))
-          (let
-            [found-comma : i64
-              (compiler-backend-peephole-find-comma-space-range
-                data
-                operand-start
-                end)]
+          ;; Only move/zext pair rules consume split operands. Most assembly
+          ;; lines need just their mnemonic classification, so do not rescan
+          ;; their full text looking for a comma that no rule will read.
+          (if (or movq-prefix? zext?)
             (begin
-              (set! comma found-comma)
+              (while (and
+                (< operand-start end)
+                (= (compiler-backend-peephole-byte-at data operand-start) 32))
+                (set! operand-start (+ operand-start 1)))
+              (set!
+                comma
+                (compiler-backend-peephole-find-comma-space-range
+                  data
+                  operand-start
+                  end))
               (if (and (> comma operand-start) (< (+ comma 2) end))
                 (set! has-operands true)
-                unit)))
+                unit))
+            unit)
           (let
-            [is-movq : bool
-              (and
-                has-operands
-                (compiler-backend-peephole-movq-prefix-at-range? data start end))]
+            [is-movq : bool (and has-operands movq-prefix?)]
             [is-label : bool
               (and
                 (< ms end)
                 (= (compiler-backend-peephole-byte-at data (- end 1)) 58))]
+            [cmp-or-test? : bool
+              (compiler-backend-peephole-cmp-or-test-token? data ms mlen)]
             [clears : bool
               (cond
                 [(>= ms end) false]
                 [is-label true]
                 [(= (compiler-backend-peephole-byte-at data ms) 46) false]
                 [(= (compiler-backend-peephole-byte-at data ms) 106) false]
-                [(compiler-backend-peephole-cmp-or-test? data ms end) false]
+                [cmp-or-test? false]
                 [else true])]
             [call? : bool
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]
             [single-dest? : bool
               (compiler-backend-peephole-mnemonic-single-dest? data ms mlen)]
-            [zext? : bool
-              (or
-                (compiler-backend-peephole-range-eq?
-                  data
-                  ms
-                  (+ ms mlen)
-                  "movzbq")
-                (compiler-backend-peephole-range-eq?
-                  data
-                  ms
-                  (+ ms mlen)
-                  "movzbl"))]
             [_operands : unit
               (if (and has-operands (or is-movq zext?))
                 (begin
@@ -52369,7 +52387,9 @@ tl_tlci_call_image_entry:
               dst-key
               is-movq
               is-label
-              (compiler-backend-peephole-line-noreturn-abort? data start end)
+              (if call?
+                (compiler-backend-peephole-line-noreturn-abort? data start end)
+                false)
               clears
               call?
               single-dest?

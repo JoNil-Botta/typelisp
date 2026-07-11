@@ -675,7 +675,10 @@
   (set! (box-get ctfe-build-seen-keys) (ctfe_key_map.with-capacity 256)))
 
 (define (ctfe-build-seen-add? [key : String]) : bool
-  (ctfe_key_map.insert-if-absent? (&mut (box-get ctfe-build-seen-keys)) key 1))
+  (ctfe_key_map.insert-if-absent-ref!
+    (&mut (box-get ctfe-build-seen-keys))
+    key
+    1))
 
 (define (ctfe-layout-info-list-add-if-missing
   [layouts : CtfeLayoutInfoList]
@@ -974,7 +977,7 @@
     (ctfe_key_map.with-capacity 256)))
 
 (define (ctfe-module-macro-export-add! [module : String] [name : String]) : unit
-  (ctfe_key_map.insert
+  (ctfe_key_map.insert-ref!
     (&mut (box-get ctfe-module-macro-export-keys))
     (ctfe-module-macro-export-key module name)
     1))

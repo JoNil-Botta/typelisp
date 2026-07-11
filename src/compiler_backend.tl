@@ -917,7 +917,7 @@
     (if (backend_string_i64_map.contains? (& seen) text)
       set
       (begin
-        (backend_string_i64_map.insert (&mut seen) text 1)
+        (backend_string_i64_map.insert-ref! (&mut seen) text 1)
         (BackendStringSet
           seen
           (compiler-backend-string-cons text (struct-get set items)))))))
@@ -933,7 +933,7 @@
     (if (backend_string_i64_map.contains? (& seen) key)
       set
       (begin
-        (backend_string_i64_map.insert (&mut seen) key 1)
+        (backend_string_i64_map.insert-ref! (&mut seen) key 1)
         (BackendFloatSet
           seen
           (compiler-backend-float-cons ty payload-bits (struct-get set items)))))))
@@ -1095,7 +1095,7 @@
               values
               index)
             (begin
-              (backend_string_i64_map.insert (&mut map) name index)
+              (backend_string_i64_map.insert-ref! (&mut map) name index)
               (array-set! values index (CompilerMaybeSourceSpan.Some span))
               (compiler-backend-source-span-index-add
                 (box-get rest)
@@ -1125,7 +1125,7 @@
             map
             values)
           (begin
-            (backend_string_i64_map.insert (&mut map) name index)
+            (backend_string_i64_map.insert-ref! (&mut map) name index)
             (array-set! values index (CompilerMaybeSourceSpan.Some span))
             (compiler-backend-source-span-index-add-array
               slots
@@ -10243,7 +10243,7 @@
         [(CompilerIrGlobal.Global name ty _)
           (begin
             (array-set! values index ty)
-            (backend_string_i64_map.insert (&mut ids) name index)
+            (backend_string_i64_map.insert-ref! (&mut ids) name index)
             (compiler-backend-global-types-fill
               (box-get rest)
               ids
@@ -20296,7 +20296,7 @@
   [name : String]
   [index : i64]) : backend_i64_i64_map.Map
   (begin
-    (backend_i64_i64_map.insert (&mut ids) (ci.intern name) index)
+    (backend_i64_i64_map.insert-ref! (&mut ids) (ci.intern name) index)
     ids))
 
 (define (compiler-backend-program-index-functions-into
@@ -20485,7 +20485,7 @@
           (if (backend_string_i64_map.contains? (& map) name)
             map
             (begin
-              (backend_string_i64_map.insert
+              (backend_string_i64_map.insert-ref!
                 (&mut map)
                 name
                 (compiler-ir-value-list-count words))
@@ -20675,11 +20675,14 @@
     (match (backend_string_i64_map.get (& map) name)
       [(backend_string_i64_map.LookupFound found)
         (begin
-          (backend_string_i64_map.insert (&mut map) name (bit-or found mask))
+          (backend_string_i64_map.insert-ref!
+            (&mut map)
+            name
+            (bit-or found mask))
           map)]
       [(backend_string_i64_map.LookupMissing)
         (begin
-          (backend_string_i64_map.insert (&mut map) name mask)
+          (backend_string_i64_map.insert-ref! (&mut map) name mask)
           map)])))
 
 (define (compiler-backend-collect-group-class-masks-instr
@@ -21087,7 +21090,7 @@
                   "backend: duplicate emitted global symbol "
                   symbol))
               (begin
-                (backend_string_i64_map.insert (&mut seen) symbol 1)
+                (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
                 (compiler-backend-validate-global-symbols-into
                   (box-get rest)
                   seen))))])]
@@ -21158,7 +21161,7 @@
                     symbol))]
               [else
                 (begin
-                  (backend_string_i64_map.insert (&mut seen) symbol 1)
+                  (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
                   (compiler-backend-validate-function-symbols-into
                     (box-get rest)
                     _plan
@@ -21215,7 +21218,7 @@
                   symbol))]
             [else
               (begin
-                (backend_string_i64_map.insert (&mut seen) symbol 1)
+                (backend_string_i64_map.insert-ref! (&mut seen) symbol 1)
                 (compiler-backend-validate-function-symbol-seq-into
                   functions
                   _plan
@@ -37692,7 +37695,7 @@
     [(OptLabelSet.Nil) counts]
     [(OptLabelSet.Cons label rest)
       (begin
-        (backend_string_i64_map.insert
+        (backend_string_i64_map.insert-ref!
           (&mut counts)
           label
           (+
@@ -43222,7 +43225,7 @@
   (let
     [defines : backend_string_i64_map.Map (struct-get index defines)]
     (begin
-      (backend_string_i64_map.insert (&mut defines) name 1)
+      (backend_string_i64_map.insert-ref! (&mut defines) name 1)
       (CompilerBackendRuntimeIndex
         defines
         (struct-get index externs)
@@ -43236,7 +43239,7 @@
   (let
     [externs : backend_string_i64_map.Map (struct-get index externs)]
     (begin
-      (backend_string_i64_map.insert (&mut externs) name 1)
+      (backend_string_i64_map.insert-ref! (&mut externs) name 1)
       (CompilerBackendRuntimeIndex
         (struct-get index defines)
         externs
@@ -43250,7 +43253,7 @@
   (let
     [calls : backend_string_i64_map.Map (struct-get index calls)]
     (begin
-      (backend_string_i64_map.insert (&mut calls) name 1)
+      (backend_string_i64_map.insert-ref! (&mut calls) name 1)
       (CompilerBackendRuntimeIndex
         (struct-get index defines)
         (struct-get index externs)

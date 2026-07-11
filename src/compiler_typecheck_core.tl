@@ -269,7 +269,10 @@
               unit)
             (array-set! tc-body-type-fact-types slot ty)
             (set! tc-body-type-fact-count (+ slot 1))
-            (tc_i64_i64_map.insert (&mut tc-body-type-fact-ids) expr-id slot)))])
+            (tc_i64_i64_map.insert-ref!
+              (&mut tc-body-type-fact-ids)
+              expr-id
+              slot)))])
     unit))
 
 (define (tc-body-type-fact-lookup [expr-id : i64]) : TcBodyTypeFact
@@ -4536,7 +4539,7 @@
   [unsafe : bool]
   [c-abi-fnptr : bool]
   [shadow : bool]) : bool
-  (if (tc_i64_i64_map.insert-if-absent? ids name-id next)
+  (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
       (array-set! values next ty)
@@ -10714,7 +10717,7 @@
                         (let
                           [new-slot : i64 module-count]
                           (begin
-                            (tc_i64_i64_map.insert
+                            (tc_i64_i64_map.insert-ref!
                               (&mut modules)
                               cur-module-id
                               new-slot)
@@ -17189,7 +17192,7 @@
                     (ast-decl-list-push (&mut (array-ref decls slot)) decl)]
                   [(tc_i64_i64_map.LookupMissing)
                     (begin
-                      (tc_i64_i64_map.insert
+                      (tc_i64_i64_map.insert-ref!
                         (&mut modules)
                         cur-module-id
                         slot-count)
@@ -17645,7 +17648,10 @@
                     (if (tc-import-alias-materialized? seen-aliases seen-key)
                       (set! cur rest)
                       (begin
-                        (tc_i64_i64_map.insert (&mut seen-aliases) seen-key 1)
+                        (tc_i64_i64_map.insert-ref!
+                          (&mut seen-aliases)
+                          seen-key
+                          1)
                         (if (string.eq alias "")
                           (match (tc-bind-import-alias-module-with-index
                             ctx
@@ -22859,7 +22865,7 @@
               [key : i64 (tc-clone-root-collection-decl-key module decl)]
               (begin
                 (if (>= key 0)
-                  (tc_i64_i64_map.insert (&mut selected) key 1)
+                  (tc_i64_i64_map.insert-ref! (&mut selected) key 1)
                   unit)
                 (match (ast-decl-unwrapped decl)
                   [(AstDecl.Module next-module)
@@ -37812,7 +37818,7 @@
         (begin
           (match (tc_string_i64_map.entry-at src index)
             [(tc_string_i64_map.EntrySome key value)
-              (tc_string_i64_map.insert (&mut out) key value)]
+              (tc_string_i64_map.insert-ref! (&mut out) key value)]
             [(tc_string_i64_map.EntryNone) unit])
           (set! index (tc_string_i64_map.next-occupied src (+ index 1)))))
       out)))
@@ -37834,14 +37840,14 @@
   (let
     [out : tc_string_i64_map.Map (tc-moved-map set)]
     (begin
-      (tc_string_i64_map.insert (&mut out) name (tc-moved-no-origin-id))
+      (tc_string_i64_map.insert-ref! (&mut out) name (tc-moved-no-origin-id))
       (TcMovedSet out))))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name : String] [value : i64]) : TcMovedSet
   (let
     [out : tc_string_i64_map.Map (tc-moved-map set)]
     (begin
-      (tc_string_i64_map.insert (&mut out) name value)
+      (tc_string_i64_map.insert-ref! (&mut out) name value)
       (TcMovedSet out))))
 
 (define (tc-moved-add-origin
@@ -37854,7 +37860,7 @@
   (let
     [out : tc_string_i64_map.Map (tc-moved-map set)]
     (begin
-      (tc_string_i64_map.remove (&mut out) name)
+      (tc_string_i64_map.remove-ref! (&mut out) name)
       (TcMovedSet out))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name : String]) : TcMoveConflict
@@ -48718,7 +48724,7 @@
     [(TcStringList.Nil) unit]
     [(TcStringList.Cons name rest)
       (let
-        [_inserted : bool (tc_string_i64_map.insert-if-absent? set name 1)]
+        [_inserted : bool (tc_string_i64_map.insert-if-absent-ref! set name 1)]
         (macro-name-set-add-all (box-get rest) set))]))
 
 (define (macro-name-set-from-list [names : TcStringList]) : tc_string_i64_map.Map

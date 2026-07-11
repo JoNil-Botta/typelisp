@@ -294,7 +294,7 @@
               (let
                 [next-index : spec_string_i64_map.Map index]
                 (begin
-                  (spec_string_i64_map.insert (&mut next-index) name slot)
+                  (spec_string_i64_map.insert-ref! (&mut next-index) name slot)
                   (spec-template-index-build
                     (box-get rest)
                     next-index
@@ -725,7 +725,7 @@
     [index : spec_string_i64_map.Map (struct-get ready index)]
     (begin
       (array-set! decls slot decl)
-      (spec_string_i64_map.insert (&mut index) key slot)
+      (spec_string_i64_map.insert-ref! (&mut index) key slot)
       (GenRegistry index decls (+ slot 1)))))
 
 (define (gen-decl-visible-name [decl : AstDecl]) : SpecMaybeString
@@ -2509,7 +2509,7 @@
                               (let
                                 [next-cache : spec_string_string_map.Map cache]
                                 (begin
-                                  (spec_string_string_map.insert
+                                  (spec_string_string_map.insert-ref!
                                     (&mut next-cache)
                                     key
                                     generated-name)
@@ -5754,11 +5754,11 @@
         [seed-cache : spec_string_string_map.Map
           (spec_string_string_map.with-capacity 8)]
         (begin
-          (spec_string_string_map.insert
+          (spec_string_string_map.insert-ref!
             (&mut seed-cache)
             "two"
             "generated-two")
-          (spec_string_string_map.insert
+          (spec_string_string_map.insert-ref!
             (&mut seed-cache)
             "one"
             "generated-one")

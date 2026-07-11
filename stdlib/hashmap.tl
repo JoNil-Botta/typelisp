@@ -35,16 +35,16 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.hashmap)
+;# (import (hashmap String i64) as map)
 ;# (define (main) : i64
 ;#   (let
-;#     [m : hashmap.StringI64Map
-;#       (hashmap.string-i64-map-put
-;#         (hashmap.string-i64-map-with-capacity 4)
-;#         "k"
-;#         42)]
-;#     (hashmap.string-i64-map-len m)))
+;#     [m : map.Map (map.new)]
+;#     (begin
+;#       (map.insert! m "k" 42)
+;#       (map.lookup-value-or (map.get (& m) "k") 0))))
 ;# ```
 (import stdlib.array)
+(import stdlib.comptime)
 (import stdlib.hash as hash_mod)
 
 ;; lint-allow: unused-import
@@ -66,20 +66,174 @@
 ;:
 ;: This first stdlib macro slice exposes `String -> i64` as `Map` plus
 ;: module-relative helpers. It delegates to the checked-in `StringI64Map`
-;: implementation while presenting the new `&`/`&mut` collection API shape.
+;: implementation while presenting `&` readers and public bang place macros
+;: backed by explicit `&mut` `*-ref!` helpers.
 (defmacro (hashmap [K : type] [V : type]) : Module
   (let
-    [module-name : Expr
-      (expr-var
-        (string-append
-          "stdlib.hashmap.generated."
-          (string-append (type-key K) (string-append "." (type-key V)))))]
+    [module-key-k : String
+      (match (type-key K)
+        ["struct_stdlib.hashmap/HashNestedKey"
+          "struct_stdlib.hashmap.HashNestedKey"]
+        [_ (type-key K)])]
+    [module-key-v : String
+      (match (type-key V)
+        ["struct_stdlib.hashmap/HashPayload"
+          "struct_stdlib.hashmap.HashPayload"]
+        ["enum_stdlib.hashmap/HashState" "enum_stdlib.hashmap.HashState"]
+        [_ (type-key V)])]
+    [module-name-text : String
+      (comptime.string-append
+        "stdlib.hashmap.generated."
+        (comptime.string-append
+          module-key-k
+          (comptime.string-append "." module-key-v)))]
+    [module-name : comptime.Expr (comptime.expr-var module-name-text)]
+    [empty : comptime.ExprList (comptime.expr-list-empty)]
+    [place : comptime.Expr (comptime.expr-var "place")]
+    [key : comptime.Expr (comptime.expr-var "key")]
+    [value : comptime.Expr (comptime.expr-var "value")]
+    [default-value : comptime.Expr (comptime.expr-var "default-value")]
+    [empty-call : comptime.Expr
+      (comptime.expr-call (comptime.expr-var "expr-list-empty") empty)]
+    [borrow : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-mut-borrow")
+        (comptime.expr-list-cons place empty))]
+    [key-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons key (comptime.expr-list-cons empty-call empty)))]
+    [value-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          value
+          (comptime.expr-list-cons empty-call empty)))]
+    [default-value-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          default-value
+          (comptime.expr-list-cons empty-call empty)))]
+    [key-value-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons key (comptime.expr-list-cons value-tail empty)))]
+    [key-default-value-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          key
+          (comptime.expr-list-cons default-value-tail empty)))]
+    [one-arg-call-args : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          borrow
+          (comptime.expr-list-cons key-tail empty)))]
+    [two-arg-call-args : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          borrow
+          (comptime.expr-list-cons key-value-tail empty)))]
+    [entry-or-insert-call-args : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          borrow
+          (comptime.expr-list-cons key-default-value-tail empty)))]
+    [insert-helper-name : String
+      (comptime.string-append module-name-text ".insert-ref!")]
+    [insert-or-update-helper-name : String
+      (comptime.string-append module-name-text ".insert-or-update-ref!")]
+    [insert-if-absent-helper-name : String
+      (comptime.string-append module-name-text ".insert-if-absent-ref!")]
+    [remove-helper-name : String
+      (comptime.string-append module-name-text ".remove-ref!")]
+    [remove-borrowed-helper-name : String
+      (comptime.string-append module-name-text ".remove-borrowed-ref!")]
+    [entry-or-insert-helper-name : String
+      (comptime.string-append module-name-text ".entry-or-insert-ref!")]
+    [insert-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string insert-helper-name)
+          empty))]
+    [insert-or-update-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string insert-or-update-helper-name)
+          empty))]
+    [insert-if-absent-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string insert-if-absent-helper-name)
+          empty))]
+    [remove-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string remove-helper-name)
+          empty))]
+    [remove-borrowed-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string remove-borrowed-helper-name)
+          empty))]
+    [entry-or-insert-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string entry-or-insert-helper-name)
+          empty))]
+    [insert-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          insert-callee
+          (comptime.expr-list-cons two-arg-call-args empty)))]
+    [insert-or-update-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          insert-or-update-callee
+          (comptime.expr-list-cons two-arg-call-args empty)))]
+    [insert-if-absent-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          insert-if-absent-callee
+          (comptime.expr-list-cons two-arg-call-args empty)))]
+    [remove-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          remove-callee
+          (comptime.expr-list-cons one-arg-call-args empty)))]
+    [remove-borrowed-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          remove-borrowed-callee
+          (comptime.expr-list-cons one-arg-call-args empty)))]
+    [entry-or-insert-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          entry-or-insert-callee
+          (comptime.expr-list-cons entry-or-insert-call-args empty)))]
     (match (type-key K)
       ["String"
         (match (type-key V)
           ["i64"
             `(begin
               (module ,module-name)
+              (import stdlib.comptime)
               (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (defstruct Map
@@ -163,17 +317,17 @@
                   key))
               (define (contains? [map : (& map Map)] [key : String]) : bool
                 (contains-borrowed? map (& key)))
-              (define (insert
+              (define (insert-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : i64]) : unit
                 (base.string-i64-map-put! (inner-mut map) key value))
-              (define (insert-or-update
+              (define (insert-or-update-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : i64]) : unit
-                (insert map key value))
-              (define (insert-if-absent?
+                (insert-ref! map key value))
+              (define (insert-if-absent-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : i64]) : bool
@@ -181,19 +335,28 @@
                   (&mut (struct-get map inner))
                   key
                   value))
-              (define (remove-borrowed
+              (defmacro (insert-if-absent!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : bool
+                ,insert-if-absent-body)
+              (define (remove-borrowed-ref!
                 [map : (&mut map Map)]
                 [key : (& key str)]) : RemoveResult
                 (if (base.string-i64-map-remove-borrowed! (inner-mut map) key)
                   (RemoveOk)
                   (RemoveMissing)))
-              (define (remove [map : (&mut map Map)] [key : String]) : RemoveResult
-                (remove-borrowed map (& key)))
+              (defmacro (remove-borrowed!
+                [place : comptime.Expr]
+                [key : comptime.Expr]) : RemoveResult
+                ,remove-borrowed-body)
+              (define (remove-ref! [map : (&mut map Map)] [key : String]) : RemoveResult
+                (remove-borrowed-ref! map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
                 (match result
                   [(RemoveOk) true]
                   [(RemoveMissing) false]))
-              (define (entry-or-insert
+              (define (entry-or-insert-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [default-value : i64]) : EntryOrInsertResult
@@ -211,8 +374,25 @@
                             (& key)))
                         default-value))
                     (begin
-                      (insert map key default-value)
+                      (insert-ref! map key default-value)
                       (EntryOrInsertInserted default-value)))))
+              (defmacro (insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-body)
+              (defmacro (insert-or-update!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-or-update-body)
+              (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
+                ,remove-body)
+              (defmacro (entry-or-insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [default-value : comptime.Expr]) : EntryOrInsertResult
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -260,6 +440,7 @@
           ["String"
             `(begin
               (module ,module-name)
+              (import stdlib.comptime)
               (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (import stdlib.string)
@@ -344,17 +525,17 @@
                   [(LookupMissing) false]))
               (define (contains? [map : (& map Map)] [key : String]) : bool
                 (contains-borrowed? map (& key)))
-              (define (insert
+              (define (insert-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : String]) : unit
                 (base.string-string-map-put! (inner-mut map) key value))
-              (define (insert-or-update
+              (define (insert-or-update-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : String]) : unit
-                (insert map key value))
-              (define (remove-borrowed
+                (insert-ref! map key value))
+              (define (remove-borrowed-ref!
                 [map : (&mut map Map)]
                 [key : (& key str)]) : RemoveResult
                 (if (base.string-string-map-remove-borrowed!
@@ -362,13 +543,17 @@
                   key)
                   (RemoveOk)
                   (RemoveMissing)))
-              (define (remove [map : (&mut map Map)] [key : String]) : RemoveResult
-                (remove-borrowed map (& key)))
+              (defmacro (remove-borrowed!
+                [place : comptime.Expr]
+                [key : comptime.Expr]) : RemoveResult
+                ,remove-borrowed-body)
+              (define (remove-ref! [map : (&mut map Map)] [key : String]) : RemoveResult
+                (remove-borrowed-ref! map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
                 (match result
                   [(RemoveOk) true]
                   [(RemoveMissing) false]))
-              (define (entry-or-insert
+              (define (entry-or-insert-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [default-value : String]) : EntryOrInsertResult
@@ -378,8 +563,25 @@
                   [(base.StringStringMapFound value) (EntryOrInsertFound value)]
                   [(base.StringStringMapMissing)
                     (begin
-                      (insert map key default-value)
+                      (insert-ref! map key default-value)
                       (EntryOrInsertInserted default-value))]))
+              (defmacro (insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-body)
+              (defmacro (insert-or-update!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-or-update-body)
+              (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
+                ,remove-body)
+              (defmacro (entry-or-insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [default-value : comptime.Expr]) : EntryOrInsertResult
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -428,6 +630,7 @@
           ["struct_stdlib.hashmap/HashPayload"
             `(begin
               (module ,module-name)
+              (import stdlib.comptime)
               (import stdlib.hashmap as base)
               (defstruct Map
                 (inner base.StringHashPayloadMap))
@@ -506,17 +709,17 @@
                   key))
               (define (contains? [map : Map] [key : String]) : bool
                 (contains-borrowed? map (& key)))
-              (define (insert
+              (define (insert-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : ,V]) : unit
                 (base.string-hash-payload-map-put! (inner-mut map) key value))
-              (define (insert-or-update
+              (define (insert-or-update-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [value : ,V]) : unit
-                (insert map key value))
-              (define (remove-borrowed
+                (insert-ref! map key value))
+              (define (remove-borrowed-ref!
                 [map : (&mut map Map)]
                 [key : (& key str)]) : RemoveResult
                 (if (base.string-hash-payload-map-remove-borrowed!
@@ -524,13 +727,17 @@
                   key)
                   (RemoveOk)
                   (RemoveMissing)))
-              (define (remove [map : (&mut map Map)] [key : String]) : RemoveResult
-                (remove-borrowed map (& key)))
+              (defmacro (remove-borrowed!
+                [place : comptime.Expr]
+                [key : comptime.Expr]) : RemoveResult
+                ,remove-borrowed-body)
+              (define (remove-ref! [map : (&mut map Map)] [key : String]) : RemoveResult
+                (remove-borrowed-ref! map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
                 (match result
                   [(RemoveOk) true]
                   [(RemoveMissing) false]))
-              (define (entry-or-insert
+              (define (entry-or-insert-ref!
                 [map : (&mut map Map)]
                 [key : String]
                 [default-value : ,V]) : EntryOrInsertResult
@@ -541,8 +748,25 @@
                     (EntryOrInsertFound value)]
                   [(base.StringHashPayloadMapMissing)
                     (begin
-                      (insert map key default-value)
+                      (insert-ref! map key default-value)
                       (EntryOrInsertInserted default-value))]))
+              (defmacro (insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-body)
+              (defmacro (insert-or-update!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-or-update-body)
+              (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
+                ,remove-body)
+              (defmacro (entry-or-insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [default-value : comptime.Expr]) : EntryOrInsertResult
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -570,12 +794,14 @@
                   [(EntryNone) fallback])))]
           [_
             `(begin
-              (module ,module-name))])]
+              (module ,module-name)
+              (import stdlib.comptime))])]
       ["i64"
         (match (type-key V)
           ["i64"
             `(begin
               (module ,module-name)
+              (import stdlib.comptime)
               (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (defstruct Map
@@ -657,19 +883,27 @@
                 (match (get map key)
                   [(LookupFound _) true]
                   [(LookupMissing) false]))
-              (define (insert [map : (&mut map Map)] [key : i64] [value : i64]) : unit
+              (define (insert-ref!
+                [map : (&mut map Map)]
+                [key : i64]
+                [value : i64]) : unit
                 (base.i64-i64-map-put! (inner-mut map) key value))
-              (define (insert-if-absent?
+              (define (insert-if-absent-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [value : i64]) : bool
                 (base.i64-i64-map-insert-if-absent! (inner-mut map) key value))
-              (define (insert-or-update
+              (defmacro (insert-if-absent!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : bool
+                ,insert-if-absent-body)
+              (define (insert-or-update-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [value : i64]) : unit
-                (insert map key value))
-              (define (remove [map : (&mut map Map)] [key : i64]) : RemoveResult
+                (insert-ref! map key value))
+              (define (remove-ref! [map : (&mut map Map)] [key : i64]) : RemoveResult
                 (if (base.i64-i64-map-remove! (inner-mut map) key)
                   (RemoveOk)
                   (RemoveMissing)))
@@ -677,7 +911,7 @@
                 (match result
                   [(RemoveOk) true]
                   [(RemoveMissing) false]))
-              (define (entry-or-insert
+              (define (entry-or-insert-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [default-value : i64]) : EntryOrInsertResult
@@ -685,8 +919,25 @@
                   [(base.I64I64MapFound value) (EntryOrInsertFound value)]
                   [(base.I64I64MapMissing)
                     (begin
-                      (insert map key default-value)
+                      (insert-ref! map key default-value)
                       (EntryOrInsertInserted default-value))]))
+              (defmacro (insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-body)
+              (defmacro (insert-or-update!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-or-update-body)
+              (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
+                ,remove-body)
+              (defmacro (entry-or-insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [default-value : comptime.Expr]) : EntryOrInsertResult
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -730,6 +981,7 @@
           ["String"
             `(begin
               (module ,module-name)
+              (import stdlib.comptime)
               (import stdlib.array as array_ops)
               (import stdlib.hashmap as base)
               (import stdlib.string)
@@ -805,17 +1057,17 @@
                 (match (get map key)
                   [(LookupFound _) true]
                   [(LookupMissing) false]))
-              (define (insert
+              (define (insert-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [value : String]) : unit
                 (base.i64-string-map-put! (inner-mut map) key value))
-              (define (insert-or-update
+              (define (insert-or-update-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [value : String]) : unit
-                (insert map key value))
-              (define (remove [map : (&mut map Map)] [key : i64]) : RemoveResult
+                (insert-ref! map key value))
+              (define (remove-ref! [map : (&mut map Map)] [key : i64]) : RemoveResult
                 (if (base.i64-string-map-remove! (inner-mut map) key)
                   (RemoveOk)
                   (RemoveMissing)))
@@ -823,7 +1075,7 @@
                 (match result
                   [(RemoveOk) true]
                   [(RemoveMissing) false]))
-              (define (entry-or-insert
+              (define (entry-or-insert-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [default-value : String]) : EntryOrInsertResult
@@ -833,8 +1085,25 @@
                   [(base.I64StringMapFound value) (EntryOrInsertFound value)]
                   [(base.I64StringMapMissing)
                     (begin
-                      (insert map key default-value)
+                      (insert-ref! map key default-value)
                       (EntryOrInsertInserted default-value))]))
+              (defmacro (insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-body)
+              (defmacro (insert-or-update!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-or-update-body)
+              (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
+                ,remove-body)
+              (defmacro (entry-or-insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [default-value : comptime.Expr]) : EntryOrInsertResult
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -879,6 +1148,7 @@
           ["enum_stdlib.hashmap/HashState"
             `(begin
               (module ,module-name)
+              (import stdlib.comptime)
               (import stdlib.hashmap as base)
               (defstruct Map
                 (inner base.I64HashStateMap))
@@ -949,14 +1219,17 @@
                 (match (get map key)
                   [(LookupFound _) true]
                   [(LookupMissing) false]))
-              (define (insert [map : (&mut map Map)] [key : i64] [value : ,V]) : unit
-                (base.i64-hash-state-map-put! (inner-mut map) key value))
-              (define (insert-or-update
+              (define (insert-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [value : ,V]) : unit
-                (insert map key value))
-              (define (remove [map : (&mut map Map)] [key : i64]) : RemoveResult
+                (base.i64-hash-state-map-put! (inner-mut map) key value))
+              (define (insert-or-update-ref!
+                [map : (&mut map Map)]
+                [key : i64]
+                [value : ,V]) : unit
+                (insert-ref! map key value))
+              (define (remove-ref! [map : (&mut map Map)] [key : i64]) : RemoveResult
                 (if (base.i64-hash-state-map-remove! (inner-mut map) key)
                   (RemoveOk)
                   (RemoveMissing)))
@@ -964,7 +1237,7 @@
                 (match result
                   [(RemoveOk) true]
                   [(RemoveMissing) false]))
-              (define (entry-or-insert
+              (define (entry-or-insert-ref!
                 [map : (&mut map Map)]
                 [key : i64]
                 [default-value : ,V]) : EntryOrInsertResult
@@ -974,8 +1247,25 @@
                   [(base.I64HashStateMapFound value) (EntryOrInsertFound value)]
                   [(base.I64HashStateMapMissing)
                     (begin
-                      (insert map key default-value)
+                      (insert-ref! map key default-value)
                       (EntryOrInsertInserted default-value))]))
+              (defmacro (insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-body)
+              (defmacro (insert-or-update!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [value : comptime.Expr]) : unit
+                ,insert-or-update-body)
+              (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
+                ,remove-body)
+              (defmacro (entry-or-insert!
+                [place : comptime.Expr]
+                [key : comptime.Expr]
+                [default-value : comptime.Expr]) : EntryOrInsertResult
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -1003,7 +1293,8 @@
                   [(EntryNone) fallback])))]
           [_
             `(begin
-              (module ,module-name))])]
+              (module ,module-name)
+              (import stdlib.comptime))])]
       [_
         (match (type-key K)
           ["struct_stdlib.hashmap/HashNestedKey"
@@ -1011,6 +1302,7 @@
               ["i64"
                 `(begin
                   (module ,module-name)
+                  (import stdlib.comptime)
                   (import stdlib.hashmap as base)
                   (defstruct Map
                     (inner base.HashNestedKeyI64Map))
@@ -1087,7 +1379,7 @@
                     (base.hash-nested-key-i64-map-contains?
                       (struct-get map inner)
                       key))
-                  (define (insert
+                  (define (insert-ref!
                     [map : (&mut map Map)]
                     [key : ,K]
                     [value : i64]) : unit
@@ -1095,12 +1387,12 @@
                       (inner-mut map)
                       key
                       value))
-                  (define (insert-or-update
+                  (define (insert-or-update-ref!
                     [map : (&mut map Map)]
                     [key : ,K]
                     [value : i64]) : unit
-                    (insert map key value))
-                  (define (remove [map : (&mut map Map)] [key : ,K]) : RemoveResult
+                    (insert-ref! map key value))
+                  (define (remove-ref! [map : (&mut map Map)] [key : ,K]) : RemoveResult
                     (if (base.hash-nested-key-i64-map-remove!
                       (inner-mut map)
                       key)
@@ -1110,7 +1402,7 @@
                     (match result
                       [(RemoveOk) true]
                       [(RemoveMissing) false]))
-                  (define (entry-or-insert
+                  (define (entry-or-insert-ref!
                     [map : (&mut map Map)]
                     [key : ,K]
                     [default-value : i64]) : EntryOrInsertResult
@@ -1121,8 +1413,27 @@
                         (EntryOrInsertFound value)]
                       [(base.HashNestedKeyI64MapMissing)
                         (begin
-                          (insert map key default-value)
+                          (insert-ref! map key default-value)
                           (EntryOrInsertInserted default-value))]))
+                  (defmacro (insert!
+                    [place : comptime.Expr]
+                    [key : comptime.Expr]
+                    [value : comptime.Expr]) : unit
+                    ,insert-body)
+                  (defmacro (insert-or-update!
+                    [place : comptime.Expr]
+                    [key : comptime.Expr]
+                    [value : comptime.Expr]) : unit
+                    ,insert-or-update-body)
+                  (defmacro (remove!
+                    [place : comptime.Expr]
+                    [key : comptime.Expr]) : RemoveResult
+                    ,remove-body)
+                  (defmacro (entry-or-insert!
+                    [place : comptime.Expr]
+                    [key : comptime.Expr]
+                    [default-value : comptime.Expr]) : EntryOrInsertResult
+                    ,entry-or-insert-body)
                   (define (entry-or-insert-inserted?
                     [result : EntryOrInsertResult]) : bool
                     (match result
@@ -1151,10 +1462,12 @@
                       [(EntryNone) fallback])))]
               [_
                 `(begin
-                  (module ,module-name))])]
+                  (module ,module-name)
+                  (import stdlib.comptime))])]
           [_
             `(begin
-              (module ,module-name))])])))
+              (module ,module-name)
+              (import stdlib.comptime))])])))
 
 ;: One open-addressing slot: empty, a deleted tombstone, or an occupied entry
 ;: carrying the owned key, its copied value, and the cached key hash.

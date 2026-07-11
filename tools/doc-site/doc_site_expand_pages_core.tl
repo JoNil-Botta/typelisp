@@ -494,10 +494,10 @@
     (doc-site-expand-nav-entry "peek-back")
     (doc-site-expand-nav-entry "copy-live!")
     (doc-site-expand-nav-entry "grow")
-    (doc-site-expand-nav-entry "push-back")
-    (doc-site-expand-nav-entry "push-front")
-    (doc-site-expand-nav-entry "pop-front")
-    (doc-site-expand-nav-entry "pop-back")))
+    (doc-site-expand-nav-entry "push-back!")
+    (doc-site-expand-nav-entry "push-front!")
+    (doc-site-expand-nav-entry "pop-front!")
+    (doc-site-expand-nav-entry "pop-back!")))
 
 (define (doc-site-expand-queue-items [type-name : String] [alias : String]) : String
   (str_cat.str-cat
@@ -636,31 +636,31 @@
       "(define (grow [q : (&mut q Deque)]) : unit ...)"
       "")
     (doc-site-expand-item
-      "define-function"
-      "push-back"
+      "defmacro"
+      "push-back!"
       (str_cat.str-cat
-        "(define (push-back [q : (&mut q Deque)] [value : "
+        "(defmacro (push-back! [place : comptime.Expr] [value : "
         type-name
         "]) : unit ...)")
-      "")
+      "Mutates a caller-owned storage place by expanding to `push-back-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
-      "define-function"
-      "push-front"
+      "defmacro"
+      "push-front!"
       (str_cat.str-cat
-        "(define (push-front [q : (&mut q Deque)] [value : "
+        "(defmacro (push-front! [place : comptime.Expr] [value : "
         type-name
         "]) : unit ...)")
-      "")
+      "Mutates a caller-owned storage place by expanding to `push-front-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
-      "define-function"
-      "pop-front"
-      "(define (pop-front [q : (&mut q Deque)]) : Pop ...)"
-      "")
+      "defmacro"
+      "pop-front!"
+      "(defmacro (pop-front! [place : comptime.Expr]) : Pop ...)"
+      "Mutates a caller-owned storage place by expanding to `pop-front-ref!` with an explicit mutable borrow.")
     (doc-site-expand-item
-      "define-function"
-      "pop-back"
-      "(define (pop-back [q : (&mut q Deque)]) : Pop ...)"
-      "")))
+      "defmacro"
+      "pop-back!"
+      "(defmacro (pop-back! [place : comptime.Expr]) : Pop ...)"
+      "Mutates a caller-owned storage place by expanding to `pop-back-ref!` with an explicit mutable borrow.")))
 
 (define (doc-site-expand-queue-module [type-name : String] [alias : String]) : String
   (doc-site-expand-module-section

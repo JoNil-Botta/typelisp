@@ -2687,7 +2687,7 @@
             (array-set! arr index block)
             (compiler-reg-set->row! uses use-rows (* index words))
             (compiler-reg-set->row! defs def-rows (* index words))
-            (reg_string_i64_map.insert (&mut idmap) label index)
+            (reg_string_i64_map.insert-ref! (&mut idmap) label index)
             (compiler-reg-bits-build-rows!
               (box-get rest)
               arr
@@ -2711,7 +2711,7 @@
         (begin
           (compiler-reg-set->row! uses use-rows (* index words))
           (compiler-reg-set->row! defs def-rows (* index words))
-          (reg_string_i64_map.insert (&mut idmap) label index)
+          (reg_string_i64_map.insert-ref! (&mut idmap) label index)
           (compiler-reg-bits-build-rows-from-array!
             blocks
             idmap
@@ -7568,7 +7568,7 @@
       (match block
         [(CompilerIrBlock.Block label _)
           (begin
-            (reg_string_i64_map.insert (&mut ids) label index)
+            (reg_string_i64_map.insert-ref! (&mut ids) label index)
             (compiler-reg-loop-depth-block-ids (box-get rest) ids (+ index 1)))])]
     [(CompilerIrBlockList.Array seq)
       (compiler-reg-loop-depth-block-ids-seq seq ids index)]))
@@ -7585,7 +7585,7 @@
       (while (< i count)
         (match (compiler-ir-block-seq-ref seq i)
           [(CompilerIrBlock.Block label _)
-            (reg_string_i64_map.insert (&mut out) label i)])
+            (reg_string_i64_map.insert-ref! (&mut out) label i)])
         (set! i (+ i 1)))
       out)))
 
@@ -8404,7 +8404,7 @@
     [(CompilerRegStringList.Nil) out]
     [(CompilerRegStringList.Cons label rest)
       (begin
-        (reg_string_i64_map.insert (&mut out) label 1)
+        (reg_string_i64_map.insert-ref! (&mut out) label 1)
         (compiler-reg-region-label-map-from (box-get rest) out))]))
 
 (define (compiler-reg-region-label-map [labels : CompilerRegStringList]) : reg_string_i64_map.Map

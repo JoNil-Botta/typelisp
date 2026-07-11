@@ -233,7 +233,7 @@
   [map : (&mut map symbol_map.Map)]
   [name-id : i64]
   [handle : i64]) : unit
-  (symbol_map.insert map name-id handle))
+  (symbol_map.insert-ref! map name-id handle))
 
 (define (compiler-symbol-map-bind!
   [map : (&mut map symbol_map.Map)]
@@ -544,7 +544,7 @@
         [(option_i64.Some existing)
           (if (= existing handle)
             (if (symbol_map.remove-ok?
-              (symbol_map.remove
+              (symbol_map.remove-ref!
                 (&mut macros)
                 (compiler-symbol-name-key-id name)))
               (CompilerSymbols values types macros decls owner-names)

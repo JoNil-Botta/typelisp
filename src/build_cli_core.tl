@@ -250,7 +250,7 @@
   (let
     [out : build_string_i64_map.Map map]
     (begin
-      (build_string_i64_map.insert (&mut out) key value)
+      (build_string_i64_map.insert-ref! (&mut out) key value)
       out)))
 
 (define (build-invalid-manifest-message [diag : CompilerDiagnostic]) : String

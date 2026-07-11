@@ -26,8 +26,8 @@
       (test.assert-true
         (map_string_string.is-empty? (& m))
         "fresh StringString empty")
-      (map_string_string.insert (&mut m) "alpha" "red")
-      (map_string_string.insert (&mut m) "beta" "amber")
+      (map_string_string.insert! m "alpha" "red")
+      (map_string_string.insert! m "beta" "amber")
       (test.assert-i64-eq
         (map_string_string.len (& m))
         2
@@ -53,17 +53,17 @@
         "StringString borrowed value get")
       (test.assert-true
         (map_string_string.remove-ok?
-          (map_string_string.remove-borrowed (&mut m) (& beta)))
+          (map_string_string.remove-borrowed! m (& beta)))
         "StringString remove borrowed")
       (test.assert-false
         (map_string_string.contains? (& m) "beta")
         "StringString removed key absent")
-      (match (map_string_string.entry-or-insert (&mut m) "beta" "gold")
+      (match (map_string_string.entry-or-insert! m "beta" "gold")
         [(map_string_string.EntryOrInsertInserted value)
           (assert-owned-string-eq value "gold" "StringString inserted value")]
         [(map_string_string.EntryOrInsertFound _)
           (test.assert-true false "StringString entry-or-insert should insert")])
-      (match (map_string_string.entry-or-insert (&mut m) "alpha" "purple")
+      (match (map_string_string.entry-or-insert! m "alpha" "purple")
         [(map_string_string.EntryOrInsertFound value)
           (assert-owned-string-eq value "red" "StringString found value")]
         [(map_string_string.EntryOrInsertInserted _)
@@ -102,12 +102,12 @@
   (let
     [m : map_string_string.Map (map_string_string.with-capacity 1)]
     (begin
-      (map_string_string.insert (&mut m) "k0" "v0")
-      (map_string_string.insert (&mut m) "k1" "v1")
-      (map_string_string.insert (&mut m) "k2" "v2")
-      (map_string_string.insert (&mut m) "k3" "v3")
-      (map_string_string.insert (&mut m) "k4" "v4")
-      (map_string_string.insert (&mut m) "k5" "v5")
+      (map_string_string.insert! m "k0" "v0")
+      (map_string_string.insert! m "k1" "v1")
+      (map_string_string.insert! m "k2" "v2")
+      (map_string_string.insert! m "k3" "v3")
+      (map_string_string.insert! m "k4" "v4")
+      (map_string_string.insert! m "k5" "v5")
       (test.assert-i64-eq
         (map_string_string.len (& m))
         6
@@ -129,9 +129,15 @@
     (begin
       (test.assert-i64-eq (map_i64_i64.len (& m)) 0 "fresh I64I64 len")
       (test.assert-true (map_i64_i64.is-empty? (& m)) "fresh I64I64 empty")
-      (map_i64_i64.insert (&mut m) 1 10)
-      (map_i64_i64.insert (&mut m) 2 20)
+      (map_i64_i64.insert! m 1 10)
+      (map_i64_i64.insert! m 2 20)
       (test.assert-i64-eq (map_i64_i64.len (& m)) 2 "I64I64 insert len")
+      (test.assert-false
+        (map_i64_i64.insert-if-absent! m 1 99)
+        "I64I64 insert-if-absent reports existing key")
+      (test.assert-true
+        (map_i64_i64.insert-if-absent! m 3 30)
+        "I64I64 insert-if-absent stores missing key")
       (test.assert-i64-eq
         (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 1) -1)
         10
@@ -150,17 +156,17 @@
           (map_i64_i64.get-value-borrowed (& m) 1))
         "I64I64 borrowed value get")
       (test.assert-true
-        (map_i64_i64.remove-ok? (map_i64_i64.remove (&mut m) 2))
+        (map_i64_i64.remove-ok? (map_i64_i64.remove! m 2))
         "I64I64 remove")
       (test.assert-false
         (map_i64_i64.contains? (& m) 2)
         "I64I64 removed absent")
-      (match (map_i64_i64.entry-or-insert (&mut m) 2 22)
+      (match (map_i64_i64.entry-or-insert! m 2 22)
         [(map_i64_i64.EntryOrInsertInserted value)
           (test.assert-i64-eq value 22 "I64I64 inserted value")]
         [(map_i64_i64.EntryOrInsertFound _)
           (test.assert-true false "I64I64 entry-or-insert should insert")])
-      (match (map_i64_i64.entry-or-insert (&mut m) 1 99)
+      (match (map_i64_i64.entry-or-insert! m 1 99)
         [(map_i64_i64.EntryOrInsertFound value)
           (test.assert-i64-eq value 10 "I64I64 found value")]
         [(map_i64_i64.EntryOrInsertInserted _)
@@ -194,12 +200,12 @@
   (let
     [m : map_i64_i64.Map (map_i64_i64.with-capacity 1)]
     (begin
-      (map_i64_i64.insert (&mut m) 0 0)
-      (map_i64_i64.insert (&mut m) 1 1)
-      (map_i64_i64.insert (&mut m) 2 2)
-      (map_i64_i64.insert (&mut m) 3 3)
-      (map_i64_i64.insert (&mut m) 4 4)
-      (map_i64_i64.insert (&mut m) 5 5)
+      (map_i64_i64.insert! m 0 0)
+      (map_i64_i64.insert! m 1 1)
+      (map_i64_i64.insert! m 2 2)
+      (map_i64_i64.insert! m 3 3)
+      (map_i64_i64.insert! m 4 4)
+      (map_i64_i64.insert! m 5 5)
       (test.assert-i64-eq (map_i64_i64.len (& m)) 6 "I64I64 growth len")
       (test.assert-true
         (>= (map_i64_i64.capacity (& m)) 8)
@@ -210,6 +216,34 @@
         "I64I64 growth keeps late insert"))))
 
 (test
+  hashmap-macro-i64-i64-bang-evaluates-arguments-once
+  (let
+    [m : map_i64_i64.Map (map_i64_i64.new)]
+    [key-evaluations : i64 0]
+    [value-evaluations : i64 0]
+    (begin
+      (map_i64_i64.insert!
+        m
+        (begin
+          (set! key-evaluations (+ key-evaluations 1))
+          7)
+        (begin
+          (set! value-evaluations (+ value-evaluations 1))
+          70))
+      (test.assert-i64-eq
+        key-evaluations
+        1
+        "bang key expression evaluates once")
+      (test.assert-i64-eq
+        value-evaluations
+        1
+        "bang value expression evaluates once")
+      (test.assert-i64-eq
+        (map_i64_i64.lookup-value-or (map_i64_i64.get (& m) 7) -1)
+        70
+        "bang stores the once-evaluated value"))))
+
+(test
   hashmap-macro-i64-string-basic-operations
   (let
     [m : map_i64_string.Map (map_i64_string.with-capacity 2)]
@@ -218,8 +252,8 @@
       (test.assert-true
         (map_i64_string.is-empty? (& m))
         "fresh I64String empty")
-      (map_i64_string.insert (&mut m) 1 "one")
-      (map_i64_string.insert (&mut m) 2 "two")
+      (map_i64_string.insert! m 1 "one")
+      (map_i64_string.insert! m 2 "two")
       (test.assert-i64-eq (map_i64_string.len (& m)) 2 "I64String insert len")
       (assert-owned-string-eq
         (map_i64_string.lookup-value-or (map_i64_string.get (& m) 1) "fallback")
@@ -231,17 +265,17 @@
           (map_i64_string.get-value-borrowed (& m) 1))
         "I64String borrowed value get")
       (test.assert-true
-        (map_i64_string.remove-ok? (map_i64_string.remove (&mut m) 2))
+        (map_i64_string.remove-ok? (map_i64_string.remove! m 2))
         "I64String remove")
       (test.assert-false
         (map_i64_string.contains? (& m) 2)
         "I64String removed absent")
-      (match (map_i64_string.entry-or-insert (&mut m) 2 "deux")
+      (match (map_i64_string.entry-or-insert! m 2 "deux")
         [(map_i64_string.EntryOrInsertInserted value)
           (assert-owned-string-eq value "deux" "I64String inserted value")]
         [(map_i64_string.EntryOrInsertFound _)
           (test.assert-true false "I64String entry-or-insert should insert")])
-      (match (map_i64_string.entry-or-insert (&mut m) 1 "uno")
+      (match (map_i64_string.entry-or-insert! m 1 "uno")
         [(map_i64_string.EntryOrInsertFound value)
           (assert-owned-string-eq value "one" "I64String found value")]
         [(map_i64_string.EntryOrInsertInserted _)
@@ -278,12 +312,12 @@
   (let
     [m : map_i64_string.Map (map_i64_string.with-capacity 1)]
     (begin
-      (map_i64_string.insert (&mut m) 0 "v0")
-      (map_i64_string.insert (&mut m) 1 "v1")
-      (map_i64_string.insert (&mut m) 2 "v2")
-      (map_i64_string.insert (&mut m) 3 "v3")
-      (map_i64_string.insert (&mut m) 4 "v4")
-      (map_i64_string.insert (&mut m) 5 "v5")
+      (map_i64_string.insert! m 0 "v0")
+      (map_i64_string.insert! m 1 "v1")
+      (map_i64_string.insert! m 2 "v2")
+      (map_i64_string.insert! m 3 "v3")
+      (map_i64_string.insert! m 4 "v4")
+      (map_i64_string.insert! m 5 "v5")
       (test.assert-i64-eq (map_i64_string.len (& m)) 6 "I64String growth len")
       (test.assert-true
         (>= (map_i64_string.capacity (& m)) 8)

@@ -11,15 +11,16 @@
 ;#   (let
 ;#     [s : iset.Set (iset.new)]
 ;#     (begin
-;#       (iset.insert (&mut s) 10)
+;#       (iset.insert! s 10)
 ;#       (if (iset.contains? (& s) 10)
 ;#         (iset.len (& s))
 ;#         0))))
 ;# ```
 ;#
-;# Mutators take `&mut` and update the set in place. Readers take `&`.
-;# Iteration is deterministic bucket order for a fixed table state. It is not
-;# insertion order, and it can change after resize/rehash. Walk by starting at
+;# Public bang mutators take a caller-owned storage place and expand to an
+;# explicit `&mut` call to their `*-ref!` helper. Readers take `&`. Iteration is
+;# deterministic bucket order for a fixed table state. It is not insertion
+;# order, and it can change after resize/rehash. Walk by starting at
 ;# `(next-occupied (& set) 0)`, advancing with `(+ index 1)`, and reading each
 ;# key with `entry-at`.
 (import stdlib.comptime)
@@ -31,14 +32,76 @@
 (defmacro (set [T : type]) : Module
   (let
     [type-key-name : String (type-key T)]
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append "stdlib.set.generated." type-key-name))]
+    [module-name-text : String
+      (comptime.string-append "stdlib.set.generated." type-key-name)]
+    [module-name : comptime.Expr (comptime.expr-var module-name-text)]
+    [empty : comptime.ExprList (comptime.expr-list-empty)]
+    [place : comptime.Expr (comptime.expr-var "place")]
+    [key : comptime.Expr (comptime.expr-var "key")]
+    [empty-call : comptime.Expr
+      (comptime.expr-call (comptime.expr-var "expr-list-empty") empty)]
+    [borrow : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-mut-borrow")
+        (comptime.expr-list-cons place empty))]
+    [key-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons key (comptime.expr-list-cons empty-call empty)))]
+    [call-args : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          borrow
+          (comptime.expr-list-cons key-tail empty)))]
+    [insert-helper-name : String
+      (comptime.string-append module-name-text ".insert-ref!")]
+    [remove-helper-name : String
+      (comptime.string-append module-name-text ".remove-ref!")]
+    [remove-borrowed-helper-name : String
+      (comptime.string-append module-name-text ".remove-borrowed-ref!")]
+    [insert-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string insert-helper-name)
+          empty))]
+    [remove-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string remove-helper-name)
+          empty))]
+    [remove-borrowed-callee : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-var")
+        (comptime.expr-list-cons
+          (comptime.expr-string remove-borrowed-helper-name)
+          empty))]
+    [insert-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          insert-callee
+          (comptime.expr-list-cons call-args empty)))]
+    [remove-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          remove-callee
+          (comptime.expr-list-cons call-args empty)))]
+    [remove-borrowed-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          remove-borrowed-callee
+          (comptime.expr-list-cons call-args empty)))]
     (match type-key-name
       ["String"
         `(begin
           (module ,module-name)
           (import stdlib.array)
+          (import stdlib.comptime)
           (import stdlib.string)
           (defenum Slot
             (Empty)
@@ -231,7 +294,7 @@
               [_ false]))
           (define (contains? [set : (& set Set)] [key : String]) : bool
             (contains-borrowed? set (& key)))
-          (define (insert [set : (&mut set Set)] [key : String]) : unit
+          (define (insert-ref! [set : (&mut set Set)] [key : String]) : unit
             (begin
               (if (needs-grow? set)
                 (grow set)
@@ -264,8 +327,10 @@
                   [Probe.Full
                     (begin
                       (grow set)
-                      (insert set key))]))))
-          (define (remove-borrowed [set : (&mut set Set)] [key : (& key str)]) : unit
+                      (insert-ref! set key))]))))
+          (define (remove-borrowed-ref!
+            [set : (&mut set Set)]
+            [key : (& key str)]) : unit
             (match (probe-borrowed
               (& (struct-get set slots))
               (capacity-mut set)
@@ -277,8 +342,8 @@
                   (set! (struct-get set len) (- (struct-get set len) 1))
                   (set! (struct-get set deleted) (+ (struct-get set deleted) 1)))]
               [_ unit]))
-          (define (remove [set : (&mut set Set)] [key : String]) : unit
-            (remove-borrowed set (& key)))
+          (define (remove-ref! [set : (&mut set Set)] [key : String]) : unit
+            (remove-borrowed-ref! set (& key)))
           (define (next-occupied [set : (& set Set)] [from : i64]) : i64
             (let
               [index : i64
@@ -306,11 +371,22 @@
           (define (entry-key-or [entry : Entry] [fallback : String]) : String
             (match entry
               [(Entry.Some key) key]
-              [Entry.None fallback])))]
+              [Entry.None fallback]))
+          ;; Public set updates take a caller place. The `*-ref!` helpers are
+          ;; retained only for code that already owns an explicit mutable ref.
+          (defmacro (insert! [place : comptime.Expr] [key : comptime.Expr]) : unit
+            ,insert-body)
+          (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : unit
+            ,remove-body)
+          (defmacro (remove-borrowed!
+            [place : comptime.Expr]
+            [key : comptime.Expr]) : unit
+            ,remove-borrowed-body))]
       ["i64"
         `(begin
           (module ,module-name)
           (import stdlib.array)
+          (import stdlib.comptime)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -466,7 +542,7 @@
               (hash-key key))
               [(Probe.Found _) true]
               [_ false]))
-          (define (insert [set : (&mut set Set)] [key : i64]) : unit
+          (define (insert-ref! [set : (&mut set Set)] [key : i64]) : unit
             (begin
               (if (needs-grow? set)
                 (grow set)
@@ -499,8 +575,8 @@
                   [Probe.Full
                     (begin
                       (grow set)
-                      (insert set key))]))))
-          (define (remove [set : (&mut set Set)] [key : i64]) : unit
+                      (insert-ref! set key))]))))
+          (define (remove-ref! [set : (&mut set Set)] [key : i64]) : unit
             (match (probe
               (& (struct-get set slots))
               (capacity-mut set)
@@ -539,7 +615,13 @@
           (define (entry-key-or [entry : Entry] [fallback : i64]) : i64
             (match entry
               [(Entry.Some key) key]
-              [Entry.None fallback])))]
+              [Entry.None fallback]))
+          ;; Public set updates take a caller place. The `*-ref!` helpers are
+          ;; retained only for code that already owns an explicit mutable ref.
+          (defmacro (insert! [place : comptime.Expr] [key : comptime.Expr]) : unit
+            ,insert-body)
+          (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : unit
+            ,remove-body))]
       [_
         `(begin
           (module ,module-name))])))
@@ -570,8 +652,8 @@
         [borrowed-key : String "alpha"]
         [s : strset.Set (strset.with-capacity 4)]
         (begin
-          (strset.insert (&mut s) "alpha")
-          (strset.insert (&mut s) "alpha")
+          (strset.insert! s "alpha")
+          (strset.insert! s "alpha")
           (assert-i64-eq
             (strset.len (& s))
             1
@@ -579,37 +661,37 @@
           (assert-true
             (strset.contains-borrowed? (& s) (& borrowed-key))
             "borrowed String contains finds owned key")
-          (strset.insert (&mut s) "a")
-          (strset.insert (&mut s) "e")
+          (strset.insert! s "a")
+          (strset.insert! s "e")
           (assert-true
             (strset.contains? (& s) "e")
             "String collision chain lookup")
-          (strset.remove (&mut s) "a")
+          (strset.remove! s "a")
           (assert-false
             (strset.contains? (& s) "a")
             "String remove tombstones key")
           (assert-true
             (strset.contains? (& s) "e")
             "String tombstone preserves later collision")
-          (strset.insert (&mut s) "i")
+          (strset.insert! s "i")
           (assert-true
             (strset.contains? (& s) "i")
             "String insert reuses tombstone slot")
-          (strset.remove-borrowed (&mut s) (& borrowed-key))
+          (strset.remove-borrowed! s (& borrowed-key))
           (assert-false
             (strset.contains-borrowed? (& s) (& borrowed-key))
             "borrowed String remove removes key")
           (let
             [len-before-missing : i64 (strset.len (& s))]
             (begin
-              (strset.remove (&mut s) "missing")
+              (strset.remove! s "missing")
               (assert-i64-eq
                 (strset.len (& s))
                 len-before-missing
                 "missing String remove is no-op")))
-          (strset.insert (&mut s) "one")
-          (strset.insert (&mut s) "two")
-          (strset.insert (&mut s) "three")
+          (strset.insert! s "one")
+          (strset.insert! s "two")
+          (strset.insert! s "three")
           (assert-true
             (> (strset.capacity (& s)) 4)
             "String set grows and rehashes")
@@ -657,20 +739,20 @@
       (let
         [s : i64set.Set (i64set.with-capacity 4)]
         (begin
-          (i64set.insert (&mut s) 1)
-          (i64set.insert (&mut s) 5)
-          (i64set.insert (&mut s) 1)
+          (i64set.insert! s 1)
+          (i64set.insert! s 5)
+          (i64set.insert! s 1)
           (assert-i64-eq
             (i64set.len (& s))
             2
             "duplicate i64 insert is idempotent")
           (assert-true (i64set.contains? (& s) 5) "i64 collision lookup")
-          (i64set.remove (&mut s) 1)
+          (i64set.remove! s 1)
           (assert-false (i64set.contains? (& s) 1) "i64 remove tombstones key")
           (assert-true
             (i64set.contains? (& s) 5)
             "i64 tombstone preserves later collision")
-          (i64set.insert (&mut s) 9)
+          (i64set.insert! s 9)
           (assert-true (i64set.contains? (& s) 9) "i64 tombstone slot reused")
           (let
             [len-before-missing : i64 (i64set.len (& s))]
@@ -685,7 +767,7 @@
                       sum-before-growth
                       (i64set.entry-key-or (i64set.entry-at (& s) sum-index) 0)))
                   (set! sum-index (i64set.next-occupied (& s) (+ sum-index 1)))))
-              (i64set.remove (&mut s) 999)
+              (i64set.remove! s 999)
               (assert-i64-eq
                 (i64set.len (& s))
                 len-before-missing
@@ -694,9 +776,9 @@
                 sum-before-growth
                 14
                 "i64 set iteration exposes live keys")))
-          (i64set.insert (&mut s) 10)
-          (i64set.insert (&mut s) 11)
-          (i64set.insert (&mut s) 12)
+          (i64set.insert! s 10)
+          (i64set.insert! s 11)
+          (i64set.insert! s 12)
           (assert-true
             (> (i64set.capacity (& s)) 4)
             "i64 set grows and rehashes")

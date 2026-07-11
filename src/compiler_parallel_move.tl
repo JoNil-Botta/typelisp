@@ -128,6 +128,16 @@
         (compiler-parallel-move-edge-cons
           (compiler-parallel-move-test-edge 4 8 13)
           CompilerParallelMoveNil))]
+    ;; A scalar destination must not clobber either half of a pair source
+    ;; before the pair is copied. This is the reverse of `pair` above and is
+    ;; the phi-carried group case: emit edge 5 first, then edge 6 may write
+    ;; resource 12.
+    [pair-source : CompilerParallelMoveEdgeList
+      (compiler-parallel-move-edge-cons
+        (ParallelMoveEdge 5 8 0 12 13)
+        (compiler-parallel-move-edge-cons
+          (compiler-parallel-move-test-edge 6 12 20)
+          CompilerParallelMoveNil))]
     (and
       (match (compiler-parallel-move-decision empty empty)
         [(CompilerParallelMoveDone) true]
@@ -141,4 +151,8 @@
       (match (compiler-parallel-move-decision pair pair)
         [(CompilerParallelMoveUnblocked id) (= id 4)]
         [_ false])
-      (compiler-parallel-move-list-has-blocked? pair pair))))
+      (compiler-parallel-move-list-has-blocked? pair pair)
+      (match (compiler-parallel-move-decision pair-source pair-source)
+        [(CompilerParallelMoveUnblocked id) (= id 5)]
+        [_ false])
+      (compiler-parallel-move-list-has-blocked? pair-source pair-source))))

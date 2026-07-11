@@ -1596,6 +1596,26 @@
         (string.substring s (+ k 1) (- n (+ k 1)))
         s))))
 
+;; Module alias portion of a dotted/legacy-qualified symbol (`io.panic` ->
+;; `io`, `core/cond` -> `core`). Empty for an unqualified symbol.
+(define (lsp-symbol-qualifier [s : String]) : String
+  (let
+    [n : i64 (string.string-length s)]
+    [i : i64 0]
+    [k : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (or
+            (= (string.string-ref s i) '/')
+            (= (string.string-ref s i) '.'))
+            (set! k i)
+            unit)
+          (set! i (+ i 1))))
+      (if (> k 0)
+        (string.substring s 0 k)
+        ""))))
+
 ;; Byte offset of a 0-based (line, character) position, clamped to the line.
 (define (lsp-offset-at-position [text : String] [line0 : i64] [char0 : i64]) : i64
   (let
@@ -2029,6 +2049,85 @@
             [else (set! i (+ i 1))])))
       target)))
 
+;; Alias introduced by an import operand. Dotted imports default to their last
+;; segment (`stdlib.io` -> `io`); an explicit `as alias` wins.
+(define (lsp-import-alias-at
+  [text : String]
+  [operand-start : i64]
+  [operand-end : i64]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [after-operand : i64 (lsp-skip-space text operand-end n)]
+    [as-end : i64 (lsp-scan-ident text after-operand n)]
+    (if (and
+      (> as-end after-operand)
+      (string.eq
+        (string.substring text after-operand (- as-end after-operand))
+        "as"))
+      (let
+        [alias-start : i64 (lsp-skip-space text as-end n)]
+        [alias-end : i64 (lsp-scan-ident text alias-start n)]
+        (if (> alias-end alias-start)
+          (string.substring text alias-start (- alias-end alias-start))
+          ""))
+      (if (and
+        (< operand-start n)
+        (lsp-ident-char? (string.string-ref text operand-start)))
+        (lsp-symbol-base
+          (string.substring text operand-start (- operand-end operand-start)))
+        ""))))
+
+;; Resolve a module alias using the import syntax already understood by the
+;; loader-backed import target resolver. Empty means no matching import.
+(define (lsp-resolve-import-alias
+  [text : String]
+  [path : String]
+  [stdlib-roots : lsp_svec.Vec]
+  [alias : String]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [i : i64 0]
+    [resolved : String ""]
+    [found : bool false]
+    (begin
+      (while (and (< i n) (not found))
+        (let
+          [c : char (string.string-ref text i)]
+          (cond
+            [(= c ';') (set! i (lsp-skip-line text i n))]
+            [(= c '\'') (set! i (lsp-skip-apostrophe-char-literal text i n))]
+            [(= c '"') (set! i (lsp-skip-string text i n))]
+            [(= c '(')
+              (let
+                [kw-start : i64 (lsp-skip-space text (+ i 1) n)]
+                [kw-end : i64 (lsp-scan-ident text kw-start n)]
+                (if (and
+                  (> kw-end kw-start)
+                  (string.eq
+                    (string.substring text kw-start (- kw-end kw-start))
+                    "import"))
+                  (let
+                    [operand-start : i64 (lsp-skip-space text kw-end n)]
+                    (match (lsp-resolve-import-target-at
+                      text
+                      path
+                      stdlib-roots
+                      operand-start)
+                      [(LspImportTarget.Found target _ operand-end)
+                        (begin
+                          (if (string.eq
+                            (lsp-import-alias-at text operand-start operand-end)
+                            alias)
+                            (begin
+                              (set! resolved (string.copy (& target)))
+                              (set! found true))
+                            unit)
+                          (set! i operand-end))]
+                      [(LspImportTarget.Missing) (set! i (+ i 1))]))
+                  (set! i (+ i 1))))]
+            [else (set! i (+ i 1))])))
+      resolved)))
+
 (defstruct LspModuleSet
   (paths lsp_svec.Vec)
   (texts lsp_svec.Vec))
@@ -2156,6 +2255,39 @@
             needle
             0)]))))
 
+;; Resolve a qualified symbol inside precisely the module bound by its alias.
+;; This deliberately bypasses the broad transitive-module scan used for bare
+;; names, so `left.get` cannot resolve to a same-named declaration in `right`.
+(define (lsp-find-qualified-definition
+  [current-path : String]
+  [current-text : String]
+  [stdlib-roots : lsp_svec.Vec]
+  [symbol : String]) : LspDefLocation
+  (let
+    [alias : String (lsp-symbol-qualifier symbol)]
+    [needle : String (lsp-symbol-base symbol)]
+    (if (or (string.eq alias "") (string.eq needle ""))
+      LspDefLocation.Missing
+      (let
+        [resolved : String
+          (lsp-resolve-import-alias
+            current-text
+            current-path
+            stdlib-roots
+            alias)]
+        (if (string.eq resolved "")
+          LspDefLocation.Missing
+          (let
+            [src : String (io.read-file-or (& resolved) "")]
+            [off : i64 (lsp-find-def-or-variant-offset-in src needle)]
+            (if (>= off 0)
+              (lsp-def-loc-from
+                (lsp-resolved-path-to-file-uri resolved)
+                src
+                off
+                needle)
+              LspDefLocation.Missing)))))))
+
 (define (lsp-json-int-field-default
   [value : json.Json]
   [key : String]
@@ -2212,13 +2344,15 @@
           [(LspImportTarget.Missing)
             (if (string.eq sym "")
               (lsp-write-response id json.JsonNull)
-              (match (lsp-find-definition
-                docs
-                uri
-                path
-                text
-                stdlib-roots
-                (lsp-symbol-base sym))
+              (match (if (string.eq (lsp-symbol-qualifier sym) "")
+                (lsp-find-definition
+                  docs
+                  uri
+                  path
+                  text
+                  stdlib-roots
+                  (lsp-symbol-base sym))
+                (lsp-find-qualified-definition path text stdlib-roots sym))
                 [(LspDefLocation.Found def-uri def-line def-col def-len)
                   (lsp-write-response
                     id
@@ -2260,7 +2394,7 @@
         "smoke.tl"
         src
         (lsp_svec.new)
-        (lsp-symbol-base sym))
+        sym)
         [(LspDefLocation.Found _ line col len)
           (and (= line 1) (= col 10) (= len 3))]
         [(LspDefLocation.Missing) false]))))
@@ -2308,13 +2442,7 @@
     [sym : String (lsp-symbol-at-offset src off)]
     (if (not (string.eq sym "io.panic"))
       false
-      (match (lsp-find-definition
-        (lsp-documents-new)
-        "file:///smoke.tl"
-        "smoke.tl"
-        src
-        (lsp_svec.new)
-        (lsp-symbol-base sym))
+      (match (lsp-find-qualified-definition "smoke.tl" src (lsp_svec.new) sym)
         [(LspDefLocation.Found def-uri line _ len)
           (and
             (not (string.eq def-uri "file:///stdlib/io.tl"))
@@ -2323,13 +2451,55 @@
             (= len 5))]
         [(LspDefLocation.Missing) false]))))
 
+(define (lsp-definition-smoke-qualified-import-aliases?) : bool
+  (let
+    [src : String
+      "(import stdlib.byte_buf as bytes)\n(import stdlib.env as env)\n(define (main) : i64 (bytes.get (init) 0 0))\n"]
+    [byte-buf-suffix : String "/stdlib/byte_buf.tl"]
+    [env-suffix : String "/stdlib/env.tl"]
+    (match (lsp-find-qualified-definition
+      "smoke.tl"
+      src
+      (lsp_svec.new)
+      "bytes.get")
+      [(LspDefLocation.Found bytes-uri _ _ bytes-len)
+        (match (lsp-find-qualified-definition
+          "smoke.tl"
+          src
+          (lsp_svec.new)
+          "env.get")
+          [(LspDefLocation.Found env-uri _ _ env-len)
+            (and
+              (string.contains (& bytes-uri) (& byte-buf-suffix))
+              (string.contains (& env-uri) (& env-suffix))
+              (= bytes-len 3)
+              (= env-len 3))]
+          [(LspDefLocation.Missing) false])]
+      [(LspDefLocation.Missing) false])))
+
+(define (lsp-hover-smoke-qualified-import-alias?) : bool
+  (let
+    [src : String
+      "(import stdlib.byte_buf as bytes)\n(import stdlib.env as env)\n(define (main) : i64 (bytes.get (init) 0 0))\n"]
+    [needle : String "ByteBuf"]
+    (match (lsp-hover-resolve-qualified
+      "smoke.tl"
+      src
+      (lsp_svec.new)
+      "bytes.get")
+      [(LspDefSource.Found def-text form-off)
+        (and (>= form-off 0) (string.contains (& def-text) (& needle)))]
+      [(LspDefSource.Missing) false])))
+
 (define (lsp-definition-smoke-ok?) : bool
   (and
     (lsp-definition-smoke-basic?)
     (lsp-definition-smoke-skips-strings?)
     (lsp-definition-smoke-skips-char-literals?)
     (lsp-definition-smoke-qualified-base?)
-    (lsp-definition-smoke-stdlib-symbol?)))
+    (lsp-definition-smoke-stdlib-symbol?)
+    (lsp-definition-smoke-qualified-import-aliases?)
+    (lsp-hover-smoke-qualified-import-alias?)))
 
 ;; --------------------------------------------------------------------------
 ;; Completion (textDocument/completion).
@@ -3015,6 +3185,32 @@
             needle
             0)]))))
 
+(define (lsp-hover-resolve-qualified
+  [current-path : String]
+  [current-text : String]
+  [stdlib-roots : lsp_svec.Vec]
+  [symbol : String]) : LspDefSource
+  (let
+    [alias : String (lsp-symbol-qualifier symbol)]
+    [needle : String (lsp-symbol-base symbol)]
+    (if (or (string.eq alias "") (string.eq needle ""))
+      LspDefSource.Missing
+      (let
+        [resolved : String
+          (lsp-resolve-import-alias
+            current-text
+            current-path
+            stdlib-roots
+            alias)]
+        (if (string.eq resolved "")
+          LspDefSource.Missing
+          (let
+            [src : String (io.read-file-or (& resolved) "")]
+            [off : i64 (lsp-find-def-form-in src needle)]
+            (if (>= off 0)
+              (LspDefSource.Found src off)
+              LspDefSource.Missing)))))))
+
 ;; The (define ...) header up to and including the return type, e.g.
 ;; "(define (foo [a : i64]) : bool".
 (define (lsp-define-header [text : String] [form-off : i64]) : String
@@ -3496,67 +3692,80 @@
         [sym : String (lsp-symbol-at-offset text off)]
         (if (string.eq sym "")
           (lsp-write-response id json.JsonNull)
-          (let
-            [needle : String (lsp-symbol-base sym)]
-            [bind-type : String (lsp-binding-type text needle off)]
-            [builtin : String (lsp-builtin-hover needle)]
-            (if (not (string.eq bind-type ""))
-              (lsp-write-response
-                id
-                (lsp-hover-result
-                  (lsp-hover-markdown
-                    (string.append needle (string.append " : " bind-type))
-                    "")
-                  line0
-                  char0
-                  (string.string-length sym)))
-              (if (not (string.eq builtin ""))
+          (if (not (string.eq (lsp-symbol-qualifier sym) ""))
+            (match (lsp-hover-resolve-qualified path text stdlib-roots sym)
+              [(LspDefSource.Found def-text form-off)
                 (lsp-write-response
                   id
                   (lsp-hover-result
-                    builtin
+                    (lsp-hover-markdown
+                      (lsp-define-header def-text form-off)
+                      (lsp-doc-comments-above def-text form-off))
+                    line0
+                    char0
+                    (string.string-length sym)))]
+              [(LspDefSource.Missing) (lsp-write-response id json.JsonNull)])
+            (let
+              [needle : String (lsp-symbol-base sym)]
+              [bind-type : String (lsp-binding-type text needle off)]
+              [builtin : String (lsp-builtin-hover needle)]
+              (if (not (string.eq bind-type ""))
+                (lsp-write-response
+                  id
+                  (lsp-hover-result
+                    (lsp-hover-markdown
+                      (string.append needle (string.append " : " bind-type))
+                      "")
                     line0
                     char0
                     (string.string-length sym)))
-                (match (lsp-hover-resolve
-                  docs
-                  uri
-                  path
-                  text
-                  stdlib-roots
-                  needle)
-                  [(LspDefSource.Found def-text form-off)
-                    (lsp-write-response
-                      id
-                      (lsp-hover-result
-                        (lsp-hover-markdown
-                          (lsp-define-header def-text form-off)
-                          (lsp-doc-comments-above def-text form-off))
-                        line0
-                        char0
-                        (string.string-length sym)))]
-                  [(LspDefSource.Missing)
-                    (match (lsp-resolve-variant
-                      docs
-                      uri
-                      path
-                      text
-                      stdlib-roots
-                      needle)
-                      [(LspVariantHit.Found enum-name variant-form)
-                        (lsp-write-response
-                          id
-                          (lsp-hover-result
-                            (lsp-hover-markdown
-                              variant-form
-                              (string.append
-                                "Variant of `"
-                                (string.append enum-name "`.")))
-                            line0
-                            char0
-                            (string.string-length sym)))]
-                      [(LspVariantHit.Missing)
-                        (lsp-write-response id json.JsonNull)])]))))))]
+                (if (not (string.eq builtin ""))
+                  (lsp-write-response
+                    id
+                    (lsp-hover-result
+                      builtin
+                      line0
+                      char0
+                      (string.string-length sym)))
+                  (match (lsp-hover-resolve
+                    docs
+                    uri
+                    path
+                    text
+                    stdlib-roots
+                    needle)
+                    [(LspDefSource.Found def-text form-off)
+                      (lsp-write-response
+                        id
+                        (lsp-hover-result
+                          (lsp-hover-markdown
+                            (lsp-define-header def-text form-off)
+                            (lsp-doc-comments-above def-text form-off))
+                          line0
+                          char0
+                          (string.string-length sym)))]
+                    [(LspDefSource.Missing)
+                      (match (lsp-resolve-variant
+                        docs
+                        uri
+                        path
+                        text
+                        stdlib-roots
+                        needle)
+                        [(LspVariantHit.Found enum-name variant-form)
+                          (lsp-write-response
+                            id
+                            (lsp-hover-result
+                              (lsp-hover-markdown
+                                variant-form
+                                (string.append
+                                  "Variant of `"
+                                  (string.append enum-name "`.")))
+                              line0
+                              char0
+                              (string.string-length sym)))]
+                        [(LspVariantHit.Missing)
+                          (lsp-write-response id json.JsonNull)])])))))))]
     [(LspDocumentLookup.Missing) (lsp-write-response id json.JsonNull)]))
 
 (define (lsp-handle-hover

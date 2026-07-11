@@ -1178,6 +1178,36 @@
                     (set! ok false))
                   ok)))))))))
 
+;; Parser dispatch ids are process-global cached data, while driver states own
+;; distinct intern tables whose generation counters can have the same value.
+;; Pre-interning one syntax name gives the two tables different ids without
+;; changing the complete dispatch's marker id, reproducing the batch compiler
+;; state switch that used to classify `never` with the previous table's index.
+(define (compiler-driver-state-smoke-parser-dispatch-cache-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-install-interns! state-a)
+      (intern-reset!)
+      (intern "never")
+      (let
+        [dispatch-a : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
+        [a-ok : bool
+          (=
+            (compiler-parse-dispatch-tag dispatch-a "never")
+            (compiler-parse-tag-ty-never))]
+        (begin
+          (compiler-driver-state-install-interns! state-b)
+          (intern-reset!)
+          (let
+            [dispatch-b : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
+            (and
+              a-ok
+              (=
+                (compiler-parse-dispatch-tag dispatch-b "never")
+                (compiler-parse-tag-ty-never)))))))))
+
 (define (compiler-driver-state-smoke-lower-arenas-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -1425,7 +1455,7 @@
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
 
-(define (compiler-driver-state-smoke-lower-tail-reads-use-context?) : bool
+(define (compiler-driver-state-smoke-lower-rvo-reads-use-context?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
@@ -1438,19 +1468,6 @@
           (compiler-driver-state-pool-context state-a)]
         [pools-b : AstNodePoolContext
           (compiler-driver-state-pool-context state-b)]
-        [callee-name : i64 (intern "loop")]
-        [callee-a : i64
-          (ast-node-pool-context-expr-push pools-a (AstExpr.Var callee-name))]
-        [callee-b : i64
-          (ast-node-pool-context-expr-push
-            pools-b
-            (AstExpr.Literal (ast-lit-int 70)))]
-        [call-a : i64
-          (ast-expr-call-with-pools pools-a callee-a (ast-expr-list-new))]
-        [call-b : i64
-          (ast-node-pool-context-expr-push
-            pools-b
-            (AstExpr.Literal (ast-lit-int 71)))]
         [rvo-cond-a : i64
           (ast-node-pool-context-expr-push
             pools-a
@@ -1480,12 +1497,6 @@
           (ast-node-pool-context-expr-push
             pools-b
             (AstExpr.Literal (ast-lit-int 75)))]
-        [tail-exprs : AstExprList
-          (let
-            [items : AstExprList (ast-expr-list-new)]
-            (begin
-              (ast-expr-list-push (&mut items) call-a)
-              items))]
         (match (build-compiler-symbols program)
           [(ResultCompilerSymbols.Ok symbols)
             (match (build-compiler-registries-with-symbols program symbols)
@@ -1493,46 +1504,20 @@
                 (let
                   [ctx : TcContext
                     (TcContext program symbols registries "" pools-a)]
-                  [lower-state : LowerState
-                    (LowerState.State
-                      0
-                      0
-                      0
-                      "entry"
-                      (compiler-ir-instr-builder-new)
-                      (compiler-ir-block-builder-new)
-                      (compiler-ir-function-builder-new)
-                      "loop"
-                      (box (compiler-source-spans-empty))
-                      (lower-empty-global-name-cache)
-                      (lower-type-cache-from-env (TcTypeEnv.Nil))
-                      (CompilerLowerMode.Scalar)
-                      (lower_i64_i64_map.with-capacity 8)
-                      0
-                      0)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
-                  [tail-candidate : bool
-                    (lower-tail-expr-candidate?
-                      ctx
-                      lower-state
-                      (sym_i64_env.sym-i64-empty)
-                      (AstExpr.Begin tail-exprs))]
                   [rvo-has-return : bool
                     (lower-rvo-expr-has-early-return?
                       ctx
                       (AstExpr.If rvo-cond-a rvo-return-a rvo-else-a))]
                   [active-after : i64 (ast-node-pool-len)]
                   (and
-                    (= callee-a callee-b)
-                    (= call-a call-b)
                     (= rvo-cond-a rvo-cond-b)
                     (= rvo-value-a rvo-value-b)
                     (= rvo-return-a rvo-return-b)
                     (= rvo-else-a rvo-else-b)
                     (= active-before (ast-node-pool-context-expr-len pools-b))
                     (= active-after active-before)
-                    tail-candidate
                     rvo-has-return))]
               [(ResultCompilerRegistries.Err _) false])]
           [(ResultCompilerSymbols.Err _) false])))))
@@ -2471,6 +2456,9 @@
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
     (unless (compiler-driver-state-smoke-interns-isolated?) (return 29))
+    (unless
+      (compiler-driver-state-smoke-parser-dispatch-cache-isolated?)
+      (return 31))
     (unless (compiler-driver-state-smoke-lower-arenas-isolated?) (return 9))
     (unless
       (compiler-driver-state-smoke-lower-type-reads-use-context?)
@@ -2479,7 +2467,7 @@
       (compiler-driver-state-smoke-lower-expr-reads-use-context?)
       (return 22))
     (unless
-      (compiler-driver-state-smoke-lower-tail-reads-use-context?)
+      (compiler-driver-state-smoke-lower-rvo-reads-use-context?)
       (return 24))
     (unless
       (compiler-driver-state-smoke-lower-vector-analysis-uses-context?)

@@ -27631,7 +27631,8 @@
 
 (defstruct OptFunctionIndex
   (ids opt_string_i64_map.Map)
-  (values (Array CompilerIrFunction)))
+  (values (Array CompilerIrFunction))
+  (leaf-starts (Array i64)))
 
 (defstruct OptCallGraph
   (count i64)
@@ -27694,6 +27695,7 @@
   [functions : CompilerIrFunctionList]
   [ids : opt_string_i64_map.Map]
   [values : (Array CompilerIrFunction)]
+  [leaf-starts : (Array i64)]
   [index : i64]) : opt_string_i64_map.Map
   (match functions
     [(CompilerIrFunctionList.Nil) ids]
@@ -27702,13 +27704,20 @@
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
             (array-set! values index func)
+            (array-set! leaf-starts index (opt-symbol-leaf-start name))
             (opt_string_i64_map.insert-ref! (&mut ids) name index)
-            (opt-function-index-fill (box-get rest) ids values (+ index 1)))])]
+            (opt-function-index-fill
+              (box-get rest)
+              ids
+              values
+              leaf-starts
+              (+ index 1)))])]
     [(CompilerIrFunctionList.Array seq)
       (opt-function-index-fill
         (compiler-ir-function-seq-to-list seq)
         ids
         values
+        leaf-starts
         index)]))
 
 (define (opt-function-index-build [functions : CompilerIrFunctionList]) : OptFunctionIndex
@@ -27716,13 +27725,15 @@
     [count : i64 (opt-function-list-count functions)]
     [values : (Array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
+    [leaf-starts : (Array i64) (array.make-array i64 count)]
     [ids : opt_string_i64_map.Map
       (opt-function-index-fill
         functions
         (opt_string_i64_map.with-capacity (opt-function-index-capacity count))
         values
+        leaf-starts
         0)]
-    (OptFunctionIndex ids values)))
+    (OptFunctionIndex ids values leaf-starts)))
 
 (define (opt-function-index-defines? [index : OptFunctionIndex] [name : String]) : bool
   (opt_string_i64_map.contains? (& (struct-get index ids)) name))
@@ -31975,7 +31986,10 @@
       [(CompilerIrFunction.Function name _ _ _ _)
         (opt-reach-add-function-leaf-from
           index
-          (if (opt-symbol-leaf-matches? name leaf)
+          (if (opt-symbol-leaf-matches-from?
+            name
+            (array-ref (struct-get index leaf-starts) slot)
+            leaf)
             (opt-reach-add-function index state name)
             state)
           leaf
@@ -32007,17 +32021,19 @@
       (not (= (string.string-ref source-name (+ start 2)) '_')))
       ""
       (cond
-        [(opt-symbol-leaf-matches? source-name "tl_int_to_string")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_int_to_string")
           "int-to-string"]
-        [(opt-symbol-leaf-matches? source-name "tl_substring") "substring"]
-        [(opt-symbol-leaf-matches? source-name "tl_str_view") "str-view"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_substring")
+          "substring"]
+        [(opt-symbol-leaf-matches-from? source-name start "tl_str_view")
+          "str-view"]
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat")
           "string-concat"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat3")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat3")
           "string-concat3"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat4")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat4")
           "string-concat4"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat5")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat5")
           "string-concat5"]
         [else ""]))))
 
@@ -32517,9 +32533,9 @@
 ;; Return the byte offset just past the last '/' or ':' separator in `name`
 ;; (0 when there is none). Scanning backward from the end stops at the final
 ;; separator instead of walking the whole string, and reading the raw String
-;; bytes skips the per-char bounds check of `string.string-ref`. This runs once
-;; per call target in the reachability pass, so it is one of the optimizer's
-;; hottest predicates in the self-compile.
+;; bytes skips the per-char bounds check of `string.string-ref`. Function names
+;; are classified once when the reachability index is built; standalone call
+;; targets classify once before all of their fixed helper-name checks.
 (define (opt-symbol-leaf-start [name : String]) : i64
   (let
     [n : i64 (string.string-length name)]
@@ -32547,13 +32563,15 @@
             (set! i (- i 1)))))
       start)))
 
-;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf).
-;; The reachability pass tests every call target's leaf against a handful of
-;; fixed runtime helper names; materializing the leaf substring allocated on
-;; every call site in the program.
-(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
+;; Compare a leaf using a start already classified by the function index or by
+;; the caller. The reachability pass checks the same indexed names for several
+;; runtime helpers, so rescanning each name for its last separator dominated the
+;; actual byte comparison.
+(define (opt-symbol-leaf-matches-from?
+  [name : String]
+  [start : i64]
+  [leaf : String]) : bool
   (let
-    [start : i64 (opt-symbol-leaf-start name)]
     [n : i64 (string.string-length name)]
     [leaf-len : i64 (string.string-length leaf)]
     (if (not (= (- n start) leaf-len))
@@ -32579,6 +32597,11 @@
               (set! i (+ i 1))
               (set! ok false)))
           ok)))))
+
+;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf) for
+;; standalone callers that do not already have a classified start.
+(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
+  (opt-symbol-leaf-matches-from? name (opt-symbol-leaf-start name) leaf))
 
 (define (opt-symbol-leaf [name : String]) : String
   (let

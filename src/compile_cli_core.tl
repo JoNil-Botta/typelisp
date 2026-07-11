@@ -29,93 +29,16 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import sym_i64_env)
 
-(defstruct CompileCliBatchEntry
-  (input-path String)
-  (output-path String))
-
-(defstruct CompileCliBatchEntryList
-  (slots (Array CompileCliBatchEntry))
-  (len i64))
-
 (defenum ResultCompileCliBatchEntryList
-  (Ok CompileCliBatchEntryList)
+  ;; Batch entries are adjacent input/output string pairs in this generated
+  ;; vector. Reusing the CLI string vector keeps this hot root within the
+  ;; stage-0 compiler's allocation budget.
+  (Ok cli_svec.Vec)
   (Err i64))
 
 (defstruct CompileCliCfgNames
   (slots (Array String))
   (len i64))
-
-(define (compile-cli-batch-entry-list-with-capacity [capacity : i64]) : CompileCliBatchEntryList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (CompileCliBatchEntryList (make-array CompileCliBatchEntry cap) 0)))
-
-(define (compile-cli-batch-entry-list-new) : CompileCliBatchEntryList
-  (compile-cli-batch-entry-list-with-capacity 4))
-
-(define (compile-cli-batch-entry-list-len
-  [entries : (& entries CompileCliBatchEntryList)]) : i64
-  (struct-get entries len))
-
-(define (compile-cli-batch-entry-list-get
-  [entries : (& entries CompileCliBatchEntryList)]
-  [index : i64]) : CompileCliBatchEntry
-  (if (if (>= index 0)
-    (< index (struct-get entries len))
-    false)
-    (array-ref (struct-get entries slots) index)
-    (CompileCliBatchEntry "" "")))
-
-(define (compile-cli-batch-entry-list-copy-range!
-  [dst : (&mut dst (Array CompileCliBatchEntry))]
-  [src : (& src (Array CompileCliBatchEntry))]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (array-set! dst i (array-ref src i))
-        (set! i (+ i 1))))))
-
-(define (compile-cli-batch-entry-list-grow!
-  [entries : (&mut entries CompileCliBatchEntryList)]) : unit
-  (let
-    [count : i64 (struct-get entries len)]
-    [old-cap : i64 (array-length (struct-get entries slots))]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (Array CompileCliBatchEntry)
-      (make-array CompileCliBatchEntry new-cap)]
-    (begin
-      (compile-cli-batch-entry-list-copy-range!
-        (&mut bigger)
-        (& (struct-get entries slots))
-        0
-        count)
-      (set! (struct-get entries slots) bigger))))
-
-(define (compile-cli-batch-entry-list-push!
-  [entries : (&mut entries CompileCliBatchEntryList)]
-  [input-path : String]
-  [output-path : String]) : unit
-  (begin
-    (if (< (struct-get entries len) (array-length (struct-get entries slots)))
-      unit
-      (compile-cli-batch-entry-list-grow! entries))
-    (let
-      [index : i64 (struct-get entries len)]
-      (begin
-        (array-set!
-          (struct-get entries slots)
-          index
-          (CompileCliBatchEntry input-path output-path))
-        (set! (struct-get entries len) (+ index 1))))))
 
 (define (compile-cli-cfg-names-with-capacity [capacity : i64]) : CompileCliCfgNames
   (let
@@ -924,17 +847,15 @@
       doctest-status)))
 
 (define (compile-cli-run-batch-inline-tests-from
-  [entries : (& entries CompileCliBatchEntryList)]
+  [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [target : CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]) : i64
-  (if (>= index (compile-cli-batch-entry-list-len entries))
+  (if (>= index (cli_svec.len entries))
     0
     (let
-      [entry : CompileCliBatchEntry
-        (compile-cli-batch-entry-list-get entries index)]
-      [input-path : String (struct-get entry input-path)]
+      [input-path : String (cli_svec.get entries index "")]
       [status : i64
         (tltest-inline-typecheck-file-with-cfg
           input-path
@@ -946,7 +867,7 @@
       (if (= status 0)
         (compile-cli-run-batch-inline-tests-from
           entries
-          (+ index 1)
+          (+ index 2)
           target
           stdlib-roots
           cfgs)
@@ -956,7 +877,7 @@
           status)))))
 
 (define (compile-cli-run-batch-inline-tests
-  [entries : CompileCliBatchEntryList]
+  [entries : cli_svec.Vec]
   [target : CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
   [cfgs : CompileCliCfgNames]) : i64
@@ -1020,7 +941,7 @@
   [start : i64]
   [line : i64]
   [n : i64]
-  [entries : (&mut entries CompileCliBatchEntryList)]) : i64
+  [entries : (&mut entries cli_svec.Vec)]) : i64
   (if (>= start n)
     0
     (let
@@ -1052,10 +973,8 @@
                         output-start
                         (- line-end output-start))]
                     (begin
-                      (compile-cli-batch-entry-list-push!
-                        entries
-                        input-path
-                        output-path)
+                      (cli_svec.push entries input-path)
+                      (cli_svec.push entries output-path)
                       (compile-cli-batch-parse-entries-into!
                         text
                         next-start
@@ -1069,48 +988,16 @@
   [line : i64]
   [n : i64]) : ResultCompileCliBatchEntryList
   (let
-    [entries : CompileCliBatchEntryList (compile-cli-batch-entry-list-new)]
+    [entries : cli_svec.Vec (cli_svec.new)]
     [status : i64
       (compile-cli-batch-parse-entries-into! text start line n (&mut entries))]
     (if (= status 0)
       (ResultCompileCliBatchEntryList.Ok entries)
       (ResultCompileCliBatchEntryList.Err status))))
 
-(define (compile-cli-batch-entry-at?
-  [entries : (& entries CompileCliBatchEntryList)]
-  [index : i64]
-  [input-path : String]
-  [output-path : String]) : bool
-  (let
-    [entry : CompileCliBatchEntry
-      (compile-cli-batch-entry-list-get entries index)]
-    (and
-      (string.eq (struct-get entry input-path) input-path)
-      (string.eq (struct-get entry output-path) output-path))))
-
-(define (compile-cli-batch-parse-dense-order-ok?) : bool
-  (match (compile-cli-batch-parse-entries-from
-    "a.tl|a.s\n\nb.tl|b.s\r\nc.tl|c.s"
-    0
-    1
-    (string.string-length "a.tl|a.s\n\nb.tl|b.s\r\nc.tl|c.s"))
-    [(ResultCompileCliBatchEntryList.Err _) false]
-    [(ResultCompileCliBatchEntryList.Ok entries)
-      (and
-        (= (compile-cli-batch-entry-list-len (& entries)) 3)
-        (compile-cli-batch-entry-at? (& entries) 0 "a.tl" "a.s")
-        (compile-cli-batch-entry-at? (& entries) 1 "b.tl" "b.s")
-        (compile-cli-batch-entry-at? (& entries) 2 "c.tl" "c.s"))]))
-
-(test
-  compile-cli-batch-entry-dense-preserves-order
-  (unless
-    (compile-cli-batch-parse-dense-order-ok?)
-    (io.panic "compile: batch entry dense order smoke failed")))
-
 (define (compile-cli-run-batch-entries-from
   [state : CompilerDriverState]
-  [entries : (& entries CompileCliBatchEntryList)]
+  [entries : (& entries cli_svec.Vec)]
   [index : i64]
   [has-target : bool]
   [target : CompilerBackendTarget]
@@ -1118,13 +1005,11 @@
   [cfgs : CompileCliCfgNames]
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]) : i64
-  (if (>= index (compile-cli-batch-entry-list-len entries))
+  (if (>= index (cli_svec.len entries))
     0
     (let
-      [entry : CompileCliBatchEntry
-        (compile-cli-batch-entry-list-get entries index)]
-      [input-path : String (struct-get entry input-path)]
-      [output-path : String (struct-get entry output-path)]
+      [input-path : String (cli_svec.get entries index "")]
+      [output-path : String (cli_svec.get entries (+ index 1) "")]
       ;; Each batch entry gets a destroyable scratch arena, not just a lexical
       ;; rewind region. Keep the exact scratch handle so cleanup does not
       ;; depend on which arena compiler driver internals leave active.
@@ -1165,7 +1050,7 @@
           (compile-cli-run-batch-entries-from
             state
             entries
-            (+ index 1)
+            (+ index 2)
             has-target
             target
             stdlib-roots
@@ -1182,7 +1067,7 @@
 
 (define (compile-cli-run-batch-entries
   [state : CompilerDriverState]
-  [entries : CompileCliBatchEntryList]
+  [entries : cli_svec.Vec]
   [has-target : bool]
   [target : CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]

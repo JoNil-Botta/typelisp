@@ -20499,6 +20499,69 @@
           (not (tc-name-qualified? name))
           (string.eq (tc-context-module ctx) (tc-arena-module-name)))))))
 
+(define (tc-arena-safe-call-kind-none) : i64
+  0)
+
+(define (tc-arena-safe-call-kind-phase) : i64
+  1)
+
+(define (tc-arena-safe-call-kind-rewind) : i64
+  2)
+
+(define (tc-arena-safe-call-kind-destroy) : i64
+  3)
+
+(define (tc-arena-safe-call-base-kind-id [base-id : i64]) : i64
+  (let
+    [base : String (intern-str base-id)]
+    (cond
+      [(string.eq base "phase") (tc-arena-safe-call-kind-phase)]
+      [(string.eq base "rewind-safe!") (tc-arena-safe-call-kind-rewind)]
+      [(string.eq base "destroy-safe!") (tc-arena-safe-call-kind-destroy)]
+      [else (tc-arena-safe-call-kind-none)])))
+
+;; Call dispatch has already resolved dotted module aliases into `lookup-id`.
+;; Classify that canonical id once, then check the source-name owner fallback
+;; once.  The old per-builtin predicates repeated the same environment name
+;; resolution for phase, rewind-safe!, and destroy-safe! in sequence.
+(define (tc-arena-safe-call-kind-id
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [lookup-id : i64]) : i64
+  (let
+    [canonical-kind : i64
+      (if (and
+        (intern-qualified? lookup-id)
+        (string.eq (intern-qualified-module lookup-id) (tc-arena-module-name)))
+        (tc-arena-safe-call-base-kind-id (intern-qualified-base-id lookup-id))
+        (tc-arena-safe-call-kind-none))]
+    (if (not (= canonical-kind (tc-arena-safe-call-kind-none)))
+      canonical-kind
+      (let
+        [qualified : bool (tc-name-qualified-id? name-id)]
+        [source-base-id : i64
+          (if qualified
+            (intern-qualified-base-id name-id)
+            name-id)]
+        [source-kind : i64 (tc-arena-safe-call-base-kind-id source-base-id)]
+        (if (= source-kind (tc-arena-safe-call-kind-none))
+          source-kind
+          (if qualified
+            (if (tc-source-name-bound-exact-id? env name-id)
+              source-kind
+              (tc-arena-safe-call-kind-none))
+            (let
+              [in-arena-module : bool
+                (string.eq (tc-context-module ctx) (tc-arena-module-name))]
+              (if (or
+                in-arena-module
+                (and
+                  (not (tc-name-local-bound-before-module-scan-id? env name-id))
+                  (tc-source-name-bound-exact-id? env name-id)))
+                source-kind
+                (tc-arena-safe-call-kind-none)))))))))
+
 (define (tc-arena-owner-kind-none) : i64
   0)
 
@@ -22450,6 +22513,8 @@
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
         [name-id : i64 (tc-builtin-name-id name)]
         [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [arena-call-kind : i64
+          (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         (cond
           [(and
               (tc-layout-query-name? name)
@@ -22469,11 +22534,11 @@
               (tc-atomic-pointer-name? name)
               (not (tc-name-bound-id? env name-id)))
             (tc-atomic-pointer-call ctx env name args)]
-          [(tc-arena-safe-call-name? ctx env name "phase")
+          [(= arena-call-kind (tc-arena-safe-call-kind-phase))
             (tc-phase-call ctx env args)]
-          [(tc-arena-safe-call-name? ctx env name "rewind-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-rewind-safe-call ctx env args)]
-          [(tc-arena-safe-call-name? ctx env name "destroy-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
             (tc-destroy-safe-call ctx env args)]
           [(and
               (tc-borrowed-string-builtin-id? name-id)
@@ -23306,6 +23371,8 @@
         [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
         [name-id : i64 (tc-builtin-name-id name)]
         [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [arena-call-kind : i64
+          (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         (cond
           [(and
               (tc-layout-query-name? name)
@@ -23325,11 +23392,11 @@
               (tc-atomic-pointer-name? name)
               (not (tc-name-bound-id? env name-id)))
             (tc-atomic-pointer-call ctx env name args)]
-          [(tc-arena-safe-call-name? ctx env name "phase")
+          [(= arena-call-kind (tc-arena-safe-call-kind-phase))
             (tc-phase-call ctx env args)]
-          [(tc-arena-safe-call-name? ctx env name "rewind-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-rewind-safe-call ctx env args)]
-          [(tc-arena-safe-call-name? ctx env name "destroy-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
             (tc-destroy-safe-call ctx env args)]
           [(and
               (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
@@ -23371,6 +23438,8 @@
           [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
           [name-id : i64 (tc-builtin-name-id name)]
           [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+          [arena-call-kind : i64
+            (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
           (cond
             [(and
                 (tc-layout-query-name? name)
@@ -23390,11 +23459,11 @@
                 (tc-atomic-pointer-name? name)
                 (not (tc-name-bound-id? env name-id)))
               (tc-atomic-pointer-call ctx env name args)]
-            [(tc-arena-safe-call-name? ctx env name "phase")
+            [(= arena-call-kind (tc-arena-safe-call-kind-phase))
               (tc-phase-call ctx env args)]
-            [(tc-arena-safe-call-name? ctx env name "rewind-safe!")
+            [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
               (tc-rewind-safe-call ctx env args)]
-            [(tc-arena-safe-call-name? ctx env name "destroy-safe!")
+            [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
               (tc-destroy-safe-call ctx env args)]
             [(and
                 (cbi.compiler-builtin-typecheck-tls-current-arena-id? name-id)
@@ -39640,8 +39709,12 @@
     [(TcMaybeString.Some raw-name)
       (let
         [name : String (tc-hygiene-global-symbol-name raw-name)]
+        [name-id : i64 (tc-builtin-name-id name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [arena-call-kind : i64
+          (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         (cond
-          [(tc-arena-safe-call-name? ctx env name "rewind-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-move-safe-arena-rewind-effect
               ctx
               env
@@ -39650,7 +39723,7 @@
               moved
               args
               origin)]
-          [(tc-arena-safe-call-name? ctx env name "destroy-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
             (tc-move-safe-arena-destroy-effect
               ctx
               env
@@ -42696,8 +42769,12 @@
     [(TcMaybeString.Some raw-name)
       (let
         [name : String (tc-hygiene-global-symbol-name raw-name)]
+        [name-id : i64 (tc-builtin-name-id name)]
+        [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+        [arena-call-kind : i64
+          (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
         (cond
-          [(tc-arena-safe-call-name? ctx env name "rewind-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
             (tc-borrow-check-safe-arena-rewind-effect
               ctx
               env
@@ -42705,7 +42782,7 @@
               borrowed
               args
               call-expr)]
-          [(tc-arena-safe-call-name? ctx env name "destroy-safe!")
+          [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
             (tc-borrow-check-safe-arena-destroy-effect
               ctx
               env

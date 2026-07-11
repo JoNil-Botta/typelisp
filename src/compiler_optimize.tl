@@ -24270,10 +24270,11 @@
 ;; GAP4: the header-typed handle set feeds gep classification; build it from
 ;; the whole function so the block-local pass sees params and cross-block defs.
 (define (optimize-block-list-for-function
+  [frame : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs
-    (opt-load-header-set-from-function params blocks)
+    (opt-load-header-set-from-function-with-size params blocks frame)
     blocks))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -27162,7 +27163,7 @@
               unit)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [folded : CompilerIrBlockList
-            (optimize-block-list-for-function params blocks)]
+            (optimize-block-list-for-function frame params blocks)]
           [_p-fold : unit
             (cfg
               compile-profile
@@ -27686,7 +27687,7 @@
       (let
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : CompilerIrBlockList
-          (optimize-block-list-for-function params blocks)]
+          (optimize-block-list-for-function frame params blocks)]
         [_p-fold : unit
           (cfg
             compile-profile
@@ -51192,17 +51193,32 @@
 ;; Function-constant header-typed var set: var -> 1 (array/string handle at
 ;; every typed def) or 2 (poisoned: any non-handle or untyped def).
 (defenum OptLoadHeaderSet
-  (OptLoadHeaderSet opt_i64_i64_map.Map))
+  (Sparse opt_i64_i64_map.Map)
+  (Dense (Array i64)))
 
 (define (opt-load-header-set-empty) : OptLoadHeaderSet
-  (OptLoadHeaderSet (opt_i64_i64_map.with-capacity 17)))
+  (OptLoadHeaderSet.Sparse (opt_i64_i64_map.with-capacity 17)))
+
+(define (opt-load-header-set-fill-zero! [items : (Array i64)] [index : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index 0)
+      (opt-load-header-set-fill-zero! items (+ index 1)))))
+
+(define (opt-load-header-set-with-size [count : i64]) : OptLoadHeaderSet
+  (let
+    [items : (Array i64) (array.make-array i64 count)]
+    (begin
+      (opt-load-header-set-fill-zero! items 0)
+      (OptLoadHeaderSet.Dense items))))
 
 (define (opt-load-header-set-mark
   [set : OptLoadHeaderSet]
   [var : i64]
   [header? : bool]) : OptLoadHeaderSet
   (match set
-    [(OptLoadHeaderSet map)
+    [(OptLoadHeaderSet.Sparse map)
       (if header?
         (if (opt_i64_i64_map.contains? (& map) var)
           set
@@ -51210,33 +51226,70 @@
             [out : opt_i64_i64_map.Map map]
             (begin
               (opt_i64_i64_map.insert-ref! (&mut out) var 1)
-              (OptLoadHeaderSet out))))
+              (OptLoadHeaderSet.Sparse out))))
         (let
           [out : opt_i64_i64_map.Map map]
           (begin
             (opt_i64_i64_map.insert-ref! (&mut out) var 2)
-            (OptLoadHeaderSet out))))]))
+            (OptLoadHeaderSet.Sparse out))))]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        set
+        (begin
+          (if header?
+            (if (= (array-ref items var) 0)
+              (array-set! items var 1)
+              unit)
+            (array-set! items var 2))
+          set))]))
 
 (define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
   (match set
-    [(OptLoadHeaderSet map)
+    [(OptLoadHeaderSet.Sparse map)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (= value 1)]
-        [(opt_i64_i64_map.LookupMissing) false])]))
+        [(opt_i64_i64_map.LookupMissing) false])]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        false
+        (= (array-ref items var) 1))]))
+
+(define (opt-load-header-set-add-param
+  [param : CompilerIrParam]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (match param
+    [(CompilerIrParam.Param _ ty var)
+      (opt-load-header-set-mark set var (opt-licm-array-header-type? ty))]))
+
+(define (opt-load-header-set-add-param-seq
+  [params : CompilerIrParamSeq]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-param-seq-count params)]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            work
+            (opt-load-header-set-add-param
+              (compiler-ir-param-seq-ref params index)
+              work))
+          (set! index (+ index 1))))
+      work)))
 
 (define (opt-load-header-set-add-params
   [params : CompilerIrParamList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (match (compiler-ir-param-list-force-cons params)
+  (match params
     [(CompilerIrParamList.Nil) set]
     [(CompilerIrParamList.Array seq)
-      (opt-load-header-set-add-params (compiler-ir-param-seq-to-list seq) set)]
+      (opt-load-header-set-add-param-seq seq set)]
     [(CompilerIrParamList.Cons param rest)
-      (match param
-        [(CompilerIrParam.Param _ ty var)
-          (opt-load-header-set-add-params
-            (box-get rest)
-            (opt-load-header-set-mark set var (opt-licm-array-header-type? ty)))])]))
+      (opt-load-header-set-add-params
+        (box-get rest)
+        (opt-load-header-set-add-param param set))]))
 
 ;; Defs with a declared result type mark it; every OTHER defining instruction
 ;; poisons its dst (its handle-ness is unknown).
@@ -51278,6 +51331,22 @@
         set
         (compiler-ir-instr-seq-ref instrs index)))))
 
+(define (opt-load-header-set-add-block-seq
+  [blocks : CompilerIrBlockSeq]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block _ instrs)
+              (set! work (opt-load-header-set-add-instr-seq-from instrs 0 work))])
+          (set! index (+ index 1))))
+      work)))
+
 (define (opt-load-header-set-add-blocks
   [blocks : CompilerIrBlockList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
@@ -51290,7 +51359,7 @@
             (box-get rest)
             (opt-load-header-set-add-instr-seq-from instrs 0 set))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-load-header-set-add-blocks (compiler-ir-block-seq-to-list seq) set)]))
+      (opt-load-header-set-add-block-seq seq set)]))
 
 (define (opt-load-header-set-from-function
   [params : CompilerIrParamList]
@@ -51298,6 +51367,16 @@
   (opt-load-header-set-add-blocks
     blocks
     (opt-load-header-set-add-params params (opt-load-header-set-empty))))
+
+(define (opt-load-header-set-from-function-with-size
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptLoadHeaderSet
+  (opt-load-header-set-add-blocks
+    blocks
+    (opt-load-header-set-add-params
+      params
+      (opt-load-header-set-with-size frame))))
 
 (define opt-load-cse-table-cap-floor : i64
   128)

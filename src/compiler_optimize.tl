@@ -24208,7 +24208,11 @@
                 (set! copy-state next-copy)
                 (set! index (+ index 1)))])]))))
 
-(define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
+(define (optimize-block-hs-with-kinds
+  [hs : OptLoadHeaderSet]
+  [dead-kinds : OptLoadPtrKinds]
+  [load-kinds : OptLoadPtrKinds]
+  [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
@@ -24227,14 +24231,28 @@
         ;; self-compile).
         (begin
           (set! store-capacity (opt-fold-strength-cse-instr-seq-rewrite! work))
-          (set! work (opt-dead-store-instr-seq-known hs store-capacity work))
+          (set!
+            work
+            (opt-dead-store-instr-seq-known-with-kinds
+              hs
+              store-capacity
+              dead-kinds
+              work))
           (opt-load-copy-instr-seq-rewrite!
             hs
-            (opt-load-cse-empty-state-for-size
-              (compiler-ir-instr-seq-count work))
+            (opt-load-cse-empty-state-for-size-with-kinds
+              (compiler-ir-instr-seq-count work)
+              load-kinds)
             work)
           (opt-bounds-instr-seq-rewrite! work)
           (CompilerIrBlock.Block label work)))]))
+
+(define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
+  (optimize-block-hs-with-kinds
+    hs
+    (opt-load-kinds-empty)
+    (opt-load-kinds-empty)
+    block))
 
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (optimize-block-hs (opt-load-header-set-empty) block))
@@ -24256,6 +24274,37 @@
           (set! index (+ index 1))))
       (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
+(define (optimize-block-seq-hs-dense
+  [hs : OptLoadHeaderSet]
+  [frame : i64]
+  [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [work : OptLoadKindsDenseWork (opt-load-kinds-dense-work-with-size frame)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [generation : i64 (+ (* index 2) 1)]
+          (begin
+            (array-set!
+              slots
+              index
+              (optimize-block-hs-with-kinds
+                hs
+                (opt-load-kinds-dense-state
+                  work
+                  generation
+                  opt-load-cse-kinds-cap-floor)
+                (opt-load-kinds-dense-state
+                  work
+                  (+ generation 1)
+                  opt-load-cse-kinds-cap-floor)
+                (compiler-ir-block-seq-ref blocks index)))
+            (set! index (+ index 1)))))
+      (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
+
 (define (optimize-block-list-hs
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -24273,9 +24322,13 @@
   [frame : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (optimize-block-list-hs
-    (opt-load-header-set-from-function-with-size params blocks frame)
-    blocks))
+  (let
+    [hs : OptLoadHeaderSet
+      (opt-load-header-set-from-function-with-size params blocks frame)]
+    (match blocks
+      [(CompilerIrBlockList.Array seq)
+        (optimize-block-seq-hs-dense hs frame seq)]
+      [_ (optimize-block-list-hs hs blocks)])))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs (opt-load-header-set-empty) blocks))
@@ -51526,37 +51579,118 @@
       (OptLoadLocUnknown))))
 
 ;; Pointer-kind env: var -> encoded kind, plus a base-var refcount so the
-;; common no-references case of a base redefinition skips the sweep. Mutable
-;; hashmaps threaded linearly (the opt-alias-facts pattern): block entries in
-;; the cross-block pass clone before processing.
+;; common no-references case of a base redefinition skips the sweep. Cross-block
+;; GVN uses cloneable sparse maps. The block-local pipeline uses one frame-sized
+;; dense workspace per function; generation stamps reset it between blocks in
+;; O(1), while an active-var vector keeps the rare base-invalidation sweep
+;; proportional to live facts rather than frame size.
+(defstruct OptLoadKindsDenseWork
+  (kinds (Array i64))
+  (kind-stamps (Array i64))
+  (positions (Array i64))
+  (refs (Array i64))
+  (ref-stamps (Array i64))
+  (active (Array i64)))
+
 (defenum OptLoadPtrKinds
-  (OptLoadPtrKinds opt_i64_i64_map.Map opt_i64_i64_map.Map i64))
+  (Sparse opt_i64_i64_map.Map opt_i64_i64_map.Map i64)
+  (Dense OptLoadKindsDenseWork i64 i64 i64))
+
+(define (opt-load-kinds-fill-zero! [items : (Array i64)] [index : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index 0)
+      (opt-load-kinds-fill-zero! items (+ index 1)))))
+
+(define (opt-load-kinds-dense-work-with-size [count : i64]) : OptLoadKindsDenseWork
+  (let
+    [kind-stamps : (Array i64) (array.make-array i64 count)]
+    [ref-stamps : (Array i64) (array.make-array i64 count)]
+    (begin
+      (opt-load-kinds-fill-zero! kind-stamps 0)
+      (opt-load-kinds-fill-zero! ref-stamps 0)
+      (OptLoadKindsDenseWork
+        (array.make-array i64 count)
+        kind-stamps
+        (array.make-array i64 count)
+        (array.make-array i64 count)
+        ref-stamps
+        (array.make-array i64 count)))))
+
+(define (opt-load-kinds-dense-state
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [cap : i64]) : OptLoadPtrKinds
+  (OptLoadPtrKinds.Dense work generation 0 cap))
+
+(define (opt-load-kinds-set-cap [kinds : OptLoadPtrKinds] [cap : i64]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Sparse map refs _) (OptLoadPtrKinds.Sparse map refs cap)]
+    [(OptLoadPtrKinds.Dense work generation len _)
+      (OptLoadPtrKinds.Dense work generation len cap)]))
 
 (define (opt-load-kinds-empty-with-cap [cap : i64]) : OptLoadPtrKinds
   (begin
     (cfg compile-profile (compiler-opt-load-cse-profile-note-kinds-cap cap))
-    (OptLoadPtrKinds
+    (OptLoadPtrKinds.Sparse
       (opt_i64_i64_map.with-capacity 17)
       (opt_i64_i64_map.with-capacity 17)
       cap)))
 
 (define (opt-load-kinds-empty) : OptLoadPtrKinds
-  (OptLoadPtrKinds
+  (OptLoadPtrKinds.Sparse
     (opt_i64_i64_map.with-capacity 17)
     (opt_i64_i64_map.with-capacity 17)
     opt-load-cse-kinds-cap-floor))
 
 (define (opt-load-kinds-lookup [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadLocKind
   (match kinds
-    [(OptLoadPtrKinds map _ _)
+    [(OptLoadPtrKinds.Sparse map _ _)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (opt-load-loc-kind-decode value)]
-        [(opt_i64_i64_map.LookupMissing) (OptLoadLocUnknown)])]))
+        [(opt_i64_i64_map.LookupMissing) (OptLoadLocUnknown)])]
+    [(OptLoadPtrKinds.Dense work generation _ _)
+      (if (or
+        (< var 0)
+        (>= var (array-length (struct-get work kinds)))
+        (not (= (array-ref (struct-get work kind-stamps) var) generation)))
+        (OptLoadLocUnknown)
+        (opt-load-loc-kind-decode (array-ref (struct-get work kinds) var)))]))
 
 (define (opt-load-kinds-ref-count [refs : opt_i64_i64_map.Map] [base : i64]) : i64
   (match (opt_i64_i64_map.get (& refs) base)
     [(opt_i64_i64_map.LookupFound value) value]
     [(opt_i64_i64_map.LookupMissing) 0]))
+
+(define (opt-load-kinds-dense-ref-count
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [base : i64]) : i64
+  (if (or
+    (< base 0)
+    (>= base (array-length (struct-get work refs)))
+    (not (= (array-ref (struct-get work ref-stamps) base) generation)))
+    0
+    (array-ref (struct-get work refs) base)))
+
+(define (opt-load-kinds-dense-ref-add!
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [base : i64]
+  [delta : i64]) : unit
+  (if (or (< base 0) (>= base (array-length (struct-get work refs))))
+    unit
+    (let
+      [stamps : (Array i64) (struct-get work ref-stamps)]
+      [refs : (Array i64) (struct-get work refs)]
+      [old : i64
+        (if (= (array-ref stamps base) generation)
+          (array-ref refs base)
+          0)]
+      (begin
+        (array-set! stamps base generation)
+        (array-set! refs base (+ old delta))))))
 
 (define (opt-load-kinds-ref-add
   [refs : opt_i64_i64_map.Map]
@@ -51572,7 +51706,7 @@
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
 (define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (match kinds
-    [(OptLoadPtrKinds map refs cap)
+    [(OptLoadPtrKinds.Sparse map refs cap)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound old-value)
           (let
@@ -51587,8 +51721,31 @@
                 [(OptLoadLocField base _ _ _)
                   (opt-load-kinds-ref-add refs base (- 0 1))]
                 [_ refs])]
-            (OptLoadPtrKinds map2 refs2 cap))]
-        [(opt_i64_i64_map.LookupMissing) kinds])]))
+            (OptLoadPtrKinds.Sparse map2 refs2 cap))]
+        [(opt_i64_i64_map.LookupMissing) kinds])]
+    [(OptLoadPtrKinds.Dense work generation len cap)
+      (if (or
+        (< var 0)
+        (>= var (array-length (struct-get work kinds)))
+        (not (= (array-ref (struct-get work kind-stamps) var) generation)))
+        kinds
+        (let
+          [old-value : i64 (array-ref (struct-get work kinds) var)]
+          [pos : i64 (array-ref (struct-get work positions) var)]
+          [last-pos : i64 (- len 1)]
+          [last-var : i64 (array-ref (struct-get work active) last-pos)]
+          (begin
+            (match (opt-load-loc-kind-decode old-value)
+              [(OptLoadLocField base _ _ _)
+                (opt-load-kinds-dense-ref-add! work generation base (- 0 1))]
+              [_ unit])
+            (if (not (= pos last-pos))
+              (begin
+                (array-set! (struct-get work active) pos last-var)
+                (array-set! (struct-get work positions) last-var pos))
+              unit)
+            (array-set! (struct-get work kind-stamps) var 0)
+            (OptLoadPtrKinds.Dense work generation last-pos cap))))]))
 
 ;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
 ;; new pointers just stay unclassified once the cap is hit).
@@ -51602,7 +51759,7 @@
       (let
         [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
         (match removed
-          [(OptLoadPtrKinds map refs cap)
+          [(OptLoadPtrKinds.Sparse map refs cap)
             (let
               [current-len : i64 (opt_i64_i64_map.len (& map))]
               (begin
@@ -51629,7 +51786,7 @@
                         compile-profile
                         (compiler-opt-load-cse-profile-note-kinds-size
                           (+ current-len 1)))
-                      (OptLoadPtrKinds
+                      (OptLoadPtrKinds.Sparse
                         (let
                           [out : opt_i64_i64_map.Map map]
                           (begin
@@ -51639,16 +51796,68 @@
                               (opt-load-loc-kind-encode kind))
                             out))
                         refs2
-                        cap))))))]))]))
+                        cap))))))]
+          [(OptLoadPtrKinds.Dense work generation len cap)
+            (if (or
+              (< var 0)
+              (>= var (array-length (struct-get work kinds)))
+              (>= len cap)
+              (>= len (array-length (struct-get work active))))
+              (begin
+                (if (or
+                  (< var 0)
+                  (>= var (array-length (struct-get work kinds))))
+                  unit
+                  (cfg
+                    compile-profile
+                    (compiler-opt-load-cse-profile-note-kinds-cap-hit)))
+                removed)
+              (begin
+                (match kind
+                  [(OptLoadLocField base _ _ _)
+                    (opt-load-kinds-dense-ref-add! work generation base 1)]
+                  [_ unit])
+                (array-set! (struct-get work active) len var)
+                (array-set! (struct-get work positions) var len)
+                (array-set!
+                  (struct-get work kinds)
+                  var
+                  (opt-load-loc-kind-encode kind))
+                (array-set! (struct-get work kind-stamps) var generation)
+                (cfg
+                  compile-profile
+                  (compiler-opt-load-cse-profile-note-kinds-size (+ len 1)))
+                (OptLoadPtrKinds.Dense work generation (+ len 1) cap)))]))]))
 
 ;; Redefinition of `var`: drop its own binding, and (only when some Field kind
 ;; references it as a base -- refcount-gated) sweep out every binding whose
 ;; base is `var`, because base-var identity must mean base-VALUE identity.
+(define (opt-load-kinds-dense-drop-base-from
+  [kinds : OptLoadPtrKinds]
+  [base : i64]
+  [index : i64]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Dense work _ len _)
+      (if (>= index len)
+        kinds
+        (let
+          [bound-var : i64 (array-ref (struct-get work active) index)]
+          (match (opt-load-kinds-lookup kinds bound-var)
+            [(OptLoadLocField found-base _ _ _)
+              (if (= found-base base)
+                (opt-load-kinds-dense-drop-base-from
+                  (opt-load-kinds-remove kinds bound-var)
+                  base
+                  index)
+                (opt-load-kinds-dense-drop-base-from kinds base (+ index 1)))]
+            [_ (opt-load-kinds-dense-drop-base-from kinds base (+ index 1))])))]
+    [_ kinds]))
+
 (define (opt-load-kinds-invalidate-def [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (let
     [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
     (match removed
-      [(OptLoadPtrKinds map refs cap)
+      [(OptLoadPtrKinds.Sparse map refs cap)
         (if (<= (opt-load-kinds-ref-count refs var) 0)
           removed
           (let
@@ -51681,11 +51890,31 @@
                               [_ unit]))))]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
-              (OptLoadPtrKinds out out-refs cap))))])))
+              (OptLoadPtrKinds.Sparse out out-refs cap))))]
+      [(OptLoadPtrKinds.Dense work generation _ _)
+        (if (<= (opt-load-kinds-dense-ref-count work generation var) 0)
+          removed
+          (opt-load-kinds-dense-drop-base-from removed var 0))])))
+
+(define (opt-load-kinds-dense-clone-from
+  [kinds : OptLoadPtrKinds]
+  [index : i64]
+  [out : OptLoadPtrKinds]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Dense work _ len _)
+      (if (>= index len)
+        out
+        (let
+          [var : i64 (array-ref (struct-get work active) index)]
+          (opt-load-kinds-dense-clone-from
+            kinds
+            (+ index 1)
+            (opt-load-kinds-bind out var (opt-load-kinds-lookup kinds var)))))]
+    [_ out]))
 
 (define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
-    [(OptLoadPtrKinds map refs cap)
+    [(OptLoadPtrKinds.Sparse map refs cap)
       (let
         [out : opt_i64_i64_map.Map
           (opt_i64_i64_map.with-capacity
@@ -51706,14 +51935,19 @@
                       [_ unit]))]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
-          (OptLoadPtrKinds out out-refs cap)))]))
+          (OptLoadPtrKinds.Sparse out out-refs cap)))]
+    [(OptLoadPtrKinds.Dense _ _ _ cap)
+      (opt-load-kinds-dense-clone-from
+        kinds
+        0
+        (opt-load-kinds-empty-with-cap cap))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
 (define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match a
-    [(OptLoadPtrKinds amap _ acap)
+    [(OptLoadPtrKinds.Sparse amap _ acap)
       (match b
-        [(OptLoadPtrKinds bmap _ _)
+        [(OptLoadPtrKinds.Sparse bmap _ _)
           (let
             [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap acap)]
             [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
@@ -51736,7 +51970,11 @@
                         [(opt_i64_i64_map.LookupMissing) unit])]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
-              out))])]))
+              out))]
+        [(OptLoadPtrKinds.Dense _ _ _ _)
+          (opt-load-kinds-intersect a (opt-load-kinds-clone b))])]
+    [(OptLoadPtrKinds.Dense _ _ _ _)
+      (opt-load-kinds-intersect (opt-load-kinds-clone a) b)]))
 
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
@@ -52408,9 +52646,10 @@
           (set! index (+ index 1))))
       stores)))
 
-(define (opt-dead-store-instr-seq-known
+(define (opt-dead-store-instr-seq-known-with-kinds
   [hs : OptLoadHeaderSet]
   [store-capacity : i64]
+  [initial-kinds : OptLoadPtrKinds]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (if (>= store-capacity 2)
     (let
@@ -52418,7 +52657,7 @@
       [dead : (Array i64) (make-array i64 count)]
       [pending : OptDeadStoreSet
         (opt-dead-store-set-with-capacity store-capacity)]
-      [kinds : OptLoadPtrKinds (opt-load-kinds-empty)]
+      [kinds : OptLoadPtrKinds initial-kinds]
       [index : i64 0]
       (begin
         (while (< index count)
@@ -52432,6 +52671,16 @@
               (set! index (+ index 1)))))
         (opt-dead-store-compact! instrs dead count)
         instrs))
+    instrs))
+
+(define (opt-dead-store-instr-seq-known
+  [hs : OptLoadHeaderSet]
+  [store-capacity : i64]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (opt-dead-store-instr-seq-known-with-kinds
+    hs
+    store-capacity
+    (opt-load-kinds-empty)
     instrs))
 
 (define (opt-dead-store-instr-seq
@@ -52791,6 +53040,23 @@
   (opt-load-cse-empty-state-with-caps
     (opt-load-cse-table-cap-for-size instr-count)
     (opt-load-cse-kinds-cap-for-size instr-count)))
+
+(define (opt-load-cse-empty-state-for-size-with-kinds
+  [instr-count : i64]
+  [kinds : OptLoadPtrKinds]) : OptLoadCseState
+  (let
+    [table-cap : i64 (opt-load-cse-table-cap-for-size instr-count)]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-opt-load-cse-profile-note-table-cap table-cap))
+      (OptLoadCseState.State
+        (opt-alias-empty)
+        (OptLoadTable.Nil)
+        (opt-load-kinds-set-cap
+          kinds
+          (opt-load-cse-kinds-cap-for-size instr-count))
+        table-cap))))
 
 (define (opt-load-cse-empty-state) : OptLoadCseState
   (opt-load-cse-empty-state-with-caps

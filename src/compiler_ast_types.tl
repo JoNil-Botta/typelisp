@@ -670,11 +670,11 @@
 (define (ast-node-get-active [id : i64]) : AstExpr
   (array-ref ast-node-pool-slots id))
 
-;: Read the node at `id` from the selected AST pool.
+;: Read the node at `id` from the installed AST pool. Compatibility contexts
+;; install their backing state at the context boundary, keeping this hottest
+;; operation branch-free.
 (define (ast-node-get [id : i64]) : AstExpr
-  (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-expr-get ast-node-pool-compat-context id)
-    (ast-node-get-active id)))
+  (array-ref ast-node-pool-slots id))
 
 ;: Overwrite the node at `id` in the selected AST pool (used when a node is
 ;; rewritten in place).
@@ -1628,11 +1628,9 @@
 (define (ty-node-get-active [id : i64]) : AstType
   (array-ref ty-node-pool-slots id))
 
-;: Read the type node at `id` from the selected type pool.
+;: Read the type node at `id` from the installed type pool.
 (define (ty-node-get [id : i64]) : AstType
-  (if ast-node-pool-compat-context-explicit?
-    (ast-node-pool-context-type-get ast-node-pool-compat-context id)
-    (ty-node-get-active id)))
+  (array-ref ty-node-pool-slots id))
 
 ;: Overwrite the type node at `id` in place.
 (define (ty-node-set! [id : i64] [node : AstType]) : unit
@@ -1715,6 +1713,10 @@
   false)
 (define ast-node-pool-compat-context : AstNodePoolContext
   (ast-node-pool-context-capture-active-raw))
+(define ast-node-pool-compat-saved-expr : AstExprNodePoolState
+  (ast-node-pool-state-capture))
+(define ast-node-pool-compat-saved-type : AstTypeNodePoolState
+  (ty-node-pool-state-capture))
 
 (define (ast-node-pool-context-capture-active) : AstNodePoolContext
   (if ast-node-pool-compat-context-explicit?
@@ -1765,17 +1767,33 @@
 
 (define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
   (begin
+    (set! ast-node-pool-compat-saved-expr (ast-node-pool-state-capture))
+    (set! ast-node-pool-compat-saved-type (ty-node-pool-state-capture))
     (set! ast-node-pool-compat-context pools)
-    (set! ast-node-pool-compat-context-explicit? true)))
+    (set! ast-node-pool-compat-context-explicit? true)
+    (ast-node-pools-state-install!
+      (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
+      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0))))
 
 (define (ast-node-pool-compat-context-clear!) : unit
-  (set! ast-node-pool-compat-context-explicit? false))
+  (begin
+    (ast-node-pools-state-install!
+      ast-node-pool-compat-saved-expr
+      ast-node-pool-compat-saved-type)
+    (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool
   ast-node-pool-compat-context-explicit?)
 
 (define (ast-node-pool-compat-context-current) : AstNodePoolContext
   ast-node-pool-compat-context)
+
+(define (ast-node-pool-compat-context-sync-installed!) : unit
+  (if ast-node-pool-compat-context-explicit?
+    (ast-node-pools-state-install!
+      (array-ref (struct-get ast-node-pool-compat-context expr-pool) 0)
+      (array-ref (struct-get ast-node-pool-compat-context type-pool) 0))
+    unit))
 
 (define (ast-node-pool-context-snapshot [pools : AstNodePoolContext]) : AstNodePoolContext
   (ast-node-pool-context-new
@@ -1886,7 +1904,8 @@
       0
       (ast-type-node-pool-state-reset-to
         (array-ref (struct-get pools type-pool) 0)
-        type-mark))))
+        type-mark))
+    (ast-node-pool-compat-context-sync-installed!)))
 
 ;; Clear the type-node dedup index on a captured pool context without
 ;; truncating any live nodes. Pushes after this rebuild the index from the
@@ -1894,11 +1913,13 @@
 ;; entry's pool snapshot can never resolve to an id whose slot now holds an
 ;; unrelated node.
 (define (ast-node-pool-context-type-dedup-clear! [pools : AstNodePoolContext]) : unit
-  (array-set!
-    (struct-get pools type-pool)
-    0
-    (ast-type-node-pool-state-dedup-clear
-      (array-ref (struct-get pools type-pool) 0))))
+  (begin
+    (array-set!
+      (struct-get pools type-pool)
+      0
+      (ast-type-node-pool-state-dedup-clear
+        (array-ref (struct-get pools type-pool) 0)))
+    (ast-node-pool-compat-context-sync-installed!)))
 
 (define (ast-node-pool-context-expr-push
   [pools : AstNodePoolContext]
@@ -1912,6 +1933,7 @@
         (ast-node-pool-context-sync-base-arena!
           pools
           (struct-get next base-arena))
+        (ast-node-pool-compat-context-sync-installed!)
         id)]))
 
 (define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
@@ -1921,13 +1943,15 @@
   [pools : AstNodePoolContext]
   [id : i64]
   [node : AstExpr]) : unit
-  (array-set!
-    (struct-get pools expr-pool)
-    0
-    (ast-expr-node-pool-state-set!
-      (array-ref (struct-get pools expr-pool) 0)
-      id
-      node)))
+  (begin
+    (array-set!
+      (struct-get pools expr-pool)
+      0
+      (ast-expr-node-pool-state-set!
+        (array-ref (struct-get pools expr-pool) 0)
+        id
+        node))
+    (ast-node-pool-compat-context-sync-installed!)))
 
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]
@@ -1941,6 +1965,7 @@
         (ast-node-pool-context-sync-base-arena!
           pools
           (struct-get next base-arena))
+        (ast-node-pool-compat-context-sync-installed!)
         id)]))
 
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
@@ -1975,7 +2000,8 @@
       (array-set! (struct-get pools type-pool) 0 next)
       (ast-node-pool-context-sync-base-arena!
         pools
-        (struct-get next base-arena)))))
+        (struct-get next base-arena))
+      (ast-node-pool-compat-context-sync-installed!))))
 
 (defstruct AstExprList
   (slots (Array i64))

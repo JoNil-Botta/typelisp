@@ -72,6 +72,10 @@ mutable_reference_scalar_binding_reject|check-fail|tests/safety/mutable_referenc
 auto_borrow_temporary_reject|check-fail|tests/safety/auto_borrow_temporary_reject.tl|-|borrow requires a local, parameter, or aggregate place
 comptime_mut_borrow_rvalue_reject|check-fail|tests/safety/comptime_mut_borrow_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
 comptime_mut_call_rvalue_reject|check-fail|tests/safety/comptime_mut_call_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+queue_bang_rvalue_reject|check-fail|tests/safety/queue_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+set_bang_rvalue_reject|check-fail|tests/safety/set_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+hashmap_bang_rvalue_reject|check-fail|tests/safety/hashmap_bang_rvalue_reject.tl|-|borrow requires a local, parameter, or aggregate place
+hashmap_bang_shared_borrow_reject|check-fail|tests/safety/hashmap_bang_shared_borrow_reject.tl|-|cannot mutably borrow borrowed place `m`
 auto_borrow_shared_lifetime_reject|check-fail|tests/safety/auto_borrow_shared_lifetime_reject.tl|-|typecheck: constructor lifetime mismatch
 auto_borrow_mutable_param_reject|check-fail|tests/safety/auto_borrow_mutable_param_reject.tl|-|typecheck: argument type mismatch
 auto_borrow_assignment_before_last_use_reject|check-fail|tests/safety/auto_borrow_assignment_before_last_use_reject.tl|-|cannot assign to borrowed place `n`

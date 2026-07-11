@@ -2,14 +2,15 @@
 ;#
 ;# `(deque T)` emits a growable, owned double-ended queue module for element
 ;# type `T`, backed by a circular `(Array T)`. Queue-style callers use
-;# `push-back` with `pop-front`; double-ended callers may also use `push-front`
-;# and `pop-back`.
+;# `push-back!` with `pop-front!`; double-ended callers may also use
+;# `push-front!` and `pop-back!`.
 ;#
-;# Mutating operations take `&mut` and update the deque in place. Growth
-;# allocates a larger backing array, copies the live logical range starting at
-;# index 0, and resets `head` to 0. Empty pops return `Pop.Empty`; successful
-;# pops return `Pop.Ok` with only the removed value. Peeks and indexed reads use
-;# caller-supplied fallbacks.
+;# Public bang mutators take a caller-owned storage place and expand to an
+;# explicit `&mut` call to their `*-ref!` helper. Growth allocates a larger
+;# backing array, copies the live logical range starting at index 0, and resets
+;# `head` to 0. Empty pops return `Pop.Empty`; successful pops return `Pop.Ok`
+;# with only the removed value. Peeks and indexed reads use caller-supplied
+;# fallbacks.
 ;#
 ;# Usage:
 ;#
@@ -21,8 +22,8 @@
 ;#   (let
 ;#     [q : deque_i64.Deque (deque_i64.new)]
 ;#     (begin
-;#       (deque_i64.push-back (&mut q) 10)
-;#       (deque_i64.push-back (&mut q) 32)
+;#       (deque_i64.push-back! q 10)
+;#       (deque_i64.push-back! q 32)
 ;#       (deque_i64.peek-front (& q) 0))))
 ;# ```
 (import stdlib.comptime)
@@ -30,13 +31,25 @@
 ;: Emit a generated growable deque module for element type `T`.
 (defmacro (deque [T : type]) : Module
   (let
-    [module-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append "stdlib.queue.deque.generated." (type-key T)))]
+    [module-name-text : String
+      (comptime.string-append "stdlib.queue.deque.generated." (type-key T))]
+    [module-name : comptime.Expr (comptime.expr-var module-name-text)]
     [deque-name : comptime.Expr (comptime.expr-var "Deque")]
     [pop-name : comptime.Expr (comptime.expr-var "Pop")]
     [pop-empty-name : comptime.Expr (comptime.expr-var "Pop.Empty")]
     [pop-ok-name : comptime.Expr (comptime.expr-var "Pop.Ok")]
+    [push-back-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".push-back-ref!"))]
+    [push-front-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".push-front-ref!"))]
+    [pop-front-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".pop-front-ref!"))]
+    [pop-back-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".pop-back-ref!"))]
     `(begin
       (module ,module-name)
       (import stdlib.array)
@@ -124,7 +137,7 @@
               0)
             (set! (struct-get q slots) bigger)
             (set! (struct-get q head) 0))))
-      (define (push-back [q : (&mut q ,deque-name)] [value : ,T]) : unit
+      (define (push-back-ref! [q : (&mut q ,deque-name)] [value : ,T]) : unit
         (begin
           (if (< (struct-get q len) (array-length (struct-get q slots)))
             unit
@@ -139,7 +152,7 @@
             (begin
               (array-set! (struct-get q slots) tail value)
               (set! (struct-get q len) (+ old-len 1))))))
-      (define (push-front [q : (&mut q ,deque-name)] [value : ,T]) : unit
+      (define (push-front-ref! [q : (&mut q ,deque-name)] [value : ,T]) : unit
         (begin
           (if (< (struct-get q len) (array-length (struct-get q slots)))
             unit
@@ -153,7 +166,7 @@
               (array-set! (struct-get q slots) new-head value)
               (set! (struct-get q head) new-head)
               (set! (struct-get q len) (+ (struct-get q len) 1))))))
-      (define (pop-front [q : (&mut q ,deque-name)]) : ,pop-name
+      (define (pop-front-ref! [q : (&mut q ,deque-name)]) : ,pop-name
         (if (<= (struct-get q len) 0)
           (,pop-empty-name)
           (let
@@ -170,7 +183,7 @@
               (set! (struct-get q head) new-head)
               (set! (struct-get q len) new-len)
               (,pop-ok-name value)))))
-      (define (pop-back [q : (&mut q ,deque-name)]) : ,pop-name
+      (define (pop-back-ref! [q : (&mut q ,deque-name)]) : ,pop-name
         (if (<= (struct-get q len) 0)
           (,pop-empty-name)
           (let
@@ -188,7 +201,21 @@
             (begin
               (set! (struct-get q head) new-head)
               (set! (struct-get q len) new-len)
-              (,pop-ok-name value))))))))
+              (,pop-ok-name value)))))
+      ;; Public mutators take a caller place and reuse the ordinary explicit
+      ;; mutable-borrow helper above. `*-ref!` remains for implementation code
+      ;; that already owns an explicit mutable reference. Keep these generated
+      ;; macro bodies on direct CTFE helper aliases: the module already imports
+      ;; its runtime dependency, so a redundant comptime import would force an
+      ;; extra generated-import materialization.
+      (defmacro (push-back! [place : Expr] [value : Expr]) : unit
+        (expr-mut-call1 (expr-var ,push-back-helper-name) place value))
+      (defmacro (push-front! [place : Expr] [value : Expr]) : unit
+        (expr-mut-call1 (expr-var ,push-front-helper-name) place value))
+      (defmacro (pop-front! [place : Expr]) : ,pop-name
+        (expr-mut-call0 (expr-var ,pop-front-helper-name) place))
+      (defmacro (pop-back! [place : Expr]) : ,pop-name
+        (expr-mut-call0 (expr-var ,pop-back-helper-name) place)))))
 
 (cfg test (import "test.tl"))
 (cfg test (import (deque i64) as deque_i64))
@@ -205,7 +232,7 @@
   (define (deque-test-push-through-duplicate-import
     [q : (&mut q deque_i64_again.Deque)]
     [value : i64]) : unit
-    (deque_i64_again.push-back q value)))
+    (deque_i64_again.push-back-ref! q value)))
 
 (cfg
   test
@@ -236,9 +263,9 @@
       (let
         [q : deque_i64.Deque (deque_i64.with-capacity 3)]
         (begin
-          (deque_i64.push-back (&mut q) 10)
-          (deque_i64.push-back (&mut q) 20)
-          (deque_i64.push-back (&mut q) 30)
+          (deque_i64.push-back! q 10)
+          (deque_i64.push-back! q 20)
+          (deque_i64.push-back! q 30)
           (assert-i64-eq (deque_i64.len (& q)) 3 "three pushes len")
           (assert-i64-eq
             (deque_i64.peek-front (& q) -1)
@@ -248,7 +275,7 @@
           (assert-i64-eq (deque_i64.get (& q) 1 -1) 20 "middle read")
           (assert-i64-eq (deque_i64.get (& q) -1 -1) -1 "negative fallback")
           (assert-i64-eq (deque_i64.get (& q) 3 -1) -1 "at-len fallback")
-          (match (deque_i64.pop-front (&mut q))
+          (match (deque_i64.pop-front! q)
             [(deque_i64.Pop.Ok value)
               (begin
                 (assert-i64-eq value 10 "pop-front value")
@@ -257,7 +284,7 @@
                   20
                   "front advances"))]
             [deque_i64.Pop.Empty (assert-true false "pop-front should succeed")])
-          (match (deque_i64.pop-front (&mut q))
+          (match (deque_i64.pop-front! q)
             [(deque_i64.Pop.Ok value)
               (assert-i64-eq value 20 "second pop-front value")]
             [deque_i64.Pop.Empty
@@ -265,15 +292,15 @@
       (let
         [wrapped : deque_i64.Deque (deque_i64.with-capacity 3)]
         (begin
-          (deque_i64.push-back (&mut wrapped) 1)
-          (deque_i64.push-back (&mut wrapped) 2)
-          (deque_i64.push-back (&mut wrapped) 3)
-          (match (deque_i64.pop-front (&mut wrapped))
+          (deque_i64.push-back! wrapped 1)
+          (deque_i64.push-back! wrapped 2)
+          (deque_i64.push-back! wrapped 3)
+          (match (deque_i64.pop-front! wrapped)
             [(deque_i64.Pop.Ok value) (assert-i64-eq value 1 "wrap seed pop")]
             [deque_i64.Pop.Empty
               (assert-true false "wrap seed pop should succeed")])
-          (deque_i64.push-back (&mut wrapped) 4)
-          (deque_i64.push-back (&mut wrapped) 5)
+          (deque_i64.push-back! wrapped 4)
+          (deque_i64.push-back! wrapped 5)
           (assert-i64-eq
             (deque_i64.capacity (& wrapped))
             6
@@ -291,21 +318,21 @@
       (let
         [dq : deque_i64.Deque (deque_i64.with-capacity 2)]
         (begin
-          (deque_i64.push-back (&mut dq) 20)
-          (deque_i64.push-front (&mut dq) 10)
+          (deque_i64.push-back! dq 20)
+          (deque_i64.push-front! dq 10)
           (assert-i64-eq (deque_i64.get (& dq) 0 -1) 10 "push-front get 0")
           (assert-i64-eq (deque_i64.get (& dq) 1 -1) 20 "push-front get 1")
-          (match (deque_i64.pop-back (&mut dq))
+          (match (deque_i64.pop-back! dq)
             [(deque_i64.Pop.Ok back-value)
               (assert-i64-eq back-value 20 "pop-back value")]
             [deque_i64.Pop.Empty (assert-true false "pop-back should succeed")])
-          (match (deque_i64.pop-front (&mut dq))
+          (match (deque_i64.pop-front! dq)
             [(deque_i64.Pop.Ok front-value)
               (assert-i64-eq front-value 10 "final pop-front value")]
             [deque_i64.Pop.Empty
               (assert-true false "final pop-front should succeed")])
           (assert-true (deque_i64.is-empty? (& dq)) "drained deque empty")
-          (deque_i64.push-back (&mut dq) 99)
+          (deque_i64.push-back! dq 99)
           (assert-i64-eq (deque_i64.len (& dq)) 1 "reuse after drain len")
           (assert-i64-eq
             (deque_i64.peek-front (& dq) -1)
@@ -314,10 +341,10 @@
       (let
         [mut : deque_i64.Deque (deque_i64.with-capacity 1)]
         (begin
-          (deque_i64.push-back (&mut mut) 1)
+          (deque_i64.push-back! mut 1)
           (assert-i64-eq (deque_i64.len (& mut)) 1 "mutable push len")
           (assert-i64-eq (deque_i64.capacity (& mut)) 1 "mutable push capacity")
-          (deque_i64.push-front (&mut mut) 0)
+          (deque_i64.push-front! mut 0)
           (assert-i64-eq (deque_i64.len (& mut)) 2 "mutable growth len")
           (assert-i64-eq
             (deque_i64.capacity (& mut))
@@ -325,7 +352,7 @@
             "mutable growth capacity")
           (assert-i64-eq (deque_i64.get (& mut) 0 -1) 0 "mutable get front")
           (assert-i64-eq (deque_i64.get (& mut) 1 -1) 1 "mutable get back")
-          (match (deque_i64.pop-back (&mut mut))
+          (match (deque_i64.pop-back! mut)
             [(deque_i64.Pop.Ok back-value)
               (assert-i64-eq back-value 1 "mutable pop-back value")]
             [deque_i64.Pop.Empty
@@ -335,8 +362,8 @@
             (deque_i64.peek-front (& mut) -1)
             0
             "mutable pop-back leaves front")
-          (deque_i64.push-back (&mut mut) 2)
-          (match (deque_i64.pop-front (&mut mut))
+          (deque_i64.push-back! mut 2)
+          (match (deque_i64.pop-front! mut)
             [(deque_i64.Pop.Ok front-value)
               (assert-i64-eq front-value 0 "mutable pop-front value")]
             [deque_i64.Pop.Empty
@@ -359,11 +386,11 @@
         [front-empty : deque_i64.Deque (deque_i64.new)]
         [back-empty : deque_i64.Deque (deque_i64.new)]
         (begin
-          (match (deque_i64.pop-front (&mut front-empty))
+          (match (deque_i64.pop-front! front-empty)
             [deque_i64.Pop.Empty unit]
             [(deque_i64.Pop.Ok _)
               (assert-true false "empty pop-front should be empty")])
-          (match (deque_i64.pop-back (&mut back-empty))
+          (match (deque_i64.pop-back! back-empty)
             [deque_i64.Pop.Empty unit]
             [(deque_i64.Pop.Ok _)
               (assert-true false "empty pop-back should be empty")]))))))

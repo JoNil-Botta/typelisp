@@ -1513,7 +1513,7 @@
   (let
     [out : opt_i64_i64_map.Map set]
     (begin
-      (opt_i64_i64_map.insert (&mut out) var 1)
+      (opt_i64_i64_map.insert-ref! (&mut out) var 1)
       out)))
 
 (define (opt-collect-value-uses
@@ -6739,7 +6739,7 @@
           (if (opt_string_i64_map.contains? (& seen) label)
             false
             (begin
-              (opt_string_i64_map.insert (&mut seen) label 1)
+              (opt_string_i64_map.insert-ref! (&mut seen) label 1)
               (opt-cfg-block-labels-unique-map? (box-get rest) seen)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-block-labels-unique-map?
@@ -6760,7 +6760,7 @@
       (match block
         [(CompilerIrBlock.Block label _)
           (begin
-            (opt_string_i64_map.insert (&mut seen) label 1)
+            (opt_string_i64_map.insert-ref! (&mut seen) label 1)
             (opt-cfg-block-label-map (box-get rest) seen))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-block-label-map (compiler-ir-block-seq-to-list seq) seen)]))
@@ -7004,7 +7004,7 @@
         [(CompilerIrBlock.Block label _)
           (begin
             (array-set! labels index label)
-            (opt_string_i64_map.insert (&mut ids) label index)
+            (opt_string_i64_map.insert-ref! (&mut ids) label index)
             (opt-cfg-index-fill-labels! (box-get rest) ids labels (+ index 1)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-index-fill-labels!
@@ -9229,7 +9229,7 @@
     [next-count : i64 (+ 1 (opt-ssa-count counts var))]
     [out : opt_i64_i64_map.Map counts]
     (begin
-      (opt_i64_i64_map.insert (&mut out) var next-count)
+      (opt_i64_i64_map.insert-ref! (&mut out) var next-count)
       out)))
 
 (define (opt-ssa-scalar-type? [ty : AstType]) : bool
@@ -16470,7 +16470,7 @@
             (let
               [out : opt_i64_i64_map.Map env]
               (begin
-                (opt_i64_i64_map.insert (&mut out) dst offset)
+                (opt_i64_i64_map.insert-ref! (&mut out) dst offset)
                 out))]
           [(option_i64.None) env])
         env)]
@@ -19103,7 +19103,7 @@
     [next-count : i64 (+ 1 (opt-gvn-count sources var))]
     [out : opt_i64_i64_map.Map sources]
     (begin
-      (opt_i64_i64_map.insert (&mut out) var next-count)
+      (opt_i64_i64_map.insert-ref! (&mut out) var next-count)
       out)))
 
 ;; A var is reusable across dominance only when it has exactly one value source.
@@ -19788,7 +19788,7 @@
             (let
               [out : opt_i64_i64_map.Map copies]
               (begin
-                (opt_i64_i64_map.insert (&mut out) dst s)
+                (opt_i64_i64_map.insert-ref! (&mut out) dst s)
                 out))
             copies)]
         [_ copies])]
@@ -19802,7 +19802,7 @@
             (let
               [out : opt_i64_i64_map.Map copies]
               (begin
-                (opt_i64_i64_map.insert (&mut out) dst s)
+                (opt_i64_i64_map.insert-ref! (&mut out) dst s)
                 out))
             copies)]
         [_ copies])]
@@ -27727,7 +27727,7 @@
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
             (array-set! values index func)
-            (opt_string_i64_map.insert (&mut ids) name index)
+            (opt_string_i64_map.insert-ref! (&mut ids) name index)
             (opt-function-index-fill (box-get rest) ids values (+ index 1)))])]
     [(CompilerIrFunctionList.Array seq)
       (opt-function-index-fill
@@ -27908,9 +27908,9 @@
   (begin
     (match (opt_string_i64_map.get (& map) name)
       [(opt_string_i64_map.LookupFound count)
-        (opt_string_i64_map.insert (&mut map) name (+ count 1))]
+        (opt_string_i64_map.insert-ref! (&mut map) name (+ count 1))]
       [(opt_string_i64_map.LookupMissing)
-        (opt_string_i64_map.insert (&mut map) name 1)])
+        (opt_string_i64_map.insert-ref! (&mut map) name 1)])
     map))
 
 (define (opt-inline-census-add-ref
@@ -27931,7 +27931,7 @@
     (let
       [addrtaken : opt_string_i64_map.Map (struct-get census addrtaken)]
       (begin
-        (opt_string_i64_map.insert (&mut addrtaken) name 1)
+        (opt_string_i64_map.insert-ref! (&mut addrtaken) name 1)
         (OptInlineCensus (struct-get census refcount) addrtaken)))
     census))
 
@@ -31620,7 +31620,7 @@
         (if (opt_string_i64_map.contains? (& seen) ok-label)
           (OptInlineBoundsLabelScan.Duplicate)
           (begin
-            (opt_string_i64_map.insert (&mut seen) ok-label 1)
+            (opt_string_i64_map.insert-ref! (&mut seen) ok-label 1)
             (opt-inline-bounds-labels-unique-instrs-from
               instrs
               (+ index 1)
@@ -31973,7 +31973,7 @@
         (let
           [next-reachable : opt_i64_i64_map.Map reachable]
           (begin
-            (opt_i64_i64_map.insert (&mut next-reachable) slot 1)
+            (opt_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
             (OptReachState.State
               next-reachable
               (OptReachWorklist.Cons slot (box worklist))
@@ -31985,7 +31985,7 @@
       (if (opt_string_i64_map.contains? (& globals) name)
         state
         (begin
-          (opt_string_i64_map.insert (&mut globals) name 1)
+          (opt_string_i64_map.insert-ref! (&mut globals) name 1)
           (OptReachState.State reachable worklist globals)))]))
 
 (define (opt-reach-add-function-leaf-from
@@ -32785,7 +32785,7 @@
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
             (if (opt-loop-bce-function-returns-argc? func)
-              (opt_string_i64_map.insert (&mut map) name 1)
+              (opt_string_i64_map.insert-ref! (&mut map) name 1)
               unit)
             (opt-loop-bce-argc-return-map (box-get rest) map))])]
     [(CompilerIrFunctionList.Array seq)
@@ -32984,7 +32984,7 @@
                 (OptLoopBceCleanPass.Pass tail-clean tail-added)
                 (if (opt-loop-bce-function-length-clean? func tail-clean)
                   (begin
-                    (opt_string_i64_map.insert (&mut tail-clean) name 1)
+                    (opt_string_i64_map.insert-ref! (&mut tail-clean) name 1)
                     (OptLoopBceCleanPass.Pass tail-clean true))
                   (OptLoopBceCleanPass.Pass tail-clean tail-added)))])])]
     [(CompilerIrFunctionList.Array seq)
@@ -33127,7 +33127,7 @@
       (match func
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
-            (opt_string_i64_map.insert (&mut map) name 1)
+            (opt_string_i64_map.insert-ref! (&mut map) name 1)
             (opt-loop-bce-direct-call-clean-all-functions (box-get rest) map))])]
     [(CompilerIrFunctionList.Array seq)
       (opt-loop-bce-direct-call-clean-all-functions
@@ -33152,7 +33152,7 @@
                 (opt-loop-bce-function-direct-call-hoist-target? func current))]
             [_record : unit
               (if keep
-                (opt_string_i64_map.insert (&mut out) name 1)
+                (opt_string_i64_map.insert-ref! (&mut out) name 1)
                 unit)]
             (opt-loop-bce-direct-call-clean-filter
               (box-get rest)
@@ -33222,7 +33222,7 @@
   (match value
     [(CompilerIrValue.GlobalAddr name)
       (begin
-        (opt_string_i64_map.insert (&mut disq) name 1)
+        (opt_string_i64_map.insert-ref! (&mut disq) name 1)
         disq)]
     [_ disq]))
 
@@ -33434,7 +33434,7 @@
       (opt-const-globals-disq-args disq args)]
     [(CompilerIrInstr.Store name value _)
       (begin
-        (opt_string_i64_map.insert (&mut disq) name 1)
+        (opt_string_i64_map.insert-ref! (&mut disq) name 1)
         (opt-const-globals-disq-value disq value))]
     [(CompilerIrInstr.Jump _) disq]
     [(CompilerIrInstr.Branch cond _ _) (opt-const-globals-disq-value disq cond)]
@@ -33534,7 +33534,7 @@
                   (opt_string_i64_map.contains? (& disq) name))
                   map
                   (begin
-                    (opt_string_i64_map.insert (&mut map) name n)
+                    (opt_string_i64_map.insert-ref! (&mut map) name n)
                     map))]
               [_ map])]))]
     [(CompilerIrGlobalList.Array seq)
@@ -33561,7 +33561,7 @@
                 (opt_string_i64_map.contains? (& disq) name))
                 map
                 (begin
-                  (opt_string_i64_map.insert (&mut map) name n)
+                  (opt_string_i64_map.insert-ref! (&mut map) name n)
                   map))]
             [_ map])]))))
 
@@ -38465,7 +38465,7 @@
         (let
           [map : opt_string_i64_map.Map (opt_string_i64_map.with-capacity 8)]
           (begin
-            (opt_string_i64_map.insert (&mut map) "touch" 1)
+            (opt_string_i64_map.insert-ref! (&mut map) "touch" 1)
             map))
         (opt_string_i64_map.with-capacity 8))]
     [argc : opt_string_i64_map.Map
@@ -38473,7 +38473,7 @@
         (let
           [map : opt_string_i64_map.Map (opt_string_i64_map.with-capacity 8)]
           (begin
-            (opt_string_i64_map.insert (&mut map) "argc" 1)
+            (opt_string_i64_map.insert-ref! (&mut map) "argc" 1)
             map))
         (opt_string_i64_map.with-capacity 8))]
     (OptLoopBceSummaries
@@ -45512,7 +45512,7 @@
       (let
         [map : opt_string_i64_map.Map (opt_string_i64_map.with-capacity 8)]
         (begin
-          (opt_string_i64_map.insert (&mut map) "touch" 1)
+          (opt_string_i64_map.insert-ref! (&mut map) "touch" 1)
           map))]
     [header-clean-call-func : CompilerIrFunction
       (opt-licm-array-optimized-function-with-direct-call-clean
@@ -48803,7 +48803,7 @@
       (let
         [out : opt_i64_i64_map.Map map]
         (begin
-          (opt_i64_i64_map.remove (&mut out) var)
+          (opt_i64_i64_map.remove-ref! (&mut out) var)
           (OptAliasFacts.Facts out)))]))
 
 (define (opt-alias-bind
@@ -48815,7 +48815,10 @@
       (let
         [out : opt_i64_i64_map.Map map]
         (begin
-          (opt_i64_i64_map.insert (&mut out) var (opt-alias-kind-encode kind))
+          (opt_i64_i64_map.insert-ref!
+            (&mut out)
+            var
+            (opt-alias-kind-encode kind))
           (OptAliasFacts.Facts out)))]))
 
 (define (opt-alias-mark-unique [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
@@ -48914,7 +48917,7 @@
             (begin
               (match (opt_i64_i64_map.entry-at (& map) i)
                 [(opt_i64_i64_map.EntrySome var value)
-                  (opt_i64_i64_map.insert (&mut out) var value)]
+                  (opt_i64_i64_map.insert-ref! (&mut out) var value)]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
           (OptAliasFacts.Facts out)))]))
@@ -50643,12 +50646,12 @@
           (let
             [out : opt_i64_i64_map.Map map]
             (begin
-              (opt_i64_i64_map.insert (&mut out) var 1)
+              (opt_i64_i64_map.insert-ref! (&mut out) var 1)
               (OptLoadHeaderSet out))))
         (let
           [out : opt_i64_i64_map.Map map]
           (begin
-            (opt_i64_i64_map.insert (&mut out) var 2)
+            (opt_i64_i64_map.insert-ref! (&mut out) var 2)
             (OptLoadHeaderSet out))))]))
 
 (define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
@@ -50921,7 +50924,7 @@
     [next-count : i64 (+ (opt-load-kinds-ref-count refs base) delta)]
     [out : opt_i64_i64_map.Map refs]
     (begin
-      (opt_i64_i64_map.insert (&mut out) base next-count)
+      (opt_i64_i64_map.insert-ref! (&mut out) base next-count)
       out)))
 
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
@@ -50935,7 +50938,7 @@
               (let
                 [out : opt_i64_i64_map.Map map]
                 (begin
-                  (opt_i64_i64_map.remove (&mut out) var)
+                  (opt_i64_i64_map.remove-ref! (&mut out) var)
                   out))]
             [refs2 : opt_i64_i64_map.Map
               (match (opt-load-loc-kind-decode old-value)
@@ -50988,7 +50991,7 @@
                         (let
                           [out : opt_i64_i64_map.Map map]
                           (begin
-                            (opt_i64_i64_map.insert
+                            (opt_i64_i64_map.insert-ref!
                               (&mut out)
                               var
                               (opt-load-loc-kind-encode kind))
@@ -51024,7 +51027,10 @@
                         (if drop?
                           unit
                           (begin
-                            (opt_i64_i64_map.insert (&mut out) bound-var value)
+                            (opt_i64_i64_map.insert-ref!
+                              (&mut out)
+                              bound-var
+                              value)
                             (match (opt-load-loc-kind-decode value)
                               [(OptLoadLocField base _ _ _)
                                 (set!
@@ -51051,7 +51057,7 @@
               (match (opt_i64_i64_map.entry-at (& map) i)
                 [(opt_i64_i64_map.EntrySome var value)
                   (begin
-                    (opt_i64_i64_map.insert (&mut out) var value)
+                    (opt_i64_i64_map.insert-ref! (&mut out) var value)
                     (match (opt-load-loc-kind-decode value)
                       [(OptLoadLocField base _ _ _)
                         (set! out-refs (opt-load-kinds-ref-add out-refs base 1))]

@@ -968,7 +968,7 @@
         [(CompilerLiveBlock.Block label _ _ _ _ _ _)
           (begin
             (array-set! values index block)
-            (if (live_label_map.insert-if-absent? ids label index)
+            (if (live_label_map.insert-if-absent-ref! ids label index)
               (compiler-live-block-graph-fill!
                 (box-get rest)
                 ids
@@ -2334,7 +2334,7 @@
           [(CompilerLiveBlock.Block label _ _ _ _ _ _)
             (let
               [_inserted : bool
-                (live_label_map.insert-if-absent? (&mut ids) label i)]
+                (live_label_map.insert-if-absent-ref! (&mut ids) label i)]
               unit)])
         (set! i (+ i 1)))
       (compiler-live-block-graph-fill-successors-from-array!

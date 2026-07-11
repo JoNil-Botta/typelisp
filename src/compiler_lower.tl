@@ -1248,7 +1248,7 @@
             [next : i64 (lower_i64_i64_map.len (& ids))]
             (begin
               (array-set! values next logical-name)
-              (lower_i64_i64_map.insert (&mut ids) source-id next)
+              (lower_i64_i64_map.insert-ref! (&mut ids) source-id next)
               (LowerNameCache ids values (struct-get cache parent))))]))))
 
 (define (lower-name-cache-add
@@ -1415,7 +1415,7 @@
         [(lower_i64_i64_map.LookupMissing)
           (begin
             (array-set! values next ty)
-            (lower_i64_i64_map.insert (&mut ids) name-id next)
+            (lower_i64_i64_map.insert-ref! (&mut ids) name-id next)
             (LowerTypeCache.Some ids values (+ next 1) parent))])]))
 
 (define (lower-type-cache-from-env-into
@@ -1718,7 +1718,7 @@
     [(lower_i64_i64_map.LookupMissing) false]))
 
 (define (lower-alias-overlay-record! [source-id : i64]) : unit
-  (lower_i64_i64_map.insert (&mut lower-alias-overlay-ids) source-id 1))
+  (lower_i64_i64_map.insert-ref! (&mut lower-alias-overlay-ids) source-id 1))
 
 ;; Seed the overlay membership set from an existing base env (the non-cache
 ;; import-alias path threads aliases directly onto a full name env rather than a
@@ -1741,7 +1741,7 @@
             (begin
               (if (< bind-id 0)
                 (set! lower-alias-overlay-valid false)
-                (lower_i64_i64_map.insert
+                (lower_i64_i64_map.insert-ref!
                   (&mut lower-alias-overlay-ids)
                   bind-id
                   1))
@@ -2937,7 +2937,7 @@
                         (let
                           [new-slot : i64 module-count]
                           (begin
-                            (lower_i64_i64_map.insert
+                            (lower_i64_i64_map.insert-ref!
                               (&mut modules)
                               cur-module-id
                               new-slot)
@@ -4538,7 +4538,7 @@
                       unit
                       (let
                         [slot : i64 (lower_string_i64_map.len (& cur-out))]
-                        (lower_string_i64_map.insert
+                        (lower_string_i64_map.insert-ref!
                           (&mut cur-out)
                           logical-name
                           slot)))]
@@ -4571,7 +4571,7 @@
             (let
               [next-reachable : lower_i64_i64_map.Map reachable]
               (begin
-                (lower_i64_i64_map.insert (&mut next-reachable) slot 1)
+                (lower_i64_i64_map.insert-ref! (&mut next-reachable) slot 1)
                 (LowerReachState.State
                   next-reachable
                   (LowerStringSet.Cons logical-name (box worklist))))))])]))
@@ -5814,7 +5814,7 @@
         bodies
         next
         (LowerMaybeFunctionBody.Some body names decl-path))
-      (lower_string_i64_map.insert (&mut ids) logical-name next)
+      (lower_string_i64_map.insert-ref! (&mut ids) logical-name next)
       (LowerFunctionBodyIndex ids bodies (+ next 1)))))
 
 (define (lower-function-body-index-find
@@ -5958,7 +5958,7 @@
                       [paths : lower_i64_i64_map.Map
                         lower-reach-active-runtime-paths]
                       (begin
-                        (lower_i64_i64_map.insert
+                        (lower_i64_i64_map.insert-ref!
                           (&mut paths)
                           (intern body-path)
                           1)
@@ -6011,7 +6011,7 @@
           (let
             [next-out : lower_string_i64_map.Map out]
             (begin
-              (lower_string_i64_map.insert
+              (lower_string_i64_map.insert-ref!
                 (&mut next-out)
                 (lower-dispatch-variant-logical-name module names variant-name)
                 1)
@@ -6256,14 +6256,14 @@
     ;; `name` is already the interned id of `source`, so read the id-keyed
     ;; metadata slots directly instead of re-hashing `source`. Refs #4427.
     (begin
-      (lower_i64_i64_map.insert (&mut with-source) name 1)
+      (lower_i64_i64_map.insert-ref! (&mut with-source) name 1)
       (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
         (let
           [leaf : String (lower-used-type-name-leaf source)]
           (begin
             (if (string.eq leaf source)
               unit
-              (lower_i64_i64_map.insert (&mut with-source) (intern leaf) 1))
+              (lower_i64_i64_map.insert-ref! (&mut with-source) (intern leaf) 1))
             with-source))
         with-source))))
 
@@ -6288,7 +6288,7 @@
   (let
     [used : lower_i64_i64_map.Map (lower_i64_i64_map.with-capacity 8192)]
     (begin
-      (lower_i64_i64_map.insert
+      (lower_i64_i64_map.insert-ref!
         (&mut used)
         (intern "$lower.precise-type-dce")
         1)
@@ -8125,7 +8125,7 @@
       (let
         [next-address-taken : lower_i64_i64_map.Map address-taken]
         (begin
-          (lower_i64_i64_map.insert (&mut next-address-taken) var-id 1)
+          (lower_i64_i64_map.insert-ref! (&mut next-address-taken) var-id 1)
           (LowerState.State
             next-var
             next-label
@@ -30629,7 +30629,10 @@
   [lanes : i64]) : lower_string_i64_map.Map
   (if (> lanes 0)
     (begin
-      (lower_string_i64_map.insert (&mut lane-locals) (intern-str name) lanes)
+      (lower_string_i64_map.insert-ref!
+        (&mut lane-locals)
+        (intern-str name)
+        lanes)
       lane-locals)
     lane-locals))
 
@@ -44057,7 +44060,7 @@
                 (set! cur-module (intern-str next-module))]
               [(AstDecl.DefFn name _ _ body-box _)
                 (if (lower-rvo-node-has-early-return? ctx body-box)
-                  (lower_string_i64_map.insert
+                  (lower_string_i64_map.insert-ref!
                     (&mut cur-out)
                     (lower-current-decl-logical-name
                       names

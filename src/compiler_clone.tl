@@ -117,7 +117,7 @@
   (let
     [map (clone-name-set-map names)]
     (begin
-      (clone_name_map.insert (&mut map) name 1)
+      (clone_name_map.insert-ref! (&mut map) name 1)
       (CloneNameSet map))))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool

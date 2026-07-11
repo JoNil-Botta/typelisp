@@ -986,7 +986,8 @@
 (define (tltest-reach-mark-name [names : tltest_name_map.Map] [name : String]) : tltest_name_map.Map
   (let
     [result : tltest_name_map.Map names]
-    [_inserted : bool (tltest_name_map.insert-if-absent? (&mut result) name 1)]
+    [_inserted : bool
+      (tltest_name_map.insert-if-absent-ref! (&mut result) name 1)]
     result))
 
 ;; The leaf of an alias-qualified source name (`io.panic` -> `panic`). Source

@@ -5677,7 +5677,7 @@
             path)]
         [next-cache : load_string_map.Map cache]
         (begin
-          (load_string_map.insert (&mut next-cache) path owned)
+          (load_string_map.insert-ref! (&mut next-cache) path owned)
           (CompilerLoadOwnedPathCacheResult next-cache owned)))]))
 
 (define (compiler-load-package-decl-logical-name
@@ -8681,7 +8681,7 @@
         (box (compiler-pkg-deps-list tail)))]
     [aliases : load_string_map.Map (struct-get tail aliases)]
     (begin
-      (load_string_map.insert (&mut aliases) alias path)
+      (load_string_map.insert-ref! (&mut aliases) alias path)
       (CompilerPkgDeps ordered aliases))))
 
 (define (compiler-pkg-deps-from-list [deps : CompilerPkgDepList]) : CompilerPkgDeps

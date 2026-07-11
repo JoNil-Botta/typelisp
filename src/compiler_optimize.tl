@@ -3458,6 +3458,48 @@
     [(AstType.Tuple _) true]
     [_ false]))
 
+(define (opt-aggregate-stack-promote-instr-candidate? [instr : CompilerIrInstr]) : bool
+  (match (opt-aggregate-direct-alloc instr)
+    [(OptMaybeAggregateAlloc.Some _ ty _)
+      (opt-aggregate-stack-promote-type? ty)]
+    [(OptMaybeAggregateAlloc.No) false]))
+
+(define (opt-aggregate-stack-promote-instr-seq-candidate-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-aggregate-stack-promote-instr-candidate?
+      (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-aggregate-stack-promote-instr-seq-candidate-from? instrs (+ index 1)))))
+
+(define (opt-aggregate-stack-promote-block-candidate? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (opt-aggregate-stack-promote-instr-seq-candidate-from? instrs 0)]))
+
+(define (opt-aggregate-stack-promote-block-seq-candidate-from?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (if (opt-aggregate-stack-promote-block-candidate?
+      (compiler-ir-block-seq-ref blocks index))
+      true
+      (opt-aggregate-stack-promote-block-seq-candidate-from? blocks (+ index 1)))))
+
+(define (opt-aggregate-stack-promote-blocks-have-candidate?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-aggregate-stack-promote-block-candidate? block)
+        true
+        (opt-aggregate-stack-promote-blocks-have-candidate? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-aggregate-stack-promote-block-seq-candidate-from? seq 0)]))
+
 (define (opt-aggregate-stack-slot-count [size : i64]) : i64
   (/ (+ size 7) 8))
 
@@ -3585,16 +3627,20 @@
 (define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (match (opt-aggregate-promote-build
-        (opt-aggregate-allocation-candidates-function func)
-        frame)
-        [(OptAggregatePromoteBuild.Build slots promoted-frame)
-          (CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            promoted-frame
-            (opt-aggregate-promote-blocks slots blocks))])]))
+      (if (opt-aggregate-stack-promote-blocks-have-candidate? blocks)
+        (match (opt-aggregate-promote-build
+          (opt-aggregate-allocation-candidates-function func)
+          frame)
+          [(OptAggregatePromoteBuild.Build slots promoted-frame)
+            (if (= (struct-get slots len) 0)
+              func
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                promoted-frame
+                (opt-aggregate-promote-blocks slots blocks)))])
+        func)]))
 
 ;; --- aggregate field-load scalar replacement (SROA) --------------------------
 ;; Replaces loads of fields from non-escaping aggregate allocations with the

@@ -1084,9 +1084,15 @@
     (macro-alias-cache-ensure!)
     (macro-alias-cache-put! 1 262144 11)
     (macro-alias-cache-put! 2 0 22)
+    (macro-alias-cache-put! 3 1 -1)
+    (macro-alias-cache-put! 3 1 33)
+    (macro-alias-cache-put! 4 2 2)
+    (macro-alias-cache-put! 4 2 44)
     (and
       (= (macro-alias-cache-get 1 262144) 11)
-      (= (macro-alias-cache-get 2 0) 22))))
+      (= (macro-alias-cache-get 2 0) 22)
+      (= (macro-alias-cache-get 3 1) 33)
+      (= (macro-alias-cache-get 4 2) 44))))
 
 (define (compiler-typecheck-smoke-module-macro-import-evaluated-key-source) : String
   "(defmacro (gen [key : String]) : Module

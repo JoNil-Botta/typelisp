@@ -12500,6 +12500,23 @@
               [(TcMaybeString.No)
                 (ResultTcString.Err (tc-unresolved-dotted-name-message name))])])))))
 
+(define (tc-dotted-resolved-key-id-or
+  [ctx : TcContext]
+  [name-id : i64]
+  [fallback : i64]) : i64
+  (let
+    [module-id : i64 (tc-context-module-id ctx)]
+    [alias-key-id : i64
+      (tc-source-dotted-alias-key-cache-get module-id name-id)]
+    (if (>= alias-key-id 0)
+      alias-key-id
+      (let
+        [full-key-id : i64
+          (tc-source-dotted-full-path-key-cache-get module-id name-id)]
+        (if (>= full-key-id 0)
+          full-key-id
+          fallback)))))
+
 (define (tc-dotted-type-name-lookup-from-id
   [ctx : TcContext]
   [name : String]
@@ -12510,7 +12527,7 @@
         [key-id : i64
           (if (string.eq key name)
             name-id
-            (tc-existing-name-id key))]
+            (tc-dotted-resolved-key-id-or ctx name-id -1))]
         (if (>= key-id 0)
           (TcNameLookup.Ok key key-id)
           (TcNameLookup.Err
@@ -12784,8 +12801,8 @@
 ;; and returns the resolved lookup name together with its id, so the hot tc-expr
 ;; Var path gets the lookup id without re-interning the returned String. For the
 ;; common bound-name case the result id is the passed name-id (zero interning);
-;; only the qualified/dotted key cases intern the key once (which the caller
-;; would otherwise intern anyway).
+;; qualified/dotted cases carry the ID already recorded by their resolver
+;; caches instead of recovering identity from a generated display String.
 (define (tc-source-name-lookup-key-with-field-check-lookup
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -12834,7 +12851,11 @@
                     first-dot
                     current-module-id)
                     [(TcMaybeString.Some key)
-                      (TcNameLookup.Ok key (tc-generated-name-id key))]
+                      (TcNameLookup.Ok
+                        key
+                        (tc-source-dotted-alias-key-cache-get
+                          current-module-id
+                          name-id))]
                     [(TcMaybeString.No)
                       (match (tc-enum-qualified-variant-lookup-key-id
                         ctx
@@ -12853,7 +12874,11 @@
                             name-id
                             current-module-id)
                             [(TcMaybeString.Some key)
-                              (TcNameLookup.Ok key (tc-generated-name-id key))]
+                              (TcNameLookup.Ok
+                                key
+                                (tc-source-dotted-full-path-key-cache-get
+                                  current-module-id
+                                  name-id))]
                             [(TcMaybeString.No)
                               (match (tc-dotted-alias-flat-variant-key-id
                                 ctx
@@ -13633,7 +13658,7 @@
                   [(ResultTcString.Ok key)
                     (if (string.eq key name)
                       name-id
-                      (tc-generated-name-id key))]
+                      (tc-dotted-resolved-key-id-or ctx name-id name-id))]
                   [(ResultTcString.Err _)
                     (match (tc-dotted-unique-nominal-type-id ctx name name-id)
                       [(option_i64.Some unique-id) unique-id]
@@ -13778,7 +13803,7 @@
                   [(ResultTcString.Ok key)
                     (if (string.eq key name)
                       name-id
-                      (tc-generated-name-id key))]
+                      (tc-dotted-resolved-key-id-or ctx name-id name-id))]
                   [(ResultTcString.Err _)
                     (match (tc-dotted-unique-nominal-type-id ctx name name-id)
                       [(option_i64.Some unique-id) unique-id]
@@ -13973,9 +13998,9 @@
 
 (define (tc-nominal-lifetime-use-policy-ok
   [ctx : TcContext]
-  [name : String]
+  [name-id : i64]
   [lifetimes : AstLifetimeList]) : ResultTcUnit
-  (match (tc-nominal-lifetimes ctx name)
+  (match (tc-nominal-lifetimes-id ctx name-id)
     [(ResultTcLifetimeList.Ok params)
       (if (= (tc-lifetime-list-count params) (tc-lifetime-list-count lifetimes))
         ResultTcUnit.Ok
@@ -13985,12 +14010,12 @@
         (str_cat.str-cat
           message
           ": "
-          name
+          (tc-nominal-name-id-display name-id)
           "#"
-          (string.int->string (tc-existing-name-id name))))]))
+          (string.int->string name-id)))]))
 
-(define (tc-bare-nominal-lifetime-policy-ok [ctx : TcContext] [name : String]) : ResultTcUnit
-  (match (tc-nominal-lifetimes ctx name)
+(define (tc-bare-nominal-lifetime-policy-ok [ctx : TcContext] [name-id : i64]) : ResultTcUnit
+  (match (tc-nominal-lifetimes-id ctx name-id)
     [(ResultTcLifetimeList.Ok params)
       (if (ast-lifetime-list-empty? (& params))
         ResultTcUnit.Ok
@@ -14066,24 +14091,13 @@
               (ResultTcUnit.Err (tc-source-str-value-policy-message))]
             [(AstType.Bytes)
               (ResultTcUnit.Err (tc-source-bytes-value-policy-message))]
-            [(AstType.Enum name)
-              (tc-bare-nominal-lifetime-policy-ok
-                ctx
-                (tc-nominal-name-id-display name))]
+            [(AstType.Enum name) (tc-bare-nominal-lifetime-policy-ok ctx name)]
             [(AstType.Struct name)
-              (tc-bare-nominal-lifetime-policy-ok
-                ctx
-                (tc-nominal-name-id-display name))]
+              (tc-bare-nominal-lifetime-policy-ok ctx name)]
             [(AstType.EnumArgs name lifetimes)
-              (tc-nominal-lifetime-use-policy-ok
-                ctx
-                (tc-nominal-name-id-display name)
-                (box-get lifetimes))]
+              (tc-nominal-lifetime-use-policy-ok ctx name (box-get lifetimes))]
             [(AstType.StructArgs name lifetimes)
-              (tc-nominal-lifetime-use-policy-ok
-                ctx
-                (tc-nominal-name-id-display name)
-                (box-get lifetimes))]
+              (tc-nominal-lifetime-use-policy-ok ctx name (box-get lifetimes))]
             [(AstType.VarArgs name _)
               (ResultTcUnit.Err
                 (tc-source-type-policy-message
@@ -30751,9 +30765,9 @@
 (define (tc-context-enum-variants [ctx : TcContext] [enum-name : String]) : ResultAstVariantDefList
   (let
     [handle : i64
-      (compiler-symbols-lookup-type-or
+      (compiler-symbols-lookup-type-id-or
         (tc-context-symbols ctx)
-        enum-name
+        (tc-existing-nominal-name-id enum-name)
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (if (=
@@ -31264,9 +31278,9 @@
     [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
-          (compiler-symbols-lookup-type-or
+          (compiler-symbols-lookup-type-id-or
             symbols
-            struct-name
+            (tc-existing-nominal-name-id struct-name)
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (if (=
@@ -31317,9 +31331,9 @@
     [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
-          (compiler-symbols-lookup-type-or
+          (compiler-symbols-lookup-type-id-or
             symbols
-            enum-name
+            (tc-existing-nominal-name-id enum-name)
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (if (=
@@ -35481,23 +35495,23 @@
   (if (string.eq pattern-name variant-name)
     true
     (let
+      [enum-id : i64 (tc-existing-nominal-name-id enum-name)]
       [pattern-id : i64 (tc-existing-name-id pattern-name)]
-      (if (and
-        (< (intern-first-dot pattern-id) 0)
-        (not (tc-name-qualified-id? pattern-id)))
+      [variant-id : i64 (tc-existing-name-id variant-name)]
+      (if (or (< enum-id 0) (< pattern-id 0) (< variant-id 0))
         false
         (let
           [pattern-handle : i64
-            (tc-source-variant-handle-for-enum-or
+            (tc-source-variant-handle-for-enum-id-or
               ctx
-              enum-name
-              pattern-name
+              enum-id
+              pattern-id
               (compiler-symbols-missing-handle))]
           [candidate-handle : i64
-            (tc-source-variant-handle-for-enum-or
+            (tc-source-variant-handle-for-enum-id-or
               ctx
-              enum-name
-              variant-name
+              enum-id
+              variant-id
               (compiler-symbols-missing-handle))]
           (if (and
             (compiler-symbols-handle-found? pattern-handle)
@@ -35644,20 +35658,25 @@
   [variant-name : String]
   [args : AstPatternList]) : bool
   (let
-    [handle : i64
-      (tc-source-variant-handle-for-enum-or
-        ctx
-        enum-name
-        variant-name
-        (compiler-symbols-missing-handle))]
-    (if (compiler-symbols-handle-found? handle)
-      (match (compiler-registries-variant-fields-indexed
-        (tc-context-symbols ctx)
-        handle)
-        [(ResultAstTypeList.Ok fields)
-          (tc-pattern-list-irrefutable? ctx args fields)]
-        [(ResultAstTypeList.Err _) false])
-      false)))
+    [enum-id : i64 (tc-existing-nominal-name-id enum-name)]
+    [variant-id : i64 (tc-existing-name-id variant-name)]
+    (if (or (< enum-id 0) (< variant-id 0))
+      false
+      (let
+        [handle : i64
+          (tc-source-variant-handle-for-enum-id-or
+            ctx
+            enum-id
+            variant-id
+            (compiler-symbols-missing-handle))]
+        (if (compiler-symbols-handle-found? handle)
+          (match (compiler-registries-variant-fields-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(ResultAstTypeList.Ok fields)
+              (tc-pattern-list-irrefutable? ctx args fields)]
+            [(ResultAstTypeList.Err _) false])
+          false)))))
 
 (define (tc-struct-pattern-irrefutable?
   [ctx : TcContext]
@@ -53593,11 +53612,14 @@
                   (array-ref macro-alias-cache-qualifier-keys cursor)
                   qualifier-key))
                 (begin
-                  (if (and
-                    (= (array-ref macro-alias-cache-values cursor) qualifier-id)
-                    (not (= value qualifier-id)))
-                    (array-set! macro-alias-cache-values cursor value)
-                    unit)
+                  (let
+                    [existing : i64 (array-ref macro-alias-cache-values cursor)]
+                    (if (and
+                      (>= value 0)
+                      (or (< existing 0) (= existing qualifier-id))
+                      (not (= value existing)))
+                      (array-set! macro-alias-cache-values cursor value)
+                      unit))
                   (set! done true))
                 (begin
                   (set!
@@ -53659,23 +53681,12 @@
       unit
       (macro-alias-cache-build! decls))
     (let
-      ;; Batch/REPL compiles can reuse this process without a per-program
-      ;; reset; the old lazy design tolerated stale positives (module names
-      ;; are distinct across programs) because every miss rescanned the
-      ;; CURRENT decl list. A definitive eager miss is therefore only
-      ;; trustworthy when the index was built over this same decl-list shape.
-      [complete-here : bool
-        (and
-          macro-alias-cache-complete
-          (= macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
-          (= macro-alias-cache-built-decl-offset (struct-get decls offset)))]
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
       (cond
-        [(and (= cached -2) complete-here)
-          ;; The eager index saw every aliased import, so a miss is a
-          ;; definitive "no alias import for this (module, qualifier)".
-          (TcMaybeNameId.No)]
         [(= cached -2)
+          ;; Expansion can replace declarations in place without changing the
+          ;; list shape. Confirm an eager miss against the current ID-bearing
+          ;; AST once, then memoize it.
           (match (macro-import-alias-target-ids
             decls
             current-module-id

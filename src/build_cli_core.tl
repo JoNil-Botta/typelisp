@@ -1395,7 +1395,7 @@
               (ResultBuildPackageLockState.Ok
                 (BuildPackageLockState path (struct-get lock entries) true))])])
       (ResultBuildPackageLockState.Ok
-        (BuildPackageLockState path (package-lock-entry-list-new) false)))))
+        (BuildPackageLockState path (package-lock-entry-vec-new) false)))))
 
 (define (build-write-package-lock
   [state : BuildPackageLockState]
@@ -2048,7 +2048,7 @@
   [dep : CompilerPkgDep]) : ResultBuildPkgDep
   (match (build-package-resolve-dep-with-lock
     manifest-dir
-    (package-lock-entry-list-new)
+    (package-lock-entry-vec-new)
     (BuildPackageLockPolicy.Default)
     dep)
     [(ResultBuildResolvedPkgDep.Err message) (ResultBuildPkgDep.Err message)]
@@ -2083,12 +2083,15 @@
   [haystack : PackageLockEntryList]
   [needles : (& needles PackageLockEntryList)]
   [index : i64]) : bool
-  (if (>= index (package-lock-entry-list-count-ref needles))
+  (if (>= index (package-lock-entry-vec-len needles))
     true
     (and
       (build-package-lock-list-has-exact-entry?
         haystack
-        (package-lock-entry-list-get needles index))
+        (package-lock-entry-vec-get
+          needles
+          index
+          (package-lock-entry-list-fallback)))
       (build-package-lock-list-contains-all-from haystack needles (+ index 1)))))
 
 (define (build-package-lock-list-eq?
@@ -2096,8 +2099,8 @@
   [right : PackageLockEntryList]) : bool
   (and
     (=
-      (package-lock-entry-list-count left)
-      (package-lock-entry-list-count right))
+      (package-lock-entry-vec-len (& left))
+      (package-lock-entry-vec-len (& right)))
     (build-package-lock-list-contains-all? left right)))
 
 (define (build-package-lock-policy-check
@@ -2141,7 +2144,7 @@
       (ResultBuildResolvedPkgDeps.Ok
         (BuildResolvedPkgDeps
           CompilerPkgDepNil
-          (package-lock-entry-list-new)
+          (package-lock-entry-vec-new)
           false))]
     [(CompilerPkgDepCons dep rest)
       (match (build-package-resolve-dep-with-lock

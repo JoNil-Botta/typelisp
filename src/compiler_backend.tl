@@ -451,6 +451,11 @@
   (extern-signatures backend_i64_i64_map.Map)
   (extern-names (Array String))
   (extern-signature-values (Array CompilerBackendMaybeSignature))
+  ;; Extern call classification, packed by extern slot: bit 0 is C ABI,
+  ;; bit 1 has aggregate parameters, and the remaining bits encode the
+  ;; C-varargs fixed-parameter count plus one. The reference index maps both
+  ;; source names and link symbols to this same slot.
+  (extern-call-infos (Array i64))
   (extern-references backend_i64_i64_map.Map)
   (extern-link-symbols (Array String))
   (extern-provided (Array bool))
@@ -20374,23 +20379,57 @@
         (ast-node-pool-reader-type-get ret-ty))]
     [_ (CompilerBackendMaybeSignature.No)]))
 
+(define (compiler-backend-program-index-extern-call-info
+  [ty : AstType]
+  [abi : AstExternAbi]) : i64
+  (let
+    [c-abi? : bool (ast-extern-abi-c? abi)]
+    [aggregate-params? : bool
+      (if c-abi?
+        (match ty
+          [(AstType.Func args _)
+            (compiler-backend-type-list-has-aggregate? (box-get args))]
+          [_ false])
+        false)]
+    [fixed-count : i64
+      (if (ast-extern-abi-c-varargs? abi)
+        (match ty
+          [(AstType.Func args _)
+            (compiler-backend-type-list-count (box-get args))]
+          [_ -1])
+        -1)]
+    (+
+      (+
+        (if c-abi?
+          1
+          0)
+        (if aggregate-params?
+          2
+          0))
+      (* (+ fixed-count 1) 4))))
+
 (define (compiler-backend-program-index-extern-signatures-into
   [externs : CompilerIrExternList]
   [signature-ids : backend_i64_i64_map.Map]
   [names : (Array String)]
   [signatures : (Array CompilerBackendMaybeSignature)]
+  [call-infos : (Array i64)]
   [index : i64]) : backend_i64_i64_map.Map
   (match externs
     [(CompilerIrExternList.Nil) signature-ids]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name ty abi _ _ _)
           (begin
             (array-set! names index extern-name)
             (array-set!
               signatures
               index
               (compiler-backend-program-index-extern-signature ty))
+            (array-set!
+              call-infos
+              index
+              (compiler-backend-program-index-extern-call-info ty abi))
             (compiler-backend-program-index-extern-signatures-into
               (box-get rest)
               (compiler-backend-program-index-bind-name
@@ -20399,6 +20438,7 @@
                 index)
               names
               signatures
+              call-infos
               (+ index 1)))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-program-index-extern-signatures-into
@@ -20406,6 +20446,7 @@
         signature-ids
         names
         signatures
+        call-infos
         index)]))
 
 ;; First pass: fill the side arrays and bind the LINK SYMBOLS only.
@@ -20726,6 +20767,7 @@
     [extern-names : (Array String) (array.make-array String extern-count)]
     [extern-signatures : (Array CompilerBackendMaybeSignature)
       (array.make-array CompilerBackendMaybeSignature extern-count)]
+    [extern-call-infos : (Array i64) (array.make-array i64 extern-count)]
     [extern-link-symbols : (Array String)
       (array.make-array String extern-count)]
     [extern-provided : (Array bool) (array.make-array bool extern-count)]
@@ -20742,6 +20784,7 @@
         (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
         extern-names
         extern-signatures
+        extern-call-infos
         0)]
     [extern-reference-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-reference-names-into
@@ -20768,6 +20811,7 @@
       extern-signature-ids
       extern-names
       extern-signatures
+      extern-call-infos
       extern-reference-ids
       extern-link-symbols
       extern-provided
@@ -20956,6 +21000,23 @@
     [(InternLookupFound name-id)
       (backend_i64_i64_map.get (& (struct-get index extern-references)) name-id)]
     [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+
+(define (compiler-backend-index-extern-call-info
+  [index : CompilerBackendProgramIndex]
+  [name : String]) : i64
+  (match (compiler-backend-index-extern-reference-slot index name)
+    [(backend_i64_i64_map.LookupFound slot)
+      (array-ref (struct-get index extern-call-infos) slot)]
+    [(backend_i64_i64_map.LookupMissing) 0]))
+
+(define (compiler-backend-extern-call-info-c-abi? [info : i64]) : bool
+  (= (% info 2) 1))
+
+(define (compiler-backend-extern-call-info-aggregate-params? [info : i64]) : bool
+  (>= (% info 4) 2))
+
+(define (compiler-backend-extern-call-info-fixed-count [info : i64]) : i64
+  (- (/ info 4) 1))
 
 (define (compiler-backend-index-function-signature-id
   [index : CompilerBackendProgramIndex]
@@ -21329,46 +21390,6 @@
           (ast-type-cons (AstType.I64) (ast-type-list-new)))]
       [else (ast-type-list-new)])))
 
-(define (compiler-backend-extern-fixed-param-count [ty : AstType]) : i64
-  (match ty
-    [(AstType.Func args _) (compiler-backend-type-list-count (box-get args))]
-    [_ -1]))
-
-(define (compiler-backend-extern-varargs-fixed-param-count
-  [externs : CompilerIrExternList]
-  [name : String]) : i64
-  (match externs
-    [(CompilerIrExternList.Nil) -1]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
-          (if (or (string.eq name extern-name) (string.eq name link-symbol))
-            (if (ast-extern-abi-c-varargs? abi)
-              (compiler-backend-extern-fixed-param-count ty)
-              -1)
-            (compiler-backend-extern-varargs-fixed-param-count
-              (box-get rest)
-              name))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-extern-varargs-fixed-param-count-seq seq name 0)]))
-
-(define (compiler-backend-extern-varargs-fixed-param-count-seq
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : i64
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    -1
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
-        (if (or (string.eq name extern-name) (string.eq name link-symbol))
-          (if (ast-extern-abi-c-varargs? abi)
-            (compiler-backend-extern-fixed-param-count ty)
-            -1)
-          (compiler-backend-extern-varargs-fixed-param-count-seq
-            externs
-            name
-            (+ index 1)))])))
-
 (define (compiler-backend-varargs-linux-vector-count
   [types : AstTypeList]
   [float-idx : i64]
@@ -21446,12 +21467,11 @@
 
 (define (compiler-backend-varargs-pre-call
   [target : CompilerBackendTarget]
-  [name : String]
-  [externs : CompilerIrExternList]
+  [extern-call-info : i64]
   [param-types : AstTypeList]) : String
   (let
     [fixed-count : i64
-      (compiler-backend-extern-varargs-fixed-param-count externs name)]
+      (compiler-backend-extern-call-info-fixed-count extern-call-info)]
     (if (< fixed-count 0)
       ""
       (match target
@@ -21731,84 +21751,19 @@
           ""))
       (compiler-backend-type-list-has-aggregate-at? types (+ index 1)))))
 
-(define (compiler-backend-c-aggregate-extern-call?
-  [externs : CompilerIrExternList]
-  [name : String]) : bool
-  (match externs
-    [(CompilerIrExternList.Nil) false]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
-          (if (or (string.eq name extern-name) (string.eq name link-symbol))
-            (if (ast-extern-abi-c? abi)
-              (match ty
-                [(AstType.Func args _)
-                  (compiler-backend-type-list-has-aggregate? (box-get args))]
-                [_ false])
-              false)
-            (compiler-backend-c-aggregate-extern-call? (box-get rest) name))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-c-aggregate-extern-call-seq? seq name 0)]))
-
-(define (compiler-backend-c-extern-call?
-  [externs : CompilerIrExternList]
-  [name : String]) : bool
-  (match externs
-    [(CompilerIrExternList.Nil) false]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name _ abi link-symbol _ _)
-          (if (or (string.eq name extern-name) (string.eq name link-symbol))
-            (ast-extern-abi-c? abi)
-            (compiler-backend-c-extern-call? (box-get rest) name))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-c-extern-call-seq? seq name 0)]))
-
-(define (compiler-backend-c-extern-call-seq?
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : bool
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    false
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name _ abi link-symbol _ _)
-        (if (or (string.eq name extern-name) (string.eq name link-symbol))
-          (ast-extern-abi-c? abi)
-          (compiler-backend-c-extern-call-seq? externs name (+ index 1)))])))
-
-(define (compiler-backend-c-aggregate-extern-call-seq?
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : bool
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    false
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name ty abi link-symbol _ _)
-        (if (or (string.eq name extern-name) (string.eq name link-symbol))
-          (if (ast-extern-abi-c? abi)
-            (match ty
-              [(AstType.Func args _)
-                (compiler-backend-type-list-has-aggregate? (box-get args))]
-              [_ false])
-            false)
-          (compiler-backend-c-aggregate-extern-call-seq?
-            externs
-            name
-            (+ index 1)))])))
-
 (define (compiler-backend-call-param-types-for-call
   [name : String]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
-  [externs : CompilerIrExternList]
+  [extern-call-info : i64]
   [index : CompilerBackendProgramIndex]) : AstTypeList
   (let
     [param-types : AstTypeList
       (compiler-backend-call-param-types-index name index)]
     [fixed-count : i64
-      (compiler-backend-extern-varargs-fixed-param-count externs name)]
-    (if (compiler-backend-c-aggregate-extern-call? externs name)
+      (compiler-backend-extern-call-info-fixed-count extern-call-info)]
+    (if (compiler-backend-extern-call-info-aggregate-params? extern-call-info)
       (compiler-backend-call-c-abi-param-types
         types
         global-types
@@ -26000,19 +25955,22 @@
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
+    [extern-call-info : i64
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
         args
         types
         global-types
-        externs
+        extern-call-info
         program-index)]
-    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [c-abi? : bool
+      (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
       (compiler-backend-call-arg-space
         target
@@ -26036,7 +25994,7 @@
       (compiler-backend-call-symbol-index name plan program-index)]
     [return-normalize : String (compiler-backend-tail-call-return-normalize ty)]
     [varargs-pre-call : String
-      (compiler-backend-varargs-pre-call target name externs param-types)]
+      (compiler-backend-varargs-pre-call target extern-call-info param-types)]
     (if (compiler-backend-direct-tail-call?
       target
       source-function
@@ -26790,20 +26748,23 @@
   [ty : AstType]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
-  [externs : CompilerIrExternList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
+    [extern-call-info : i64
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
         args
         types
         global-types
-        externs
+        extern-call-info
         program-index)]
-    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [c-abi? : bool
+      (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
       (compiler-backend-call-arg-space
         target
@@ -27064,20 +27025,23 @@
   [ty : AstType]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
-  [externs : CompilerIrExternList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
+    [extern-call-info : i64
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
         args
         types
         global-types
-        externs
+        extern-call-info
         program-index)]
-    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [c-abi? : bool
+      (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
       (compiler-backend-call-arg-space
         target
@@ -27216,13 +27180,15 @@
           instr-diag)]
       [else
         (let
+          [extern-call-info : i64
+            (compiler-backend-index-extern-call-info program-index name)]
           [param-types : AstTypeList
             (compiler-backend-call-param-types-for-call
               name
               args
               types
               global-types
-              externs
+              extern-call-info
               program-index)]
           [effective-arg-assignments : CompilerRegAssignmentList
             (if (compiler-backend-declared-first-call-arg-accepts-rax-forward?
@@ -27231,8 +27197,10 @@
               arg-assignments
               assignments)]
           [c-abi? : bool
-            (compiler-backend-c-aggregate-extern-call? externs name)]
-          [c-return? : bool (compiler-backend-c-extern-call? externs name)]
+            (compiler-backend-extern-call-info-aggregate-params?
+              extern-call-info)]
+          [c-return? : bool
+            (compiler-backend-extern-call-info-c-abi? extern-call-info)]
           [call-space : i64
             (compiler-backend-call-arg-space
               target
@@ -27279,8 +27247,7 @@
                         (string.append
                           (compiler-backend-varargs-pre-call
                             target
-                            name
-                            externs
+                            extern-call-info
                             param-types)
                           (str_cat.str-cat
                             "    call "
@@ -31836,7 +31803,7 @@
   [vars : i64]
   [plan : CompilerBackendRuntimePlan]
   [_functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
@@ -31844,15 +31811,18 @@
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
       (compiler-backend-inline-memory-call-target name call-symbol)]
+    [extern-call-info : i64
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
         args
         types
         global-types
-        externs
+        extern-call-info
         program-index)]
-    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [c-abi? : bool
+      (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
       (compiler-backend-call-arg-space
         target
@@ -31928,8 +31898,7 @@
                   (string.append
                     (compiler-backend-varargs-pre-call
                       target
-                      name
-                      externs
+                      extern-call-info
                       param-types)
                     (str_cat.str-cat
                       "    call "
@@ -32453,20 +32422,23 @@
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
   [plan : CompilerBackendRuntimePlan]
-  [externs : CompilerIrExternList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (let
+    [extern-call-info : i64
+      (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
       (compiler-backend-call-param-types-for-call
         name
         args
         types
         global-types
-        externs
+        extern-call-info
         program-index)]
-    [c-abi? : bool (compiler-backend-c-aggregate-extern-call? externs name)]
+    [c-abi? : bool
+      (compiler-backend-extern-call-info-aggregate-params? extern-call-info)]
     [call-space : i64
       (compiler-backend-call-stack-arg-layout-space
         target
@@ -32509,8 +32481,7 @@
                     (string.append
                       (compiler-backend-varargs-pre-call
                         target
-                        name
-                        externs
+                        extern-call-info
                         param-types)
                       (str_cat.str-cat
                         "    call "
@@ -41955,7 +41926,7 @@
   [_ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
   [_functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
+  [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
   (let
     [params : CompilerIrParamList
@@ -41966,6 +41937,8 @@
         (compiler-backend-var-value-list
           (compiler-backend-type-list-count param-types)
           0))]
+    [extern-call-info : i64
+      (compiler-backend-index-extern-call-info program-index name)]
     [frame : i64
       (+
         (compiler-backend-frame-size
@@ -42038,8 +42011,7 @@
                         (string.append
                           (compiler-backend-varargs-pre-call
                             target
-                            name
-                            externs
+                            extern-call-info
                             param-types)
                           (str_cat.str-cat
                             "    call "

@@ -42092,6 +42092,194 @@
 (define (tc-borrow-check-mut-path? [path : String]) : bool
   (tc-move-string-prefix? path "#mut."))
 
+;; A lexical child scope can return a reference whose source borrow was created
+;; inside that scope. Retain the source path at the enclosing scope when its
+;; lifetime appears in the result, while dropping child-local state and NLL
+;; markers. This preserves the actual source projection instead of collapsing
+;; it to the lifetime root.
+(define (tc-borrow-check-return-borrow-base-path [path : String]) : TcMaybeString
+  (if (or
+    (tc-borrow-check-lending-path? path)
+    (tc-borrow-check-two-phase-mut-path? path))
+    TcMaybeString.No
+    (if (tc-borrow-check-mut-path? path)
+      (TcMaybeString.Some
+        (string.substring path 5 (- (string.string-length path) 5)))
+      (TcMaybeString.Some path))))
+
+(define (tc-borrow-check-propagate-return-borrows-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [outer-locals : TcMovedSet]
+  [result-lifetimes : TcStringList]
+  [map : (& map tc_string_i64_map.Map)]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (tc_string_i64_map.capacity map))
+    out
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key origin)
+        (let
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
+          [out2 : TcMovedSet
+            (if (tc-moved-path-key? key)
+              (let
+                [path : String (tc-moved-conflict-display-path key)]
+                (match (tc-borrow-check-return-borrow-base-path path)
+                  [(TcMaybeString.Some base)
+                    (let
+                      [root : String (tc-borrow-check-path-root base)]
+                      (if (and
+                        (tc-moved-contains? outer-locals root)
+                        (tc-string-list-contains
+                          result-lifetimes
+                          (tc-borrow-check-path-lifetime ctx env base)))
+                        (if (tc-moved-contains? out key)
+                          out
+                          (tc-moved-add-value out key origin))
+                        out))]
+                  [(TcMaybeString.No) out]))
+              out)]
+          (tc-borrow-check-propagate-return-borrows-at
+            ctx
+            env
+            outer-locals
+            result-lifetimes
+            map
+            next
+            out2))]
+      [(tc_string_i64_map.EntryNone)
+        (tc-borrow-check-propagate-return-borrows-at
+          ctx
+          env
+          outer-locals
+          result-lifetimes
+          map
+          (tc_string_i64_map.next-occupied map (+ index 1))
+          out)])))
+
+(define (tc-borrow-check-propagate-return-borrows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [outer-locals : TcMovedSet]
+  [outer-borrowed : TcMovedSet]
+  [inner-borrowed : TcMovedSet]
+  [result-ty : AstType]) : TcMovedSet
+  (let
+    [result-lifetimes : TcStringList
+      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
+    (match result-lifetimes
+      [TcStringList.Nil outer-borrowed]
+      [_
+        (let
+          [map : tc_string_i64_map.Map (tc-moved-map inner-borrowed)]
+          (tc-borrow-check-propagate-return-borrows-at
+            ctx
+            env
+            outer-locals
+            result-lifetimes
+            (& map)
+            (tc_string_i64_map.next-occupied (& map) 0)
+            (tc-moved-clone outer-borrowed)))])))
+
+;; A propagated returned borrow needs an NLL marker for the outer result
+;; binding. Mark only source paths newly introduced by the initializer; this
+;; keeps pre-existing unrelated borrows untouched and removes both shared and
+;; mutable source state after the binding's last use.
+(define (tc-borrow-check-mark-new-return-borrows-at
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [prior : TcMovedSet]
+  [binding-name : String]
+  [result-lifetimes : TcStringList]
+  [origin : AstExpr]
+  [map : (& map tc_string_i64_map.Map)]
+  [index : i64]
+  [out : TcMovedSet]) : TcMovedSet
+  (if (>= index (tc_string_i64_map.capacity map))
+    out
+    (match (tc_string_i64_map.entry-at map index)
+      [(tc_string_i64_map.EntrySome key _)
+        (let
+          [next : i64 (tc_string_i64_map.next-occupied map (+ index 1))]
+          [out2 : TcMovedSet
+            (if (and
+              (tc-moved-path-key? key)
+              (not (tc-moved-contains? prior key)))
+              (let
+                [path : String (tc-moved-conflict-display-path key)]
+                (match (tc-borrow-check-return-borrow-base-path path)
+                  [(TcMaybeString.Some base)
+                    (let
+                      [root : String (tc-borrow-check-path-root base)]
+                      (if (and
+                        (string.eq path base)
+                        (tc-moved-contains? locals root)
+                        (tc-string-list-contains
+                          result-lifetimes
+                          (tc-borrow-check-path-lifetime ctx env base)))
+                        (tc-borrow-check-add-lending-marker
+                          out
+                          base
+                          binding-name
+                          origin)
+                        out))]
+                  [(TcMaybeString.No) out]))
+              out)]
+          (tc-borrow-check-mark-new-return-borrows-at
+            ctx
+            env
+            locals
+            prior
+            binding-name
+            result-lifetimes
+            origin
+            map
+            next
+            out2))]
+      [(tc_string_i64_map.EntryNone)
+        (tc-borrow-check-mark-new-return-borrows-at
+          ctx
+          env
+          locals
+          prior
+          binding-name
+          result-lifetimes
+          origin
+          map
+          (tc_string_i64_map.next-occupied map (+ index 1))
+          out)])))
+
+(define (tc-borrow-check-mark-new-return-borrows
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [locals : TcMovedSet]
+  [prior : TcMovedSet]
+  [borrowed : TcMovedSet]
+  [binding-name : String]
+  [result-ty : AstType]
+  [origin : AstExpr]) : TcMovedSet
+  (let
+    [result-lifetimes : TcStringList
+      (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
+    (match result-lifetimes
+      [TcStringList.Nil borrowed]
+      [_
+        (let
+          [map : tc_string_i64_map.Map (tc-moved-map borrowed)]
+          (tc-borrow-check-mark-new-return-borrows-at
+            ctx
+            env
+            locals
+            prior
+            binding-name
+            result-lifetimes
+            origin
+            (& map)
+            (tc_string_i64_map.next-occupied (& map) 0)
+            (tc-moved-clone borrowed)))])))
+
 (define (tc-borrow-check-protected-path?
   [protected : TcMovedSet]
   [path : String]) : bool
@@ -44717,20 +44905,31 @@
                   init-box
                   binding-ty)
                   [(TcBorrowCheckResult.Ok borrowed2)
-                    (tc-borrow-check-let-bindings-at
-                      ctx
-                      (tc-bind-c-abi-fnptr-if-needed-id
+                    (let
+                      [borrowed3 : TcMovedSet
+                        (tc-borrow-check-mark-new-return-borrows
+                          ctx
+                          env
+                          locals
+                          borrowed
+                          borrowed2
+                          (intern-str name)
+                          binding-ty
+                          init)]
+                      (tc-borrow-check-let-bindings-at
                         ctx
-                        env
-                        name
-                        binding-ty
-                        init)
-                      (tc-moved-add locals (intern-str name))
-                      (tc-borrow-check-remove-root-state
-                        borrowed2
-                        (intern-str name))
-                      bindings
-                      (+ index 1))]
+                        (tc-bind-c-abi-fnptr-if-needed-id
+                          ctx
+                          env
+                          name
+                          binding-ty
+                          init)
+                        (tc-moved-add locals (intern-str name))
+                        (tc-borrow-check-remove-root-state
+                          borrowed3
+                          (intern-str name))
+                        bindings
+                        (+ index 1)))]
                   [(TcBorrowCheckResult.Err message)
                     (TcBorrowCheckBindings.Err message)]))]
             [(TcBorrowCheckResult.Err message)
@@ -45016,7 +45215,22 @@
                 borrowed2
                 borrowed
                 body-box)
-                [(TcBorrowCheckResult.Ok _) (TcBorrowCheckResult.Ok borrowed)]
+                [(TcBorrowCheckResult.Ok body-borrowed)
+                  (match (tc-body-type-fact-expr-id
+                    "borrow.let_return"
+                    ctx
+                    env2
+                    body-box)
+                    [(ResultTcType.Ok result-ty)
+                      (TcBorrowCheckResult.Ok
+                        (tc-borrow-check-propagate-return-borrows
+                          ctx
+                          env2
+                          locals
+                          borrowed
+                          body-borrowed
+                          result-ty))]
+                    [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])]
                 [(TcBorrowCheckResult.Err message)
                   (TcBorrowCheckResult.Err message)])]
             [(TcBorrowCheckBindings.Err message)

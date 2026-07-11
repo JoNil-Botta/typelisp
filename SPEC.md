@@ -1324,6 +1324,14 @@ owner/provenance is statically known:
 The checker rejects borrows of arbitrary rvalues and temporaries whose owner
 cannot be named. Bind the value first if it should have a lexical owner.
 
+**Returned stored-reference reborrows.** A field or tuple element that stores a
+reference can be reborrowed through iterator-like state. If that reborrow is
+returned from a nested lexical scope, its live borrow remains attached to the
+original source projection rather than the state-local field. Mutating,
+growing, moving, or mutably borrowing that source projection is rejected until
+the returned reference/result's last use; disjoint sibling projections remain
+independent.
+
 **Lending collection iterators.** A generated mutable collection iterator may
 store an `(&mut source Collection)` projection and return a result carrying an
 `(&mut source T)` item. This is a lending operation: the iterator state keeps

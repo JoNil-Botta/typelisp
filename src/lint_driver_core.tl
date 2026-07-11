@@ -761,7 +761,12 @@
   (roots lint_svec.Vec))
 
 (define (selfhost-lint-package-dead-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable (compiler-check-language-cfgs) "test"))
+  ;; Package reachability models the supported test and scratch-vreg build
+  ;; configurations. Keep this list explicit: arbitrary caller cfgs must stay
+  ;; inactive rather than turning conditional implementation details into API.
+  (compiler-cfg-enable
+    (compiler-cfg-enable (compiler-check-language-cfgs) "test")
+    "scratch-vreg"))
 
 (define (selfhost-lint-dead-decls-slots [items : SelfhostLintDeadDecls]) : (Array
     SelfhostLintDeadDecl)
@@ -3232,6 +3237,15 @@
 (define (selfhost-lint-package-dead-test-root-source) : String
   "(define (main) : i64 (test-reached-helper))")
 
+(define (selfhost-lint-package-dead-cfg-source) : String
+  "(define (main) : i64
+  (cfg scratch-vreg (scratch-vreg-helper) 42))
+(cfg scratch-vreg
+  (define (scratch-vreg-helper) : i64 7))
+(cfg lint-fixture-experimental
+  (define (experimental-helper) : i64 9))
+(define (ordinary-unused) : i64 0)")
+
 (define (selfhost-lint-package-dead-qualified-left-source) : String
   "(module left)
 (define (helper) : i64 1)")
@@ -3782,6 +3796,23 @@
       (struct-get scan roots)
       0)))
 
+(define (selfhost-lint-package-dead-code-cfg-fixture-decls) : SelfhostLintDeadDecls
+  (let
+    [source : String (selfhost-lint-package-dead-cfg-source)]
+    [scan-source : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (lint_svec.new))
+        "pkg/cfg.tl"
+        source
+        false
+        true)]
+    [scan : SelfhostLintDeadScan
+      (selfhost-lint-package-dead-add-kind-roots scan-source CompilerPkgKindBin)]
+    (selfhost-lint-dead-mark-roots-from
+      (struct-get scan decls)
+      (struct-get scan roots)
+      0)))
+
 (define (selfhost-lint-package-dead-qualified-import-fixture-decls) : SelfhostLintDeadDecls
   (let
     [left-source : String (selfhost-lint-package-dead-qualified-left-source)]
@@ -3881,6 +3912,7 @@
   (let
     [source-a : String (selfhost-lint-package-dead-source-a)]
     [source-b : String (selfhost-lint-package-dead-source-b)]
+    [cfg-source : String (selfhost-lint-package-dead-cfg-source)]
     [bin-decls : SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-fixture-decls
         source-a
@@ -3918,6 +3950,13 @@
         "pkg/src/main.tl"
         (selfhost-lint-package-dead-entry-source)
         test-root-decls)]
+    [cfg-bin-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-cfg-fixture-decls)]
+    [cfg-bin-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/cfg.tl"
+        cfg-source
+        cfg-bin-decls)]
     [qualified-import-decls : SelfhostLintDeadDecls
       (selfhost-lint-package-dead-qualified-import-fixture-decls)]
     [qualified-left-count : i64
@@ -3941,6 +3980,9 @@
       [(not (= lib-count-a 0)) 52]
       [(not (= lib-count-b 0)) 53]
       [(not (= test-root-count 1)) 57]
+      ;; scratch-vreg reaches its helper, while the inactive experimental cfg
+      ;; stays absent and the ordinary bin-local declaration remains dead.
+      [(not (= cfg-bin-count 1)) 61]
       [(not (selfhost-lint-package-dead-import-closure-fixture-ok?)) 58]
       [(not (= qualified-left-count 1)) 59]
       [(not (= qualified-right-count 0)) 60]

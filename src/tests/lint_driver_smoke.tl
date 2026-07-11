@@ -1021,45 +1021,52 @@
                                 (selfhost-lint-single-element-array-cell-self-test)]
                               (if (= single-cell-result 42)
                                 (let
-                                  [concat-result : i64
-                                    (lint-driver-smoke-deprecated-string-concat-self-test)]
-                                  (if (= concat-result 42)
+                                  [dynamic-array-literal-result : i64
+                                    (selfhost-lint-dynamic-array-literal-self-test)]
+                                  (if (= dynamic-array-literal-result 42)
                                     (let
-                                      [no-effect-result : i64
-                                        (lint-driver-smoke-no-effect-self-test)]
-                                      (if (= no-effect-result 42)
+                                      [concat-result : i64
+                                        (lint-driver-smoke-deprecated-string-concat-self-test)]
+                                      (if (= concat-result 42)
                                         (let
-                                          [unreachable-result : i64
-                                            (lint-driver-smoke-unreachable-self-test)]
-                                          (if (= unreachable-result 42)
+                                          [no-effect-result : i64
+                                            (lint-driver-smoke-no-effect-self-test)]
+                                          (if (= no-effect-result 42)
                                             (let
-                                              [divergence-result : i64
-                                                (lint-driver-smoke-divergence-padding-self-test)]
-                                              (if (= divergence-result 42)
+                                              [unreachable-result : i64
+                                                (lint-driver-smoke-unreachable-self-test)]
+                                              (if (= unreachable-result 42)
                                                 (let
-                                                  [unused-variable-result : i64
-                                                    (lint-driver-smoke-unused-variable-self-test)]
-                                                  (if (=
-                                                    unused-variable-result
-                                                    42)
+                                                  [divergence-result : i64
+                                                    (lint-driver-smoke-divergence-padding-self-test)]
+                                                  (if (= divergence-result 42)
                                                     (let
-                                                      [unused-unsafe-result : i64
-                                                        (lint-driver-smoke-unused-unsafe-self-test)]
+                                                      [unused-variable-result : i64
+                                                        (lint-driver-smoke-unused-variable-self-test)]
                                                       (if (=
-                                                        unused-unsafe-result
+                                                        unused-variable-result
                                                         42)
                                                         (let
-                                                          [copy-result : i64
-                                                            (lint-driver-smoke-copy-on-update-struct-self-test)]
-                                                          (if (= copy-result 42)
-                                                            (lint-driver-smoke-prefer-dotted-field-self-test)
-                                                            copy-result))
-                                                        unused-unsafe-result))
-                                                    unused-variable-result))
-                                                divergence-result))
-                                            unreachable-result))
-                                        no-effect-result))
-                                    concat-result))
+                                                          [unused-unsafe-result : i64
+                                                            (lint-driver-smoke-unused-unsafe-self-test)]
+                                                          (if (=
+                                                            unused-unsafe-result
+                                                            42)
+                                                            (let
+                                                              [copy-result : i64
+                                                                (lint-driver-smoke-copy-on-update-struct-self-test)]
+                                                              (if (=
+                                                                copy-result
+                                                                42)
+                                                                (lint-driver-smoke-prefer-dotted-field-self-test)
+                                                                copy-result))
+                                                            unused-unsafe-result))
+                                                        unused-variable-result))
+                                                    divergence-result))
+                                                unreachable-result))
+                                            no-effect-result))
+                                        concat-result))
+                                    dynamic-array-literal-result))
                                 single-cell-result))
                             unused-assignment-result))
                         dead-code-result))

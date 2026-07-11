@@ -530,14 +530,7 @@
 
 ;: Weighted-array fixture with zeros around positive buckets.
 (define (test-weighted-array-fixture) : (Array i64)
-  (let
-    [weights : (Array i64) (array.make-array i64 4)]
-    (begin
-      (array-set! weights 0 0)
-      (array-set! weights 1 10)
-      (array-set! weights 2 0)
-      (array-set! weights 3 5)
-      weights)))
+  (make-array 0 10 0 5))
 
 ;: Weighted-array fixture whose total is zero.
 (define (test-weighted-zero-array) : (Array i64)
@@ -545,12 +538,7 @@
 
 ;: Weighted-array fixture with a negative weight.
 (define (test-weighted-negative-array) : (Array i64)
-  (let
-    [weights : (Array i64) (array.make-array i64 2)]
-    (begin
-      (array-set! weights 0 1)
-      (array-set! weights 1 -1)
-      weights)))
+  (make-array 1 -1))
 
 ;: Weighted-vector fixture with zeros around positive buckets.
 (define (test-weighted-vector-fixture) : i64v.Vec

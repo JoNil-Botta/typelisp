@@ -260,18 +260,15 @@
 
 (define (tlci-loader-host-table-storage [table : tlci.TlciHostCallbackTable]) : (Array
     i64)
-  (let
-    [out : (Array i64) (make-array i64 8)]
-    (begin
-      (array-set! out 0 (struct-get table magic))
-      (array-set! out 1 (struct-get table abi-version))
-      (array-set! out 2 (struct-get table byte-size))
-      (array-set! out 3 (struct-get table host-context))
-      (array-set! out 4 (struct-get table reserved0))
-      (array-set! out 5 (struct-get table reserved1))
-      (array-set! out 6 (struct-get table invoke-callback))
-      (array-set! out 7 (struct-get table abort-callback))
-      out)))
+  (make-array
+    (struct-get table magic)
+    (struct-get table abi-version)
+    (struct-get table byte-size)
+    (struct-get table host-context)
+    (struct-get table reserved0)
+    (struct-get table reserved1)
+    (struct-get table invoke-callback)
+    (struct-get table abort-callback)))
 
 (define (tlci-loader-registration-storage) : (Array i64)
   (make-array i64 8))

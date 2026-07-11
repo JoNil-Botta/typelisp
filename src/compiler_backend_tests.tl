@@ -19397,42 +19397,13 @@
       (CompilerBackendTarget.Windows))))
 
 (define (compiler-backend-scavenge-exclude-before-r10) : (Array String)
-  (let
-    [a : (Array String) (make-array String 5)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%r8")
-      (array-set! a 2 "%r9")
-      (array-set! a 3 "%rcx")
-      (array-set! a 4 "%rdx")
-      a)))
+  (make-array "%rax" "%r8" "%r9" "%rcx" "%rdx"))
 
 (define (compiler-backend-scavenge-exclude-before-r11) : (Array String)
-  (let
-    [a : (Array String) (make-array String 6)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%r8")
-      (array-set! a 2 "%r9")
-      (array-set! a 3 "%rcx")
-      (array-set! a 4 "%rdx")
-      (array-set! a 5 "%r10")
-      a)))
+  (make-array "%rax" "%r8" "%r9" "%rcx" "%rdx" "%r10"))
 
 (define (compiler-backend-scavenge-emergency-exclude-fallback) : (Array String)
-  (let
-    [a : (Array String) (make-array String 9)]
-    (begin
-      (array-set! a 0 "%r9")
-      (array-set! a 1 "%rcx")
-      (array-set! a 2 "%rdx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
-      (array-set! a 5 "%r8")
-      (array-set! a 6 "%rsi")
-      (array-set! a 7 "%rdi")
-      (array-set! a 8 "%rax")
-      a)))
+  (make-array "%r9" "%rcx" "%rdx" "%r10" "%r11" "%r8" "%rsi" "%rdi" "%rax"))
 
 (define (compiler-backend-scavenge-pooled-r10-r11-ok?) : bool
   (let

@@ -46,14 +46,7 @@
   42)
 
 (define (thread-api-array-i64-build [base : i64]) : (Array i64)
-  (let
-    [items : (Array i64) (array.make-array i64 4)]
-    (begin
-      (array-set! items 0 base)
-      (array-set! items 1 (+ base 10))
-      (array-set! items 2 (+ base 20))
-      (array-set! items 3 (+ base 30))
-      items)))
+  (make-array base (+ base 10) (+ base 20) (+ base 30)))
 
 (define (thread-api-safe-array-i64-run) : i64
   42)

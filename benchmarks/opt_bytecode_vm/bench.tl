@@ -23,19 +23,16 @@
   (XorOp))
 
 (define (vm-build-program) : (Array Inst)
-  (let
-    [program : (Array Inst) (array.make-array Inst 9)]
-    (begin
-      (array-set! program 0 (PushInput))
-      (array-set! program 1 (PushConst 1000003))
-      (array-set! program 2 (MulOp))
-      (array-set! program 3 (PushConst 98765))
-      (array-set! program 4 (AddOp))
-      (array-set! program 5 (Dup))
-      (array-set! program 6 (MulOp))
-      (array-set! program 7 (PushConst 54321))
-      (array-set! program 8 (XorOp))
-      program)))
+  (make-array
+    (PushInput)
+    (PushConst 1000003)
+    (MulOp)
+    (PushConst 98765)
+    (AddOp)
+    (Dup)
+    (MulOp)
+    (PushConst 54321)
+    (XorOp)))
 
 (define (vm-run
   [program : (Array Inst)]

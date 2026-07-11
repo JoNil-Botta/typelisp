@@ -11857,22 +11857,8 @@
 (define (compiler-reg-call-region-pool [abi : CompilerRegTargetAbi]) : (Array
     String)
   (match abi
-    [(CompilerRegTargetAbi.Linux)
-      (let
-        [pool : (Array String) (array.make-array String 4)]
-        (begin
-          (array-set! pool 0 "%r8")
-          (array-set! pool 1 "%r9")
-          (array-set! pool 2 "%rsi")
-          (array-set! pool 3 "%rdi")
-          pool))]
-    [(CompilerRegTargetAbi.Windows)
-      (let
-        [pool : (Array String) (array.make-array String 2)]
-        (begin
-          (array-set! pool 0 "%r8")
-          (array-set! pool 1 "%r9")
-          pool))]))
+    [(CompilerRegTargetAbi.Linux) (make-array "%r8" "%r9" "%rsi" "%rdi")]
+    [(CompilerRegTargetAbi.Windows) (make-array "%r8" "%r9")]))
 
 ;; Size guards: at most 4 realized regions per root and 64 per function
 ;; (bounds the minted segment vars and the rewrite work).

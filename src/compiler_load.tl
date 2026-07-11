@@ -248,18 +248,10 @@
   (dotted-path-cache-generation (Array i64)))
 
 (define (compiler-load-session-state-bool-cell [value : bool]) : (Array bool)
-  (let
-    [cell : (Array bool) (make-array bool 1)]
-    (begin
-      (array-set! cell 0 value)
-      cell)))
+  (make-array value))
 
 (define (compiler-load-session-state-i64-cell [value : i64]) : (Array i64)
-  (let
-    [cell : (Array i64) (make-array i64 1)]
-    (begin
-      (array-set! cell 0 value)
-      cell)))
+  (make-array value))
 
 (define (compiler-load-session-state-bool-cell-get [cell : (Array bool)]) : bool
   (array-ref cell 0))

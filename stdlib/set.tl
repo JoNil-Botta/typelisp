@@ -44,51 +44,6 @@
     [remove-borrowed-helper-name : comptime.Expr
       (comptime.expr-string
         (comptime.string-append module-name-text ".remove-borrowed-ref!"))]
-    [empty-exprs : comptime.ExprList (comptime.expr-list-empty)]
-    [empty-call : comptime.Expr
-      (comptime.expr-call (comptime.expr-var "expr-list-empty") empty-exprs)]
-    [place-expr : comptime.Expr (comptime.expr-var "place")]
-    [key-expr : comptime.Expr (comptime.expr-var "key")]
-    [mut-place-expr : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-mut-borrow")
-        (comptime.expr-list-cons place-expr empty-exprs))]
-    [key-tail : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-list-cons")
-        (comptime.expr-list-cons
-          key-expr
-          (comptime.expr-list-cons empty-call empty-exprs)))]
-    [one-arg : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-list-cons")
-        (comptime.expr-list-cons
-          mut-place-expr
-          (comptime.expr-list-cons key-tail empty-exprs)))]
-    [insert-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          (comptime.expr-call
-            (comptime.expr-var "expr-var")
-            (comptime.expr-list-cons insert-helper-name empty-exprs))
-          (comptime.expr-list-cons one-arg empty-exprs)))]
-    [remove-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          (comptime.expr-call
-            (comptime.expr-var "expr-var")
-            (comptime.expr-list-cons remove-helper-name empty-exprs))
-          (comptime.expr-list-cons one-arg empty-exprs)))]
-    [remove-borrowed-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          (comptime.expr-call
-            (comptime.expr-var "expr-var")
-            (comptime.expr-list-cons remove-borrowed-helper-name empty-exprs))
-          (comptime.expr-list-cons one-arg empty-exprs)))]
     (match type-key-name
       ["String"
         `(begin
@@ -368,13 +323,16 @@
           ;; Public set updates take a caller place. The `*-ref!` helpers are
           ;; retained only for code that already owns an explicit mutable ref.
           (defmacro (insert! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            ,insert-body)
+            (comptime.expr-mut-call1 (expr-var ,insert-helper-name) place key))
           (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            ,remove-body)
+            (comptime.expr-mut-call1 (expr-var ,remove-helper-name) place key))
           (defmacro (remove-borrowed!
             [place : comptime.Expr]
             [key : comptime.Expr]) : unit
-            ,remove-borrowed-body))]
+            (comptime.expr-mut-call1
+              (expr-var ,remove-borrowed-helper-name)
+              place
+              key)))]
       ["i64"
         `(begin
           (module ,module-name)
@@ -612,9 +570,9 @@
           ;; Public set updates take a caller place. The `*-ref!` helpers are
           ;; retained only for code that already owns an explicit mutable ref.
           (defmacro (insert! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            ,insert-body)
+            (comptime.expr-mut-call1 (expr-var ,insert-helper-name) place key))
           (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            ,remove-body))]
+            (comptime.expr-mut-call1 (expr-var ,remove-helper-name) place key)))]
       [_
         `(begin
           (module ,module-name))])))

@@ -5979,8 +5979,54 @@
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
     ok))
 
+(define (compiler-backend-peephole-single-dest-mnemonic? [name : String]) : bool
+  (compiler-backend-peephole-mnemonic-single-dest?
+    (unsafe
+      (string-data name))
+    0
+    (string.string-length name)))
+
+(define (compiler-backend-peephole-single-dest-classifier-ok?) : bool
+  (and
+    (compiler-backend-peephole-single-dest-mnemonic? "movabsq")
+    (compiler-backend-peephole-single-dest-mnemonic? "setae")
+    (compiler-backend-peephole-single-dest-mnemonic? "movl")
+    (compiler-backend-peephole-single-dest-mnemonic? "movw")
+    (compiler-backend-peephole-single-dest-mnemonic? "movb")
+    (compiler-backend-peephole-single-dest-mnemonic? "addq")
+    (compiler-backend-peephole-single-dest-mnemonic? "subl")
+    (compiler-backend-peephole-single-dest-mnemonic? "andw")
+    (compiler-backend-peephole-single-dest-mnemonic? "orb")
+    (compiler-backend-peephole-single-dest-mnemonic? "xorq")
+    (compiler-backend-peephole-single-dest-mnemonic? "leal")
+    (compiler-backend-peephole-single-dest-mnemonic? "shlw")
+    (compiler-backend-peephole-single-dest-mnemonic? "shrb")
+    (compiler-backend-peephole-single-dest-mnemonic? "sarq")
+    (compiler-backend-peephole-single-dest-mnemonic? "sall")
+    (compiler-backend-peephole-single-dest-mnemonic? "negb")
+    (compiler-backend-peephole-single-dest-mnemonic? "notw")
+    (compiler-backend-peephole-single-dest-mnemonic? "incl")
+    (compiler-backend-peephole-single-dest-mnemonic? "decq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzbq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzwq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movsbq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movswq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movslq")
+    (not (compiler-backend-peephole-single-dest-mnemonic? "movq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "movzbl"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "movsd"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "imulq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "mulq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "divq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "idivq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "callq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "xchgq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "testq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "cmpq"))))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
+    (compiler-backend-peephole-single-dest-classifier-ok?)
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
     (compiler-backend-mov-scratch-staging-ok?)

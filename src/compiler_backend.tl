@@ -52076,84 +52076,76 @@ tl_tlci_call_image_entry:
             (compiler-backend-peephole-token-to-reg data ts te)
             ""))))))
 
-;; SCAV3: true iff the mnemonic token [i,i+mlen) is an l/w/b (32/16/8-bit) width
-;; variant of a safe single-writer base -- one of {mov,add,sub,and,or,xor,shl,
-;; shr,sar,sal,neg,not,inc,dec,lea}. Every listed base writes ONLY its last
-;; operand at every width, so clearing exactly that (sub-)register's parent is
-;; sound. The base is the mnemonic minus its trailing l/w/b byte. Rejects by
-;; construction: mul/imul/div/idiv (base not listed -> multi-writer rdx:rax),
-;; `call` (base "cal"), `movsd`/`movss`/`movups` (end in d/s, not l/w/b),
-;; `cmov*`/`movz*l`/`movs*l` (base not "mov"). q-width forms match the explicit
-;; list in mnemonic-single-dest?; cmp/test never reach here (line-clears-owners?).
-(define (compiler-backend-peephole-mnemonic-lwb-single-dest?
+;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
+;; register is its last operand (so invalidating just that register is sound):
+;; the fixed q/l/w/b base set, the movabsq imm->reg load, any set<cc> (8-bit
+;; dest), or one of the five widening moves. Classify the token from its length
+;; and bytes once: this runs for every non-movq assembly line, and the former
+;; chain re-entered the generic range/string comparator up to twenty times.
+;; Excludes multi-writers (imul/mul/div/cqo/call/xchg); plain movq remains on the
+;; dedicated move-transfer path and is deliberately not classified here.
+(define (compiler-backend-peephole-mnemonic-single-dest?
   [data : (Ptr u8)]
   [i : i64]
   [mlen : i64]) : bool
   (if (< mlen 3)
     false
     (let
-      [last : i64 (compiler-backend-peephole-byte-at data (+ i (- mlen 1)))]
-      (if (not (or (= last 108) (= last 119) (= last 98)))
-        false
-        (let
-          [e : i64 (+ i (- mlen 1))]
-          (or
-            (compiler-backend-peephole-range-eq? data i e "mov")
-            (compiler-backend-peephole-range-eq? data i e "add")
-            (compiler-backend-peephole-range-eq? data i e "sub")
-            (compiler-backend-peephole-range-eq? data i e "and")
-            (compiler-backend-peephole-range-eq? data i e "or")
-            (compiler-backend-peephole-range-eq? data i e "xor")
-            (compiler-backend-peephole-range-eq? data i e "shl")
-            (compiler-backend-peephole-range-eq? data i e "shr")
-            (compiler-backend-peephole-range-eq? data i e "sar")
-            (compiler-backend-peephole-range-eq? data i e "sal")
-            (compiler-backend-peephole-range-eq? data i e "neg")
-            (compiler-backend-peephole-range-eq? data i e "not")
-            (compiler-backend-peephole-range-eq? data i e "inc")
-            (compiler-backend-peephole-range-eq? data i e "dec")
-            (compiler-backend-peephole-range-eq? data i e "lea")))))))
-
-;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
-;; register is its last operand (so invalidating just that register is sound):
-;; the explicit q-suffix list below, the movabsq imm->reg load, any set<cc>
-;; (8-bit dest), or an l/w/b width variant of a safe base (SCAV3). Excludes
-;; multi-writers (imul/mul/div/cqo/call/xchg).
-(define (compiler-backend-peephole-mnemonic-single-dest?
-  [data : (Ptr u8)]
-  [i : i64]
-  [mlen : i64]) : bool
-  (let
-    [e : i64 (+ i mlen)]
-    (or
-      ;; SCAV3: movabsq (64-bit imm -> reg, single dest); set<cc> (8-bit dest);
-      ;; and all l/w/b width variants of the safe single-writer bases.
-      (compiler-backend-peephole-range-eq? data i e "movabsq")
-      (and
-        (>= mlen 3)
-        (= (compiler-backend-peephole-byte-at data i) 115)
-        (= (compiler-backend-peephole-byte-at data (+ i 1)) 101)
-        (= (compiler-backend-peephole-byte-at data (+ i 2)) 116))
-      (compiler-backend-peephole-mnemonic-lwb-single-dest? data i mlen)
-      (compiler-backend-peephole-range-eq? data i e "addq")
-      (compiler-backend-peephole-range-eq? data i e "subq")
-      (compiler-backend-peephole-range-eq? data i e "andq")
-      (compiler-backend-peephole-range-eq? data i e "orq")
-      (compiler-backend-peephole-range-eq? data i e "xorq")
-      (compiler-backend-peephole-range-eq? data i e "leaq")
-      (compiler-backend-peephole-range-eq? data i e "shlq")
-      (compiler-backend-peephole-range-eq? data i e "shrq")
-      (compiler-backend-peephole-range-eq? data i e "sarq")
-      (compiler-backend-peephole-range-eq? data i e "salq")
-      (compiler-backend-peephole-range-eq? data i e "negq")
-      (compiler-backend-peephole-range-eq? data i e "notq")
-      (compiler-backend-peephole-range-eq? data i e "incq")
-      (compiler-backend-peephole-range-eq? data i e "decq")
-      (compiler-backend-peephole-range-eq? data i e "movzbq")
-      (compiler-backend-peephole-range-eq? data i e "movzwq")
-      (compiler-backend-peephole-range-eq? data i e "movsbq")
-      (compiler-backend-peephole-range-eq? data i e "movswq")
-      (compiler-backend-peephole-range-eq? data i e "movslq"))))
+      [b0 : i64 (compiler-backend-peephole-byte-at data i)]
+      [b1 : i64 (compiler-backend-peephole-byte-at data (+ i 1))]
+      [b2 : i64 (compiler-backend-peephole-byte-at data (+ i 2))]
+      [base3 : i64 (+ b0 (+ (* b1 256) (* b2 65536)))]
+      (cond
+        ;; set<cc>: preserve the existing prefix classification.
+        [(and (= b0 115) (= b1 101) (= b2 116)) true]
+        ;; movabsq
+        [(= mlen 7)
+          (and
+            (= base3 7761773)
+            (= (compiler-backend-peephole-byte-at data (+ i 3)) 97)
+            (= (compiler-backend-peephole-byte-at data (+ i 4)) 98)
+            (= (compiler-backend-peephole-byte-at data (+ i 5)) 115)
+            (= (compiler-backend-peephole-byte-at data (+ i 6)) 113))]
+        ;; movzbq, movzwq, movsbq, movswq, movslq
+        [(= mlen 6)
+          (let
+            [kind : i64 (compiler-backend-peephole-byte-at data (+ i 3))]
+            [width : i64 (compiler-backend-peephole-byte-at data (+ i 4))]
+            (and
+              (= base3 7761773)
+              (= (compiler-backend-peephole-byte-at data (+ i 5)) 113)
+              (or
+                (and (= kind 122) (or (= width 98) (= width 119)))
+                (and (= kind 115) (or (= width 98) (= width 119) (= width 108))))))]
+        [else
+          (let
+            [suffix : i64
+              (compiler-backend-peephole-byte-at data (+ i (- mlen 1)))]
+            [width-suffix? : bool
+              (or (= suffix 113) (= suffix 108) (= suffix 119) (= suffix 98))]
+            (and
+              width-suffix?
+              (or
+                ;; or{q,l,w,b}
+                (and (= mlen 3) (= b0 111) (= b1 114))
+                (and
+                  (= mlen 4)
+                  ;; mov{l,w,b}; movq stays on the dedicated move path.
+                  (or
+                    (and (not (= suffix 113)) (= base3 7761773))
+                    (= base3 6579297)
+                    (= base3 6452595)
+                    (= base3 6581857)
+                    (= base3 7499640)
+                    (= base3 7104627)
+                    (= base3 7497843)
+                    (= base3 7496051)
+                    (= base3 7102835)
+                    (= base3 6776174)
+                    (= base3 7630702)
+                    (= base3 6516329)
+                    (= base3 6514020)
+                    (= base3 6382956))))))]))))
 
 (define (compiler-backend-peephole-range-mentions-r10-data?
   [data : (Ptr u8)]

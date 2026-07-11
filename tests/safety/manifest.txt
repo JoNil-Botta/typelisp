@@ -256,3 +256,5 @@ arena_phase_shadowed_make_reject|check-fail|tests/safety/arena_phase_shadowed_ma
 arena_phase_rewind_inside_owner_reject|check-fail|tests/safety/arena_phase_rewind_inside_owner_reject.tl|-|arena.rewind-safe! cannot run inside the arena it rewinds
 arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_owner_reject.tl|-|arena.destroy-safe! cannot run inside the arena it destroys
 arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`
+function_lifetime_elision_ambiguous_return_reject|check-fail|tests/safety/function_lifetime_elision_ambiguous_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime
+function_lifetime_elision_zero_input_return_reject|check-fail|tests/safety/function_lifetime_elision_zero_input_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime

@@ -291,3 +291,4 @@ sync_channel_pair_thread_runtime|tests/integration/sync_channel_pair_thread_runt
 sync_channel_string_thread_runtime|tests/integration/sync_channel_string_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 sync_mutex_thread_runtime|tests/integration/sync_mutex_thread_runtime.tl|42|-|-|stdlib/sync.tl stdlib/arena.tl stdlib/thread.tl stdlib/string.tl
 box_take_set|tests/integration/box_take_set.tl|42|-|-|-
+function_lifetime_elision|tests/integration/function_lifetime_elision.tl|42|-|-|stdlib/io.tl

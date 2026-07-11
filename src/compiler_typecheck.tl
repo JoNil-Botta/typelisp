@@ -4145,10 +4145,9 @@
       (compiler-typecheck-error-ok?
         (compiler-typecheck-reference-struct-local-escape-source)
         "typecheck: reference value would escape lexical scope")]
-    [lambda-return-error-ok : bool
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-reference-lambda-return-source)
-        "typecheck: returning references requires lifetime support")]
+    [lambda-return-ok : bool
+      (compiler-typecheck-ok?
+        (compiler-typecheck-reference-lambda-return-source))]
     [mut-ref-ok : bool
       (compiler-typecheck-ok? (compiler-typecheck-reference-mut-source))]
     [mut-borrow-ok : bool
@@ -4310,7 +4309,7 @@
       (if struct-local-escape-error-ok
         unit
         (set! ok false))
-      (if lambda-return-error-ok
+      (if lambda-return-ok
         unit
         (set! ok false))
       (if mut-ref-ok

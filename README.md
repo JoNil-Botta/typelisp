@@ -190,6 +190,13 @@ consistent raw-pointer atomics (`atomic-load`, `atomic-store!`,
 `atomic-add!`, `atomic-fetch-add!`, `atomic-cas!`) for 32/64-bit integer
 elements.
 
+Function signatures normally elide reference lifetime names: write
+`[item : (& Item)]` or `[item : (&mut Item)]`, and an elided reference return
+uses the sole input reference lifetime. Use explicit names such as
+`(& selected Item)` only when an API intentionally relates multiple reference
+inputs; fields, globals, locals, and nominal lifetime arguments remain
+explicit. Borrow expressions stay `(& place)` and `(&mut place)`.
+
 ### Abstraction: comptime, not generics
 
 TypeLisp does not plan source-level generics, traits, interfaces, `impl`

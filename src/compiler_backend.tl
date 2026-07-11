@@ -247,8 +247,14 @@
   (mnemonic-start i64)
   (mnemonic-len i64)
   (has-operands bool)
-  (op-src String)
-  (op-dst String)
+  (op-src-start i64)
+  (op-src-end i64)
+  (op-dst-start i64)
+  (op-dst-end i64)
+  (op-src-reg i64)
+  (op-dst-reg i64)
+  (op-src-flags i64)
+  (op-dst-flags i64)
   (op-src-key i64)
   (op-dst-key i64)
   (movq bool)
@@ -50779,6 +50785,7 @@ tl_tlci_call_image_entry:
   [off : i64]
   [len : i64]
   [data : (Ptr u8)]
+  [data-start : i64]
   [klen : i64]) : bool
   (if (not (= len klen))
     false
@@ -50794,20 +50801,19 @@ tl_tlci_call_image_entry:
                   compiler-backend-peephole-owner-global-bytes
                   (+ off j))
                 : i64)
-              (compiler-backend-peephole-byte-at data j))
+              (compiler-backend-peephole-byte-at data (+ data-start j)))
               unit
               (set! ok false))
             (set! j (+ j 1))))
         ok))))
 
-(define (compiler-backend-peephole-owner-global-key
+(define (compiler-backend-peephole-owner-global-key-range
   [operand : String]
+  [data : (Ptr u8)]
+  [operand-start : i64]
   [symbol-len : i64]) : i64
   (let
-    [data : (Ptr u8)
-      (unsafe
-        (string-data operand))]
-    [hash : i64 (intern-hash-slice operand 0 symbol-len)]
+    [hash : i64 (intern-hash-slice operand operand-start symbol-len)]
     [cap : i64 compiler-backend-peephole-owner-global-capacity]
     [slot : i64 (bit-and hash (- cap 1))]
     [walked : i64 0]
@@ -50830,7 +50836,11 @@ tl_tlci_call_image_entry:
                         (array-set!
                           compiler-backend-peephole-owner-global-bytes
                           (+ start j)
-                          (cast (compiler-backend-peephole-byte-at data j) : u8))
+                          (cast
+                            (compiler-backend-peephole-byte-at
+                              data
+                              (+ operand-start j))
+                            : u8))
                         (set! j (+ j 1))))
                     (array-set!
                       compiler-backend-peephole-owner-global-offsets
@@ -50849,6 +50859,7 @@ tl_tlci_call_image_entry:
               off
               (array-ref compiler-backend-peephole-owner-global-lengths slot)
               data
+              operand-start
               symbol-len)
               (return (- 0 (+ slot 1)))
               (begin
@@ -50859,6 +50870,16 @@ tl_tlci_call_image_entry:
                     (+ slot 1)))
                 (set! walked (+ walked 1)))))))
       (compiler-backend-peephole-owner-key-unknown))))
+
+(define (compiler-backend-peephole-owner-global-key
+  [operand : String]
+  [symbol-len : i64]) : i64
+  (compiler-backend-peephole-owner-global-key-range
+    operand
+    (unsafe
+      (string-data operand))
+    0
+    symbol-len))
 
 (define (compiler-backend-peephole-string-suffix-eq?
   [text : String]
@@ -50990,6 +51011,129 @@ tl_tlci_call_image_entry:
               (compiler-backend-peephole-string-suffix-eq? operand "(%rip)"))
               (compiler-backend-peephole-owner-global-key
                 operand
+                (- len suffix-len))
+              (compiler-backend-peephole-owner-key-unknown))))))))
+
+;; Range forms used by the streaming descriptor path. They preserve operand
+;; identity without allocating a substring for each side of every movq.
+(define (compiler-backend-peephole-decimal-range-valid?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [i : i64 start]
+    [ok : bool (< start end)]
+    (begin
+      (if (and ok (= (compiler-backend-peephole-byte-at data i) 45))
+        (begin
+          (set! i (+ i 1))
+          (if (= i end)
+            (set! ok false)
+            unit))
+        unit)
+      (while (and ok (< i end))
+        (let
+          [b : i64 (compiler-backend-peephole-byte-at data i)]
+          (begin
+            (if (and (>= b 48) (<= b 57))
+              unit
+              (set! ok false))
+            (set! i (+ i 1)))))
+      ok)))
+
+(define (compiler-backend-peephole-decimal-range-value
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [neg : bool (= (compiler-backend-peephole-byte-at data start) 45)]
+    [i : i64
+      (if neg
+        (+ start 1)
+        start)]
+    [value : i64 0]
+    (begin
+      (while (< i end)
+        (begin
+          (set!
+            value
+            (+ (* value 10) (- (compiler-backend-peephole-byte-at data i) 48)))
+          (set! i (+ i 1))))
+      (if neg
+        (- 0 value)
+        value))))
+
+(define (compiler-backend-peephole-stack-owner-key-range
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [suffix : String]
+  [base : i64]) : i64
+  (let
+    [suffix-len : i64 (string.string-length suffix)]
+    [len : i64 (- end start)]
+    (if (or
+      (< len suffix-len)
+      (not
+        (compiler-backend-peephole-range-eq? data (- end suffix-len) end suffix)))
+      (compiler-backend-peephole-owner-key-unknown)
+      (let
+        [prefix-end : i64 (- end suffix-len)]
+        (cond
+          [(= prefix-end start)
+            (compiler-backend-peephole-stack-owner-key-from-parts base 0 false)]
+          [(compiler-backend-peephole-decimal-range-valid?
+              data
+              start
+              prefix-end)
+            (compiler-backend-peephole-stack-owner-key-from-parts
+              base
+              (compiler-backend-peephole-decimal-range-value
+                data
+                start
+                prefix-end)
+              true)]
+          [else (compiler-backend-peephole-owner-key-unknown)])))))
+
+(define (compiler-backend-peephole-owner-key-from-range
+  [operand : String]
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [rbp : i64
+      (compiler-backend-peephole-stack-owner-key-range
+        data
+        start
+        end
+        "(%rbp)"
+        0)]
+    (if (compiler-backend-peephole-owner-key-known? rbp)
+      rbp
+      (let
+        [rsp : i64
+          (compiler-backend-peephole-stack-owner-key-range
+            data
+            start
+            end
+            "(%rsp)"
+            1)]
+        (if (compiler-backend-peephole-owner-key-known? rsp)
+          rsp
+          (let
+            [len : i64 (- end start)]
+            [suffix-len : i64 6]
+            (if (and
+              (> len suffix-len)
+              (compiler-backend-peephole-range-eq?
+                data
+                (- end suffix-len)
+                end
+                "(%rip)"))
+              (compiler-backend-peephole-owner-global-key-range
+                operand
+                data
+                start
                 (- len suffix-len))
               (compiler-backend-peephole-owner-key-unknown))))))))
 
@@ -51518,6 +51662,53 @@ tl_tlci_call_image_entry:
 ;; the first one or two bytes. The mapping is exact (same accept set, same
 ;; ordering as the string-compare chains it replaces), so owner-map decisions --
 ;; and therefore emitted assembly -- stay byte-identical.
+(define (compiler-backend-peephole-reg-index-range
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : i64
+  (let
+    [n : i64 (- end start)]
+    (if (or (< n 3) (> n 4))
+      -1
+      (let
+        [b0 : i64 (compiler-backend-peephole-byte-at data start)]
+        [b1 : i64 (compiler-backend-peephole-byte-at data (+ start 1))]
+        [b2 : i64 (compiler-backend-peephole-byte-at data (+ start 2))]
+        (if (or (not (= b0 37)) (not (= b1 114)))
+          -1
+          (if (= n 3)
+            (cond [(= b2 56) 6] [(= b2 57) 7] [else -1])
+            (let
+              [b3 : i64 (compiler-backend-peephole-byte-at data (+ start 3))]
+              (cond
+                [(= b2 97)
+                  (if (= b3 120)
+                    0
+                    -1)]
+                [(= b2 99)
+                  (if (= b3 120)
+                    1
+                    -1)]
+                [(= b2 100) (cond [(= b3 120) 2] [(= b3 105) 5] [else -1])]
+                [(= b2 98)
+                  (if (= b3 120)
+                    3
+                    -1)]
+                [(= b2 115)
+                  (if (= b3 105)
+                    4
+                    -1)]
+                [(= b2 49)
+                  (cond
+                    [(= b3 48) 8]
+                    [(= b3 49) 9]
+                    [(= b3 50) 10]
+                    [(= b3 51) 11]
+                    [(= b3 52) 12]
+                    [(= b3 53) 13]
+                    [else -1])]
+                [else -1]))))))))
+
 (define (compiler-backend-peephole-reg-index [reg : String]) : i64
   (let
     [n : i64 (string.string-length reg)]
@@ -51578,27 +51769,32 @@ tl_tlci_call_image_entry:
   (>= (compiler-backend-peephole-reg-index operand) 0))
 
 ;; Location currently mirrored by `reg`, or Unknown if unknown / `reg` is not tracked.
+(define (compiler-backend-peephole-owners-get-index
+  [owners : CompilerBackendPeepholeOwners]
+  [idx : i64]) : i64
+  (cond
+    [(= idx 0) (struct-get owners rax)]
+    [(= idx 1) (struct-get owners rcx)]
+    [(= idx 2) (struct-get owners rdx)]
+    [(= idx 3) (struct-get owners rbx)]
+    [(= idx 4) (struct-get owners rsi)]
+    [(= idx 5) (struct-get owners rdi)]
+    [(= idx 6) (struct-get owners r8)]
+    [(= idx 7) (struct-get owners r9)]
+    [(= idx 8) (struct-get owners r10)]
+    [(= idx 9) (struct-get owners r11)]
+    [(= idx 10) (struct-get owners r12)]
+    [(= idx 11) (struct-get owners r13)]
+    [(= idx 12) (struct-get owners r14)]
+    [(= idx 13) (struct-get owners r15)]
+    [else (compiler-backend-peephole-owner-key-unknown)]))
+
 (define (compiler-backend-peephole-owners-get
   [owners : CompilerBackendPeepholeOwners]
   [reg : String]) : i64
-  (let
-    [idx : i64 (compiler-backend-peephole-reg-index reg)]
-    (cond
-      [(= idx 0) (struct-get owners rax)]
-      [(= idx 1) (struct-get owners rcx)]
-      [(= idx 2) (struct-get owners rdx)]
-      [(= idx 3) (struct-get owners rbx)]
-      [(= idx 4) (struct-get owners rsi)]
-      [(= idx 5) (struct-get owners rdi)]
-      [(= idx 6) (struct-get owners r8)]
-      [(= idx 7) (struct-get owners r9)]
-      [(= idx 8) (struct-get owners r10)]
-      [(= idx 9) (struct-get owners r11)]
-      [(= idx 10) (struct-get owners r12)]
-      [(= idx 11) (struct-get owners r13)]
-      [(= idx 12) (struct-get owners r14)]
-      [(= idx 13) (struct-get owners r15)]
-      [else (compiler-backend-peephole-owner-key-unknown)])))
+  (compiler-backend-peephole-owners-get-index
+    owners
+    (compiler-backend-peephole-reg-index reg)))
 
 ;; The first tracked GP register whose mirrored location equals `slot`, other than
 ;; `exclude`, or "" if none. Drives cross-register reload reuse: a redundant
@@ -51607,14 +51803,14 @@ tl_tlci_call_image_entry:
 ;; invariant guarantees `found` still holds SLOT (not written since it loaded it,
 ;; and SLOT not written since -- a location write clears every mirror). Unknown
 ;; matches nothing (a reg with unknown owner must never be "reused").
-(define (compiler-backend-peephole-owners-find-reg-for-slot
+(define (compiler-backend-peephole-owners-find-reg-for-slot-index
   [owners : CompilerBackendPeepholeOwners]
   [slot : i64]
-  [exclude : String]) : String
+  [exclude : i64]) : String
   (if (not (compiler-backend-peephole-owner-key-known? slot))
     ""
     (let
-      [ex : i64 (compiler-backend-peephole-reg-index exclude)]
+      [ex : i64 exclude]
       (cond
         [(and
             (not (= ex 0))
@@ -51702,57 +51898,73 @@ tl_tlci_call_image_entry:
           "%r15"]
         [else ""]))))
 
+(define (compiler-backend-peephole-owners-find-reg-for-slot
+  [owners : CompilerBackendPeepholeOwners]
+  [slot : i64]
+  [exclude : String]) : String
+  (compiler-backend-peephole-owners-find-reg-for-slot-index
+    owners
+    slot
+    (compiler-backend-peephole-reg-index exclude)))
+
 ;; Owner map with `reg`'s owner set to `slot` (Unknown clears it). No-op when `reg`
 ;; is not a tracked register (e.g. an immediate or untracked register source).
+(define (compiler-backend-peephole-owners-set-reg-index
+  [owners : CompilerBackendPeepholeOwners]
+  [idx : i64]
+  [slot : i64]) : CompilerBackendPeepholeOwners
+  (CompilerBackendPeepholeOwners
+    (if (= idx 0)
+      slot
+      (struct-get owners rax))
+    (if (= idx 1)
+      slot
+      (struct-get owners rcx))
+    (if (= idx 2)
+      slot
+      (struct-get owners rdx))
+    (if (= idx 3)
+      slot
+      (struct-get owners rbx))
+    (if (= idx 4)
+      slot
+      (struct-get owners rsi))
+    (if (= idx 5)
+      slot
+      (struct-get owners rdi))
+    (if (= idx 6)
+      slot
+      (struct-get owners r8))
+    (if (= idx 7)
+      slot
+      (struct-get owners r9))
+    (if (= idx 8)
+      slot
+      (struct-get owners r10))
+    (if (= idx 9)
+      slot
+      (struct-get owners r11))
+    (if (= idx 10)
+      slot
+      (struct-get owners r12))
+    (if (= idx 11)
+      slot
+      (struct-get owners r13))
+    (if (= idx 12)
+      slot
+      (struct-get owners r14))
+    (if (= idx 13)
+      slot
+      (struct-get owners r15))))
+
 (define (compiler-backend-peephole-owners-set-reg
   [owners : CompilerBackendPeepholeOwners]
   [reg : String]
   [slot : i64]) : CompilerBackendPeepholeOwners
-  (let
-    [idx : i64 (compiler-backend-peephole-reg-index reg)]
-    (CompilerBackendPeepholeOwners
-      (if (= idx 0)
-        slot
-        (struct-get owners rax))
-      (if (= idx 1)
-        slot
-        (struct-get owners rcx))
-      (if (= idx 2)
-        slot
-        (struct-get owners rdx))
-      (if (= idx 3)
-        slot
-        (struct-get owners rbx))
-      (if (= idx 4)
-        slot
-        (struct-get owners rsi))
-      (if (= idx 5)
-        slot
-        (struct-get owners rdi))
-      (if (= idx 6)
-        slot
-        (struct-get owners r8))
-      (if (= idx 7)
-        slot
-        (struct-get owners r9))
-      (if (= idx 8)
-        slot
-        (struct-get owners r10))
-      (if (= idx 9)
-        slot
-        (struct-get owners r11))
-      (if (= idx 10)
-        slot
-        (struct-get owners r12))
-      (if (= idx 11)
-        slot
-        (struct-get owners r13))
-      (if (= idx 12)
-        slot
-        (struct-get owners r14))
-      (if (= idx 13)
-        slot
-        (struct-get owners r15)))))
+  (compiler-backend-peephole-owners-set-reg-index
+    owners
+    (compiler-backend-peephole-reg-index reg)
+    slot))
 
 ;; Owner map with every register that mirrored `slot` reset to unknown. Used
 ;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
@@ -51847,10 +52059,10 @@ tl_tlci_call_image_entry:
 ;;    operand that is not a clean stack slot -- indexed, pointer, rip-relative,
 ;;    or segment relative) may change the frame base or alias an unknown slot, so
 ;;    conservatively clear the whole map.
-(define (compiler-backend-peephole-movq-owners-transfer-keyed
+(define (compiler-backend-peephole-movq-owners-transfer-keyed-index
   [owners : CompilerBackendPeepholeOwners]
-  [src : String]
-  [dst : String]
+  [src-reg : i64]
+  [dst-reg : i64]
   [src-key : i64]
   [dst-key : i64]) : CompilerBackendPeepholeOwners
   (cond
@@ -51859,17 +52071,33 @@ tl_tlci_call_image_entry:
         [cleared : CompilerBackendPeepholeOwners
           (compiler-backend-peephole-owners-clear-slot owners dst-key)]
         (if (and
-          (compiler-backend-peephole-owner-reg? src)
+          (>= src-reg 0)
           (not
             (compiler-backend-peephole-owner-key-known?
-              (compiler-backend-peephole-owners-get cleared src))))
-          (compiler-backend-peephole-owners-set-reg cleared src dst-key)
+              (compiler-backend-peephole-owners-get-index cleared src-reg))))
+          (compiler-backend-peephole-owners-set-reg-index
+            cleared
+            src-reg
+            dst-key)
           cleared))]
-    [(compiler-backend-peephole-owner-reg? dst)
+    [(>= dst-reg 0)
       ;; DST is a load/reg-reg dest: it mirrors a clean stack slot OR a SYM(%rip)
       ;; global load (SCAV2); otherwise its contents become unknown.
-      (compiler-backend-peephole-owners-set-reg owners dst src-key)]
+      (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
+
+(define (compiler-backend-peephole-movq-owners-transfer-keyed
+  [owners : CompilerBackendPeepholeOwners]
+  [src : String]
+  [dst : String]
+  [src-key : i64]
+  [dst-key : i64]) : CompilerBackendPeepholeOwners
+  (compiler-backend-peephole-movq-owners-transfer-keyed-index
+    owners
+    (compiler-backend-peephole-reg-index src)
+    (compiler-backend-peephole-reg-index dst)
+    src-key
+    dst-key))
 
 (define (compiler-backend-peephole-movq-owners-transfer
   [owners : CompilerBackendPeepholeOwners]
@@ -52101,6 +52329,143 @@ tl_tlci_call_image_entry:
               (set! k (+ k 1))))
           ok)))))
 
+(define (compiler-backend-peephole-ranges-eq?
+  [left : (Ptr u8)]
+  [ls : i64]
+  [le : i64]
+  [right : (Ptr u8)]
+  [rs : i64]
+  [re : i64]) : bool
+  (let
+    [len : i64 (- le ls)]
+    (if (not (= len (- re rs)))
+      false
+      (let
+        [i : i64 0]
+        [same : bool true]
+        (begin
+          (while (and same (< i len))
+            (begin
+              (if (=
+                (compiler-backend-peephole-byte-at left (+ ls i))
+                (compiler-backend-peephole-byte-at right (+ rs i)))
+                unit
+                (set! same false))
+              (set! i (+ i 1))))
+          same)))))
+
+(define (compiler-backend-peephole-range-contains?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [needle : String]) : bool
+  (let
+    [len : i64 (string.string-length needle)]
+    [i : i64 start]
+    [found : bool false]
+    (begin
+      (while (and (not found) (<= (+ i len) end))
+        (if (compiler-backend-peephole-range-eq? data i (+ i len) needle)
+          (set! found true)
+          (set! i (+ i 1))))
+      found)))
+
+(define (compiler-backend-peephole-register-range?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (and (< start end) (= (compiler-backend-peephole-byte-at data start) 37)))
+
+(define (compiler-backend-peephole-stack-slot-range?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (or
+    (compiler-backend-peephole-range-contains? data start end "(%rbp)")
+    (compiler-backend-peephole-range-contains? data start end "(%rsp)")))
+
+(define (compiler-backend-peephole-local-frame-slot-range?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (or
+    (compiler-backend-peephole-range-contains? data start end "(%rsp)")
+    (and
+      (< start end)
+      (= (compiler-backend-peephole-byte-at data start) 45)
+      (compiler-backend-peephole-range-contains? data start end "(%rbp)"))))
+
+(define (compiler-backend-peephole-local-move-range?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (or
+    (compiler-backend-peephole-register-range? data start end)
+    (compiler-backend-peephole-stack-slot-range? data start end)))
+
+(define (compiler-backend-peephole-mem-base-r10-range?
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : bool
+  (and
+    (>= (- end start) 6)
+    (compiler-backend-peephole-range-eq? data (- end 6) end "(%r10)")))
+
+(define compiler-backend-peephole-op-register-flag : i64
+  1)
+(define compiler-backend-peephole-op-stack-flag : i64
+  2)
+(define compiler-backend-peephole-op-local-frame-flag : i64
+  4)
+(define compiler-backend-peephole-op-r10-base-flag : i64
+  8)
+
+(define (compiler-backend-peephole-operand-flags
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]
+  [key : i64]) : i64
+  (let
+    [register? : bool
+      (compiler-backend-peephole-register-range? data start end)]
+    [packed-stack? : bool (compiler-backend-peephole-owner-key-stack? key)]
+    [stack? : bool
+      (or
+        packed-stack?
+        (and
+          (>= (- end start) 6)
+          (compiler-backend-peephole-stack-slot-range? data start end)))]
+    [local-frame? : bool
+      (if packed-stack?
+        (or
+          (not (= (bit-and (- key 1) 2) 0))
+          (and
+            (< start end)
+            (= (compiler-backend-peephole-byte-at data start) 45)))
+        (and
+          stack?
+          (compiler-backend-peephole-local-frame-slot-range? data start end)))]
+    [r10-base? : bool
+      (compiler-backend-peephole-mem-base-r10-range? data start end)]
+    (+
+      (if register?
+        compiler-backend-peephole-op-register-flag
+        0)
+      (+
+        (if stack?
+          compiler-backend-peephole-op-stack-flag
+          0)
+        (+
+          (if local-frame?
+            compiler-backend-peephole-op-local-frame-flag
+            0)
+          (if r10-base?
+            compiler-backend-peephole-op-r10-base-flag
+            0))))))
+
+(define (compiler-backend-peephole-op-flag? [flags : i64] [flag : i64]) : bool
+  (not (= (bit-and flags flag) 0)))
+
 ;; SCAV3: the 64-bit parent of a 32/16/8-bit sub-register token [ts,te), or ""
 ;; if it is not a sub-register of one of the 14 owner-tracked GP registers. A
 ;; write to a sub-register (movl/xorl/movb/setcc dest) changes the full parent
@@ -52324,6 +52689,20 @@ tl_tlci_call_image_entry:
     (struct-get line start)
     (- (struct-get line end) (struct-get line start))))
 
+(define (compiler-backend-peephole-line-op-src-text
+  [line : CompilerBackendPeepholeLine]) : String
+  (string.substring
+    (struct-get line src)
+    (struct-get line op-src-start)
+    (- (struct-get line op-src-end) (struct-get line op-src-start))))
+
+(define (compiler-backend-peephole-line-op-dst-text
+  [line : CompilerBackendPeepholeLine]) : String
+  (string.substring
+    (struct-get line src)
+    (struct-get line op-dst-start)
+    (- (struct-get line op-dst-end) (struct-get line op-dst-start))))
+
 (define (compiler-backend-peephole-line-append
   [buf : (text_buf_borrowed.TextBufBorrowed asm)]
   [asm : String]
@@ -52362,8 +52741,6 @@ tl_tlci_call_image_entry:
         [mlen : i64 (compiler-backend-peephole-token-len data ms end)]
         [operand-start : i64 (+ ms mlen)]
         [has-operands : bool false]
-        [op-src : String ""]
-        [op-dst : String ""]
         [comma : i64 -1]
         [movq-prefix? : bool
           (compiler-backend-peephole-movq-prefix-at-range? data start end)]
@@ -52390,6 +52767,16 @@ tl_tlci_call_image_entry:
             unit)
           (let
             [is-movq : bool (and has-operands movq-prefix?)]
+            [op-src-start : i64 operand-start]
+            [op-src-end : i64
+              (if has-operands
+                comma
+                operand-start)]
+            [op-dst-start : i64
+              (if has-operands
+                (+ comma 2)
+                end)]
+            [op-dst-end : i64 end]
             [is-label : bool
               (and
                 (< ms end)
@@ -52408,28 +52795,56 @@ tl_tlci_call_image_entry:
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]
             [single-dest? : bool
               (compiler-backend-peephole-mnemonic-single-dest? data ms mlen)]
-            [_operands : unit
-              (if (and has-operands (or is-movq zext?))
-                (begin
-                  (set!
-                    op-src
-                    (string.substring src operand-start (- comma operand-start)))
-                  (set!
-                    op-dst
-                    (string.substring src (+ comma 2) (- end (+ comma 2)))))
-                unit)]
             [last-reg : String
               (if (or single-dest? zext?)
                 (compiler-backend-peephole-last-operand-reg data start end)
                 "")]
             [src-key : i64
               (if is-movq
-                (compiler-backend-peephole-owner-key-from-operand op-src)
+                (compiler-backend-peephole-owner-key-from-range
+                  src
+                  data
+                  op-src-start
+                  op-src-end)
                 (compiler-backend-peephole-owner-key-unknown))]
             [dst-key : i64
               (if is-movq
-                (compiler-backend-peephole-owner-key-from-operand op-dst)
+                (compiler-backend-peephole-owner-key-from-range
+                  src
+                  data
+                  op-dst-start
+                  op-dst-end)
                 (compiler-backend-peephole-owner-key-unknown))]
+            [src-reg : i64
+              (if is-movq
+                (compiler-backend-peephole-reg-index-range
+                  data
+                  op-src-start
+                  op-src-end)
+                -1)]
+            [dst-reg : i64
+              (if is-movq
+                (compiler-backend-peephole-reg-index-range
+                  data
+                  op-dst-start
+                  op-dst-end)
+                -1)]
+            [src-flags : i64
+              (if is-movq
+                (compiler-backend-peephole-operand-flags
+                  data
+                  op-src-start
+                  op-src-end
+                  src-key)
+                0)]
+            [dst-flags : i64
+              (if is-movq
+                (compiler-backend-peephole-operand-flags
+                  data
+                  op-dst-start
+                  op-dst-end
+                  dst-key)
+                0)]
             (CompilerBackendPeepholeLine
               src
               data
@@ -52440,8 +52855,14 @@ tl_tlci_call_image_entry:
               ms
               mlen
               has-operands
-              op-src
-              op-dst
+              op-src-start
+              op-src-end
+              op-dst-start
+              op-dst-end
+              src-reg
+              dst-reg
+              src-flags
+              dst-flags
               src-key
               dst-key
               is-movq
@@ -52482,8 +52903,14 @@ tl_tlci_call_image_entry:
     (struct-get line mnemonic-start)
     (struct-get line mnemonic-len)
     (struct-get line has-operands)
-    (struct-get line op-src)
-    (struct-get line op-dst)
+    (struct-get line op-src-start)
+    (struct-get line op-src-end)
+    (struct-get line op-dst-start)
+    (struct-get line op-dst-end)
+    (struct-get line op-src-reg)
+    (struct-get line op-dst-reg)
+    (struct-get line op-src-flags)
+    (struct-get line op-dst-flags)
     (struct-get line op-src-key)
     (struct-get line op-dst-key)
     (struct-get line movq)
@@ -52633,9 +53060,14 @@ tl_tlci_call_image_entry:
   [line : CompilerBackendPeepholeLine]) : bool
   (and
     (struct-get line movq)
-    (compiler-backend-peephole-self-move-operands?
-      (struct-get line op-src)
-      (struct-get line op-dst))))
+    (not (= (bit-and (struct-get line op-src-flags) 3) 0))
+    (compiler-backend-peephole-ranges-eq?
+      (struct-get line data)
+      (struct-get line op-src-start)
+      (struct-get line op-src-end)
+      (struct-get line data)
+      (struct-get line op-dst-start)
+      (struct-get line op-dst-end))))
 
 (define (compiler-backend-peephole-redundant-zext-next-desc?
   [next : CompilerBackendPeepholeLine]
@@ -52645,21 +53077,21 @@ tl_tlci_call_image_entry:
     (not (compiler-backend-peephole-line-mnemonic-eq? next "movzbq")))
     false
     (let
-      [src : String (struct-get next op-src)]
-      [src-len : i64 (string.string-length src)]
-      (if (or (= src-len 0) (not (= (cast (string.string-ref src 0) : i64) 37)))
+      [data : (Ptr u8) (struct-get next data)]
+      [src-start : i64 (struct-get next op-src-start)]
+      [src-end : i64 (struct-get next op-src-end)]
+      [src-len : i64 (- src-end src-start)]
+      (if (or
+        (= src-len 0)
+        (not (= (compiler-backend-peephole-byte-at data src-start) 37)))
         false
         (let
-          [last : i64 (cast (string.string-ref src (- src-len 1)) : i64)]
+          [last : i64 (compiler-backend-peephole-byte-at data (- src-end 1))]
           (if (not (or (= last 108) (= last 98)))
             false
             (and
               (string.eq
-                (compiler-backend-peephole-subreg-to-reg
-                  (unsafe
-                    (string-data src))
-                  0
-                  src-len)
+                (compiler-backend-peephole-subreg-to-reg data src-start src-end)
                 reg)
               (string.eq (struct-get next last-reg) reg))))))))
 
@@ -52705,11 +53137,12 @@ tl_tlci_call_image_entry:
           [clean-writes-r10 : bool
             (and
               (struct-get line movq)
-              (string.eq (struct-get line op-dst) "%r10")
+              (= (struct-get line op-dst-reg) 8)
               (not
-                (compiler-backend-string-contains?
-                  (struct-get line op-src)
-                  "%r10")))]
+                (compiler-backend-peephole-range-mentions-r10-data?
+                  (struct-get line data)
+                  (struct-get line op-src-start)
+                  (struct-get line op-src-end))))]
           (begin
             (if mentions-r10
               (if clean-writes-r10
@@ -52735,70 +53168,128 @@ tl_tlci_call_image_entry:
   (if (compiler-backend-peephole-redundant-zext-pair-desc? pending next)
     2
     (if (struct-get pending movq)
-      (let
-        [src : String (struct-get pending op-src)]
-        [dst : String (struct-get pending op-dst)]
-        (if (compiler-backend-peephole-self-move-operands? src dst)
-          1
-          (if (struct-get next movq)
-            (let
-              [next-src : String (struct-get next op-src)]
-              [next-dst : String (struct-get next op-dst)]
-              (cond
-                [(compiler-backend-peephole-overwritten-frame-store-operands?
-                    src
-                    dst
-                    next-src
-                    next-dst)
-                  1]
-                [(compiler-backend-peephole-redundant-move-operands?
-                    src
-                    dst
-                    next-src
-                    next-dst)
-                  2]
-                [(compiler-backend-peephole-forward-frame-load-operands?
-                    src
-                    dst
-                    next-src
-                    next-dst)
-                  3]
-                [(and
-                    (compiler-backend-peephole-r10-base-fold-operands?
-                      src
-                      dst
-                      next-src
-                      next-dst)
-                    (or
-                      (string.eq next-dst "%r10")
-                      (compiler-backend-peephole-r10-dead-after-desc?
-                        asm
-                        asm-data
-                        (if (< (struct-get next end) (string.string-length asm))
-                          (+ (struct-get next end) 1)
-                          (struct-get next end))
-                        (string.string-length asm))))
-                  4]
-                [else 0]))
-            0)))
+      (if (compiler-backend-peephole-line-self-move-desc? pending)
+        1
+        (if (struct-get next movq)
+          (let
+            [pd : (Ptr u8) (struct-get pending data)]
+            [nd : (Ptr u8) (struct-get next data)]
+            [pss : i64 (struct-get pending op-src-start)]
+            [pse : i64 (struct-get pending op-src-end)]
+            [pds : i64 (struct-get pending op-dst-start)]
+            [pde : i64 (struct-get pending op-dst-end)]
+            [nss : i64 (struct-get next op-src-start)]
+            [nse : i64 (struct-get next op-src-end)]
+            [nds : i64 (struct-get next op-dst-start)]
+            [nde : i64 (struct-get next op-dst-end)]
+            [psf : i64 (struct-get pending op-src-flags)]
+            [pdf : i64 (struct-get pending op-dst-flags)]
+            [nsf : i64 (struct-get next op-src-flags)]
+            [ndf : i64 (struct-get next op-dst-flags)]
+            (cond
+              [(and
+                  (compiler-backend-peephole-op-flag?
+                    psf
+                    compiler-backend-peephole-op-register-flag)
+                  (compiler-backend-peephole-op-flag?
+                    pdf
+                    compiler-backend-peephole-op-local-frame-flag)
+                  (compiler-backend-peephole-op-flag?
+                    nsf
+                    compiler-backend-peephole-op-register-flag)
+                  (compiler-backend-peephole-op-flag?
+                    ndf
+                    compiler-backend-peephole-op-local-frame-flag)
+                  (compiler-backend-peephole-ranges-eq? pd pds pde nd nds nde))
+                1]
+              [(and
+                  (not (= (bit-and psf 3) 0))
+                  (not (= (bit-and pdf 3) 0))
+                  (not (= (bit-and nsf 3) 0))
+                  (not (= (bit-and ndf 3) 0))
+                  (or
+                    (and
+                      (compiler-backend-peephole-ranges-eq?
+                        pd
+                        pss
+                        pse
+                        nd
+                        nss
+                        nse)
+                      (compiler-backend-peephole-ranges-eq?
+                        pd
+                        pds
+                        pde
+                        nd
+                        nds
+                        nde))
+                    (and
+                      (compiler-backend-peephole-ranges-eq?
+                        pd
+                        pds
+                        pde
+                        nd
+                        nss
+                        nse)
+                      (compiler-backend-peephole-ranges-eq?
+                        pd
+                        pss
+                        pse
+                        nd
+                        nds
+                        nde))))
+                2]
+              [(and
+                  (compiler-backend-peephole-op-flag?
+                    psf
+                    compiler-backend-peephole-op-register-flag)
+                  (compiler-backend-peephole-op-flag?
+                    pdf
+                    compiler-backend-peephole-op-local-frame-flag)
+                  (compiler-backend-peephole-op-flag?
+                    nsf
+                    compiler-backend-peephole-op-local-frame-flag)
+                  (compiler-backend-peephole-op-flag?
+                    ndf
+                    compiler-backend-peephole-op-register-flag)
+                  (compiler-backend-peephole-ranges-eq? pd pds pde nd nss nse))
+                3]
+              [(and
+                  (compiler-backend-peephole-op-flag?
+                    psf
+                    compiler-backend-peephole-op-register-flag)
+                  (not (compiler-backend-peephole-range-eq? pd pss pse "%r10"))
+                  (not (compiler-backend-peephole-range-eq? pd pss pse "%rbp"))
+                  (= (struct-get pending op-dst-reg) 8)
+                  (compiler-backend-peephole-op-flag?
+                    nsf
+                    compiler-backend-peephole-op-r10-base-flag)
+                  (compiler-backend-peephole-op-flag?
+                    ndf
+                    compiler-backend-peephole-op-register-flag)
+                  (or
+                    (= (struct-get next op-dst-reg) 8)
+                    (compiler-backend-peephole-r10-dead-after-desc?
+                      asm
+                      asm-data
+                      (if (< (struct-get next end) (string.string-length asm))
+                        (+ (struct-get next end) 1)
+                        (struct-get next end))
+                      (string.string-length asm))))
+                4]
+              [else 0]))
+          0))
       0)))
 
 (define (compiler-backend-peephole-forward-frame-load-line-desc
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : String
-  (if (and
-    (struct-get pending movq)
-    (struct-get next movq)
-    (compiler-backend-peephole-forward-frame-load-operands?
-      (struct-get pending op-src)
-      (struct-get pending op-dst)
-      (struct-get next op-src)
-      (struct-get next op-dst)))
+  (if (and (struct-get pending movq) (struct-get next movq))
     (str_cat.str-cat
       "    movq "
-      (struct-get pending op-src)
+      (compiler-backend-peephole-line-op-src-text pending)
       ", "
-      (struct-get next op-dst))
+      (compiler-backend-peephole-line-op-dst-text next))
     (compiler-backend-peephole-line-text next)))
 
 (define (compiler-backend-peephole-r10-base-fold-line-desc
@@ -52808,10 +53299,10 @@ tl_tlci_call_image_entry:
     (str_cat.str-cat
       "    movq "
       (compiler-backend-peephole-r10-base-rewrite
-        (struct-get next op-src)
-        (struct-get pending op-src))
+        (compiler-backend-peephole-line-op-src-text next)
+        (compiler-backend-peephole-line-op-src-text pending))
       ", "
-      (struct-get next op-dst))
+      (compiler-backend-peephole-line-op-dst-text next))
     (compiler-backend-peephole-line-text next)))
 
 (define (compiler-backend-peephole-emit-line-desc
@@ -52822,8 +53313,8 @@ tl_tlci_call_image_entry:
   [prev-abort? : bool]) : (CompilerBackendPeepholeEmitResult asm)
   (if (struct-get line movq)
     (let
-      [src : String (struct-get line op-src)]
-      [dst : String (struct-get line op-dst)]
+      [src-reg : i64 (struct-get line op-src-reg)]
+      [dst-reg : i64 (struct-get line op-dst-reg)]
       [src-key : i64 (struct-get line op-src-key)]
       [dst-key : i64 (struct-get line op-dst-key)]
       [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
@@ -52831,17 +53322,14 @@ tl_tlci_call_image_entry:
         (and
           is-slot
           (compiler-backend-peephole-owner-key-eq?
-            (compiler-backend-peephole-owners-get owners dst)
+            (compiler-backend-peephole-owners-get-index owners dst-reg)
             src-key))]
       [ry : String
-        (if (and
-          is-slot
-          (not dst-owns)
-          (compiler-backend-peephole-owner-reg? dst))
-          (compiler-backend-peephole-owners-find-reg-for-slot
+        (if (and is-slot (not dst-owns) (>= dst-reg 0))
+          (compiler-backend-peephole-owners-find-reg-for-slot-index
             owners
             src-key
-            dst)
+            dst-reg)
           "")]
       [next-out : (text_buf_borrowed.TextBufBorrowed asm)
         (cond
@@ -52855,16 +53343,26 @@ tl_tlci_call_image_entry:
               [b3 : (text_buf_borrowed.TextBufBorrowed asm)
                 (text_buf_borrowed.append-owned b2 ", ")]
               [b4 : (text_buf_borrowed.TextBufBorrowed asm)
-                (text_buf_borrowed.append-owned b3 dst)]
+                (if (struct-get line owned)
+                  (text_buf_borrowed.append-owned
+                    b3
+                    (compiler-backend-peephole-line-op-dst-text line))
+                  (text_buf_borrowed.append-slice
+                    b3
+                    (& asm)
+                    (struct-get line op-dst-start)
+                    (-
+                      (struct-get line op-dst-end)
+                      (struct-get line op-dst-start))))]
               (if (struct-get line newline)
                 (text_buf_borrowed.append-char b4 '\n')
                 b4))]
           [else (compiler-backend-peephole-line-append out asm line)])]
       [next-owners : CompilerBackendPeepholeOwners
-        (compiler-backend-peephole-movq-owners-transfer-keyed
+        (compiler-backend-peephole-movq-owners-transfer-keyed-index
           owners
-          src
-          dst
+          src-reg
+          dst-reg
           src-key
           dst-key)]
       (CompilerBackendPeepholeEmitResult next-out next-owners))

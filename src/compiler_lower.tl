@@ -18459,13 +18459,13 @@
 ;; the generation, so a stale scratch-allocated type is never read). A slot
 ;; collision (different id, same slot) misses via the stored-id check.
 (define tc-rtf-cap : i64
-  1048576)
+  65536)
 (define tc-rtf-gen-arr : (Array i64)
-  (make-array i64 1048576))
+  (make-array i64 tc-rtf-cap))
 (define tc-rtf-id-arr : (Array i64)
-  (make-array i64 1048576))
+  (make-array i64 tc-rtf-cap))
 (define tc-rtf-ty-arr : (Array AstType)
-  (make-array AstType 1048576))
+  (make-array AstType tc-rtf-cap))
 (define tc-rtf-current-gen : i64
   0)
 (define tc-rtf-filled : bool

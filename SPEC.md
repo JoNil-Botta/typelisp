@@ -654,6 +654,11 @@ element access whose index is computed during macro CTFE, and
 `expr-mut-borrow` builds an inferred-lifetime `(&mut place)` expression;
 `expr-list-empty` and `expr-list-cons` build ordered argument lists; and
 `expr-call` builds an ordinary call from a callee expression and that list.
+`expr-mut-call0`, `expr-mut-call1`, and `expr-mut-call2` are compact
+fixed-arity builders that take a callee expression, a place, and zero, one, or two
+ordinary captured expressions respectively. They build the same ordinary call
+with an inferred `(&mut place)` first argument without requiring a temporary
+argument-list value.
 The generated program typechecks the resulting borrow and call normally, so a
 mutable-borrow receiver must still be a caller place and every supplied
 argument is evaluated once in source order.

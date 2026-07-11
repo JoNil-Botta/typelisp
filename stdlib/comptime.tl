@@ -189,6 +189,22 @@
 (define (expr-call [callee : Expr] [args : ExprList]) : Expr
   (expr-call callee args))
 
+;: Build a call with an inferred mutable borrow of `place` and no other arguments.
+(define (expr-mut-call0 [callee : Expr] [place : Expr]) : Expr
+  (expr-mut-call0 callee place))
+
+;: Build a call with an inferred mutable borrow of `place` and one argument.
+(define (expr-mut-call1 [callee : Expr] [place : Expr] [arg : Expr]) : Expr
+  (expr-mut-call1 callee place arg))
+
+;: Build a call with an inferred mutable borrow of `place` and two arguments.
+(define (expr-mut-call2
+  [callee : Expr]
+  [place : Expr]
+  [first : Expr]
+  [second : Expr]) : Expr
+  (expr-mut-call2 callee place first second))
+
 ;: Concatenate two strings during macro CTFE.
 (define (string-concat [left : String] [_right : String]) : String
   left)

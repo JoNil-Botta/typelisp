@@ -42107,11 +42107,66 @@
         (string.substring path 5 (- (string.string-length path) 5)))
       (TcMaybeString.Some path))))
 
+(define (tc-borrow-check-result-needs-path?
+  [locals : TcMovedSet]
+  [path : String]
+  [result-expr : AstExpr]) : bool
+  (match (tc-borrow-check-result-direct-borrow-path locals result-expr)
+    [(TcMaybeString.Some result-path)
+      (tc-moved-path-key-conflicts? (tc-moved-path-key path) result-path)]
+    [(TcMaybeString.No) true]))
+
+;; Recover a direct place borrow from the value position of an expression.
+;; Indirect call/aggregate results deliberately return No so their existing
+;; lifetime-based propagation remains conservative.
+(define (tc-borrow-check-result-direct-borrow-path
+  [locals : TcMovedSet]
+  [expr : AstExpr]) : TcMaybeString
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (tc-borrow-check-result-direct-borrow-path
+        locals
+        (ast-node-get inner-box))]
+    [(AstExpr.Borrow _ _ place-box)
+      (tc-borrow-check-local-place-path locals (ast-node-get place-box))]
+    [(AstExpr.Begin exprs)
+      (if (ast-expr-list-empty? (& exprs))
+        TcMaybeString.No
+        (tc-borrow-check-result-direct-borrow-path
+          locals
+          (ast-node-get
+            (ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0))))]
+    [(AstExpr.Unsafe exprs)
+      (if (ast-expr-list-empty? (& exprs))
+        TcMaybeString.No
+        (tc-borrow-check-result-direct-borrow-path
+          locals
+          (ast-node-get
+            (ast-expr-list-get (& exprs) (- (struct-get (& exprs) len) 1) 0))))]
+    [(AstExpr.Ann inner-box _)
+      (tc-borrow-check-result-direct-borrow-path
+        locals
+        (ast-node-get inner-box))]
+    [(AstExpr.Cast inner-box _)
+      (tc-borrow-check-result-direct-borrow-path
+        locals
+        (ast-node-get inner-box))]
+    [(AstExpr.Comptime inner-box)
+      (tc-borrow-check-result-direct-borrow-path
+        locals
+        (ast-node-get inner-box))]
+    [(AstExpr.Try inner-box)
+      (tc-borrow-check-result-direct-borrow-path
+        locals
+        (ast-node-get inner-box))]
+    [_ TcMaybeString.No]))
+
 (define (tc-borrow-check-propagate-return-borrows-at
   [ctx : TcContext]
   [env : TcTypeEnv]
   [outer-locals : TcMovedSet]
   [result-lifetimes : TcStringList]
+  [result-expr : AstExpr]
   [map : (& map tc_string_i64_map.Map)]
   [index : i64]
   [out : TcMovedSet]) : TcMovedSet
@@ -42133,7 +42188,11 @@
                         (tc-moved-contains? outer-locals root)
                         (tc-string-list-contains
                           result-lifetimes
-                          (tc-borrow-check-path-lifetime ctx env base)))
+                          (tc-borrow-check-path-lifetime ctx env base))
+                        (tc-borrow-check-result-needs-path?
+                          outer-locals
+                          base
+                          result-expr))
                         (if (tc-moved-contains? out key)
                           out
                           (tc-moved-add-value out key origin))
@@ -42145,6 +42204,7 @@
             env
             outer-locals
             result-lifetimes
+            result-expr
             map
             next
             out2))]
@@ -42154,6 +42214,7 @@
           env
           outer-locals
           result-lifetimes
+          result-expr
           map
           (tc_string_i64_map.next-occupied map (+ index 1))
           out)])))
@@ -42164,7 +42225,8 @@
   [outer-locals : TcMovedSet]
   [outer-borrowed : TcMovedSet]
   [inner-borrowed : TcMovedSet]
-  [result-ty : AstType]) : TcMovedSet
+  [result-ty : AstType]
+  [result-expr : AstExpr]) : TcMovedSet
   (let
     [result-lifetimes : TcStringList
       (tc-type-collect-reference-lifetimes (tc-resolve-type ctx result-ty))]
@@ -42178,6 +42240,7 @@
             env
             outer-locals
             result-lifetimes
+            result-expr
             (& map)
             (tc_string_i64_map.next-occupied (& map) 0)
             (tc-moved-clone outer-borrowed)))])))
@@ -45229,7 +45292,8 @@
                           locals
                           borrowed
                           body-borrowed
-                          result-ty))]
+                          result-ty
+                          (ast-node-get body-box)))]
                     [(ResultTcType.Err _) (TcBorrowCheckResult.Ok borrowed)])]
                 [(TcBorrowCheckResult.Err message)
                   (TcBorrowCheckResult.Err message)])]

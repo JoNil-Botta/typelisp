@@ -43,6 +43,7 @@ vector_iter_mut_after_last_use_ok|check-ok|tests/safety/vector_iter_mut_after_la
 reborrow_stored_reference_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_reference_item_after_last_use_ok.tl|-|-
 reborrow_stored_mut_reference_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_mut_reference_item_after_last_use_ok.tl|-|-
 reborrow_stored_reference_item_disjoint_sibling_ok|check-ok|tests/safety/reborrow_stored_reference_item_disjoint_sibling_ok.tl|-|-
+reborrow_stored_dead_sibling_after_use_ok|check-ok|tests/safety/reborrow_stored_dead_sibling_after_use_ok.tl|-|-
 reborrow_stored_generated_vector_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_generated_vector_item_after_last_use_ok.tl|-|-
 
 # Static rejection areas.

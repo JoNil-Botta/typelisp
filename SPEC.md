@@ -927,6 +927,11 @@ macro body:
   string slicing, string length, `int->string`, layout/reflection queries, and the
   `Expr`/`ExprList`/`ExprClause` constructor and inspector surface are
   available.
+- CTFE lexical `let` bindings may be updated with `set!` and used by `while`.
+  This is compile-time-local mutation only: assignments store only CTFE values,
+  cannot address runtime places, and every loop iteration shares the enclosing
+  deterministic fuel budget. A non-terminating loop reports the normal
+  compile-time evaluation-limit diagnostic.
 - Macro and generator code may call `(comptime-error message)` where
   `message` is a compile-time `String`. It returns `never`, aborts the
   current CTFE expansion/evaluation, reports `message` at the call

@@ -497,12 +497,14 @@
   (None)
   (Some CtfeReflectInfo))
 
-;; Immutable name -> value environment plus immutable type metadata tables. Newest
-;; value binding sits at the front so lookup finds the most recent shadowing
-;; binding first; metadata lives at the root and is shared by extensions.
+;; Name -> value environment plus immutable type metadata tables. Newest value
+;; binding sits at the front so lookup finds the most recent shadowing binding
+;; first; metadata lives at the root and is shared by extensions. `LocalCons`
+;; is the deliberately narrow mutable cell used for CTFE `let` bindings.
 (defenum CtfeEnv
   (Nil AstNodePoolContext CtfeLayoutInfoList CtfeReflectInfoList)
-  (Cons String CompilerCtfeValue AstType (Box CtfeEnv)))
+  (Cons String CompilerCtfeValue AstType (Box CtfeEnv))
+  (LocalCons String (Box CompilerCtfeValue) AstType (Box CtfeEnv)))
 
 (define (ctfe-env-empty-with-pools [pools : AstNodePoolContext]) : CtfeEnv
   (CtfeEnv.Nil
@@ -559,6 +561,16 @@
   [value : CompilerCtfeValue]
   [ty : AstType]) : CtfeEnv
   (CtfeEnv.Cons name value ty (box env)))
+
+;; Only CTFE lexical `let` bindings receive mutable cells. This keeps compiler
+;; metadata, macro parameters, and all runtime-only forms outside the mutation
+;; surface while still allowing iterative compile-time syntax construction.
+(define (ctfe-env-extend-local-typed
+  [env : CtfeEnv]
+  [name : String]
+  [value : CompilerCtfeValue]
+  [ty : AstType]) : CtfeEnv
+  (CtfeEnv.LocalCons name (box value) ty (box env)))
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList (array.make-array CtfeLayoutField capacity) 0))
@@ -724,17 +736,20 @@
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
     [(CtfeEnv.Nil _ layouts _) layouts]
-    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
+    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-layouts (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
     [(CtfeEnv.Nil _ _ reflections) reflections]
-    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
+    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-reflections (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
 
 (define (ctfe-env-pools [env : CtfeEnv]) : AstNodePoolContext
   (match env
     [(CtfeEnv.Nil pools _ _) pools]
-    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-pools (box-get rest))]))
+    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-pools (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-pools (box-get rest))]))
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : AstNodePoolContext]) : CtfeEnv
   (match env
@@ -742,6 +757,12 @@
       (CtfeEnv.Nil pools layouts reflections)]
     [(CtfeEnv.Cons key value ty rest)
       (CtfeEnv.Cons
+        key
+        value
+        ty
+        (box (ctfe-env-rebase-pools (box-get rest) pools)))]
+    [(CtfeEnv.LocalCons key value ty rest)
+      (CtfeEnv.LocalCons
         key
         value
         ty
@@ -776,6 +797,10 @@
     [(CtfeEnv.Cons key value _ rest)
       (if (string.eq key name)
         (CtfeMaybeValue.Some value)
+        (ctfe-env-lookup (box-get rest) name))]
+    [(CtfeEnv.LocalCons key value _ rest)
+      (if (string.eq key name)
+        (CtfeMaybeValue.Some (box-get value))
         (ctfe-env-lookup (box-get rest) name))]))
 
 (define (ctfe-env-lookup-type [env : CtfeEnv] [name : String]) : AstMaybeType
@@ -784,7 +809,30 @@
     [(CtfeEnv.Cons key _ ty rest)
       (if (string.eq key name)
         (AstMaybeType.Some ty)
+        (ctfe-env-lookup-type (box-get rest) name))]
+    [(CtfeEnv.LocalCons key _ ty rest)
+      (if (string.eq key name)
+        (AstMaybeType.Some ty)
         (ctfe-env-lookup-type (box-get rest) name))]))
+
+;; Set the nearest CTFE-local binding. Finding an immutable binding with the
+;; same name stops the search, matching ordinary lexical shadowing rules.
+(define (ctfe-env-set-local!
+  [env : CtfeEnv]
+  [name : String]
+  [value : CompilerCtfeValue]) : bool
+  (match env
+    [(CtfeEnv.Nil _ _ _) false]
+    [(CtfeEnv.Cons key _ _ rest)
+      (if (string.eq key name)
+        false
+        (ctfe-env-set-local! (box-get rest) name value))]
+    [(CtfeEnv.LocalCons key cell _ rest)
+      (if (string.eq key name)
+        (begin
+          (set! (box-get cell) value)
+          true)
+        (ctfe-env-set-local! (box-get rest) name value))]))
 
 (define (ctfe-string-prefix? [text : String] [prefix : String]) : bool
   (let
@@ -2989,6 +3037,11 @@
         [then-branch : AstExpr (ctfe-ast-get env then-branch-box)]
         [else-branch : AstExpr (ctfe-ast-get env else-branch-box)]
         (ctfe-eval-if cond then-branch else-branch env fuel))]
+    [(AstExpr.While cond-box body-box)
+      (let
+        [cond : AstExpr (ctfe-ast-get env cond-box)]
+        [body : AstExpr (ctfe-ast-get env body-box)]
+        (ctfe-eval-while cond body expr env fuel))]
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body-box)
@@ -2997,6 +3050,10 @@
             (ctfe-eval-let bindings body env fuel))])]
     [(AstExpr.Begin exprs) (ctfe-eval-begin exprs env fuel)]
     [(AstExpr.Unsafe exprs) (ctfe-eval-begin exprs env fuel)]
+    [(AstExpr.Set name rhs-box)
+      (let
+        [rhs : AstExpr (ctfe-ast-get env rhs-box)]
+        (ctfe-eval-set (intern-str name) rhs expr env fuel))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
@@ -5208,6 +5265,26 @@
 (define (ctfe-comptime-sequence-nth-name? [name : String]) : bool
   (ctfe-builtin-sequence-nth-id? (intern name)))
 
+(define (ctfe-expr-if-condition-type-ok? [env : CtfeEnv] [ty : AstType]) : bool
+  (or (ctfe-type-eq-in-env env ty (AstType.Bool)) (ctfe-untyped-expr-type? ty)))
+
+(define (ctfe-expr-if-branch-types-compatible?
+  [env : CtfeEnv]
+  [then-ty : AstType]
+  [else-ty : AstType]) : bool
+  (or
+    (ctfe-type-eq-in-env env then-ty else-ty)
+    (ctfe-untyped-expr-type? then-ty)
+    (ctfe-untyped-expr-type? else-ty)))
+
+(define (ctfe-expr-if-result-type
+  [env : CtfeEnv]
+  [then-ty : AstType]
+  [else-ty : AstType]) : AstType
+  (if (ctfe-type-eq-in-env env then-ty else-ty)
+    then-ty
+    (ctfe-untyped-expr-type)))
+
 (define (ctfe-eval-expr-if-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -5222,7 +5299,7 @@
         [(ResultCtfe.Ok cond-val cond-fuel)
           (match cond-val
             [(CompilerCtfeValue.Expr cond-node cond-ty)
-              (if (ctfe-type-eq-in-env env cond-ty (AstType.Bool))
+              (if (ctfe-expr-if-condition-type-ok? env cond-ty)
                 (match (compiler-ctfe-eval then-arg env cond-fuel)
                   [(ResultCtfe.Ok then-val then-fuel)
                     (match then-val
@@ -5231,7 +5308,10 @@
                           [(ResultCtfe.Ok else-val else-fuel)
                             (match else-val
                               [(CompilerCtfeValue.Expr else-node else-ty)
-                                (if (ctfe-type-eq-in-env env then-ty else-ty)
+                                (if (ctfe-expr-if-branch-types-compatible?
+                                  env
+                                  then-ty
+                                  else-ty)
                                   (ResultCtfe.Ok
                                     (CompilerCtfeValue.Expr
                                       (ast-expr-if-with-pools
@@ -5239,7 +5319,10 @@
                                         cond-node
                                         then-node
                                         else-node)
-                                      then-ty)
+                                      (ctfe-expr-if-result-type
+                                        env
+                                        then-ty
+                                        else-ty))
                                     else-fuel)
                                   (ResultCtfe.Err
                                     (box
@@ -6578,6 +6661,53 @@
                 "comptime 'if' condition must be bool")))])]
     [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
 
+;; CTFE loops evaluate only compiler-owned values, share the normal evaluator
+;; fuel counter, and return unit. A non-terminating loop therefore reaches the
+;; existing deterministic fuel diagnostic instead of relying on host state.
+(define (ctfe-eval-while
+  [cond : AstExpr]
+  [body : AstExpr]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval cond env fuel)
+    [(ResultCtfe.Ok cond-value cond-fuel)
+      (match cond-value
+        [(CompilerCtfeValue.Bool keep-going)
+          (if keep-going
+            (match (compiler-ctfe-eval body env cond-fuel)
+              [(ResultCtfe.Ok _ body-fuel)
+                (ctfe-eval-while cond body origin env body-fuel)]
+              [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])
+            (ResultCtfe.Ok (CompilerCtfeValue.Unit) cond-fuel))]
+        [_
+          (ResultCtfe.Err
+            (box
+              (ctfe-diagnostic-at-expr
+                origin
+                "comptime 'while' condition must be bool")))])]
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+
+;; CTFE assignment is intentionally limited to the mutable cells created for
+;; lexical `let` bindings above. The right-hand side has already been evaluated
+;; to a CompilerCtfeValue, so this cannot materialize or mutate a runtime value.
+(define (ctfe-eval-set
+  [name : String]
+  [rhs : AstExpr]
+  [origin : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (compiler-ctfe-eval rhs env fuel)
+    [(ResultCtfe.Ok value rhs-fuel)
+      (if (ctfe-env-set-local! env name value)
+        (ResultCtfe.Ok (CompilerCtfeValue.Unit) rhs-fuel)
+        (ResultCtfe.Err
+          (box
+            (ctfe-diagnostic-at-expr
+              origin
+              "comptime set! requires a local let binding"))))]
+    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+
 ;; Evaluate `let` bindings sequentially, threading both fuel and the extended
 ;; environment. The original `env` is preserved for siblings because each
 ;; binding extends a fresh copy threaded forward.
@@ -6606,7 +6736,7 @@
                 bindings
                 (+ index 1)
                 body
-                (ctfe-env-extend-typed
+                (ctfe-env-extend-local-typed
                   env
                   (intern-str name)
                   value
@@ -12906,6 +13036,56 @@
     (compiler-ctfe-expr-pattern-match-if-ok?)
     (compiler-ctfe-expr-pattern-match-clause-ok?)))
 
+(define (compiler-ctfe-local-while-ok?) : bool
+  (let
+    [env : CtfeEnv (ctfe-env-empty)]
+    [pools : AstNodePoolContext (ctfe-env-pools env)]
+    [zero : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 0)))]
+    [one : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 1)))]
+    [three : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 3)))]
+    [i-var : i64 (ctfe-ast-push env (AstExpr.Var (intern "i")))]
+    [loop-cond : i64
+      (ast-expr-binary-with-pools pools (AstBinOp.Lt) i-var three)]
+    [increment : i64
+      (ast-expr-binary-with-pools pools (AstBinOp.Add) i-var one)]
+    [set-i : i64 (ast-expr-set-with-pools pools "i" increment)]
+    [loop-body : i64
+      (ctfe-ast-push
+        env
+        (AstExpr.Begin (ast-expr-cons set-i (ast-expr-list-new))))]
+    [loop : i64 (ast-expr-while-with-pools pools loop-cond loop-body)]
+    [loop-result : i64 (ctfe-ast-push env (AstExpr.Var (intern "i")))]
+    [loop-body-result : i64
+      (ctfe-ast-push
+        env
+        (AstExpr.Begin
+          (ast-expr-cons loop (ast-expr-cons loop-result (ast-expr-list-new)))))]
+    [loop-bindings : AstLetBindingList
+      (ast-let-binding-cons
+        (ast-let-binding "i" (AstMaybeType.Some (AstType.I64)) zero)
+        (ast-let-binding-list-new))]
+    [loop-let : i64
+      (ast-expr-let-with-pools pools loop-bindings loop-body-result)]
+    [immutable-env : CtfeEnv
+      (ctfe-env-extend env "outer" (CompilerCtfeValue.I64 0))]
+    [immutable-set : i64 (ast-expr-set-with-pools pools "outer" one)]
+    [true-lit : i64
+      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
+    [unit-lit : i64 (ctfe-ast-push env (AstExpr.Literal AstLiteral.Unit))]
+    [infinite-loop : i64 (ast-expr-while-with-pools pools true-lit unit-lit)]
+    (and
+      (compiler-ctfe-eval-i64-ok? loop-let env 3)
+      (compiler-ctfe-eval-error-ok?
+        immutable-set
+        immutable-env
+        "comptime set! requires a local let binding")
+      (match (compiler-ctfe-eval (ctfe-ast-get env infinite-loop) env 3)
+        [(ResultCtfe.Err diag)
+          (string.eq
+            (compiler-diagnostic-message (box-get diag))
+            "compile-time evaluation limit exceeded")]
+        [(ResultCtfe.Ok _ _) false]))))
+
 (define (compiler-ctfe-self-test) : i64
   (begin
     (unless (compiler-ctfe-type-literal-ok?) (return 1))
@@ -12926,6 +13106,7 @@
     (unless (compiler-ctfe-checked-expr-rejects-non-bool-cond-ok?) (return 1))
     (unless (compiler-ctfe-quote-syntax-ok?) (return 1))
     (unless (compiler-ctfe-expr-pattern-match-ok?) (return 1))
+    (unless (compiler-ctfe-local-while-ok?) (return 1))
     42))
 
 (cfg

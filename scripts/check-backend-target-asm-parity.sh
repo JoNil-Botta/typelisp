@@ -416,41 +416,30 @@ check_register_group_phi_return_opt2_shapes() {
     _linux="$LINUX_NORM_DIR/opt2_register_group_phi_return.norm"
     _windows="$WINDOWS_NORM_DIR/opt2_register_group_phi_return.norm"
 
-    # `pick-address-taken` has two live incoming group parameters. SysV leaves
-    # r8:r9 available for the selected group return, while the Win64 argument
-    # banks occupy those registers and correctly retain the result in its stack
-    # home. Keep both target-specific outcomes explicit: this is an intentional
-    # ABI-resource divergence, not a broad parity exemption.
-    if ! awk '
-        BEGIN { found = 0; ok = 0 }
-        /^\.LfN_match_merge\.0:$/ {
-            found = 1
-            getline word0
-            getline word1
-            ok = (word0 == "movq %r8, %rax" && word1 == "movq %r9, %rdx")
-            exit
-        }
-        END { exit (found && ok) ? 0 : 1 }
-    ' "$_linux"; then
-        echo "register_group_phi_return Linux opt2 merge lost the r8:r9 group return" >&2
-        return 1
-    fi
-
-    if ! awk '
-        BEGIN { found = 0; ok = 0 }
-        /^\.LfN_match_merge\.0:$/ {
-            found = 1
-            getline word0
-            getline word1
-            ok = (word0 ~ /^movq [0-9]+\(%rsp\), %rax$/ &&
-                  word1 ~ /^movq [0-9]+\(%rsp\), %rdx$/)
-            exit
-        }
-        END { exit (found && ok) ? 0 : 1 }
-    ' "$_windows"; then
-        echo "register_group_phi_return Win64 opt2 merge lost its stack group return" >&2
-        return 1
-    fi
+    # Both match arms are terminal after trivial-phi folding. Pin the live
+    # two-word returns instead of an unreachable merge block: CFG cleanup may
+    # (and should) delete that block once both arms return directly.
+    for _assembly in "$_linux" "$_windows"; do
+        if ! awk '
+            function group_return_ok(    word0, word1, teardown, terminator) {
+                if ((getline word0) <= 0) return 0
+                if ((getline word1) <= 0) return 0
+                if ((getline teardown) <= 0) return 0
+                if ((getline terminator) <= 0) return 0
+                return (word0 ~ /^movq [0-9]+\(%rsp\), %rax$/ &&
+                        word1 ~ /^movq [0-9]+\(%rsp\), %rdx$/ &&
+                        teardown == "FRAME_TEARDOWN" &&
+                        terminator == "ret")
+            }
+            BEGIN { arm_ok = 0; next_ok = 0 }
+            /^\.LfN_match_arm\.[0-9]+:$/ { arm_ok = group_return_ok() }
+            /^\.LfN_match_next\.[0-9]+:$/ { next_ok = group_return_ok() }
+            END { exit (arm_ok && next_ok) ? 0 : 1 }
+        ' "$_assembly"; then
+            echo "register_group_phi_return opt2 lost a live two-word group return: $_assembly" >&2
+            return 1
+        fi
+    done
 }
 
 expected_target_asm_mismatch() {
@@ -470,10 +459,6 @@ expected_target_asm_mismatch() {
         2:functions) return 0 ;;
         2:lambda_capture_struct_enum) return 0 ;;
         2:many_args) return 0 ;;
-        # Win64's four argument registers leave no r8:r9 group-return pair in
-        # pick-address-taken, unlike SysV. check_register_group_phi_return_opt2_shapes
-        # above pins the precise, safe shape on both targets.
-        2:register_group_phi_return) return 0 ;;
     esac
     return 1
 }

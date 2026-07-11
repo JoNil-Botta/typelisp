@@ -10249,20 +10249,22 @@
                 (tc-dotted-local-field-expr-id-tail name (+ i 1) next)
                 (ResultTcExprId.Ok next)))))))))
 
+(define (tc-dotted-local-field-expr-id-after-check [name : String]) : ResultTcExprId
+  (let
+    [first-dot : i64 (tc-name-first-dot name)]
+    [root-name : String (string.substring name 0 first-dot)]
+    [root : i64 (ast-node-push (AstExpr.Var (intern root-name)))]
+    (tc-dotted-local-field-expr-id-tail name (+ first-dot 1) root)))
+
 (define (tc-dotted-local-field-expr-id [env : TcTypeEnv] [name : String]) : ResultTcExprId
   (if (tc-dotted-local-field-name? env name)
-    (let
-      [first-dot : i64 (tc-name-first-dot name)]
-      [root-name : String (string.substring name 0 first-dot)]
-      [root : i64 (ast-node-push (AstExpr.Var (intern root-name)))]
-      (tc-dotted-local-field-expr-id-tail name (+ first-dot 1) root))
+    (tc-dotted-local-field-expr-id-after-check name)
     (ResultTcExprId.Err "")))
 
-(define (tc-dotted-local-field-set-expr-id
-  [env : TcTypeEnv]
+(define (tc-dotted-local-field-set-expr-id-after-check
   [name : String]
   [value : i64]) : ResultTcExprId
-  (match (tc-dotted-local-field-expr-id env name)
+  (match (tc-dotted-local-field-expr-id-after-check name)
     [(ResultTcExprId.Ok get-id)
       (match (ast-expr-unspan (ast-node-get get-id))
         [(AstExpr.StructGet receiver-box field)
@@ -10271,6 +10273,14 @@
           (ResultTcExprId.Err
             "typecheck: internal dotted field target mismatch")])]
     [(ResultTcExprId.Err message) (ResultTcExprId.Err message)]))
+
+(define (tc-dotted-local-field-set-expr-id
+  [env : TcTypeEnv]
+  [name : String]
+  [value : i64]) : ResultTcExprId
+  (if (tc-dotted-local-field-name? env name)
+    (tc-dotted-local-field-set-expr-id-after-check name value)
+    (ResultTcExprId.Err "")))
 
 ;; Local dotted fields must become ordinary projection nodes before the
 ;; move/borrow/lower passes see them.  Keeping `root.field` as a raw Var and
@@ -10287,7 +10297,7 @@
       (if (< (intern-first-dot name) 0)
         ResultTcUnit.Ok
         (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-expr-id env (intern-str name))
+          (match (tc-dotted-local-field-expr-id-after-check (intern-str name))
             [(ResultTcExprId.Ok projection-id)
               (begin
                 (ast-node-set! expr-id (ast-node-get projection-id))
@@ -10298,8 +10308,7 @@
       (if (< (intern-first-dot name) 0)
         ResultTcUnit.Ok
         (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id
-            env
+          (match (tc-dotted-local-field-set-expr-id-after-check
             (intern-str name)
             value-box)
             [(ResultTcExprId.Ok projection-id)
@@ -18816,6 +18825,22 @@
           (ResultTcType.Ok actual)))]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
+(define (tc-expr-result-with-expected-or-actual
+  [ctx : TcContext]
+  [expected : AstType]
+  [allow-mut-by-value-borrow : bool]
+  [result : ResultTcType]) : ResultTcType
+  (match result
+    [(ResultTcType.Ok actual)
+      (if (tc-type-compatible? expected actual)
+        (ResultTcType.Ok (tc-contextual-result-type expected actual))
+        (if (and
+          allow-mut-by-value-borrow
+          (tc-call-string-temporary-ref-compatible? ctx expected actual))
+          (ResultTcType.Ok expected)
+          (ResultTcType.Ok actual)))]
+    [(ResultTcType.Err message) (ResultTcType.Err message)]))
+
 (define (tc-expr-with-expected-or-actual-core
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -19015,16 +19040,11 @@
         (tc-integer-literal-expr-with-expected ctx expr expected)
         (if (tc-float-literal-expr? expr)
           (tc-float-literal-expr-with-expected expr expected)
-          (match (tc-expr ctx env expr)
-            [(ResultTcType.Ok actual)
-              (if (tc-type-compatible? expected actual)
-                (ResultTcType.Ok (tc-contextual-result-type expected actual))
-                (if (and
-                  allow-mut-by-value-borrow
-                  (tc-call-string-temporary-ref-compatible? ctx expected actual))
-                  (ResultTcType.Ok expected)
-                  (ResultTcType.Ok actual)))]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])))]))
+          (tc-expr-result-with-expected-or-actual
+            ctx
+            expected
+            allow-mut-by-value-borrow
+            (tc-expr ctx env expr))))]))
 
 (define (tc-expr-with-expected-or-actual
   [ctx : TcContext]
@@ -19048,7 +19068,19 @@
   [env : TcTypeEnv]
   [expr-id : i64]) : ResultTcType
   (let
-    [result : ResultTcType (tc-expr ctx env (ast-node-get expr-id))]
+    [expr : AstExpr (ast-node-get expr-id)]
+    [result : ResultTcType
+      (match expr
+        [(AstExpr.Var name)
+          (tc-var-expr-after-local-field-check ctx env name (intern-str name))]
+        [(AstExpr.Set name value-box)
+          (tc-set-expr-after-local-field-check
+            ctx
+            env
+            name
+            (intern-str name)
+            value-box)]
+        [_ (tc-expr ctx env expr)])]
     (begin
       (match result
         [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
@@ -19169,6 +19201,38 @@
 ;; Contextual typing is deliberately separate from non-contextual `tc-expr-id`:
 ;; the same node can produce a different result type when an expected type
 ;; guides literal, array, tuple, borrow, or call-argument typing.
+(define (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [expr : AstExpr]
+  [expected : AstType]
+  [allow-mut-by-value-borrow : bool]) : ResultTcType
+  (match expr
+    [(AstExpr.Var name)
+      (tc-expr-result-with-expected-or-actual
+        ctx
+        expected
+        allow-mut-by-value-borrow
+        (tc-var-expr-after-local-field-check ctx env name (intern-str name)))]
+    [(AstExpr.Set name value-box)
+      (tc-expr-result-with-expected-or-actual
+        ctx
+        expected
+        allow-mut-by-value-borrow
+        (tc-set-expr-after-local-field-check
+          ctx
+          env
+          name
+          (intern-str name)
+          value-box))]
+    [_
+      (tc-expr-with-expected-or-actual-core
+        ctx
+        env
+        expr
+        expected
+        allow-mut-by-value-borrow)]))
+
 (define (tc-expr-with-expected-or-actual-core-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -19180,7 +19244,7 @@
     (match expr
       [(AstExpr.Var name)
         (if (< (intern-first-dot name) 0)
-          (tc-expr-with-expected-or-actual-core
+          (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
             ctx
             env
             expr
@@ -19188,7 +19252,7 @@
             allow-mut-by-value-borrow)
           (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
             [(ResultTcUnit.Ok)
-              (tc-expr-with-expected-or-actual-core
+              (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
                 env
                 (ast-node-get expr-id)
@@ -19197,7 +19261,7 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
       [(AstExpr.Set name _)
         (if (< (intern-first-dot name) 0)
-          (tc-expr-with-expected-or-actual-core
+          (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
             ctx
             env
             expr
@@ -19205,7 +19269,7 @@
             allow-mut-by-value-borrow)
           (match (tc-normalize-dotted-local-field-direct-node! env expr-id expr)
             [(ResultTcUnit.Ok)
-              (tc-expr-with-expected-or-actual-core
+              (tc-expr-with-expected-or-actual-after-dotted-local-field-normalization
                 ctx
                 env
                 (ast-node-get expr-id)
@@ -35387,6 +35451,106 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcString.Err message) (ResultTcType.Err message)]))
 
+(define (tc-var-expr-after-local-field-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [name-text : String]) : ResultTcType
+  (if (tc-hygiene-global-name? name-text)
+    (match (tc-hygiene-global-decode name-text)
+      [(TcHygieneGlobalName.Legacy global-name)
+        (let
+          [global-id : i64 (tc-name-id global-name)]
+          (if (tc-hygiene-global-binding-unsafe? env global-name)
+            (match (tc-require-unsafe env global-name)
+              [(ResultTcUnit.Ok)
+                (tc-lookup-hygiene-global-visible-id ctx env global-id)]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+            (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
+      [(TcHygieneGlobalName.Context module global-name)
+        (tc-lookup-hygiene-context-global-visible-id
+          ctx
+          env
+          module
+          (tc-name-id global-name))])
+    (match (tc-source-name-lookup-key-after-local-field-check-id
+      ctx
+      env
+      name-text
+      name)
+      [(ResultTcString.Ok lookup-name)
+        (let
+          [lookup-id : i64
+            (if (string.eq lookup-name name-text)
+              name
+              (tc-name-id lookup-name))]
+          (match (tc-lookup-unsafe-id env lookup-id)
+            [(ResultTcTypeUnsafe.Ok ty unsafe)
+              (if unsafe
+                (match (tc-require-unsafe
+                  env
+                  (tc-source-lookup-display-name ctx name-text lookup-name))
+                  [(ResultTcUnit.Ok)
+                    (match (tc-unqualified-import-ambiguity-message
+                      ctx
+                      env
+                      name)
+                      [(TcMaybeString.No) (ResultTcType.Ok ty)]
+                      [(TcMaybeString.Some message) (ResultTcType.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                (match (tc-unqualified-import-ambiguity-message ctx env name)
+                  [(TcMaybeString.No) (ResultTcType.Ok ty)]
+                  [(TcMaybeString.Some message) (ResultTcType.Err message)]))]
+            [(ResultTcTypeUnsafe.Err message)
+              (tc-variant-constructor-type-for-lookup-or
+                ctx
+                lookup-name
+                (tc-source-lookup-display-name ctx name-text lookup-name)
+                (tc-source-unbound-display-message
+                  ctx
+                  name-text
+                  lookup-name
+                  message))]))]
+      [(ResultTcString.Err message) (ResultTcType.Err message)])))
+
+(define (tc-set-expr-after-local-field-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [name : i64]
+  [name-text : String]
+  [value-box : i64]) : ResultTcType
+  (let
+    [value : AstExpr (ast-node-get value-box)]
+    (match (tc-lookup-visible-id ctx env name)
+      [(ResultTcType.Ok var-ty)
+        (match (tc-expr-with-expected-or-actual-id ctx env value-box var-ty)
+          [(ResultTcType.Ok value-ty)
+            (match (tc-expect
+              value-ty
+              var-ty
+              "typecheck: assignment type mismatch")
+              [(ResultTcUnit.Ok)
+                (match (tc-ensure-cleanup-resource-not-assigned env value)
+                  [(ResultTcUnit.Ok)
+                    (match (tc-ensure-region-value-can-flow-into
+                      env
+                      var-ty
+                      value-ty
+                      "assignment")
+                      [(ResultTcUnit.Ok)
+                        (match (tc-ensure-reference-value-can-assign
+                          env
+                          name-text
+                          value-ty)
+                          [(ResultTcUnit.Ok) (ResultTcType.Ok (AstType.Unit))]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcType.Err message)])]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+              [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])]
+      [(ResultTcType.Err message) (ResultTcType.Err message)])))
+
 (define (tc-expr [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcType
   (match expr
     [(AstExpr.Spanned inner-box span)
@@ -35411,77 +35575,10 @@
       (let
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-expr-id env name-text)
+          (match (tc-dotted-local-field-expr-id-after-check name-text)
             [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
             [(ResultTcExprId.Err message) (ResultTcType.Err message)])
-          (if (tc-hygiene-global-name? name-text)
-            (match (tc-hygiene-global-decode name-text)
-              [(TcHygieneGlobalName.Legacy global-name)
-                (let
-                  [global-id : i64 (tc-name-id global-name)]
-                  (if (tc-hygiene-global-binding-unsafe? env global-name)
-                    (match (tc-require-unsafe env global-name)
-                      [(ResultTcUnit.Ok)
-                        (tc-lookup-hygiene-global-visible-id ctx env global-id)]
-                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-                    (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
-              [(TcHygieneGlobalName.Context module global-name)
-                (tc-lookup-hygiene-context-global-visible-id
-                  ctx
-                  env
-                  module
-                  (tc-name-id global-name))])
-            (match (tc-source-name-lookup-key-after-local-field-check-id
-              ctx
-              env
-              name-text
-              name)
-              [(ResultTcString.Ok lookup-name)
-                (let
-                  [lookup-id : i64
-                    (if (string.eq lookup-name name-text)
-                      name
-                      (tc-name-id lookup-name))]
-                  (match (tc-lookup-unsafe-id env lookup-id)
-                    [(ResultTcTypeUnsafe.Ok ty unsafe)
-                      (if unsafe
-                        (match (tc-require-unsafe
-                          env
-                          (tc-source-lookup-display-name
-                            ctx
-                            name-text
-                            lookup-name))
-                          [(ResultTcUnit.Ok)
-                            (match (tc-unqualified-import-ambiguity-message
-                              ctx
-                              env
-                              name)
-                              [(TcMaybeString.No) (ResultTcType.Ok ty)]
-                              [(TcMaybeString.Some message)
-                                (ResultTcType.Err message)])]
-                          [(ResultTcUnit.Err message)
-                            (ResultTcType.Err message)])
-                        (match (tc-unqualified-import-ambiguity-message
-                          ctx
-                          env
-                          name)
-                          [(TcMaybeString.No) (ResultTcType.Ok ty)]
-                          [(TcMaybeString.Some message)
-                            (ResultTcType.Err message)]))]
-                    [(ResultTcTypeUnsafe.Err message)
-                      (tc-variant-constructor-type-for-lookup-or
-                        ctx
-                        lookup-name
-                        (tc-source-lookup-display-name
-                          ctx
-                          name-text
-                          lookup-name)
-                        (tc-source-unbound-display-message
-                          ctx
-                          name-text
-                          lookup-name
-                          message))]))]
-              [(ResultTcString.Err message) (ResultTcType.Err message)]))))]
+          (tc-var-expr-after-local-field-check ctx env name name-text)))]
     [(AstExpr.TypeLiteral ty)
       (ResultTcType.Err
         (string.append
@@ -35768,47 +35865,14 @@
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Set name value-box)
       (let
-        [value : AstExpr (ast-node-get value-box)]
         [name-text : String (intern-str name)]
         (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id env name-text value-box)
+          (match (tc-dotted-local-field-set-expr-id-after-check
+            name-text
+            value-box)
             [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
             [(ResultTcExprId.Err message) (ResultTcType.Err message)])
-          (match (tc-lookup-visible-id ctx env name)
-            [(ResultTcType.Ok var-ty)
-              (match (tc-expr-with-expected-or-actual-id
-                ctx
-                env
-                value-box
-                var-ty)
-                [(ResultTcType.Ok value-ty)
-                  (match (tc-expect
-                    value-ty
-                    var-ty
-                    "typecheck: assignment type mismatch")
-                    [(ResultTcUnit.Ok)
-                      (match (tc-ensure-cleanup-resource-not-assigned env value)
-                        [(ResultTcUnit.Ok)
-                          (match (tc-ensure-region-value-can-flow-into
-                            env
-                            var-ty
-                            value-ty
-                            "assignment")
-                            [(ResultTcUnit.Ok)
-                              (match (tc-ensure-reference-value-can-assign
-                                env
-                                name-text
-                                value-ty)
-                                [(ResultTcUnit.Ok)
-                                  (ResultTcType.Ok (AstType.Unit))]
-                                [(ResultTcUnit.Err message)
-                                  (ResultTcType.Err message)])]
-                            [(ResultTcUnit.Err message)
-                              (ResultTcType.Err message)])]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                [(ResultTcType.Err message) (ResultTcType.Err message)])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)])))]
+          (tc-set-expr-after-local-field-check ctx env name name-text value-box)))]
     [(AstExpr.Cast inner-box ty)
       (match (tc-expr-id ctx env inner-box)
         [(ResultTcType.Ok inner-ty)

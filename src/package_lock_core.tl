@@ -5,6 +5,7 @@
 ;; fetch/replay behavior remains owned by the package build pipeline.
 (import stdlib.io)
 (import stdlib.string)
+(import stdlib.vector)
 (import "read.tl")
 (import "package_cache_core.tl")
 
@@ -15,9 +16,7 @@
   (pin-value String)
   (commit String))
 
-(defstruct PackageLockEntryList
-  (slots (Array PackageLockEntry))
-  (len i64))
+(vector.family PackageLockEntry PackageLockEntryList package-lock-entry-vec)
 
 (defstruct PackageLockFile
   (version String)
@@ -110,23 +109,15 @@
           (set! ok false)))
       (= i n))))
 
-(define (package-lock-entry-list-with-capacity [capacity : i64]) : PackageLockEntryList
-  (let
-    [cap : i64
-      (if (< capacity 1)
-        1
-        capacity)]
-    (PackageLockEntryList (make-array PackageLockEntry cap) 0)))
-
 (define (package-lock-entry-list-new) : PackageLockEntryList
-  (package-lock-entry-list-with-capacity 4))
+  (package-lock-entry-vec-new))
 
 (define (package-lock-entry-list-fallback) : PackageLockEntry
   (PackageLockEntry "" "" (PackageCachePinKind.Rev) "" ""))
 
 (define (package-lock-entry-list-count-ref
   [entries : (& entries PackageLockEntryList)]) : i64
-  (struct-get entries len))
+  (package-lock-entry-vec-len entries))
 
 (define (package-lock-entry-list-count [entries : PackageLockEntryList]) : i64
   (package-lock-entry-list-count-ref (& entries)))
@@ -134,17 +125,13 @@
 (define (package-lock-entry-list-get
   [entries : (& entries PackageLockEntryList)]
   [index : i64]) : PackageLockEntry
-  (if (if (>= index 0)
-    (< index (struct-get entries len))
-    false)
-    (array-ref (struct-get entries slots) index)
-    (package-lock-entry-list-fallback)))
+  (package-lock-entry-vec-get entries index (package-lock-entry-list-fallback)))
 
 (define (package-lock-entry-list-lookup-from
   [entries : (& entries PackageLockEntryList)]
   [alias : String]
   [index : i64]) : PackageLockMaybeEntry
-  (if (>= index (struct-get entries len))
+  (if (>= index (package-lock-entry-vec-len entries))
     (PackageLockMaybeEntry.No)
     (let
       [entry : PackageLockEntry (package-lock-entry-list-get entries index)]
@@ -161,7 +148,7 @@
   [entries : (& entries PackageLockEntryList)]
   [alias : String]
   [index : i64]) : i64
-  (if (>= index (struct-get entries len))
+  (if (>= index (package-lock-entry-vec-len entries))
     index
     (let
       [head : PackageLockEntry (package-lock-entry-list-get entries index)]
@@ -171,57 +158,12 @@
           index
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
-(define (package-lock-entry-list-copy-range!
-  [dst : (&mut dst (Array PackageLockEntry))]
-  [src : (& src (Array PackageLockEntry))]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (while (< i count)
-      (begin
-        (array-set! dst i (array-ref src i))
-        (set! i (+ i 1))))))
-
-(define (package-lock-entry-list-grow!
-  [entries : (&mut entries PackageLockEntryList)]) : unit
-  (let
-    [count : i64 (struct-get entries len)]
-    [old-cap : i64 (array-length (struct-get entries slots))]
-    [new-cap : i64
-      (if (< old-cap 1)
-        1
-        (* old-cap 2))]
-    [bigger : (Array PackageLockEntry) (make-array PackageLockEntry new-cap)]
-    (begin
-      (package-lock-entry-list-copy-range!
-        (&mut bigger)
-        (& (struct-get entries slots))
-        0
-        count)
-      (set! (struct-get entries slots) bigger))))
-
-(define (package-lock-entry-list-push-placeholder!
-  [entries : (&mut entries PackageLockEntryList)]) : unit
-  (begin
-    (if (< (struct-get entries len) (array-length (struct-get entries slots)))
-      unit
-      (package-lock-entry-list-grow! entries))
-    (let
-      [index : i64 (struct-get entries len)]
-      (begin
-        (array-set!
-          (struct-get entries slots)
-          index
-          (package-lock-entry-list-fallback))
-        (set! (struct-get entries len) (+ index 1))))))
-
 (define (package-lock-entry-list-insert-at!
   [entries : (&mut entries PackageLockEntryList)]
   [entry : PackageLockEntry]
   [index : i64]) : unit
   (begin
-    (package-lock-entry-list-push-placeholder! entries)
+    (package-lock-entry-vec-push entries (package-lock-entry-list-fallback))
     (let
       [write : i64 (- (struct-get entries len) 1)]
       (begin
@@ -232,7 +174,7 @@
               write
               (array-ref (struct-get entries slots) (- write 1)))
             (set! write (- write 1))))
-        (array-set! (struct-get entries slots) index entry)))))
+        (package-lock-entry-vec-set! entries index entry)))))
 
 (define (package-lock-entry-list-insert
   [entries : PackageLockEntryList]
@@ -695,7 +637,7 @@
 (define (package-lock-emit-entries-from
   [entries : (& entries PackageLockEntryList)]
   [index : i64]) : String
-  (if (>= index (struct-get entries len))
+  (if (>= index (package-lock-entry-vec-len entries))
     ""
     (string.append
       (package-lock-emit-entry (package-lock-entry-list-get entries index))
@@ -717,6 +659,9 @@
 
 (define (package-lock-valid-source) : String
   "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"zeta\") (url \"https://github.com/owner/zeta.git\") (pin (rev \"abcdef0123456789abcdef0123456789abcdef01\")) (commit \"abcdef0123456789abcdef0123456789abcdef01\")) (dependency (alias \"alpha\") (url \"https://github.com/owner/alpha.git\") (pin (branch \"main\")) (commit \"1111111111111111111111111111111111111111\"))))")
+
+(define (package-lock-growth-source) : String
+  "(typelisp-lock (version \"v1\") (dependencies (dependency (alias \"foxtrot\") (url \"u\") (pin (rev \"f\")) (commit \"f\")) (dependency (alias \"alpha\") (url \"u\") (pin (rev \"a\")) (commit \"a\")) (dependency (alias \"echo\") (url \"u\") (pin (rev \"e\")) (commit \"e\")) (dependency (alias \"bravo\") (url \"u\") (pin (rev \"b\")) (commit \"b\")) (dependency (alias \"delta\") (url \"u\") (pin (rev \"d\")) (commit \"d\")) (dependency (alias \"charlie\") (url \"u\") (pin (rev \"c\")) (commit \"c\"))))")
 
 (define (package-lock-expected-emitted) : String
   (string.append
@@ -813,6 +758,37 @@
                 "abcdef0123456789abcdef0123456789abcdef01"
                 "abcdef0123456789abcdef0123456789abcdef01")))])]))
 
+(define (package-lock-entry-alias-at?
+  [entries : (& entries PackageLockEntryList)]
+  [index : i64]
+  [alias : String]) : bool
+  (string.eq
+    (struct-get (package-lock-entry-list-get entries index) alias)
+    alias))
+
+(define (package-lock-growth-entries-ok?
+  [entries : (& entries PackageLockEntryList)]) : bool
+  (and
+    (= (package-lock-entry-vec-len entries) 6)
+    (= (package-lock-entry-vec-capacity entries) 8)
+    (package-lock-entry-alias-at? entries 0 "alpha")
+    (package-lock-entry-alias-at? entries 1 "bravo")
+    (package-lock-entry-alias-at? entries 2 "charlie")
+    (package-lock-entry-alias-at? entries 3 "delta")
+    (package-lock-entry-alias-at? entries 4 "echo")
+    (package-lock-entry-alias-at? entries 5 "foxtrot")))
+
+(define (package-lock-growth-order-ok?) : bool
+  (match (package-lock-parse (package-lock-growth-source))
+    [(ResultPackageLockFile.Err _) false]
+    [(ResultPackageLockFile.Ok lock)
+      (if (package-lock-growth-entries-ok? (& (struct-get lock entries)))
+        (match (package-lock-parse (package-lock-emit lock))
+          [(ResultPackageLockFile.Err _) false]
+          [(ResultPackageLockFile.Ok again)
+            (package-lock-growth-entries-ok? (& (struct-get again entries)))])
+        false)]))
+
 (define (package-lock-parse-rejects? [source : String] [expected : String]) : bool
   (match (package-lock-parse source)
     [(ResultPackageLockFile.Err message) (string.eq message expected)]
@@ -841,6 +817,7 @@
     (package-lock-valid-parse-ok?)
     (package-lock-emit-stable-ok?)
     (package-lock-round-trip-ok?)
+    (package-lock-growth-order-ok?)
     (package-lock-rejections-ok?)))
 
 (define (package-lock-self-test) : i64
@@ -853,3 +830,9 @@
   (if (package-lock-self-test-ok?)
     unit
     (io.panic "package-lock: inline self-test mismatch")))
+
+(test
+  package-lock-generated-vector-growth-order
+  (if (package-lock-growth-order-ok?)
+    unit
+    (io.panic "package-lock: generated vector growth/order mismatch")))

@@ -2978,9 +2978,48 @@
       (compiler-load-surface-summaries-reset!)
       ok)))
 
+(define (compiler-typecheck-smoke-registry-member-diagnostic-ok?
+  [src : String]
+  [path : String]
+  [message : String]) : bool
+  (match (parse-ast-source src)
+    [(ResultAstProgram.Ok program)
+      (match (typecheck-compiler-program-with-paths
+        program
+        (ast-decl-path-cons
+          "support.tl"
+          (ast-decl-path-cons path (ast-decl-path-list-new))))
+        [(ResultCompilerTypecheck.Err diag)
+          (let
+            [value : CompilerDiagnostic (box-get diag)]
+            (and
+              (string.eq (compiler-diagnostic-message value) message)
+              (string.eq (compiler-diagnostic-path value) path)
+              (= (compiler-diagnostic-line value) 4)
+              (= (compiler-diagnostic-col value) 3)))]
+        [(ResultCompilerTypecheck.Ok _) false])]
+    [(ResultAstProgram.Err _) false]))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
+    (unless
+      (and
+        (compiler-typecheck-smoke-registry-member-diagnostic-ok?
+          "(define support : i64 0)
+(defstruct Pair
+  (x i64)
+  (x i64))"
+          "fields.tl"
+          "symbols: duplicate field Pair.x")
+        (compiler-typecheck-smoke-registry-member-diagnostic-ok?
+          "(define support : i64 0)
+(defenum Choice
+  (Same)
+  (Same))"
+          "variants.tl"
+          "symbols: duplicate enum variant Choice.Same"))
+      (io.panic "typecheck: registry member diagnostic spans failed"))
     (unless
       (compiler-typecheck-reference-escape-tests-ok?)
       (io.panic "typecheck: reference escape tests failed"))

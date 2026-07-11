@@ -14,6 +14,90 @@
 (import token)
 (import (option i64) as option_i64)
 
+;; Aggregate member origins reuse the transient spanned-node pool instead of
+;; widening hot AST nodes. After each top-level form, only marker + span records
+;; are compacted below the next form's pool mark; lookup is error-path-only.
+(define (compiler-parse-member-origin-span
+  [key : i64]
+  [member-index : i64]
+  [fallback : AstSourceSpan]) : AstSourceSpan
+  (let
+    [cursor : i64 0]
+    [result : AstSourceSpan fallback]
+    (begin
+      (while (< cursor (sp-node-pool-len))
+        (begin
+          (match (sp-node-get cursor)
+            [(SpannedSexpr.Int record-key marker marker-span)
+              (if (and
+                (= record-key key)
+                (string.eq marker "__tl_member_origin"))
+                (let
+                  [record-index : i64 (+ cursor 1)]
+                  [record-offset : i64 0]
+                  [done : bool false]
+                  (begin
+                    ;; The marker span is the aggregate name and remains a
+                    ;; useful fallback if a later transform appends a member.
+                    (set! result (ast-source-span-from-source-span marker-span))
+                    (while (and (not done) (< record-index (sp-node-pool-len)))
+                      (match (sp-node-get record-index)
+                        [(SpannedSexpr.Nil span)
+                          (if (= record-offset member-index)
+                            (begin
+                              (set!
+                                result
+                                (ast-source-span-from-source-span span))
+                              (set! done true))
+                            (begin
+                              (set! record-index (+ record-index 1))
+                              (set! record-offset (+ record-offset 1))))]
+                        [_ (set! done true)]))))
+                unit)]
+            [_ unit])
+          (set! cursor (+ cursor 1))))
+      result)))
+
+(define (compiler-parse-field-def-list-span-get
+  [fields : (& fields AstFieldDefList)]
+  [index : i64]
+  [fallback : AstSourceSpan]) : AstSourceSpan
+  (compiler-parse-member-origin-span
+    (unsafe
+      (cast
+        (ptr->int (ptr-cast (array-data (struct-get fields slots)) : (Ptr u8)))
+        : i64))
+    index
+    fallback))
+
+(define (compiler-parse-variant-def-list-span-get
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]
+  [fallback : AstSourceSpan]) : AstSourceSpan
+  (compiler-parse-member-origin-span
+    (unsafe
+      (cast
+        (ptr->int
+          (ptr-cast (array-data (struct-get variants slots)) : (Ptr u8)))
+        : i64))
+    index
+    fallback))
+
+(define (compiler-parse-member-records-compact!
+  [mark : i64]
+  [records-start : i64]) : unit
+  (let
+    [read-index : i64 records-start]
+    [write-index : i64 mark]
+    [end : i64 (sp-node-pool-len)]
+    (begin
+      (while (< read-index end)
+        (begin
+          (array-set! sp-node-pool-slots write-index (sp-node-get read-index))
+          (set! read-index (+ read-index 1))
+          (set! write-index (+ write-index 1))))
+      (sp-node-pool-truncate! write-index))))
+
 (defenum ResultAstType
   (Ok AstType)
   (Err String))
@@ -2455,6 +2539,7 @@
         [next-fields : AstFieldDefList fields]
         (begin
           (ast-field-def-list-push (&mut next-fields) parsed-field)
+          (sp-node-push (SpannedSexpr.Nil (spanned-sexpr-span head)))
           (parse-ast-defstruct-items
             dispatch
             pools
@@ -2877,22 +2962,27 @@
     (spanned-sexpr-form head)
     (ast-enum-cleanup? cleanup))
     [(ResultAstVariantDef.Ok parsed-variant)
-      (match (parse-ast-defenum-items
-        dispatch
-        pools
-        tail
-        lifetimes
-        cleanup
-        seen-lifetimes
-        seen-cleanup
-        true)
-        [(ResultAstEnumDefParts.Ok parsed-lifetimes parsed-cleanup parsed-rest)
-          (ResultAstEnumDefParts.Ok
-            parsed-lifetimes
-            parsed-cleanup
-            (ast-variant-def-cons parsed-variant parsed-rest))]
-        [(ResultAstEnumDefParts.Err message)
-          (ResultAstEnumDefParts.Err message)])]
+      (begin
+        (sp-node-push (SpannedSexpr.Nil (spanned-sexpr-span head)))
+        (match (parse-ast-defenum-items
+          dispatch
+          pools
+          tail
+          lifetimes
+          cleanup
+          seen-lifetimes
+          seen-cleanup
+          true)
+          [(ResultAstEnumDefParts.Ok
+              parsed-lifetimes
+              parsed-cleanup
+              parsed-rest)
+            (ResultAstEnumDefParts.Ok
+              parsed-lifetimes
+              parsed-cleanup
+              (ast-variant-def-cons parsed-variant parsed-rest))]
+          [(ResultAstEnumDefParts.Err message)
+            (ResultAstEnumDefParts.Err message)]))]
     [(ResultAstVariantDef.Err message) (ResultAstEnumDefParts.Err message)]))
 
 (define (parse-ast-defenum-items
@@ -6878,28 +6968,51 @@
     [(SpannedSexpr.Cons name-node variants _)
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
-          (match (parse-ast-defenum-items
-            dispatch
-            pools
-            (sp-node-get variants)
-            (ast-lifetime-list-new)
-            (AstEnumCleanup.No)
-            false
-            false
-            false)
-            [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
-              (if (ast-variant-def-list-empty? (& parsed-variants))
-                (ResultAstDecl.Err "parse: defenum needs at least one variant")
-                (if (ast-lifetime-list-empty? (& lifetimes))
-                  (ResultAstDecl.Ok
-                    (ast-decl-def-enum name cleanup parsed-variants))
-                  (ResultAstDecl.Ok
-                    (ast-decl-def-enum-lifetimes
-                      name
-                      lifetimes
-                      cleanup
-                      parsed-variants))))]
-            [(ResultAstEnumDefParts.Err message) (ResultAstDecl.Err message)])]
+          (let
+            [member-marker : i64
+              (sp-node-push
+                (SpannedSexpr.Int
+                  0
+                  "__tl_member_origin"
+                  (spanned-sexpr-span (sp-node-get name-node))))]
+            (match (parse-ast-defenum-items
+              dispatch
+              pools
+              (sp-node-get variants)
+              (ast-lifetime-list-new)
+              (AstEnumCleanup.No)
+              false
+              false
+              false)
+              [(ResultAstEnumDefParts.Ok lifetimes cleanup parsed-variants)
+                (begin
+                  (array-set!
+                    sp-node-pool-slots
+                    member-marker
+                    (SpannedSexpr.Int
+                      (unsafe
+                        (cast
+                          (ptr->int
+                            (ptr-cast
+                              (array-data
+                                (struct-get (& parsed-variants) slots))
+                              : (Ptr u8)))
+                          : i64))
+                      "__tl_member_origin"
+                      (spanned-sexpr-span (sp-node-get name-node))))
+                  (if (ast-variant-def-list-empty? (& parsed-variants))
+                    (ResultAstDecl.Err
+                      "parse: defenum needs at least one variant")
+                    (if (ast-lifetime-list-empty? (& lifetimes))
+                      (ResultAstDecl.Ok
+                        (ast-decl-def-enum name cleanup parsed-variants))
+                      (ResultAstDecl.Ok
+                        (ast-decl-def-enum-lifetimes
+                          name
+                          lifetimes
+                          cleanup
+                          parsed-variants)))))]
+              [(ResultAstEnumDefParts.Err message) (ResultAstDecl.Err message)]))]
         [_ (ResultAstDecl.Err "parse: malformed defenum")])]
     [_ (ResultAstDecl.Err "parse: malformed defenum")]))
 
@@ -6911,32 +7024,55 @@
     [(SpannedSexpr.Cons name-node fields _)
       (match (sp-node-get name-node)
         [(SpannedSexpr.Sym name _)
-          (match (parse-ast-defstruct-items
-            dispatch
-            pools
-            (sp-node-get fields)
-            (ast-lifetime-list-new)
-            (AstStructRepr.Default)
-            (AstStructCleanup.No)
-            (ast-field-def-list-new)
-            false
-            false
-            false
-            false)
-            [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
-              (if (ast-field-def-list-empty? (& parsed-fields))
-                (ResultAstDecl.Err "parse: defstruct needs at least one field")
-                (if (ast-lifetime-list-empty? (& lifetimes))
-                  (ResultAstDecl.Ok
-                    (ast-decl-def-struct name repr cleanup parsed-fields))
-                  (ResultAstDecl.Ok
-                    (ast-decl-def-struct-lifetimes
-                      name
-                      lifetimes
-                      repr
-                      cleanup
-                      parsed-fields))))]
-            [(ResultAstStructDefParts.Err message) (ResultAstDecl.Err message)])]
+          (let
+            [member-marker : i64
+              (sp-node-push
+                (SpannedSexpr.Int
+                  0
+                  "__tl_member_origin"
+                  (spanned-sexpr-span (sp-node-get name-node))))]
+            (match (parse-ast-defstruct-items
+              dispatch
+              pools
+              (sp-node-get fields)
+              (ast-lifetime-list-new)
+              (AstStructRepr.Default)
+              (AstStructCleanup.No)
+              (ast-field-def-list-new)
+              false
+              false
+              false
+              false)
+              [(ResultAstStructDefParts.Ok lifetimes repr cleanup parsed-fields)
+                (begin
+                  (array-set!
+                    sp-node-pool-slots
+                    member-marker
+                    (SpannedSexpr.Int
+                      (unsafe
+                        (cast
+                          (ptr->int
+                            (ptr-cast
+                              (array-data (struct-get (& parsed-fields) slots))
+                              : (Ptr u8)))
+                          : i64))
+                      "__tl_member_origin"
+                      (spanned-sexpr-span (sp-node-get name-node))))
+                  (if (ast-field-def-list-empty? (& parsed-fields))
+                    (ResultAstDecl.Err
+                      "parse: defstruct needs at least one field")
+                    (if (ast-lifetime-list-empty? (& lifetimes))
+                      (ResultAstDecl.Ok
+                        (ast-decl-def-struct name repr cleanup parsed-fields))
+                      (ResultAstDecl.Ok
+                        (ast-decl-def-struct-lifetimes
+                          name
+                          lifetimes
+                          repr
+                          cleanup
+                          parsed-fields)))))]
+              [(ResultAstStructDefParts.Err message)
+                (ResultAstDecl.Err message)]))]
         [_ (ResultAstDecl.Err "parse: malformed defstruct")])]
     [_ (ResultAstDecl.Err "parse: malformed defstruct")]))
 
@@ -7784,28 +7920,34 @@
       [mark : i64 (sp-node-pool-len)]
       (match (read-form-spanned-result toks cur)
         [(ResultSpannedSexpr.Ok form)
-          (match (parse-ast-decl-maybe-with-pools dispatch pools form)
-            [(ResultAstMaybeDecl.SomeDecl decl)
-              (begin
-                (parse-ast-decl-vec-push-with-span
-                  out
-                  decl
-                  (ast-source-span-from-source-span (spanned-sexpr-span form)))
-                (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-            [(ResultAstMaybeDecl.Decls decls)
-              (begin
-                (sp-node-pool-truncate! mark)
-                (parse-ast-decl-vec-push-list! out decls)
-                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-            [(ResultAstMaybeDecl.NoDecl)
-              (begin
-                (sp-node-pool-truncate! mark)
-                (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
-            [(ResultAstMaybeDecl.Err message)
-              (ResultParseAstDeclVec.Err message)])]
+          (let
+            [records-start : i64 (sp-node-pool-len)]
+            (match (parse-ast-decl-maybe-with-pools dispatch pools form)
+              [(ResultAstMaybeDecl.SomeDecl decl)
+                (begin
+                  (parse-ast-decl-vec-push-with-span
+                    out
+                    decl
+                    (ast-source-span-from-source-span (spanned-sexpr-span form)))
+                  (compiler-parse-member-records-compact! mark records-start)
+                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
+              [(ResultAstMaybeDecl.Decls decls)
+                (begin
+                  (compiler-parse-member-records-compact! mark records-start)
+                  (parse-ast-decl-vec-push-list! out decls)
+                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
+              [(ResultAstMaybeDecl.NoDecl)
+                (begin
+                  (compiler-parse-member-records-compact! mark records-start)
+                  (parse-ast-program-forms-into-vec dispatch pools toks cur out))]
+              [(ResultAstMaybeDecl.Err message)
+                (begin
+                  (sp-node-pool-truncate! mark)
+                  (ResultParseAstDeclVec.Err message))]))]
         [(ResultSpannedSexpr.Err err)
-          (ResultParseAstDeclVec.Err (token.source-error-message err))]))))
+          (begin
+            (sp-node-pool-truncate! mark)
+            (ResultParseAstDeclVec.Err (token.source-error-message err)))]))))
 
 (define (parse-ast-program-forms
   [dispatch : sym_i64_env.SymI64Env]
@@ -7838,7 +7980,6 @@
     [dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
-      (sp-node-pool-reset!)
       (array-set! cur 0 0)
       (match (parse-ast-program-forms dispatch pools toks cur)
         [(ResultAstDeclList.Ok decls) (ResultAstProgram.Ok (ast-program decls))]
@@ -7905,32 +8046,57 @@
 (define (parse-ast-repl-source-with-pools
   [src : String]
   [pools : AstNodePoolContext]) : ResultAstReplItem
-  (match (lex-spanned-result src)
-    [(ResultSpannedTokens.Ok toks)
-      (let
-        [cur : (Array i64) (array.make-array i64 1)]
-        [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
+  (let
+    [mark : i64 (sp-node-pool-len)]
+    (match (lex-spanned-result src)
+      [(ResultSpannedTokens.Ok toks)
+        (let
+          [cur : (Array i64) (array.make-array i64 1)]
+          [dispatch : sym_i64_env.SymI64Env (parse-ast-program-dispatch)]
+          (begin
+            (array-set! cur 0 0)
+            (if (= (peek-spanned-tag toks cur) (token.tag-end))
+              (begin
+                (sp-node-pool-truncate! mark)
+                (ResultAstReplItem.Err "parse: expected REPL input"))
+              (match (read-form-spanned-result toks cur)
+                [(ResultSpannedSexpr.Ok form)
+                  (let
+                    [records-start : i64 (sp-node-pool-len)]
+                    (if (= (peek-spanned-tag toks cur) (token.tag-end))
+                      (match (parse-ast-decl dispatch pools form)
+                        [(ResultAstDecl.Ok decl)
+                          (let
+                            [result : ResultAstReplItem
+                              (if (parse-ast-repl-module-macro-call-decl? decl)
+                                (parse-ast-repl-expr-item dispatch pools form)
+                                (ResultAstReplItem.Ok (AstReplDecl decl)))]
+                            (begin
+                              (compiler-parse-member-records-compact!
+                                mark
+                                records-start)
+                              result))]
+                        [(ResultAstDecl.Err _)
+                          (begin
+                            (sp-node-pool-truncate! records-start)
+                            (let
+                              [result : ResultAstReplItem
+                                (parse-ast-repl-expr-item dispatch pools form)]
+                              (begin
+                                (sp-node-pool-truncate! mark)
+                                result)))])
+                      (begin
+                        (sp-node-pool-truncate! mark)
+                        (ResultAstReplItem.Err
+                          "parse: trailing tokens after REPL input"))))]
+                [(ResultSpannedSexpr.Err err)
+                  (begin
+                    (sp-node-pool-truncate! mark)
+                    (ResultAstReplItem.Err (token.source-error-message err)))]))))]
+      [(ResultSpannedTokens.Err err)
         (begin
-          (sp-node-pool-reset!)
-          (array-set! cur 0 0)
-          (if (= (peek-spanned-tag toks cur) (token.tag-end))
-            (ResultAstReplItem.Err "parse: expected REPL input")
-            (match (read-form-spanned-result toks cur)
-              [(ResultSpannedSexpr.Ok form)
-                (if (= (peek-spanned-tag toks cur) (token.tag-end))
-                  (match (parse-ast-decl dispatch pools form)
-                    [(ResultAstDecl.Ok decl)
-                      (if (parse-ast-repl-module-macro-call-decl? decl)
-                        (parse-ast-repl-expr-item dispatch pools form)
-                        (ResultAstReplItem.Ok (AstReplDecl decl)))]
-                    [(ResultAstDecl.Err _)
-                      (parse-ast-repl-expr-item dispatch pools form)])
-                  (ResultAstReplItem.Err
-                    "parse: trailing tokens after REPL input"))]
-              [(ResultSpannedSexpr.Err err)
-                (ResultAstReplItem.Err (token.source-error-message err))]))))]
-    [(ResultSpannedTokens.Err err)
-      (ResultAstReplItem.Err (token.source-error-message err))]))
+          (sp-node-pool-truncate! mark)
+          (ResultAstReplItem.Err (token.source-error-message err)))])))
 
 (define (parse-ast-repl-source [src : String]) : ResultAstReplItem
   (let
@@ -7966,59 +8132,68 @@
       [mark : i64 (sp-node-pool-len)]
       (match (read-form-spanned-result toks cur)
         [(ResultSpannedSexpr.Ok spanned-form)
-          (begin
-            (parse-ast-error-span-clear!)
-            (match (parse-ast-decl-maybe-with-pools dispatch pools spanned-form)
-              [(ResultAstMaybeDecl.SomeDecl decl)
-                (begin
-                  (parse-ast-decl-vec-push-with-span
-                    out
-                    decl
-                    (ast-source-span-from-source-span
-                      (spanned-sexpr-span spanned-form)))
-                  (sp-node-pool-truncate! mark)
-                  (parse-ast-program-forms-diagnostic-into-vec
-                    path
-                    dispatch
-                    pools
-                    toks
-                    cur
-                    out))]
-              [(ResultAstMaybeDecl.Decls decls)
-                (begin
-                  (sp-node-pool-truncate! mark)
-                  (parse-ast-decl-vec-push-list! out decls)
-                  (parse-ast-program-forms-diagnostic-into-vec
-                    path
-                    dispatch
-                    pools
-                    toks
-                    cur
-                    out))]
-              [(ResultAstMaybeDecl.NoDecl)
-                (begin
-                  (sp-node-pool-truncate! mark)
-                  (parse-ast-program-forms-diagnostic-into-vec
-                    path
-                    dispatch
-                    pools
-                    toks
-                    cur
-                    out))]
-              [(ResultAstMaybeDecl.Err message)
-                (ResultParseAstDeclVecDiagnostic.Err
-                  (box
-                    (parse-ast-canonical-diagnostic
-                      (compiler-diagnostic-from-span
-                        path
-                        (parse-ast-error-span-current
-                          (spanned-sexpr-span spanned-form))
-                        message))))]))]
+          (let
+            [records-start : i64 (sp-node-pool-len)]
+            (begin
+              (parse-ast-error-span-clear!)
+              (match (parse-ast-decl-maybe-with-pools
+                dispatch
+                pools
+                spanned-form)
+                [(ResultAstMaybeDecl.SomeDecl decl)
+                  (begin
+                    (parse-ast-decl-vec-push-with-span
+                      out
+                      decl
+                      (ast-source-span-from-source-span
+                        (spanned-sexpr-span spanned-form)))
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-diagnostic-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.Decls decls)
+                  (begin
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-decl-vec-push-list! out decls)
+                    (parse-ast-program-forms-diagnostic-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.NoDecl)
+                  (begin
+                    (compiler-parse-member-records-compact! mark records-start)
+                    (parse-ast-program-forms-diagnostic-into-vec
+                      path
+                      dispatch
+                      pools
+                      toks
+                      cur
+                      out))]
+                [(ResultAstMaybeDecl.Err message)
+                  (begin
+                    (sp-node-pool-truncate! mark)
+                    (ResultParseAstDeclVecDiagnostic.Err
+                      (box
+                        (parse-ast-canonical-diagnostic
+                          (compiler-diagnostic-from-span
+                            path
+                            (parse-ast-error-span-current
+                              (spanned-sexpr-span spanned-form))
+                            message)))))])))]
         [(ResultSpannedSexpr.Err err)
-          (ResultParseAstDeclVecDiagnostic.Err
-            (box
-              (parse-ast-canonical-diagnostic
-                (compiler-diagnostic-from-source-error path err))))]))))
+          (begin
+            (sp-node-pool-truncate! mark)
+            (ResultParseAstDeclVecDiagnostic.Err
+              (box
+                (parse-ast-canonical-diagnostic
+                  (compiler-diagnostic-from-source-error path err)))))]))))
 
 (define (parse-ast-program-forms-diagnostic
   [path : String]
@@ -8057,7 +8232,6 @@
     [dispatch : sym_i64_env.SymI64Env
       (parse-ast-program-dispatch-with-cfg cfgs)]
     (begin
-      (sp-node-pool-reset!)
       (array-set! cur 0 0)
       (match (parse-ast-program-forms-diagnostic path dispatch pools toks cur)
         [(ResultAstDeclListDiagnostic.Ok decls)

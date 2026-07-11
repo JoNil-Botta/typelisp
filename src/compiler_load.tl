@@ -731,6 +731,7 @@
         (ast-node-pool-reset-to! (compiler-load-session-ast-floor-value))
         (ty-node-pool-reset-to! (compiler-load-session-ty-floor-value)))
       (begin
+        (sp-node-pool-reset!)
         (ast-node-pool-reset!)
         (ty-node-pool-reset!)))))
 
@@ -744,7 +745,9 @@
         pools
         (compiler-load-session-ast-floor-value)
         (compiler-load-session-ty-floor-value))
-      (ast-node-pool-context-reset-to! pools 0 0))))
+      (begin
+        (sp-node-pool-reset!)
+        (ast-node-pool-context-reset-to! pools 0 0)))))
 
 (define (compiler-load-session-reset-interns!) : unit
   (begin
@@ -9629,36 +9632,46 @@
 (define (compiler-load-parse-manifest-diagnostic
   [path : String]
   [source : String]) : ResultCompilerPkgManifestDiagnostic
-  (begin
-    (sp-node-pool-reset!)
-    (match (lex-spanned-result source)
-      [(ResultSpannedTokens.Err err)
-        (ResultCompilerPkgManifestDiagnostic.Err
-          (box (compiler-load-manifest-source-error-diagnostic path err)))]
-      [(ResultSpannedTokens.Ok toks)
-        (match (read-spanned-result toks)
-          [(ResultSpannedSexpr.Err err)
-            (ResultCompilerPkgManifestDiagnostic.Err
-              (box (compiler-load-manifest-source-error-diagnostic path err)))]
-          [(ResultSpannedSexpr.Ok form)
-            (compiler-load-parse-manifest-form-diagnostic path form)])])))
+  (let
+    [mark : i64 (sp-node-pool-len)]
+    [result : ResultCompilerPkgManifestDiagnostic
+      (match (lex-spanned-result source)
+        [(ResultSpannedTokens.Err err)
+          (ResultCompilerPkgManifestDiagnostic.Err
+            (box (compiler-load-manifest-source-error-diagnostic path err)))]
+        [(ResultSpannedTokens.Ok toks)
+          (match (read-spanned-result toks)
+            [(ResultSpannedSexpr.Err err)
+              (ResultCompilerPkgManifestDiagnostic.Err
+                (box (compiler-load-manifest-source-error-diagnostic path err)))]
+            [(ResultSpannedSexpr.Ok form)
+              (compiler-load-parse-manifest-form-diagnostic path form)])])]
+    (begin
+      (sp-node-pool-truncate! mark)
+      result)))
 
 (define (compiler-load-parse-manifest-diagnostic-infer-kind
   [path : String]
   [source : String]) : ResultCompilerPkgManifestDiagnostic
-  (begin
-    (sp-node-pool-reset!)
-    (match (lex-spanned-result source)
-      [(ResultSpannedTokens.Err err)
-        (ResultCompilerPkgManifestDiagnostic.Err
-          (box (compiler-load-manifest-source-error-diagnostic path err)))]
-      [(ResultSpannedTokens.Ok toks)
-        (match (read-spanned-result toks)
-          [(ResultSpannedSexpr.Err err)
-            (ResultCompilerPkgManifestDiagnostic.Err
-              (box (compiler-load-manifest-source-error-diagnostic path err)))]
-          [(ResultSpannedSexpr.Ok form)
-            (compiler-load-parse-manifest-form-diagnostic-infer-kind path form)])])))
+  (let
+    [mark : i64 (sp-node-pool-len)]
+    [result : ResultCompilerPkgManifestDiagnostic
+      (match (lex-spanned-result source)
+        [(ResultSpannedTokens.Err err)
+          (ResultCompilerPkgManifestDiagnostic.Err
+            (box (compiler-load-manifest-source-error-diagnostic path err)))]
+        [(ResultSpannedTokens.Ok toks)
+          (match (read-spanned-result toks)
+            [(ResultSpannedSexpr.Err err)
+              (ResultCompilerPkgManifestDiagnostic.Err
+                (box (compiler-load-manifest-source-error-diagnostic path err)))]
+            [(ResultSpannedSexpr.Ok form)
+              (compiler-load-parse-manifest-form-diagnostic-infer-kind
+                path
+                form)])])]
+    (begin
+      (sp-node-pool-truncate! mark)
+      result)))
 
 ;: Parse a manifest source string into a structured manifest. This compatibility
 ;: wrapper keeps existing in-memory parser callers and message-only tests stable.

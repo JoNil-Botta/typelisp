@@ -8002,6 +8002,17 @@
                   out))]
             [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteArmsBuild.Err diag)]))])))
 
+(define (ctfe-quote-preserve-unquoted-source-span?
+  [template : AstExpr]
+  [result-node : i64]
+  [env : CtfeEnv]) : bool
+  (match (ctfe-expr-unspan env template)
+    [(AstExpr.Unquote _)
+      (match (ctfe-ast-get env result-node)
+        [(AstExpr.Spanned _ _) true]
+        [_ false])]
+    [_ false]))
+
 (define (ctfe-quote-expr
   [expr : AstExpr]
   [env : CtfeEnv]
@@ -8013,10 +8024,18 @@
         [inner : AstExpr (ctfe-ast-get env inner-box)]
         (match (ctfe-quote-expr inner env fuel quasiquote)
           [(ResultCtfeQuoteExpr.Ok node ty next-fuel)
-            (ResultCtfeQuoteExpr.Ok
-              (ast-expr-spanned-with-pools (ctfe-env-pools env) node span)
-              ty
-              next-fuel)]
+            ;; An unquoted macro argument is already source-spanned at its
+            ;; call site. Preserve that origin rather than covering it with
+            ;; the template's quasiquote span, while retaining the template
+            ;; span for synthetic expressions with no caller origin.
+            (if (and
+              quasiquote
+              (ctfe-quote-preserve-unquoted-source-span? inner node env))
+              (ResultCtfeQuoteExpr.Ok node ty next-fuel)
+              (ResultCtfeQuoteExpr.Ok
+                (ast-expr-spanned-with-pools (ctfe-env-pools env) node span)
+                ty
+                next-fuel))]
           [(ResultCtfeQuoteExpr.Err diag) (ResultCtfeQuoteExpr.Err diag)]))]
     [(AstExpr.Literal lit)
       (ResultCtfeQuoteExpr.Ok

@@ -266,3 +266,5 @@ arena_destroy_inside_owner_reject|check-fail|tests/safety/arena_destroy_inside_o
 arena_phase_rewind_borrow_live_reject|check-fail|tests/safety/arena_phase_rewind_borrow_live_reject.tl|-|use of moved value `view`
 function_lifetime_elision_ambiguous_return_reject|check-fail|tests/safety/function_lifetime_elision_ambiguous_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime
 function_lifetime_elision_zero_input_return_reject|check-fail|tests/safety/function_lifetime_elision_zero_input_return_reject.tl|-|typecheck: elided reference return is ambiguous; write an explicit lifetime
+vector_aggregate_ref_rvalue_call_reject|check-fail|tests/safety/vector_aggregate_ref_rvalue_call_reject.tl|-|borrow slots from a vector place or use the generated vector get helper
+vector_aggregate_ref_rvalue_workarounds_ok|check-ok|tests/safety/vector_aggregate_ref_rvalue_workarounds_ok.tl|-|-

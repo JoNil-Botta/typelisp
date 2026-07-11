@@ -341,6 +341,32 @@
   (let [r : (& n i64) (& n)]
     (lambda () : i64 (take r))))")
 
+(define (compiler-typecheck-vector-ref-rvalue-diagnostic-source) : String
+  "(import stdlib.comptime)
+(defmacro (for-each [vec : Expr] [body : Expr]) : unit
+  `(let
+    [idx : i64 0]
+    (while (< idx (struct-get ,vec len))
+      (,body (array-ref (struct-get ,vec slots) idx))
+      (set! idx (+ idx 1)))))
+
+(defstruct Ball
+  (x i64)
+  (y i64))
+
+(defstruct Vec
+  (slots (Array Ball))
+  (len i64))
+
+(defstruct World
+  (balls Vec))
+
+(define (draw-ball [ball : Ball]) : unit
+  unit)
+
+(define (draw-balls [world : (& a World)]) : unit
+  (for-each (& world.balls) draw-ball))")
+
 (define (compiler-typecheck-escape-diagnostic-tests-ok?) : bool
   (and
     (compiler-typecheck-error-shape-ok?
@@ -366,6 +392,12 @@
       "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"
       4
       5
+      1)
+    (compiler-typecheck-error-shape-ok?
+      (compiler-typecheck-vector-ref-rvalue-diagnostic-source)
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper"
+      24
+      13
       1)))
 
 (define (compiler-typecheck-diagnostic-code-tests-ok?) : bool

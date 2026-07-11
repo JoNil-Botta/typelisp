@@ -1308,6 +1308,18 @@ owner/provenance is statically known:
 The checker rejects borrows of arbitrary rvalues and temporaries whose owner
 cannot be named. Bind the value first if it should have a lexical owner.
 
+**Lending collection iterators.** A generated mutable collection iterator may
+store an `(&mut source Collection)` projection and return a result carrying an
+`(&mut source T)` item. This is a lending operation: the iterator state keeps
+the source exclusively borrowed, and a previously yielded item/result must be
+dead before the next mutable step. The checker does not assume dynamic indexes
+are disjoint. Consequently, mutation, growth, or conflicting borrows of the
+collection are rejected while the iterator state or a yielded item is live;
+they are accepted after the last proven use. Repeated exhausted steps return a
+concrete `Done` result. `String` elements remain immutable and use `(& source
+str)` items under this convention. A future `for` macro may select the
+protocol, but it is explicit library API until its reflection support lands.
+
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
 

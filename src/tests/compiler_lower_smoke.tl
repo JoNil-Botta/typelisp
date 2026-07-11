@@ -449,8 +449,8 @@
       (compiler-lower-ok? (compiler-lower-match-source))
       (panic "lower: match smoke mismatch"))
     (unless
-      (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
-      (panic "lower: match phi smoke mismatch"))
+      (compiler-lower-match-tail-shape-ok? (compiler-lower-match-source))
+      (panic "lower: match tail smoke mismatch"))
     (unless
       (compiler-lower-ok? (compiler-lower-enum-match-source))
       (panic "lower: enum match smoke mismatch"))

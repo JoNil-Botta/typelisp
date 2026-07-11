@@ -47900,6 +47900,8 @@
         [summary : CompilerIrSummary (compiler-ir-program-summary program)]
         [ok : bool true]
         (begin
+          ;; The tail-position `if` returns directly from both arms, so the
+          ;; lowered program has no merge block, merge phi, or phi result var.
           (if (= (compiler-ir-summary-globals summary) 1)
             unit
             (set! ok false))
@@ -47909,19 +47911,19 @@
           (if (= (compiler-ir-summary-externs summary) 1)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-blocks summary) 8)
+          (if (= (compiler-ir-summary-blocks summary) 7)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-instructions summary) 22)
+          (if (= (compiler-ir-summary-instructions summary) 20)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-vars summary) 14)
+          (if (= (compiler-ir-summary-vars summary) 13)
             unit
             (set! ok false))
           (if (= (compiler-ir-summary-empty-blocks summary) 0)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-max-instructions-function summary) 19)
+          (if (= (compiler-ir-summary-max-instructions-function summary) 17)
             unit
             (set! ok false))
           (if (= (compiler-ir-summary-max-instructions-block summary) 6)
@@ -47930,7 +47932,7 @@
           (if (= (compiler-ir-summary-call-arg-entries summary) 1)
             unit
             (set! ok false))
-          (if (= (compiler-ir-summary-phi-input-entries summary) 2)
+          (if (= (compiler-ir-summary-phi-input-entries summary) 0)
             unit
             (set! ok false))
           ok))]
@@ -52121,29 +52123,31 @@
 (define (compiler-lower-comptime-f32-fold-ok? [src : String] [want : String]) : bool
   (compiler-lower-comptime-float-fold-ok? src want (AstType.F32)))
 
-;; The value-returning scalar matches (`classify`/`flag-score`/`sign`) each emit
-;; a merge phi; the unit-typed match (`announce`) emits no value phi.
-(define (compiler-lower-match-phi-shape-ok? [src : String]) : bool
+;; Tail-position scalar matches (`classify`/`flag-score`/`sign`) return directly
+;; from every arm; the unit-typed match (`announce`) likewise needs no phi.
+(define (compiler-lower-match-tail-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-phi-count functions "classify") 0)
-            (> (lower-test-function-phi-count functions "flag-score") 0)
-            (> (lower-test-function-phi-count functions "sign") 0)
+            (= (lower-test-function-phi-count functions "classify") 0)
+            (= (lower-test-function-phi-count functions "flag-score") 0)
+            (= (lower-test-function-phi-count functions "sign") 0)
             (= (lower-test-function-phi-count functions "announce") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
+;; Tail-position enum matches also return directly from their arms. Payload
+;; matches still need the loads that extract values from the enum storage.
 (define (compiler-lower-enum-match-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(ResultCompilerLower.Ok program _)
       (match program
         [(CompilerIrProgram.Program _ functions _)
           (and
-            (> (lower-test-function-phi-count functions "score") 0)
-            (> (lower-test-function-phi-count functions "zero-call") 0)
-            (> (lower-test-function-phi-count functions "or-zero") 0)
+            (= (lower-test-function-phi-count functions "score") 0)
+            (= (lower-test-function-phi-count functions "zero-call") 0)
+            (= (lower-test-function-phi-count functions "or-zero") 0)
             (= (lower-test-function-phi-count functions "touch") 0)
             (> (lower-test-function-load-count functions "score") 1)
             (> (lower-test-function-load-count functions "or-zero") 1))])]
@@ -55625,7 +55629,7 @@
       (if (compiler-lower-ok? (compiler-lower-match-source))
         unit
         (set! ok false))
-      (if (compiler-lower-match-phi-shape-ok? (compiler-lower-match-source))
+      (if (compiler-lower-match-tail-shape-ok? (compiler-lower-match-source))
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-enum-match-source))

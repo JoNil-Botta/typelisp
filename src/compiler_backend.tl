@@ -263,8 +263,8 @@
   (clears-owners bool)
   (call bool)
   (single-dest bool)
-  (last-reg String)
-  (zext-dst String))
+  (last-reg i64)
+  (zext-dst i64))
 
 (defstruct CompilerBackendPeepholeEmitResult
   (:lifetimes asm)
@@ -51372,79 +51372,92 @@ tl_tlci_call_image_entry:
         (- 0 value)
         value))))
 
-(define (compiler-backend-peephole-stack-owner-key-range
+(define compiler-backend-peephole-memory-base-none : i64
+  0)
+(define compiler-backend-peephole-memory-base-rbp : i64
+  1)
+(define compiler-backend-peephole-memory-base-rsp : i64
+  2)
+(define compiler-backend-peephole-memory-base-rip : i64
+  3)
+(define compiler-backend-peephole-memory-base-r10 : i64
+  4)
+
+;; Fixed memory bases emitted by the backend all have a six-byte suffix. Parse
+;; that suffix once per movq operand, then share the compact result between
+;; owner-key construction and the operand flags instead of independently
+;; comparing or searching the same bytes for rbp, rsp, rip, and r10.
+(define (compiler-backend-peephole-memory-base-range
   [data : (Ptr u8)]
   [start : i64]
-  [end : i64]
-  [suffix : String]
-  [base : i64]) : i64
-  (let
-    [suffix-len : i64 (string.string-length suffix)]
-    [len : i64 (- end start)]
-    (if (or
-      (< len suffix-len)
-      (not
-        (compiler-backend-peephole-range-eq? data (- end suffix-len) end suffix)))
-      (compiler-backend-peephole-owner-key-unknown)
-      (let
-        [prefix-end : i64 (- end suffix-len)]
-        (cond
-          [(= prefix-end start)
-            (compiler-backend-peephole-stack-owner-key-from-parts base 0 false)]
-          [(compiler-backend-peephole-decimal-range-valid?
-              data
-              start
-              prefix-end)
-            (compiler-backend-peephole-stack-owner-key-from-parts
-              base
-              (compiler-backend-peephole-decimal-range-value
-                data
-                start
-                prefix-end)
-              true)]
-          [else (compiler-backend-peephole-owner-key-unknown)])))))
+  [end : i64]) : i64
+  (if (< (- end start) 6)
+    compiler-backend-peephole-memory-base-none
+    (let
+      [s : i64 (- end 6)]
+      (if (and
+        (= (compiler-backend-peephole-byte-at data s) 40)
+        (= (compiler-backend-peephole-byte-at data (+ s 1)) 37)
+        (= (compiler-backend-peephole-byte-at data (+ s 2)) 114)
+        (= (compiler-backend-peephole-byte-at data (+ s 5)) 41))
+        (let
+          [b3 : i64 (compiler-backend-peephole-byte-at data (+ s 3))]
+          [b4 : i64 (compiler-backend-peephole-byte-at data (+ s 4))]
+          (if (= b4 112)
+            (cond
+              [(= b3 98) compiler-backend-peephole-memory-base-rbp]
+              [(= b3 115) compiler-backend-peephole-memory-base-rsp]
+              [(= b3 105) compiler-backend-peephole-memory-base-rip]
+              [else compiler-backend-peephole-memory-base-none])
+            (if (and (= b3 49) (= b4 48))
+              compiler-backend-peephole-memory-base-r10
+              compiler-backend-peephole-memory-base-none)))
+        compiler-backend-peephole-memory-base-none))))
 
 (define (compiler-backend-peephole-owner-key-from-range
   [operand : String]
   [data : (Ptr u8)]
   [start : i64]
-  [end : i64]) : i64
+  [end : i64]
+  [memory-base : i64]) : i64
   (let
-    [rbp : i64
-      (compiler-backend-peephole-stack-owner-key-range
-        data
-        start
-        end
-        "(%rbp)"
-        0)]
-    (if (compiler-backend-peephole-owner-key-known? rbp)
-      rbp
-      (let
-        [rsp : i64
-          (compiler-backend-peephole-stack-owner-key-range
-            data
-            start
-            end
-            "(%rsp)"
-            1)]
-        (if (compiler-backend-peephole-owner-key-known? rsp)
-          rsp
-          (let
-            [len : i64 (- end start)]
-            [suffix-len : i64 6]
-            (if (and
-              (> len suffix-len)
-              (compiler-backend-peephole-range-eq?
-                data
-                (- end suffix-len)
-                end
-                "(%rip)"))
-              (compiler-backend-peephole-owner-global-key-range
-                operand
+    [prefix-end : i64 (- end 6)]
+    (cond
+      [(or
+          (= memory-base compiler-backend-peephole-memory-base-rbp)
+          (= memory-base compiler-backend-peephole-memory-base-rsp))
+        (let
+          [base : i64
+            (if (= memory-base compiler-backend-peephole-memory-base-rbp)
+              0
+              1)]
+          (cond
+            [(= prefix-end start)
+              (compiler-backend-peephole-stack-owner-key-from-parts
+                base
+                0
+                false)]
+            [(compiler-backend-peephole-decimal-range-valid?
                 data
                 start
-                (- len suffix-len))
-              (compiler-backend-peephole-owner-key-unknown))))))))
+                prefix-end)
+              (compiler-backend-peephole-stack-owner-key-from-parts
+                base
+                (compiler-backend-peephole-decimal-range-value
+                  data
+                  start
+                  prefix-end)
+                true)]
+            [else (compiler-backend-peephole-owner-key-unknown)]))]
+      [(and
+          (= memory-base compiler-backend-peephole-memory-base-rip)
+          (> prefix-end start))
+        (compiler-backend-peephole-owner-global-key-range
+          operand
+          data
+          start
+          (- prefix-end start))]
+      [else (compiler-backend-peephole-owner-key-unknown)])))
 
 ;; Local frame slots: every rsp-form slot (the rebased local frame; incoming
 ;; stack args stay on rbp in stage 1), plus the pre-rebase rbp spelling at
@@ -52712,14 +52725,6 @@ tl_tlci_call_image_entry:
     (compiler-backend-peephole-register-range? data start end)
     (compiler-backend-peephole-stack-slot-range? data start end)))
 
-(define (compiler-backend-peephole-mem-base-r10-range?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (and
-    (>= (- end start) 6)
-    (compiler-backend-peephole-range-eq? data (- end 6) end "(%r10)")))
-
 (define compiler-backend-peephole-op-register-flag : i64
   1)
 (define compiler-backend-peephole-op-stack-flag : i64
@@ -52733,7 +52738,8 @@ tl_tlci_call_image_entry:
   [data : (Ptr u8)]
   [start : i64]
   [end : i64]
-  [key : i64]) : i64
+  [key : i64]
+  [memory-base : i64]) : i64
   (let
     [register? : bool
       (compiler-backend-peephole-register-range? data start end)]
@@ -52741,6 +52747,8 @@ tl_tlci_call_image_entry:
     [stack? : bool
       (or
         packed-stack?
+        (= memory-base compiler-backend-peephole-memory-base-rbp)
+        (= memory-base compiler-backend-peephole-memory-base-rsp)
         (and
           (>= (- end start) 6)
           (compiler-backend-peephole-stack-slot-range? data start end)))]
@@ -52751,11 +52759,23 @@ tl_tlci_call_image_entry:
           (and
             (< start end)
             (= (compiler-backend-peephole-byte-at data start) 45)))
-        (and
-          stack?
-          (compiler-backend-peephole-local-frame-slot-range? data start end)))]
-    [r10-base? : bool
-      (compiler-backend-peephole-mem-base-r10-range? data start end)]
+        (cond
+          [(= memory-base compiler-backend-peephole-memory-base-rsp) true]
+          [(= memory-base compiler-backend-peephole-memory-base-rbp)
+            (or
+              (and
+                (< start end)
+                (= (compiler-backend-peephole-byte-at data start) 45))
+              (compiler-backend-peephole-range-contains?
+                data
+                start
+                end
+                "(%rsp)"))]
+          [else
+            (and
+              stack?
+              (compiler-backend-peephole-local-frame-slot-range? data start end))]))]
+    [r10-base? : bool (= memory-base compiler-backend-peephole-memory-base-r10)]
     (+
       (if register?
         compiler-backend-peephole-op-register-flag
@@ -52788,84 +52808,161 @@ tl_tlci_call_image_entry:
   [data : (Ptr u8)]
   [ts : i64]
   [te : i64]) : String
-  (cond
-    [(compiler-backend-peephole-range-eq? data ts te "%eax") "%rax"]
-    [(compiler-backend-peephole-range-eq? data ts te "%ax") "%rax"]
-    [(compiler-backend-peephole-range-eq? data ts te "%al") "%rax"]
-    [(compiler-backend-peephole-range-eq? data ts te "%ecx") "%rcx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%cx") "%rcx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%cl") "%rcx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%edx") "%rdx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%dx") "%rdx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%dl") "%rdx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%ebx") "%rbx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%bx") "%rbx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%bl") "%rbx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%esi") "%rsi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%si") "%rsi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%sil") "%rsi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%edi") "%rdi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%di") "%rdi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%dil") "%rdi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r8d") "%r8"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r8w") "%r8"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r8b") "%r8"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r9d") "%r9"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r9w") "%r9"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r9b") "%r9"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r10d") "%r10"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r10w") "%r10"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r10b") "%r10"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r11d") "%r11"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r11w") "%r11"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r11b") "%r11"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r12d") "%r12"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r12w") "%r12"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r12b") "%r12"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r13d") "%r13"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r13w") "%r13"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r13b") "%r13"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r14d") "%r14"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r14w") "%r14"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r14b") "%r14"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r15d") "%r15"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r15w") "%r15"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r15b") "%r15"]
-    [else ""]))
+  (if (>= (compiler-backend-peephole-reg-index-range data ts te) 0)
+    ""
+    (compiler-backend-peephole-reg-name-from-index
+      (compiler-backend-peephole-token-reg-index-range data ts te))))
 
-;; The tracked GP register name for the token [ts,te), or "" if it is not one of
-;; the 14 allocator-owned registers (or a sub-register thereof -> its 64-bit
-;; parent, SCAV3).
-(define (compiler-backend-peephole-token-to-reg
+;; Dense owner-register index for a full or partial GP register token. The
+;; token grammar is a fixed set, so classify its 3--5 bytes once instead of
+;; walking 56 literal comparisons. Partial-register writes map to their 64-bit
+;; owner; rbp/rsp and their partial forms remain deliberately untracked.
+(define (compiler-backend-peephole-token-reg-index-range
   [data : (Ptr u8)]
   [ts : i64]
-  [te : i64]) : String
+  [te : i64]) : i64
+  (let
+    [n : i64 (- te ts)]
+    (if (or
+      (< n 3)
+      (> n 5)
+      (not (= (compiler-backend-peephole-byte-at data ts) 37)))
+      -1
+      (let
+        [b1 : i64 (compiler-backend-peephole-byte-at data (+ ts 1))]
+        [b2 : i64 (compiler-backend-peephole-byte-at data (+ ts 2))]
+        (cond
+          [(= n 3)
+            (cond
+              [(= b1 114) (cond [(= b2 56) 6] [(= b2 57) 7] [else -1])]
+              [(= b1 97)
+                (if (or (= b2 120) (= b2 108))
+                  0
+                  -1)]
+              [(= b1 99)
+                (if (or (= b2 120) (= b2 108))
+                  1
+                  -1)]
+              [(= b1 100)
+                (cond [(or (= b2 120) (= b2 108)) 2] [(= b2 105) 5] [else -1])]
+              [(= b1 98)
+                (if (or (= b2 120) (= b2 108))
+                  3
+                  -1)]
+              [(= b1 115)
+                (if (= b2 105)
+                  4
+                  -1)]
+              [else -1])]
+          [(= n 4)
+            (let
+              [b3 : i64 (compiler-backend-peephole-byte-at data (+ ts 3))]
+              (cond
+                [(= b1 114)
+                  (cond
+                    [(= b2 97)
+                      (if (= b3 120)
+                        0
+                        -1)]
+                    [(= b2 99)
+                      (if (= b3 120)
+                        1
+                        -1)]
+                    [(= b2 100) (cond [(= b3 120) 2] [(= b3 105) 5] [else -1])]
+                    [(= b2 98)
+                      (if (= b3 120)
+                        3
+                        -1)]
+                    [(= b2 115)
+                      (if (= b3 105)
+                        4
+                        -1)]
+                    [(= b2 56)
+                      (if (or (= b3 100) (= b3 119) (= b3 98))
+                        6
+                        -1)]
+                    [(= b2 57)
+                      (if (or (= b3 100) (= b3 119) (= b3 98))
+                        7
+                        -1)]
+                    [(= b2 49)
+                      (cond
+                        [(= b3 48) 8]
+                        [(= b3 49) 9]
+                        [(= b3 50) 10]
+                        [(= b3 51) 11]
+                        [(= b3 52) 12]
+                        [(= b3 53) 13]
+                        [else -1])]
+                    [else -1])]
+                [(= b1 101)
+                  (cond
+                    [(= b2 97)
+                      (if (= b3 120)
+                        0
+                        -1)]
+                    [(= b2 99)
+                      (if (= b3 120)
+                        1
+                        -1)]
+                    [(= b2 100) (cond [(= b3 120) 2] [(= b3 105) 5] [else -1])]
+                    [(= b2 98)
+                      (if (= b3 120)
+                        3
+                        -1)]
+                    [(= b2 115)
+                      (if (= b3 105)
+                        4
+                        -1)]
+                    [else -1])]
+                [(and (= b1 115) (= b2 105) (= b3 108)) 4]
+                [(and (= b1 100) (= b2 105) (= b3 108)) 5]
+                [else -1]))]
+          [else
+            (let
+              [b3 : i64 (compiler-backend-peephole-byte-at data (+ ts 3))]
+              [b4 : i64 (compiler-backend-peephole-byte-at data (+ ts 4))]
+              (if (and
+                (= b1 114)
+                (= b2 49)
+                (or (= b4 100) (= b4 119) (= b4 98)))
+                (cond
+                  [(= b3 48) 8]
+                  [(= b3 49) 9]
+                  [(= b3 50) 10]
+                  [(= b3 51) 11]
+                  [(= b3 52) 12]
+                  [(= b3 53) 13]
+                  [else -1])
+                -1))])))))
+
+(define (compiler-backend-peephole-reg-name-from-index [index : i64]) : String
   (cond
-    [(compiler-backend-peephole-range-eq? data ts te "%rax") "%rax"]
-    [(compiler-backend-peephole-range-eq? data ts te "%rcx") "%rcx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%rdx") "%rdx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%rbx") "%rbx"]
-    [(compiler-backend-peephole-range-eq? data ts te "%rsi") "%rsi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%rdi") "%rdi"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r8") "%r8"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r9") "%r9"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r10") "%r10"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r11") "%r11"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r12") "%r12"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r13") "%r13"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r14") "%r14"]
-    [(compiler-backend-peephole-range-eq? data ts te "%r15") "%r15"]
-    [else (compiler-backend-peephole-subreg-to-reg data ts te)]))
+    [(= index 0) "%rax"]
+    [(= index 1) "%rcx"]
+    [(= index 2) "%rdx"]
+    [(= index 3) "%rbx"]
+    [(= index 4) "%rsi"]
+    [(= index 5) "%rdi"]
+    [(= index 6) "%r8"]
+    [(= index 7) "%r9"]
+    [(= index 8) "%r10"]
+    [(= index 9) "%r11"]
+    [(= index 10) "%r12"]
+    [(= index 11) "%r13"]
+    [(= index 12) "%r14"]
+    [(= index 13) "%r15"]
+    [else ""]))
 
 ;; The single tracked GP register that is the LAST operand of the line [start,end),
 ;; or "" if the last operand is not a simple tracked register (memory, immediate,
 ;; xmm, or an untracked reg). Used to invalidate exactly the register a single-dest
 ;; instruction writes. A memory last operand ends in ')' so the backward reg-token
 ;; scan yields an empty token -> "".
-(define (compiler-backend-peephole-last-operand-reg
+(define (compiler-backend-peephole-last-operand-reg-index
   [data : (Ptr u8)]
   [start : i64]
-  [end : i64]) : String
+  [end : i64]) : i64
   (let
     [te : i64 end]
     (begin
@@ -52890,8 +52987,15 @@ tl_tlci_call_image_entry:
               (let
                 [pb : i64 (compiler-backend-peephole-byte-at data (- ts 1))]
                 (or (= pb 32) (= pb 44) (= pb 9)))))
-            (compiler-backend-peephole-token-to-reg data ts te)
-            ""))))))
+            (compiler-backend-peephole-token-reg-index-range data ts te)
+            -1))))))
+
+(define (compiler-backend-peephole-last-operand-reg
+  [data : (Ptr u8)]
+  [start : i64]
+  [end : i64]) : String
+  (compiler-backend-peephole-reg-name-from-index
+    (compiler-backend-peephole-last-operand-reg-index data start end)))
 
 ;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
 ;; register is its last operand (so invalidating just that register is sound):
@@ -53104,17 +53208,35 @@ tl_tlci_call_image_entry:
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]
             [single-dest? : bool
               (compiler-backend-peephole-mnemonic-single-dest? data ms mlen)]
-            [last-reg : String
+            [last-reg : i64
               (if (or single-dest? zext?)
-                (compiler-backend-peephole-last-operand-reg data start end)
-                "")]
+                (compiler-backend-peephole-last-operand-reg-index
+                  data
+                  start
+                  end)
+                -1)]
+            [src-memory-base : i64
+              (if is-movq
+                (compiler-backend-peephole-memory-base-range
+                  data
+                  op-src-start
+                  op-src-end)
+                compiler-backend-peephole-memory-base-none)]
+            [dst-memory-base : i64
+              (if is-movq
+                (compiler-backend-peephole-memory-base-range
+                  data
+                  op-dst-start
+                  op-dst-end)
+                compiler-backend-peephole-memory-base-none)]
             [src-key : i64
               (if is-movq
                 (compiler-backend-peephole-owner-key-from-range
                   src
                   data
                   op-src-start
-                  op-src-end)
+                  op-src-end
+                  src-memory-base)
                 (compiler-backend-peephole-owner-key-unknown))]
             [dst-key : i64
               (if is-movq
@@ -53122,7 +53244,8 @@ tl_tlci_call_image_entry:
                   src
                   data
                   op-dst-start
-                  op-dst-end)
+                  op-dst-end
+                  dst-memory-base)
                 (compiler-backend-peephole-owner-key-unknown))]
             [src-reg : i64
               (if is-movq
@@ -53144,7 +53267,8 @@ tl_tlci_call_image_entry:
                   data
                   op-src-start
                   op-src-end
-                  src-key)
+                  src-key
+                  src-memory-base)
                 0)]
             [dst-flags : i64
               (if is-movq
@@ -53152,7 +53276,8 @@ tl_tlci_call_image_entry:
                   data
                   op-dst-start
                   op-dst-end
-                  dst-key)
+                  dst-key
+                  dst-memory-base)
                 0)]
             (CompilerBackendPeepholeLine
               src
@@ -53185,7 +53310,7 @@ tl_tlci_call_image_entry:
               last-reg
               (if zext?
                 last-reg
-                ""))))))))
+                -1))))))))
 
 (define (compiler-backend-peephole-owned-line [line : String] [newline : bool]) : CompilerBackendPeepholeLine
   (compiler-backend-peephole-parse-line
@@ -53320,11 +53445,14 @@ tl_tlci_call_image_entry:
                 (compiler-backend-peephole-owners-clear-call-clobbers owners)]
               [(compiler-backend-peephole-mnemonic-single-dest? data i mlen)
                 (let
-                  [dreg : String
-                    (compiler-backend-peephole-last-operand-reg data start end)]
-                  (if (string.eq dreg "")
+                  [dreg : i64
+                    (compiler-backend-peephole-last-operand-reg-index
+                      data
+                      start
+                      end)]
+                  (if (< dreg 0)
                     (compiler-backend-peephole-owners-empty)
-                    (compiler-backend-peephole-owners-set-reg
+                    (compiler-backend-peephole-owners-set-reg-index
                       owners
                       dreg
                       (compiler-backend-peephole-owner-key-unknown))))]
@@ -53356,10 +53484,10 @@ tl_tlci_call_image_entry:
       (compiler-backend-peephole-owners-clear-call-clobbers owners)]
     [(struct-get line single-dest)
       (let
-        [dreg : String (struct-get line last-reg)]
-        (if (string.eq dreg "")
+        [dreg : i64 (struct-get line last-reg)]
+        (if (< dreg 0)
           (compiler-backend-peephole-owners-empty)
-          (compiler-backend-peephole-owners-set-reg
+          (compiler-backend-peephole-owners-set-reg-index
             owners
             dreg
             (compiler-backend-peephole-owner-key-unknown))))]
@@ -53380,7 +53508,7 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-peephole-redundant-zext-next-desc?
   [next : CompilerBackendPeepholeLine]
-  [reg : String]) : bool
+  [reg : i64]) : bool
   (if (or
     (not (struct-get next has-operands))
     (not (compiler-backend-peephole-line-mnemonic-eq? next "movzbq")))
@@ -53399,17 +53527,20 @@ tl_tlci_call_image_entry:
           (if (not (or (= last 108) (= last 98)))
             false
             (and
-              (string.eq
-                (compiler-backend-peephole-subreg-to-reg data src-start src-end)
+              (=
+                (compiler-backend-peephole-token-reg-index-range
+                  data
+                  src-start
+                  src-end)
                 reg)
-              (string.eq (struct-get next last-reg) reg))))))))
+              (= (struct-get next last-reg) reg))))))))
 
 (define (compiler-backend-peephole-redundant-zext-pair-desc?
   [pending : CompilerBackendPeepholeLine]
   [next : CompilerBackendPeepholeLine]) : bool
   (let
-    [dst : String (struct-get pending zext-dst)]
-    (if (string.eq dst "")
+    [dst : i64 (struct-get pending zext-dst)]
+    (if (< dst 0)
       false
       (compiler-backend-peephole-redundant-zext-next-desc? next dst))))
 

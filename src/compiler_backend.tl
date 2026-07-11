@@ -16081,6 +16081,19 @@
         "jl")]
     [_ ""]))
 
+;; x86 encodes an immediate only as the source of cmp.  When the IR puts the
+;; immediate on the LHS, reverse the predicate and compare it directly against
+;; the register RHS instead of materialising it in a scavenged register.
+(define (compiler-backend-compare-swapped-op [op : CompilerIrBinOp]) : CompilerIrBinOp
+  (match op
+    [(CompilerIrBinOp.Eq) (CompilerIrBinOp.Eq)]
+    [(CompilerIrBinOp.Ne) (CompilerIrBinOp.Ne)]
+    [(CompilerIrBinOp.Lt) (CompilerIrBinOp.Gt)]
+    [(CompilerIrBinOp.Le) (CompilerIrBinOp.Ge)]
+    [(CompilerIrBinOp.Gt) (CompilerIrBinOp.Lt)]
+    [(CompilerIrBinOp.Ge) (CompilerIrBinOp.Le)]
+    [_ op]))
+
 (define (compiler-backend-emit-jcc-label
   [jcc : String]
   [function : String]
@@ -16292,7 +16305,15 @@
   (let
     [true-jcc : String (compiler-backend-compare-true-jcc op ty)]
     [false-jcc : String (compiler-backend-compare-false-jcc op ty)]
-    [_lhs-reg : String (compiler-backend-compare-lhs-scratch assignments rhs)]
+    ;; An immediate LHS can compare directly against a scalar RHS home below.
+    ;; Preserve that home so no scratch can overwrite it before the compare.
+    [rhs-home : String
+      (compiler-backend-value-scalar-register-home assignments rhs)]
+    [swapped-op : CompilerIrBinOp (compiler-backend-compare-swapped-op op)]
+    [swapped-true-jcc : String
+      (compiler-backend-compare-true-jcc swapped-op ty)]
+    [swapped-false-jcc : String
+      (compiler-backend-compare-false-jcc swapped-op ty)]
     (if (string.eq true-jcc "")
       (ResultCompilerBackend.Err
         (box
@@ -16304,23 +16325,47 @@
           (compiler-backend-value-scalar-register-home assignments lhs)]
         [lhs-address : String
           (compiler-backend-value-stack-address assignments lhs)]
-        (if (not (string.eq lhs-home ""))
-          (compiler-backend-emit-compare-branch-with-lhs-operand
-            assignments
-            function
-            op
-            rhs
-            ty
-            true-label
-            false-label
-            fallthrough
-            true-jcc
-            false-jcc
-            ""
-            (compiler-backend-sized-reg lhs-home ty)
-            true
-            lhs-home)
-          (if (not (string.eq lhs-address ""))
+        [lhs-immediate? : bool
+          (match (compiler-backend-immediate-operand lhs)
+            [(CompilerBackendMaybeImmediate.Some _) true]
+            [(CompilerBackendMaybeImmediate.No) false])]
+        (cond
+          [(and lhs-immediate? (not (string.eq rhs-home "")))
+            ;; `imm op rhs-reg` becomes `rhs-reg swapped-op imm`, avoiding a
+            ;; scratch entirely. This is both smaller and protects the RHS home
+            ;; through the branch compare.
+            (compiler-backend-emit-compare-branch-with-lhs-operand
+              assignments
+              function
+              swapped-op
+              lhs
+              ty
+              true-label
+              false-label
+              fallthrough
+              swapped-true-jcc
+              swapped-false-jcc
+              ""
+              (compiler-backend-sized-reg rhs-home ty)
+              true
+              rhs-home)]
+          [(not (string.eq lhs-home ""))
+            (compiler-backend-emit-compare-branch-with-lhs-operand
+              assignments
+              function
+              op
+              rhs
+              ty
+              true-label
+              false-label
+              fallthrough
+              true-jcc
+              false-jcc
+              ""
+              (compiler-backend-sized-reg lhs-home ty)
+              true
+              lhs-home)]
+          [(not (string.eq lhs-address ""))
             (compiler-backend-emit-compare-branch-with-lhs-operand
               assignments
               function
@@ -16335,7 +16380,8 @@
               ""
               lhs-address
               false
-              "")
+              "")]
+          [else
             (let
               [lhs-stage : String
                 (compiler-backend-scavenge-reg-here
@@ -16363,7 +16409,7 @@
                     true
                     lhs-stage)]
                 [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)]))))))))
+                  (ResultCompilerBackend.Err message)]))])))))
 
 (define (compiler-backend-load-compare-type? [ty : AstType]) : bool
   (and

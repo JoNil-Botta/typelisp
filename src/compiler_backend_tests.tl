@@ -11545,10 +11545,14 @@
         (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
       (compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
       (backend-and4
-        (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 4)
+        (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 9)
         (= (compiler-backend-string-count asm "    call VirtualFree\n") 4)
         (not (compiler-backend-string-contains? asm "    syscall\n"))
         (not (compiler-backend-string-contains? asm "    call WriteFile\n")))
+      (compiler-backend-string-contains? asm ".L_tl_alloc_win_commit_to:\n")
+      (compiler-backend-string-contains? asm "    movq $0x2000, %r8\n")
+      (compiler-backend-string-contains? asm "    movq $0x1000, %r8\n")
+      (compiler-backend-string-contains? asm "    cmpq 64(%r8), %r10\n")
       (compiler-backend-string-contains? asm "    movq %gs:0x28, %r8\n")
       (not (compiler-backend-string-contains? asm "    call _write\n"))
       (not (compiler-backend-string-contains? asm "SystemFunction036")))))
@@ -11587,7 +11591,7 @@
     (and
       (compiler-backend-string-contains?
         asm
-        "    movq %r10, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r10)\n    movq %rax, 56(%rax)\n    leaq 64(%rax), %r8\n")
+        "    movq %r10, 40(%rax)\n    movq $0, 48(%rax)\n    movq %rax, 56(%r10)\n    movq %rax, 56(%rax)\n    movq -40(%rbp), %rdx\n    addq %rax, %rdx\n    movq %rdx, 64(%rax)\n    movq 8(%rax), %r8\n")
       (compiler-backend-string-contains?
         asm
         "    movq 56(%r12), %rsi\n    testq %rsi, %rsi\n    jnz .L_tl_arena_destroy_win_head_ready\n    movq %r12, %rsi\n.L_tl_arena_destroy_win_head_ready:\n.L_tl_arena_destroy_win_retired_ready:\n    movq 32(%r12), %r12\n")

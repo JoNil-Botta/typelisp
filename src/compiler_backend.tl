@@ -19974,6 +19974,10 @@
         current-label
         dst
         "_profile_done")]
+    [usable-end-offset : String
+      (if (compiler-backend-target-windows? target)
+        "64"
+        "24")]
     [scav : String
       (compiler-backend-scavenge-reg
         dst
@@ -20015,7 +20019,9 @@
             next-reg
             "\n    jb "
             slow-label
-            "\n    cmpq 24("
+            "\n    cmpq "
+            usable-end-offset
+            "("
             scav
             "), "
             next-reg
@@ -44515,6 +44521,13 @@ tl_profile_alloc_peak_bytes:
     [atomic-cas-label : String (string.append label "_atomic_cas")]
     [atomic-profile-label : String (string.append label "_atomic_profile_done")]
     [profile-label : String (string.append label "_profile_done")]
+    ;; Windows reserves a full logical segment but commits it incrementally;
+    ;; offset 64 is its committed-end pointer. Linux mappings are fully usable
+    ;; through the reserved end at offset 24.
+    [usable-end-offset : String
+      (match target
+        [(CompilerBackendTarget.Windows) "64"]
+        [_ "24"])]
     [prologue : String
       (str_cat.str-cat
         label
@@ -44536,7 +44549,7 @@ tl_profile_alloc_peak_bytes:
     [ordinary-body-c : String
       (str_cat.str-cat
         (str_cat.str-cat "\n    cmpq %rax, " next-reg "\n    jb " slow-label)
-        (str_cat.str-cat "\n    cmpq 24(%r8), " next-reg))]
+        (str_cat.str-cat "\n    cmpq " usable-end-offset "(%r8), " next-reg))]
     [ordinary-body-d : String
       (str_cat.str-cat "\n    ja " slow-label "\n    movq " next-reg)]
     [ordinary-body : String
@@ -44566,7 +44579,13 @@ tl_profile_alloc_peak_bytes:
     [atomic-body-c : String
       (str_cat.str-cat "\n    cmpq %rax, " next-reg "\n    jb " slow-label)]
     [atomic-body-d : String
-      (str_cat.str-cat "\n    cmpq 24(%r8), " next-reg "\n    ja " slow-label)]
+      (str_cat.str-cat
+        "\n    cmpq "
+        usable-end-offset
+        "(%r8), "
+        next-reg
+        "\n    ja "
+        slow-label)]
     [atomic-body-e : String
       (str_cat.str-cat
         "\n    lock cmpxchgq "
@@ -45326,10 +45345,13 @@ tl_arena_destroy:
 
 ")))))))
 
-;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. These calls are
-;; part of the checked backend-core page boundary. The arg arrives in
-;; %rcx; a 32-byte shadow space is reserved before each call. A mapping failure
-;; traps via `ud2` (no libc dependency).
+;; Windows flavor: VirtualAlloc/VirtualFree under the Win64 ABI. Reserve the
+;; same 64 MiB logical segments as Linux, but initially commit only 4 MiB and
+;; grow the committed range on demand. Windows charges MEM_COMMIT against the
+;; system commit limit even for untouched capacity, so eagerly committing every
+;; sparse compiler arena used tens of gigabytes while resident data stayed much
+;; smaller. Header offset 64 stores committed-end; data begins at offset 72.
+;; The arg arrives in %rcx; a 32-byte shadow space is reserved before each call.
 (define (compiler-backend-runtime-windows-arena-functions [profile : bool]) : String
   (string.append
     "    .globl tl_arena_current
@@ -45365,22 +45387,34 @@ tl_arena_make:
     sub $32, %rsp
     xorq %rcx, %rcx
     movq $0x4000000, %rdx
-    movq $0x3000, %r8
+    movq $0x2000, %r8
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
     jz .L_tl_arena_make_win_abort
-    movq $0, 0(%rax)
-    movq $0, 32(%rax)
-    movq %rax, 40(%rax)
-    movq $0, 48(%rax)
-    movq %rax, 56(%rax)
-    leaq 64(%rax), %rcx
-    movq %rcx, 8(%rax)
-    movq %rcx, 16(%rax)
-    movq %rax, %rcx
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    movq $0x400000, %rdx
+    movq $0x1000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_make_win_abort
+    movq $0, 0(%rbx)
+    movq $0, 32(%rbx)
+    movq %rbx, 40(%rbx)
+    movq $0, 48(%rbx)
+    movq %rbx, 56(%rbx)
+    leaq 72(%rbx), %rcx
+    movq %rcx, 8(%rbx)
+    movq %rcx, 16(%rbx)
+    movq %rbx, %rsi
+    addq $0x400000, %rsi
+    movq %rsi, 64(%rbx)
+    movq %rbx, %rcx
     addq $0x4000000, %rcx
-    movq %rcx, 24(%rax)
+    movq %rcx, 24(%rbx)
+    movq %rbx, %rax
     add $32, %rsp
     popq %rsi
     popq %rbx
@@ -45398,22 +45432,34 @@ tl_arena_make_atomic:
     sub $32, %rsp
     xorq %rcx, %rcx
     movq $0x4000000, %rdx
-    movq $0x3000, %r8
+    movq $0x2000, %r8
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
     jz .L_tl_arena_make_atomic_win_abort
-    movq $0, 0(%rax)
-    movq $0, 32(%rax)
-    movq %rax, 40(%rax)
-    movq $1, 48(%rax)
-    movq %rax, 56(%rax)
-    leaq 64(%rax), %rcx
-    movq %rcx, 8(%rax)
-    movq %rcx, 16(%rax)
-    movq %rax, %rcx
+    movq %rax, %rbx
+    movq %rbx, %rcx
+    movq $0x400000, %rdx
+    movq $0x1000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_arena_make_atomic_win_abort
+    movq $0, 0(%rbx)
+    movq $0, 32(%rbx)
+    movq %rbx, 40(%rbx)
+    movq $1, 48(%rbx)
+    movq %rbx, 56(%rbx)
+    leaq 72(%rbx), %rcx
+    movq %rcx, 8(%rbx)
+    movq %rcx, 16(%rbx)
+    movq %rbx, %rsi
+    addq $0x400000, %rsi
+    movq %rsi, 64(%rbx)
+    movq %rbx, %rcx
     addq $0x4000000, %rcx
-    movq %rcx, 24(%rax)
+    movq %rcx, 24(%rbx)
+    movq %rbx, %rax
     add $32, %rsp
     popq %rsi
     popq %rbx
@@ -45662,7 +45708,50 @@ tl_region_reset:
         "%rcx"
         "%r10"
         profile)
-      "    .globl tl_alloc
+      "# Commit through REQUIRED-END inside ARENA in 4 MiB increments.
+# rcx=arena, rdx=required-end, rax=1 success / 0 failure.
+.L_tl_alloc_win_commit_to:
+    push %rbp
+    mov %rsp, %rbp
+    push %rbx
+    push %rsi
+    sub $32, %rsp
+    movq %rcx, %rbx
+    movq %rdx, %rsi
+    subq %rbx, %rsi
+    addq $0x3fffff, %rsi
+    jc .L_tl_alloc_win_commit_fail
+    andq $-0x400000, %rsi
+    addq %rbx, %rsi
+    jc .L_tl_alloc_win_commit_fail
+    cmpq 24(%rbx), %rsi
+    jbe .L_tl_alloc_win_commit_end_ready
+    movq 24(%rbx), %rsi
+.L_tl_alloc_win_commit_end_ready:
+    movq 64(%rbx), %rcx
+    cmpq %rcx, %rsi
+    jbe .L_tl_alloc_win_commit_done
+    movq %rsi, %rdx
+    subq %rcx, %rdx
+    movq $0x1000, %r8
+    movq $0x4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_win_commit_fail
+    movq %rsi, 64(%rbx)
+.L_tl_alloc_win_commit_done:
+    movq $1, %rax
+    jmp .L_tl_alloc_win_commit_return
+.L_tl_alloc_win_commit_fail:
+    xorq %rax, %rax
+.L_tl_alloc_win_commit_return:
+    add $32, %rsp
+    popq %rsi
+    popq %rbx
+    popq %rbp
+    ret
+
+    .globl tl_alloc
 tl_alloc:
     testq %rcx, %rcx
     jnz .L_tl_alloc_win_size_ready
@@ -45678,12 +45767,15 @@ tl_alloc:
     movq 40(%r8), %r9
     testq $1, 48(%r9)
     jnz .L_tl_alloc_win_atomic
+.L_tl_alloc_win_ordinary_retry:
     movq 16(%r8), %r10
     movq %r10, %rax
     addq %r11, %r10
     jc .L_tl_alloc_enter_abort
     cmpq 24(%r8), %r10
     ja .L_tl_alloc_new_arena_entry
+    cmpq 64(%r8), %r10
+    ja .L_tl_alloc_commit_arena_entry
     movq %r10, 16(%r8)
 "
       fast-profile
@@ -45697,25 +45789,43 @@ tl_alloc:
     jc .L_tl_alloc_enter_abort
     cmpq 24(%r8), %r10
     ja .L_tl_alloc_atomic_new_arena_entry
+    cmpq 64(%r8), %r10
+    ja .L_tl_alloc_atomic_new_arena_entry
     lock cmpxchgq %r10, 16(%r8)
     jne .L_tl_alloc_win_atomic_cas
 "
       atomic-fast-profile
       "    ret
+.L_tl_alloc_commit_arena_entry:
+    push %rbp
+    mov %rsp, %rbp
+    sub $80, %rsp
+    movq %r11, -8(%rbp)
+    movq %r8, -16(%rbp)
+    movq %r8, %rcx
+    movq %r10, %rdx
+    call .L_tl_alloc_win_commit_to
+    testq %rax, %rax
+    jz .L_tl_alloc_abort
+    movq -8(%rbp), %r11
+    movq -16(%rbp), %r8
+    mov %rbp, %rsp
+    pop %rbp
+    jmp .L_tl_alloc_win_ordinary_retry
 .L_tl_alloc_atomic_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
-    sub $48, %rsp
+    sub $80, %rsp
     jmp .L_tl_alloc_atomic_new_arena
 .L_tl_alloc_new_arena_entry:
     push %rbp
     mov %rsp, %rbp
-    sub $48, %rsp
+    sub $80, %rsp
     jmp .L_tl_alloc_new_arena
 .L_tl_alloc_enter_abort:
     push %rbp
     mov %rsp, %rbp
-    sub $48, %rsp
+    sub $80, %rsp
     jmp .L_tl_alloc_abort
 .L_tl_alloc_atomic_new_arena:
     movq %r9, -24(%rbp)
@@ -45736,6 +45846,8 @@ tl_alloc:
     jc .L_tl_alloc_atomic_abort_locked
     cmpq 24(%r8), %r10
     ja .L_tl_alloc_atomic_map
+    cmpq 64(%r8), %r10
+    ja .L_tl_alloc_atomic_commit
     lock cmpxchgq %r10, 16(%r8)
     jne .L_tl_alloc_atomic_locked_cas
     movq $1, 48(%r9)
@@ -45744,6 +45856,21 @@ tl_alloc:
       "    mov %rbp, %rsp
     pop %rbp
     ret
+.L_tl_alloc_atomic_commit:
+    movq %r11, -8(%rbp)
+    movq %r8, -16(%rbp)
+    movq %r8, %rcx
+    movq %r10, %rdx
+    call .L_tl_alloc_win_commit_to
+    testq %rax, %rax
+    jz .L_tl_alloc_atomic_commit_failed
+    movq -24(%rbp), %r9
+    movq -16(%rbp), %r8
+    movq -8(%rbp), %r11
+    movq 16(%r8), %rax
+    jmp .L_tl_alloc_atomic_locked_cas
+.L_tl_alloc_atomic_commit_failed:
+    movq -24(%rbp), %r9
 .L_tl_alloc_atomic_abort_locked:
     movq $1, 48(%r9)
     jmp .L_tl_alloc_abort
@@ -45751,37 +45878,62 @@ tl_alloc:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
     movq %r11, %rax
-    addq $64, %rax
-    jc .L_tl_alloc_abort
+    addq $72, %rax
+    jc .L_tl_alloc_atomic_abort_locked
     cmpq %rdx, %rax
     jbe .L_tl_alloc_atomic_len_ready
     movq %rax, %rdx
 .L_tl_alloc_atomic_len_ready:
     movq %rdx, -16(%rbp)
     xorq %rcx, %rcx
-    movq $0x3000, %r8
+    movq $0x2000, %r8
     movq $4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_alloc_abort
+    jz .L_tl_alloc_atomic_commit_failed
+    movq %rax, -32(%rbp)
+    movq -8(%rbp), %r11
+    movq %r11, %rdx
+    addq $72, %rdx
+    jc .L_tl_alloc_atomic_commit_failed
+    cmpq $0x400000, %rdx
+    jae .L_tl_alloc_atomic_commit_len_ready
+    movq $0x400000, %rdx
+.L_tl_alloc_atomic_commit_len_ready:
+    cmpq -16(%rbp), %rdx
+    jbe .L_tl_alloc_atomic_commit_len_capped
+    movq -16(%rbp), %rdx
+.L_tl_alloc_atomic_commit_len_capped:
+    movq %rdx, -40(%rbp)
+    movq -32(%rbp), %rcx
+    movq $0x1000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_atomic_commit_failed
     movq -24(%rbp), %r9
+    movq -32(%rbp), %rax
     movq -16(%rbp), %rdx
     movq -8(%rbp), %r11
     movq %rax, %rcx
     addq %rdx, %rcx
-    jc .L_tl_alloc_abort
+    jc .L_tl_alloc_atomic_commit_failed
     movq 56(%r9), %r8
     movq %r8, 0(%rax)
+    leaq 72(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %r8, 16(%rax)
+    movq %rcx, 24(%rax)
     movq $0, 32(%rax)
     movq %r9, 40(%rax)
     movq $1, 48(%rax)
     movq $0, 56(%rax)
-    leaq 64(%rax), %r8
-    movq %r8, 8(%rax)
-    movq %rcx, 24(%rax)
+    movq -40(%rbp), %rdx
+    addq %rax, %rdx
+    movq %rdx, 64(%rax)
     movq %r8, %r10
     addq %r11, %r10
-    jc .L_tl_alloc_abort
+    jc .L_tl_alloc_atomic_commit_failed
     movq %r10, 16(%rax)
     movq %rax, 56(%r9)
     movq %rax, %gs:0x28
@@ -45796,7 +45948,7 @@ tl_alloc:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
     movq %r11, %rax
-    addq $64, %rax
+    addq $72, %rax
     jc .L_tl_alloc_abort
     cmpq %rdx, %rax
     jbe .L_tl_alloc_len_ready
@@ -45804,19 +45956,46 @@ tl_alloc:
 .L_tl_alloc_len_ready:
     movq %rdx, -16(%rbp)
     xorq %rcx, %rcx
-    movq $0x3000, %r8
+    movq $0x2000, %r8
     movq $4, %r9
     call VirtualAlloc
     testq %rax, %rax
     jz .L_tl_alloc_abort
+    movq %rax, -32(%rbp)
+    movq -8(%rbp), %r11
+    movq %r11, %rdx
+    addq $72, %rdx
+    jc .L_tl_alloc_abort
+    cmpq $0x400000, %rdx
+    jae .L_tl_alloc_commit_len_ready
+    movq $0x400000, %rdx
+.L_tl_alloc_commit_len_ready:
+    cmpq -16(%rbp), %rdx
+    jbe .L_tl_alloc_commit_len_capped
+    movq -16(%rbp), %rdx
+.L_tl_alloc_commit_len_capped:
+    movq %rdx, -40(%rbp)
+    movq -32(%rbp), %rcx
+    movq $0x1000, %r8
+    movq $4, %r9
+    call VirtualAlloc
+    testq %rax, %rax
+    jz .L_tl_alloc_abort
+    movq -32(%rbp), %rax
     movq -16(%rbp), %rdx
     movq -8(%rbp), %r11
     movq %rax, %rcx
     addq %rdx, %rcx
     jc .L_tl_alloc_abort
     movq %gs:0x28, %r8
+    movq %r8, -48(%rbp)
     movq %r8, 0(%rax)
+    leaq 72(%rax), %r8
+    movq %r8, 8(%rax)
+    movq %r8, 16(%rax)
+    movq %rcx, 24(%rax)
     movq $0, 32(%rax)
+    movq -48(%rbp), %r8
     testq %r8, %r8
     jz .L_tl_alloc_win_root_self
     movq 40(%r8), %r10
@@ -45828,9 +46007,10 @@ tl_alloc:
     movq $0, 48(%rax)
     movq %rax, 56(%r10)
     movq %rax, 56(%rax)
-    leaq 64(%rax), %r8
-    movq %r8, 8(%rax)
-    movq %rcx, 24(%rax)
+    movq -40(%rbp), %rdx
+    addq %rax, %rdx
+    movq %rdx, 64(%rax)
+    movq 8(%rax), %r8
     movq %r8, %r10
     addq %r11, %r10
     jc .L_tl_alloc_abort

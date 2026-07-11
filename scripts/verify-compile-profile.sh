@@ -258,13 +258,19 @@ assert_contains_in \
     "compile-profile-detail|typecheck.macro_expand|" \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
-# Single demand-driven pass: both family instantiations expand in the one walk,
-# so a single macro-walk profile block reports calls=2 (a re-expansion would
+# Single demand-driven pass: all three family instantiations expand in one walk,
+# so a single macro-walk profile block reports calls=3 (a re-expansion would
 # inflate the count or add blocks).
 assert_line_count_in \
     "$VECTOR_STDERR" \
-    "stdlib.vector/family arity=3 calls=2" \
+    "stdlib.vector/family arity=3 calls=3" \
     1 \
+    "$VECTOR_STDOUT" \
+    "$VECTOR_STDERR"
+assert_profile_counter_eq_in \
+    "$VECTOR_STDERR" \
+    "typecheck.macro.vector_family_fast_expansions" \
+    3 \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
 

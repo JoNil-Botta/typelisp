@@ -4039,6 +4039,115 @@
           (compiler-backend-set-scalar-registers! false)
           false)])))
 
+;; #4720: an outlined shifted loop bound becomes `0 < word-count` after loop
+;; rotation. On Win64, word-count may be homed in %r9; materialising the
+;; immediate LHS into that same register silently changed the pre-test into a
+;; self-compare. Keep the function address-taken so opt2 cannot inline away the
+;; allocation shape, then emit the full lower -> opt2 -> scalar-regalloc path.
+(define compiler-backend-shifted-loop-bound-source : String
+  "(define (array-zero-count [buf : (MutPtr u8)] [byte-count : i64]) : i64
+  (let
+    [word-count : i64 (shr byte-count 3)]
+    [tail-start : i64 (* word-count 8)]
+    [slots : (MutPtr u64) (unsafe (ptr-cast buf : (MutPtr u64)))]
+    [w : i64 0]
+    [i : i64 tail-start]
+    (begin
+      (while (< w word-count)
+        (begin
+          (unsafe (ptr-write! (ptr-offset slots w) (cast 0 : u64)))
+          (set! w (+ w 1))))
+      (while (< i byte-count)
+        (begin
+          (unsafe (ptr-write! (ptr-offset buf i) (cast 0 : u8)))
+          (set! i (+ i 1))))
+      w)))
+(define (keep [f : (-> (MutPtr u8) i64 i64)]) : i64 0)
+(define (main) : i64 (keep array-zero-count))")
+
+(define (compiler-backend-emit-source-opt2-for-target
+  [source : String]
+  [target : CompilerBackendTarget]) : ResultCompilerBackend
+  (match (compiler-backend-lower-source-for-target source target)
+    [(ResultCompilerLower.Ok program spans)
+      (match (optimize-program-with-spans-and-level program spans 2)
+        [(CompilerOptimizedProgram.Program optimized optimized-spans)
+          (compiler-backend-emit-program-with-spans-for-target
+            optimized
+            optimized-spans
+            target)])]
+    [(ResultCompilerLower.Err diag) (ResultCompilerBackend.Err diag)]))
+
+(define (compiler-backend-compare-self-operand? [body : String] [reg : String]) : bool
+  (compiler-backend-string-contains?
+    body
+    (string.append
+      "    cmpq "
+      (string.append reg (string.append ", " (string.append reg "\n"))))))
+
+(define (compiler-backend-immediate-lhs-r9-compare-win64-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.Register "%r9"))
+        CompilerRegAssignmentList.Nil)]
+    [ok : bool
+      (match (compiler-backend-emit-compare-branch
+        assignments
+        "cmp"
+        (CompilerIrBinOp.Lt)
+        (CompilerIrValue.I64 0)
+        (CompilerIrValue.Var 0)
+        (AstType.I64)
+        "then"
+        "else"
+        (CompilerBackendMaybeLabel.No))
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            ;; `0 < %r9` is emitted as `%r9 > 0`; no scratch can alias the
+            ;; RHS between its definition and this compare.
+            (compiler-backend-string-contains? asm "    cmpq $0, %r9\n")
+            (not (compiler-backend-string-contains? asm "    cmpq %r9, %r9\n")))]
+        [(ResultCompilerBackend.Err _) false])]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    ok))
+
+(define (compiler-backend-shifted-loop-bound-win64-ok?) : bool
+  (begin
+    (compiler-backend-set-scalar-registers! true)
+    (let
+      [ok : bool
+        (match (compiler-backend-emit-source-opt2-for-target
+          compiler-backend-shifted-loop-bound-source
+          (CompilerBackendTarget.Windows))
+          [(ResultCompilerBackend.Ok asm)
+            (let
+              [body : String
+                (compiler-backend-asm-function-body asm "_tl_array_zero_count")]
+              (and
+                (not (string.eq body ""))
+                (compiler-backend-string-contains? body "    sarq $3,")
+                ;; The full regalloc path may spill either compare operand, so
+                ;; its exact register choice is intentionally not asserted
+                ;; here. No emitted compare may instead test a register against
+                ;; itself, which was the original zero-trip-loop corruption.
+                (not (compiler-backend-compare-self-operand? body "%rax"))
+                (not (compiler-backend-compare-self-operand? body "%rcx"))
+                (not (compiler-backend-compare-self-operand? body "%rdx"))
+                (not (compiler-backend-compare-self-operand? body "%r8"))
+                (not (compiler-backend-compare-self-operand? body "%r9"))
+                (not (compiler-backend-compare-self-operand? body "%r10"))
+                (not (compiler-backend-compare-self-operand? body "%r11"))
+                (compiler-backend-immediate-lhs-r9-compare-win64-ok?)))]
+          [(ResultCompilerBackend.Err _) false])]
+      (begin
+        (compiler-backend-set-scalar-registers! false)
+        (compiler-backend-set-current-fn-linux!)
+        ok))))
+
 (define (compiler-backend-peephole-assignments) : CompilerRegAssignmentList
   (compiler-reg-assignment-cons
     (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
@@ -6655,7 +6764,9 @@
       4)
       [(ResultCompilerBackend.Ok asm)
         (and
-          (compiler-backend-string-contains? asm "    jge .Lphi_edge_exit\n")
+          ;; `1 < %r14` is emitted as `%r14 > 1`, so the false edge uses
+          ;; the reversed predicate (`jle`) while retaining the phi-copy edge.
+          (compiler-backend-string-contains? asm "    jle .Lphi_edge_exit\n")
           (not
             (compiler-backend-string-contains?
               asm
@@ -20856,6 +20967,7 @@
       (and
         (compiler-backend-regalloc-ok?)
         (compiler-backend-call-save-r9-wrap-ok?)
+        (compiler-backend-shifted-loop-bound-win64-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
         (compiler-backend-win64-callee-save-homes-ok?))

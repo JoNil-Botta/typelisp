@@ -3367,9 +3367,6 @@
       unit)
     (TcTypeEnv.Bind name-id ty (box env))))
 
-(define (tc-bind-raw [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
-  (tc-bind-raw-id env (tc-name-id name) ty))
-
 (define (tc-env-uncached-prefix-reaches-cache?
   [env : TcTypeEnv]
   [remaining : i64]) : bool
@@ -3670,11 +3667,6 @@
 
 (define (tc-type-env-scoped-flag? [flags : i64] [flag : i64]) : bool
   (not (= (bit-and flags flag) 0)))
-
-(define (tc-type-env-scoped-slot-unsafe? [slot : TcTypeEnvScopedSlot]) : bool
-  (tc-type-env-scoped-flag?
-    (struct-get slot flags)
-    tc-type-env-scoped-flag-unsafe))
 
 (define (tc-type-env-scoped-slot-c-abi-fnptr? [slot : TcTypeEnvScopedSlot]) : bool
   (tc-type-env-scoped-flag?

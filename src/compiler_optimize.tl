@@ -1344,21 +1344,6 @@
             new-instr
             (opt-fold-instrs new-env (box-get rest)))])]))
 
-(define (opt-fold-instr-seq-from
-  [env : OptConstEnv]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : CompilerIrInstrList
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (CompilerIrInstrList.Nil)
-    (match (opt-fold-instr env (compiler-ir-instr-seq-ref instrs index))
-      [(OptInstrResult.Result new-env new-instr)
-        (compiler-ir-instr-cons
-          new-instr
-          (opt-fold-instr-seq-from new-env instrs (+ index 1)))])))
-
-(define (opt-fold-instr-seq [env : OptConstEnv] [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-fold-instr-seq-from env instrs 0))
-
 (define (opt-fold-instr-seq-rewrite!
   [env : OptConstEnv]
   [instrs : CompilerIrInstrSeq]) : unit
@@ -1884,57 +1869,6 @@
   [set : opt_i64_i64_map.Map]
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-dce-instrs-from set instrs -2))
-
-(define (opt-dce-instr-seq-from
-  [set : opt_i64_i64_map.Map]
-  [slots : (Array CompilerIrInstr)]
-  [index : i64]
-  [count : i64]) : CompilerIrInstrList
-  (if (>= index count)
-    (CompilerIrInstrList.Nil)
-    (let
-      [instr : CompilerIrInstr (array-ref slots index)]
-      [rest : CompilerIrInstrList
-        (opt-dce-instr-seq-from set slots (+ index 1) count)]
-      (if (opt-instr-dead? set instr)
-        rest
-        (match instr
-          [(CompilerIrInstr.Alloc dst _)
-            (if (and
-              (not (opt-used-contains set dst))
-              (not
-                (or
-                  (opt-array-prev-adjacent-alloc? slots index dst)
-                  (opt-array-next-adjacent-alloc? slots count index dst))))
-              rest
-              (compiler-ir-instr-cons instr rest))]
-          [_ (compiler-ir-instr-cons instr rest)])))))
-
-(define (opt-dce-instr-seq
-  [set : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-dce-instr-seq-from
-    set
-    (struct-get instrs slots)
-    0
-    (struct-get instrs len)))
-
-(define (opt-dce-block [set : opt_i64_i64_map.Map] [block : CompilerIrBlock]) : CompilerIrBlock
-  (match block
-    [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-dce-instr-seq set instrs))]))
-
-(define (opt-dce-block-list
-  [set : opt_i64_i64_map.Map]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match blocks
-    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-ir-block-cons
-        (opt-dce-block set block)
-        (opt-dce-block-list set (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (opt-dce-block-list set (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-used-array-fill [items : (Array i64)] [index : i64] [value : i64]) : unit
   (if (>= index (array-length items))

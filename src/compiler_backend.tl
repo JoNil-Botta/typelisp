@@ -37957,6 +37957,87 @@
 (define compiler-backend-peephole-r10-dead-scan-cap-hits : i64
   0)
 
+;; Packed control-mnemonic classification shared by the RSP rebase audit and
+;; the dead-frame-store sweep. Both passes used to ask the generic byte-range
+;; comparator about the same small fixed set repeatedly for every assembly
+;; line. Values are deliberately scalar so callers can derive all predicates
+;; from one classification without allocating a token object.
+(define compiler-backend-control-mnemonic-none : i64
+  0)
+(define compiler-backend-control-mnemonic-movq : i64
+  1)
+(define compiler-backend-control-mnemonic-leaq : i64
+  2)
+(define compiler-backend-control-mnemonic-push : i64
+  3)
+(define compiler-backend-control-mnemonic-pop : i64
+  4)
+(define compiler-backend-control-mnemonic-leave : i64
+  5)
+(define compiler-backend-control-mnemonic-ret : i64
+  6)
+(define compiler-backend-control-mnemonic-jmp : i64
+  7)
+(define compiler-backend-control-mnemonic-subq : i64
+  8)
+(define compiler-backend-control-mnemonic-addq : i64
+  9)
+(define compiler-backend-control-mnemonic-syscall : i64
+  10)
+
+(define (compiler-backend-control-mnemonic-kind
+  [data : (Ptr u8)]
+  [start : i64]
+  [len : i64]) : i64
+  (if (< len 3)
+    compiler-backend-control-mnemonic-none
+    (let
+      [b0 : i64 (compiler-backend-peephole-byte-at data start)]
+      [b1 : i64 (compiler-backend-peephole-byte-at data (+ start 1))]
+      [b2 : i64 (compiler-backend-peephole-byte-at data (+ start 2))]
+      [key3 : i64 (+ b0 (+ (* b1 256) (* b2 65536)))]
+      (cond
+        [(= len 3)
+          (cond
+            [(= key3 7368560) compiler-backend-control-mnemonic-pop]
+            [(= key3 7628146) compiler-backend-control-mnemonic-ret]
+            [(= key3 7368042) compiler-backend-control-mnemonic-jmp]
+            [else compiler-backend-control-mnemonic-none])]
+        [(>= len 4)
+          (let
+            [b3 : i64 (compiler-backend-peephole-byte-at data (+ start 3))]
+            [key4 : i64 (+ key3 (* b3 16777216))]
+            (cond
+              [(= len 4)
+                (cond
+                  [(= key4 1903587181) compiler-backend-control-mnemonic-movq]
+                  [(= key4 1902208364) compiler-backend-control-mnemonic-leaq]
+                  [(= key4 1752397168) compiler-backend-control-mnemonic-push]
+                  [(= key4 1903193968) compiler-backend-control-mnemonic-pop]
+                  [(= key4 1902278003) compiler-backend-control-mnemonic-subq]
+                  [(= key4 1902404705) compiler-backend-control-mnemonic-addq]
+                  [else compiler-backend-control-mnemonic-none])]
+              [(= len 5)
+                (let
+                  [b4 : i64
+                    (compiler-backend-peephole-byte-at data (+ start 4))]
+                  (cond
+                    [(and (= key4 1752397168) (= b4 113))
+                      compiler-backend-control-mnemonic-push]
+                    [(and (= key4 1986094444) (= b4 101))
+                      compiler-backend-control-mnemonic-leave]
+                    [else compiler-backend-control-mnemonic-none]))]
+              [(= len 7)
+                (if (and
+                  (= key4 1668512115)
+                  (= (compiler-backend-peephole-byte-at data (+ start 4)) 97)
+                  (= (compiler-backend-peephole-byte-at data (+ start 5)) 108)
+                  (= (compiler-backend-peephole-byte-at data (+ start 6)) 108))
+                  compiler-backend-control-mnemonic-syscall
+                  compiler-backend-control-mnemonic-none)]
+              [else compiler-backend-control-mnemonic-none]))]
+        [else compiler-backend-control-mnemonic-none]))))
+
 ;; Index of the first "(%rbp" occurrence in [start,end), or -1.
 (define (compiler-backend-rsp-rebase-find-rbp
   [data : (Ptr u8)]
@@ -38152,7 +38233,9 @@
   [data : (Ptr u8)]
   [line-start : i64]
   [m : i64]
+  [te : i64]
   [end : i64]
+  [mnemonic-kind : i64]
   [push-regs : (Array String)]
   [slot-vars : i64]) : i64
   (let
@@ -38182,15 +38265,10 @@
                         [reg : String (array-ref push-regs idx)]
                         (if (string.eq reg "")
                           0
-                          (let
-                            [tok : i64
-                              (compiler-backend-peephole-token-len data m end)]
-                            [te : i64 (+ m tok)]
-                            (if (compiler-backend-peephole-range-eq?
-                              data
-                              m
-                              te
-                              "movq")
+                          (cond
+                            [(=
+                                mnemonic-kind
+                                compiler-backend-control-mnemonic-movq)
                               ;; restore: movq -K(%rbp), %rXX
                               (if (and
                                 (= ks (+ te 1))
@@ -38231,34 +38309,32 @@
                                     32)
                                   (= ks (+ te 7)))
                                   1
-                                  3))
-                              (if (compiler-backend-peephole-range-eq?
-                                data
-                                m
-                                te
-                                "leaq")
-                                ;; pop-run entry: leaq -K(%rbp), %rsp
-                                (if (and
-                                  (= ks (+ te 1))
-                                  (= (+ p 12) end)
-                                  (=
-                                    (compiler-backend-peephole-byte-at
-                                      data
-                                      (+ p 6))
-                                    44)
-                                  (=
-                                    (compiler-backend-peephole-byte-at
-                                      data
-                                      (+ p 7))
-                                    32)
-                                  (compiler-backend-peephole-range-eq?
+                                  3))]
+                            [(=
+                                mnemonic-kind
+                                compiler-backend-control-mnemonic-leaq)
+                              ;; pop-run entry: leaq -K(%rbp), %rsp
+                              (if (and
+                                (= ks (+ te 1))
+                                (= (+ p 12) end)
+                                (=
+                                  (compiler-backend-peephole-byte-at
                                     data
-                                    (+ p 8)
-                                    (+ p 12)
-                                    "%rsp"))
-                                  2
-                                  3)
-                                3))))))))))))))))
+                                    (+ p 6))
+                                  44)
+                                (=
+                                  (compiler-backend-peephole-byte-at
+                                    data
+                                    (+ p 7))
+                                  32)
+                                (compiler-backend-peephole-range-eq?
+                                  data
+                                  (+ p 8)
+                                  (+ p 12)
+                                  "%rsp"))
+                                2
+                                3)]
+                            [else 3]))))))))))))))
 
 ;; Rewrite one function's POST-PROLOGUE text to rsp-relative frame addressing
 ;; (`X(%rbp)` -> `(frame+delta+X)(%rsp)`); returns the ORIGINAL text when the
@@ -38374,16 +38450,14 @@
                 (let
                   [tok : i64 (compiler-backend-peephole-token-len data m end)]
                   [te : i64 (+ m tok)]
+                  [mnemonic-kind : i64
+                    (compiler-backend-control-mnemonic-kind data m tok)]
                   [push? : bool
-                    (or
-                      (compiler-backend-peephole-range-eq? data m te "pushq")
-                      (compiler-backend-peephole-range-eq? data m te "push"))]
+                    (= mnemonic-kind compiler-backend-control-mnemonic-push)]
                   [pop? : bool
-                    (or
-                      (compiler-backend-peephole-range-eq? data m te "popq")
-                      (compiler-backend-peephole-range-eq? data m te "pop"))]
+                    (= mnemonic-kind compiler-backend-control-mnemonic-pop)]
                   [leave? : bool
-                    (compiler-backend-peephole-range-eq? data m te "leave")]
+                    (= mnemonic-kind compiler-backend-control-mnemonic-leave)]
                   ;; A raw `syscall` can REPLACE %rsp in a way this textual
                   ;; audit cannot track -- `clone` (syscall 56, the raw-thread
                   ;; spawn) hands the CHILD a fresh stack, and rt_sigreturn loads
@@ -38399,7 +38473,7 @@
                   ;; space and rbp is never in clone's register set; byte-
                   ;; identical to pre-FPO for that function -- the sound choice).
                   [syscall? : bool
-                    (compiler-backend-peephole-range-eq? data m te "syscall")]
+                    (= mnemonic-kind compiler-backend-control-mnemonic-syscall)]
                   [rsp-dst? : bool
                     (and
                       (>= (- end i) 6)
@@ -38420,7 +38494,9 @@
                         data
                         i
                         m
+                        te
                         end
+                        mnemonic-kind
                         push-regs
                         slot-vars)
                       0)]
@@ -38664,11 +38740,9 @@
                                   ;; lint-allow: nested-if-ladder
                                   (if (and
                                     valid
-                                    (compiler-backend-peephole-range-eq?
-                                      data
-                                      m
-                                      te
-                                      "subq")
+                                    (=
+                                      mnemonic-kind
+                                      compiler-backend-control-mnemonic-subq)
                                     (< (+ te 1) end)
                                     (=
                                       (compiler-backend-peephole-byte-at
@@ -38685,11 +38759,9 @@
                                           (- end 6))))
                                     (if (and
                                       valid
-                                      (compiler-backend-peephole-range-eq?
-                                        data
-                                        m
-                                        te
-                                        "addq")
+                                      (=
+                                        mnemonic-kind
+                                        compiler-backend-control-mnemonic-addq)
                                       (< (+ te 1) end)
                                       (=
                                         (compiler-backend-peephole-byte-at
@@ -38720,11 +38792,9 @@
                                           valid
                                           (not tail)
                                           (= ref-count 1)
-                                          (compiler-backend-peephole-range-eq?
-                                            data
-                                            m
-                                            te
-                                            "leaq"))
+                                          (=
+                                            mnemonic-kind
+                                            compiler-backend-control-mnemonic-leaq))
                                           (begin
                                             (set! tail true)
                                             (set! delta (- delta last-noff)))
@@ -39140,11 +39210,12 @@
   [m : i64]
   [te : i64]
   [end : i64]
+  [mnemonic-kind : i64]
   [delta : i64]) : i64
   (let
     [none : i64 compiler-backend-sweep-no-candidate]
     ;; lint-allow: nested-if-ladder
-    (if (not (compiler-backend-peephole-range-eq? data m te "movq"))
+    (if (not (= mnemonic-kind compiler-backend-control-mnemonic-movq))
       none
       (if (or (>= (+ te 1) end) (< (- end te) 10))
         none
@@ -39224,11 +39295,12 @@
   [m : i64]
   [te : i64]
   [end : i64]
+  [mnemonic-kind : i64]
   [delta : i64]) : i64
   (let
     [none : i64 compiler-backend-sweep-no-candidate]
     ;; lint-allow: nested-if-ladder
-    (if (not (compiler-backend-peephole-range-eq? data m te "leaq"))
+    (if (not (= mnemonic-kind compiler-backend-control-mnemonic-leaq))
       none
       (if (or (>= (+ te 1) end) (< (- end te) 14))
         none
@@ -39314,30 +39386,26 @@
                       [tok : i64
                         (compiler-backend-peephole-token-len data m end)]
                       [te : i64 (+ m tok)]
+                      [mnemonic-kind : i64
+                        (compiler-backend-control-mnemonic-kind data m tok)]
                       [push? : bool
-                        (or
-                          (compiler-backend-peephole-range-eq?
-                            data
-                            m
-                            te
-                            "pushq")
-                          (compiler-backend-peephole-range-eq? data m te "push"))]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-push)]
                       [pop? : bool
-                        (or
-                          (compiler-backend-peephole-range-eq? data m te "popq")
-                          (compiler-backend-peephole-range-eq? data m te "pop"))]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-pop)]
                       [leaq? : bool
-                        (compiler-backend-peephole-range-eq? data m te "leaq")]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-leaq)]
                       [leave? : bool
-                        (compiler-backend-peephole-range-eq? data m te "leave")]
+                        (=
+                          mnemonic-kind
+                          compiler-backend-control-mnemonic-leave)]
                       [ret? : bool
-                        (compiler-backend-peephole-range-eq? data m te "ret")]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-ret)]
                       [jmp? : bool
-                        (compiler-backend-peephole-range-eq? data m te "jmp")]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-jmp)]
                       [subq? : bool
-                        (compiler-backend-peephole-range-eq? data m te "subq")]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-subq)]
                       [addq? : bool
-                        (compiler-backend-peephole-range-eq? data m te "addq")]
+                        (= mnemonic-kind compiler-backend-control-mnemonic-addq)]
                       [rsp-dst? : bool
                         (and
                           (>= (- end m) 6)
@@ -39369,6 +39437,7 @@
                             m
                             te
                             end
+                            mnemonic-kind
                             delta)
                           none)]
                       [win64-epilogue-leaq? : bool
@@ -39378,7 +39447,13 @@
                           (< win64-epilogue-c lo))]
                       [win64-tail-ok? : bool (or pop? leave? ret? jmp?)]
                       [cand : i64
-                        (compiler-backend-sweep-candidate-c data m te end delta)]
+                        (compiler-backend-sweep-candidate-c
+                          data
+                          m
+                          te
+                          end
+                          mnemonic-kind
+                          delta)]
                       (begin
                         (if (and win64-tail (not win64-tail-ok?))
                           (set! sweepable false)

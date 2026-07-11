@@ -5986,6 +5986,67 @@
     0
     (string.string-length name)))
 
+(define (compiler-backend-test-control-mnemonic-kind [name : String]) : i64
+  (compiler-backend-control-mnemonic-kind
+    (unsafe
+      (string-data name))
+    0
+    (string.string-length name)))
+
+(define (compiler-backend-control-mnemonic-classifier-ok?) : bool
+  (and
+    (=
+      (compiler-backend-test-control-mnemonic-kind "movq")
+      compiler-backend-control-mnemonic-movq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "leaq")
+      compiler-backend-control-mnemonic-leaq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "push")
+      compiler-backend-control-mnemonic-push)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "pushq")
+      compiler-backend-control-mnemonic-push)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "pop")
+      compiler-backend-control-mnemonic-pop)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "popq")
+      compiler-backend-control-mnemonic-pop)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "leave")
+      compiler-backend-control-mnemonic-leave)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "ret")
+      compiler-backend-control-mnemonic-ret)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "jmp")
+      compiler-backend-control-mnemonic-jmp)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "subq")
+      compiler-backend-control-mnemonic-subq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "addq")
+      compiler-backend-control-mnemonic-addq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "syscall")
+      compiler-backend-control-mnemonic-syscall)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "movl")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "retq")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "pushqq")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "syscalx")
+      compiler-backend-control-mnemonic-none)))
+
 (define (compiler-backend-peephole-single-dest-classifier-ok?) : bool
   (and
     (compiler-backend-peephole-single-dest-mnemonic? "movabsq")
@@ -6026,6 +6087,7 @@
 
 (define (compiler-backend-peephole-ok?) : bool
   (and
+    (compiler-backend-control-mnemonic-classifier-ok?)
     (compiler-backend-peephole-single-dest-classifier-ok?)
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)

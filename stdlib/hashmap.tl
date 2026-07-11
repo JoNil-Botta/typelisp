@@ -35,13 +35,14 @@
 ;#
 ;# ```typelisp
 ;# (import stdlib.hashmap)
-;# (import (hashmap String i64) as map)
 ;# (define (main) : i64
 ;#   (let
-;#     [m : map.Map (map.new)]
-;#     (begin
-;#       (map.insert! m "k" 42)
-;#       (map.lookup-value-or (map.get (& m) "k") 0))))
+;#     [m : hashmap.StringI64Map
+;#       (hashmap.string-i64-map-put
+;#         (hashmap.string-i64-map-with-capacity 4)
+;#         "k"
+;#         42)]
+;#     (hashmap.string-i64-map-len m)))
 ;# ```
 (import stdlib.array)
 (import stdlib.comptime)
@@ -106,6 +107,113 @@
     [entry-or-insert-helper-name : comptime.Expr
       (comptime.expr-string
         (comptime.string-append module-name-text ".entry-or-insert-ref!"))]
+    [place-expr : comptime.Expr (comptime.expr-var "place")]
+    [key-expr : comptime.Expr (comptime.expr-var "key")]
+    [value-expr : comptime.Expr (comptime.expr-var "value")]
+    [default-value-expr : comptime.Expr (comptime.expr-var "default-value")]
+    [empty-exprs : comptime.ExprList (comptime.expr-list-empty)]
+    [empty-call : comptime.Expr
+      (comptime.expr-call (comptime.expr-var "expr-list-empty") empty-exprs)]
+    [mut-place-expr : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-mut-borrow")
+        (comptime.expr-list-cons place-expr empty-exprs))]
+    [two-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          key-expr
+          (comptime.expr-list-cons
+            (comptime.expr-call
+              (comptime.expr-var "expr-list-cons")
+              (comptime.expr-list-cons
+                value-expr
+                (comptime.expr-list-cons empty-call empty-exprs)))
+            empty-exprs)))]
+    [one-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          key-expr
+          (comptime.expr-list-cons empty-call empty-exprs)))]
+    [default-tail : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          key-expr
+          (comptime.expr-list-cons
+            (comptime.expr-call
+              (comptime.expr-var "expr-list-cons")
+              (comptime.expr-list-cons
+                default-value-expr
+                (comptime.expr-list-cons empty-call empty-exprs)))
+            empty-exprs)))]
+    [two-args : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          mut-place-expr
+          (comptime.expr-list-cons two-tail empty-exprs)))]
+    [one-arg : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          mut-place-expr
+          (comptime.expr-list-cons one-tail empty-exprs)))]
+    [default-args : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-list-cons")
+        (comptime.expr-list-cons
+          mut-place-expr
+          (comptime.expr-list-cons default-tail empty-exprs)))]
+    [insert-if-absent-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          (comptime.expr-call
+            (comptime.expr-var "expr-var")
+            (comptime.expr-list-cons insert-if-absent-helper-name empty-exprs))
+          (comptime.expr-list-cons two-args empty-exprs)))]
+    [remove-borrowed-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          (comptime.expr-call
+            (comptime.expr-var "expr-var")
+            (comptime.expr-list-cons remove-borrowed-helper-name empty-exprs))
+          (comptime.expr-list-cons one-arg empty-exprs)))]
+    [insert-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          (comptime.expr-call
+            (comptime.expr-var "expr-var")
+            (comptime.expr-list-cons insert-helper-name empty-exprs))
+          (comptime.expr-list-cons two-args empty-exprs)))]
+    [insert-or-update-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          (comptime.expr-call
+            (comptime.expr-var "expr-var")
+            (comptime.expr-list-cons insert-or-update-helper-name empty-exprs))
+          (comptime.expr-list-cons two-args empty-exprs)))]
+    [remove-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          (comptime.expr-call
+            (comptime.expr-var "expr-var")
+            (comptime.expr-list-cons remove-helper-name empty-exprs))
+          (comptime.expr-list-cons one-arg empty-exprs)))]
+    [entry-or-insert-body : comptime.Expr
+      (comptime.expr-call
+        (comptime.expr-var "expr-call")
+        (comptime.expr-list-cons
+          (comptime.expr-call
+            (comptime.expr-var "expr-var")
+            (comptime.expr-list-cons entry-or-insert-helper-name empty-exprs))
+          (comptime.expr-list-cons default-args empty-exprs)))]
     (match (type-key K)
       ["String"
         (match (type-key V)
@@ -218,7 +326,7 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : bool
-                (expr-mut-call2 ,insert-if-absent-helper-name place key value))
+                ,insert-if-absent-body)
               (define (remove-borrowed-ref!
                 [map : (&mut map Map)]
                 [key : (& key str)]) : RemoveResult
@@ -228,7 +336,7 @@
               (defmacro (remove-borrowed!
                 [place : comptime.Expr]
                 [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-borrowed-helper-name place key))
+                ,remove-borrowed-body)
               (define (remove-ref! [map : (&mut map Map)] [key : String]) : RemoveResult
                 (remove-borrowed-ref! map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
@@ -259,23 +367,19 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-helper-name place key value))
+                ,insert-body)
               (defmacro (insert-or-update!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-or-update-helper-name place key value))
+                ,insert-or-update-body)
               (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-helper-name place key))
+                ,remove-body)
               (defmacro (entry-or-insert!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [default-value : comptime.Expr]) : EntryOrInsertResult
-                (expr-mut-call2
-                  ,entry-or-insert-helper-name
-                  place
-                  key
-                  default-value))
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -429,7 +533,7 @@
               (defmacro (remove-borrowed!
                 [place : comptime.Expr]
                 [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-borrowed-helper-name place key))
+                ,remove-borrowed-body)
               (define (remove-ref! [map : (&mut map Map)] [key : String]) : RemoveResult
                 (remove-borrowed-ref! map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
@@ -452,23 +556,19 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-helper-name place key value))
+                ,insert-body)
               (defmacro (insert-or-update!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-or-update-helper-name place key value))
+                ,insert-or-update-body)
               (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-helper-name place key))
+                ,remove-body)
               (defmacro (entry-or-insert!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [default-value : comptime.Expr]) : EntryOrInsertResult
-                (expr-mut-call2
-                  ,entry-or-insert-helper-name
-                  place
-                  key
-                  default-value))
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -617,7 +717,7 @@
               (defmacro (remove-borrowed!
                 [place : comptime.Expr]
                 [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-borrowed-helper-name place key))
+                ,remove-borrowed-body)
               (define (remove-ref! [map : (&mut map Map)] [key : String]) : RemoveResult
                 (remove-borrowed-ref! map (& key)))
               (define (remove-ok? [result : RemoveResult]) : bool
@@ -641,23 +741,19 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-helper-name place key value))
+                ,insert-body)
               (defmacro (insert-or-update!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-or-update-helper-name place key value))
+                ,insert-or-update-body)
               (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-helper-name place key))
+                ,remove-body)
               (defmacro (entry-or-insert!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [default-value : comptime.Expr]) : EntryOrInsertResult
-                (expr-mut-call2
-                  ,entry-or-insert-helper-name
-                  place
-                  key
-                  default-value))
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -788,7 +884,7 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : bool
-                (expr-mut-call2 ,insert-if-absent-helper-name place key value))
+                ,insert-if-absent-body)
               (define (insert-or-update-ref!
                 [map : (&mut map Map)]
                 [key : i64]
@@ -816,23 +912,19 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-helper-name place key value))
+                ,insert-body)
               (defmacro (insert-or-update!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-or-update-helper-name place key value))
+                ,insert-or-update-body)
               (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-helper-name place key))
+                ,remove-body)
               (defmacro (entry-or-insert!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [default-value : comptime.Expr]) : EntryOrInsertResult
-                (expr-mut-call2
-                  ,entry-or-insert-helper-name
-                  place
-                  key
-                  default-value))
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -986,23 +1078,19 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-helper-name place key value))
+                ,insert-body)
               (defmacro (insert-or-update!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-or-update-helper-name place key value))
+                ,insert-or-update-body)
               (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-helper-name place key))
+                ,remove-body)
               (defmacro (entry-or-insert!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [default-value : comptime.Expr]) : EntryOrInsertResult
-                (expr-mut-call2
-                  ,entry-or-insert-helper-name
-                  place
-                  key
-                  default-value))
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -1152,23 +1240,19 @@
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-helper-name place key value))
+                ,insert-body)
               (defmacro (insert-or-update!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [value : comptime.Expr]) : unit
-                (expr-mut-call2 ,insert-or-update-helper-name place key value))
+                ,insert-or-update-body)
               (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : RemoveResult
-                (expr-mut-call1 ,remove-helper-name place key))
+                ,remove-body)
               (defmacro (entry-or-insert!
                 [place : comptime.Expr]
                 [key : comptime.Expr]
                 [default-value : comptime.Expr]) : EntryOrInsertResult
-                (expr-mut-call2
-                  ,entry-or-insert-helper-name
-                  place
-                  key
-                  default-value))
+                ,entry-or-insert-body)
               (define (entry-or-insert-inserted? [result : EntryOrInsertResult]) : bool
                 (match result
                   [(EntryOrInsertInserted _) true]
@@ -1322,29 +1406,21 @@
                     [place : comptime.Expr]
                     [key : comptime.Expr]
                     [value : comptime.Expr]) : unit
-                    (expr-mut-call2 ,insert-helper-name place key value))
+                    ,insert-body)
                   (defmacro (insert-or-update!
                     [place : comptime.Expr]
                     [key : comptime.Expr]
                     [value : comptime.Expr]) : unit
-                    (expr-mut-call2
-                      ,insert-or-update-helper-name
-                      place
-                      key
-                      value))
+                    ,insert-or-update-body)
                   (defmacro (remove!
                     [place : comptime.Expr]
                     [key : comptime.Expr]) : RemoveResult
-                    (expr-mut-call1 ,remove-helper-name place key))
+                    ,remove-body)
                   (defmacro (entry-or-insert!
                     [place : comptime.Expr]
                     [key : comptime.Expr]
                     [default-value : comptime.Expr]) : EntryOrInsertResult
-                    (expr-mut-call2
-                      ,entry-or-insert-helper-name
-                      place
-                      key
-                      default-value))
+                    ,entry-or-insert-body)
                   (define (entry-or-insert-inserted?
                     [result : EntryOrInsertResult]) : bool
                     (match result

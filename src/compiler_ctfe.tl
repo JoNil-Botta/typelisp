@@ -25,7 +25,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 98))
+  (array.make-array i64 101))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -137,6 +137,9 @@
       (ctfe-builtin-set! 95 "expr-call")
       (ctfe-builtin-set! 96 "expr-list-empty")
       (ctfe-builtin-set! 97 "expr-list-cons")
+      (ctfe-builtin-set! 98 "expr-mut-call0")
+      (ctfe-builtin-set! 99 "expr-mut-call1")
+      (ctfe-builtin-set! 100 "expr-mut-call2")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -4327,76 +4330,17 @@
 
 (define (ctfe-comptime-helper-call-name [name : String]) : String
   (let
-    [_ctfe-builtin-refresh : unit (ctfe-builtin-refresh!)]
     [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
-    [lookup-id : i64 (intern lookup-name)]
     (cond
-      [(= lookup-id (ctfe-builtin-ref 27)) "expr-bool"]
-      [(= lookup-id (ctfe-builtin-ref 28)) "expr-int"]
-      [(= lookup-id (ctfe-builtin-ref 29)) "expr-string"]
-      [(= lookup-id (ctfe-builtin-ref 30)) "expr-var"]
-      [(= lookup-id (ctfe-builtin-ref 31)) "expr-struct-get"]
-      [(= lookup-id (ctfe-builtin-ref 32)) "expr-tuple-ref"]
-      [(= lookup-id (ctfe-builtin-ref 33)) "expr-struct-set"]
-      [(= lookup-id (ctfe-builtin-ref 94)) "expr-mut-borrow"]
-      [(= lookup-id (ctfe-builtin-ref 95)) "expr-call"]
-      [(= lookup-id (ctfe-builtin-ref 96)) "expr-list-empty"]
-      [(= lookup-id (ctfe-builtin-ref 97)) "expr-list-cons"]
-      [(= lookup-id (ctfe-builtin-ref 34)) "expr-splice"]
-      [(= lookup-id (ctfe-builtin-ref 35)) "expr-if"]
-      [(= lookup-id (ctfe-builtin-ref 36)) "pattern-wildcard"]
-      [(= lookup-id (ctfe-builtin-ref 37)) "pattern-binding"]
-      [(= lookup-id (ctfe-builtin-ref 38)) "pattern-variant"]
-      [(= lookup-id (ctfe-builtin-ref 39)) "pattern-list-empty"]
-      [(= lookup-id (ctfe-builtin-ref 40)) "pattern-list-cons"]
-      [(= lookup-id (ctfe-builtin-ref 90)) "pattern-list-bindings"]
-      [(= lookup-id (ctfe-builtin-ref 41)) "match-arm"]
-      [(= lookup-id (ctfe-builtin-ref 42)) "match-arm-list-empty"]
-      [(= lookup-id (ctfe-builtin-ref 43)) "match-arm-list-cons"]
-      [(= lookup-id (ctfe-builtin-ref 44)) "expr-match"]
-      [(= lookup-id (ctfe-builtin-ref 45)) "expr-type"]
-      [(= lookup-id (ctfe-builtin-ref 91)) "expr-string?"]
-      [(= lookup-id (ctfe-builtin-ref 92)) "expr-string-value"]
-      [(= lookup-id (ctfe-builtin-ref 46)) "type-info"]
-      [(= lookup-id (ctfe-builtin-ref 47)) "module-name"]
-      [(= lookup-id (ctfe-builtin-ref 48)) "module-export-macro?"]
-      [(= lookup-id (ctfe-builtin-ref 49)) "module-hook"]
-      [(= lookup-id (ctfe-builtin-ref 50)) "expr-list-empty?"]
-      [(= lookup-id (ctfe-builtin-ref 51)) "expr-list-length"]
-      [(= lookup-id (ctfe-builtin-ref 52)) "expr-list-head"]
-      [(= lookup-id (ctfe-builtin-ref 53)) "expr-list-tail"]
-      [(= lookup-id (ctfe-builtin-ref 54)) "expr-list-nth"]
-      [(= lookup-id (ctfe-builtin-ref 55)) "expr-clause-list-empty?"]
-      [(= lookup-id (ctfe-builtin-ref 56)) "expr-clause-list-length"]
-      [(= lookup-id (ctfe-builtin-ref 57)) "expr-clause-list-head"]
-      [(= lookup-id (ctfe-builtin-ref 58)) "expr-clause-list-tail"]
-      [(= lookup-id (ctfe-builtin-ref 59)) "expr-clause-list-nth"]
-      [(= lookup-id (ctfe-builtin-ref 60)) "expr-clause-list->expr-list"]
-      [(= lookup-id (ctfe-builtin-ref 61)) "expr-binding-clause-name"]
-      [(= lookup-id (ctfe-builtin-ref 62)) "expr-binding-clause-has-type?"]
-      [(= lookup-id (ctfe-builtin-ref 63)) "expr-binding-clause-type"]
-      [(= lookup-id (ctfe-builtin-ref 64)) "expr-binding-clause-init"]
-      [(= lookup-id (ctfe-builtin-ref 65)) "expr-binding-clause-list-empty?"]
-      [(= lookup-id (ctfe-builtin-ref 66)) "expr-binding-clause-list-length"]
-      [(= lookup-id (ctfe-builtin-ref 67)) "expr-binding-clause-list-head"]
-      [(= lookup-id (ctfe-builtin-ref 68)) "expr-binding-clause-list-tail"]
-      [(= lookup-id (ctfe-builtin-ref 69)) "expr-binding-clause-list-nth"]
-      [(= lookup-id (ctfe-builtin-ref 70))
-        "expr-binding-clause-list->expr-list"]
-      [(= lookup-id (ctfe-builtin-ref 14)) "string-append"]
       [(ctfe-stdlib-string-helper-name? lookup-name "append") "string-append"]
-      [(= lookup-id (ctfe-builtin-ref 15)) "string-concat"]
       [(ctfe-stdlib-string-helper-name? lookup-name "concat") "string-concat"]
-      [(= lookup-id (ctfe-builtin-ref 93)) "string-slice"]
-      [(= lookup-id (ctfe-builtin-ref 16)) "int->string"]
       [(ctfe-stdlib-string-helper-name? lookup-name "int->string")
         "int->string"]
       [(ctfe-stdlib-string-helper-name? lookup-name ">int") "string->int"]
       [(ctfe-stdlib-string-helper-name? lookup-name "string->int")
         "string->int"]
       [(ctfe-comptime-error-helper-name? name) "comptime-error"]
-      [(= lookup-id (ctfe-builtin-ref 17)) "comptime-error"]
-      [else name])))
+      [else lookup-name])))
 
 (define (ctfe-eval-comptime-error-call
   [args : AstExprList]
@@ -4953,6 +4897,118 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-call expects exactly two args")))))
+
+;; Build a call whose receiver is an explicit inferred-lifetime mutable borrow.
+(define (ctfe-expr-mut-call-result
+  [callee : i64]
+  [place : i64]
+  [tail : AstExprList]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (ResultCtfe.Ok
+    (CompilerCtfeValue.Expr
+      (ast-expr-call-with-pools
+        (ctfe-env-pools env)
+        callee
+        (ast-expr-cons
+          (ast-expr-borrow-with-pools
+            (ctfe-env-pools env)
+            true
+            AstBorrowLifetime.Inferred
+            place)
+          tail))
+      (ctfe-untyped-expr-type))
+    fuel))
+
+;; Fixed public arities avoid temporary ExprList values in generated macro
+;; bodies while evaluating every captured expression in source order.
+(define (ctfe-eval-expr-mut-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]
+  [ordinary-count : i64]
+  [arity-message : String]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) (+ ordinary-count 2))
+    (let
+      [callee-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [place-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      (match (compiler-ctfe-eval callee-arg env fuel)
+        [(ResultCtfe.Ok callee-value callee-fuel)
+          (match callee-value
+            [(CompilerCtfeValue.Expr callee _)
+              (match (compiler-ctfe-eval place-arg env callee-fuel)
+                [(ResultCtfe.Ok place-value place-fuel)
+                  (match place-value
+                    [(CompilerCtfeValue.Expr place _)
+                      (if (= ordinary-count 0)
+                        (ctfe-expr-mut-call-result
+                          callee
+                          place
+                          (ast-expr-list-new)
+                          env
+                          place-fuel)
+                        (match (compiler-ctfe-eval
+                          (ctfe-expr-arg args 2 env)
+                          env
+                          place-fuel)
+                          [(ResultCtfe.Ok first-value first-fuel)
+                            (match first-value
+                              [(CompilerCtfeValue.Expr first _)
+                                (if (= ordinary-count 1)
+                                  (ctfe-expr-mut-call-result
+                                    callee
+                                    place
+                                    (ast-expr-cons first (ast-expr-list-new))
+                                    env
+                                    first-fuel)
+                                  (match (compiler-ctfe-eval
+                                    (ctfe-expr-arg args 3 env)
+                                    env
+                                    first-fuel)
+                                    [(ResultCtfe.Ok second-value second-fuel)
+                                      (match second-value
+                                        [(CompilerCtfeValue.Expr second _)
+                                          (ctfe-expr-mut-call-result
+                                            callee
+                                            place
+                                            (ast-expr-cons
+                                              first
+                                              (ast-expr-cons
+                                                second
+                                                (ast-expr-list-new)))
+                                            env
+                                            second-fuel)]
+                                        [_
+                                          (ResultCtfe.Err
+                                            (box
+                                              (ctfe-diagnostic-at-expr
+                                                expr
+                                                "expr-mut-call arguments expect Expr")))])]
+                                    [(ResultCtfe.Err diag)
+                                      (ResultCtfe.Err diag)]))]
+                              [_
+                                (ResultCtfe.Err
+                                  (box
+                                    (ctfe-diagnostic-at-expr
+                                      expr
+                                      "expr-mut-call arguments expect Expr")))])]
+                          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))]
+                    [_
+                      (ResultCtfe.Err
+                        (box
+                          (ctfe-diagnostic-at-expr
+                            expr
+                            "expr-mut-call place expects Expr")))])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-mut-call callee expects Expr")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err (box (ctfe-diagnostic-at-expr expr arity-message)))))
 
 (define (ctfe-eval-expr-type-call
   [args : AstExprList]
@@ -6004,6 +6060,30 @@
             (ctfe-eval-expr-list-empty-call args expr fuel)]
           [(= call-id (ctfe-builtin-ref 97))
             (ctfe-eval-expr-list-cons-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 98))
+            (ctfe-eval-expr-mut-call
+              args
+              expr
+              env
+              fuel
+              0
+              "expr-mut-call0 expects exactly two args")]
+          [(= call-id (ctfe-builtin-ref 99))
+            (ctfe-eval-expr-mut-call
+              args
+              expr
+              env
+              fuel
+              1
+              "expr-mut-call1 expects exactly three args")]
+          [(= call-id (ctfe-builtin-ref 100))
+            (ctfe-eval-expr-mut-call
+              args
+              expr
+              env
+              fuel
+              2
+              "expr-mut-call2 expects exactly four args")]
           [(= call-id (ctfe-builtin-ref 34))
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 35))

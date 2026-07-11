@@ -5868,6 +5868,18 @@
 (define (tc-fn3 [a : AstType] [b : AstType] [c : AstType] [ret : AstType]) : AstType
   (ast-ty-func (tc-type-list3 a b c) ret))
 
+(define (tc-fn4
+  [a : AstType]
+  [b : AstType]
+  [c : AstType]
+  [d : AstType]
+  [ret : AstType]) : AstType
+  (ast-ty-func
+    (ast-type-cons
+      a
+      (ast-type-cons b (ast-type-cons c (ast-type-cons d (ast-type-list-new)))))
+    ret))
+
 (define (tc-type-list-render [types : AstTypeList]) : String
   (tc-type-list-render-at (& types) 0))
 
@@ -7252,6 +7264,11 @@
           out
           "expr-call"
           (tc-fn2 expr (AstType.ExprList) expr)))
+      (set! out (tc-bind out "expr-mut-call0" (tc-fn2 expr expr expr)))
+      (set! out (tc-bind out "expr-mut-call1" (tc-fn3 expr expr expr expr)))
+      (set!
+        out
+        (tc-bind out "expr-mut-call2" (tc-fn4 expr expr expr expr expr)))
       (set! out (tc-bind out "expr-list-empty" (tc-fn0 (AstType.ExprList))))
       (set!
         out

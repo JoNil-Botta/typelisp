@@ -1665,17 +1665,44 @@
         (lower-hygiene-context-source-name ctx type-env module lookup-name)])
     name))
 
+(define (lower-hygiene-lookup-id-or [name : String] [fallback : i64]) : i64
+  (let
+    [slash : i64 (tc-qualified-name-last-slash name)]
+    (if (and (> slash 0) (< slash (- (string.string-length name) 1)))
+      (let
+        [base-start : i64 (+ slash 1)]
+        [module-id : i64
+          (lower-existing-name-id-or (string.substring name 0 slash) -1)]
+        [base-id : i64
+          (lower-existing-name-id-or
+            (string.substring
+              name
+              base-start
+              (- (string.string-length name) base-start))
+            -1)]
+        (if (and (>= module-id 0) (>= base-id 0))
+          (compiler-symbol-module-key-id-by-id module-id base-id)
+          fallback))
+      (lower-existing-name-id-or name fallback))))
+
 (define (lower-type-cache-lookup-hygiene
   [cache : LowerTypeCache]
   [name : String]) : ResultTcType
   (let
     [source-name : String (lower-hygiene-source-name name)]
-    (match (lower-type-cache-lookup cache source-name)
+    [generated-name-id : i64 (lower-existing-name-id-or name -1)]
+    [source-name-id : i64
+      (macro-hygiene-global-source-name-id-or generated-name-id -1)]
+    [lookup-id : i64 (lower-hygiene-lookup-id-or source-name source-name-id)]
+    (match (lower-type-cache-lookup-id cache lookup-id source-name)
       [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
       [(ResultTcType.Err message)
         (match (lower-hygiene-fallback-source-name name)
           [(TcMaybeString.Some fallback)
-            (match (lower-type-cache-lookup cache fallback)
+            (match (lower-type-cache-lookup-id
+              cache
+              (lower-hygiene-lookup-id-or fallback source-name-id)
+              fallback)
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
               [(ResultTcType.Err _) (ResultTcType.Err message)])]
           [(TcMaybeString.No) (ResultTcType.Err message)])])))
@@ -1793,38 +1820,51 @@
       [(ResultTcExprId.Err message) (ResultTcType.Err message)])
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
-      (match (lower-source-name-lookup-key-after-local-field-check
-        ctx
-        type-env
-        name)
-        [(ResultTcString.Ok lookup-name)
-          (let
-            [lookup-id : i64
-              (match (intern-lookup lookup-name)
-                [(InternLookupFound id) id]
-                [(InternLookupMissing)
-                  (lower-existing-name-id-or lookup-name -1)])]
-            (if (< lookup-id 0)
-              (ResultTcType.Err
-                (string.append "typecheck: unbound name " lookup-name))
+      (let
+        [name-id : i64 (lower-existing-name-id-or name -1)]
+        (if (< name-id 0)
+          (ResultTcType.Err (string.append "typecheck: unbound name " name))
+          (match (tc-source-name-lookup-key-with-field-check-lookup
+            ctx
+            type-env
+            name
+            name-id
+            false)
+            [(TcNameLookup.Ok lookup-name lookup-id)
               (if (sym_i64_env.sym-i64-contains-id env lookup-id)
                 (tc-lookup-id type-env lookup-id)
                 ;; `type-cache` is the complete global type environment plus the
                 ;; current module overlay. Nonlocals therefore resolve here in
                 ;; O(1); avoid another linear global-env scan.
-                (match (lower-type-cache-lookup type-cache lookup-name)
+                (match (lower-type-cache-lookup-id
+                  type-cache
+                  lookup-id
+                  lookup-name)
                   [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
                   [(ResultTcType.Err message)
-                    (tc-variant-constructor-type-for-lookup-or-id
-                      ctx
-                      lookup-name
-                      lookup-id
-                      (tc-source-unbound-display-message
+                    (if (= (tc-env-name-key-id lookup-id) lookup-id)
+                      (tc-variant-constructor-type-for-lookup-or-id
                         ctx
-                        name
                         lookup-name
-                        message))]))))]
-        [(ResultTcString.Err message) (ResultTcType.Err message)]))))
+                        lookup-id
+                        (tc-source-unbound-display-message
+                          ctx
+                          name
+                          lookup-name
+                          message))
+                      (match (tc-lookup-id type-env lookup-id)
+                        [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                        [(ResultTcType.Err _)
+                          (tc-variant-constructor-type-for-lookup-or-id
+                            ctx
+                            lookup-name
+                            lookup-id
+                            (tc-source-unbound-display-message
+                              ctx
+                              name
+                              lookup-name
+                              message))]))]))]
+            [(TcNameLookup.Err message) (ResultTcType.Err message)]))))))
 
 (define (lower-lookup-type-id
   [ctx : TcContext]
@@ -2105,6 +2145,13 @@
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
   (lower-name-cache-resolve-hygiene (lower-state-names state) source-name))
+
+(define (lower-resolve-name-id [state : LowerState] [source-id : i64]) : String
+  (if (and (>= source-id 0) (< source-id (intern-capacity)))
+    (lower-resolve-name state (intern-str source-id))
+    (match (lower-name-cache-lookup-id (lower-state-names state) source-id)
+      [(TcMaybeString.Some logical-name) logical-name]
+      [(TcMaybeString.No) (tc-nominal-name-id-display source-id)])))
 
 (define (lower-resolve-call-name
   [state : LowerState]
@@ -9040,9 +9087,9 @@
     [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
-          (compiler-symbols-lookup-type-or
+          (compiler-symbols-lookup-type-id-or
             symbols
-            struct-name
+            (lower-existing-name-id struct-name)
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (if (=
@@ -9067,11 +9114,17 @@
             (string.append "lower: unknown struct " struct-name))))]))
 
 (define (lower-struct-repr-c? [ctx : TcContext] [struct-name : String]) : bool
-  (match (tc-struct-decl ctx struct-name)
-    [(ResultTcStructDecl.Ok decl)
-      (match decl
-        [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
-    [(ResultTcStructDecl.Err _) false]))
+  (let
+    [handle : i64
+      (compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        (lower-existing-name-id struct-name)
+        (compiler-symbols-missing-handle))]
+    (match (tc-struct-decl-at-handle ctx handle struct-name)
+      [(ResultTcStructDecl.Ok decl)
+        (match decl
+          [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
+      [(ResultTcStructDecl.Err _) false])))
 
 (define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool
   (match (tc-resolve-type ctx field-ty)
@@ -11053,8 +11106,7 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.Global
-            (lower-resolve-name state (intern-str name-id)))
+          (CompilerIrValue.Global (lower-resolve-name-id state name-id))
           result-ty)))))
 
 (define (lower-borrow-var-address-by-value
@@ -13191,8 +13243,7 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.Global
-            (lower-resolve-name state (intern-str name-id)))
+          (CompilerIrValue.Global (lower-resolve-name-id state name-id))
           ty)))))
 
 (define (lower-register-address-taken-local-read
@@ -13242,8 +13293,7 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.Global
-            (lower-resolve-name state (intern-str name-id)))
+          (CompilerIrValue.Global (lower-resolve-name-id state name-id))
           ty)))))
 
 (define (lower-function-type? [ty : AstType]) : bool
@@ -15612,14 +15662,14 @@
 
 (define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module _ _)
+    [(TcContext _ symbols _ module module-id _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
           (not (tc-name-qualified-id? name-id)))
           (compiler-symbols-lookup-value-in-module-id-or
             symbols
-            (intern module)
+            module-id
             name-id
             (compiler-symbols-missing-handle))
           (compiler-symbols-lookup-value-id-or
@@ -15787,6 +15837,15 @@
     name-id
     (clone-name-key-id-in-module (tc-context-module-id ctx) name-id)))
 
+(define (lower-clone-helper-lookup-id
+  [type-key-id : i64]
+  [helper-name-id : i64]) : i64
+  (if (clone-name-key-qualified? type-key-id)
+    (compiler-symbol-module-key-id-by-id
+      (clone-name-key-module-id type-key-id)
+      helper-name-id)
+    helper-name-id))
+
 (define (lower-clone-named
   [ctx : TcContext]
   [state : LowerState]
@@ -15818,7 +15877,12 @@
                     allocated
                     (CompilerIrInstr.Call
                       var-id
-                      (lower-resolve-call-name-id allocated env helper-name-id)
+                      (lower-resolve-call-name-id
+                        allocated
+                        env
+                        (lower-clone-helper-lookup-id
+                          type-key-id
+                          helper-name-id))
                       (compiler-ir-call-args-from-list sret-values)
                       ty))
                   (CompilerIrValue.Var var-id)
@@ -17935,17 +17999,19 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
+  [raw-name-id : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (if (lower-nullary-variant-result-type? expr-ty)
     (let
       [lookup-name : String
         (lower-variant-constructor-lookup-name ctx name expr-ty)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
       [handle : i64
-        (compiler-registries-lookup-variant-or
-          registries
-          lookup-name
+        (lower-variant-constructor-handle-id-or
+          ctx
+          name
+          raw-name-id
+          expr-ty
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? handle)
         (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -18011,6 +18077,7 @@
         env
         type-env
         name
+        (lower-existing-name-id-or name -1)
         expr-ty))))
 
 (define (lower-var-or-nullary-variant-id
@@ -18038,6 +18105,7 @@
               env
               type-env
               lookup-name
+              name-id
               expr-ty)]
           [(ResultTcString.Err message)
             (ResultLowerExpr.Err (box (lower-diagnostic message)))])))))
@@ -18215,7 +18283,33 @@
         type-env
         type-cache
         else-branch)
-        [(ResultTcType.Ok else-ty) (tc-merge-branch-type then-ty else-ty)]
+        [(ResultTcType.Ok else-ty)
+          (match (tc-merge-branch-type then-ty else-ty)
+            [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+            [(ResultTcType.Err message)
+              (if (and
+                (tc-integer-literal-expr? then-branch)
+                (tc-integer-type? else-ty))
+                (match (tc-integer-literal-expr-with-expected
+                  ctx
+                  then-branch
+                  else-ty)
+                  [(ResultTcType.Ok contextual-then)
+                    (tc-merge-branch-type contextual-then else-ty)]
+                  [(ResultTcType.Err literal-message)
+                    (ResultTcType.Err literal-message)])
+                (if (and
+                  (tc-integer-literal-expr? else-branch)
+                  (tc-integer-type? then-ty))
+                  (match (tc-integer-literal-expr-with-expected
+                    ctx
+                    else-branch
+                    then-ty)
+                    [(ResultTcType.Ok contextual-else)
+                      (tc-merge-branch-type then-ty contextual-else)]
+                    [(ResultTcType.Err literal-message)
+                      (ResultTcType.Err literal-message)])
+                  (ResultTcType.Err message)))])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
@@ -24430,12 +24524,18 @@
     (let
       [source-name : String (lower-hygiene-source-name name)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
       [variant-name : String
         (lower-variant-constructor-lookup-name ctx source-name result-ty)]
       [struct-name : String
         (match (tc-type-strip-region result-ty)
           [(AstType.Struct resolved-struct)
+            (if (lower-call-name-matches-nominal?
+              ctx
+              source-name
+              (tc-nominal-name-id-display resolved-struct))
+              (tc-nominal-name-id-display resolved-struct)
+              (lower-module-lookup-name ctx source-name))]
+          [(AstType.StructArgs resolved-struct _)
             (if (lower-call-name-matches-nominal?
               ctx
               source-name
@@ -24451,10 +24551,14 @@
           result-ty
           (compiler-symbols-missing-handle))]
       [struct-handle : i64
-        (compiler-symbols-lookup-type-or
-          symbols
-          struct-name
-          (compiler-symbols-missing-handle))]
+        (let
+          [struct-name-id : i64 (lower-name-cache-source-id-value struct-name)]
+          (if (>= struct-name-id 0)
+            (compiler-symbols-lookup-type-id-or
+              symbols
+              struct-name-id
+              (compiler-symbols-missing-handle))
+            (compiler-symbols-missing-handle)))]
       (if (compiler-symbols-handle-found? variant-handle)
         (lower-construct-enum-with-handle
           ctx
@@ -24512,7 +24616,6 @@
     (let
       [source-name : String (lower-hygiene-source-name name)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
       [variant-name : String
         (lower-variant-constructor-lookup-name ctx source-name result-ty)]
       [struct-name : String
@@ -24540,10 +24643,14 @@
           result-ty
           (compiler-symbols-missing-handle))]
       [struct-handle : i64
-        (compiler-symbols-lookup-type-or
-          symbols
-          struct-name
-          (compiler-symbols-missing-handle))]
+        (let
+          [struct-name-id : i64 (lower-name-cache-source-id-value struct-name)]
+          (if (>= struct-name-id 0)
+            (compiler-symbols-lookup-type-id-or
+              symbols
+              struct-name-id
+              (compiler-symbols-missing-handle))
+            (compiler-symbols-missing-handle)))]
       (if (compiler-symbols-handle-found? variant-handle)
         (lower-direct-store-result
           (lower-construct-enum-with-handle-into
@@ -24588,7 +24695,6 @@
     (LowerMaybeDirectStore.No)
     (let
       [source-name : String (lower-hygiene-source-name name)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
       [variant-name : String
         (lower-variant-constructor-lookup-name ctx source-name result-ty)]
@@ -44727,9 +44833,7 @@
                           cur-externs
                           (compiler-ir-extern-cons
                             (CompilerIrExtern.Extern
-                              (compiler-symbol-module-key-id-by-id
-                                cur-module-id
-                                name)
+                              (compiler-symbol-name-id-key name)
                               (intern-str name)
                               (tc-type-without-regions resolved-ty)
                               (ast-extern-metadata-abi metadata)

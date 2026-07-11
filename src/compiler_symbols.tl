@@ -57,7 +57,7 @@
 ;; that short handoff so the public diagnostic adapter can keep its source
 ;; path and expression-derived span without widening every internal helper.
 (define compiler-symbols-last-error-decl : AstDecl
-  (ast-decl-module ""))
+  (ast-decl-module-id cbi.compiler-builtin-id-fix-empty))
 (define compiler-symbols-last-error-path : String
   "")
 (define compiler-symbols-last-error-span : AstSourceSpan
@@ -67,7 +67,9 @@
 
 (define (compiler-symbols-clear-last-error!) : unit
   (begin
-    (set! compiler-symbols-last-error-decl (ast-decl-module ""))
+    (set!
+      compiler-symbols-last-error-decl
+      (ast-decl-module-id cbi.compiler-builtin-id-fix-empty))
     (set! compiler-symbols-last-error-path "")
     (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
     (set! compiler-symbols-last-error-has-span false)))

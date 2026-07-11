@@ -2607,21 +2607,23 @@
 
 (define (compiler-load-contextual-moduleless-decls
   [decls : AstDeclList]
-  [source-module : String]) : AstDeclList
+  [source-module : String]
+  [source-module-id : i64]) : AstDeclList
   (if (and
     (> (string.string-length source-module) 0)
     (not (compiler-load-decl-list-has-module? decls)))
-    (ast-decl-cons (ast-decl-module source-module) decls)
+    (ast-decl-cons (ast-decl-module-id source-module-id) decls)
     decls))
 
 (define (compiler-load-seen-module-with-paths
   [path : String]
   [module-id : String]
+  [module-name-id : i64]
   [decls : AstDeclList]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
   (if (compiler-load-decl-list-has-module? decls)
     (ResultCompilerLoadWithPaths.Ok
-      (ast-decl-cons (ast-decl-module module-id) (ast-decl-list-new))
+      (ast-decl-cons (ast-decl-module-id module-name-id) (ast-decl-list-new))
       (ast-decl-path-cons path (ast-decl-path-list-new))
       (ast-decl-module-cons module-id (ast-decl-module-list-new))
       seen)
@@ -4505,8 +4507,15 @@
               (compiler-load-decls-source-module-or
                 decls
                 effective-source-module-fallback)]
+            [source-module-id : i64
+              (if (> (string.string-length source-module) 0)
+                (compiler-load-name-id source-module)
+                cbi.compiler-builtin-id-fix-empty)]
             [load-decls : AstDeclList
-              (compiler-load-contextual-moduleless-decls decls source-module)]
+              (compiler-load-contextual-moduleless-decls
+                decls
+                source-module
+                source-module-id)]
             (match (compiler-load-decls-module-id-with-fallback
               path
               decls
@@ -4525,6 +4534,7 @@
                       (compiler-load-seen-module-with-paths
                         path
                         module-id
+                        module-name-id
                         load-decls
                         seen)
                       (match (compiler-load-check-dotted-import-aliases
@@ -6557,8 +6567,15 @@
               (compiler-load-decls-source-module-or
                 decls
                 effective-source-module-fallback)]
+            [source-module-id : i64
+              (if (> (string.string-length source-module) 0)
+                (compiler-load-name-id source-module)
+                cbi.compiler-builtin-id-fix-empty)]
             [load-decls : AstDeclList
-              (compiler-load-contextual-moduleless-decls decls source-module)]
+              (compiler-load-contextual-moduleless-decls
+                decls
+                source-module
+                source-module-id)]
             (match (compiler-load-decls-module-id-with-fallback
               path
               decls
@@ -6577,6 +6594,7 @@
                       (compiler-load-seen-module-with-paths
                         path
                         module-id
+                        module-name-id
                         load-decls
                         seen)
                       (match (compiler-load-check-dotted-import-aliases

@@ -10803,7 +10803,7 @@
     (let
       [name-id : i64 (tc-existing-name-id name)]
       [prefix-id : i64
-        (if (< name-id 0)
+        (if (or (< name-id 0) (>= name-id (intern-capacity)))
           -1
           (intern-leading-dot-id name-id))]
       (and (>= prefix-id 0) (tc-source-name-bound-exact-id? env prefix-id)))))
@@ -10845,7 +10845,7 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [first-dot : i64]) : bool
-  (if (<= first-dot 0)
+  (if (or (<= first-dot 0) (< name-id 0) (>= name-id (intern-capacity)))
     false
     (let
       [prefix-id : i64 (intern-leading-dot-id name-id)]
@@ -10875,7 +10875,7 @@
   [_name : String]
   [name-id : i64]
   [first-dot : i64]) : bool
-  (if (<= first-dot 0)
+  (if (or (<= first-dot 0) (< name-id 0) (>= name-id (intern-capacity)))
     false
     (let
       [prefix-id : i64 (intern-leading-dot-id name-id)]
@@ -10912,14 +10912,16 @@
           first-dot)))))
 
 (define (tc-dotted-local-field-name-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (let
-    [first-dot : i64 (intern-first-dot name-id)]
-    (if (< first-dot 0)
-      false
-      (tc-source-leading-segment-wins-over-exact-id-from-dot?
-        env
-        name-id
-        first-dot))))
+  (if (or (< name-id 0) (>= name-id (intern-capacity)))
+    false
+    (let
+      [first-dot : i64 (intern-first-dot name-id)]
+      (if (< first-dot 0)
+        false
+        (tc-source-leading-segment-wins-over-exact-id-from-dot?
+          env
+          name-id
+          first-dot)))))
 
 (define (tc-dotted-local-field-expr-id-tail
   [name : String]
@@ -12122,18 +12124,20 @@
   [source-name : String]) : String
   (let
     [source-id : i64 (tc-existing-name-id source-name)]
-    (if (tc-name-qualified-id? source-id)
+    (if (< source-id 0)
       source-name
-      (if (>= (intern-first-dot source-id) 0)
-        (match (tc-source-name-lookup-key-with-field-check
-          ctx
-          env
-          source-name
-          source-id
-          true)
-          [(ResultTcString.Ok lookup-name) lookup-name]
-          [(ResultTcString.Err _) source-name])
-        source-name))))
+      (if (tc-name-qualified-id? source-id)
+        source-name
+        (if (>= (intern-first-dot source-id) 0)
+          (match (tc-source-name-lookup-key-with-field-check
+            ctx
+            env
+            source-name
+            source-id
+            true)
+            [(ResultTcString.Ok lookup-name) lookup-name]
+            [(ResultTcString.Err _) source-name])
+          source-name)))))
 
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
@@ -13952,7 +13956,17 @@
             (compiler-symbol-handle-index handle))
             [(ResultAstDecl.Ok decl) (tc-nominal-lifetimes-from-decl decl)]
             [(ResultAstDecl.Err message) (ResultTcLifetimeList.Err message)])
-          (tc-program-nominal-lifetimes (tc-context-program ctx) name-id)))]))
+          (match (tc-program-nominal-lifetimes (tc-context-program ctx) name-id)
+            [(ResultTcLifetimeList.Ok lifetimes)
+              (ResultTcLifetimeList.Ok lifetimes)]
+            [(ResultTcLifetimeList.Err message)
+              (ResultTcLifetimeList.Err
+                (str_cat.str-cat
+                  message
+                  ": "
+                  (tc-nominal-name-id-display name-id)
+                  "#"
+                  (string.int->string name-id)))])))]))
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
   (tc-nominal-lifetimes-id ctx (tc-existing-name-id name)))
@@ -21897,15 +21911,20 @@
 (define (tc-hygiene-c-abi-fnptr-binding?
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name : String]) : bool
-  (match (tc-hygiene-global-decode name)
-    [(TcHygieneGlobalName.Legacy global-name)
-      (tc-binding-c-abi-fnptr-id? env (tc-existing-name-id global-name))]
-    [(TcHygieneGlobalName.Context module global-name)
-      (match (tc-hygiene-definition-env ctx module)
-        [(ResultTcEnv.Ok def-env)
-          (tc-binding-c-abi-fnptr-id? def-env (tc-existing-name-id global-name))]
-        [(ResultTcEnv.Err _) false])]))
+  [name-id : i64]) : bool
+  (let
+    [name : String (intern-str name-id)]
+    [source-name-id : i64 (macro-hygiene-global-source-name-id-or name-id -1)]
+    (if (< source-name-id 0)
+      false
+      (match (tc-hygiene-global-decode name)
+        [(TcHygieneGlobalName.Legacy _)
+          (tc-binding-c-abi-fnptr-id? env source-name-id)]
+        [(TcHygieneGlobalName.Context module _)
+          (match (tc-hygiene-definition-env ctx module)
+            [(ResultTcEnv.Ok def-env)
+              (tc-binding-c-abi-fnptr-id? def-env source-name-id)]
+            [(ResultTcEnv.Err _) false])]))))
 
 (define (tc-expr-c-abi-fnptr?
   [ctx : TcContext]
@@ -21916,7 +21935,7 @@
       (let
         [text : String (intern-str name)]
         (if (tc-hygiene-global-name? text)
-          (tc-hygiene-c-abi-fnptr-binding? ctx env text)
+          (tc-hygiene-c-abi-fnptr-binding? ctx env name)
           (tc-binding-c-abi-fnptr-id? env name)))]
     [(AstExpr.Ann inner-box _)
       (let
@@ -33956,26 +33975,25 @@
               (+ index 1))]
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
 
-(define (tc-nominal-owner-context [ctx : TcContext] [owner-name : String]) : TcContext
-  (tc-context-with-nominal-owner-module ctx owner-name))
-
 (defenum ResultTcVariantPayloadTypes
   (Ok AstTypeList)
   (Err String))
 
 (define (tc-variant-pattern-payload-types
   [ctx : TcContext]
-  [enum-name : String]
+  [enum-name-id : i64]
+  [owner-index : i64]
   [enum-lifetimes : AstLifetimeList]
   [fields : AstTypeList]) : ResultTcVariantPayloadTypes
   (let
-    [field-ctx : TcContext (tc-nominal-owner-context ctx enum-name)]
+    [field-ctx : TcContext
+      (tc-context-with-nominal-owner-index-module ctx owner-index)]
     [resolved-fields : AstTypeList (tc-resolve-type-list field-ctx fields)]
     (if (ast-lifetime-list-empty? (& enum-lifetimes))
       (ResultTcVariantPayloadTypes.Ok resolved-fields)
-      (match (tc-lifetime-subst-from-nominal-args
+      (match (tc-lifetime-subst-from-nominal-args-id
         field-ctx
-        enum-name
+        enum-name-id
         enum-lifetimes)
         [(ResultTcLifetimeSubst.Ok subst)
           (ResultTcVariantPayloadTypes.Ok
@@ -33986,49 +34004,55 @@
 (define (tc-bind-variant-pattern
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [enum-name : String]
-  [variant-name : String]
+  [enum-name-id : i64]
+  [variant-name-id : i64]
   [enum-lifetimes : AstLifetimeList]
   [args : AstPatternList]
   [payload-regions : TcStringList]) : ResultTcEnv
   (let
+    [enum-name : String (tc-nominal-name-id-display enum-name-id)]
+    [variant-name : String (intern-str variant-name-id)]
     [handle : i64
-      (tc-source-variant-handle-for-enum-or
+      (tc-source-variant-handle-for-enum-id-or
         ctx
-        enum-name
-        variant-name
+        enum-name-id
+        variant-name-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
-      (match (tc-variant-owner-name ctx handle)
-        [(ResultTcString.Ok owner)
-          (if (string.eq owner enum-name)
-            (match (compiler-registries-variant-fields-indexed
-              (tc-context-symbols ctx)
-              handle)
-              [(ResultAstTypeList.Ok fields)
-                (match (tc-variant-pattern-payload-types
-                  ctx
-                  owner
-                  enum-lifetimes
-                  fields)
-                  [(ResultTcVariantPayloadTypes.Ok payload-fields)
-                    (tc-bind-sub-pattern-list
-                      ctx
-                      env
-                      args
-                      (tc-tag-type-list-regions payload-regions payload-fields))]
-                  [(ResultTcVariantPayloadTypes.Err message)
-                    (ResultTcEnv.Err message)])]
-              [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
-            (ResultTcEnv.Err
+      (let
+        [owner-id : i64 (tc-variant-owner-id-or ctx handle -1)]
+        [owner : String
+          (if (>= owner-id 0)
+            (tc-nominal-name-id-display owner-id)
+            "<unknown>")]
+        (if (and (>= owner-id 0) (tc-nominal-name-id-eq? owner-id enum-name-id))
+          (match (compiler-registries-variant-fields-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(ResultAstTypeList.Ok fields)
+              (match (tc-variant-pattern-payload-types
+                ctx
+                owner-id
+                (compiler-registry-handle-owner-index handle)
+                enum-lifetimes
+                fields)
+                [(ResultTcVariantPayloadTypes.Ok payload-fields)
+                  (tc-bind-sub-pattern-list
+                    ctx
+                    env
+                    args
+                    (tc-tag-type-list-regions payload-regions payload-fields))]
+                [(ResultTcVariantPayloadTypes.Err message)
+                  (ResultTcEnv.Err message)])]
+            [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
+          (ResultTcEnv.Err
+            (string.append
+              "typecheck: variant "
               (string.append
-                "typecheck: variant "
+                variant-name
                 (string.append
-                  variant-name
-                  (string.append
-                    " belongs to enum "
-                    (string.append owner (string.append ", not " enum-name)))))))]
-        [(ResultTcString.Err message) (ResultTcEnv.Err message)])
+                  " belongs to enum "
+                  (string.append owner (string.append ", not " enum-name))))))))
       (ResultTcEnv.Err
         (string.append "typecheck: unknown variant " variant-name)))))
 
@@ -34293,8 +34317,8 @@
               (tc-bind-variant-pattern
                 ctx
                 env
-                (tc-nominal-name-id-display enum-name)
-                (intern-str name)
+                enum-name
+                name
                 (ast-lifetime-list-new)
                 args
                 (tc-type-outer-regions ty))]
@@ -34302,8 +34326,8 @@
               (tc-bind-variant-pattern
                 ctx
                 env
-                (tc-nominal-name-id-display enum-name)
-                (intern-str name)
+                enum-name
+                name
                 (box-get lifetimes)
                 args
                 (tc-type-outer-regions ty))]
@@ -34385,49 +34409,55 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [lifetime : String]
-  [enum-name : String]
-  [variant-name : String]
+  [enum-name-id : i64]
+  [variant-name-id : i64]
   [enum-lifetimes : AstLifetimeList]
   [args : AstPatternList]) : ResultTcEnv
   (let
+    [enum-name : String (tc-nominal-name-id-display enum-name-id)]
+    [variant-name : String (intern-str variant-name-id)]
     [handle : i64
-      (tc-source-variant-handle-for-enum-or
+      (tc-source-variant-handle-for-enum-id-or
         ctx
-        enum-name
-        variant-name
+        enum-name-id
+        variant-name-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
-      (match (tc-variant-owner-name ctx handle)
-        [(ResultTcString.Ok owner)
-          (if (string.eq owner enum-name)
-            (match (compiler-registries-variant-fields-indexed
-              (tc-context-symbols ctx)
-              handle)
-              [(ResultAstTypeList.Ok fields)
-                (match (tc-variant-pattern-payload-types
-                  ctx
-                  owner
-                  enum-lifetimes
-                  fields)
-                  [(ResultTcVariantPayloadTypes.Ok payload-fields)
-                    (tc-bind-borrowed-sub-pattern-list
-                      ctx
-                      env
-                      lifetime
-                      args
-                      payload-fields)]
-                  [(ResultTcVariantPayloadTypes.Err message)
-                    (ResultTcEnv.Err message)])]
-              [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
-            (ResultTcEnv.Err
+      (let
+        [owner-id : i64 (tc-variant-owner-id-or ctx handle -1)]
+        [owner : String
+          (if (>= owner-id 0)
+            (tc-nominal-name-id-display owner-id)
+            "<unknown>")]
+        (if (and (>= owner-id 0) (tc-nominal-name-id-eq? owner-id enum-name-id))
+          (match (compiler-registries-variant-fields-indexed
+            (tc-context-symbols ctx)
+            handle)
+            [(ResultAstTypeList.Ok fields)
+              (match (tc-variant-pattern-payload-types
+                ctx
+                owner-id
+                (compiler-registry-handle-owner-index handle)
+                enum-lifetimes
+                fields)
+                [(ResultTcVariantPayloadTypes.Ok payload-fields)
+                  (tc-bind-borrowed-sub-pattern-list
+                    ctx
+                    env
+                    lifetime
+                    args
+                    payload-fields)]
+                [(ResultTcVariantPayloadTypes.Err message)
+                  (ResultTcEnv.Err message)])]
+            [(ResultAstTypeList.Err message) (ResultTcEnv.Err message)])
+          (ResultTcEnv.Err
+            (string.append
+              "typecheck: variant "
               (string.append
-                "typecheck: variant "
+                variant-name
                 (string.append
-                  variant-name
-                  (string.append
-                    " belongs to enum "
-                    (string.append owner (string.append ", not " enum-name)))))))]
-        [(ResultTcString.Err message) (ResultTcEnv.Err message)])
+                  " belongs to enum "
+                  (string.append owner (string.append ", not " enum-name))))))))
       (ResultTcEnv.Err
         (string.append "typecheck: unknown variant " variant-name)))))
 
@@ -34454,8 +34484,8 @@
                 ctx
                 env
                 lifetime
-                (tc-nominal-name-id-display enum-name)
-                (intern-str name)
+                enum-name
+                name
                 (ast-lifetime-list-new)
                 args)]
             [(AstType.EnumArgs enum-name lifetimes)
@@ -34463,8 +34493,8 @@
                 ctx
                 env
                 lifetime
-                (tc-nominal-name-id-display enum-name)
-                (intern-str name)
+                enum-name
+                name
                 (box-get lifetimes)
                 args)]
             [(AstType.Box _)
@@ -34484,7 +34514,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [lifetime : String]
-  [enum-name : String]
+  [enum-name-id : i64]
   [enum-lifetimes : AstLifetimeList]
   [pattern : AstPattern]) : ResultTcEnv
   (match pattern
@@ -34494,8 +34524,8 @@
         ctx
         env
         lifetime
-        enum-name
-        (intern-str variant-name)
+        enum-name-id
+        variant-name
         enum-lifetimes
         (ast-pattern-list-new))]
     [(AstPattern.Variant variant-name args-box)
@@ -34505,8 +34535,8 @@
           ctx
           env
           lifetime
-          enum-name
-          (intern-str variant-name)
+          enum-name-id
+          variant-name
           enum-lifetimes
           args))]
     [_ (ResultTcEnv.Err "typecheck: unsupported enum match pattern")]))
@@ -34528,7 +34558,7 @@
               ctx
               env
               lifetime
-              (tc-nominal-name-id-display enum-name)
+              enum-name
               (ast-lifetime-list-new)
               pattern)]
           [(AstType.EnumArgs enum-name lifetimes)
@@ -34536,7 +34566,7 @@
               ctx
               env
               lifetime
-              (tc-nominal-name-id-display enum-name)
+              enum-name
               (box-get lifetimes)
               pattern)]
           [(AstType.Box _)
@@ -34563,8 +34593,8 @@
           (tc-bind-variant-pattern
             ctx
             env
-            (tc-nominal-name-id-display enum-name)
-            (intern-str variant-name)
+            enum-name
+            variant-name
             (ast-lifetime-list-new)
             (ast-pattern-list-new)
             (tc-type-outer-regions scrut-ty))]
@@ -34574,8 +34604,8 @@
             (tc-bind-variant-pattern
               ctx
               env
-              (tc-nominal-name-id-display enum-name)
-              (intern-str variant-name)
+              enum-name
+              variant-name
               (ast-lifetime-list-new)
               args
               (tc-type-outer-regions scrut-ty)))]
@@ -34587,8 +34617,8 @@
           (tc-bind-variant-pattern
             ctx
             env
-            (tc-nominal-name-id-display enum-name)
-            (intern-str variant-name)
+            enum-name
+            variant-name
             (box-get lifetimes)
             (ast-pattern-list-new)
             (tc-type-outer-regions scrut-ty))]
@@ -34598,8 +34628,8 @@
             (tc-bind-variant-pattern
               ctx
               env
-              (tc-nominal-name-id-display enum-name)
-              (intern-str variant-name)
+              enum-name
+              variant-name
               (box-get lifetimes)
               args
               (tc-type-outer-regions scrut-ty)))]
@@ -37881,26 +37911,32 @@
               [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
               [(ResultTcExprId.Err message) (ResultTcType.Err message)])
             (if (tc-hygiene-global-name? name-text)
-              (match (tc-hygiene-global-decode name-text)
-                [(TcHygieneGlobalName.Legacy global-name)
-                  (let
-                    [global-id : i64 (tc-existing-name-id global-name)]
-                    (if (tc-hygiene-global-binding-unsafe-id? env global-id)
-                      (match (tc-require-unsafe env global-name)
-                        [(ResultTcUnit.Ok)
-                          (tc-lookup-hygiene-global-visible-id
-                            ctx
-                            env
-                            global-id)]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-                      (tc-lookup-hygiene-global-visible-id ctx env global-id)))]
-                [(TcHygieneGlobalName.Context module global-name)
-                  (begin
-                    (tc-lookup-hygiene-context-global-visible-id
-                      ctx
-                      env
-                      module
-                      (tc-existing-name-id global-name)))])
+              (let
+                [global-id : i64
+                  (macro-hygiene-global-source-name-id-or name -1)]
+                (if (< global-id 0)
+                  (ResultTcType.Err
+                    (string.append
+                      "typecheck: macro hygiene source id unavailable: "
+                      name-text))
+                  (match (tc-hygiene-global-decode name-text)
+                    [(TcHygieneGlobalName.Legacy global-name)
+                      (if (tc-hygiene-global-binding-unsafe-id? env global-id)
+                        (match (tc-require-unsafe env global-name)
+                          [(ResultTcUnit.Ok)
+                            (tc-lookup-hygiene-global-visible-id
+                              ctx
+                              env
+                              global-id)]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcType.Err message)])
+                        (tc-lookup-hygiene-global-visible-id ctx env global-id))]
+                    [(TcHygieneGlobalName.Context module _)
+                      (tc-lookup-hygiene-context-global-visible-id
+                        ctx
+                        env
+                        module
+                        global-id)])))
               (match (tc-source-name-lookup-key-with-field-check-lookup
                 ctx
                 env
@@ -51925,11 +51961,10 @@
   (tc_i64_i64_map.with-capacity 64))
 
 (define (macro-hygiene-global-name-ids-reset!) : unit
-  (begin
-    (set! macro-hygiene-global-name-ids (tc_i64_i64_map.with-capacity 64))
-    (set!
-      macro-hygiene-global-source-name-ids
-      (tc_i64_i64_map.with-capacity 64))))
+  (set! macro-hygiene-global-name-ids (tc_i64_i64_map.with-capacity 64)))
+
+(define (macro-hygiene-global-source-name-ids-reset!) : unit
+  (set! macro-hygiene-global-source-name-ids (tc_i64_i64_map.with-capacity 64)))
 
 (define (macro-hygiene-global-source-name-id-or
   [generated-name-id : i64]
@@ -51952,19 +51987,21 @@
   (compiler-symbol-module-key module name))
 
 (define (macro-hygiene-definition-module [macro-name : String]) : String
-  (if (tc-name-qualified? macro-name)
+  ;; Macro identities can be generated after parsing, so their intern ids do
+  ;; not necessarily carry the parser's qualified-name metadata.
+  (if (>= (tc-qualified-name-last-slash macro-name) 0)
     (tc-qualified-name-module macro-name)
     ""))
 
 (define (macro-hygiene-definition-base [macro-name : String]) : String
-  (if (tc-name-qualified? macro-name)
+  (if (>= (tc-qualified-name-last-slash macro-name) 0)
     (tc-qualified-name-base macro-name)
     macro-name))
 
 (define (macro-hygiene-context-macro-name
   [macro-name : String]
   [module : String]) : String
-  (if (tc-name-qualified? macro-name)
+  (if (>= (tc-qualified-name-last-slash macro-name) 0)
     macro-name
     (if (string.eq module "")
       macro-name
@@ -51974,7 +52011,9 @@
   (let
     [definition-module : String (macro-hygiene-definition-module macro-name)]
     [macro-base : String (macro-hygiene-definition-base macro-name)]
-    (if (and (not (tc-name-qualified? base)) (string.eq base macro-base))
+    (if (and
+      (< (tc-qualified-name-last-slash base) 0)
+      (string.eq base macro-base))
       (tc-hygiene-global-name
         (compiler-symbol-module-key definition-module base))
       (tc-hygiene-global-context-name definition-module base))))
@@ -52026,9 +52065,14 @@
         (match (macro-hygiene-env-lookup env name-id)
           [(MacroMaybeHygieneName.Some _ renamed-id) renamed-id]
           [(MacroMaybeHygieneName.No)
-            (macro-hygiene-global-name-id
-              name-id
-              (macro-hygiene-global-name-for macro-name base))]))
+            (let
+              [source-name-id : i64
+                (tc-required-existing-name-id
+                  "typecheck: missing parsed macro template name: "
+                  base)]
+              (macro-hygiene-global-name-id
+                source-name-id
+                (macro-hygiene-global-name-for macro-name base)))]))
       name-id)))
 
 (define (macro-hygiene-bind-name-id
@@ -54074,10 +54118,8 @@
   [lookup-name : String]
   [call-expr : AstExpr]) : ResultMacroCallDecl
   (let
-    [lookup-id : i64 (tc-existing-name-id lookup-name)]
-    (if (or
-      (tc-name-qualified-id? lookup-id)
-      (tc-source-slash-qualified-id? lookup-name lookup-id))
+    [slash : i64 (tc-qualified-name-last-slash lookup-name)]
+    (if (and (> slash 0) (< slash (- (string.string-length lookup-name) 1)))
       (macro-qualified-call-decl
         (tc-context-with-module ctx module)
         decls
@@ -54118,13 +54160,20 @@
   [decls : AstDeclList]
   [definition-module : String]
   [lookup-name : String]
+  [lookup-id : i64]
   [call-expr : AstExpr]) : ResultMacroCallDecl
-  (let
-    [lookup-id : i64 (tc-existing-name-id lookup-name)]
+  (if (< lookup-id 0)
+    (ResultMacroCallDecl.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          call-expr
+          (string.append
+            "typecheck: macro hygiene source id unavailable: "
+            lookup-name))))
     (if (and
       (>= (intern-first-dot lookup-id) 0)
       (not (tc-name-qualified-id? lookup-id))
-      (not (tc-source-slash-qualified-id? lookup-name lookup-id)))
+      (< (tc-qualified-name-last-slash lookup-name) 0))
       (macro-call-decl-from-source-name
         ctx
         decls
@@ -54161,6 +54210,7 @@
               decls
               (tc-context-module ctx)
               lookup-name
+              (macro-hygiene-global-source-name-id-or name -1)
               call-expr)]
           [(TcHygieneGlobalName.Context module lookup-name)
             (macro-call-decl-from-hygiene-name
@@ -54168,6 +54218,7 @@
               decls
               module
               lookup-name
+              (macro-hygiene-global-source-name-id-or name -1)
               call-expr)])
         (macro-call-decl-from-source-name
           ctx
@@ -60724,6 +60775,8 @@
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroExpand
   (begin
     (cfg compile-profile (compiler-tc-macro-profile-reset-program-counters))
+    (macro-hygiene-global-name-ids-reset!)
+    (macro-hygiene-global-source-name-ids-reset!)
     (tc-stdlib-comptime-macro-surface-ok-reset!)
     (macro-generated-module-memo-reset!)
     (macro-generated-decls-memo-reset!)

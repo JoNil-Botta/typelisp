@@ -7681,13 +7681,16 @@
         (compiler-backend-runtime-prelude-string-helper-symbol name)]
       (if (not (string.eq runtime-symbol ""))
         runtime-symbol
-        (if (compiler-backend-compact-function-symbol? name)
-          (match (compiler-backend-index-function-slot index name)
-            [(backend_i64_i64_map.LookupFound slot)
-              (str_cat.str-cat "_tl_f" (string.int->string slot) "")]
-            [(backend_i64_i64_map.LookupMissing)
-              (compiler-backend-user-symbol name)])
-          (compiler-backend-user-symbol name))))))
+        (match (compiler-backend-index-function-slot index name)
+          [(backend_i64_i64_map.LookupFound slot)
+            (let
+              [indexed-name : String
+                (array-ref (struct-get index function-names) slot)]
+              (if (compiler-backend-compact-function-symbol? indexed-name)
+                (str_cat.str-cat "_tl_f" (string.int->string slot) "")
+                (compiler-backend-user-symbol indexed-name)))]
+          [(backend_i64_i64_map.LookupMissing)
+            (compiler-backend-user-symbol name)])))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]

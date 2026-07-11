@@ -41,7 +41,8 @@
 (defstruct CompilerLiveBlockGraph
   (ids live_label_map.Map)
   (blocks (Array CompilerLiveBlock))
-  (successors (Array CompilerLiveIndexVec)))
+  (successors (Array CompilerLiveIndexVec))
+  (predecessors (Array CompilerLiveIndexVec)))
 
 (defstruct CompilerLiveFunctionGraphBuild
   (seq CompilerIrBlockSeq)
@@ -985,7 +986,11 @@
     (begin
       (compiler-live-block-graph-fill! blocks (&mut ids) values 0)
       (compiler-live-block-graph-fill-successors! blocks (& ids) successors 0)
-      (CompilerLiveBlockGraph ids values successors))))
+      (CompilerLiveBlockGraph
+        ids
+        values
+        successors
+        (compiler-live-predecessors-build successors)))))
 
 (define (compiler-live-i64-array-prefix-copy
   [items : (Array i64)]
@@ -1051,6 +1056,79 @@
               ids
               successors
               (+ index 1)))])]))
+
+;; Precompute reverse CFG edges once. The worklist below only reprocesses
+;; predecessors of a changed block, preserving deterministic source/RPO order.
+(define (compiler-live-predecessor-counts-add!
+  [successors : (Array CompilerLiveIndexVec)]
+  [counts : (Array i64)]
+  [source : i64]) : unit
+  (if (>= source (array-length successors))
+    unit
+    (let
+      [items : (Array i64) (struct-get (array-ref successors source) items)]
+      [i : i64 0]
+      (begin
+        (while (< i (array-length items))
+          (let
+            [target : i64 (array-ref items i)]
+            (begin
+              (array-set! counts target (+ (array-ref counts target) 1))
+              (set! i (+ i 1)))))
+        (compiler-live-predecessor-counts-add! successors counts (+ source 1))))))
+
+(define (compiler-live-predecessor-items-make
+  [counts : (Array i64)]
+  [index : i64]
+  [out : (Array CompilerLiveIndexVec)]) : unit
+  (if (>= index (array-length counts))
+    unit
+    (begin
+      (array-set!
+        out
+        index
+        (CompilerLiveIndexVec (make-array i64 (array-ref counts index))))
+      (compiler-live-predecessor-items-make counts (+ index 1) out))))
+
+(define (compiler-live-predecessor-fill!
+  [successors : (Array CompilerLiveIndexVec)]
+  [predecessors : (Array CompilerLiveIndexVec)]
+  [next : (Array i64)]
+  [source : i64]) : unit
+  (if (>= source (array-length successors))
+    unit
+    (let
+      [items : (Array i64) (struct-get (array-ref successors source) items)]
+      [i : i64 0]
+      (begin
+        (while (< i (array-length items))
+          (let
+            [target : i64 (array-ref items i)]
+            [slot : i64 (array-ref next target)]
+            [target-items : (Array i64)
+              (struct-get (array-ref predecessors target) items)]
+            (begin
+              (array-set! target-items slot source)
+              (array-set! next target (+ slot 1))
+              (set! i (+ i 1)))))
+        (compiler-live-predecessor-fill!
+          successors
+          predecessors
+          next
+          (+ source 1))))))
+
+(define (compiler-live-predecessors-build
+  [successors : (Array CompilerLiveIndexVec)]) : (Array CompilerLiveIndexVec)
+  (let
+    [count : i64 (array-length successors)]
+    [counts : (Array i64) (make-array i64 count)]
+    [out : (Array CompilerLiveIndexVec) (make-array CompilerLiveIndexVec count)]
+    [next : (Array i64) (make-array i64 count)]
+    (begin
+      (compiler-live-predecessor-counts-add! successors counts 0)
+      (compiler-live-predecessor-items-make counts 0 out)
+      (compiler-live-predecessor-fill! successors out next 0)
+      out)))
 
 (define (compiler-live-graph-find-block
   [graph : CompilerLiveBlockGraph]
@@ -1118,6 +1196,43 @@
           (and
             (compiler-live-set-eq? left-in right-in)
             (compiler-live-set-eq? left-out right-out))])]))
+
+(define (compiler-live-worklist-seed! [pending : (Array bool)] [index : i64]) : unit
+  (if (>= index (array-length pending))
+    unit
+    (begin
+      (array-set! pending index true)
+      (compiler-live-worklist-seed! pending (+ index 1)))))
+
+;; Blocks are laid out in the lowering's deterministic reverse-postorder. For
+;; backward liveness, consume that order backwards; changed facts flow only to
+;; predecessor blocks, which are re-enqueued at most once while pending.
+(define (compiler-live-worklist-pick! [pending : (Array bool)]) : i64
+  (let
+    [index : i64 (- (array-length pending) 1)]
+    [picked : i64 -1]
+    (begin
+      (while (and (>= index 0) (< picked 0))
+        (if (array-ref pending index)
+          (begin
+            (array-set! pending index false)
+            (set! picked index))
+          unit)
+        (set! index (- index 1)))
+      picked)))
+
+(define (compiler-live-worklist-enqueue-predecessors!
+  [graph : CompilerLiveBlockGraph]
+  [slot : i64]
+  [pending : (Array bool)]) : unit
+  (let
+    [items : (Array i64)
+      (struct-get (array-ref (struct-get graph predecessors) slot) items)]
+    [i : i64 0]
+    (while (< i (array-length items))
+      (begin
+        (array-set! pending (array-ref items i) true)
+        (set! i (+ i 1))))))
 
 (define (compiler-live-graph-update! [graph : CompilerLiveBlockGraph]) : bool
   (let
@@ -1468,10 +1583,33 @@
   [graph : CompilerLiveBlockGraph]
   [phi-out : (Array CompilerLiveI64Set)]) : CompilerLiveBlockGraph
   (let
+    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
+    [pending : (Array bool)
+      (make-array bool (array-length (struct-get graph blocks)))]
     [done : bool false]
     (begin
+      (compiler-live-worklist-seed! pending 0)
       (while (not done)
-        (set! done (not (compiler-live-graph-update-ep! graph phi-out))))
+        (let
+          [index : i64 (compiler-live-worklist-pick! pending)]
+          (if (< index 0)
+            (set! done true)
+            (let
+              [block : CompilerLiveBlock (array-ref blocks index)]
+              [updated : CompilerLiveBlock
+                (compiler-live-recompute-block-graph-ep
+                  block
+                  graph
+                  index
+                  phi-out)]
+              (if (compiler-live-block-liveness-eq? block updated)
+                unit
+                (begin
+                  (array-set! blocks index updated)
+                  (compiler-live-worklist-enqueue-predecessors!
+                    graph
+                    index
+                    pending)))))))
       graph)))
 
 (define (compiler-live-before-instr-nophi
@@ -2204,7 +2342,11 @@
         (& ids)
         successors
         0)
-      (CompilerLiveBlockGraph ids blocks successors))))
+      (CompilerLiveBlockGraph
+        ids
+        blocks
+        successors
+        (compiler-live-predecessors-build successors)))))
 
 (define (compiler-live-function-graph-build
   [seq : CompilerIrBlockSeq]
@@ -2235,8 +2377,27 @@
 
 (define (compiler-live-fixpoint [graph : CompilerLiveBlockGraph]) : CompilerLiveBlockGraph
   (let
+    [blocks : (Array CompilerLiveBlock) (struct-get graph blocks)]
+    [pending : (Array bool)
+      (make-array bool (array-length (struct-get graph blocks)))]
     [done : bool false]
     (begin
+      (compiler-live-worklist-seed! pending 0)
       (while (not done)
-        (set! done (not (compiler-live-graph-update! graph))))
+        (let
+          [index : i64 (compiler-live-worklist-pick! pending)]
+          (if (< index 0)
+            (set! done true)
+            (let
+              [block : CompilerLiveBlock (array-ref blocks index)]
+              [updated : CompilerLiveBlock
+                (compiler-live-recompute-block-graph block graph index)]
+              (if (compiler-live-block-liveness-eq? block updated)
+                unit
+                (begin
+                  (array-set! blocks index updated)
+                  (compiler-live-worklist-enqueue-predecessors!
+                    graph
+                    index
+                    pending)))))))
       graph)))

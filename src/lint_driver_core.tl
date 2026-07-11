@@ -744,12 +744,12 @@
   (len i64))
 
 (defstruct SelfhostLintDeadSourceSet
-  (sources PackageSourceList)
-  (root-sources PackageSourceList)
-  (reportable-sources PackageSourceList))
+  (sources lint_svec.Vec)
+  (root-sources lint_svec.Vec)
+  (reportable-sources lint_svec.Vec))
 
 (defenum ResultSelfhostLintDeadSourceList
-  (Ok PackageSourceList)
+  (Ok lint_svec.Vec)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultSelfhostLintDeadSources
@@ -1984,17 +1984,17 @@
     [(ResultAstProgramDiagnostic.Err _) scan]))
 
 (define (selfhost-lint-package-dead-scan-files
-  [sources : PackageSourceList]
-  [reportable-sources : PackageSourceList]
+  [sources : lint_svec.Vec]
+  [reportable-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [index : i64]
   [visible-root : bool]
   [reportable : bool]
   [scan : SelfhostLintDeadScan]) : SelfhostLintDeadScan
-  (if (>= index (package-source-list-len sources))
+  (if (>= index (lint_svec.len (& sources)))
     scan
     (let
-      [path : String (package-source-list-get sources index "")]
+      [path : String (lint_svec.get (& sources) index "")]
       (selfhost-lint-package-dead-scan-files
         sources
         reportable-sources
@@ -2197,24 +2197,24 @@
           roots)))))
 
 (define (selfhost-lint-package-source-list-contains-from
-  [sources : PackageSourceList]
+  [sources : lint_svec.Vec]
   [path : String]
   [index : i64]) : bool
-  (if (>= index (package-source-list-len sources))
+  (if (>= index (lint_svec.len (& sources)))
     false
     (if (string.eq
-      (compiler-load-normalize-path (package-source-list-get sources index ""))
+      (compiler-load-normalize-path (lint_svec.get (& sources) index ""))
       (compiler-load-normalize-path path))
       true
       (selfhost-lint-package-source-list-contains-from sources path (+ index 1)))))
 
 (define (selfhost-lint-package-source-list-contains?
-  [sources : PackageSourceList]
+  [sources : lint_svec.Vec]
   [path : String]) : bool
   (selfhost-lint-package-source-list-contains-from sources path 0))
 
-(define (selfhost-lint-package-empty-source-list) : PackageSourceList
-  (package-source-list-from-vec (lint_svec.new)))
+(define (selfhost-lint-package-empty-source-list) : lint_svec.Vec
+  (lint_svec.new))
 
 (define (selfhost-lint-package-stdlib-source?
   [path : String]
@@ -2229,7 +2229,7 @@
 
 (define (selfhost-lint-package-dead-source-path?
   [path : String]
-  [sources : PackageSourceList]
+  [sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]) : bool
   (and
     (> (string.string-length path) 0)
@@ -2238,8 +2238,8 @@
 
 (define (selfhost-lint-package-dead-graph-source-path?
   [path : String]
-  [sources : PackageSourceList]
-  [root-sources : PackageSourceList]
+  [sources : lint_svec.Vec]
+  [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]) : bool
   (and
     (> (string.string-length path) 0)
@@ -2251,7 +2251,7 @@
 (define (selfhost-lint-package-dead-source-insert
   [items : lint_svec.Vec]
   [path : String]
-  [sources : PackageSourceList]
+  [sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]) : lint_svec.Vec
   (if (selfhost-lint-package-dead-source-path? path sources stdlib-roots)
     (package-source-vec-insert items path)
@@ -2260,8 +2260,8 @@
 (define (selfhost-lint-package-dead-graph-source-insert
   [items : lint_svec.Vec]
   [path : String]
-  [sources : PackageSourceList]
-  [root-sources : PackageSourceList]
+  [sources : lint_svec.Vec]
+  [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]) : lint_svec.Vec
   (if (selfhost-lint-package-dead-graph-source-path?
     path
@@ -2273,12 +2273,12 @@
 
 (define (selfhost-lint-package-dead-paths-to-sources-from
   [paths : AstDeclPathList]
-  [sources : PackageSourceList]
-  [root-sources : PackageSourceList]
+  [sources : lint_svec.Vec]
+  [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
-  [items : lint_svec.Vec]) : PackageSourceList
+  [items : lint_svec.Vec]) : lint_svec.Vec
   (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) (package-source-list-from-vec items)]
+    [(AstDeclPathListStep.Nil) items]
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
@@ -2299,9 +2299,9 @@
 (define (selfhost-lint-package-dead-paths-to-sources
   [entry-path : String]
   [paths : AstDeclPathList]
-  [sources : PackageSourceList]
-  [root-sources : PackageSourceList]
-  [stdlib-roots : lint_svec.Vec]) : PackageSourceList
+  [sources : lint_svec.Vec]
+  [root-sources : lint_svec.Vec]
+  [stdlib-roots : lint_svec.Vec]) : lint_svec.Vec
   (selfhost-lint-package-dead-paths-to-sources-from
     paths
     sources
@@ -2317,10 +2317,10 @@
 (define (selfhost-lint-package-dead-paths-to-sources-into
   [entry-path : String]
   [paths : AstDeclPathList]
-  [sources : PackageSourceList]
-  [root-sources : PackageSourceList]
+  [sources : lint_svec.Vec]
+  [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
-  [items : lint_svec.Vec]) : PackageSourceList
+  [items : lint_svec.Vec]) : lint_svec.Vec
   (selfhost-lint-package-dead-paths-to-sources-from
     paths
     sources
@@ -2334,7 +2334,7 @@
       stdlib-roots)))
 
 (define (selfhost-lint-package-dead-repository-test-roots
-  [source-set : PackageSourceSet]) : PackageSourceList
+  [source-set : PackageSourceSet]) : lint_svec.Vec
   (match (package-source-scan-optional-dir
     "lint"
     (struct-get source-set manifest-dir)
@@ -2346,7 +2346,7 @@
 (define (selfhost-lint-package-dead-closure-sources
   [entry-path : String]
   [source-set : PackageSourceSet]
-  [root-sources : PackageSourceList]
+  [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
   (let
@@ -2375,7 +2375,7 @@
 (define (selfhost-lint-package-dead-root-file-closure-sources
   [entry-path : String]
   [source-set : PackageSourceSet]
-  [root-sources : PackageSourceList]
+  [root-sources : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
   (let
@@ -2398,15 +2398,15 @@
         (ResultSelfhostLintDeadSourceList.Err diag)])))
 
 (define (selfhost-lint-package-dead-root-closure-sources-from
-  [root-sources : PackageSourceList]
+  [root-sources : lint_svec.Vec]
   [source-set : PackageSourceSet]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]
   [index : i64]) : ResultSelfhostLintDeadSourceList
-  (if (>= index (package-source-list-len root-sources))
-    (ResultSelfhostLintDeadSourceList.Ok (package-source-list-from-vec items))
+  (if (>= index (lint_svec.len (& root-sources)))
+    (ResultSelfhostLintDeadSourceList.Ok items)
     (match (selfhost-lint-package-dead-root-file-closure-sources
-      (package-source-list-get root-sources index "")
+      (lint_svec.get (& root-sources) index "")
       source-set
       root-sources
       stdlib-roots
@@ -2418,11 +2418,11 @@
           root-sources
           source-set
           stdlib-roots
-          (package-source-list-items next-sources)
+          next-sources
           (+ index 1))])))
 
 (define (selfhost-lint-package-dead-root-closure-sources
-  [root-sources : PackageSourceList]
+  [root-sources : lint_svec.Vec]
   [source-set : PackageSourceSet]
   [stdlib-roots : lint_svec.Vec]
   [items : lint_svec.Vec]) : ResultSelfhostLintDeadSourceList
@@ -2446,7 +2446,7 @@
         [manifest-dir : String (struct-get source-set manifest-dir)]
         [entry-path : String
           (selfhost-lint-package-entry-path manifest-dir manifest)]
-        [root-sources : PackageSourceList
+        [root-sources : lint_svec.Vec
           (selfhost-lint-package-dead-repository-test-roots source-set)]
         (match (selfhost-lint-package-dead-closure-sources
           entry-path
@@ -2461,7 +2461,7 @@
               root-sources
               source-set
               package-roots
-              (package-source-list-items entry-sources))
+              entry-sources)
               [(ResultSelfhostLintDeadSourceList.Err diag)
                 (ResultSelfhostLintDeadSources.Err diag)]
               [(ResultSelfhostLintDeadSourceList.Ok graph-sources)
@@ -2854,7 +2854,7 @@
     status))
 
 (define (selfhost-lint-package-files-from
-  [input-paths : PackageSourceList]
+  [input-paths : lint_svec.Vec]
   [index : i64]
   [stdlib-roots : lint_svec.Vec]
   [enforcing : bool]
@@ -2864,10 +2864,10 @@
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
-  (if (>= index (package-source-list-len input-paths))
+  (if (>= index (lint_svec.len (& input-paths)))
     status
     (let
-      [input-path : String (package-source-list-get input-paths index "")]
+      [input-path : String (lint_svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
           (if print-headers
@@ -2897,7 +2897,7 @@
           status)))))
 
 (define (selfhost-lint-package-files
-  [input-paths : PackageSourceList]
+  [input-paths : lint_svec.Vec]
   [stdlib-roots : lint_svec.Vec]
   [enforcing : bool]
   [deprecated-string-concat : bool]
@@ -2933,7 +2933,7 @@
         1)]
     [(ResultPackageSourceSet.Ok source-set)
       (let
-        [sources : PackageSourceList (struct-get source-set sources)]
+        [sources : lint_svec.Vec (struct-get source-set sources)]
         [manifest : CompilerPkgManifest (struct-get source-set manifest)]
         [package-roots : lint_svec.Vec
           (selfhost-lint-package-import-roots source-set stdlib-roots)]
@@ -2953,7 +2953,7 @@
                 redundant-function-name
                 prefer-dotted-field
                 dead-decls
-                (> (package-source-list-len sources) 1)
+                (> (lint_svec.len (& sources)) 1)
                 0))]
           [(ResultSelfhostLintDeadSources.Err diag)
             (begin

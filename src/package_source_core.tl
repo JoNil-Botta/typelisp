@@ -9,45 +9,24 @@
 (import stdlib.fs)
 (import stdlib.io)
 (import stdlib.vector)
-(import (vector String) as svec)
+(import (vector.vector String) as svec)
 (import stdlib.string)
 (import "compiler_diagnostic.tl")
 (import "compiler_load.tl")
-
-(defstruct PackageSourceList
-  (items svec.Vec))
 
 (defstruct PackageSourceSet
   (manifest-path String)
   (manifest-dir String)
   (manifest CompilerPkgManifest)
-  (sources PackageSourceList))
+  (sources svec.Vec))
 
 (defenum ResultPackageSourceSet
   (Ok PackageSourceSet)
   (Err String))
 
 (defenum ResultPackageSourceList
-  (Ok PackageSourceList)
+  (Ok svec.Vec)
   (Err String))
-
-(define (package-source-list-from-vec [items : svec.Vec]) : PackageSourceList
-  (PackageSourceList items))
-
-(define (package-source-list-new) : PackageSourceList
-  (package-source-list-from-vec (svec.new)))
-
-(define (package-source-list-items [sources : PackageSourceList]) : svec.Vec
-  (struct-get sources items))
-
-(define (package-source-list-len [sources : PackageSourceList]) : i64
-  (svec.len (& (struct-get sources items))))
-
-(define (package-source-list-get
-  [sources : PackageSourceList]
-  [index : i64]
-  [fallback : String]) : String
-  (svec.get (& (struct-get sources items)) index fallback))
 
 (define (package-source-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -162,7 +141,7 @@
             path
             (package-source-manifest-dir path)
             manifest
-            (package-source-list-new)))])
+            (svec.new)))])
     (ResultPackageSourceSet.Err
       (string.concat3 "cannot read package manifest '" path "'"))))
 
@@ -243,6 +222,26 @@
     unit
     (io.panic "package-source: vector insert self-test mismatch")))
 
+(define (package-source-vector-growth-self-test?) : bool
+  (let
+    [items : svec.Vec (svec.new)]
+    (begin
+      (svec.push (&mut items) "src/a.tl")
+      (svec.push (&mut items) "src/b.tl")
+      (svec.push (&mut items) "src/c.tl")
+      (svec.push (&mut items) "src/d.tl")
+      (svec.push (&mut items) "src/e.tl")
+      (and
+        (= (svec.len (& items)) 5)
+        (string.eq (svec.get (& items) 0 "") "src/a.tl")
+        (string.eq (svec.get (& items) 4 "") "src/e.tl")))))
+
+(test
+  package-source-generated-vector-grows-past-initial-capacity
+  (if (package-source-vector-growth-self-test?)
+    unit
+    (io.panic "package-source: generated vector growth self-test mismatch")))
+
 (define (package-source-sort-entries-from
   [entries : fs.FsStringVector]
   [index : i64]
@@ -315,7 +314,7 @@
       path
       (string.append "': " (io.error-message error)))))
 
-(define (package-source-entry-list [source-set : PackageSourceSet]) : PackageSourceList
+(define (package-source-entry-list [source-set : PackageSourceSet]) : svec.Vec
   (let
     [manifest : CompilerPkgManifest (struct-get source-set manifest)]
     [entry : String
@@ -326,7 +325,7 @@
     [items : svec.Vec (svec.new)]
     (begin
       (svec.push (&mut items) entry)
-      (package-source-list-from-vec items))))
+      items)))
 
 (define (package-source-scan-dir
   [command : String]
@@ -356,7 +355,7 @@
     (match (fs.try-read-dir (& dir))
       [(fs.ErrIoStringVector error)
         (if (or (io.error-not-found? error) (io.error-unsupported? error))
-          (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
+          (ResultPackageSourceList.Ok acc)
           (package-source-read-dir-error command dir error))]
       [(fs.OkIoStringVector entries)
         (package-source-scan-entries
@@ -391,7 +390,7 @@
   [name : String]
   [acc : svec.Vec]) : ResultPackageSourceList
   (if (package-source-skip-dir? name)
-    (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
+    (ResultPackageSourceList.Ok acc)
     (let
       [child-relative : String (package-source-relative-join relative name)]
       [child-path : String (package-source-root-join root child-relative)]
@@ -403,15 +402,14 @@
             [kind : fs.FsFileKind (fs.metadata-kind metadata)]
             (if (fs.file-kind-directory? kind)
               (if (package-source-dir-has-manifest? child-path)
-                (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
+                (ResultPackageSourceList.Ok acc)
                 (package-source-scan-dir command root child-relative acc))
               (if (package-source-include-file? child-path metadata)
                 (ResultPackageSourceList.Ok
-                  (package-source-list-from-vec
-                    (package-source-vec-insert
-                      acc
-                      (compiler-load-normalize-path child-path))))
-                (ResultPackageSourceList.Ok (package-source-list-from-vec acc)))))]))))
+                  (package-source-vec-insert
+                    acc
+                    (compiler-load-normalize-path child-path)))
+                (ResultPackageSourceList.Ok acc))))]))))
 
 (define (package-source-scan-entries-from
   [command : String]
@@ -421,7 +419,7 @@
   [index : i64]
   [acc : svec.Vec]) : ResultPackageSourceList
   (if (>= index (svec.len (& entries)))
-    (ResultPackageSourceList.Ok (package-source-list-from-vec acc))
+    (ResultPackageSourceList.Ok acc)
     (match (package-source-scan-one
       command
       root
@@ -437,7 +435,7 @@
           relative
           entries
           (+ index 1)
-          (package-source-list-items next))])))
+          next)])))
 
 (define (package-source-scan-entries
   [command : String]
@@ -458,7 +456,7 @@
         [(ResultPackageSourceList.Err message)
           (ResultPackageSourceSet.Err message)]
         [(ResultPackageSourceList.Ok sources)
-          (if (= (package-source-list-len sources) 0)
+          (if (= (svec.len (& sources)) 0)
             (ResultPackageSourceSet.Err
               (string.concat3
                 (string.append

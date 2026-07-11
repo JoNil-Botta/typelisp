@@ -77,23 +77,23 @@
       modules)))
 
 (define (doc-modules-from-package-sources-from
-  [paths : PackageSourceList]
+  [paths : doc_svec.Vec]
   [index : i64]
   [modules : (&mut modules doc_render.DocModuleList)]) : unit
-  (if (>= index (package-source-list-len paths))
+  (if (>= index (doc_svec.len (& paths)))
     unit
     (let
-      [path : String (package-source-list-get paths index "")]
+      [path : String (doc_svec.get (& paths) index "")]
       (begin
         (doc_render.doc-module-list-push
           modules
           (doc_render.DocModule.Module path (doc_extract.doc-extract-file path)))
         (doc-modules-from-package-sources-from paths (+ index 1) modules)))))
 
-(define (doc-modules-from-package-sources [paths : PackageSourceList]) : doc_render.DocModuleList
+(define (doc-modules-from-package-sources [paths : doc_svec.Vec]) : doc_render.DocModuleList
   (let
     [modules : doc_render.DocModuleList
-      (doc_render.doc-module-list-with-capacity (package-source-list-len paths))]
+      (doc_render.doc-module-list-with-capacity (doc_svec.len (& paths)))]
     (begin
       (doc-modules-from-package-sources-from paths 0 (&mut modules))
       modules)))
@@ -559,14 +559,14 @@
   (doc-test-files-from input-paths 0 stdlib-roots print-headers status))
 
 (define (doc-test-package-files-from
-  [input-paths : PackageSourceList]
+  [input-paths : doc_svec.Vec]
   [index : i64]
   [stdlib-roots : doc_svec.Vec]
   [status : i64]) : i64
-  (if (>= index (package-source-list-len input-paths))
+  (if (>= index (doc_svec.len (& input-paths)))
     status
     (let
-      [input-path : String (package-source-list-get input-paths index "")]
+      [input-path : String (doc_svec.get (& input-paths) index "")]
       [file-status : i64
         (begin
           (io.print-string
@@ -581,7 +581,7 @@
           status)))))
 
 (define (doc-test-package-files
-  [input-paths : PackageSourceList]
+  [input-paths : doc_svec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [status : i64]) : i64
   (doc-test-package-files-from input-paths 0 stdlib-roots status))

@@ -203,11 +203,21 @@
   false)
 (define tc-body-type-facts-consuming : bool
   false)
-(define tc-body-type-fact-ids : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 16))
+
+;; Dense source-expression id -> (fact slot + 1) index. Each function clears
+;; only ids it touched, recorded in the parallel expr-id buffer, so body
+;; boundaries neither allocate nor zero a capacity-sized hashmap. Expression
+;; ids synthesized after the source-pool snapshot simply miss and use the
+;; existing conservative reinference path.
+(define tc-body-type-fact-index : (Array i64)
+  (array.make-array i64 1))
+(define tc-body-type-fact-expr-ids : (Array i64)
+  (array.make-array i64 16))
 (define tc-body-type-fact-types : (Array AstType)
   (array.make-array AstType 16))
 (define tc-body-type-fact-count : i64
+  0)
+(define tc-body-type-fact-storage-arena : i64
   0)
 
 ;; Lower's call-slot RVO needs one semantic fact per function body: whether a
@@ -240,12 +250,14 @@
       (set! tc-body-early-exit-suppress-depth 0)
       (set! tc-body-early-exit-source-expr-limit expr-limit)
       (set! tc-body-early-exit-facts-ready false)
-      (set! tc-body-early-exit-facts-collecting true))))
+      (set! tc-body-early-exit-facts-collecting true)
+      (tc-body-type-fact-storage-start! expr-limit))))
 
 (define (tc-body-early-exit-facts-finish!) : unit
   (begin
     (set! tc-body-early-exit-facts-collecting false)
-    (set! tc-body-early-exit-facts-ready true)))
+    (set! tc-body-early-exit-facts-ready true)
+    (tc-body-type-fact-storage-release!)))
 
 (define (tc-body-early-exit-facts-abort!) : unit
   (begin
@@ -253,7 +265,8 @@
     (set! tc-body-early-exit-facts-ready false)
     (set! tc-body-early-exit-current false)
     (set! tc-body-early-exit-suppress-depth 0)
-    (set! tc-body-early-exit-source-expr-limit -1)))
+    (set! tc-body-early-exit-source-expr-limit -1)
+    (tc-body-type-fact-storage-release!)))
 
 (define (tc-body-early-exit-function-start!) : unit
   (if tc-body-early-exit-facts-collecting
@@ -314,39 +327,136 @@
 (define (tc-body-type-fact-initial-capacity) : i64
   1024)
 
+;; Body checks run in a rewindable per-function arena, so reusable facts cannot
+;; be allocated by the first body that happens to need them. Give the table a
+;; phase-lifetime arena: build its dense index once before body checking, grow
+;; only its compact value buffers, and release the whole arena when source
+;; typechecking finishes.
+(define (tc-body-type-fact-storage-release!) : unit
+  (if (= tc-body-type-fact-storage-arena 0)
+    unit
+    (let
+      [storage : i64 tc-body-type-fact-storage-arena]
+      (begin
+        (if (= (arena.tl_arena_current) storage)
+          (unsafe
+            (arena.tl_arena_set node-pool-base-arena))
+          unit)
+        (unsafe
+          (arena.tl_arena_destroy storage))
+        (set! tc-body-type-fact-storage-arena 0)
+        (set! tc-body-type-fact-count 0)
+        (set! tc-body-type-facts-recording false)
+        (set! tc-body-type-facts-consuming false)))))
+
+(define (tc-body-type-fact-storage-start! [source-limit : i64]) : unit
+  (begin
+    (tc-body-type-fact-storage-release!)
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [storage : i64 (arena.tl_arena_make)]
+      [index-cap : i64
+        (if (> source-limit 0)
+          source-limit
+          1)]
+      (begin
+        (set! tc-body-type-fact-storage-arena storage)
+        (unsafe
+          (arena.tl_arena_set storage))
+        (set! tc-body-type-fact-index (array.make-array i64 index-cap))
+        (set!
+          tc-body-type-fact-expr-ids
+          (array.make-array i64 (tc-body-type-fact-initial-capacity)))
+        (set!
+          tc-body-type-fact-types
+          (array.make-array AstType (tc-body-type-fact-initial-capacity)))
+        (set! tc-body-type-fact-storage-arena (arena.tl_arena_current))
+        (set! tc-body-type-fact-count 0)
+        (unsafe
+          (arena.tl_arena_set enclosing))))))
+
 (define (tc-body-type-fact-grow-copy!
-  [dst : (Array AstType)]
-  [src : (Array AstType)]
+  [dst-types : (Array AstType)]
+  [dst-expr-ids : (Array i64)]
+  [src-types : (Array AstType)]
+  [src-expr-ids : (Array i64)]
   [index : i64]) : unit
   (let
     [i : i64 index]
     (while (< i tc-body-type-fact-count)
       (begin
-        (array-set! dst i (array.ref src i))
+        (array-set! dst-types i (array.ref src-types i))
+        (array-set! dst-expr-ids i (array.ref src-expr-ids i))
         (set! i (+ i 1))))))
 
 (define (tc-body-type-fact-grow!) : unit
   (let
-    [old : (Array AstType) tc-body-type-fact-types]
-    [old-cap : i64 (array.length old)]
+    [old-types : (Array AstType) tc-body-type-fact-types]
+    [old-expr-ids : (Array i64) tc-body-type-fact-expr-ids]
+    [old-cap : i64 (array.length old-types)]
     [new-cap : i64
       (if (< old-cap 1)
         (tc-body-type-fact-initial-capacity)
         (* old-cap 2))]
-    [next : (Array AstType) (array.make-array AstType new-cap)]
+    [enclosing : i64 (arena.tl_arena_current)]
     (begin
-      (tc-body-type-fact-grow-copy! next old 0)
-      (set! tc-body-type-fact-types next))))
+      (unsafe
+        (arena.tl_arena_set tc-body-type-fact-storage-arena))
+      (let
+        [next-types : (Array AstType) (array.make-array AstType new-cap)]
+        [next-expr-ids : (Array i64) (array.make-array i64 new-cap)]
+        (begin
+          (tc-body-type-fact-grow-copy!
+            next-types
+            next-expr-ids
+            old-types
+            old-expr-ids
+            0)
+          (set! tc-body-type-fact-types next-types)
+          (set! tc-body-type-fact-expr-ids next-expr-ids)
+          (set! tc-body-type-fact-storage-arena (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set enclosing)))))))
+
+(define (tc-body-type-fact-clear-recorded-index!) : unit
+  (let
+    [i : i64 0]
+    [index-len : i64 (array.length tc-body-type-fact-index)]
+    (begin
+      (while (< i tc-body-type-fact-count)
+        (let
+          [expr-id : i64 (array.ref tc-body-type-fact-expr-ids i)]
+          (begin
+            (if (and (>= expr-id 0) (< expr-id index-len))
+              (array-set! tc-body-type-fact-index expr-id 0)
+              unit)
+            (set! i (+ i 1)))))
+      (set! tc-body-type-fact-count 0))))
+
+(define (tc-body-type-fact-ensure-storage!) : unit
+  (let
+    [source-limit : i64
+      (if (> tc-body-early-exit-source-expr-limit 0)
+        tc-body-early-exit-source-expr-limit
+        1)]
+    (if (or
+      (= tc-body-type-fact-storage-arena 0)
+      (< (array.length tc-body-type-fact-index) source-limit)
+      (<
+        (array.length tc-body-type-fact-types)
+        (tc-body-type-fact-initial-capacity)))
+      (tc-body-type-fact-storage-start! source-limit)
+      unit)))
+
+(define (tc-body-type-fact-slot [expr-id : i64]) : i64
+  (if (and (>= expr-id 0) (< expr-id (array.length tc-body-type-fact-index)))
+    (- (array.ref tc-body-type-fact-index expr-id) 1)
+    -1))
 
 (define (tc-body-type-facts-start-recording!) : unit
   (begin
-    (set!
-      tc-body-type-fact-ids
-      (tc_i64_i64_map.with-capacity (tc-body-type-fact-initial-capacity)))
-    (set!
-      tc-body-type-fact-types
-      (array.make-array AstType (tc-body-type-fact-initial-capacity)))
-    (set! tc-body-type-fact-count 0)
+    (tc-body-type-fact-ensure-storage!)
+    (tc-body-type-fact-clear-recorded-index!)
     (set! tc-body-type-facts-consuming false)
     (set! tc-body-type-facts-recording true)))
 
@@ -359,35 +469,34 @@
   (begin
     (set! tc-body-type-facts-recording false)
     (set! tc-body-type-facts-consuming false)
-    (set! tc-body-type-fact-count 0)))
+    (tc-body-type-fact-clear-recorded-index!)))
 
 (define (tc-body-type-fact-record! [expr-id : i64] [ty : AstType]) : unit
-  (if tc-body-type-facts-recording
-    (match (tc_i64_i64_map.get (& tc-body-type-fact-ids) expr-id)
-      [(tc_i64_i64_map.LookupFound _) unit]
-      [(tc_i64_i64_map.LookupMissing)
-        (let
-          [slot : i64 tc-body-type-fact-count]
-          (begin
-            (if (>= slot (array.length tc-body-type-fact-types))
-              (tc-body-type-fact-grow!)
-              unit)
-            (array-set! tc-body-type-fact-types slot ty)
-            (set! tc-body-type-fact-count (+ slot 1))
-            (tc_i64_i64_map.insert-ref!
-              (&mut tc-body-type-fact-ids)
-              expr-id
-              slot)))])
+  (if (and
+    tc-body-type-facts-recording
+    (>= expr-id 0)
+    (< expr-id (array.length tc-body-type-fact-index)))
+    (if (>= (tc-body-type-fact-slot expr-id) 0)
+      unit
+      (let
+        [slot : i64 tc-body-type-fact-count]
+        (begin
+          (if (>= slot (array.length tc-body-type-fact-types))
+            (tc-body-type-fact-grow!)
+            unit)
+          (array-set! tc-body-type-fact-types slot ty)
+          (array-set! tc-body-type-fact-expr-ids slot expr-id)
+          (array-set! tc-body-type-fact-index expr-id (+ slot 1))
+          (set! tc-body-type-fact-count (+ slot 1)))))
     unit))
 
 (define (tc-body-type-fact-lookup [expr-id : i64]) : TcBodyTypeFact
   (if tc-body-type-facts-consuming
-    (match (tc_i64_i64_map.get (& tc-body-type-fact-ids) expr-id)
-      [(tc_i64_i64_map.LookupFound slot)
-        (if (and (>= slot 0) (< slot tc-body-type-fact-count))
-          (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
-          (TcBodyTypeFact.Miss))]
-      [(tc_i64_i64_map.LookupMissing) (TcBodyTypeFact.Miss)])
+    (let
+      [slot : i64 (tc-body-type-fact-slot expr-id)]
+      (if (and (>= slot 0) (< slot tc-body-type-fact-count))
+        (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
+        (TcBodyTypeFact.Miss)))
     (TcBodyTypeFact.Miss)))
 
 (defenum TcBorrowPlace
@@ -20001,12 +20110,11 @@
   (if (and
     (>= key 0)
     (or tc-body-type-facts-recording tc-body-type-facts-consuming))
-    (match (tc_i64_i64_map.get (& tc-body-type-fact-ids) key)
-      [(tc_i64_i64_map.LookupFound slot)
-        (if (and (>= slot 0) (< slot tc-body-type-fact-count))
-          (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
-          (TcBodyTypeFact.Miss))]
-      [(tc_i64_i64_map.LookupMissing) (TcBodyTypeFact.Miss)])
+    (let
+      [slot : i64 (tc-body-type-fact-slot key)]
+      (if (and (>= slot 0) (< slot tc-body-type-fact-count))
+        (TcBodyTypeFact.Hit (array.ref tc-body-type-fact-types slot))
+        (TcBodyTypeFact.Miss)))
     (TcBodyTypeFact.Miss)))
 
 (define (tc-call-arg-expr-type

@@ -14,6 +14,7 @@
 ;; diagnostic when one is available.
 (import stdlib.io)
 (import stdlib.process)
+(import stdlib.vector)
 (import (vector.vector String) as doc_svec)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
@@ -50,9 +51,7 @@
 (defenum DocTestError
   (Error i64 String))
 
-(defstruct DocTestErrorList
-  (slots (Array DocTestError))
-  (len i64))
+(vector.family DocTestError DocTestErrorList doc-test-error-vec)
 
 (defenum DocTestExtraction
   (Extraction DocTestExampleList DocTestErrorList))
@@ -122,23 +121,20 @@
       (DocTestExampleList slots (+ n 1)))))
 
 (define (doc-test-error-list-empty) : DocTestErrorList
-  (DocTestErrorList (make-array DocTestError 0) 0))
+  (doc-test-error-vec-new))
 
 (define (doc-test-error-list-count [errors : DocTestErrorList]) : i64
-  (struct-get errors len))
+  (doc-test-error-vec-len (& errors)))
 
 (define (doc-test-error-list-ref [errors : DocTestErrorList] [index : i64]) : DocTestError
-  (array-ref (struct-get errors slots) index))
+  (doc-test-error-vec-get (& errors) index (DocTestError.Error 0 "")))
 
 (define (doc-test-error-list-append
   [errors : DocTestErrorList]
   [err : DocTestError]) : DocTestErrorList
-  (let
-    [n : i64 (struct-get errors len)]
-    [slots : (Array DocTestError) (struct-get errors slots)]
-    (begin
-      (array-push! slots err)
-      (DocTestErrorList slots (+ n 1)))))
+  (begin
+    (doc-test-error-vec-push (&mut errors) err)
+    errors))
 
 (define (doc-test-error-list-append-all-from
   [errors : DocTestErrorList]
@@ -1084,6 +1080,25 @@
     (begin
       (array-push! slots failure)
       (DocTestRunFailureList slots (+ n 1)))))
+
+;; Grow the generated error collection past its initial capacity while preserving
+;; source order. The extraction path uses this same helper.
+(define (doc-test-error-vector-growth-smoke-ok?) : bool
+  (let
+    [errors : DocTestErrorList (doc-test-error-list-empty)]
+    [index : i64 1]
+    (begin
+      (while (<= index 5)
+        (begin
+          (set!
+            errors
+            (doc-test-error-list-append
+              errors
+              (DocTestError.Error index (string.int->string index))))
+          (set! index (+ index 1))))
+      (and
+        (= (doc-test-error-list-count errors) 5)
+        (= (doc-test-error-line (doc-test-error-list-ref errors 4)) 5)))))
 
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
@@ -2827,6 +2842,9 @@ typecheck: return type mismatch"))]
 
 (define (doc-test-run-smoke) : i64
   (begin
+    (unless
+      (doc-test-error-vector-growth-smoke-ok?)
+      (return (io.panic "doc-test-run: generated error vector growth mismatch")))
     (unless
       (doc-test-run-smoke-pass-ok?)
       (return (io.panic "doc-test-run: pass-case mismatch")))

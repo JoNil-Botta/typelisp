@@ -11788,9 +11788,9 @@
     [_ false]))
 
 (define (compiler-backend-scratch-vreg-instr-reserved-mask
-  [assignments : CompilerRegAssignmentList]
+  [_assignments : CompilerRegAssignmentList]
   [instr : CompilerIrInstr]) : i64
-  (compiler-backend-instr-reserved-home-mask assignments instr))
+  (compiler-backend-instr-reserved-home-mask instr))
 
 (define (compiler-backend-scratch-vreg-record-call-target!
   [points : (Array i64)]
@@ -28451,7 +28451,7 @@
       (begin
         (set!
           compiler-backend-current-instr-reserved-mask
-          (compiler-backend-instr-reserved-home-mask assignments instr))
+          (compiler-backend-instr-reserved-home-mask instr))
         compiler-backend-current-instr-reserved-mask)]
     (match instr
       [(CompilerIrInstr.Mov dst src ty)
@@ -29124,14 +29124,37 @@
                   (box-get message)
                   instr-diag)))])])))
 
+;; The backend already has one complete, allocation-free instruction operand
+;; walk for use counts. Reuse that walk when emission only needs the register
+;; homes mentioned by one instruction instead of compiling a second giant
+;; CompilerIrInstr match into the compiler. A zero-length count array selects
+;; mask-only mode; ordinary use-count walks keep their existing behavior.
+(define compiler-backend-use-home-mask-active : bool
+  false)
+(define compiler-backend-use-home-mask-value : i64
+  0)
+(define compiler-backend-use-home-mask-empty-counts : (Array i64)
+  (make-array i64 0))
+
 (define (compiler-backend-use-count-inc [counts : (Array i64)] [var : i64]) : unit
   (if (< var 0)
     unit
-    (if (>= var (array-length counts))
-      unit
-      (begin
-        (array-set! counts var (+ (array-ref counts var) 1))
-        unit))))
+    (begin
+      (if compiler-backend-use-home-mask-active
+        (set!
+          compiler-backend-use-home-mask-value
+          (bit-or
+            compiler-backend-use-home-mask-value
+            (compiler-backend-scavenge-reg-bit
+              (compiler-backend-var-register-home-index
+                compiler-backend-scavenge-ctx-assignment-index
+                var))))
+        unit)
+      (if (>= var (array-length counts))
+        unit
+        (begin
+          (array-set! counts var (+ (array-ref counts var) 1))
+          unit)))))
 
 (define (compiler-backend-count-value-use
   [counts : (Array i64)]
@@ -29785,7 +29808,7 @@
       (begin
         (set!
           compiler-backend-current-instr-reserved-mask
-          (compiler-backend-instr-reserved-home-mask assignments instr))
+          (compiler-backend-instr-reserved-home-mask instr))
         compiler-backend-current-instr-reserved-mask)]
     (match instr
       [(CompilerIrInstr.Call dst name args ty)
@@ -37013,366 +37036,20 @@
 ;; Fold instruction uses/def straight into their assigned register-home bits.
 ;; Building generic liveness bitsets here used to allocate and zero two arrays
 ;; per emitted instruction, only to scan them immediately into this small mask.
-(define (compiler-backend-instr-home-var-mask
-  [assignments : CompilerRegAssignmentList]
-  [var : i64]
-  [mask : i64]) : i64
-  (if (< var 0)
-    mask
-    (bit-or
-      mask
-      (compiler-backend-scavenge-reg-bit
-        (compiler-backend-var-register-home assignments var)))))
-
-(define (compiler-backend-instr-home-value-mask
-  [assignments : CompilerRegAssignmentList]
-  [value : CompilerIrValue]
-  [mask : i64]) : i64
-  (match value
-    [(CompilerIrValue.Var var)
-      (compiler-backend-instr-home-var-mask assignments var mask)]
-    [_ mask]))
-
-(define (compiler-backend-instr-home-values2-mask
-  [assignments : CompilerRegAssignmentList]
-  [a : CompilerIrValue]
-  [b : CompilerIrValue]
-  [mask : i64]) : i64
-  (compiler-backend-instr-home-value-mask
-    assignments
-    b
-    (compiler-backend-instr-home-value-mask assignments a mask)))
-
-(define (compiler-backend-instr-home-values3-mask
-  [assignments : CompilerRegAssignmentList]
-  [a : CompilerIrValue]
-  [b : CompilerIrValue]
-  [c : CompilerIrValue]
-  [mask : i64]) : i64
-  (compiler-backend-instr-home-value-mask
-    assignments
-    c
-    (compiler-backend-instr-home-values2-mask assignments a b mask)))
-
-(define (compiler-backend-instr-home-values4-mask
-  [assignments : CompilerRegAssignmentList]
-  [a : CompilerIrValue]
-  [b : CompilerIrValue]
-  [c : CompilerIrValue]
-  [d : CompilerIrValue]
-  [mask : i64]) : i64
-  (compiler-backend-instr-home-value-mask
-    assignments
-    d
-    (compiler-backend-instr-home-values3-mask assignments a b c mask)))
-
-(define (compiler-backend-instr-home-value-list-mask
-  [assignments : CompilerRegAssignmentList]
-  [values : CompilerIrValueList]
-  [mask : i64]) : i64
-  (match values
-    [(CompilerIrValueList.Nil) mask]
-    [(CompilerIrValueList.Cons value rest)
-      (compiler-backend-instr-home-value-list-mask
-        assignments
-        (box-get rest)
-        (compiler-backend-instr-home-value-mask assignments value mask))]
-    [(CompilerIrValueList.Array seq)
-      (let
-        [slots : (Array CompilerIrValue) (struct-get seq slots)]
-        [len : i64 (struct-get seq len)]
-        [i : i64 0]
-        [out : i64 mask]
-        (begin
-          (while (< i len)
-            (begin
-              (set!
-                out
-                (compiler-backend-instr-home-value-mask
-                  assignments
-                  (array-ref slots i)
-                  out))
-              (set! i (+ i 1))))
-          out))]))
-
-(define (compiler-backend-instr-home-call-args-mask
-  [assignments : CompilerRegAssignmentList]
-  [args : CompilerIrCallArgs]
-  [mask : i64]) : i64
-  (match args
-    [(CompilerIrCallArgs.Nil) mask]
-    [(CompilerIrCallArgs.One value)
-      (compiler-backend-instr-home-value-mask assignments value mask)]
-    [(CompilerIrCallArgs.Two a b)
-      (compiler-backend-instr-home-values2-mask assignments a b mask)]
-    [(CompilerIrCallArgs.Array values)
-      (let
-        [i : i64 0]
-        [out : i64 mask]
-        (begin
-          (while (< i (array-length values))
-            (begin
-              (set!
-                out
-                (compiler-backend-instr-home-value-mask
-                  assignments
-                  (array-ref values i)
-                  out))
-              (set! i (+ i 1))))
-          out))]))
-
-(define (compiler-backend-instr-home-spmd-args-mask
-  [assignments : CompilerRegAssignmentList]
-  [args : CompilerIrSpmdCallArgList]
-  [mask : i64]) : i64
-  (match args
-    [(CompilerIrSpmdCallArgList.Nil) mask]
-    [(CompilerIrSpmdCallArgList.Cons arg rest)
-      (match arg
-        [(CompilerIrSpmdCallArg.Arg _ value _)
-          (compiler-backend-instr-home-spmd-args-mask
-            assignments
-            (box-get rest)
-            (compiler-backend-instr-home-value-mask assignments value mask))])]
-    [(CompilerIrSpmdCallArgList.Array seq)
-      (let
-        [slots : (Array CompilerIrSpmdCallArg) (struct-get seq slots)]
-        [len : i64 (struct-get seq len)]
-        [i : i64 0]
-        [out : i64 mask]
-        (begin
-          (while (< i len)
-            (begin
-              (match (array-ref slots i)
-                [(CompilerIrSpmdCallArg.Arg _ value _)
-                  (set!
-                    out
-                    (compiler-backend-instr-home-value-mask
-                      assignments
-                      value
-                      out))])
-              (set! i (+ i 1))))
-          out))]))
-
-(define (compiler-backend-instr-home-maybe-value-mask
-  [assignments : CompilerRegAssignmentList]
-  [value : CompilerIrMaybeValue]
-  [mask : i64]) : i64
-  (match value
-    [(CompilerIrMaybeValue.No) mask]
-    [(CompilerIrMaybeValue.Some inner)
-      (compiler-backend-instr-home-value-mask assignments inner mask)]))
-
-(define (compiler-backend-instr-home-phi-input-mask
-  [assignments : CompilerRegAssignmentList]
-  [inputs : CompilerIrPhiInputList]
-  [mask : i64]) : i64
-  (match inputs
-    [(CompilerIrPhiInputList.Nil) mask]
-    [(CompilerIrPhiInputList.Cons value _ rest)
-      (compiler-backend-instr-home-phi-input-mask
-        assignments
-        (box-get rest)
-        (compiler-backend-instr-home-value-mask assignments value mask))]
-    [(CompilerIrPhiInputList.Array seq)
-      (let
-        [slots : (Array CompilerIrPhiInput) (struct-get seq slots)]
-        [len : i64 (struct-get seq len)]
-        [i : i64 0]
-        [out : i64 mask]
-        (begin
-          (while (< i len)
-            (let
-              [entry : CompilerIrPhiInput (array-ref slots i)]
-              (begin
-                (set!
-                  out
-                  (compiler-backend-instr-home-value-mask
-                    assignments
-                    (struct-get entry value)
-                    out))
-                (set! i (+ i 1)))))
-          out))]))
-
-(define (compiler-backend-instr-use-home-mask
-  [assignments : CompilerRegAssignmentList]
-  [instr : CompilerIrInstr]
-  [mask : i64]) : i64
-  (match instr
-    [(CompilerIrInstr.Mov _ src _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.Alloc _ _) mask]
-    [(CompilerIrInstr.AddrOf _ src)
-      (compiler-backend-instr-home-var-mask assignments src mask)]
-    [(CompilerIrInstr.Gep _ base offset _)
-      (compiler-backend-instr-home-values2-mask assignments base offset mask)]
-    [(CompilerIrInstr.Load _ src _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.StorePtr dst src _)
-      (compiler-backend-instr-home-values2-mask assignments dst src mask)]
-    [(CompilerIrInstr.CopyBytes dst src _)
-      (compiler-backend-instr-home-values2-mask assignments dst src mask)]
-    [(CompilerIrInstr.BoundsCheck index length _)
-      (compiler-backend-instr-home-values2-mask assignments index length mask)]
-    [(CompilerIrInstr.Cast _ src _ _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.Bitcast _ src _ _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.BinOp _ _ lhs rhs _)
-      (compiler-backend-instr-home-values2-mask assignments lhs rhs mask)]
-    [(CompilerIrInstr.UnOp _ _ src _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.LaneId _ _ _) mask]
-    [(CompilerIrInstr.Splat _ value _ _)
-      (compiler-backend-instr-home-value-mask assignments value mask)]
-    [(CompilerIrInstr.VectorBinOp payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorBinOpPayload.Payload _ _ lhs rhs _ _)
-          (compiler-backend-instr-home-values2-mask assignments lhs rhs mask)])]
-    [(CompilerIrInstr.VectorReduce _ _ src _ _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.VectorCompare payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorComparePayload.Payload _ _ lhs rhs _ _)
-          (compiler-backend-instr-home-values2-mask assignments lhs rhs mask)])]
-    [(CompilerIrInstr.MaskBinOp _ _ lhs rhs _)
-      (compiler-backend-instr-home-values2-mask assignments lhs rhs mask)]
-    [(CompilerIrInstr.MaskNot _ src _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.MaskReduce _ _ src _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.Select payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSelectPayload.Payload
-            _
-            select-mask
-            on-true
-            on-false
-            _
-            _)
-          (compiler-backend-instr-home-values3-mask
-            assignments
-            select-mask
-            on-true
-            on-false
-            mask)])]
-    [(CompilerIrInstr.VectorLoad _ base index _ _)
-      (compiler-backend-instr-home-values2-mask assignments base index mask)]
-    [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload base index value _ _)
-          (compiler-backend-instr-home-values3-mask
-            assignments
-            base
-            index
-            value
-            mask)])]
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload
-            base
-            index
-            value
-            pred
-            _
-            _)
-          (compiler-backend-instr-home-values4-mask
-            assignments
-            base
-            index
-            value
-            pred
-            mask)])]
-    [(CompilerIrInstr.PredicatedLoad payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedLoadPayload.Payload _ base index pred _ _)
-          (compiler-backend-instr-home-values3-mask
-            assignments
-            base
-            index
-            pred
-            mask)])]
-    [(CompilerIrInstr.TailMask _ index len _)
-      (compiler-backend-instr-home-values2-mask assignments index len mask)]
-    [(CompilerIrInstr.EntryArgc _) mask]
-    [(CompilerIrInstr.EntryArgv _) mask]
-    [(CompilerIrInstr.EntryEnvp _) mask]
-    [(CompilerIrInstr.CpuId _ leaf subleaf _)
-      (compiler-backend-instr-home-values2-mask assignments leaf subleaf mask)]
-    [(CompilerIrInstr.Xgetbv _ index)
-      (compiler-backend-instr-home-value-mask assignments index mask)]
-    [(CompilerIrInstr.Syscall _ args)
-      (compiler-backend-instr-home-call-args-mask assignments args mask)]
-    [(CompilerIrInstr.Call _ _ args _)
-      (compiler-backend-instr-home-call-args-mask assignments args mask)]
-    [(CompilerIrInstr.CallIndirect _ func args _)
-      (compiler-backend-instr-home-value-mask
-        assignments
-        func
-        (compiler-backend-instr-home-call-args-mask assignments args mask))]
-    [(CompilerIrInstr.CallIndirectC _ func args _)
-      (compiler-backend-instr-home-value-mask
-        assignments
-        func
-        (compiler-backend-instr-home-call-args-mask assignments args mask))]
-    [(CompilerIrInstr.CallCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallCAbiStoreResultPayload.Payload base _ args _)
-          (compiler-backend-instr-home-value-mask
-            assignments
-            base
-            (compiler-backend-instr-home-call-args-mask assignments args mask))])]
-    [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrCallIndirectCAbiStoreResultPayload.Payload
-            base
-            func
-            args
-            _)
-          (compiler-backend-instr-home-value-mask
-            assignments
-            func
-            (compiler-backend-instr-home-value-mask
-              assignments
-              base
-              (compiler-backend-instr-home-call-args-mask assignments args mask)))])]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ active args _)
-          (compiler-backend-instr-home-value-mask
-            assignments
-            active
-            (compiler-backend-instr-home-spmd-args-mask assignments args mask))])]
-    [(CompilerIrInstr.TailCall _ args _)
-      (compiler-backend-instr-home-call-args-mask assignments args mask)]
-    [(CompilerIrInstr.Store _ value _)
-      (compiler-backend-instr-home-value-mask assignments value mask)]
-    [(CompilerIrInstr.Branch cond _ _)
-      (compiler-backend-instr-home-value-mask assignments cond mask)]
-    [(CompilerIrInstr.Return value)
-      (compiler-backend-instr-home-maybe-value-mask assignments value mask)]
-    [(CompilerIrInstr.Phi _ inputs _)
-      (compiler-backend-instr-home-phi-input-mask assignments inputs mask)]
-    [(CompilerIrInstr.Pack _ words _)
-      (compiler-backend-instr-home-value-list-mask assignments words mask)]
-    [(CompilerIrInstr.Word _ src _ _)
-      (compiler-backend-instr-home-value-mask assignments src mask)]
-    [(CompilerIrInstr.Jump _) mask]
-    [(CompilerIrInstr.TailCallIndirect func args _)
-      (compiler-backend-instr-home-value-mask
-        assignments
-        func
-        (compiler-backend-instr-home-call-args-mask assignments args mask))]
-    [(CompilerIrInstr.Switch index _ _ _)
-      (compiler-backend-instr-home-value-mask assignments index mask)]))
-
-(define (compiler-backend-instr-reserved-home-mask
-  [assignments : CompilerRegAssignmentList]
-  [instr : CompilerIrInstr]) : i64
-  (compiler-backend-instr-home-var-mask
-    assignments
-    (compiler-reg-instr-def-var instr)
-    (compiler-backend-instr-use-home-mask assignments instr 0)))
+;; The dense assignment index is already installed for the function before
+;; scratch planning or emission, so operand visits are constant-time lookups.
+(define (compiler-backend-instr-reserved-home-mask [instr : CompilerIrInstr]) : i64
+  (begin
+    (set! compiler-backend-use-home-mask-value 0)
+    (set! compiler-backend-use-home-mask-active true)
+    (compiler-backend-use-count-inc
+      compiler-backend-use-home-mask-empty-counts
+      (compiler-reg-instr-def-var instr))
+    (compiler-backend-count-instr-uses
+      compiler-backend-use-home-mask-empty-counts
+      instr)
+    (set! compiler-backend-use-home-mask-active false)
+    compiler-backend-use-home-mask-value))
 
 (define (compiler-backend-scavenge-candidate-ok?
   [occupied-mask : i64]

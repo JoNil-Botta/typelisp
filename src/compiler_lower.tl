@@ -2147,10 +2147,10 @@
   [decl-path : String]
   [source-name : String]) : String
   (if (and
+    (string.eq source-name "main")
     (string.eq
       (lower-normalize-path decl-path)
-      (lower-normalize-path entry-path))
-    (string.eq source-name "main"))
+      (lower-normalize-path entry-path)))
     "main"
     (string.append
       (string.append (lower-module-id entry-path decl-path) "::")
@@ -2172,11 +2172,11 @@
   [module : String]
   [source-name : String]) : bool
   (and
+    (string.eq source-name "main")
+    (lower-entry-main-module-match? module)
     (string.eq
       (lower-normalize-path decl-path)
-      (lower-normalize-path entry-path))
-    (string.eq source-name "main")
-    (lower-entry-main-module-match? module)))
+      (lower-normalize-path entry-path))))
 
 (define (lower-entry-main-decl? [decl : AstDecl]) : bool
   (match decl
@@ -2201,10 +2201,10 @@
   (match scan
     [(LowerEntryMainScan.Scan fallback-count fallback-module preferred)
       (if (and
+        (lower-entry-main-decl? decl)
         (string.eq
           (lower-normalize-path decl-path)
-          (lower-normalize-path entry-path))
-        (lower-entry-main-decl? decl))
+          (lower-normalize-path entry-path)))
         (if (or (string.eq module "") (string.eq module "main"))
           (LowerEntryMainScan.Scan fallback-count fallback-module true)
           (LowerEntryMainScan.Scan (+ fallback-count 1) module preferred))

@@ -6590,6 +6590,237 @@
                 [(option_i64.None) casts])
               (box-get rest)))])]))
 
+(defenum OptBoundsSeqState
+  (Plain OptBoundsFacts OptBoundsCastEnv)
+  (Object
+    OptBoundsFacts
+    OptObjectLengthFact
+    OptObjectLengthFact
+    OptBoundsCastEnv))
+
+(defenum OptBoundsSeqStep
+  (Step OptBoundsSeqState bool))
+
+(define (opt-bounds-casts-after
+  [casts : OptBoundsCastEnv]
+  [instr : CompilerIrInstr]) : OptBoundsCastEnv
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
+    [(option_i64.None) casts]))
+
+(define (opt-bounds-seq-step-plain
+  [facts : OptBoundsFacts]
+  [casts : OptBoundsCastEnv]
+  [instr : CompilerIrInstr]) : OptBoundsSeqStep
+  (match instr
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (let
+        [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
+        (if (opt-bounds-contains facts index-key length)
+          (OptBoundsSeqStep.Step (OptBoundsSeqState.Plain facts casts) false)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain
+              (opt-bounds-add facts index-key length)
+              casts)
+            true)))]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (let
+        [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [next-casts : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
+        (if (opt-bounds-object-length-slot? offset ty)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Object
+              next-facts
+              (OptObjectLengthFact.None)
+              (match base
+                [(CompilerIrValue.Var object-var)
+                  (opt-object-length-bind
+                    (OptObjectLengthFact.None)
+                    dst
+                    object-var)]
+                [_ (OptObjectLengthFact.None)])
+              next-casts)
+            true)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain next-facts next-casts)
+            true)))]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (OptBoundsSeqStep.Step
+        (OptBoundsSeqState.Plain
+          (opt-bounds-update-facts facts instr)
+          (opt-bounds-cast-update casts dst src from-ty to-ty))
+        true)]
+    [_
+      (OptBoundsSeqStep.Step
+        (OptBoundsSeqState.Plain
+          (opt-bounds-update-facts facts instr)
+          (opt-bounds-casts-after casts instr))
+        true)]))
+
+(define (opt-bounds-seq-step-object
+  [facts : OptBoundsFacts]
+  [lengths : OptObjectLengthFact]
+  [ptrs : OptObjectLengthFact]
+  [casts : OptBoundsCastEnv]
+  [instr : CompilerIrInstr]) : OptBoundsSeqStep
+  (match instr
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (let
+        [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
+        [length-key : CompilerIrValue (opt-bounds-length-value lengths length)]
+        (if (opt-bounds-contains facts index-key length-key)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Object facts lengths ptrs casts)
+            false)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Object
+              (opt-bounds-add facts index-key length-key)
+              lengths
+              ptrs
+              casts)
+            true)))]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (let
+        [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [lengths2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var lengths dst)]
+        [ptrs2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var ptrs dst)]
+        [ptrs3 : OptObjectLengthFact
+          (if (opt-bounds-object-length-slot? offset ty)
+            (match base
+              [(CompilerIrValue.Var object-var)
+                (opt-object-length-bind ptrs2 dst object-var)]
+              [_ ptrs2])
+            ptrs2)]
+        (OptBoundsSeqStep.Step
+          (OptBoundsSeqState.Object
+            facts2
+            lengths2
+            ptrs3
+            (opt-bounds-cast-unbind casts dst))
+          true))]
+    [(CompilerIrInstr.Load dst src ty)
+      (let
+        [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [lengths2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var lengths dst)]
+        [ptrs2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var ptrs dst)]
+        [lengths3 : OptObjectLengthFact
+          (if (opt-type-eq ty (AstType.I64))
+            (match src
+              [(CompilerIrValue.Var ptr-var)
+                (match (opt-object-length-lookup ptrs2 ptr-var)
+                  [(option_i64.Some object-var)
+                    (opt-object-length-bind lengths2 dst object-var)]
+                  [(option_i64.None) lengths2])]
+              [_ lengths2])
+            lengths2)]
+        (OptBoundsSeqStep.Step
+          (OptBoundsSeqState.Object
+            facts2
+            lengths3
+            ptrs2
+            (opt-bounds-cast-unbind casts dst))
+          true))]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (let
+        [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [lengths2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var lengths dst)]
+        [ptrs2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var ptrs dst)]
+        [lengths3 : OptObjectLengthFact
+          (if (and
+            (opt-type-eq from-ty (AstType.I64))
+            (opt-type-eq to-ty (AstType.U64)))
+            (match src
+              [(CompilerIrValue.Var length-var)
+                (match (opt-object-length-lookup lengths2 length-var)
+                  [(option_i64.Some object-var)
+                    (opt-object-length-bind lengths2 dst object-var)]
+                  [(option_i64.None) lengths2])]
+              [_ lengths2])
+            lengths2)]
+        (OptBoundsSeqStep.Step
+          (OptBoundsSeqState.Object
+            facts2
+            lengths3
+            ptrs2
+            (opt-bounds-cast-update casts dst src from-ty to-ty))
+          true))]
+    [(CompilerIrInstr.StorePtr ptr _ _)
+      (match ptr
+        [(CompilerIrValue.Var ptr-var)
+          (match (opt-object-length-lookup ptrs ptr-var)
+            [(option_i64.Some _)
+              (OptBoundsSeqStep.Step
+                (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) casts)
+                true)]
+            [(option_i64.None)
+              (OptBoundsSeqStep.Step
+                (OptBoundsSeqState.Object facts lengths ptrs casts)
+                true)])]
+        [_
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) casts)
+            true)])]
+    [_
+      (let
+        [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
+        [next-casts : OptBoundsCastEnv (opt-bounds-casts-after casts instr)]
+        (match next-facts
+          [(OptBoundsFacts.Nil)
+            (OptBoundsSeqStep.Step
+              (OptBoundsSeqState.Plain next-facts next-casts)
+              true)]
+          [_
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (OptBoundsSeqStep.Step
+                  (OptBoundsSeqState.Object
+                    next-facts
+                    (opt-object-length-invalidate-var lengths dst)
+                    (opt-object-length-invalidate-var ptrs dst)
+                    next-casts)
+                  true)]
+              [(option_i64.None)
+                (OptBoundsSeqStep.Step
+                  (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
+                  true)])]))]))
+
+(define (opt-bounds-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [read : i64 0]
+    [write : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [state : OptBoundsSeqState
+      (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil))]
+    (begin
+      (while (< read count)
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs read)]
+          [step : OptBoundsSeqStep
+            (match state
+              [(OptBoundsSeqState.Plain facts casts)
+                (opt-bounds-seq-step-plain facts casts instr)]
+              [(OptBoundsSeqState.Object facts lengths ptrs casts)
+                (opt-bounds-seq-step-object facts lengths ptrs casts instr)])]
+          (match step
+            [(OptBoundsSeqStep.Step next-state keep)
+              (begin
+                (if keep
+                  (begin
+                    (if (not (= write read))
+                      (compiler-ir-instr-seq-set! instrs write instr)
+                      unit)
+                    (set! write (+ write 1)))
+                  unit)
+                (set! state next-state)
+                (set! read (+ read 1)))])))
+      (set! (struct-get instrs len) write))))
+
 ;; --- conservative CFG simplification ----------------------------------------
 ;;
 ;; Runs after block-local constant/copy propagation has exposed literal branch
@@ -23787,7 +24018,7 @@
         ;; proven bounds checks; function-level DCE drops dead copies. Independent
         ;; per-stage states preserve the old scheduling while the forward
         ;; one-in/one-out stages share two in-place traversals of the cloned block
-        ;; sequence; only bounds-check elimination still materializes a list.
+        ;; sequence; bounds-check elimination then compacts that sequence in place.
         ;; Fold runs ONCE: it is a single forward pass that binds every folded
         ;; result into its env, so over the block it already reaches a fixpoint --
         ;; a second `opt-fold-instrs` over the result only re-walked and rebuilt
@@ -23801,12 +24032,8 @@
             (opt-load-cse-empty-state-for-size
               (compiler-ir-instr-seq-count work))
             work)
-          (compiler-ir-block
-            label
-            (opt-bounds-instrs
-              (OptBoundsFacts.Nil)
-              (OptBoundsCastEnv.Nil)
-              (compiler-ir-instr-seq-to-list work)))))]))
+          (opt-bounds-instr-seq-rewrite! work)
+          (CompilerIrBlock.Block label work)))]))
 
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (optimize-block-hs (opt-load-header-set-empty) block))

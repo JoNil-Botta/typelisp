@@ -22,6 +22,7 @@
 (cfg compile-profile (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
 (import stdlib.array)
+(import stdlib.vector)
 (import "compiler_ir_types.tl")
 (import "compiler_float.tl")
 (import stdlib.arena)
@@ -52,9 +53,10 @@
   (Store i64 AstType)
   (Load i64 i64 AstType))
 
-(defstruct OptAggregateAccessList
-  (slots (Array OptAggregateAccess))
-  (len i64))
+(vector.family
+  OptAggregateAccess
+  OptAggregateAccessList
+  opt-aggregate-access-vec)
 
 (defenum OptAggregateAllocCandidate
   (Candidate i64 AstType i64 OptAggregatePointerList OptAggregateAccessList))
@@ -2693,39 +2695,6 @@
         (array-set! slots len ptr)
         (OptAggregatePointerList slots (+ len 1))))))
 
-(define (opt-aggregate-access-list-with-capacity [capacity : i64]) : OptAggregateAccessList
-  (OptAggregateAccessList (array.make-array OptAggregateAccess capacity) 0))
-
-(define (opt-aggregate-access-list-grow [accesses : OptAggregateAccessList]) : OptAggregateAccessList
-  (let
-    [old-slots : (Array OptAggregateAccess) (struct-get accesses slots)]
-    [len : i64 (struct-get accesses len)]
-    [new-slots : (Array OptAggregateAccess)
-      (array.make-array
-        OptAggregateAccess
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (OptAggregateAccessList new-slots len))))
-
-(define (opt-aggregate-access-list-push
-  [accesses : OptAggregateAccessList]
-  [access : OptAggregateAccess]) : OptAggregateAccessList
-  (let
-    [slots : (Array OptAggregateAccess) (struct-get accesses slots)]
-    [len : i64 (struct-get accesses len)]
-    (if (>= len (array-length slots))
-      (opt-aggregate-access-list-push
-        (opt-aggregate-access-list-grow accesses)
-        access)
-      (begin
-        (array-set! slots len access)
-        (OptAggregateAccessList slots (+ len 1))))))
-
 (define (opt-aggregate-candidate-list-with-capacity [capacity : i64]) : OptAggregateAllocCandidateList
   (OptAggregateAllocCandidateList
     (array.make-array OptAggregateAllocCandidate capacity)
@@ -3221,16 +3190,18 @@
           [(CompilerIrInstr.Load dst src load-ty)
             (match (opt-aggregate-value-offset base ptrs src)
               [(option_i64.Some offset)
-                (opt-aggregate-scan-instrs
-                  base
-                  ty
-                  size
-                  (box-get rest)
-                  ptrs
-                  (opt-aggregate-access-list-push
-                    accesses
+                (begin
+                  (opt-aggregate-access-vec-push
+                    (&mut accesses)
                     (OptAggregateAccess.Load dst offset load-ty))
-                  true)]
+                  (opt-aggregate-scan-instrs
+                    base
+                    ty
+                    size
+                    (box-get rest)
+                    ptrs
+                    accesses
+                    true))]
               [(option_i64.None)
                 (if (opt-aggregate-instrs-touch-candidate?
                   (box-get rest)
@@ -3250,16 +3221,18 @@
               [(option_i64.Some offset)
                 (if (opt-aggregate-value-has-pointer? base ptrs value)
                   (OptAggregateScanResult.Reject)
-                  (opt-aggregate-scan-instrs
-                    base
-                    ty
-                    size
-                    (box-get rest)
-                    ptrs
-                    (opt-aggregate-access-list-push
-                      accesses
+                  (begin
+                    (opt-aggregate-access-vec-push
+                      (&mut accesses)
                       (OptAggregateAccess.Store offset store-ty))
-                    true))]
+                    (opt-aggregate-scan-instrs
+                      base
+                      ty
+                      size
+                      (box-get rest)
+                      ptrs
+                      accesses
+                      true)))]
               [(option_i64.None)
                 (if (or
                   (opt-aggregate-value-has-pointer? base ptrs value)
@@ -3307,8 +3280,7 @@
     instrs
     (opt-aggregate-pointer-list-with-capacity
       opt-aggregate-list-initial-capacity)
-    (opt-aggregate-access-list-with-capacity
-      opt-aggregate-list-initial-capacity)
+    (opt-aggregate-access-vec-with-capacity opt-aggregate-list-initial-capacity)
     false))
 
 (define (opt-aggregate-candidates-from-instrs
@@ -3432,16 +3404,16 @@
 (define (opt-aggregate-pointer-list-count [ptrs : OptAggregatePointerList]) : i64
   (struct-get ptrs len))
 
-(define (opt-aggregate-access-list-count [accesses : OptAggregateAccessList]) : i64
-  (struct-get accesses len))
-
 (define (opt-aggregate-access-list-load-count-from
   [accesses : OptAggregateAccessList]
   [index : i64]) : i64
-  (if (>= index (struct-get accesses len))
+  (if (>= index (opt-aggregate-access-vec-len (& accesses)))
     0
     (+
-      (match (array-ref (struct-get accesses slots) index)
+      (match (opt-aggregate-access-vec-get
+        (& accesses)
+        index
+        (OptAggregateAccess.Store 0 (AstType.Unit)))
         [(OptAggregateAccess.Load _ _ _) 1]
         [_ 0])
       (opt-aggregate-access-list-load-count-from accesses (+ index 1)))))
@@ -3453,10 +3425,13 @@
 (define (opt-aggregate-access-list-store-count-from
   [accesses : OptAggregateAccessList]
   [index : i64]) : i64
-  (if (>= index (struct-get accesses len))
+  (if (>= index (opt-aggregate-access-vec-len (& accesses)))
     0
     (+
-      (match (array-ref (struct-get accesses slots) index)
+      (match (opt-aggregate-access-vec-get
+        (& accesses)
+        index
+        (OptAggregateAccess.Store 0 (AstType.Unit)))
         [(OptAggregateAccess.Store _ _) 1]
         [_ 0])
       (opt-aggregate-access-list-store-count-from accesses (+ index 1)))))
@@ -35235,12 +35210,77 @@
             (= size 16)
             (opt-type-eq ty (AstType.Struct (intern "Pair")))
             (= (opt-aggregate-pointer-list-count ptrs) 3)
-            (= (opt-aggregate-access-list-count accesses) 3)
+            (= (opt-aggregate-access-vec-len (& accesses)) 3)
             (= (opt-aggregate-access-list-store-count accesses) 2)
             (= (opt-aggregate-access-list-load-count accesses) 1)
             (< (array-length (struct-get ptrs slots)) instr-count)
-            (< (array-length (struct-get accesses slots)) instr-count))])
+            (< (opt-aggregate-access-vec-capacity (& accesses)) instr-count))])
       false)))
+
+;; Grow the append-ordered classifier scratch vector past its initial capacity.
+;; The optimizer relies on the exact load/store order when it later promotes an
+;; aggregate, so test both the interleaving and the metadata preserved by each
+;; access entry.
+(define (opt-aggregate-access-vector-growth-ok?) : bool
+  (let
+    [accesses : OptAggregateAccessList
+      (opt-aggregate-access-vec-with-capacity 1)]
+    (begin
+      (opt-aggregate-access-vec-push
+        (&mut accesses)
+        (OptAggregateAccess.Store 0 (AstType.I64)))
+      (opt-aggregate-access-vec-push
+        (&mut accesses)
+        (OptAggregateAccess.Load 11 0 (AstType.I64)))
+      (opt-aggregate-access-vec-push
+        (&mut accesses)
+        (OptAggregateAccess.Store 8 (AstType.Bool)))
+      (opt-aggregate-access-vec-push
+        (&mut accesses)
+        (OptAggregateAccess.Load 12 8 (AstType.Bool)))
+      (opt-aggregate-access-vec-push
+        (&mut accesses)
+        (OptAggregateAccess.Store 16 (AstType.U64)))
+      (and
+        (= (opt-aggregate-access-vec-len (& accesses)) 5)
+        (>= (opt-aggregate-access-vec-capacity (& accesses)) 5)
+        (= (opt-aggregate-access-list-store-count accesses) 3)
+        (= (opt-aggregate-access-list-load-count accesses) 2)
+        (match (opt-aggregate-access-vec-get
+          (& accesses)
+          0
+          (OptAggregateAccess.Store -1 (AstType.Unit)))
+          [(OptAggregateAccess.Store offset ty)
+            (and (= offset 0) (opt-type-eq ty (AstType.I64)))]
+          [_ false])
+        (match (opt-aggregate-access-vec-get
+          (& accesses)
+          1
+          (OptAggregateAccess.Store -1 (AstType.Unit)))
+          [(OptAggregateAccess.Load dst offset ty)
+            (and (= dst 11) (= offset 0) (opt-type-eq ty (AstType.I64)))]
+          [_ false])
+        (match (opt-aggregate-access-vec-get
+          (& accesses)
+          2
+          (OptAggregateAccess.Store -1 (AstType.Unit)))
+          [(OptAggregateAccess.Store offset ty)
+            (and (= offset 8) (opt-type-eq ty (AstType.Bool)))]
+          [_ false])
+        (match (opt-aggregate-access-vec-get
+          (& accesses)
+          3
+          (OptAggregateAccess.Store -1 (AstType.Unit)))
+          [(OptAggregateAccess.Load dst offset ty)
+            (and (= dst 12) (= offset 8) (opt-type-eq ty (AstType.Bool)))]
+          [_ false])
+        (match (opt-aggregate-access-vec-get
+          (& accesses)
+          4
+          (OptAggregateAccess.Store -1 (AstType.Unit)))
+          [(OptAggregateAccess.Store offset ty)
+            (and (= offset 16) (opt-type-eq ty (AstType.U64)))]
+          [_ false])))))
 
 (define (compiler-optimize-aggregate-candidate-self-test) : i64
   (cond
@@ -35260,6 +35300,7 @@
     [(not
         (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
       9]
+    [(not (opt-aggregate-access-vector-growth-ok?)) 10]
     [else 42]))
 
 (define (opt-aggregate-array-local-instrs) : CompilerIrInstrList

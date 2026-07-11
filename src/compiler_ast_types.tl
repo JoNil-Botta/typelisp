@@ -1713,10 +1713,8 @@
   false)
 (define ast-node-pool-compat-context : AstNodePoolContext
   (ast-node-pool-context-capture-active-raw))
-(define ast-node-pool-compat-saved-expr : AstExprNodePoolState
-  (ast-node-pool-state-capture))
-(define ast-node-pool-compat-saved-type : AstTypeNodePoolState
-  (ty-node-pool-state-capture))
+(define ast-node-pool-compat-saved-context : AstNodePoolContext
+  (ast-node-pool-context-capture-active-raw))
 
 (define (ast-node-pool-context-capture-active) : AstNodePoolContext
   (if ast-node-pool-compat-context-explicit?
@@ -1767,8 +1765,9 @@
 
 (define (ast-node-pool-compat-context-use! [pools : AstNodePoolContext]) : unit
   (begin
-    (set! ast-node-pool-compat-saved-expr (ast-node-pool-state-capture))
-    (set! ast-node-pool-compat-saved-type (ty-node-pool-state-capture))
+    (set!
+      ast-node-pool-compat-saved-context
+      (ast-node-pool-context-capture-active-raw))
     (set! ast-node-pool-compat-context pools)
     (set! ast-node-pool-compat-context-explicit? true)
     (ast-node-pools-state-install!
@@ -1778,8 +1777,8 @@
 (define (ast-node-pool-compat-context-clear!) : unit
   (begin
     (ast-node-pools-state-install!
-      ast-node-pool-compat-saved-expr
-      ast-node-pool-compat-saved-type)
+      (array-ref (struct-get ast-node-pool-compat-saved-context expr-pool) 0)
+      (array-ref (struct-get ast-node-pool-compat-saved-context type-pool) 0))
     (set! ast-node-pool-compat-context-explicit? false)))
 
 (define (ast-node-pool-compat-context-active?) : bool

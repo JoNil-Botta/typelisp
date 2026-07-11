@@ -23959,7 +23959,7 @@
       blocks)
     blocks))
 
-(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : bool
+(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [store-count : i64 0]
@@ -23980,7 +23980,7 @@
                     (begin
                       (match rewritten
                         [(CompilerIrInstr.StorePtr _ _ _)
-                          (if (< store-count 2)
+                          (if (< store-count 128)
                             (set! store-count (+ store-count 1))
                             unit)]
                         [_ unit])
@@ -23989,7 +23989,7 @@
                       (set! strength-state next-strength)
                       (set! cse-state next-cse)
                       (set! index (+ index 1)))])])]))
-      (>= store-count 2))))
+      store-count)))
 
 (define (opt-load-copy-instr-seq-rewrite!
   [hs : OptLoadHeaderSet]
@@ -24022,7 +24022,7 @@
     [(CompilerIrBlock.Block label instrs)
       (let
         [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq instrs)]
-        [has-two-storeptr? : bool false]
+        [store-capacity : i64 0]
         ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
         ;; pure expressions, propagate the resulting copies, then remove duplicate
         ;; proven bounds checks; function-level DCE drops dead copies. Independent
@@ -24035,10 +24035,8 @@
         ;; the list without changing it (byte-identical output, ~0.9% of
         ;; self-compile).
         (begin
-          (set!
-            has-two-storeptr?
-            (opt-fold-strength-cse-instr-seq-rewrite! work))
-          (set! work (opt-dead-store-instr-seq-known hs has-two-storeptr? work))
+          (set! store-capacity (opt-fold-strength-cse-instr-seq-rewrite! work))
+          (set! work (opt-dead-store-instr-seq-known hs store-capacity work))
           (opt-load-copy-instr-seq-rewrite!
             hs
             (opt-load-cse-empty-state-for-size
@@ -51888,20 +51886,20 @@
 (defenum OptDeadStoreEntry
   (Entry i64 OptLoadStoreClass))
 
-(defenum OptDeadStoreSet
-  (Nil)
-  (Cons OptDeadStoreEntry (Box OptDeadStoreSet)))
+(defstruct OptDeadStoreSet
+  (slots (Array OptDeadStoreEntry))
+  (len i64))
+
+(define (opt-dead-store-set-with-capacity [capacity : i64]) : OptDeadStoreSet
+  (OptDeadStoreSet (array.make-array OptDeadStoreEntry capacity) 0))
+
+(define (opt-dead-store-set-clear [pending : OptDeadStoreSet]) : OptDeadStoreSet
+  (OptDeadStoreSet (struct-get pending slots) 0))
 
 (define (opt-dead-store-trackable? [class : OptLoadStoreClass]) : bool
   (match class
     [(OptLoadStoreField _ _ _ _) true]
     [_ false]))
-
-(define (opt-dead-store-set-len [pending : OptDeadStoreSet]) : i64
-  (match pending
-    [(OptDeadStoreSet.Nil) 0]
-    [(OptDeadStoreSet.Cons _ rest)
-      (+ 1 (opt-dead-store-set-len (box-get rest)))]))
 
 (define (opt-dead-store-classes-exact?
   [a : OptLoadStoreClass]
@@ -51946,21 +51944,29 @@
   [pending : OptDeadStoreSet]
   [dead : (Array i64)]
   [class : OptLoadStoreClass]) : OptDeadStoreSet
-  (match pending
-    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
-    [(OptDeadStoreSet.Cons entry rest)
-      (let
-        [tail : OptDeadStoreSet
-          (opt-dead-store-filter-store (box-get rest) dead class)]
-        (match entry
-          [(OptDeadStoreEntry.Entry old-index old-class)
-            (if (opt-dead-store-classes-exact? old-class class)
-              (begin
-                (array-set! dead old-index 1)
-                tail)
-              (if (opt-dead-store-classes-disjoint? class old-class)
-                (OptDeadStoreSet.Cons entry (box tail))
-                tail))]))]))
+  (let
+    [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+    [count : i64 (struct-get pending len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptDeadStoreEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptDeadStoreEntry.Entry old-index old-class)
+                (if (opt-dead-store-classes-exact? old-class class)
+                  (array-set! dead old-index 1)
+                  (if (opt-dead-store-classes-disjoint? class old-class)
+                    (begin
+                      (if (not (= write read))
+                        (array-set! slots write entry)
+                        unit)
+                      (set! write (+ write 1)))
+                    unit))])
+            (set! read (+ read 1)))))
+      (OptDeadStoreSet slots write))))
 
 (define (opt-dead-store-add-current
   [pending : OptDeadStoreSet]
@@ -51968,24 +51974,39 @@
   [class : OptLoadStoreClass]) : OptDeadStoreSet
   (if (and
     (opt-dead-store-trackable? class)
-    (< (opt-dead-store-set-len pending) 128))
-    (OptDeadStoreSet.Cons (OptDeadStoreEntry.Entry index class) (box pending))
+    (< (struct-get pending len) (array-length (struct-get pending slots))))
+    (let
+      [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+      [len : i64 (struct-get pending len)]
+      (begin
+        (array-set! slots len (OptDeadStoreEntry.Entry index class))
+        (OptDeadStoreSet slots (+ len 1))))
     pending))
 
 (define (opt-dead-store-filter-access
   [pending : OptDeadStoreSet]
   [class : OptLoadStoreClass]) : OptDeadStoreSet
-  (match pending
-    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
-    [(OptDeadStoreSet.Cons entry rest)
-      (let
-        [tail : OptDeadStoreSet
-          (opt-dead-store-filter-access (box-get rest) class)]
-        (match entry
-          [(OptDeadStoreEntry.Entry _ old-class)
-            (if (opt-dead-store-classes-disjoint? class old-class)
-              (OptDeadStoreSet.Cons entry (box tail))
-              tail)]))]))
+  (let
+    [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+    [count : i64 (struct-get pending len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptDeadStoreEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptDeadStoreEntry.Entry _ old-class)
+                (if (opt-dead-store-classes-disjoint? class old-class)
+                  (begin
+                    (if (not (= write read))
+                      (array-set! slots write entry)
+                      unit)
+                    (set! write (+ write 1)))
+                  unit)])
+            (set! read (+ read 1)))))
+      (OptDeadStoreSet slots write))))
 
 (define (opt-dead-store-class-uses-var? [class : OptLoadStoreClass] [var : i64]) : bool
   (match class
@@ -51993,16 +52014,27 @@
     [_ false]))
 
 (define (opt-dead-store-filter-def [pending : OptDeadStoreSet] [var : i64]) : OptDeadStoreSet
-  (match pending
-    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
-    [(OptDeadStoreSet.Cons entry rest)
-      (let
-        [tail : OptDeadStoreSet (opt-dead-store-filter-def (box-get rest) var)]
-        (match entry
-          [(OptDeadStoreEntry.Entry _ class)
-            (if (opt-dead-store-class-uses-var? class var)
-              tail
-              (OptDeadStoreSet.Cons entry (box tail)))]))]))
+  (let
+    [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+    [count : i64 (struct-get pending len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptDeadStoreEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptDeadStoreEntry.Entry _ class)
+                (if (opt-dead-store-class-uses-var? class var)
+                  unit
+                  (begin
+                    (if (not (= write read))
+                      (array-set! slots write entry)
+                      unit)
+                    (set! write (+ write 1))))])
+            (set! read (+ read 1)))))
+      (OptDeadStoreSet slots write))))
 
 (define (opt-dead-store-other-keeps-pending? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -52035,11 +52067,11 @@
           (opt-dead-store-filter-access
             pending
             (opt-load-classify-store kinds src (opt-load-loc-type-size ty)))]
-        [(CompilerIrInstr.CopyBytes _ _ _) (OptDeadStoreSet.Nil)]
+        [(CompilerIrInstr.CopyBytes _ _ _) (opt-dead-store-set-clear pending)]
         [_
           (if (opt-dead-store-other-keeps-pending? instr)
             pending
-            (OptDeadStoreSet.Nil))])]
+            (opt-dead-store-set-clear pending))])]
     (match (opt-instr-def-var instr)
       [(option_i64.Some dst) (opt-dead-store-filter-def after-memory dst)]
       [(option_i64.None) after-memory])))
@@ -52067,29 +52099,30 @@
           (set! read (+ read 1))))
       (set! (struct-get instrs len) write))))
 
-(define (opt-dead-store-has-two-storeptr? [instrs : CompilerIrInstrSeq]) : bool
+(define (opt-dead-store-storeptr-capacity [instrs : CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     [stores : i64 0]
     (begin
-      (while (and (< index count) (< stores 2))
+      (while (and (< index count) (< stores 128))
         (begin
           (match (compiler-ir-instr-seq-ref instrs index)
             [(CompilerIrInstr.StorePtr _ _ _) (set! stores (+ stores 1))]
             [_ unit])
           (set! index (+ index 1))))
-      (>= stores 2))))
+      stores)))
 
 (define (opt-dead-store-instr-seq-known
   [hs : OptLoadHeaderSet]
-  [has-two-storeptr? : bool]
+  [store-capacity : i64]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
-  (if has-two-storeptr?
+  (if (>= store-capacity 2)
     (let
       [count : i64 (compiler-ir-instr-seq-count instrs)]
       [dead : (Array i64) (make-array i64 count)]
-      [pending : OptDeadStoreSet (OptDeadStoreSet.Nil)]
+      [pending : OptDeadStoreSet
+        (opt-dead-store-set-with-capacity store-capacity)]
       [kinds : OptLoadPtrKinds (opt-load-kinds-empty)]
       [index : i64 0]
       (begin
@@ -52111,7 +52144,7 @@
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
   (opt-dead-store-instr-seq-known
     hs
-    (opt-dead-store-has-two-storeptr? instrs)
+    (opt-dead-store-storeptr-capacity instrs)
     instrs))
 
 ;; GVN stability for a key's referenced vars (the cross-block pass only

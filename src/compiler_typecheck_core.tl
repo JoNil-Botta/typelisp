@@ -45865,6 +45865,19 @@
   (Ok TcContext TcTypeEnv)
   (Err (Box CompilerDiagnostic)))
 
+;; A generated module is additive: its canonical declarations live in a fresh
+;; module namespace and its trailing marker only imports that module into the
+;; caller. Keep the already-built top env and fold those two pieces into it.
+;; Arbitrary Decls splices and freshly loaded files retain the conservative
+;; whole-program rebuild.
+(defenum MacroSpliceEnvPlan
+  (Rebuild)
+  (Extend TcTypeEnv AstDeclList AstDeclList AstDeclList))
+
+(defenum MacroMaybeGeneratedModuleExtension
+  (No)
+  (Some AstDeclList AstDeclList))
+
 (defenum ResultMacroValue
   (Ok CompilerCtfeValue)
   (Err (Box CompilerDiagnostic)))
@@ -56213,6 +56226,91 @@
   [target-module : String]) : CompilerMaybeString
   (macro-module-generated-identity-in decls target-module ""))
 
+(define (macro-generated-module-marker-in
+  [decls : AstDeclList]
+  [target-module : String]
+  [importer-module : String]
+  [module : String]) : AstDeclList
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (ast-decl-list-new)]
+    [(AstDeclListStep.Cons decl rest)
+      (match decl
+        [(AstDecl.Module next-module)
+          (macro-generated-module-marker-in
+            rest
+            target-module
+            importer-module
+            (intern-str next-module))]
+        [(AstDecl.Import
+            (AstImportSpec.Spec
+              kind
+              _
+              (AstMaybeModuleName.Some imported-module)
+              _
+              _))
+          (match kind
+            [(AstImportKind.Module)
+              (if (and
+                (string.eq module importer-module)
+                (string.eq imported-module target-module))
+                (ast-decl-cons decl (ast-decl-list-new))
+                (macro-generated-module-marker-in
+                  rest
+                  target-module
+                  importer-module
+                  module))]
+            [_
+              (macro-generated-module-marker-in
+                rest
+                target-module
+                importer-module
+                module)])]
+        [_
+          (macro-generated-module-marker-in
+            rest
+            target-module
+            importer-module
+            module)])]))
+
+;; A memoized module expansion has exactly the two pieces needed by the
+;; incremental top-env path: its canonical module summary and the import marker
+;; emitted in the caller's module. Decls macros use `generated:` keys and never
+;; satisfy macro-module-generated-key?, so they stay on the full-rebuild path.
+(define (macro-generated-module-extension
+  [decls : AstDeclList]
+  [importer-module : String]) : MacroMaybeGeneratedModuleExtension
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) MacroMaybeGeneratedModuleExtension.No]
+    [(AstDeclListStep.Cons first _)
+      (match first
+        [(AstDecl.Module target-module-id)
+          (let
+            [target-module : String (intern-str target-module-id)]
+            (match (macro-module-generated-identity decls target-module)
+              [(CompilerSomeString identity)
+                (let
+                  [summary : AstDeclList
+                    (macro-generated-module-memo-get-summary identity)]
+                  [marker : AstDeclList
+                    (macro-generated-module-marker-in
+                      decls
+                      target-module
+                      importer-module
+                      "")]
+                  (match (ast-decl-list-step summary)
+                    [(AstDeclListStep.Nil)
+                      MacroMaybeGeneratedModuleExtension.No]
+                    [_
+                      (match (ast-decl-list-step marker)
+                        [(AstDeclListStep.Nil)
+                          MacroMaybeGeneratedModuleExtension.No]
+                        [_
+                          (MacroMaybeGeneratedModuleExtension.Some
+                            summary
+                            marker)])]))]
+              [CompilerNoString MacroMaybeGeneratedModuleExtension.No]))]
+        [_ MacroMaybeGeneratedModuleExtension.No])]))
+
 (define (macro-import-unqualified? [alias : AstMaybeImportAlias]) : bool
   (match alias
     [(AstMaybeImportAlias.Some alias-name) (string.eq alias-name "")]
@@ -57284,11 +57382,42 @@
 ;; but the already-expanded prefix is kept instead of being re-walked. `module`
 ;; is the walk's active module at the splice site, threaded into the returned
 ;; context so the tail resolves in the right module namespace.
+(define (macro-splice-top-env
+  [ctx : TcContext]
+  [program : AstProgram]
+  [decls : AstDeclList]
+  [module : String]
+  [plan : MacroSpliceEnvPlan]) : ResultTcEnv
+  (match plan
+    [(MacroSpliceEnvPlan.Rebuild) (tc-build-top-env ctx program)]
+    [(MacroSpliceEnvPlan.Extend base-env summary marker refresh-decls)
+      (match (env-extend-with-module ctx base-env summary)
+        [(ResultTcEnv.Ok module-env)
+          (match (macro-extend-top-env-with-module-marker
+            ctx
+            module-env
+            decls
+            marker
+            module)
+            [(ResultTcEnv.Ok marker-env)
+              (match (tc-build-top-env-list-explicit-in-module
+                ctx
+                refresh-decls
+                marker-env
+                module)
+                [(ResultTcEnv.Ok refreshed-env)
+                  (ResultTcEnv.Ok
+                    (tc-env-with-cache-layer-over-explicit refreshed-env))]
+                [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+            [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+        [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]))
+
 (define (macro-expand-rebuild-context-for-splice
   [cur-ctx : TcContext]
   [next-decls : AstDeclList]
   [next-paths : AstDeclPathList]
-  [module : String]) : ResultMacroSpliceRebuild
+  [module : String]
+  [env-plan : MacroSpliceEnvPlan]) : ResultMacroSpliceRebuild
   (let
     [pools : AstNodePoolContext (tc-context-pools cur-ctx)]
     [next-program : AstProgram (ast-program next-decls)]
@@ -57313,7 +57442,12 @@
               (macro-expand-set-macro-names! macro-live-prescan-visible-names)
               (match (tc-stdlib-comptime-surface-ok-for-macro next-ctx)
                 [(ResultTcUnit.Ok)
-                  (match (tc-build-top-env next-ctx next-program)
+                  (match (macro-splice-top-env
+                    next-ctx
+                    next-program
+                    next-decls
+                    module
+                    env-plan)
                     [(ResultTcEnv.Ok top-env)
                       (begin
                         (tc-hygiene-reset-active-top-env! top-env)
@@ -57577,7 +57711,23 @@
                                       cur-ctx
                                       next-decls
                                       next-paths
-                                      cur-module)
+                                      cur-module
+                                      (match (macro-generated-module-extension
+                                        expanded
+                                        cur-module)
+                                        [(MacroMaybeGeneratedModuleExtension.No)
+                                          MacroSpliceEnvPlan.Rebuild]
+                                        [(MacroMaybeGeneratedModuleExtension.Some
+                                            summary
+                                            marker)
+                                          (MacroSpliceEnvPlan.Extend
+                                            cur-top-env
+                                            summary
+                                            marker
+                                            (macro-scratch-decl-list-filter-path
+                                              rest
+                                              rest-paths
+                                              decl-path))]))
                                       [(ResultMacroSpliceRebuild.Ok
                                           next-ctx
                                           next-top-env)
@@ -57695,7 +57845,8 @@
                                   cur-ctx
                                   next-decls
                                   next-paths
-                                  cur-module)
+                                  cur-module
+                                  MacroSpliceEnvPlan.Rebuild)
                                   [(ResultMacroSpliceRebuild.Ok
                                       next-ctx
                                       next-top-env)

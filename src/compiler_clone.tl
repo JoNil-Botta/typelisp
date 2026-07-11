@@ -37,7 +37,10 @@
   (clone_id_map.with-capacity 65536))
 
 (define (clone-helper-name-id-bind! [type-key-id : i64] [helper-name-id : i64]) : unit
-  (clone_id_map.insert (&mut clone-helper-name-ids) type-key-id helper-name-id))
+  (clone_id_map.insert-ref!
+    (&mut clone-helper-name-ids)
+    type-key-id
+    helper-name-id))
 
 (define (clone-helper-name-id-for-key-or [type-key-id : i64] [fallback : i64]) : i64
   (match (clone_id_map.get (& clone-helper-name-ids) type-key-id)
@@ -1071,11 +1074,11 @@
         [qualified-cons-id : i64
           (clone-list-variant-reference-id type-name-id cons-ctor-id)]
         (begin
-          (clone_id_map.insert
+          (clone_id_map.insert-ref!
             (&mut clone-helper-acc-name-ids)
             type-key-id
             acc-name-id)
-          (clone_id_map.insert
+          (clone_id_map.insert-ref!
             (&mut clone-helper-rev-name-ids)
             type-key-id
             rev-name-id)

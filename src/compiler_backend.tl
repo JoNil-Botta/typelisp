@@ -20535,7 +20535,7 @@
           (begin
             (array-set! link-symbols index link-symbol)
             (array-set! provideds index provided)
-            (backend_string_i64_map.insert
+            (backend_string_i64_map.insert-ref!
               (&mut link-references)
               link-symbol
               index)

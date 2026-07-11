@@ -96,7 +96,7 @@
         [generated-name-id : i64 (intern-generated-name name)]
         (begin
           (ctfe-generated-name-cache-note-current!)
-          (ctfe_key_map.insert
+          (ctfe_key_map.insert-ref!
             (&mut (box-get ctfe-generated-name-ids))
             key-id
             generated-name-id)
@@ -703,7 +703,7 @@
     [index : ctfe_key_map.Map (struct-get items index)]
     (begin
       (array-set! slots n value)
-      (ctfe_key_map.insert (&mut index) (ctfe-layout-info-name-id value) n)
+      (ctfe_key_map.insert-ref! (&mut index) (ctfe-layout-info-name-id value) n)
       (CtfeLayoutInfoList slots index (+ n 1)))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
@@ -769,7 +769,7 @@
     [index : ctfe_key_map.Map (struct-get items index)]
     (begin
       (array-set! slots n value)
-      (ctfe_key_map.insert (&mut index) (ctfe-reflect-info-key-id value) n)
+      (ctfe_key_map.insert-ref! (&mut index) (ctfe-reflect-info-key-id value) n)
       (CtfeReflectInfoList slots index (+ n 1)))))
 
 (define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String

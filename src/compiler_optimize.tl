@@ -27829,10 +27829,10 @@
     [ids : opt_i64_i64_map.Map (struct-get names ids)]
     [fallback : opt_string_i64_map.Map (struct-get names fallback)]
     (begin
-      (opt_string_i64_map.insert (&mut fallback) name slot)
+      (opt_string_i64_map.insert-ref! (&mut fallback) name slot)
       (match (opt-function-logical-name-id name)
         [(CompilerIrMaybeNameId.Some name-id)
-          (opt_i64_i64_map.insert (&mut ids) name-id slot)]
+          (opt_i64_i64_map.insert-ref! (&mut ids) name-id slot)]
         [(CompilerIrMaybeNameId.No) unit])
       (OptFunctionNameIndex ids fallback))))
 

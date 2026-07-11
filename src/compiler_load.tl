@@ -2307,7 +2307,7 @@
         (compiler-load-exact-key-id-at name (- key-id 1)))]
     [(load_i64_string_map.LookupMissing)
       (begin
-        (load_i64_string_map.insert
+        (load_i64_string_map.insert-ref!
           (&mut compiler-load-exact-key-names)
           key-id
           name)

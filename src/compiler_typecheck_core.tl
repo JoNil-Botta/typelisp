@@ -8704,7 +8704,7 @@
               [replacement-id : i64
                 (ci.intern-generated-qualified-name name module-id base-id)]
               (begin
-                (tc_i64_i64_map.insert
+                (tc_i64_i64_map.insert-ref!
                   (&mut tc-generated-qualified-name-ids)
                   key-id
                   replacement-id)
@@ -8714,7 +8714,7 @@
             [generated-name-id : i64
               (ci.intern-generated-qualified-name name module-id base-id)]
             (begin
-              (tc_i64_i64_map.insert
+              (tc_i64_i64_map.insert-ref!
                 (&mut tc-generated-qualified-name-ids)
                 key-id
                 generated-name-id)
@@ -8743,7 +8743,7 @@
       (let
         [generated-name-id : i64 (ci.intern-generated-name name)]
         (begin
-          (tc_i64_i64_map.insert
+          (tc_i64_i64_map.insert-ref!
             (&mut tc-generated-module-name-ids)
             key-id
             generated-name-id)
@@ -52034,7 +52034,7 @@
   (match (tc_i64_i64_map.get (& macro-hygiene-global-name-ids) source-name-id)
     [(tc_i64_i64_map.LookupFound generated-name-id)
       (begin
-        (tc_i64_i64_map.insert
+        (tc_i64_i64_map.insert-ref!
           (&mut macro-hygiene-global-source-name-ids)
           generated-name-id
           source-name-id)
@@ -52043,11 +52043,11 @@
       (let
         [generated-name-id : i64 (ci.intern-generated-name generated-name)]
         (begin
-          (tc_i64_i64_map.insert
+          (tc_i64_i64_map.insert-ref!
             (&mut macro-hygiene-global-name-ids)
             source-name-id
             generated-name-id)
-          (tc_i64_i64_map.insert
+          (tc_i64_i64_map.insert-ref!
             (&mut macro-hygiene-global-source-name-ids)
             generated-name-id
             source-name-id)

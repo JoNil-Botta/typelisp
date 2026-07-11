@@ -112,7 +112,7 @@
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
-        (if (doc_path_map.insert-if-absent? seen path 1)
+        (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (begin
             (doc_render.doc-module-list-push
               modules
@@ -140,7 +140,7 @@
     [(AstDeclPathListStep.Cons path rest)
       (let
         [rest : AstDeclPathList rest]
-        (if (doc_path_map.insert-if-absent? seen path 1)
+        (if (doc_path_map.insert-if-absent-ref! seen path 1)
           (let
             [docs : doc_extract.DocExtraction
               (doc_extract.doc-extract-file path)]

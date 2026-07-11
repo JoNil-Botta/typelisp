@@ -38,89 +38,18 @@
     [pop-name : comptime.Expr (comptime.expr-var "Pop")]
     [pop-empty-name : comptime.Expr (comptime.expr-var "Pop.Empty")]
     [pop-ok-name : comptime.Expr (comptime.expr-var "Pop.Ok")]
-    [empty : comptime.ExprList (comptime.expr-list-empty)]
-    [place : comptime.Expr (comptime.expr-var "place")]
-    [value : comptime.Expr (comptime.expr-var "value")]
-    [empty-call : comptime.Expr
-      (comptime.expr-call (comptime.expr-var "expr-list-empty") empty)]
-    [borrow : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-mut-borrow")
-        (comptime.expr-list-cons place empty))]
-    [value-tail : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-list-cons")
-        (comptime.expr-list-cons
-          value
-          (comptime.expr-list-cons empty-call empty)))]
-    [one-arg-call-args : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-list-cons")
-        (comptime.expr-list-cons
-          borrow
-          (comptime.expr-list-cons value-tail empty)))]
-    [zero-arg-call-args : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-list-cons")
-        (comptime.expr-list-cons
-          borrow
-          (comptime.expr-list-cons empty-call empty)))]
-    [push-back-helper-name : String
-      (comptime.string-append module-name-text ".push-back-ref!")]
-    [push-front-helper-name : String
-      (comptime.string-append module-name-text ".push-front-ref!")]
-    [pop-front-helper-name : String
-      (comptime.string-append module-name-text ".pop-front-ref!")]
-    [pop-back-helper-name : String
-      (comptime.string-append module-name-text ".pop-back-ref!")]
-    [push-back-helper-name-expr : comptime.Expr
-      (comptime.expr-string push-back-helper-name)]
-    [push-front-helper-name-expr : comptime.Expr
-      (comptime.expr-string push-front-helper-name)]
-    [pop-front-helper-name-expr : comptime.Expr
-      (comptime.expr-string pop-front-helper-name)]
-    [pop-back-helper-name-expr : comptime.Expr
-      (comptime.expr-string pop-back-helper-name)]
-    [push-back-callee : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-var")
-        (comptime.expr-list-cons push-back-helper-name-expr empty))]
-    [push-front-callee : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-var")
-        (comptime.expr-list-cons push-front-helper-name-expr empty))]
-    [pop-front-callee : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-var")
-        (comptime.expr-list-cons pop-front-helper-name-expr empty))]
-    [pop-back-callee : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-var")
-        (comptime.expr-list-cons pop-back-helper-name-expr empty))]
-    [push-back-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          push-back-callee
-          (comptime.expr-list-cons one-arg-call-args empty)))]
-    [push-front-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          push-front-callee
-          (comptime.expr-list-cons one-arg-call-args empty)))]
-    [pop-front-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          pop-front-callee
-          (comptime.expr-list-cons zero-arg-call-args empty)))]
-    [pop-back-body : comptime.Expr
-      (comptime.expr-call
-        (comptime.expr-var "expr-call")
-        (comptime.expr-list-cons
-          pop-back-callee
-          (comptime.expr-list-cons zero-arg-call-args empty)))]
+    [push-back-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".push-back-ref!"))]
+    [push-front-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".push-front-ref!"))]
+    [pop-front-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".pop-front-ref!"))]
+    [pop-back-helper-name : comptime.Expr
+      (comptime.expr-string
+        (comptime.string-append module-name-text ".pop-back-ref!"))]
     `(begin
       (module ,module-name)
       (import stdlib.array)
@@ -278,13 +207,13 @@
       ;; mutable-borrow helper above. `*-ref!` remains for implementation code
       ;; that already owns an explicit mutable reference.
       (defmacro (push-back! [place : comptime.Expr] [value : comptime.Expr]) : unit
-        ,push-back-body)
+        (expr-mut-call1 ,push-back-helper-name place value))
       (defmacro (push-front! [place : comptime.Expr] [value : comptime.Expr]) : unit
-        ,push-front-body)
+        (expr-mut-call1 ,push-front-helper-name place value))
       (defmacro (pop-front! [place : comptime.Expr]) : ,pop-name
-        ,pop-front-body)
+        (expr-mut-call0 ,pop-front-helper-name place))
       (defmacro (pop-back! [place : comptime.Expr]) : ,pop-name
-        ,pop-back-body))))
+        (expr-mut-call0 ,pop-back-helper-name place)))))
 
 (cfg test (import "test.tl"))
 (cfg test (import (deque i64) as deque_i64))

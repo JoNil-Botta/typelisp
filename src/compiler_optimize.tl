@@ -23728,6 +23728,55 @@
       blocks)
     blocks))
 
+(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [fold-state : OptConstEnv (OptConstEnv.Nil)]
+    [strength-state : OptConstEnv (OptConstEnv.Nil)]
+    [cse-state : OptExprTable (OptExprTable.Nil)]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (match (opt-fold-instr
+        fold-state
+        (compiler-ir-instr-seq-ref instrs index))
+        [(OptInstrResult.Result next-fold folded)
+          (match (opt-strength-instr strength-state folded)
+            [(OptInstrResult.Result next-strength strengthened)
+              (match (opt-cse-instr cse-state strengthened)
+                [(OptCseResult.Result next-cse rewritten)
+                  (begin
+                    (compiler-ir-instr-seq-set! instrs index rewritten)
+                    (set! fold-state next-fold)
+                    (set! strength-state next-strength)
+                    (set! cse-state next-cse)
+                    (set! index (+ index 1)))])])]))))
+
+(define (opt-load-copy-instr-seq-rewrite!
+  [hs : OptLoadHeaderSet]
+  [state : OptLoadCseState]
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [load-state : OptLoadCseState state]
+    [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (match (opt-load-cse-dispatch
+        hs
+        false
+        sources
+        load-state
+        (compiler-ir-instr-seq-ref instrs index))
+        [(OptLoadCseResult.Result next-load loaded)
+          (match (opt-copy-instr copy-state loaded)
+            [(OptCopyResult.Result next-copy rewritten)
+              (begin
+                (compiler-ir-instr-seq-set! instrs index rewritten)
+                (set! load-state next-load)
+                (set! copy-state next-copy)
+                (set! index (+ index 1)))])]))))
+
 (define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
@@ -23735,26 +23784,23 @@
         [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq instrs)]
         ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
         ;; pure expressions, propagate the resulting copies, then remove duplicate
-        ;; proven bounds checks; function-level DCE drops dead copies.
-        ;; The first five stages are one-in/one-out rewrites and run in place on
-        ;; the cloned block sequence; only bounds-check elimination still
-        ;; materializes a list because it can drop instructions.
+        ;; proven bounds checks; function-level DCE drops dead copies. Independent
+        ;; per-stage states preserve the old scheduling while the forward
+        ;; one-in/one-out stages share two in-place traversals of the cloned block
+        ;; sequence; only bounds-check elimination still materializes a list.
         ;; Fold runs ONCE: it is a single forward pass that binds every folded
         ;; result into its env, so over the block it already reaches a fixpoint --
         ;; a second `opt-fold-instrs` over the result only re-walked and rebuilt
         ;; the list without changing it (byte-identical output, ~0.9% of
         ;; self-compile).
         (begin
-          (opt-fold-instr-seq-rewrite! (OptConstEnv.Nil) work)
-          (opt-strength-instr-seq-rewrite! (OptConstEnv.Nil) work)
-          (opt-cse-instr-seq-rewrite! (OptExprTable.Nil) work)
+          (opt-fold-strength-cse-instr-seq-rewrite! work)
           (set! work (opt-dead-store-instr-seq hs work))
-          (opt-load-cse-instr-seq-rewrite!
+          (opt-load-copy-instr-seq-rewrite!
             hs
             (opt-load-cse-empty-state-for-size
               (compiler-ir-instr-seq-count work))
             work)
-          (opt-copy-instr-seq-rewrite! (OptCopyEnv.Nil) work)
           (compiler-ir-block
             label
             (opt-bounds-instrs

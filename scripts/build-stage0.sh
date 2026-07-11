@@ -32,14 +32,29 @@ if [ ! -x "$SEED" ]; then
     exit 1
 fi
 
+# The first stage may run from a scratch directory to select the legacy
+# prelude, so normalize a caller-provided relative seed path while at ROOT.
+case "$SEED" in
+    /* | [A-Za-z]:[\\/]*) ;;
+    *) SEED="$ROOT/$SEED" ;;
+esac
+
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
 configure_toolchain
+. "$ROOT/scripts/lib-bootstrap-ctfe.sh"
 
 WORKDIR="$ROOT/target/build-stage0"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 mkdir -p "$(dirname -- "$OUT")"
+
+SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_while_legacy_stdlib "$ROOT" "$SEED" "$WORKDIR")
+if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
+    echo "[build-stage0] seed lacks CTFE while; using the legacy prelude for stage1"
+else
+    echo "[build-stage0] seed supports CTFE while; using iterative core macros"
+fi
 
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
@@ -74,12 +89,32 @@ while [ "$i" -le "$STAGES" ]; do
         STAGE_BIN="$WORKDIR/stage$i$NL_BIN_EXT"
     fi
     echo "[build-stage0] stage$i: compile src/main.tl ($NL_BOOTSTRAP_TARGET)"
-    if ! run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
-        "$PREV" compile src/main.tl -o "$STAGE_ASM" \
-        --target "$NL_BOOTSTRAP_TARGET" \
-        $(native_target_cfg_args) \
-        --stdlib-root stdlib --stdlib-root src --opt-level 2 \
-        --cfg stage0-build-version; then
+    stage_compile_failed=0
+    if [ "$i" -eq 1 ] && [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
+        SEED_BOOTSTRAP_CWD="$WORKDIR/seed-bootstrap-cwd"
+        mkdir -p "$SEED_BOOTSTRAP_CWD"
+        if ! (
+            cd "$SEED_BOOTSTRAP_CWD"
+            run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+                "$PREV" compile "$ROOT/src/main.tl" -o "$STAGE_ASM" \
+                --target "$NL_BOOTSTRAP_TARGET" \
+                $(native_target_cfg_args) \
+                --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2 \
+                --cfg stage0-build-version
+        ); then
+            stage_compile_failed=1
+        fi
+    else
+        if ! run_with_heartbeat_capture "compile stage$i" "$COMPILE_STDOUT" "$COMPILE_STDERR" \
+            "$PREV" compile src/main.tl -o "$STAGE_ASM" \
+            --target "$NL_BOOTSTRAP_TARGET" \
+            $(native_target_cfg_args) \
+            --stdlib-root stdlib --stdlib-root src --opt-level 2 \
+            --cfg stage0-build-version; then
+            stage_compile_failed=1
+        fi
+    fi
+    if [ "$stage_compile_failed" -ne 0 ]; then
         echo "[build-stage0] stage$i compiler failed while compiling src/main.tl" >&2
         echo "[build-stage0] compiler stdout:" >&2
         sed 's/^/  /' "$COMPILE_STDOUT" >&2 || true

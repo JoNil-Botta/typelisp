@@ -49,7 +49,6 @@
         `(begin
           (module ,module-name)
           (import stdlib.array)
-          (import stdlib.comptime)
           (import stdlib.string)
           (defenum Slot
             (Empty)
@@ -322,22 +321,18 @@
               [Entry.None fallback]))
           ;; Public set updates take a caller place. The `*-ref!` helpers are
           ;; retained only for code that already owns an explicit mutable ref.
-          (defmacro (insert! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            (comptime.expr-mut-call1 (expr-var ,insert-helper-name) place key))
-          (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            (comptime.expr-mut-call1 (expr-var ,remove-helper-name) place key))
-          (defmacro (remove-borrowed!
-            [place : comptime.Expr]
-            [key : comptime.Expr]) : unit
-            (comptime.expr-mut-call1
-              (expr-var ,remove-borrowed-helper-name)
-              place
-              key)))]
+          ;; Direct CTFE helper aliases avoid another generated-module comptime
+          ;; import; stdlib.array above still materializes this module body.
+          (defmacro (insert! [place : Expr] [key : Expr]) : unit
+            (expr-mut-call1 (expr-var ,insert-helper-name) place key))
+          (defmacro (remove! [place : Expr] [key : Expr]) : unit
+            (expr-mut-call1 (expr-var ,remove-helper-name) place key))
+          (defmacro (remove-borrowed! [place : Expr] [key : Expr]) : unit
+            (expr-mut-call1 (expr-var ,remove-borrowed-helper-name) place key)))]
       ["i64"
         `(begin
           (module ,module-name)
           (import stdlib.array)
-          (import stdlib.comptime)
           (defenum Slot
             (Empty)
             (Tombstone)
@@ -569,10 +564,12 @@
               [Entry.None fallback]))
           ;; Public set updates take a caller place. The `*-ref!` helpers are
           ;; retained only for code that already owns an explicit mutable ref.
-          (defmacro (insert! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            (comptime.expr-mut-call1 (expr-var ,insert-helper-name) place key))
-          (defmacro (remove! [place : comptime.Expr] [key : comptime.Expr]) : unit
-            (comptime.expr-mut-call1 (expr-var ,remove-helper-name) place key)))]
+          ;; Direct CTFE helper aliases avoid another generated-module comptime
+          ;; import; stdlib.array above still materializes this module body.
+          (defmacro (insert! [place : Expr] [key : Expr]) : unit
+            (expr-mut-call1 (expr-var ,insert-helper-name) place key))
+          (defmacro (remove! [place : Expr] [key : Expr]) : unit
+            (expr-mut-call1 (expr-var ,remove-helper-name) place key)))]
       [_
         `(begin
           (module ,module-name))])))

@@ -53,7 +53,6 @@
     `(begin
       (module ,module-name)
       (import stdlib.array)
-      (import stdlib.comptime)
       (defstruct ,deque-name
         (slots (Array ,T))
         (head i64)
@@ -205,15 +204,18 @@
               (,pop-ok-name value)))))
       ;; Public mutators take a caller place and reuse the ordinary explicit
       ;; mutable-borrow helper above. `*-ref!` remains for implementation code
-      ;; that already owns an explicit mutable reference.
-      (defmacro (push-back! [place : comptime.Expr] [value : comptime.Expr]) : unit
-        (comptime.expr-mut-call1 (expr-var ,push-back-helper-name) place value))
-      (defmacro (push-front! [place : comptime.Expr] [value : comptime.Expr]) : unit
-        (comptime.expr-mut-call1 (expr-var ,push-front-helper-name) place value))
-      (defmacro (pop-front! [place : comptime.Expr]) : ,pop-name
-        (comptime.expr-mut-call0 (expr-var ,pop-front-helper-name) place))
-      (defmacro (pop-back! [place : comptime.Expr]) : ,pop-name
-        (comptime.expr-mut-call0 (expr-var ,pop-back-helper-name) place)))))
+      ;; that already owns an explicit mutable reference. Keep these generated
+      ;; macro bodies on direct CTFE helper aliases: the module already imports
+      ;; its runtime dependency, so a redundant comptime import would force an
+      ;; extra generated-import materialization.
+      (defmacro (push-back! [place : Expr] [value : Expr]) : unit
+        (expr-mut-call1 (expr-var ,push-back-helper-name) place value))
+      (defmacro (push-front! [place : Expr] [value : Expr]) : unit
+        (expr-mut-call1 (expr-var ,push-front-helper-name) place value))
+      (defmacro (pop-front! [place : Expr]) : ,pop-name
+        (expr-mut-call0 (expr-var ,pop-front-helper-name) place))
+      (defmacro (pop-back! [place : Expr]) : ,pop-name
+        (expr-mut-call0 (expr-var ,pop-back-helper-name) place)))))
 
 (cfg test (import "test.tl"))
 (cfg test (import (deque i64) as deque_i64))

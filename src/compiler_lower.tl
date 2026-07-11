@@ -42917,6 +42917,17 @@
         (arena.tl_arena_destroy lower-scratch-arena))
       (set! lower-scratch-arena 0))))
 
+(define (lower-scratch-arena-release-after-overflow!
+  [scratch : i64]
+  [scratch-head : i64]) : unit
+  ;; Region reset retains overflow mappings to preserve the public stale-address
+  ;; semantics. A lowered function has already cloned every live result into the
+  ;; IR/enclosing arenas, so recycle an overflowed internal scratch arena here
+  ;; instead of accumulating one 64 MiB mapping per large function.
+  (if (= scratch scratch-head)
+    unit
+    (lower-scratch-arena-release!)))
+
 ;; Dedicated arena for the escaped (lowered) IR function bodies. The
 ;; lowered IR is consumed exactly once: at opt levels >= 1 the optimizer
 ;; deep-clones every surviving function into the enclosing arena
@@ -43061,6 +43072,9 @@
                           (arena.tl_arena_set scratch-head)
                           (arena.tl_region_reset mark)
                           (arena.tl_arena_set new-enclosing))
+                        (lower-scratch-arena-release-after-overflow!
+                          scratch
+                          scratch-head)
                         (tc-nominal-owner-cache-reset!)
                         (if prev-persist
                           unit
@@ -43080,6 +43094,9 @@
                       (arena.tl_arena_set scratch-head)
                       (arena.tl_region_reset mark)
                       (arena.tl_arena_set new-enclosing))
+                    (lower-scratch-arena-release-after-overflow!
+                      scratch
+                      scratch-head)
                     (tc-nominal-owner-cache-reset!)
                     (if prev-persist
                       unit

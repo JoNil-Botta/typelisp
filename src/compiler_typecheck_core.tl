@@ -1034,16 +1034,20 @@
   (tc-diag-at-start (ty-node-pool-exhausted-message)))
 
 (define (tc-typecheck-result-with-pool-check [result : ResultCompilerTypecheck]) : ResultCompilerTypecheck
-  (if (ty-node-pool-exhausted?)
-    (ResultCompilerTypecheck.Err (box (tc-ty-node-pool-exhausted-diagnostic)))
-    result))
+  (begin
+    (tc-fn-scratch-arena-release!)
+    (if (ty-node-pool-exhausted?)
+      (ResultCompilerTypecheck.Err (box (tc-ty-node-pool-exhausted-diagnostic)))
+      result)))
 
 (define (tc-typecheck-checked-result-with-pool-check
   [result : ResultCompilerTypecheckChecked]) : ResultCompilerTypecheckChecked
-  (if (ty-node-pool-exhausted?)
-    (ResultCompilerTypecheckChecked.Err
-      (box (tc-ty-node-pool-exhausted-diagnostic)))
-    result))
+  (begin
+    (tc-fn-scratch-arena-release!)
+    (if (ty-node-pool-exhausted?)
+      (ResultCompilerTypecheckChecked.Err
+        (box (tc-ty-node-pool-exhausted-diagnostic)))
+      result)))
 
 (cfg
   compile-profile
@@ -1822,6 +1826,10 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-vector-family-fast-expansions : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-live-rebuilds : i64
     0))
 (cfg
@@ -1917,6 +1925,7 @@
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
+      (set! compiler-tc-macro-vector-family-fast-expansions 0)
       (set! compiler-tc-macro-live-rebuilds 0)
       (set! compiler-tc-macro-live-reuses 0)
       (set! compiler-tc-macro-live-registry-rebuilds 0)
@@ -1961,6 +1970,13 @@
     (set!
       compiler-tc-macro-generated-module-memo-hits
       (+ compiler-tc-macro-generated-module-memo-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-vector-family-fast-expansion) : unit
+    (set!
+      compiler-tc-macro-vector-family-fast-expansions
+      (+ compiler-tc-macro-vector-family-fast-expansions 1))))
 
 (cfg
   compile-profile
@@ -52647,7 +52663,7 @@
   [definition-module : String]) : bool
   (and
     (string.eq definition-module "stdlib.vector")
-    (tc-name-base-eq? macro-name "vector-family")))
+    (tc-name-base-eq? macro-name "family")))
 
 (define (macro-vf-name-expr [expr : AstExpr]) : TcMaybeString
   (match (ast-expr-unspan expr)
@@ -53077,8 +53093,12 @@
             [(TcMaybeString.Some vec-name)
               (match (macro-vf-name-expr (ast-node-get prefix-id))
                 [(TcMaybeString.Some base)
-                  (ResultMacroParsedDecls.Ok
-                    (macro-vf-decls elem-ty vec-name base))]
+                  (begin
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-note-vector-family-fast-expansion))
+                    (ResultMacroParsedDecls.Ok
+                      (macro-vf-decls elem-ty vec-name base)))]
                 [(TcMaybeString.No)
                   (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
             [(TcMaybeString.No) (ResultMacroParsedDecls.Ok (ast-decl-list-new))])]
@@ -57811,6 +57831,13 @@
       cfgs)
       [(ResultMacroExpand.Ok expanded expanded-paths)
         (let
+          [_emit-vector-family-fast-count : unit
+            (cfg
+              compile-profile
+              (compiler-tc-macro-counter-profile-line
+                "vector_family_fast_expansions"
+                compiler-tc-macro-vector-family-fast-expansions)
+              unit)]
           [_release-scratch : unit (macro-expand-scratch-release!)]
           (if (compiler-specialize-needed? expanded)
             (match (gen-normalize-program-with-paths-and-pools
@@ -57825,6 +57852,11 @@
             (ResultMacroExpand.Ok expanded expanded-paths)))]
       [(ResultMacroExpand.Err diag)
         (begin
+          (cfg
+            compile-profile
+            (compiler-tc-macro-counter-profile-line
+              "vector_family_fast_expansions"
+              compiler-tc-macro-vector-family-fast-expansions))
           (macro-expand-scratch-release!)
           (ResultMacroExpand.Err diag))])))
 
@@ -58478,6 +58510,18 @@
         (arena.tl_arena_destroy tc-fn-scratch-arena))
       (set! tc-fn-scratch-arena 0))))
 
+(define (tc-fn-scratch-arena-release-after-overflow!
+  [scratch : i64]
+  [scratch-head : i64]) : unit
+  ;; A nonzero region reset deliberately retires overflow segments so stale
+  ;; unsafe pointers are never remapped. Function-body scratch has no surviving
+  ;; values after clone-out, so destroy the whole arena when a body crossed its
+  ;; first segment; otherwise thousands of checked functions retain one 64 MiB
+  ;; mapping apiece until the end of the compile.
+  (if (= scratch scratch-head)
+    unit
+    (tc-fn-scratch-arena-release!)))
+
 ;; Function bodies dominate typecheck allocation (~96% of the phase's live
 ;; delta) and the check returns only unit -- everything it allocates
 ;; is garbage once the body is checked, but the program-lifetime arena never
@@ -58524,6 +58568,7 @@
                 (arena.tl_arena_set scratch-head)
                 (arena.tl_region_reset mark)
                 (arena.tl_arena_set new-enclosing))
+              (tc-fn-scratch-arena-release-after-overflow! scratch scratch-head)
               (if prev-persist
                 unit
                 (intern-persistent-storage-disable!))

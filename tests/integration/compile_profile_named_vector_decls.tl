@@ -12,6 +12,12 @@
 
 (vector.family ProfileVecDoc ProfileVecDocList profile-vec-doc-list)
 
+(defstruct ProfileVecSpan
+  (start i64)
+  (end i64))
+
+(vector.family ProfileVecSpan ProfileVecSpanList profile-vec-span-list)
+
 (define (profile-core-after-vector [n : i64]) : i64
   (cond [(and (> n 0) (< n 10)) 42] [else 0]))
 

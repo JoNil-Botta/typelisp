@@ -31369,9 +31369,10 @@
           [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))))
 
 (define (tc-nominal-owner-context [ctx : TcContext] [owner-name : String]) : TcContext
-  (if (tc-name-qualified? owner-name)
-    (tc-context-with-module ctx (tc-qualified-name-module owner-name))
-    ctx))
+  ;; Reflected fields retain the declaration's source spelling. Generated
+  ;; modules can match a nominal value from another module, so resolve those
+  ;; fields in the nominal declaration's owner rather than the generated body.
+  (tc-context-with-owner-name-module ctx owner-name))
 
 (defenum ResultTcVariantPayloadTypes
   (Ok AstTypeList)
@@ -31422,7 +31423,7 @@
               [(ResultAstTypeList.Ok fields)
                 (match (tc-variant-pattern-payload-types
                   ctx
-                  enum-name
+                  owner
                   enum-lifetimes
                   fields)
                   [(ResultTcVariantPayloadTypes.Ok payload-fields)
@@ -31817,7 +31818,7 @@
               [(ResultAstTypeList.Ok fields)
                 (match (tc-variant-pattern-payload-types
                   ctx
-                  enum-name
+                  owner
                   enum-lifetimes
                   fields)
                   [(ResultTcVariantPayloadTypes.Ok payload-fields)
@@ -51663,7 +51664,25 @@
   [expanded-args : AstExprList]
   [call-expr : AstExpr]) : ResultMacroValueEnv
   (begin
-    (tc-context-capture-active-pools! ctx)
+    ;; Macro argument normalization may have already extended this context
+    ;; while the global active pool still points at an older caller snapshot.
+    ;; Do not overwrite the newer context in that case; otherwise retain the
+    ;; usual capture of the active pool.
+    (if (ast-node-pool-compat-context-active?)
+      unit
+      (let
+        [owned-pools : AstNodePoolContext (tc-context-pools ctx)]
+        [active-pools : AstNodePoolContext
+          (ast-node-pool-context-capture-active)]
+        (if (or
+          (>
+            (ast-node-pool-context-expr-len owned-pools)
+            (ast-node-pool-context-expr-len active-pools))
+          (>
+            (ast-node-pool-context-type-len owned-pools)
+            (ast-node-pool-context-type-len active-pools)))
+          (tc-context-install-pools! ctx)
+          (tc-context-capture-active-pools! ctx))))
     (match (macro-bind-params
       ctx
       decls

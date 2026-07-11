@@ -196,6 +196,7 @@ spmd_scan_scalar|tests/integration/spmd_scan_scalar.tl|42|-|-|-
 spmd_shuffle_scalar|tests/integration/spmd_shuffle_scalar.tl|42|-|-|-
 spmd_shuffle_lane1_trap|tests/integration/spmd_shuffle_lane1_trap.tl|134|-|-|-|expected-stderr:tl: array index out of bounds\n
 stdlib_io|tests/integration/stdlib_io.tl|42|-|-|stdlib/io.tl stdlib/string.tl
+stdlib_eq_aggregate|tests/integration/stdlib_eq_aggregate.tl|42|-|-|stdlib/eq.tl stdlib/comptime.tl
 stdlib_json|tests/integration/stdlib_json.tl|42|-|-|stdlib/json.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl
 stdlib_serialize_json|tests/integration/stdlib_serialize_json.tl|42|-|-|stdlib/json.tl stdlib/serialize.tl stdlib/str_cat.tl stdlib/string.tl stdlib/text_buf_family.tl stdlib/text_buf.tl stdlib/io.tl stdlib/vector.tl serialize_enum_fixture.tl
 stdlib_serialize|tests/integration/stdlib_serialize.tl|42|-|-|stdlib/comptime.tl stdlib/option.tl stdlib/result.tl stdlib/serialize.tl stdlib/string.tl serialize_toy_format.tl serialize_enum_fixture.tl

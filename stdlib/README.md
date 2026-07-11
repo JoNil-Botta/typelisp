@@ -99,9 +99,14 @@ use.
   `path-list-vec`, `path-split-vec`, and `path-join-vec`. Import it
   with `(import stdlib.env)`.
 - `eq.tl`: generated concrete equality modules. Import `stdlib.eq`, then
-  import `(eq.eq T)` for type-specific `eq` / `eq?` functions. The first
-  implementation supports scalar values and `String`; aggregate equality is
-  added in follow-up work.
+  import `(eq.eq T)` for type-specific `eq` / `eq?` functions. It supports
+  scalar values, `String`, and finite structural equality for structs, enums,
+  tuples, and fixed arrays, recursively evaluating each top-level operand once.
+  Generated modules are keyed by their requested concrete root type; nested
+  aggregates expand inline instead of recursively importing modules. Boxed or
+  indirect values (references, raw pointers, and function values), dynamic
+  arrays, and unresolved type/region values are rejected at compile time with
+  `eq: unsupported type` rather than attempting unbounded structural expansion.
 - `cpu.tl`: host CPU SIMD ISA detection via stdlib-owned `cpuid`/`xgetbv`
   wrappers over backend runtime symbols (#1167). `runs-avx2?` /
   `runs-avx512f?` / `runs-avx512bw?` report an ISA as runnable only when both

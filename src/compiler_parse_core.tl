@@ -5,6 +5,7 @@
 ;; the parsed `AstProgram` for typechecking/lowering.
 (import stdlib.array)
 (import stdlib.io)
+(import compiler_intern as ci)
 (import "compiler_ast_types.tl")
 (import "compiler_diagnostic.tl")
 (import "read.tl")
@@ -955,6 +956,8 @@
   (array.make-array i64 512))
 (define compiler-parse-dispatch-index-generation : i64
   -1)
+(define compiler-parse-dispatch-index-pool-data-addr : i64
+  -1)
 (define compiler-parse-dispatch-index-marker-id : i64
   -1)
 (define compiler-parse-dispatch-index-ready : bool
@@ -967,6 +970,13 @@
       (begin
         (array-set! compiler-parse-dispatch-index-keys i 0)
         (set! i (+ i 1))))))
+
+(define (compiler-parse-dispatch-index-current?) : bool
+  (and
+    (= compiler-parse-dispatch-index-generation (intern-generation))
+    (=
+      compiler-parse-dispatch-index-pool-data-addr
+      (ci.intern-active-pool-data-addr))))
 
 (define (compiler-parse-dispatch-index-insert! [name-id : i64] [tag : i64]) : bool
   (let
@@ -995,7 +1005,10 @@
   [dispatch : sym_i64_env.SymI64Env]) : unit
   (let
     [generation : i64 (intern-generation)]
-    (if (= compiler-parse-dispatch-index-generation generation)
+    [pool-data-addr : i64 (ci.intern-active-pool-data-addr)]
+    (if (and
+      (= compiler-parse-dispatch-index-generation generation)
+      (= compiler-parse-dispatch-index-pool-data-addr pool-data-addr))
       unit
       (let
         [cursor : sym_i64_env.SymI64Env dispatch]
@@ -1018,7 +1031,8 @@
           (if (< compiler-parse-dispatch-index-marker-id 0)
             (set! compiler-parse-dispatch-index-ready false)
             unit)
-          (set! compiler-parse-dispatch-index-generation generation))))))
+          (set! compiler-parse-dispatch-index-generation generation)
+          (set! compiler-parse-dispatch-index-pool-data-addr pool-data-addr))))))
 
 ;; A complete dispatch naturally starts with the defdispatch binding. Derived
 ;; cfg dispatches repeat that same binding at the head as a semantics-neutral
@@ -1026,7 +1040,7 @@
 (define (compiler-parse-dispatch-indexed? [dispatch : sym_i64_env.SymI64Env]) : bool
   (and
     compiler-parse-dispatch-index-ready
-    (= compiler-parse-dispatch-index-generation (intern-generation))
+    (compiler-parse-dispatch-index-current?)
     (match dispatch
       [(sym_i64_env.SymI64Bind name-id tag _)
         (and
@@ -1037,7 +1051,7 @@
 (define (compiler-parse-dispatch-index-mark [dispatch : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (if (and
     compiler-parse-dispatch-index-ready
-    (= compiler-parse-dispatch-index-generation (intern-generation)))
+    (compiler-parse-dispatch-index-current?))
     (sym_i64_env.sym-i64-bind-id
       dispatch
       compiler-parse-dispatch-index-marker-id

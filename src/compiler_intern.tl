@@ -164,6 +164,15 @@
 (define (intern-pool-len) : i64
   intern-pool-count)
 
+;; Identity of the currently installed compatibility intern table. Generation
+;; alone is not enough for process-global caches: CompilerDriverState can swap
+;; between distinct tables whose per-state generation counters are equal.
+(define (intern-active-pool-data-addr) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data intern-pool-slots) : (Ptr u8))))
+    : i64))
+
 (define intern-map-slots : (Array InternSlot)
   (make-array InternSlot 262144))
 (define intern-map-ready : bool

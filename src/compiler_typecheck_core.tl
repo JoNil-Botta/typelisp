@@ -45939,10 +45939,12 @@
 ;; A generated module is additive: its canonical declarations live in a fresh
 ;; module namespace and its trailing marker only imports that module into the
 ;; caller. Keep the already-built top env and fold those two pieces into it.
-;; Arbitrary Decls splices and freshly loaded files retain the conservative
-;; whole-program rebuild.
+;; Arbitrary Decls splices re-resolve stale cached signatures and refresh their
+;; local source tail. Freshly loaded files retain the conservative whole-program
+;; rebuild because their imports can alter arbitrary module alias surfaces.
 (defenum MacroSpliceEnvPlan
   (Rebuild)
+  (Refresh TcTypeEnv AstDeclList AstDeclList)
   (Extend TcTypeEnv AstDeclList AstDeclList AstDeclList))
 
 (defenum MacroMaybeGeneratedModuleExtension
@@ -57443,16 +57445,91 @@
         (macro-decl-reflection-relevant? decl)
         (macro-decls-reflection-relevant? rest))]))
 
-;; When the decl walk splices generated or freshly loaded declarations that
-;; introduce new names (types/modules/macros) the rest of the walk references,
-;; rebuild the live symbols/registries + top-env over the current whole-program
-;; view so those names resolve, then continue the walk over the spliced tail:
-;; the same cache resets, the same macro-live-symbols rebuild (forced via
-;; invalidate), the same tc-build-top-env, and the same ctfe-env reuse the pass
-;; setup runs -- so the tail is expanded identically to a whole-program re-pass,
-;; but the already-expanded prefix is kept instead of being re-walked. `module`
-;; is the walk's active module at the splice site, threaded into the returned
-;; context so the tail resolves in the right module namespace.
+;; A forced splice always rebuilds live symbols/registries over the current
+;; program view. Its top env follows the narrowest correct plan: generated
+;; modules append an isolated namespace, arbitrary Decls refresh unresolved
+;; cached signatures plus their source-local tail, and newly loaded files keep
+;; the conservative whole-program rebuild because imports can alter unrelated
+;; alias surfaces. `module` is the active namespace at the splice site.
+(define (tc-top-env-binding-context [ctx : TcContext] [name-id : i64]) : TcContext
+  (if (tc-name-qualified-id? name-id)
+    (tc-context-with-module ctx (tc-qualified-name-module (intern-str name-id)))
+    (tc-context-with-module ctx "")))
+
+;; A splice rebuilds symbols before it rebuilds the type env. Most cached
+;; bindings are already final nominal/scalar types; only signatures that still
+;; contain `Var`/`VarArgs` nodes can change when the new symbols appear. Walk
+;; each cache's retained binding keys until every indexed value has been seen,
+;; and re-resolve just those values in the binding's module context. The seen
+;; array preserves the cache's head-most binding when a raw spine contains
+;; shadowed duplicates.
+(define (tc-top-env-reresolve-cache-layer!
+  [ctx : TcContext]
+  [ids : tc_i64_i64_map.Map]
+  [values : (Array AstType)]
+  [env : TcTypeEnv]) : unit
+  (let
+    [seen : (Array i64) (array.make-array i64 (array.length values))]
+    [remaining : i64 (tc_i64_i64_map.len (& ids))]
+    [cur : TcTypeEnv env]
+    [done : bool false]
+    (while (and (not done) (> remaining 0))
+      (match cur
+        [(TcTypeEnv.Nil) (set! done true)]
+        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]
+        [(TcTypeEnv.Bind name-id _ rest)
+          (begin
+            (match (tc_i64_i64_map.get (& ids) name-id)
+              [(tc_i64_i64_map.LookupFound index)
+                (if (= (array-ref seen index) 0)
+                  (let
+                    [ty : AstType (array-ref values index)]
+                    (begin
+                      (if (tc-type-needs-resolution? ty)
+                        (array-set!
+                          values
+                          index
+                          (tc-resolve-type
+                            (tc-top-env-binding-context ctx name-id)
+                            ty))
+                        unit)
+                      (array-set! seen index 1)
+                      (set! remaining (- remaining 1))))
+                  unit)]
+              [(tc_i64_i64_map.LookupMissing) unit])
+            (set! cur (box-get rest)))]))))
+
+(define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
+  (match env
+    [(TcTypeEnv.Cache ids values _ _ _ _ partial rest below)
+      (begin
+        (tc-top-env-reresolve-cache-layer! ctx ids values (box-get rest))
+        (if partial
+          (tc-top-env-reresolve-caches! ctx (box-get below))
+          unit))]
+    [_ unit]))
+
+(define (tc-refresh-top-env-for-splice
+  [ctx : TcContext]
+  [base-env : TcTypeEnv]
+  [splice : AstDeclList]
+  [refresh-decls : AstDeclList]
+  [module : String]) : ResultTcEnv
+  (begin
+    (tc-top-env-reresolve-caches! ctx base-env)
+    (match (tc-build-top-env-list-explicit-in-module ctx splice base-env module)
+      [(ResultTcEnv.Ok splice-env)
+        (match (tc-build-top-env-list-explicit-in-module
+          ctx
+          refresh-decls
+          splice-env
+          module)
+          [(ResultTcEnv.Ok refreshed-env)
+            (ResultTcEnv.Ok
+              (tc-env-with-cache-layer-over-explicit refreshed-env))]
+          [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])]
+      [(ResultTcEnv.Err message) (ResultTcEnv.Err message)])))
+
 (define (macro-splice-top-env
   [ctx : TcContext]
   [program : AstProgram]
@@ -57461,6 +57538,8 @@
   [plan : MacroSpliceEnvPlan]) : ResultTcEnv
   (match plan
     [(MacroSpliceEnvPlan.Rebuild) (tc-build-top-env ctx program)]
+    [(MacroSpliceEnvPlan.Refresh base-env splice refresh-decls)
+      (tc-refresh-top-env-for-splice ctx base-env splice refresh-decls module)]
     [(MacroSpliceEnvPlan.Extend base-env summary marker refresh-decls)
       (match (env-extend-with-module ctx base-env summary)
         [(ResultTcEnv.Ok module-env)
@@ -57787,7 +57866,13 @@
                                         expanded
                                         cur-module)
                                         [(MacroMaybeGeneratedModuleExtension.No)
-                                          MacroSpliceEnvPlan.Rebuild]
+                                          (MacroSpliceEnvPlan.Refresh
+                                            cur-top-env
+                                            expanded
+                                            (macro-scratch-decl-list-filter-path
+                                              rest
+                                              rest-paths
+                                              decl-path))]
                                         [(MacroMaybeGeneratedModuleExtension.Some
                                             summary
                                             marker)

@@ -2337,6 +2337,19 @@
           (set! index (+ index 1))))
       unit)))
 
+(define (opt-collect-block-seq-uses-array-into
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (begin
+        (match (compiler-ir-block-seq-ref blocks index)
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-collect-instr-seq-uses-array items instrs)])
+        (set! index (+ index 1))))))
+
 (define (opt-collect-blocks-uses-array-into
   [items : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
@@ -2349,9 +2362,7 @@
             (opt-collect-instr-seq-uses-array items instrs)
             (opt-collect-blocks-uses-array-into items (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-collect-blocks-uses-array-into
-        items
-        (compiler-ir-block-seq-to-list seq))]))
+      (opt-collect-block-seq-uses-array-into items seq)]))
 
 (define (opt-collect-blocks-uses-array
   [vars : i64]
@@ -7244,6 +7255,25 @@
     8
     (* count 2)))
 
+(define (opt-cfg-index-fill-label-seq!
+  [blocks : CompilerIrBlockSeq]
+  [ids : opt_string_i64_map.Map]
+  [labels : (Array String)]
+  [base : i64]) : opt_string_i64_map.Map
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block label _)
+              (begin
+                (array-set! labels (+ base index) label)
+                (opt_string_i64_map.insert-ref! (&mut ids) label (+ base index)))])
+          (set! index (+ index 1))))
+      ids)))
+
 (define (opt-cfg-index-fill-labels!
   [blocks : CompilerIrBlockList]
   [ids : opt_string_i64_map.Map]
@@ -7259,11 +7289,7 @@
             (opt_string_i64_map.insert-ref! (&mut ids) label index)
             (opt-cfg-index-fill-labels! (box-get rest) ids labels (+ index 1)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-labels!
-        (compiler-ir-block-seq-to-list seq)
-        ids
-        labels
-        index)]))
+      (opt-cfg-index-fill-label-seq! seq ids labels index)]))
 
 (define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
   (match items
@@ -7361,6 +7387,31 @@
           [(opt_string_i64_map.LookupMissing) unit])
         (opt-cfg-index-add-pred-edges! pred-rows ids source-id (box-get rest)))]))
 
+(define (opt-cfg-index-fill-row-seq!
+  [blocks : CompilerIrBlockSeq]
+  [ids : opt_string_i64_map.Map]
+  [succ-rows : (Array OptI64List)]
+  [pred-rows : (Array OptI64List)]
+  [base : i64]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (let
+        [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+        [next-label : String
+          (if (< (+ index 1) count)
+            (match (compiler-ir-block-seq-ref blocks (+ index 1))
+              [(CompilerIrBlock.Block label _) label])
+            "")]
+        [succs : OptLabelSet
+          (opt-cfg-block-successors-with-next block next-label)]
+        [row : i64 (+ base index)]
+        (begin
+          (array-set! succ-rows row (opt-cfg-index-label-set-to-ids succs ids))
+          (opt-cfg-index-add-pred-edges! pred-rows ids row succs)
+          (set! index (+ index 1)))))))
+
 (define (opt-cfg-index-fill-rows!
   [blocks : CompilerIrBlockList]
   [ids : opt_string_i64_map.Map]
@@ -7390,12 +7441,7 @@
                 pred-rows
                 (+ index 1))))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-rows!
-        (compiler-ir-block-seq-to-list seq)
-        ids
-        succ-rows
-        pred-rows
-        index)]))
+      (opt-cfg-index-fill-row-seq! seq ids succ-rows pred-rows index)]))
 
 (define (opt-cfg-csr-fill-rows!
   [rows : (Array OptI64List)]
@@ -12573,6 +12619,41 @@
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-fold-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-cfg-fold-branches-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (begin
+        (compiler-ir-instr-seq-set!
+          instrs
+          index
+          (opt-cfg-fold-branch (compiler-ir-instr-seq-ref instrs index)))
+        (set! index (+ index 1))))))
+
+(define (opt-cfg-fold-branches-block-seq-rewrite! [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (begin
+        (match (compiler-ir-block-seq-ref blocks index)
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-cfg-fold-branches-instr-seq-rewrite! instrs)])
+        (set! index (+ index 1))))))
+
+(define (opt-cfg-fold-branches-blocks-rewrite! [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-cfg-fold-branches-instr-seq-rewrite! instrs)])
+        (opt-cfg-fold-branches-blocks-rewrite! (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-cfg-fold-branches-block-seq-rewrite! seq)]))
+
 (define (opt-cfg-instr-successors [set : OptLabelSet] [instr : CompilerIrInstr]) : OptLabelSet
   (match instr
     [(CompilerIrInstr.Jump label) (opt-label-add set label)]
@@ -17654,6 +17735,65 @@
     [folded : CompilerIrBlockList (opt-cfg-fold-branches-blocks blocks)]
     [index : OptCfgIndex (opt-cfg-index-build folded)]
     (opt-cfg-filter-clean-blocks index folded)))
+
+(define (opt-cfg-clean-instr-seq-rewrite!
+  [index : OptCfgIndex]
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [pos : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< pos count)
+      (begin
+        (compiler-ir-instr-seq-set!
+          instrs
+          pos
+          (opt-cfg-clean-instr index (compiler-ir-instr-seq-ref instrs pos)))
+        (set! pos (+ pos 1))))))
+
+(define (opt-cfg-filter-clean-block-seq-rewrite!
+  [index : OptCfgIndex]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [slots : (Array CompilerIrBlock) (struct-get blocks slots)]
+    [reachable : (Array bool) (struct-get index reachable)]
+    [count : i64 (struct-get blocks len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (begin
+          (if (array-ref reachable read)
+            (let
+              [block : CompilerIrBlock (array-ref slots read)]
+              (begin
+                (match block
+                  [(CompilerIrBlock.Block _ instrs)
+                    (opt-cfg-clean-instr-seq-rewrite! index instrs)])
+                (if (not (= write read))
+                  (array-set! slots write block)
+                  unit)
+                (set! write (+ write 1))))
+            unit)
+          (set! read (+ read 1))))
+      (set! (struct-get blocks len) write))))
+
+;; Level 1 owns its post-fold block/instruction arrays in the per-function
+;; scratch arena. Keep that representation through CFG cleanup: fold branches
+;; and phis in place, compact unreachable blocks in the outer sequence, and let
+;; the final DCE+escape traversal clone only the live result.
+(define (opt-cfg-simplify-blocks-in-place [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+  (let
+    [folded : CompilerIrBlockList (compiler-ir-block-list-compact blocks)]
+    (begin
+      (opt-cfg-fold-branches-blocks-rewrite! folded)
+      (let
+        [index : OptCfgIndex (opt-cfg-index-build folded)]
+        (begin
+          (match folded
+            [(CompilerIrBlockList.Array seq)
+              (opt-cfg-filter-clean-block-seq-rewrite! index seq)]
+            [_ unit])
+          folded)))))
 
 (define (opt-cfg-simplify-blocks-with-context-result
   [input : OptBlockCtxResult]) : OptBlockCtxResult
@@ -24094,6 +24234,23 @@
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (optimize-block-hs (opt-load-header-set-empty) block))
 
+(define (optimize-block-seq-hs
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (optimize-block-hs hs (compiler-ir-block-seq-ref blocks index)))
+          (set! index (+ index 1))))
+      (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
+
 (define (optimize-block-list-hs
   [hs : OptLoadHeaderSet]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
@@ -24103,8 +24260,7 @@
       (compiler-ir-block-cons
         (optimize-block-hs hs block)
         (optimize-block-list-hs hs (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (optimize-block-list-hs hs (compiler-ir-block-seq-to-list seq))]))
+    [(CompilerIrBlockList.Array seq) (optimize-block-seq-hs hs seq)]))
 
 ;; GAP4: the header-typed handle set feeds gep classification; build it from
 ;; the whole function so the block-local pass sees params and cross-block defs.
@@ -27546,7 +27702,7 @@
             (let
               [_t-cfg : i64 (cfg compile-profile (profile.now-ms) 0)]
               [cfg : CompilerIrBlockList
-                (opt-cfg-simplify-blocks promoted-blocks)]
+                (opt-cfg-simplify-blocks-in-place promoted-blocks)]
               [_p-cfg : unit
                 (cfg
                   compile-profile

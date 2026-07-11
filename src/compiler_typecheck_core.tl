@@ -50324,6 +50324,10 @@
   -1)
 (define macro-alias-cache-built-decl-offset : i64
   -1)
+(define macro-alias-cache-built-decl-slots-addr : i64
+  -1)
+(define macro-alias-cache-built-end-module-id : i64
+  -1)
 (define macro-unqualified-import-cache-capacity : i64
   65536)
 (define macro-unqualified-import-cache-module-keys : (Array i64)
@@ -50363,6 +50367,12 @@
   -1)
 (define macro-flat-import-target-cache-built-decl-offset : i64
   -1)
+
+(define (macro-decl-list-slots-data-addr [decls : AstDeclList]) : i64
+  (cast
+    (unsafe
+      (ptr->int (ptr-cast (array-data (struct-get decls slots)) : (Ptr u8))))
+    : i64))
 
 ;; The mapping is program-derived, so the cache must not survive into the next
 ;; program of a multi-program process (smoke batteries, REPL, LSP, package
@@ -50793,8 +50803,6 @@
     (match (macro-flat-import-target-cache-get current-module-id)
       [(MacroFlatImportTargetCacheLookup.Hit targets) targets]
       [(MacroFlatImportTargetCacheLookup.Missing)
-        ;; Same batch-safety rule as the alias index: a definitive empty
-        ;; answer requires the build to match this decl-list shape.
         (if (and
           macro-flat-import-target-cache-complete
           (=
@@ -50911,23 +50919,16 @@
                   (set! steps (+ steps 1)))))))
         unit))))
 
-;; One-pass eager index over the program's aliased imports: record every
-;; (module, alias) -> target mapping in program order (first import wins,
-;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
-;; cache miss used to rescan the ENTIRE declaration list -- and the cache is
-;; reset at every in-pass splice rebuild, so a self-compile re-paid those
-;; whole-program scans (with a ~100B AstDecl unwrap copy per declaration)
-;; hundreds of times. One pass makes every later query O(1); if the table's
-;; half-load insert cap is ever hit, complete stays false and misses fall back
-;; to the exact scan, so only memoization -- never correctness -- degrades.
-(define (macro-alias-cache-build! [decls : AstDeclList]) : unit
+(define (macro-alias-cache-index-range!
+  [decls : AstDeclList]
+  [start : i64]
+  [count : i64]
+  [start-module-id : i64]) : i64
   (let
-    [count : i64 (ast-decl-list-len (& decls))]
     [decl-offset : i64 (struct-get decls offset)]
     [decl-slots : (Array AstDecl) (struct-get decls slots)]
-    [cur-module-id : i64 (intern "")]
-    [truncated : bool false]
-    [i : i64 0]
+    [cur-module-id : i64 start-module-id]
+    [i : i64 start]
     (begin
       (while (< i count)
         (begin
@@ -50944,7 +50945,7 @@
                     (if (>=
                       (* macro-alias-cache-count 2)
                       macro-alias-cache-capacity)
-                      (set! truncated true)
+                      (set! macro-alias-cache-complete false)
                       (macro-alias-cache-put!
                         cur-module-id
                         (intern alias)
@@ -50952,10 +50953,61 @@
                 [(AstMaybeImportAlias.No) unit])]
             [_ unit])
           (set! i (+ i 1))))
+      cur-module-id)))
+
+;; One-pass eager index over the program's aliased imports: record every
+;; (module, alias) -> target mapping in program order (first import wins,
+;; matching macro-import-alias-target-ids' first-match scan). Each per-pair
+;; cache miss used to rescan the ENTIRE declaration list -- and the cache is
+;; reset at every in-pass splice rebuild, so a self-compile re-paid those
+;; whole-program scans (with a ~100B AstDecl unwrap copy per declaration)
+;; hundreds of times. One pass makes every later query O(1); if the table's
+;; half-load insert cap is ever hit, complete stays false and misses fall back
+;; to the exact scan, so only memoization -- never correctness -- degrades.
+(define (macro-alias-cache-build! [decls : AstDeclList]) : unit
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    (begin
+      (set! macro-alias-cache-complete true)
+      (set!
+        macro-alias-cache-built-end-module-id
+        (macro-alias-cache-index-range! decls 0 count (intern "")))
       (set! macro-alias-cache-built true)
-      (set! macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
+      (set! macro-alias-cache-built-decl-count count)
       (set! macro-alias-cache-built-decl-offset (struct-get decls offset))
-      (set! macro-alias-cache-complete (not truncated)))))
+      (set!
+        macro-alias-cache-built-decl-slots-addr
+        (macro-decl-list-slots-data-addr decls)))))
+
+;; Macro expansion appends generated declarations to the active program view.
+;; Keep the eager index synchronized once per larger view. When the backing
+;; array is stable, consume only the new tail. Growth may reallocate the list;
+;; in that case rebuild the index once over the replacement view rather than
+;; making every later miss rescan it. Smaller/offset views remain transient and
+;; retain the exact fallback below.
+(define (macro-alias-cache-adopt-larger-view! [decls : AstDeclList]) : unit
+  (let
+    [count : i64 (ast-decl-list-len (& decls))]
+    (if (and
+      (= macro-alias-cache-built-decl-offset (struct-get decls offset))
+      (> count macro-alias-cache-built-decl-count))
+      (if (=
+        macro-alias-cache-built-decl-slots-addr
+        (macro-decl-list-slots-data-addr decls))
+        (begin
+          (set!
+            macro-alias-cache-built-end-module-id
+            (macro-alias-cache-index-range!
+              decls
+              macro-alias-cache-built-decl-count
+              count
+              macro-alias-cache-built-end-module-id))
+          (set! macro-alias-cache-built-decl-count count))
+        (begin
+          (set! macro-alias-cache-ready false)
+          (macro-alias-cache-ensure!)
+          (macro-alias-cache-build! decls)))
+      unit)))
 
 (define (macro-import-alias-target-cached-id
   [decls : AstDeclList]
@@ -50966,22 +51018,22 @@
     (if macro-alias-cache-built
       unit
       (macro-alias-cache-build! decls))
+    (macro-alias-cache-adopt-larger-view! decls)
     (let
-      ;; Batch/REPL compiles can reuse this process without a per-program
-      ;; reset; the old lazy design tolerated stale positives (module names
-      ;; are distinct across programs) because every miss rescanned the
-      ;; CURRENT decl list. A definitive eager miss is therefore only
-      ;; trustworthy when the index was built over this same decl-list shape.
-      [complete-here : bool
+      [shape-here : bool
         (and
-          macro-alias-cache-complete
           (= macro-alias-cache-built-decl-count (ast-decl-list-len (& decls)))
-          (= macro-alias-cache-built-decl-offset (struct-get decls offset)))]
+          (= macro-alias-cache-built-decl-offset (struct-get decls offset))
+          (=
+            macro-alias-cache-built-decl-slots-addr
+            (macro-decl-list-slots-data-addr decls)))]
+      [complete-here : bool (and macro-alias-cache-complete shape-here)]
       [cached : i64 (macro-alias-cache-get current-module-id qualifier-id)]
       (cond
         [(and (= cached -2) complete-here)
           ;; The eager index saw every aliased import, so a miss is a
-          ;; definitive "no alias import for this (module, qualifier)".
+          ;; definitive "no alias import for this (module, qualifier)" for the
+          ;; exact declaration view that populated it.
           (TcMaybeString.No)]
         [(= cached -2)
           (let

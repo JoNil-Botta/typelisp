@@ -43,6 +43,10 @@
   (blocks (Array CompilerLiveBlock))
   (successors (Array CompilerLiveIndexVec)))
 
+(defstruct CompilerLiveFunctionGraphBuild
+  (seq CompilerIrBlockSeq)
+  (graph CompilerLiveBlockGraph))
+
 (defenum CompilerFunctionLiveness
   (Liveness live_label_map.Map (Array CompilerLiveBlock)))
 
@@ -893,10 +897,12 @@
                 cases)]
             [_ CompilerLiveLabelSet.Nil])])]))
 
-(define (compiler-live-build-block [block : CompilerIrBlock]) : CompilerLiveBlock
+(define (compiler-live-build-block-from-use-def
+  [block : CompilerIrBlock]
+  [use-def : CompilerLiveUseDef]) : CompilerLiveBlock
   (match block
-    [(CompilerIrBlock.Block label instrs)
-      (match (compiler-live-block-use-def-seq instrs)
+    [(CompilerIrBlock.Block label _)
+      (match use-def
         [(CompilerLiveUseDef.Def uses defs)
           (CompilerLiveBlock.Block
             label
@@ -906,6 +912,13 @@
             (compiler-live-set-empty)
             (compiler-live-block-successors block)
             (compiler-live-instr-set-vec-empty))])]))
+
+(define (compiler-live-build-block [block : CompilerIrBlock]) : CompilerLiveBlock
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (compiler-live-build-block-from-use-def
+        block
+        (compiler-live-block-use-def-seq instrs))]))
 
 (define (compiler-live-build-blocks [blocks : CompilerIrBlockList]) : CompilerLiveBlockList
   (match blocks
@@ -1242,13 +1255,15 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (let
         [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
-        [block-array : (Array CompilerLiveBlock)
-          (compiler-live-build-block-array seq)]
+        [build : CompilerLiveFunctionGraphBuild
+          (compiler-live-function-graph-build
+            seq
+            (compiler-live-build-block-array seq))]
         [graph : CompilerLiveBlockGraph
-          (compiler-live-fixpoint-from-array block-array)]
+          (compiler-live-fixpoint (struct-get build graph))]
         (begin
           (compiler-live-fill-instr-after-graph-seq!
-            seq
+            (struct-get build seq)
             (struct-get graph blocks))
           (CompilerFunctionLiveness.Liveness
             (struct-get graph ids)
@@ -1300,21 +1315,14 @@
 
 (define (compiler-live-build-block-nophi [block : CompilerIrBlock]) : CompilerLiveBlock
   (match block
-    [(CompilerIrBlock.Block label instrs)
-      (match (compiler-live-block-use-def-nophi-seq-from
-        instrs
-        0
-        (compiler-live-set-empty)
-        (compiler-live-set-empty))
-        [(CompilerLiveUseDef.Def uses defs)
-          (CompilerLiveBlock.Block
-            label
-            uses
-            defs
-            (compiler-live-set-empty)
-            (compiler-live-set-empty)
-            (compiler-live-block-successors block)
-            (compiler-live-instr-set-vec-empty))])]))
+    [(CompilerIrBlock.Block _ instrs)
+      (compiler-live-build-block-from-use-def
+        block
+        (compiler-live-block-use-def-nophi-seq-from
+          instrs
+          0
+          (compiler-live-set-empty)
+          (compiler-live-set-empty)))]))
 
 (define (compiler-live-build-blocks-nophi [blocks : CompilerIrBlockList]) : CompilerLiveBlockList
   (match blocks
@@ -1580,10 +1588,11 @@
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (let
         [seq : CompilerIrBlockSeq (compiler-live-ir-block-list-to-seq blocks)]
-        [block-array : (Array CompilerLiveBlock)
-          (compiler-live-build-block-array-nophi seq)]
-        [graph0 : CompilerLiveBlockGraph
-          (compiler-live-block-graph-build-from-array block-array)]
+        [build : CompilerLiveFunctionGraphBuild
+          (compiler-live-function-graph-build
+            seq
+            (compiler-live-build-block-array-nophi seq))]
+        [graph0 : CompilerLiveBlockGraph (struct-get build graph)]
         [phi-out : (Array CompilerLiveI64Set)
           (make-array
             CompilerLiveI64Set
@@ -2019,6 +2028,49 @@
             [(CompilerLiveMaybeBlock.No) false]))]
       [(CompilerLiveMaybeBlock.No) false])))
 
+(define (compiler-live-phi-edge-precise-ok?) : bool
+  (let
+    [baseline : CompilerFunctionLiveness
+      (compiler-live-analyze-function (compiler-live-phi-function))]
+    [edge-precise : CompilerFunctionLiveness
+      (compiler-live-analyze-function-edge-precise (compiler-live-phi-function))]
+    (match (compiler-live-function-find-block baseline "join")
+      [(CompilerLiveMaybeBlock.Some baseline-join)
+        (match (compiler-live-function-find-block edge-precise "join")
+          [(CompilerLiveMaybeBlock.Some edge-precise-join)
+            (match (compiler-live-function-find-block baseline "left")
+              [(CompilerLiveMaybeBlock.Some baseline-left)
+                (match (compiler-live-function-find-block edge-precise "left")
+                  [(CompilerLiveMaybeBlock.Some edge-precise-left)
+                    (match (compiler-live-function-find-block
+                      edge-precise
+                      "right")
+                      [(CompilerLiveMaybeBlock.Some edge-precise-right)
+                        (and
+                          (compiler-live-set-eq?
+                            (compiler-live-block-uses baseline-join)
+                            (compiler-live-set2 1 2))
+                          (compiler-live-set-eq?
+                            (compiler-live-block-uses edge-precise-join)
+                            (compiler-live-set-empty))
+                          (compiler-live-set-eq?
+                            (compiler-live-block-live-in edge-precise-join)
+                            (compiler-live-set-empty))
+                          (compiler-live-set-eq?
+                            (compiler-live-block-live-out baseline-left)
+                            (compiler-live-set2 1 2))
+                          (compiler-live-set-eq?
+                            (compiler-live-block-live-out edge-precise-left)
+                            (compiler-live-set1 1))
+                          (compiler-live-set-eq?
+                            (compiler-live-block-live-out edge-precise-right)
+                            (compiler-live-set1 2)))]
+                      [(CompilerLiveMaybeBlock.No) false])]
+                  [(CompilerLiveMaybeBlock.No) false])]
+              [(CompilerLiveMaybeBlock.No) false])]
+          [(CompilerLiveMaybeBlock.No) false])]
+      [(CompilerLiveMaybeBlock.No) false])))
+
 (define (compiler-live-switch-ok?) : bool
   (let
     [cases : CompilerIrSwitchCaseList
@@ -2051,6 +2103,7 @@
     (compiler-live-straight-ok?)
     (compiler-live-branch-ok?)
     (compiler-live-phi-ok?)
+    (compiler-live-phi-edge-precise-ok?)
     (compiler-live-switch-ok?))
     42
     (io.panic "liveness: smoke mismatch")))
@@ -2153,6 +2206,14 @@
         0)
       (CompilerLiveBlockGraph ids blocks successors))))
 
+(define (compiler-live-function-graph-build
+  [seq : CompilerIrBlockSeq]
+  [live-blocks : (Array CompilerLiveBlock)]) : CompilerLiveFunctionGraphBuild
+  (let
+    [graph : CompilerLiveBlockGraph
+      (compiler-live-block-graph-build-from-array live-blocks)]
+    (CompilerLiveFunctionGraphBuild seq graph)))
+
 (define (compiler-live-fill-instr-after-graph-seq!
   [ir-blocks : CompilerIrBlockSeq]
   [blocks : (Array CompilerLiveBlock)]) : unit
@@ -2172,10 +2233,8 @@
             (array-ref blocks i)))
         (set! i (+ i 1))))))
 
-(define (compiler-live-fixpoint-from-array [blocks : (Array CompilerLiveBlock)]) : CompilerLiveBlockGraph
+(define (compiler-live-fixpoint [graph : CompilerLiveBlockGraph]) : CompilerLiveBlockGraph
   (let
-    [graph : CompilerLiveBlockGraph
-      (compiler-live-block-graph-build-from-array blocks)]
     [done : bool false]
     (begin
       (while (not done)

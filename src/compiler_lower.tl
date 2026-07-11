@@ -2046,65 +2046,121 @@
                 [svec.Pop.Empty unit])
               next-segments))))]))
 
-(define (lower-normalize-path [path : String]) : String
+(define (lower-path-canonical? [path : String]) : bool
   (let
     [n : i64 (string.string-length path)]
-    [drive-root : bool
-      (if (> n 2)
-        (if (lower-path-drive-qualified? path)
-          (lower-path-separator? (string.string-ref path 2))
-          false)
-        false)]
-    [rooted : bool
-      (if drive-root
-        true
-        (if (> n 0)
-          (lower-path-separator? (string.string-ref path 0))
-          false))]
-    [i : i64
-      (if drive-root
-        3
-        (if rooted
-          1
-          0))]
-    [segment-start : i64 i]
-    [segments : svec.Vec (svec.new)]
+    [i : i64 0]
+    [segment-start : i64 0]
+    [ok : bool (> n 0)]
     (begin
-      (while (< i n)
-        (begin
-          (if (lower-path-separator? (string.string-ref path i))
-            (begin
-              (set!
-                segments
-                (lower-path-normalize-segment
-                  (string.substring path segment-start (- i segment-start))
+      (while (and ok (< i n))
+        (let
+          [c : char (string.string-ref path i)]
+          (begin
+            (cond
+              [(= c '\\') (set! ok false)]
+              [(= c '/')
+                (let
+                  [segment-len : i64 (- i segment-start)]
+                  (begin
+                    (if (and (= segment-len 0) (not (= i 0)))
+                      (set! ok false)
+                      unit)
+                    (if (and
+                      (= segment-len 1)
+                      (= (string.string-ref path segment-start) '.'))
+                      (set! ok false)
+                      unit)
+                    (if (and
+                      (= segment-len 2)
+                      (= (string.string-ref path segment-start) '.')
+                      (= (string.string-ref path (+ segment-start 1)) '.'))
+                      (set! ok false)
+                      unit)
+                    (set! segment-start (+ i 1))))]
+              [else unit])
+            (set! i (+ i 1)))))
+      (if (not ok)
+        false
+        (let
+          [segment-len : i64 (- n segment-start)]
+          (cond
+            [(= segment-len 0)
+              (or (= n 1) (and (= n 3) (lower-path-drive-qualified? path)))]
+            [(and
+                (= segment-len 1)
+                (= (string.string-ref path segment-start) '.'))
+              false]
+            [(and
+                (= segment-len 2)
+                (= (string.string-ref path segment-start) '.')
+                (= (string.string-ref path (+ segment-start 1)) '.'))
+              false]
+            [else true]))))))
+
+(define (lower-normalize-path [path : String]) : String
+  (if (lower-path-canonical? path)
+    path
+    (let
+      [n : i64 (string.string-length path)]
+      [drive-root : bool
+        (if (> n 2)
+          (if (lower-path-drive-qualified? path)
+            (lower-path-separator? (string.string-ref path 2))
+            false)
+          false)]
+      [rooted : bool
+        (if drive-root
+          true
+          (if (> n 0)
+            (lower-path-separator? (string.string-ref path 0))
+            false))]
+      [i : i64
+        (if drive-root
+          3
+          (if rooted
+            1
+            0))]
+      [segment-start : i64 i]
+      [segments : svec.Vec (svec.new)]
+      (begin
+        (while (< i n)
+          (begin
+            (if (lower-path-separator? (string.string-ref path i))
+              (begin
+                (set!
                   segments
-                  rooted))
-              (set! segment-start (+ i 1)))
-            (set! segment-start segment-start))
-          (set! i (+ i 1))))
-      (set!
-        segments
-        (lower-path-normalize-segment
-          (string.substring path segment-start (- n segment-start))
+                  (lower-path-normalize-segment
+                    (string.substring path segment-start (- i segment-start))
+                    segments
+                    rooted))
+                (set! segment-start (+ i 1)))
+              (set! segment-start segment-start))
+            (set! i (+ i 1))))
+        (set!
           segments
-          rooted))
-      (let
-        [body : String (lower-path-segment-vec-render segments)]
-        (cond
-          [(if drive-root
-              (= (string.string-length body) 0)
-              false)
-            (string.append (string.substring path 0 2) "/")]
-          [drive-root
-            (string.append (string.substring path 0 2) (string.append "/" body))]
-          [(if rooted
-              (= (string.string-length body) 0)
-              false)
-            "/"]
-          [rooted (string.append "/" body)]
-          [(= (string.string-length body) 0) "."]
-          [else body])))))
+          (lower-path-normalize-segment
+            (string.substring path segment-start (- n segment-start))
+            segments
+            rooted))
+        (let
+          [body : String (lower-path-segment-vec-render segments)]
+          (cond
+            [(if drive-root
+                (= (string.string-length body) 0)
+                false)
+              (string.append (string.substring path 0 2) "/")]
+            [drive-root
+              (string.append
+                (string.substring path 0 2)
+                (string.append "/" body))]
+            [(if rooted
+                (= (string.string-length body) 0)
+                false)
+              "/"]
+            [rooted (string.append "/" body)]
+            [(= (string.string-length body) 0) "."]
+            [else body]))))))
 
 (define (lower-string-prefix-at?
   [text : String]

@@ -59362,8 +59362,11 @@
     (tc-install-pools! pools)
     (match (build-compiler-symbols-diagnostic-with-paths program paths)
       [(ResultCompilerSymbolsDiagnostic.Ok symbols)
-        (match (build-compiler-registries-with-symbols program symbols)
-          [(ResultCompilerRegistries.Ok registries)
+        (match (build-compiler-registries-diagnostic-with-symbols-and-paths
+          program
+          symbols
+          paths)
+          [(ResultCompilerRegistriesDiagnostic.Ok registries)
             (let
               [ctx : TcContext (TcContext program symbols registries "" pools)]
               (match (tc-stdlib-comptime-surface-ok ctx)
@@ -59407,9 +59410,8 @@
                 [(ResultTcUnit.Err message)
                   (ResultCompilerTypecheckChecked.Err
                     (box (tc-diag-at-start message)))]))]
-          [(ResultCompilerRegistries.Err message)
-            (ResultCompilerTypecheckChecked.Err
-              (box (tc-diag-at-start message)))])]
+          [(ResultCompilerRegistriesDiagnostic.Err diag)
+            (ResultCompilerTypecheckChecked.Err diag)])]
       [(ResultCompilerSymbolsDiagnostic.Err diag)
         (ResultCompilerTypecheckChecked.Err diag)])))
 

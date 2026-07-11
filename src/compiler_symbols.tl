@@ -51,6 +51,10 @@
   (Ok CompilerRegistries)
   (Err String))
 
+(defenum ResultCompilerRegistriesDiagnostic
+  (Ok CompilerRegistries)
+  (Err (Box CompilerDiagnostic)))
+
 ;; `build-compiler-symbols-with-paths` is single-threaded and reports its
 ;; failure immediately to a caller. Retain the current declaration only for
 ;; that short handoff so the public diagnostic adapter can keep its source
@@ -77,6 +81,13 @@
     (set! compiler-symbols-last-error-path path)
     (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
     (set! compiler-symbols-last-error-has-span false)))
+
+(define (compiler-symbols-note-last-error-member-span! [span : AstSourceSpan]) : unit
+  (let
+    [has-span : bool (> (ast-source-span-start-line span) 0)]
+    (begin
+      (set! compiler-symbols-last-error-span span)
+      (set! compiler-symbols-last-error-has-span has-span))))
 
 (define (compiler-symbols-expr-maybe-span [expr : AstExpr]) : CompilerSymbolsMaybeSpan
   (match expr
@@ -1067,7 +1078,13 @@
               enum-index
               (+ variant-index 1))]
           [(ResultCompilerSymbols.Err message)
-            (ResultCompilerSymbols.Err message)])])))
+            (begin
+              (compiler-symbols-note-last-error-member-span!
+                (compiler-parse-variant-def-list-span-get
+                  (& variants)
+                  variant-index
+                  (ast-decl-span-fallback)))
+              (ResultCompilerSymbols.Err message))])])))
 
 (define (compiler-symbols-add-variant-values-in-module
   [symbols : CompilerSymbols]
@@ -3260,6 +3277,7 @@
     variants
     registries
     ""
+    ""
     enum-name
     enum-index
     variant-index))
@@ -3268,6 +3286,7 @@
   [variants : AstVariantDefList]
   [registries : CompilerRegistries]
   [module : String]
+  [path : String]
   [enum-name : String]
   [enum-index : i64]
   [variant-index : i64]) : ResultCompilerRegistries
@@ -3290,16 +3309,25 @@
               variants
               next-registries
               module
+              path
               enum-name
               enum-index
               (+ variant-index 1))]
           [(ResultCompilerRegistries.Err message)
-            (ResultCompilerRegistries.Err message)])])))
+            (begin
+              (set! compiler-symbols-last-error-path path)
+              (compiler-symbols-note-last-error-member-span!
+                (compiler-parse-variant-def-list-span-get
+                  (& variants)
+                  variant-index
+                  (ast-decl-span-fallback)))
+              (ResultCompilerRegistries.Err message))])])))
 
 (define (build-compiler-field-registry-list
   [fields : AstFieldDefList]
   [registries : CompilerRegistries]
   [seen : sym_i64_env.SymI64Env]
+  [path : String]
   [struct-name : String]
   [struct-index : i64]
   [field-index : i64]) : ResultCompilerRegistries
@@ -3311,10 +3339,17 @@
       (ast-field-def-fallback))
       [(AstFieldDef.Def name _ _)
         (if (sym_i64_env.sym-i64-contains-id seen name)
-          (ResultCompilerRegistries.Err
-            (compiler-registries-duplicate-field-message
-              struct-name
-              (intern-str name)))
+          (begin
+            (set! compiler-symbols-last-error-path path)
+            (compiler-symbols-note-last-error-member-span!
+              (compiler-parse-field-def-list-span-get
+                (& fields)
+                field-index
+                (ast-decl-span-fallback)))
+            (ResultCompilerRegistries.Err
+              (compiler-registries-duplicate-field-message
+                struct-name
+                (intern-str name))))
           (match (compiler-registries-add-field
             registries
             struct-name
@@ -3326,20 +3361,34 @@
                 fields
                 next-registries
                 (sym_i64_env.sym-i64-bind-id seen name field-index)
+                path
                 struct-name
                 struct-index
                 (+ field-index 1))]
             [(ResultCompilerRegistries.Err message)
-              (ResultCompilerRegistries.Err message)]))])))
+              (begin
+                (set! compiler-symbols-last-error-path path)
+                (compiler-symbols-note-last-error-member-span!
+                  (compiler-parse-field-def-list-span-get
+                    (& fields)
+                    field-index
+                    (ast-decl-span-fallback)))
+                (ResultCompilerRegistries.Err message))]))])))
 
 (define (build-compiler-registry-list
   [decls : AstDeclList]
   [registries : CompilerRegistries]
   [index : i64]) : ResultCompilerRegistries
-  (build-compiler-registry-list-in-module decls registries index ""))
+  (build-compiler-registry-list-in-module
+    decls
+    (compiler-symbol-path-list-repeat decls "")
+    registries
+    index
+    ""))
 
 (define (build-compiler-registry-list-in-module
   [decls : AstDeclList]
+  [paths : AstDeclPathList]
   [registries : CompilerRegistries]
   [index : i64]
   [module : String]) : ResultCompilerRegistries
@@ -3362,6 +3411,7 @@
           (let
             [decl : AstDecl
               (array-ref (struct-get decls slots) (+ decl-offset position))]
+            [decl-path : String (ast-decl-path-list-get (& paths) position "")]
             (match decl
               [(AstDecl.Import _) (set! position (+ position 1))]
               [(AstDecl.IncludeStr _ _) (set! position (+ position 1))]
@@ -3374,8 +3424,11 @@
                 (let
                   [body : AstDeclList (box-get body-box)]
                   [body-count : i64 (compiler-decl-list-index-count body)]
+                  [body-paths : AstDeclPathList
+                    (compiler-symbol-path-list-repeat body decl-path)]
                   (match (build-compiler-registry-list-in-module
                     body
+                    body-paths
                     cur-registries
                     cur-index
                     (intern-str name))
@@ -3394,6 +3447,7 @@
                   variants
                   cur-registries
                   cur-module
+                  decl-path
                   (intern-str name)
                   cur-index
                   0)
@@ -3411,6 +3465,7 @@
                   variants
                   cur-registries
                   cur-module
+                  decl-path
                   (intern-str name)
                   cur-index
                   0)
@@ -3428,6 +3483,7 @@
                   fields
                   cur-registries
                   (sym_i64_env.sym-i64-empty)
+                  decl-path
                   (compiler-symbol-module-key cur-module (intern-str name))
                   cur-index
                   0)
@@ -3445,6 +3501,7 @@
                   fields
                   cur-registries
                   (sym_i64_env.sym-i64-empty)
+                  decl-path
                   (compiler-symbol-module-key cur-module (intern-str name))
                   cur-index
                   0)
@@ -3466,6 +3523,7 @@
                         variants
                         cur-registries
                         cur-module
+                        decl-path
                         (intern-str name)
                         cur-index
                         0)
@@ -3483,6 +3541,7 @@
                         variants
                         cur-registries
                         cur-module
+                        decl-path
                         (intern-str name)
                         cur-index
                         0)
@@ -3500,6 +3559,7 @@
                         fields
                         cur-registries
                         (sym_i64_env.sym-i64-empty)
+                        decl-path
                         (compiler-symbol-module-key
                           cur-module
                           (intern-str name))
@@ -3519,6 +3579,7 @@
                         fields
                         cur-registries
                         (sym_i64_env.sym-i64-empty)
+                        decl-path
                         (compiler-symbol-module-key
                           cur-module
                           (intern-str name))
@@ -3543,6 +3604,23 @@
                   (set! cur-index (+ cur-index 1)))]))))
       result)))
 
+(define (build-compiler-registries-for-decls-with-paths
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultCompilerRegistries
+  (match (build-compiler-registry-list-in-module
+    decls
+    paths
+    (compiler-registries-empty)
+    0
+    "")
+    [(ResultCompilerRegistries.Ok registries)
+      (let
+        [aliased : CompilerRegistries
+          (build-compiler-registry-aliases-list decls decls registries "")]
+        (ResultCompilerRegistries.Ok aliased))]
+    [(ResultCompilerRegistries.Err message)
+      (ResultCompilerRegistries.Err message)]))
+
 (define (build-compiler-registries-with-symbols
   [program : AstProgram]
   [_symbols : CompilerSymbols]) : ResultCompilerRegistries
@@ -3550,17 +3628,26 @@
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
-        (match (build-compiler-registry-list
+        (build-compiler-registries-for-decls-with-paths
           decls
-          (compiler-registries-empty)
-          0)
-          [(ResultCompilerRegistries.Ok registries)
-            (let
-              [aliased : CompilerRegistries
-                (build-compiler-registry-aliases-list decls decls registries "")]
-              (ResultCompilerRegistries.Ok aliased))]
-          [(ResultCompilerRegistries.Err message)
-            (ResultCompilerRegistries.Err message)]))]))
+          (compiler-symbol-path-list-repeat decls "")))]))
+
+(define (build-compiler-registries-diagnostic-with-symbols-and-paths
+  [program : AstProgram]
+  [_symbols : CompilerSymbols]
+  [paths : AstDeclPathList]) : ResultCompilerRegistriesDiagnostic
+  (begin
+    (compiler-symbols-clear-last-error!)
+    (match program
+      [(AstProgram.Program decls-box)
+        (let
+          [decls : AstDeclList (box-get decls-box)]
+          (match (build-compiler-registries-for-decls-with-paths decls paths)
+            [(ResultCompilerRegistries.Ok registries)
+              (ResultCompilerRegistriesDiagnostic.Ok registries)]
+            [(ResultCompilerRegistries.Err message)
+              (ResultCompilerRegistriesDiagnostic.Err
+                (box (compiler-symbols-last-error-diagnostic message)))]))])))
 
 (define (build-compiler-registries [program : AstProgram]) : ResultCompilerRegistries
   (match (build-compiler-symbols program)

@@ -83,7 +83,8 @@ Issue #4417 status: expression-origin lowering diagnostics that pass through
 common compound/generated forms by selecting the first source-carrying child.
 Source-facing symbol failures now adapt their string boundary to
 `CompilerDiagnostic`, preserving their source path and expression-derived span
-when one is available. The remaining semantic-location gaps include
-declaration-shape and registry-member failures without a concrete source span,
-plus internal/synthetic macro or generated rebuild errors that still cross string
-boundaries before a concrete origin is available.
+when one is available. Duplicate struct-field and enum-variant registry failures
+retain a compact member-definition origin and adapt it with the owning source
+path. The remaining semantic-location gaps include other declaration-shape
+failures plus internal/synthetic macro or generated rebuild errors that still
+cross string boundaries before a concrete origin is available.

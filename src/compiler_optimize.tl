@@ -23959,28 +23959,37 @@
       blocks)
     blocks))
 
-(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : bool
   (let
     [index : i64 0]
+    [store-count : i64 0]
     [fold-state : OptConstEnv (OptConstEnv.Nil)]
     [strength-state : OptConstEnv (OptConstEnv.Nil)]
     [cse-state : OptExprTable (OptExprTable.Nil)]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-fold-instr
-        fold-state
-        (compiler-ir-instr-seq-ref instrs index))
-        [(OptInstrResult.Result next-fold folded)
-          (match (opt-strength-instr strength-state folded)
-            [(OptInstrResult.Result next-strength strengthened)
-              (match (opt-cse-instr cse-state strengthened)
-                [(OptCseResult.Result next-cse rewritten)
-                  (begin
-                    (compiler-ir-instr-seq-set! instrs index rewritten)
-                    (set! fold-state next-fold)
-                    (set! strength-state next-strength)
-                    (set! cse-state next-cse)
-                    (set! index (+ index 1)))])])]))))
+    (begin
+      (while (< index count)
+        (match (opt-fold-instr
+          fold-state
+          (compiler-ir-instr-seq-ref instrs index))
+          [(OptInstrResult.Result next-fold folded)
+            (match (opt-strength-instr strength-state folded)
+              [(OptInstrResult.Result next-strength strengthened)
+                (match (opt-cse-instr cse-state strengthened)
+                  [(OptCseResult.Result next-cse rewritten)
+                    (begin
+                      (match rewritten
+                        [(CompilerIrInstr.StorePtr _ _ _)
+                          (if (< store-count 2)
+                            (set! store-count (+ store-count 1))
+                            unit)]
+                        [_ unit])
+                      (compiler-ir-instr-seq-set! instrs index rewritten)
+                      (set! fold-state next-fold)
+                      (set! strength-state next-strength)
+                      (set! cse-state next-cse)
+                      (set! index (+ index 1)))])])]))
+      (>= store-count 2))))
 
 (define (opt-load-copy-instr-seq-rewrite!
   [hs : OptLoadHeaderSet]
@@ -24013,6 +24022,7 @@
     [(CompilerIrBlock.Block label instrs)
       (let
         [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq instrs)]
+        [has-two-storeptr? : bool false]
         ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
         ;; pure expressions, propagate the resulting copies, then remove duplicate
         ;; proven bounds checks; function-level DCE drops dead copies. Independent
@@ -24025,8 +24035,10 @@
         ;; the list without changing it (byte-identical output, ~0.9% of
         ;; self-compile).
         (begin
-          (opt-fold-strength-cse-instr-seq-rewrite! work)
-          (set! work (opt-dead-store-instr-seq hs work))
+          (set!
+            has-two-storeptr?
+            (opt-fold-strength-cse-instr-seq-rewrite! work))
+          (set! work (opt-dead-store-instr-seq-known hs has-two-storeptr? work))
           (opt-load-copy-instr-seq-rewrite!
             hs
             (opt-load-cse-empty-state-for-size
@@ -52032,37 +52044,28 @@
       [(option_i64.Some dst) (opt-dead-store-filter-def after-memory dst)]
       [(option_i64.None) after-memory])))
 
-(define (opt-dead-store-has-dead? [dead : (Array i64)] [count : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< index count) (not found))
-        (begin
-          (if (= (array-ref dead index) 0)
-            unit
-            (set! found true))
-          (set! index (+ index 1))))
-      found)))
-
-(define (opt-dead-store-build
+(define (opt-dead-store-compact!
   [instrs : CompilerIrInstrSeq]
   [dead : (Array i64)]
-  [count : i64]) : CompilerIrInstrSeq
+  [count : i64]) : unit
   (let
-    [builder : CompilerIrInstrBuilder
-      (compiler-ir-instr-builder-with-capacity count)]
-    [index : i64 0]
+    [read : i64 0]
+    [write : i64 0]
     (begin
-      (while (< index count)
+      (while (< read count)
         (begin
-          (if (= (array-ref dead index) 0)
-            (compiler-ir-instr-builder-push!
-              (&mut builder)
-              (compiler-ir-instr-seq-ref instrs index))
+          (if (= (array-ref dead read) 0)
+            (begin
+              (if (not (= write read))
+                (compiler-ir-instr-seq-set!
+                  instrs
+                  write
+                  (compiler-ir-instr-seq-ref instrs read))
+                unit)
+              (set! write (+ write 1)))
             unit)
-          (set! index (+ index 1))))
-      (compiler-ir-instr-builder-to-seq builder))))
+          (set! read (+ read 1))))
+      (set! (struct-get instrs len) write))))
 
 (define (opt-dead-store-has-two-storeptr? [instrs : CompilerIrInstrSeq]) : bool
   (let
@@ -52078,10 +52081,11 @@
           (set! index (+ index 1))))
       (>= stores 2))))
 
-(define (opt-dead-store-instr-seq
+(define (opt-dead-store-instr-seq-known
   [hs : OptLoadHeaderSet]
+  [has-two-storeptr? : bool]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
-  (if (opt-dead-store-has-two-storeptr? instrs)
+  (if has-two-storeptr?
     (let
       [count : i64 (compiler-ir-instr-seq-count instrs)]
       [dead : (Array i64) (make-array i64 count)]
@@ -52098,9 +52102,16 @@
                 (opt-dead-store-step pending kinds dead index instr))
               (set! kinds (opt-load-kinds-step kinds hs instr))
               (set! index (+ index 1)))))
-        (if (opt-dead-store-has-dead? dead count)
-          (opt-dead-store-build instrs dead count)
-          instrs)))
+        (opt-dead-store-compact! instrs dead count)
+        instrs))
+    instrs))
+
+(define (opt-dead-store-instr-seq
+  [hs : OptLoadHeaderSet]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (opt-dead-store-instr-seq-known
+    hs
+    (opt-dead-store-has-two-storeptr? instrs)
     instrs))
 
 ;; GVN stability for a key's referenced vars (the cross-block pass only

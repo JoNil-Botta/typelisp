@@ -1739,12 +1739,22 @@
   [rest : Sexpr]
   [mutable : bool]) : ResultAstType
   (match rest
-    [(Sexpr.Cons region-node tail)
+    [(Sexpr.Cons first tail)
       (match (box-get tail)
+        ;; The parser is context-free. An empty lifetime marker is legal in
+        ;; the AST, but the typechecker only accepts it while normalizing a
+        ;; function signature into hidden signature-local lifetimes.
+        [(Sexpr.Nil)
+          (match (parse-ast-type dispatch pools (box-get first))
+            [(ResultAstType.Ok inner-ty)
+              (if mutable
+                (ResultAstType.Ok (ast-ty-mut-ref-with-pools pools "" inner-ty))
+                (ResultAstType.Ok (ast-ty-ref-with-pools pools "" inner-ty)))]
+            [(ResultAstType.Err message) (ResultAstType.Err message)])]
         [(Sexpr.Cons inner end)
           (match (box-get end)
             [(Sexpr.Nil)
-              (match (box-get region-node)
+              (match (box-get first)
                 [(Sexpr.Sym region)
                   (match (parse-ast-type dispatch pools (box-get inner))
                     [(ResultAstType.Ok inner-ty)
@@ -1760,18 +1770,18 @@
             [_
               (ResultAstType.Err
                 (if mutable
-                  "parse: &mut expects lifetime and exactly one type"
-                  "parse: & expects lifetime and exactly one type"))])]
+                  "parse: &mut expects an optional lifetime and exactly one type"
+                  "parse: & expects an optional lifetime and exactly one type"))])]
         [_
           (ResultAstType.Err
             (if mutable
-              "parse: &mut expects lifetime and exactly one type"
-              "parse: & expects lifetime and exactly one type"))])]
+              "parse: &mut expects an optional lifetime and exactly one type"
+              "parse: & expects an optional lifetime and exactly one type"))])]
     [_
       (ResultAstType.Err
         (if mutable
-          "parse: &mut expects lifetime and exactly one type"
-          "parse: & expects lifetime and exactly one type"))]))
+          "parse: &mut expects an optional lifetime and exactly one type"
+          "parse: & expects an optional lifetime and exactly one type"))]))
 
 (define (parse-ast-type
   [dispatch : sym_i64_env.SymI64Env]
@@ -10350,12 +10360,10 @@
     (begin
       (if (compiler-parse-error-ok?
         "(define (main [p : (&)]) : unit unit)"
-        "parse: & expects lifetime and exactly one type")
+        "parse: & expects an optional lifetime and exactly one type")
         unit
         (set! ok false))
-      (if (compiler-parse-error-ok?
-        "(define (main [p : (& r)]) : unit unit)"
-        "parse: & expects lifetime and exactly one type")
+      (if (compiler-parse-ok? "(define (main [p : (& r)]) : unit unit)")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?
@@ -10365,12 +10373,10 @@
         (set! ok false))
       (if (compiler-parse-error-ok?
         "(define (main [p : (& r i64 i64)]) : unit unit)"
-        "parse: & expects lifetime and exactly one type")
+        "parse: & expects an optional lifetime and exactly one type")
         unit
         (set! ok false))
-      (if (compiler-parse-error-ok?
-        "(define (main [p : (&mut phase)]) : unit unit)"
-        "parse: &mut expects lifetime and exactly one type")
+      (if (compiler-parse-ok? "(define (main [p : (&mut phase)]) : unit unit)")
         unit
         (set! ok false))
       (if (compiler-parse-error-ok?

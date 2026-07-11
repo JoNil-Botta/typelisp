@@ -8998,6 +8998,417 @@
       (tc-type-contains-mut-reference? (ty-node-get inner))]
     [_ false]))
 
+;; An empty reference lifetime is the parser's marker for source-level
+;; `(& T)` / `(&mut T)`. It never survives signature normalization. The
+;; generated spelling cannot be written by source code, so it cannot collide
+;; with an explicit lifetime name.
+(defstruct TcElidedType
+  (ty AstType)
+  (next-index i64))
+
+(defstruct TcElidedTypes
+  (types AstTypeList)
+  (next-index i64))
+
+(defstruct TcElidedParams
+  (params AstParamList)
+  (next-index i64))
+
+(defstruct TcElidedSignature
+  (params AstParamList)
+  (ret AstType))
+
+(defenum ResultTcElidedType
+  (Ok TcElidedType)
+  (Err String))
+
+(defenum ResultTcElidedTypes
+  (Ok TcElidedTypes)
+  (Err String))
+
+(defenum ResultTcElidedParams
+  (Ok TcElidedParams)
+  (Err String))
+
+(defenum ResultTcElidedSignature
+  (Ok TcElidedSignature)
+  (Err String))
+
+(define (tc-elided-lifetime-name [index : i64]) : String
+  (string.append
+    "\n__typelisp_signature_elided_lifetime_"
+    (string.int->string index)))
+
+(define (tc-elided-lifetime? [name : String]) : bool
+  (= (string.string-length name) 0))
+
+(define (tc-signature-input-lifetimes-into [ty : AstType] [out : TcStringList]) : TcStringList
+  ;; A nested function type owns a separate signature scope. Its lifetimes are
+  ;; intentionally not candidates for the enclosing function's elided return.
+  (match ty
+    [(AstType.Func _ _) out]
+    [(AstType.Tuple elems)
+      (tc-signature-input-type-list-lifetimes-into (box-get elems) out)]
+    [(AstType.Array elem _)
+      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+    [(AstType.DynArray elem)
+      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+    [(AstType.Box elem)
+      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+    [(AstType.Ptr elem)
+      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+    [(AstType.MutPtr elem)
+      (tc-signature-input-lifetimes-into (ty-node-get elem) out)]
+    [(AstType.Region _ inner)
+      (tc-signature-input-lifetimes-into (ty-node-get inner) out)]
+    [(AstType.Ref lifetime inner)
+      (tc-signature-input-lifetimes-into
+        (ty-node-get inner)
+        (tc-string-list-add out lifetime))]
+    [(AstType.MutRef lifetime inner)
+      (tc-signature-input-lifetimes-into
+        (ty-node-get inner)
+        (tc-string-list-add out lifetime))]
+    [_ out]))
+
+(define (tc-signature-input-type-list-lifetimes-into
+  [types : AstTypeList]
+  [out : TcStringList]) : TcStringList
+  (tc-signature-input-type-list-lifetimes-at (& types) 0 out))
+
+(define (tc-signature-input-type-list-lifetimes-at
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [out : TcStringList]) : TcStringList
+  (if (>= index (ast-type-list-len types))
+    out
+    (tc-signature-input-type-list-lifetimes-at
+      types
+      (+ index 1)
+      (tc-signature-input-lifetimes-into
+        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+        out))))
+
+(define (tc-signature-single-input-lifetime [types : AstTypeList]) : TcMaybeString
+  (match (tc-signature-input-type-list-lifetimes-into types TcStringList.Nil)
+    [(TcStringList.Nil) (TcMaybeString.No)]
+    [(TcStringList.Cons lifetime rest)
+      (match (box-get rest)
+        [(TcStringList.Nil) (TcMaybeString.Some lifetime)]
+        [_ (TcMaybeString.No)])]))
+
+(define (tc-elide-input-type-list [types : AstTypeList] [index : i64]) : ResultTcElidedTypes
+  (tc-elide-input-type-list-at (& types) 0 index (ast-type-list-new)))
+
+(define (tc-elide-input-type-list-at
+  [types : (& types AstTypeList)]
+  [offset : i64]
+  [index : i64]
+  [out : AstTypeList]) : ResultTcElidedTypes
+  (if (>= offset (ast-type-list-len types))
+    (ResultTcElidedTypes.Ok (TcElidedTypes out index))
+    (match (tc-elide-input-type
+      (ty-node-get (ast-type-list-get types offset (ast-type-id-fallback)))
+      index)
+      [(ResultTcElidedType.Ok item)
+        (let
+          [next-out : AstTypeList out]
+          (begin
+            (ast-type-list-push
+              (&mut next-out)
+              (ty-node-push (struct-get item ty)))
+            (tc-elide-input-type-list-at
+              types
+              (+ offset 1)
+              (struct-get item next-index)
+              next-out)))]
+      [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
+
+(define (tc-elide-output-type-list
+  [types : AstTypeList]
+  [lifetime : TcMaybeString]) : ResultTcElidedTypes
+  (tc-elide-output-type-list-at (& types) 0 lifetime (ast-type-list-new)))
+
+(define (tc-elide-output-type-list-at
+  [types : (& types AstTypeList)]
+  [index : i64]
+  [lifetime : TcMaybeString]
+  [out : AstTypeList]) : ResultTcElidedTypes
+  (if (>= index (ast-type-list-len types))
+    (ResultTcElidedTypes.Ok (TcElidedTypes out 0))
+    (match (tc-elide-output-type
+      (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))
+      lifetime)
+      [(ResultTcElidedType.Ok item)
+        (let
+          [next-out : AstTypeList out]
+          (begin
+            (ast-type-list-push
+              (&mut next-out)
+              (ty-node-push (struct-get item ty)))
+            (tc-elide-output-type-list-at types (+ index 1) lifetime next-out)))]
+      [(ResultTcElidedType.Err message) (ResultTcElidedTypes.Err message)])))
+
+(define (tc-elide-function-type [args : AstTypeList] [ret : AstType]) : ResultTcElidedType
+  (match (tc-elide-input-type-list args 0)
+    [(ResultTcElidedTypes.Ok inputs)
+      (let
+        [input-types : AstTypeList (struct-get inputs types)]
+        [lifetime : TcMaybeString
+          (tc-signature-single-input-lifetime input-types)]
+        (match (tc-elide-output-type ret lifetime)
+          [(ResultTcElidedType.Ok output)
+            (ResultTcElidedType.Ok
+              (TcElidedType
+                (ast-ty-func input-types (struct-get output ty))
+                (struct-get inputs next-index)))]
+          [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
+    [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)]))
+
+(define (tc-elide-input-type [ty : AstType] [index : i64]) : ResultTcElidedType
+  (match ty
+    [(AstType.Func args ret)
+      (tc-elide-function-type (box-get args) (ty-node-get ret))]
+    [(AstType.Tuple elems)
+      (match (tc-elide-input-type-list (box-get elems) index)
+        [(ResultTcElidedTypes.Ok items)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-tuple (struct-get items types))
+              (struct-get items next-index)))]
+        [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Array elem count)
+      (match (tc-elide-input-type (ty-node-get elem) index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-array (struct-get inner ty) count)
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.DynArray elem)
+      (match (tc-elide-input-type (ty-node-get elem) index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-dyn-array (struct-get inner ty))
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Box elem)
+      (match (tc-elide-input-type (ty-node-get elem) index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-box (struct-get inner ty))
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Ptr elem)
+      (match (tc-elide-input-type (ty-node-get elem) index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-ptr (struct-get inner ty))
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.MutPtr elem)
+      (match (tc-elide-input-type (ty-node-get elem) index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-mut-ptr (struct-get inner ty))
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Region region elem)
+      (match (tc-elide-input-type (ty-node-get elem) index)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType
+              (ast-ty-region region (struct-get inner ty))
+              (struct-get inner next-index)))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Ref lifetime elem)
+      (let
+        [next-lifetime : String
+          (if (tc-elided-lifetime? lifetime)
+            (tc-elided-lifetime-name index)
+            lifetime)]
+        [next-index : i64
+          (if (tc-elided-lifetime? lifetime)
+            (+ index 1)
+            index)]
+        (match (tc-elide-input-type (ty-node-get elem) next-index)
+          [(ResultTcElidedType.Ok inner)
+            (ResultTcElidedType.Ok
+              (TcElidedType
+                (ast-ty-ref next-lifetime (struct-get inner ty))
+                (struct-get inner next-index)))]
+          [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
+    [(AstType.MutRef lifetime elem)
+      (let
+        [next-lifetime : String
+          (if (tc-elided-lifetime? lifetime)
+            (tc-elided-lifetime-name index)
+            lifetime)]
+        [next-index : i64
+          (if (tc-elided-lifetime? lifetime)
+            (+ index 1)
+            index)]
+        (match (tc-elide-input-type (ty-node-get elem) next-index)
+          [(ResultTcElidedType.Ok inner)
+            (ResultTcElidedType.Ok
+              (TcElidedType
+                (ast-ty-mut-ref next-lifetime (struct-get inner ty))
+                (struct-get inner next-index)))]
+          [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)]))]
+    [_ (ResultTcElidedType.Ok (TcElidedType ty index))]))
+
+(define (tc-elide-output-type [ty : AstType] [lifetime : TcMaybeString]) : ResultTcElidedType
+  (match ty
+    [(AstType.Func args ret)
+      (tc-elide-function-type (box-get args) (ty-node-get ret))]
+    [(AstType.Tuple elems)
+      (match (tc-elide-output-type-list (box-get elems) lifetime)
+        [(ResultTcElidedTypes.Ok items)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-tuple (struct-get items types)) 0))]
+        [(ResultTcElidedTypes.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Array elem count)
+      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-array (struct-get inner ty) count) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.DynArray elem)
+      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-dyn-array (struct-get inner ty)) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Box elem)
+      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-box (struct-get inner ty)) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Ptr elem)
+      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-ptr (struct-get inner ty)) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.MutPtr elem)
+      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-mut-ptr (struct-get inner ty)) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Region region elem)
+      (match (tc-elide-output-type (ty-node-get elem) lifetime)
+        [(ResultTcElidedType.Ok inner)
+          (ResultTcElidedType.Ok
+            (TcElidedType (ast-ty-region region (struct-get inner ty)) 0))]
+        [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])]
+    [(AstType.Ref name elem)
+      (match lifetime
+        [(TcMaybeString.No)
+          (if (tc-elided-lifetime? name)
+            (ResultTcElidedType.Err
+              "typecheck: elided reference return is ambiguous; write an explicit lifetime")
+            (match (tc-elide-output-type (ty-node-get elem) lifetime)
+              [(ResultTcElidedType.Ok inner)
+                (ResultTcElidedType.Ok
+                  (TcElidedType (ast-ty-ref name (struct-get inner ty)) 0))]
+              [(ResultTcElidedType.Err message)
+                (ResultTcElidedType.Err message)]))]
+        [(TcMaybeString.Some source)
+          (match (tc-elide-output-type (ty-node-get elem) lifetime)
+            [(ResultTcElidedType.Ok inner)
+              (ResultTcElidedType.Ok
+                (TcElidedType
+                  (ast-ty-ref
+                    (if (tc-elided-lifetime? name)
+                      source
+                      name)
+                    (struct-get inner ty))
+                  0))]
+            [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])])]
+    [(AstType.MutRef name elem)
+      (match lifetime
+        [(TcMaybeString.No)
+          (if (tc-elided-lifetime? name)
+            (ResultTcElidedType.Err
+              "typecheck: elided reference return is ambiguous; write an explicit lifetime")
+            (match (tc-elide-output-type (ty-node-get elem) lifetime)
+              [(ResultTcElidedType.Ok inner)
+                (ResultTcElidedType.Ok
+                  (TcElidedType (ast-ty-mut-ref name (struct-get inner ty)) 0))]
+              [(ResultTcElidedType.Err message)
+                (ResultTcElidedType.Err message)]))]
+        [(TcMaybeString.Some source)
+          (match (tc-elide-output-type (ty-node-get elem) lifetime)
+            [(ResultTcElidedType.Ok inner)
+              (ResultTcElidedType.Ok
+                (TcElidedType
+                  (ast-ty-mut-ref
+                    (if (tc-elided-lifetime? name)
+                      source
+                      name)
+                    (struct-get inner ty))
+                  0))]
+            [(ResultTcElidedType.Err message) (ResultTcElidedType.Err message)])])]
+    [_ (ResultTcElidedType.Ok (TcElidedType ty 0))]))
+
+(define (tc-elide-input-params-at
+  [params : (& params AstParamList)]
+  [offset : i64]
+  [index : i64]
+  [out : AstParamList]) : ResultTcElidedParams
+  (if (>= offset (ast-param-list-len params))
+    (ResultTcElidedParams.Ok (TcElidedParams out index))
+    (match (ast-param-list-get params offset (ast-param-fallback))
+      [(AstParam.Param name ty is-comptime)
+        (match (tc-elide-input-type ty index)
+          [(ResultTcElidedType.Ok item)
+            (let
+              [next-out : AstParamList out]
+              (begin
+                (ast-param-list-push
+                  (&mut next-out)
+                  (ast-param-id name (struct-get item ty) is-comptime))
+                (tc-elide-input-params-at
+                  params
+                  (+ offset 1)
+                  (struct-get item next-index)
+                  next-out)))]
+          [(ResultTcElidedType.Err message) (ResultTcElidedParams.Err message)])])))
+
+(define (tc-elided-param-type-list [params : AstParamList]) : AstTypeList
+  (tc-elided-param-type-list-at (& params) 0))
+
+(define (tc-elided-param-type-list-at
+  [params : (& params AstParamList)]
+  [index : i64]) : AstTypeList
+  (if (>= index (ast-param-list-len params))
+    (ast-type-list-new)
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (ast-type-cons ty (tc-elided-param-type-list-at params (+ index 1)))])))
+
+(define (tc-elide-function-signature [params : AstParamList] [ret : AstType]) : ResultTcElidedSignature
+  (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
+    [(ResultTcElidedParams.Ok inputs)
+      (let
+        [input-params : AstParamList (struct-get inputs params)]
+        [input-types : AstTypeList (tc-elided-param-type-list input-params)]
+        [lifetime : TcMaybeString
+          (tc-signature-single-input-lifetime input-types)]
+        (match (tc-elide-output-type ret lifetime)
+          [(ResultTcElidedType.Ok output)
+            (ResultTcElidedSignature.Ok
+              (TcElidedSignature input-params (struct-get output ty)))]
+          [(ResultTcElidedType.Err message)
+            (ResultTcElidedSignature.Err message)]))]
+    [(ResultTcElidedParams.Err message) (ResultTcElidedSignature.Err message)]))
+
 (define (tc-type-list-collect-reference-lifetimes
   [types : AstTypeList]
   [out : TcStringList]) : TcStringList
@@ -12952,11 +13363,7 @@
             (match (tc-source-param-list-policy-ok ctx params)
               [(ResultTcUnit.Ok)
                 (match (tc-source-maybe-type-policy-ok ctx maybe-ret)
-                  [(ResultTcUnit.Ok)
-                    (if (tc-maybe-type-contains-reference? maybe-ret)
-                      (ResultTcUnit.Err
-                        "typecheck: returning references requires lifetime support")
-                      (tc-source-expr-policy-ok ctx body))]
+                  [(ResultTcUnit.Ok) (tc-source-expr-policy-ok ctx body)]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
               [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))])]
     [(AstExpr.Tuple exprs) (tc-source-expr-list-policy-ok ctx exprs)]
@@ -13277,21 +13684,30 @@
                 [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
           [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
     [(AstDecl.DefFn _ params ret body-box _)
-      (let
-        [body : AstExpr (ast-node-get body-box)]
-        (match (tc-source-param-list-policy-ok ctx params)
-          [(ResultTcUnit.Ok)
-            (match (tc-source-type-policy-ok ctx ret)
+      (match (tc-elide-function-signature params ret)
+        [(ResultTcElidedSignature.Ok signature)
+          (let
+            [signature-params : AstParamList (struct-get signature params)]
+            [signature-ret : AstType (struct-get signature ret)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (tc-source-param-list-policy-ok ctx signature-params)
               [(ResultTcUnit.Ok)
-                (match (tc-reference-return-policy-ok ctx params ret)
+                (match (tc-source-type-policy-ok ctx signature-ret)
                   [(ResultTcUnit.Ok)
-                    (match (tc-source-expr-policy-ok ctx body)
+                    (match (tc-reference-return-policy-ok
+                      ctx
+                      signature-params
+                      signature-ret)
                       [(ResultTcUnit.Ok)
-                        (tc-source-expr-spmd-broadcast-scope-ok body false)]
+                        (match (tc-source-expr-policy-ok ctx body)
+                          [(ResultTcUnit.Ok)
+                            (tc-source-expr-spmd-broadcast-scope-ok body false)]
+                          [(ResultTcUnit.Err message)
+                            (ResultTcUnit.Err message)])]
                       [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
                   [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])]
-          [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+              [(ResultTcUnit.Err message) (ResultTcUnit.Err message)]))]
+        [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
     [(AstDecl.DefMacro _ params ret body-box)
       (let
         [body : AstExpr (ast-node-get body-box)]
@@ -16258,8 +16674,13 @@
                 (ResultTcType.Err
                   "typecheck: top-level value requires annotation")])]))]
     [(AstDecl.DefFn _ params ret _ _)
-      (ResultTcType.Ok
-        (ast-ty-func (tc-param-type-list ctx params) (tc-resolve-type ctx ret)))]
+      (match (tc-elide-function-signature params ret)
+        [(ResultTcElidedSignature.Ok signature)
+          (ResultTcType.Ok
+            (ast-ty-func
+              (tc-param-type-list ctx (struct-get signature params))
+              (tc-resolve-type ctx (struct-get signature ret))))]
+        [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
     [(AstDecl.Extern _ _ _ ty) (ResultTcType.Ok (tc-resolve-type ctx ty))]
     [(AstDecl.DefDispatch name variants)
       (tc-dispatch-decl-type ctx (intern-str name) variants)]
@@ -34537,7 +34958,7 @@
       (tc-type-env-scoped-runtime-restore! saved)
       result)))
 
-(define (tc-lambda-expr-with-capture-check
+(define (tc-lambda-expr-normalized-with-capture-check
   [ctx : TcContext]
   [env : TcTypeEnv]
   [params : AstParamList]
@@ -34571,7 +34992,14 @@
             (if (and
               (tc-type-contains-any-region body-ty)
               (not
-                (tc-type-regions-all-atomic-arena-owners? lambda-env body-ty)))
+                (tc-type-regions-all-atomic-arena-owners? lambda-env body-ty))
+              ;; A reference result whose signature has already tied it to a
+              ;; lambda parameter is not an arena escape. It remains governed
+              ;; by the ordinary expected-type and return-lifetime checks.
+              (not
+                (match maybe-ret
+                  [(AstMaybeType.Some ret) (tc-type-contains-reference? ret)]
+                  [(AstMaybeType.No) false])))
               (ResultTcType.Err
                 "typecheck: lambda return value has region-tagged type; region value would escape")
               (match maybe-ret
@@ -34591,6 +35019,37 @@
                     (ast-ty-func (tc-param-type-list ctx params) body-ty))]))]
           [(ResultTcType.Err message) (ResultTcType.Err message)]))]
     [(ResultTcUnit.Err message) (ResultTcType.Err message)]))
+
+(define (tc-lambda-expr-with-capture-check
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [params : AstParamList]
+  [maybe-ret : AstMaybeType]
+  [body : AstExpr]
+  [allow-immutable-reference-captures : bool]) : ResultTcType
+  (match maybe-ret
+    [(AstMaybeType.Some ret)
+      (match (tc-elide-function-signature params ret)
+        [(ResultTcElidedSignature.Ok signature)
+          (tc-lambda-expr-normalized-with-capture-check
+            ctx
+            env
+            (struct-get signature params)
+            (AstMaybeType.Some (struct-get signature ret))
+            body
+            allow-immutable-reference-captures)]
+        [(ResultTcElidedSignature.Err message) (ResultTcType.Err message)])]
+    [(AstMaybeType.No)
+      (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
+        [(ResultTcElidedParams.Ok inputs)
+          (tc-lambda-expr-normalized-with-capture-check
+            ctx
+            env
+            (struct-get inputs params)
+            (AstMaybeType.No)
+            body
+            allow-immutable-reference-captures)]
+        [(ResultTcElidedParams.Err message) (ResultTcType.Err message)])]))
 
 (define (tc-lambda-expr
   [ctx : TcContext]
@@ -58052,7 +58511,15 @@
               [(ResultTcType.Ok _) ResultTcUnit.Ok]
               [(ResultTcType.Err message) (ResultTcUnit.Err message)])])]
       [(AstDecl.DefFn _ params ret body-box _)
-        (tc-check-fn-decl-scoped ctx global-env params ret body-box)]
+        (match (tc-elide-function-signature params ret)
+          [(ResultTcElidedSignature.Ok signature)
+            (tc-check-fn-decl-scoped
+              ctx
+              global-env
+              (struct-get signature params)
+              (struct-get signature ret)
+              body-box)]
+          [(ResultTcElidedSignature.Err message) (ResultTcUnit.Err message)])]
       [(AstDecl.DefMacro name params ret body-box)
         (let
           [body : AstExpr (ast-node-get body-box)]

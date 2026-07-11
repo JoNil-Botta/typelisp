@@ -1261,6 +1261,17 @@ Reference types are lifetime-bearing:
   through an owned array or a mutable array reference. Borrowed `str` source
   semantics are specified in section 3.11.
 
+In function signatures, the ordinary spelling elides the lifetime name:
+
+```lisp test=ignore name=reference-signature-elision-syntax reason="signature-only syntax example"
+(& T)
+(&mut T)
+```
+
+These are type forms, not borrow expressions. Expression position continues to
+use `(& place)` / `(&mut place)`, so the enclosing grammar context
+unambiguously selects the meaning.
+
 Borrow expressions:
 
 ```lisp test=ignore name=borrow-expression-syntax reason=syntax-only
@@ -1379,7 +1390,46 @@ structural types. Those lifetimes are preserved through `array-ref` and
 directly, such as `(& n T)`, `(Tuple (& n T))`, and `(Array (& n T) k)`, may be
 returned when the lifetime is tied to an input.
 
-#### 3.10.1 Lifetime-parameterized named aggregates
+#### 3.10.1 Function-signature lifetime elision
+
+Elision applies only to named function declarations, lambdas, and `(-> ...)`
+function types, including references nested in tuples, arrays, boxes, pointers,
+and nested function signatures that form part of those contracts. It does not
+apply to fields, enum payloads, globals, local annotations, or nominal lifetime
+argument lists; those positions require an explicit lifetime or `program`.
+
+- Each elided input reference receives a distinct hidden, signature-local
+  lifetime. Two `(& T)` inputs therefore do not imply that their callers share
+  a lifetime.
+- Explicit and elided input references may coexist. Distinct explicit lifetime
+  names count separately; repeated explicit names count once.
+- An elided output reference is assigned the sole distinct input lifetime when
+  exactly one exists. The rule applies recursively to structural output types.
+- If there are zero or multiple distinct input lifetimes, any elided output
+  reference is rejected with `typecheck: elided reference return is ambiguous;
+  write an explicit lifetime`. TypeLisp has no receiver-specific exception.
+- Explicit output lifetimes preserve their existing meaning and remain required
+  when an API intentionally relates multiple inputs or chooses `program`.
+
+```lisp test=ignore name=reference-signature-elision-examples reason="examples rely on surrounding declarations"
+(define (view [item : (&mut Item)]) : (& Item)
+  (& item))
+
+;; Each input is distinct, so this has no elided reference result.
+(define (same? [left : (& Item)] [right : (& Item)]) : bool
+  (= left.id right.id))
+
+;; This is rejected: the result could refer to either input.
+(define (choose [left : (& Item)] [right : (& Item)]) : (& Item)
+  left)
+
+;; State the relationship explicitly when it matters.
+(define (choose-left [left : (& selected Item)] [right : (& other Item)])
+  : (& selected Item)
+  left)
+```
+
+#### 3.10.2 Lifetime-parameterized named aggregates
 
 Named structs and enums may declare lifetime parameters with lifetime metadata
 after the nominal name and before all fields or variants, alongside any other
@@ -1537,8 +1587,10 @@ possible:
 - Attempts to use type parameters, type expressions, or generic type
   constructors where only lifetime names are allowed.
 
-There are no runtime generics or type parameters, no trait-like bounds, no
-lifetime elision syntax, and no lifetime subtyping or coercion.
+There are no runtime generics or type parameters, no trait-like bounds, and no
+lifetime subtyping or coercion. Function-signature reference elision is the
+only lifetime elision syntax; stored references and nominal lifetime arguments
+remain explicit.
 
 **Non-lexical lifetime rule.** A borrow lives until the last use of a
 reference value that carries the borrow lifetime. This shortening applies
@@ -1656,7 +1708,7 @@ owner or arena:
     (lambda () (takes-captured r))))
 ```
 
-#### 3.10.2 Closure reference captures
+#### 3.10.3 Closure reference captures
 
 A lambda may capture a binding whose type contains an immutable reference when
 the checker proves the closure value does not escape the reference's lifetime.

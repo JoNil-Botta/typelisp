@@ -40311,12 +40311,6 @@
             (tc-lambda-captures-reference? type-env params body))])]
     [_ false]))
 
-(define (lower-tail-call-target?
-  [_state : LowerState]
-  [_env : sym_i64_env.SymI64Env]
-  [_callee : AstExpr]) : bool
-  true)
-
 (define (lower-tail-call-self-target? [state : LowerState] [name : i64]) : bool
   (string.eq
     (lower-resolve-name state (intern-str name))
@@ -40482,117 +40476,6 @@
         (lower-return-expr ctx state env type-env origin ret-ty sret-var))]
     [(ResultTcType.Err message)
       (ResultLowerState.Err (box (lower-diagnostic-at-expr callee message)))]))
-
-(define (lower-tail-let-bindings-candidate-env
-  [env : sym_i64_env.SymI64Env]
-  [bindings : AstLetBindingList]) : sym_i64_env.SymI64Env
-  (lower-tail-let-bindings-candidate-env-at env (& bindings) 0))
-
-(define (lower-tail-let-bindings-candidate-env-at
-  [env : sym_i64_env.SymI64Env]
-  [bindings : (& bindings AstLetBindingList)]
-  [binding-index : i64]) : sym_i64_env.SymI64Env
-  (if (>= binding-index (ast-let-binding-list-len bindings))
-    env
-    (match (ast-let-binding-list-get
-      bindings
-      binding-index
-      (ast-let-binding-fallback))
-      [(AstLetBinding.Binding name _ _)
-        (lower-tail-let-bindings-candidate-env-at
-          (sym_i64_env.sym-i64-bind-id env name 0)
-          bindings
-          (+ binding-index 1))])))
-
-(define (lower-tail-begin-candidate?
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [exprs : AstExprList]) : bool
-  (let
-    [len : i64 (struct-get (& exprs) len)]
-    (if (= len 0)
-      false
-      (lower-tail-expr-candidate?
-        ctx
-        state
-        env
-        (lower-context-expr-get ctx (ast-expr-list-get (& exprs) (- len 1) 0))))))
-
-(define (lower-tail-match-arms-candidate?
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [arms : AstMatchArmList]) : bool
-  (lower-tail-match-arms-candidate-at? ctx state env (& arms) 0))
-
-(define (lower-tail-match-arms-candidate-at?
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [arms : (& arms AstMatchArmList)]
-  [index : i64]) : bool
-  (if (>= index (struct-get arms len))
-    false
-    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
-      [(AstMatchArm.Arm pat body-box)
-        (let
-          [body : AstExpr (lower-context-expr-get ctx body-box)]
-          [body-env : sym_i64_env.SymI64Env
-            (match pat
-              [(AstPattern.Binding name)
-                (sym_i64_env.sym-i64-bind-id env name 0)]
-              [_ env])]
-          (if (lower-tail-expr-candidate? ctx state body-env body)
-            true
-            (lower-tail-match-arms-candidate-at? ctx state env arms (+ index 1))))])))
-
-(define (lower-tail-expr-candidate?
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [expr : AstExpr]) : bool
-  (match expr
-    [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr-candidate? ctx state env inner))]
-    [(AstExpr.Ann inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr-candidate? ctx state env inner))]
-    [(AstExpr.Cast inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-tail-expr-candidate? ctx state env inner))]
-    [(AstExpr.Call callee-box _)
-      (let
-        [callee : AstExpr (lower-context-expr-get ctx callee-box)]
-        (lower-tail-call-target? state env callee))]
-    [(AstExpr.Let let-box)
-      (match (box-get let-box)
-        [(AstLet.Let bindings body-box)
-          (let
-            [body : AstExpr (lower-context-expr-get ctx body-box)]
-            (lower-tail-expr-candidate?
-              ctx
-              state
-              (lower-tail-let-bindings-candidate-env env bindings)
-              body))])]
-    [(AstExpr.Begin exprs) (lower-tail-begin-candidate? ctx state env exprs)]
-    [(AstExpr.Unsafe exprs) (lower-tail-begin-candidate? ctx state env exprs)]
-    [(AstExpr.If _ then-branch-box else-branch-box)
-      (let
-        [then-branch : AstExpr (lower-context-expr-get ctx then-branch-box)]
-        [else-branch : AstExpr (lower-context-expr-get ctx else-branch-box)]
-        (if (lower-tail-expr-candidate? ctx state env then-branch)
-          true
-          (lower-tail-expr-candidate? ctx state env else-branch)))]
-    [(AstExpr.Match match-box)
-      (match (box-get match-box)
-        [(AstMatch.Match _ arms)
-          (lower-tail-match-arms-candidate? ctx state env arms)])]
-    [_ false]))
 
 ;; sret return ABI: when `sret-var` >= 0 the caller passed a
 ;; hidden result-slot pointer (bound to that var). Copy the result aggregate
@@ -41841,6 +41724,7 @@
   [arms : AstMatchArmList]
   [ret-ty : AstType]
   [sret-var : i64]
+  [borrow-lifetime : TcMaybeString]
   [force-memory : bool]) : ResultLowerState
   (let
     [scrut-words : i64 (lower-type-register-words ctx scrut-ty)]
@@ -41865,7 +41749,7 @@
                   arms
                   ret-ty
                   sret-var
-                  (TcMaybeString.No)
+                  borrow-lifetime
                   true)]
               [_
                 (ResultLowerState.Err
@@ -41882,7 +41766,7 @@
           arms
           ret-ty
           sret-var
-          (TcMaybeString.No)
+          borrow-lifetime
           false))
       (match (lower-load-at-offset
         state
@@ -41903,7 +41787,7 @@
                 arms
                 ret-ty
                 sret-var
-                (TcMaybeString.No)
+                borrow-lifetime
                 false)]
             [_
               (ResultLowerState.Err
@@ -42372,70 +42256,109 @@
       [(ResultLowerExpr.Ok scrut-lowered)
         (match scrut-lowered
           [(LowerExpr.Expr scrut-state scrut-value scrut-ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
-              [(AstType.Enum _)
-                (match (lower-state-alloc-var scrut-state)
-                  [(LowerAlloc.Alloc scrut-alloc scrut-var)
-                    (lower-tail-match-enum
-                      ctx
-                      (lower-state-emit
-                        scrut-alloc
-                        (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var
-                      false)])]
-              [(AstType.EnumArgs _ _)
-                (match (lower-state-alloc-var scrut-state)
-                  [(LowerAlloc.Alloc scrut-alloc scrut-var)
-                    (lower-tail-match-enum
-                      ctx
-                      (lower-state-emit
-                        scrut-alloc
-                        (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var
-                      false)])]
-              [(AstType.VarArgs _ _)
-                (match (lower-state-alloc-var scrut-state)
-                  [(LowerAlloc.Alloc scrut-alloc scrut-var)
-                    (lower-tail-match-enum
-                      ctx
-                      (lower-state-emit
-                        scrut-alloc
-                        (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var
-                      false)])]
-              [_
-                (match (lower-state-alloc-var scrut-state)
-                  [(LowerAlloc.Alloc scrut-alloc scrut-var)
-                    (lower-tail-match-arms
-                      ctx
-                      (lower-state-emit
-                        scrut-alloc
-                        (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))
-                      env
-                      type-env
-                      scrut-var
-                      scrut-ty
-                      arms
-                      ret-ty
-                      sret-var)])])])]
+            (match (lower-state-alloc-var scrut-state)
+              [(LowerAlloc.Alloc scrut-alloc scrut-var)
+                (let
+                  [match-state : LowerState
+                    (lower-state-emit
+                      scrut-alloc
+                      (CompilerIrInstr.Mov scrut-var scrut-value scrut-ty))]
+                  (match (tc-type-strip-region (tc-resolve-type ctx scrut-ty))
+                    [(AstType.Enum _)
+                      (lower-tail-match-enum
+                        ctx
+                        match-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        ret-ty
+                        sret-var
+                        (TcMaybeString.No)
+                        false)]
+                    [(AstType.EnumArgs _ _)
+                      (lower-tail-match-enum
+                        ctx
+                        match-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        ret-ty
+                        sret-var
+                        (TcMaybeString.No)
+                        false)]
+                    [(AstType.Ref borrow-lifetime referent-box)
+                      (let
+                        [referent-ty : AstType
+                          (tc-type-strip-region
+                            (tc-resolve-type
+                              ctx
+                              (tc-context-type-get ctx referent-box)))]
+                        (match referent-ty
+                          [(AstType.Enum _)
+                            (lower-tail-match-enum
+                              ctx
+                              match-state
+                              env
+                              type-env
+                              scrut-var
+                              referent-ty
+                              arms
+                              ret-ty
+                              sret-var
+                              (TcMaybeString.Some borrow-lifetime)
+                              true)]
+                          [(AstType.EnumArgs _ _)
+                            (lower-tail-match-enum
+                              ctx
+                              match-state
+                              env
+                              type-env
+                              scrut-var
+                              referent-ty
+                              arms
+                              ret-ty
+                              sret-var
+                              (TcMaybeString.Some borrow-lifetime)
+                              true)]
+                          [_
+                            (lower-tail-match-arms
+                              ctx
+                              match-state
+                              env
+                              type-env
+                              scrut-var
+                              scrut-ty
+                              arms
+                              ret-ty
+                              sret-var)]))]
+                    [(AstType.VarArgs _ _)
+                      (lower-tail-match-enum
+                        ctx
+                        match-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        ret-ty
+                        sret-var
+                        (TcMaybeString.No)
+                        false)]
+                    [_
+                      (lower-tail-match-arms
+                        ctx
+                        match-state
+                        env
+                        type-env
+                        scrut-var
+                        scrut-ty
+                        arms
+                        ret-ty
+                        sret-var)]))])])]
       [(ResultLowerExpr.Err message) (ResultLowerState.Err message)])))
 
 (define (lower-tail-expr
@@ -42446,99 +42369,97 @@
   [expr : AstExpr]
   [ret-ty : AstType]
   [sret-var : i64]) : ResultLowerState
-  (if (lower-tail-expr-candidate? ctx state env expr)
-    (match expr
-      [(AstExpr.Spanned inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
-      [(AstExpr.Ann inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
-      [(AstExpr.Cast inner-box _)
-        (let
-          [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-          (match (tc-expr ctx type-env inner)
-            [(ResultTcType.Ok inner-ty)
-              (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
-                (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
-                (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
-            [(ResultTcType.Err message)
-              (ResultLowerState.Err
-                (box (lower-diagnostic-at-expr inner message)))]))]
-      [(AstExpr.Call callee-box args)
-        (let
-          [callee : AstExpr (lower-context-expr-get ctx callee-box)]
-          (lower-tail-call
-            ctx
-            state
-            env
-            type-env
-            callee
-            args
-            ret-ty
-            sret-var
-            expr))]
-      [(AstExpr.Let let-box)
-        (match (box-get let-box)
-          [(AstLet.Let bindings body-box)
-            (let
-              [body : AstExpr (lower-context-expr-get ctx body-box)]
-              (match (lower-let-bindings ctx state env type-env bindings)
-                [(ResultLowerEnv.Ok binding-state body-env body-type-env)
-                  (lower-tail-expr
-                    ctx
-                    binding-state
-                    body-env
-                    body-type-env
-                    body
-                    ret-ty
-                    sret-var)]
-                [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))])]
-      [(AstExpr.Begin exprs)
-        (lower-tail-begin ctx state env type-env exprs ret-ty sret-var)]
-      [(AstExpr.Unsafe exprs)
-        (lower-tail-begin
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
+    [(AstExpr.Ann inner-box _)
+      (let
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-tail-expr ctx state env type-env inner ret-ty sret-var))]
+    [(AstExpr.Cast inner-box _)
+      (let
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (match (tc-expr ctx type-env inner)
+          [(ResultTcType.Ok inner-ty)
+            (if (tc-type-eq (tc-type-without-regions inner-ty) ret-ty)
+              (lower-tail-expr ctx state env type-env inner ret-ty sret-var)
+              (lower-return-expr ctx state env type-env expr ret-ty sret-var))]
+          [(ResultTcType.Err message)
+            (ResultLowerState.Err
+              (box (lower-diagnostic-at-expr inner message)))]))]
+    [(AstExpr.Call callee-box args)
+      (let
+        [callee : AstExpr (lower-context-expr-get ctx callee-box)]
+        (lower-tail-call
           ctx
           state
           env
-          (tc-enter-unsafe type-env)
-          exprs
+          type-env
+          callee
+          args
           ret-ty
-          sret-var)]
-      [(AstExpr.If cond-box then-branch-box else-branch-box)
-        (let
-          [cond : AstExpr (lower-context-expr-get ctx cond-box)]
-          [then-branch : AstExpr (lower-context-expr-get ctx then-branch-box)]
-          [else-branch : AstExpr (lower-context-expr-get ctx else-branch-box)]
-          (lower-tail-if
-            ctx
-            state
-            env
-            type-env
-            cond
-            then-branch
-            else-branch
-            ret-ty
-            sret-var))]
-      [(AstExpr.Match match-box)
-        (match (box-get match-box)
-          [(AstMatch.Match scrutinee-box arms)
-            (let
-              [scrutinee : AstExpr (lower-context-expr-get ctx scrutinee-box)]
-              (lower-tail-match
-                ctx
-                state
-                env
-                type-env
-                scrutinee
-                arms
-                ret-ty
-                sret-var
-                expr))])]
-      [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)])
-    (lower-return-expr ctx state env type-env expr ret-ty sret-var)))
+          sret-var
+          expr))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body-box)
+          (let
+            [body : AstExpr (lower-context-expr-get ctx body-box)]
+            (match (lower-let-bindings ctx state env type-env bindings)
+              [(ResultLowerEnv.Ok binding-state body-env body-type-env)
+                (lower-tail-expr
+                  ctx
+                  binding-state
+                  body-env
+                  body-type-env
+                  body
+                  ret-ty
+                  sret-var)]
+              [(ResultLowerEnv.Err message) (ResultLowerState.Err message)]))])]
+    [(AstExpr.Begin exprs)
+      (lower-tail-begin ctx state env type-env exprs ret-ty sret-var)]
+    [(AstExpr.Unsafe exprs)
+      (lower-tail-begin
+        ctx
+        state
+        env
+        (tc-enter-unsafe type-env)
+        exprs
+        ret-ty
+        sret-var)]
+    [(AstExpr.If cond-box then-branch-box else-branch-box)
+      (let
+        [cond : AstExpr (lower-context-expr-get ctx cond-box)]
+        [then-branch : AstExpr (lower-context-expr-get ctx then-branch-box)]
+        [else-branch : AstExpr (lower-context-expr-get ctx else-branch-box)]
+        (lower-tail-if
+          ctx
+          state
+          env
+          type-env
+          cond
+          then-branch
+          else-branch
+          ret-ty
+          sret-var))]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee-box arms)
+          (let
+            [scrutinee : AstExpr (lower-context-expr-get ctx scrutinee-box)]
+            (lower-tail-match
+              ctx
+              state
+              env
+              type-env
+              scrutinee
+              arms
+              ret-ty
+              sret-var
+              expr))])]
+    [_ (lower-return-expr ctx state env type-env expr ret-ty sret-var)]))
 
 (define (lower-param-count [params : AstParamList]) : i64
   (ast-param-list-len (& params)))

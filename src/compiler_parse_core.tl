@@ -936,6 +936,137 @@
 (define (compiler-parse-tag-decl-defdispatch) : i64
   411)
 
+;; Parser syntax is a closed set, but the general-purpose scoped symbol
+;; environment stores it as a 133-node immutable list. Most parsed symbols are
+;; ordinary user names, so a miss used to walk that whole list. Keep the
+;; environment as the source of truth for cfg evaluation and nonstandard test
+;; dispatches, while indexing a complete parser dispatch once per intern
+;; generation for constant-time tag lookup.
+;;
+;; Keys store intern-id+1 so zero remains the empty-slot sentinel. Capacity is a
+;; power of two and comfortably below a 0.5 load factor for the closed syntax
+;; set, making the mask-and-linear-probe path short without a hashmap module
+;; dependency or per-module allocation.
+(define compiler-parse-dispatch-index-capacity : i64
+  512)
+(define compiler-parse-dispatch-index-keys : (Array i64)
+  (array.make-array i64 512))
+(define compiler-parse-dispatch-index-tags : (Array i64)
+  (array.make-array i64 512))
+(define compiler-parse-dispatch-index-generation : i64
+  -1)
+(define compiler-parse-dispatch-index-marker-id : i64
+  -1)
+(define compiler-parse-dispatch-index-ready : bool
+  false)
+
+(define (compiler-parse-dispatch-index-clear!) : unit
+  (let
+    [i : i64 0]
+    (while (< i compiler-parse-dispatch-index-capacity)
+      (begin
+        (array-set! compiler-parse-dispatch-index-keys i 0)
+        (set! i (+ i 1))))))
+
+(define (compiler-parse-dispatch-index-insert! [name-id : i64] [tag : i64]) : bool
+  (let
+    [encoded : i64 (+ name-id 1)]
+    [slot : i64 (bit-and name-id (- compiler-parse-dispatch-index-capacity 1))]
+    [steps : i64 0]
+    (begin
+      (while (< steps compiler-parse-dispatch-index-capacity)
+        (let
+          [present : i64 (array-ref compiler-parse-dispatch-index-keys slot)]
+          (if (or (= present 0) (= present encoded))
+            (begin
+              (array-set! compiler-parse-dispatch-index-keys slot encoded)
+              (array-set! compiler-parse-dispatch-index-tags slot tag)
+              (return true))
+            (begin
+              (set!
+                slot
+                (bit-and
+                  (+ slot 1)
+                  (- compiler-parse-dispatch-index-capacity 1)))
+              (set! steps (+ steps 1))))))
+      false)))
+
+(define (compiler-parse-dispatch-index-populate!
+  [dispatch : sym_i64_env.SymI64Env]) : unit
+  (let
+    [generation : i64 (intern-generation)]
+    (if (= compiler-parse-dispatch-index-generation generation)
+      unit
+      (let
+        [cursor : sym_i64_env.SymI64Env dispatch]
+        [done : bool false]
+        (begin
+          (compiler-parse-dispatch-index-clear!)
+          (set! compiler-parse-dispatch-index-marker-id -1)
+          (set! compiler-parse-dispatch-index-ready true)
+          (while (and compiler-parse-dispatch-index-ready (not done))
+            (match cursor
+              [(sym_i64_env.SymI64Nil) (set! done true)]
+              [(sym_i64_env.SymI64Bind name-id tag rest)
+                (begin
+                  (if (= tag (compiler-parse-tag-decl-defdispatch))
+                    (set! compiler-parse-dispatch-index-marker-id name-id)
+                    unit)
+                  (if (compiler-parse-dispatch-index-insert! name-id tag)
+                    (set! cursor (box-get rest))
+                    (set! compiler-parse-dispatch-index-ready false)))]))
+          (if (< compiler-parse-dispatch-index-marker-id 0)
+            (set! compiler-parse-dispatch-index-ready false)
+            unit)
+          (set! compiler-parse-dispatch-index-generation generation))))))
+
+;; A complete dispatch naturally starts with the defdispatch binding. Derived
+;; cfg dispatches repeat that same binding at the head as a semantics-neutral
+;; marker; partial/custom environments retain the exact linked-list fallback.
+(define (compiler-parse-dispatch-indexed? [dispatch : sym_i64_env.SymI64Env]) : bool
+  (and
+    compiler-parse-dispatch-index-ready
+    (= compiler-parse-dispatch-index-generation (intern-generation))
+    (match dispatch
+      [(sym_i64_env.SymI64Bind name-id tag _)
+        (and
+          (= name-id compiler-parse-dispatch-index-marker-id)
+          (= tag (compiler-parse-tag-decl-defdispatch)))]
+      [(sym_i64_env.SymI64Nil) false])))
+
+(define (compiler-parse-dispatch-index-mark [dispatch : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (if (and
+    compiler-parse-dispatch-index-ready
+    (= compiler-parse-dispatch-index-generation (intern-generation)))
+    (sym_i64_env.sym-i64-bind-id
+      dispatch
+      compiler-parse-dispatch-index-marker-id
+      (compiler-parse-tag-decl-defdispatch))
+    dispatch))
+
+(define (compiler-parse-dispatch-index-lookup-id [name-id : i64]) : i64
+  (let
+    [encoded : i64 (+ name-id 1)]
+    [slot : i64 (bit-and name-id (- compiler-parse-dispatch-index-capacity 1))]
+    [steps : i64 0]
+    (begin
+      (while (< steps compiler-parse-dispatch-index-capacity)
+        (let
+          [present : i64 (array-ref compiler-parse-dispatch-index-keys slot)]
+          (cond
+            [(= present 0) (return (compiler-parse-tag-unknown))]
+            [(= present encoded)
+              (return (array-ref compiler-parse-dispatch-index-tags slot))]
+            [else
+              (begin
+                (set!
+                  slot
+                  (bit-and
+                    (+ slot 1)
+                    (- compiler-parse-dispatch-index-capacity 1)))
+                (set! steps (+ steps 1)))])))
+      (compiler-parse-tag-unknown))))
+
 (define (compiler-parse-dispatch-binops [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
     [e1 : sym_i64_env.SymI64Env
@@ -1061,7 +1192,12 @@
       out)))
 
 (define (compiler-parse-dispatch-private-types [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable-private-dynamic-buffer e))
+  (let
+    [indexed : bool (compiler-parse-dispatch-indexed? e)]
+    [out : sym_i64_env.SymI64Env (compiler-cfg-enable-private-dynamic-buffer e)]
+    (if indexed
+      (compiler-parse-dispatch-index-mark out)
+      out)))
 
 (define (compiler-parse-dispatch-exprs [e : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (let
@@ -1497,19 +1633,28 @@
       (compiler-parse-tag-decl-defdispatch))))
 
 (define (compiler-parse-dispatch-env) : sym_i64_env.SymI64Env
-  (compiler-parse-dispatch-decls
-    (compiler-parse-dispatch-patterns
-      (compiler-parse-dispatch-exprs
-        (compiler-parse-dispatch-types
-          (compiler-parse-dispatch-unops
-            (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty))))))))
+  (let
+    [dispatch : sym_i64_env.SymI64Env
+      (compiler-parse-dispatch-decls
+        (compiler-parse-dispatch-patterns
+          (compiler-parse-dispatch-exprs
+            (compiler-parse-dispatch-types
+              (compiler-parse-dispatch-unops
+                (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty)))))))]
+    (begin
+      (compiler-parse-dispatch-index-populate! dispatch)
+      dispatch)))
 
 (define (compiler-parse-dispatch-tag
   [dispatch : sym_i64_env.SymI64Env]
   [name : String]) : i64
-  (match (sym_i64_env.sym-i64-lookup dispatch name)
-    [(option_i64.Some tag) tag]
-    [(option_i64.None) (compiler-parse-tag-unknown)]))
+  (let
+    [name-id : i64 (intern name)]
+    (if (compiler-parse-dispatch-indexed? dispatch)
+      (compiler-parse-dispatch-index-lookup-id name-id)
+      (match (sym_i64_env.sym-i64-lookup-id dispatch name-id)
+        [(option_i64.Some tag) tag]
+        [(option_i64.None) (compiler-parse-tag-unknown)]))))
 
 (define (ast-binop-tag? [tag : i64]) : bool
   (or
@@ -7827,7 +7972,9 @@
 (define (parse-ast-program-dispatch-with-cfg [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match cfgs
     [(sym_i64_env.SymI64Nil) (compiler-parse-dispatch-env)]
-    [_ (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs)]))
+    [_
+      (compiler-parse-dispatch-index-mark
+        (compiler-cfg-merge (compiler-parse-dispatch-env) cfgs))]))
 
 (define (parse-ast-program-with-cfg-and-pools
   [toks : (Array token.SpannedToken)]
@@ -11141,6 +11288,49 @@
       "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
       "parse: variadic macro operand must be final")))
 
+(define (compiler-parse-dispatch-index-env-matches?
+  [dispatch : sym_i64_env.SymI64Env]) : bool
+  (let
+    [ok : bool (compiler-parse-dispatch-indexed? dispatch)]
+    [cursor : sym_i64_env.SymI64Env dispatch]
+    [done : bool false]
+    (begin
+      (while (and ok (not done))
+        (match cursor
+          [(sym_i64_env.SymI64Nil) (set! done true)]
+          [(sym_i64_env.SymI64Bind name-id tag rest)
+            (if (= (compiler-parse-dispatch-index-lookup-id name-id) tag)
+              (set! cursor (box-get rest))
+              (set! ok false))]))
+      (and ok done))))
+
+(define (compiler-parse-dispatch-index-ok?) : bool
+  (let
+    [full : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
+    [partial : sym_i64_env.SymI64Env
+      (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty))]
+    [cfgs : sym_i64_env.SymI64Env
+      (compiler-cfg-enable (compiler-cfg-empty) "dispatch-index-test")]
+    [configured : sym_i64_env.SymI64Env
+      (parse-ast-program-dispatch-with-cfg cfgs)]
+    [private : sym_i64_env.SymI64Env
+      (compiler-parse-dispatch-private-types full)]
+    (and
+      (compiler-parse-dispatch-index-env-matches? full)
+      (= (compiler-parse-dispatch-tag full "if") (compiler-parse-tag-expr-if))
+      (=
+        (compiler-parse-dispatch-tag full "not-parser-syntax")
+        (compiler-parse-tag-unknown))
+      (not (compiler-parse-dispatch-indexed? partial))
+      (= (compiler-parse-dispatch-tag partial "+") (compiler-parse-tag-bin-add))
+      (=
+        (compiler-parse-dispatch-tag partial "if")
+        (compiler-parse-tag-unknown))
+      (compiler-parse-dispatch-indexed? configured)
+      (compiler-cfg-enabled? configured "dispatch-index-test")
+      (compiler-parse-dispatch-indexed? private)
+      (compiler-cfg-private-dynamic-buffer-enabled? private))))
+
 (define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
   (and
     (= (compiler-parse-smoke-score program) 36)
@@ -11152,6 +11342,7 @@
 
 (define (compiler-parse-shape-tests-middle-ok?) : bool
   (and
+    (compiler-parse-dispatch-index-ok?)
     (compiler-parse-comptime-decl-ok?)
     (compiler-parse-unsafe-decl-ok?)
     (compiler-parse-module-decl-ok?)

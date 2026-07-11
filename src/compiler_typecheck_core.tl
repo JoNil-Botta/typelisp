@@ -3392,11 +3392,34 @@
 
 (define (tc-env-partial-layer-depth [env : TcTypeEnv]) : i64
   (match env
-    [(TcTypeEnv.Cache _ _ _ _ _ _ partial _ below)
-      (if partial
+    [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial _ below)
+      (if (and scan-through partial)
         (+ 1 (tc-env-partial-layer-depth (box-get below)))
         0)]
     [_ 0]))
+
+;; Local partial caches allocate their value arrays at exactly twice the number
+;; of covered spine binds (the local threshold is well above the tiny-cache
+;; minimum). This lets a collapsed layer retain its exact coverage without
+;; widening TcTypeEnv: later collapses can sum old layers and stop at the
+;; immutable explicit top-env boundary.
+(define (tc-env-partial-local-covered-count [env : TcTypeEnv]) : i64
+  (match env
+    [(TcTypeEnv.Cache _ values _ _ _ scan-through partial _ below)
+      (if (and scan-through partial)
+        (+
+          (/ (array.length values) 2)
+          (tc-env-partial-local-covered-count (box-get below)))
+        0)]
+    [_ 0]))
+
+(define (tc-env-partial-local-base [env : TcTypeEnv]) : TcTypeEnv
+  (match env
+    [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial _ below)
+      (if (and scan-through partial)
+        (tc-env-partial-local-base (box-get below))
+        env)]
+    [_ env]))
 
 (cfg
   test
@@ -3438,7 +3461,7 @@
         (if (>=
           (tc-env-partial-layer-depth below)
           (tc-local-cache-partial-layer-cap))
-          (tc-env-with-full-local-cache env)
+          (tc-env-with-collapsed-local-cache env)
           (tc-env-with-local-cache env)))
       env)))
 
@@ -4921,6 +4944,13 @@
                 (set! left (- left 1))
                 (set! cur rest-env)
                 (set! cur-above-boundary still-above)))]
+          [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial rest _)
+            (if (and scan-through partial)
+              ;; The cache's `rest` starts at the first bind it covers. Walk
+              ;; that layer, then the next partial layer, but stop before an
+              ;; explicit/global cache; `left` is the exact covered-bind sum.
+              (set! cur (box-get rest))
+              (set! done true))]
           [_ (set! done true)]))
       cur-ids)))
 
@@ -5012,9 +5042,23 @@
 (define (tc-env-with-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-cache-mode env false))
 
-;; Depth-cap fallback for function-body spines: full but still scan-through.
-(define (tc-env-with-full-local-cache [env : TcTypeEnv]) : TcTypeEnv
-  (tc-env-with-cache-mode env true))
+;; Collapse a deep stack of local windows into one wider partial cache. Lookup
+;; misses jump directly to the existing explicit/global cache, while `rest`
+;; keeps the original spine available to marker scans. This avoids rebuilding
+;; tens of thousands of immutable top-level bindings for a few hundred locals.
+(define (tc-env-with-collapsed-local-cache [env : TcTypeEnv]) : TcTypeEnv
+  (let
+    [threshold : i64 (tc-local-cache-threshold)]
+    [layers : TcTypeEnv (tc-env-after-prefix env threshold)]
+    [count : i64
+      (+
+        (tc-env-cache-count-prefix env threshold)
+        (tc-env-partial-local-covered-count layers))]
+    (tc-env-with-cache-prefix-layer
+      env
+      count
+      true
+      (tc-env-partial-local-base layers))))
 
 ;; Threshold-compaction caches inside function-body spines: partial lookup
 ;; cache for the newest bind window; marker scans keep scanning the full spine.
@@ -15622,10 +15666,31 @@
         (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))]
     (and
       (tc-type-env-cache-head? deep)
-      (not (tc-type-env-cache-partial-head? deep))
-      (= (tc-env-partial-layer-depth deep) 0)
+      (tc-type-env-cache-partial-head? deep)
+      (= (tc-env-partial-layer-depth deep) 1)
+      (=
+        (tc-env-partial-local-covered-count deep)
+        (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))
+      (match (tc-env-partial-local-base deep)
+        [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
+        [_ false])
       (match (tc-lookup deep "global")
         [(ResultTcType.Ok (AstType.String)) true]
+        [_ false])
+      (match (tc-lookup deep "local0")
+        [(ResultTcType.Ok (AstType.I64)) true]
+        [_ false])
+      (match (tc-lookup
+        deep
+        (string.append
+          "local"
+          (string.int->string
+            (-
+              (*
+                (tc-local-cache-threshold)
+                (+ (tc-local-cache-partial-layer-cap) 1))
+              1))))
+        [(ResultTcType.Ok (AstType.I64)) true]
         [_ false]))))
 
 ;; Markers buried below MORE THAN ONE compaction window. The behavior
@@ -16408,6 +16473,12 @@
     (tc-type-env-local-cache-lambda-capture-smoke?)
     (tc-type-env-scoped-stack-smoke?)
     (tc-type-env-walker-api-smoke?)))
+
+(test
+  tc-type-env-local-cache
+  (if (tc-type-env-local-cache-smoke?)
+    unit
+    (io.panic "typecheck: local env cache smoke failed")))
 
 (test
   tc-type-env-explicit-cache-layering

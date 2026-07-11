@@ -1,4 +1,6 @@
 ;; module_macro_vector_provider.tl - helper module for generated vector imports.
+;; Its explicit dotted identity is intentional: generated bodies refer to this
+;; provider through that legacy-compatible module path.
 (module tests.module_macro_vector_provider)
 
 (import stdlib.vector)

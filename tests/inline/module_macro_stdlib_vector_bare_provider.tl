@@ -1,5 +1,7 @@
 ;; module_macro_stdlib_vector_bare_provider.tl - helper module for exported
 ;; module macros whose generated bodies flat-import generated stdlib vectors.
+;; Its explicit dotted identity is intentional: generated bodies refer to this
+;; provider through that legacy-compatible module path.
 (module tests.module_macro_stdlib_vector_bare_provider)
 
 (import stdlib.vector)

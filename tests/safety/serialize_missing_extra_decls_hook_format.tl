@@ -1,5 +1,3 @@
-(module serialize_missing_extra_decls_hook_format)
-
 (defenum Value
   (ValueNull))
 

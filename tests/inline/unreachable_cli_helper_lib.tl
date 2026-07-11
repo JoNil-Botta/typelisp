@@ -1,5 +1,3 @@
-(module unreachable_cli_helper_lib)
-
 (import stdlib.io)
 
 (define (unused-cli-helper) : unit

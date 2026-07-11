@@ -1,5 +1,3 @@
-(module serialize_bad_object_finish_hook_format)
-
 (defenum Value
   (ValueText String))
 

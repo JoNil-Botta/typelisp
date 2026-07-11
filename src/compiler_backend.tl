@@ -7478,9 +7478,10 @@
   [name : String]
   [start : i64]
   [end : i64]
-  [buf : text_buf.TextBuf]) : text_buf.TextBuf
+  [buf : (text_buf_borrowed.TextBufBorrowed name)]) : (text_buf_borrowed.TextBufBorrowed
+    name)
   (if (> end start)
-    (text_buf.append buf (string.substring name start (- end start)))
+    (text_buf_borrowed.append-slice buf (& name) start (- end start))
     buf))
 
 (define (compiler-backend-asm-safe-symbol [name : String]) : String
@@ -7489,7 +7490,8 @@
     [n : i64 (string.string-length name)]
     [start : i64 0]
     [changed : bool false]
-    [buf : text_buf.TextBuf (text_buf.empty)]
+    [buf : (text_buf_borrowed.TextBufBorrowed name)
+      (text_buf_borrowed.empty-like (& name))]
     (begin
       (while (< i n)
         (let
@@ -7503,11 +7505,13 @@
                 (compiler-backend-asm-safe-symbol-flush-run name start i buf))
               (set!
                 buf
-                (text_buf.append buf (compiler-backend-symbol-char name i c)))
+                (text_buf_borrowed.append-owned
+                  buf
+                  (compiler-backend-symbol-char name i c)))
               (set! i (+ i 1))
               (set! start i)))))
       (if changed
-        (text_buf.render
+        (text_buf_borrowed.render
           (compiler-backend-asm-safe-symbol-flush-run name start n buf))
         name))))
 
@@ -7533,33 +7537,88 @@
   (let
     [i : i64 0]
     [n : i64 (string.string-length name)]
-    [buf : text_buf.TextBuf (text_buf.empty)]
+    [run-start : i64 0]
+    [buf : (text_buf_borrowed.TextBufBorrowed name)
+      (text_buf_borrowed.empty-like (& name))]
     [emitted : bool false]
     [pending-separator : bool false]
     (begin
       (while (< i n)
         (if (compiler-backend-user-symbol-tl-extension-at? name i)
-          (set! i (+ i 3))
+          (begin
+            (if (> i run-start)
+              (begin
+                (set!
+                  buf
+                  (compiler-backend-asm-safe-symbol-flush-run
+                    name
+                    run-start
+                    i
+                    buf))
+                (set! emitted true))
+              unit)
+            (set! i (+ i 3))
+            (set! run-start i))
           (let
             [c : char (string.string-ref name i)]
             (if (compiler-backend-user-symbol-separator? c)
               (begin
+                (if (> i run-start)
+                  (begin
+                    (set!
+                      buf
+                      (compiler-backend-asm-safe-symbol-flush-run
+                        name
+                        run-start
+                        i
+                        buf))
+                    (set! emitted true))
+                  unit)
                 (if emitted
                   (set! pending-separator true)
                   unit)
-                (set! i (+ i 1)))
-              (begin
-                (if pending-separator
+                (set! i (+ i 1))
+                (set! run-start i))
+              (if (compiler-backend-symbol-safe-char? c)
+                (begin
+                  (if (and pending-separator (= i run-start))
+                    (begin
+                      (set! buf (text_buf_borrowed.append-owned buf "_"))
+                      (set! pending-separator false))
+                    unit)
+                  (set! i (+ i 1)))
+                (begin
+                  (if (> i run-start)
+                    (begin
+                      (set!
+                        buf
+                        (compiler-backend-asm-safe-symbol-flush-run
+                          name
+                          run-start
+                          i
+                          buf))
+                      (set! emitted true))
+                    unit)
+                  (if pending-separator
+                    (begin
+                      (set! buf (text_buf_borrowed.append-owned buf "_"))
+                      (set! pending-separator false))
+                    unit)
                   (begin
-                    (set! buf (text_buf.append buf "_"))
-                    (set! pending-separator false))
-                  unit)
-                (set!
-                  buf
-                  (text_buf.append buf (compiler-backend-symbol-char name i c)))
-                (set! emitted true)
-                (set! i (+ i 1)))))))
-      (text_buf.render buf))))
+                    (set!
+                      buf
+                      (text_buf_borrowed.append-owned
+                        buf
+                        (compiler-backend-symbol-char name i c)))
+                    (set! emitted true)
+                    (set! i (+ i 1))
+                    (set! run-start i))))))))
+      (if (> n run-start)
+        (set!
+          buf
+          (compiler-backend-asm-safe-symbol-flush-run name run-start n buf))
+        unit)
+      (text_buf_borrowed.render buf))))
 
 (define (compiler-backend-user-symbol-uncached [name : String]) : String
   (if (string.eq name "main")

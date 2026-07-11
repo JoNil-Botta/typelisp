@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.string)
 
@@ -21,12 +20,7 @@
     (string.append ":" (string.int->string slot))))
 
 (define (make-items [seed : i64]) : (Array String)
-  (let
-    [items : (Array String) (array.make-array String 2)]
-    (begin
-      (array-set! items 0 (piece seed 1))
-      (array-set! items 1 (piece seed 2))
-      items)))
+  (make-array (piece seed 1) (piece seed 2)))
 
 (define (escape-items [scratch : arena.Arena] [seed : i64]) : (Array String)
   (with-escape scratch (make-items seed)))

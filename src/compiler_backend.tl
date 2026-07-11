@@ -1305,18 +1305,15 @@
     [else ""]))
 
 (define (compiler-backend-vector-temp-candidates) : (Array String)
-  (let
-    [a : (Array String) (make-array String 8)]
-    (begin
-      (array-set! a 0 "%vec6")
-      (array-set! a 1 "%vec7")
-      (array-set! a 2 "%vec8")
-      (array-set! a 3 "%vec9")
-      (array-set! a 4 "%vec10")
-      (array-set! a 5 "%vec11")
-      (array-set! a 6 "%vec12")
-      (array-set! a 7 "%vec13")
-      a)))
+  (make-array
+    "%vec6"
+    "%vec7"
+    "%vec8"
+    "%vec9"
+    "%vec10"
+    "%vec11"
+    "%vec12"
+    "%vec13"))
 
 (define (compiler-backend-vector-temp-zmm-excluded?
   [reg : String]
@@ -10524,24 +10521,10 @@
       ;; The two guard temps (INT_MIN, -1) are transient (dead before the idiv).
       ;; Scavenge them instead of hardcoding guard temps, excluding the dividend
       ;; (%rax), %rdx, the divisor, and each other.
-      [min-excl : (Array String)
-        (let
-          [a : (Array String) (make-array String 3)]
-          (begin
-            (array-set! a 0 "%rax")
-            (array-set! a 1 "%rdx")
-            (array-set! a 2 divisor-reg)
-            a))]
+      [min-excl : (Array String) (make-array "%rax" "%rdx" divisor-reg)]
       [min-full : String (compiler-backend-scavenge-reg-here min-excl 3 "%r10")]
       [neg-excl : (Array String)
-        (let
-          [a : (Array String) (make-array String 4)]
-          (begin
-            (array-set! a 0 "%rax")
-            (array-set! a 1 "%rdx")
-            (array-set! a 2 divisor-reg)
-            (array-set! a 3 min-full)
-            a))]
+        (make-array "%rax" "%rdx" divisor-reg min-full)]
       [neg-full : String (compiler-backend-scavenge-reg-here neg-excl 4 "%r9")]
       [lhs : String (compiler-backend-sized-reg "%rax" ty)]
       [rhs : String (compiler-backend-sized-reg divisor-reg ty)]
@@ -17534,11 +17517,7 @@
 ;; Exclude an already-chosen register R (so a second scavenge at the same point
 ;; cannot collide with it).
 (define (compiler-backend-one-exclude [r : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 1)]
-    (begin
-      (array-set! a 0 r)
-      a)))
+  (make-array r))
 
 ;; Exclude two already-chosen registers without excluding unrelated pool
 ;; registers. Used for address operands that must survive a load temp.
@@ -17557,13 +17536,7 @@
   [r1 : String]
   [r2 : String]
   [r3 : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 3)]
-    (begin
-      (array-set! a 0 r1)
-      (array-set! a 1 r2)
-      (array-set! a 2 r3)
-      a)))
+  (make-array r1 r2 r3))
 
 (define (compiler-backend-param-register-exclude-location-count
   [location : CompilerRegLocation]) : i64
@@ -17654,16 +17627,7 @@
 ;; `extra`.
 (define (compiler-backend-scavenge-exclude-with [extra : String]) : (Array
     String)
-  (let
-    [a : (Array String) (make-array String 6)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "")
-      (array-set! a 4 "")
-      (array-set! a 5 extra)
-      a)))
+  (make-array "%rax" "%rdx" "%rcx" "" "" extra))
 
 (define compiler-backend-c-abi-stage-exclude-count : i64
   8)
@@ -27466,12 +27430,7 @@
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
 (define (compiler-backend-c-abi-return-store-base-exclude) : (Array String)
-  (let
-    [a : (Array String) (array.make-array String 2)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      a)))
+  (make-array "%rax" "%rdx"))
 
 (define (compiler-backend-scavenge-c-abi-return-store-base-reg) : String
   (let
@@ -30973,21 +30932,15 @@
   [base-reg : String]
   [offset-home : String]
   [dst-home : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 6)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 base-reg)
-      (array-set!
-        a
-        4
-        (if (string.eq offset-home "")
-          base-reg
-          offset-home))
-      (array-set! a 5 dst-home)
-      a)))
+  (make-array
+    "%rax"
+    "%rdx"
+    "%rcx"
+    base-reg
+    (if (string.eq offset-home "")
+      base-reg
+      offset-home)
+    dst-home))
 
 (define (compiler-backend-emit-gep-load-alu
   [assignments : CompilerRegAssignmentList]
@@ -36833,15 +36786,7 @@
 ;; registers (div/mul: rax/rdx; shift: rcx; fallback binops: rax=lhs). Pooled
 ;; scratch registers such as r10/r11 must stay available to the scavenger.
 (define (compiler-backend-binop-scavenge-exclude-build) : (Array String)
-  (let
-    [a : (Array String) (make-array String 5)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "")
-      (array-set! a 4 "")
-      a)))
+  (make-array "%rax" "%rdx" "%rcx" "" ""))
 
 ;; Op-specific scavenge exclude: only the registers THIS op actually clobbers
 ;; (beyond operand/dst homes, excluded separately). The over-broad superset
@@ -36870,14 +36815,7 @@
         [(CompilerIrBinOp.Shr) "%rcx"]
         [(CompilerIrBinOp.Mul) "%rdx"]
         [_ ""])]
-    [a : (Array String) (make-array String 5)]
-    (begin
-      (array-set! a 0 rax-extra)
-      (array-set! a 1 extra)
-      (array-set! a 2 "")
-      (array-set! a 3 "")
-      (array-set! a 4 "")
-      a)))
+    (make-array rax-extra extra "" "" "")))
 
 ;; Constant/magic-division 3-scratch discipline. The magic multiply needs a
 ;; scratch for the magic constant, a saved-dividend register read back for the
@@ -36888,29 +36826,12 @@
 ;; registers themselves stay available unless they were actually picked.
 (define (compiler-backend-divmod-dividend-exclude [magic : String]) : (Array
     String)
-  (let
-    [a : (Array String) (make-array String 5)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "")
-      (array-set! a 3 "")
-      (array-set! a 4 magic)
-      a)))
+  (make-array "%rax" "%rdx" "" "" magic))
 
 (define (compiler-backend-divmod-mask-exclude
   [magic : String]
   [dividend : String]) : (Array String)
-  (let
-    [a : (Array String) (make-array String 6)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "")
-      (array-set! a 3 "")
-      (array-set! a 4 magic)
-      (array-set! a 5 dividend)
-      a)))
+  (make-array "%rax" "%rdx" "" "" magic dividend))
 
 ;; Append one register to an exclude array (returns a fresh size-(n+1) array).
 (define (compiler-backend-scavenge-exclude-append
@@ -36960,28 +36881,20 @@
   [v1 : CompilerIrValue]
   [v2 : CompilerIrValue]) : (Array String)
   (let
-    [a : (Array String) (make-array String 7)]
     [h1 : String (compiler-backend-value-scalar-register assignments v1)]
     [h2 : String (compiler-backend-value-scalar-register assignments v2)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "")
-      (array-set! a 4 "")
-      (array-set!
-        a
-        5
-        (if (string.eq h1 "")
-          ""
-          h1))
-      (array-set!
-        a
-        6
-        (if (string.eq h2 "")
-          ""
-          h2))
-      a)))
+    (make-array
+      "%rax"
+      "%rdx"
+      "%rcx"
+      ""
+      ""
+      (if (string.eq h1 "")
+        ""
+        h1)
+      (if (string.eq h2 "")
+        ""
+        h2))))
 
 ;; Exclude set = HW-fixed regs PLUS two given register names (caller already knows
 ;; them, e.g. the emission's dst-home + an operand's home reg). "" stays a zero-bit
@@ -36989,73 +36902,50 @@
 ;; one of the explicit register names. n = 7.
 (define (compiler-backend-scavenge-exclude-regs2 [r1 : String] [r2 : String]) : (Array
     String)
-  (let
-    [a : (Array String) (make-array String 7)]
-    (begin
-      (array-set! a 0 "%rax")
-      (array-set! a 1 "%rdx")
-      (array-set! a 2 "%rcx")
-      (array-set! a 3 "")
-      (array-set! a 4 "")
-      (array-set!
-        a
-        5
-        (if (string.eq r1 "")
-          ""
-          r1))
-      (array-set!
-        a
-        6
-        (if (string.eq r2 "")
-          ""
-          r2))
-      a)))
+  (make-array
+    "%rax"
+    "%rdx"
+    "%rcx"
+    ""
+    ""
+    (if (string.eq r1 "")
+      ""
+      r1)
+    (if (string.eq r2 "")
+      ""
+      r2)))
 
 ;; Scavenge candidate pool. The first 11 entries are the legacy pool; ABI-special
 ;; %rsi/%rdi/%rax come last so they are only used when the older pool is occupied
 ;; and the point-local occupancy/exclude masks prove them free.
 (define (compiler-backend-scavenge-candidates) : (Array String)
-  (let
-    [a : (Array String) (make-array String 14)]
-    (begin
-      (array-set! a 0 "%r9")
-      (array-set! a 1 "%rcx")
-      (array-set! a 2 "%rdx")
-      (array-set! a 3 "%r10")
-      (array-set! a 4 "%r11")
-      (array-set! a 5 "%r8")
-      (array-set! a 6 "%r12")
-      (array-set! a 7 "%r13")
-      (array-set! a 8 "%r14")
-      (array-set! a 9 "%r15")
-      (array-set! a 10 "%rbx")
-      (array-set! a 11 "%rsi")
-      (array-set! a 12 "%rdi")
-      (array-set! a 13 "%rax")
-      a)))
+  (make-array
+    "%r9"
+    "%rcx"
+    "%rdx"
+    "%r10"
+    "%r11"
+    "%r8"
+    "%r12"
+    "%r13"
+    "%r14"
+    "%r15"
+    "%rbx"
+    "%rsi"
+    "%rdi"
+    "%rax"))
 
 (define compiler-backend-scavenge-candidate-pool : (Array String)
   (compiler-backend-scavenge-candidates))
 
 (define (compiler-backend-scavenge-rcx-candidates) : (Array String)
-  (let
-    [a : (Array String) (make-array String 1)]
-    (begin
-      (array-set! a 0 "%rcx")
-      a)))
+  (make-array "%rcx"))
 
 (define compiler-backend-scavenge-rcx-candidate-pool : (Array String)
   (compiler-backend-scavenge-rcx-candidates))
 
 (define (compiler-backend-scavenge-xmm-candidates) : (Array String)
-  (let
-    [a : (Array String) (make-array String 4)]
-    (begin
-      (array-set! a 0 "%xmm2")
-      (array-set! a 1 "%xmm3")
-      (array-set! a 2 "%xmm4")
-      (array-set! a 3 "%xmm5")
-      a)))
+  (make-array "%xmm2" "%xmm3" "%xmm4" "%xmm5"))
 
 (define compiler-backend-scavenge-xmm-candidate-pool : (Array String)
   (compiler-backend-scavenge-xmm-candidates))

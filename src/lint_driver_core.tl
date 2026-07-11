@@ -3330,6 +3330,120 @@
     [cur : (Array i64 1) (array 0)]
     (array-ref cur 0)))")
 
+(define (selfhost-lint-dynamic-array-literal-dotted-source) : String
+  "(define (make-items [a : i64] [b : i64] [c : i64]) : (Array i64)
+  (let
+    [items : (Array i64) (array.make-array i64 3)]
+    (begin
+      (array-set! items 0 a)
+      (array-set! items 1 b)
+      (array-set! items 2 c)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-bare-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      (array-set! items 1 7)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-return-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      (array-set! items 1 7)
+      (return items))))")
+
+(define (selfhost-lint-dynamic-array-literal-assignment-source) : String
+  "(define (set-items [result : (Array i64)]) : unit
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      (array-set! items 1 7)
+      (set! result items))))")
+
+(define (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source) : String
+  "(define (make-items [first : i64] [second : i64]) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 first)
+      (array-set! items 1 second)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-read-before-complete-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      (array-ref items 0)
+      (array-set! items 1 7)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-computed-index-source) : String
+  "(define (make-items [index : i64]) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items index 4)
+      (array-set! items 1 7)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-duplicate-index-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 3)]
+    (begin
+      (array-set! items 0 4)
+      (array-set! items 0 7)
+      (array-set! items 2 9)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-gapped-index-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 3)]
+    (begin
+      (array-set! items 0 4)
+      (array-set! items 2 7)
+      (array-set! items 1 9)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-partial-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-escape-source) : String
+  "(define (consume [items : (Array i64)]) : unit unit)
+(define (make-items) : (Array i64)
+  (let
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      (consume items)
+      (array-set! items 1 7)
+      items)))")
+
+(define (selfhost-lint-dynamic-array-literal-suppressed-source) : String
+  "(define (make-items) : (Array i64)
+  (let
+    ;; lint-allow: prefer-dynamic-array-literal
+    [items : (Array i64) (make-array i64 2)]
+    (begin
+      (array-set! items 0 4)
+      (array-set! items 1 7)
+      items)))")
+
 (define (selfhost-lint-nested-let-source) : String
   "(define (main) : i64
   (let
@@ -3937,6 +4051,106 @@
             (lint-rule-message rule)
             (lint-rule-single-element-array-cell-message)))
         69]
+      [else 42])))
+
+(define (selfhost-lint-dynamic-array-literal-self-test) : i64
+  (let
+    [rule : String (lint-rule-prefer-dynamic-array-literal-id)]
+    (cond
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-dotted-source)
+              rule)
+            1))
+        140]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-bare-source)
+              rule)
+            1))
+        141]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-return-source)
+              rule)
+            1))
+        152]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-assignment-source)
+              rule)
+            1))
+        153]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-ambiguous-two-var-source)
+              rule)
+            0))
+        149]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-read-before-complete-source)
+              rule)
+            0))
+        142]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-computed-index-source)
+              rule)
+            0))
+        143]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-duplicate-index-source)
+              rule)
+            0))
+        150]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-gapped-index-source)
+              rule)
+            0))
+        151]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-partial-source)
+              rule)
+            0))
+        144]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-escape-source)
+              rule)
+            0))
+        145]
+      [(not
+          (=
+            (selfhost-lint-source-rule-count
+              (selfhost-lint-dynamic-array-literal-suppressed-source)
+              rule)
+            0))
+        146]
+      [(not
+          (string.eq
+            (lint-rule-message rule)
+            (lint-rule-prefer-dynamic-array-literal-message)))
+        147]
+      [(not
+          (string.eq
+            (lint-rule-suggestion rule)
+            (lint-rule-prefer-dynamic-array-literal-suggestion)))
+        148]
       [else 42])))
 
 ;; Compatibility helper retained for the nested-if-ladder metadata shape.

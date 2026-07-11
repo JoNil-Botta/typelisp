@@ -1,4 +1,3 @@
-(import stdlib.array)
 (import stdlib.arena)
 (import stdlib.thread)
 
@@ -6,15 +5,7 @@
 ;; unsized `(Array T)` removal in #3581. User-facing examples should prefer
 ;; non-array thread results or vector-backed APIs.
 (define (thread-safe-array-i64-build [base : i64]) : (Array i64)
-  (let
-    [items : (Array i64) (array.make-array i64 5)]
-    (begin
-      (array-set! items 0 base)
-      (array-set! items 1 (+ base 1))
-      (array-set! items 2 (+ base 2))
-      (array-set! items 3 (+ base 3))
-      (array-set! items 4 (+ base 4))
-      items)))
+  (make-array base (+ base 1) (+ base 2) (+ base 3) (+ base 4)))
 
 (define (thread-safe-array-i64-sum [items : (Array i64)]) : i64
   (let

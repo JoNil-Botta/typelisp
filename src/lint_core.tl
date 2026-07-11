@@ -206,6 +206,15 @@
 (define (lint-rule-prefer-dotted-field-suggestion) : String
   "replace (struct-get p field) with p.field or (set! (struct-get p field) value) with (set! p.field value)")
 
+(define (lint-rule-prefer-dynamic-array-literal-id) : String
+  "prefer-dynamic-array-literal")
+
+(define (lint-rule-prefer-dynamic-array-literal-message) : String
+  "hand-filled dynamic array: prefer (make-array v0 v1 ...)")
+
+(define (lint-rule-prefer-dynamic-array-literal-suggestion) : String
+  "replace the allocation and consecutive array-set! calls with a dynamic array literal")
+
 (define (lint-rule-single-element-array-cell-id) : String
   "single-element-array-cell")
 
@@ -364,6 +373,12 @@
     (lint-rule-prefer-dotted-field-message)
     (lint-rule-prefer-dotted-field-suggestion)))
 
+(define (lint-rule-prefer-dynamic-array-literal) : LintRule
+  (LintRule
+    (lint-rule-prefer-dynamic-array-literal-id)
+    (lint-rule-prefer-dynamic-array-literal-message)
+    (lint-rule-prefer-dynamic-array-literal-suggestion)))
+
 (define (lint-rule-single-element-array-cell) : LintRule
   (LintRule
     (lint-rule-single-element-array-cell-id)
@@ -425,14 +440,16 @@
                                     (lint-rule-cons
                                       (lint-rule-prefer-dotted-field)
                                       (lint-rule-cons
-                                        (lint-rule-single-element-array-cell)
+                                        (lint-rule-prefer-dynamic-array-literal)
                                         (lint-rule-cons
-                                          (lint-rule-unused-variable)
+                                          (lint-rule-single-element-array-cell)
                                           (lint-rule-cons
-                                            (lint-rule-unused-unsafe)
+                                            (lint-rule-unused-variable)
                                             (lint-rule-cons
-                                              (lint-rule-transitional-core-macro-qualifier)
-                                              LintRuleList.Nil)))))))))))))))))))))))
+                                              (lint-rule-unused-unsafe)
+                                              (lint-rule-cons
+                                                (lint-rule-transitional-core-macro-qualifier)
+                                                LintRuleList.Nil))))))))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -902,6 +919,19 @@
         name
         " is only read or written at index 0; prefer Box T, &mut, or returning the updated value"))
     (lint-rule-single-element-array-cell-id)
+    0
+    span))
+
+(define (lint-prefer-dynamic-array-literal-finding
+  [name : String]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (string.append
+      "hand-filled dynamic array: "
+      (string.append
+        name
+        " is initialized by consecutive array-set! calls; prefer (make-array v0 v1 ...)"))
+    (lint-rule-prefer-dynamic-array-literal-id)
     0
     span))
 
@@ -4472,6 +4502,11 @@
   [candidates : LintSingleElementArrayCandidateList]) : LintSingleElementArrayState
   (LintSingleElementArrayState candidates (struct-get state findings)))
 
+(define (lint-single-element-array-state-with-findings
+  [state : LintSingleElementArrayState]
+  [findings : LintFindings]) : LintSingleElementArrayState
+  (LintSingleElementArrayState (struct-get state candidates) findings))
+
 (define (lint-single-element-array-candidate-tracked?
   [items : LintSingleElementArrayCandidateList]
   [name : String]) : bool
@@ -4913,6 +4948,248 @@
         (lint-single-element-array-note-use state name))
       (lint-single-element-array-expr-list args state))))
 
+(define (lint-prefer-dynamic-array-literal-int-value [expr : AstExpr]) : i64
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-int-value (ast-node-get inner))]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-int-value (ast-node-get inner))]
+    [(AstExpr.Literal lit)
+      (if (> (string.string-length (ast-lit-int-text lit)) 0)
+        (ast-lit-int-value lit)
+        -1)]
+    [_ -1]))
+
+(define (lint-prefer-dynamic-array-literal-allocation-length [expr : AstExpr]) : i64
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-allocation-length (ast-node-get inner))]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-allocation-length (ast-node-get inner))]
+    [(AstExpr.MakeArray _ length)
+      (lint-prefer-dynamic-array-literal-int-value (ast-node-get length))]
+    [(AstExpr.Call func args)
+      (if (and
+        (lint-single-element-array-make-array-callee?
+          (lint-single-element-array-callee-name (ast-node-get func)))
+        (= (lint-single-element-array-expr-list-count args) 2))
+        (lint-prefer-dynamic-array-literal-int-value
+          (ast-node-get (ast-expr-list-get (& args) 1 0)))
+        -1)]
+    [_ -1]))
+
+(define (lint-prefer-dynamic-array-literal-var?
+  [expr : AstExpr]
+  [name : String]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-var? (ast-node-get inner) name)]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-var? (ast-node-get inner) name)]
+    [(AstExpr.Var found) (string.eq (intern-str found) name)]
+    [_ false]))
+
+(define (lint-prefer-dynamic-array-literal-final-value?
+  [expr : AstExpr]
+  [name : String]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-final-value? (ast-node-get inner) name)]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-final-value? (ast-node-get inner) name)]
+    [(AstExpr.Return inner)
+      (lint-prefer-dynamic-array-literal-var? (ast-node-get inner) name)]
+    [(AstExpr.Set target value)
+      (and
+        (not (string.eq (intern-str target) name))
+        (lint-prefer-dynamic-array-literal-var? (ast-node-get value) name))]
+    [_ (lint-prefer-dynamic-array-literal-var? expr name)]))
+
+(define (lint-prefer-dynamic-array-literal-bare-var? [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-bare-var? (ast-node-get inner))]
+    [(AstExpr.Var _) true]
+    [_ false]))
+
+(define (lint-prefer-dynamic-array-literal-value-uses-name?
+  [expr : AstExpr]
+  [name : String]) : bool
+  (match (struct-get
+    (lint-single-element-array-expr
+      expr
+      (LintSingleElementArrayState
+        (lint-single-element-array-candidate-add
+          LintSingleElementArrayCandidateList.Nil
+          name
+          (lint-no-span))
+        (lint-findings-empty)))
+    candidates)
+    [(LintSingleElementArrayCandidateList.Nil) false]
+    [(LintSingleElementArrayCandidateList.Cons item _)
+      (or (struct-get item used) (not (struct-get item valid)))]))
+
+(define (lint-prefer-dynamic-array-literal-set-callee? [name : String]) : bool
+  (or
+    (lint-single-element-array-set-callee? name)
+    (string.eq name "array.set!")
+    (string.eq name "array/set!")
+    (string.eq name "stdlib.array.set!")))
+
+(define (lint-prefer-dynamic-array-literal-set-at?
+  [expr : AstExpr]
+  [name : String]
+  [index : i64]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-set-at?
+        (ast-node-get inner)
+        name
+        index)]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-set-at?
+        (ast-node-get inner)
+        name
+        index)]
+    [(AstExpr.ArraySet array actual-index value)
+      (and
+        (string.eq
+          (lint-single-element-array-var-name (ast-node-get array))
+          name)
+        (lint-single-element-array-int-literal?
+          (ast-node-get actual-index)
+          index)
+        (not
+          (lint-prefer-dynamic-array-literal-value-uses-name?
+            (ast-node-get value)
+            name)))]
+    [(AstExpr.Call func args)
+      (and
+        (lint-prefer-dynamic-array-literal-set-callee?
+          (lint-single-element-array-callee-name (ast-node-get func)))
+        (= (lint-single-element-array-expr-list-count args) 3)
+        (string.eq (lint-single-element-array-first-arg-name args) name)
+        (lint-single-element-array-args-second-int? args index)
+        (not
+          (lint-prefer-dynamic-array-literal-value-uses-name?
+            (ast-node-get (ast-expr-list-get (& args) 2 0))
+            name)))]
+    [_ false]))
+
+(define (lint-prefer-dynamic-array-literal-first-write-bare-var?
+  [expr : AstExpr]
+  [name : String]) : bool
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-first-write-bare-var?
+        (ast-node-get inner)
+        name)]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-first-write-bare-var?
+        (ast-node-get inner)
+        name)]
+    [(AstExpr.ArraySet array index value)
+      (and
+        (string.eq
+          (lint-single-element-array-var-name (ast-node-get array))
+          name)
+        (lint-single-element-array-int-literal? (ast-node-get index) 0)
+        (lint-prefer-dynamic-array-literal-bare-var? (ast-node-get value)))]
+    [(AstExpr.Call func args)
+      (and
+        (lint-prefer-dynamic-array-literal-set-callee?
+          (lint-single-element-array-callee-name (ast-node-get func)))
+        (= (lint-single-element-array-expr-list-count args) 3)
+        (string.eq (lint-single-element-array-first-arg-name args) name)
+        (lint-single-element-array-args-second-int? args 0)
+        (lint-prefer-dynamic-array-literal-bare-var?
+          (ast-node-get (ast-expr-list-get (& args) 2 0))))]
+    [_ false]))
+
+(define (lint-prefer-dynamic-array-literal-write-sequence?
+  [exprs : AstExprList]
+  [name : String]
+  [length : i64]
+  [index : i64]) : bool
+  (if (>= index length)
+    (lint-prefer-dynamic-array-literal-final-value?
+      (ast-node-get (ast-expr-list-get (& exprs) index 0))
+      name)
+    (and
+      (lint-prefer-dynamic-array-literal-set-at?
+        (ast-node-get (ast-expr-list-get (& exprs) index 0))
+        name
+        index)
+      (lint-prefer-dynamic-array-literal-write-sequence?
+        exprs
+        name
+        length
+        (+ index 1)))))
+
+(define (lint-prefer-dynamic-array-literal-body?
+  [body : AstExpr]
+  [name : String]
+  [length : i64]) : bool
+  (match body
+    [(AstExpr.Spanned inner _)
+      (lint-prefer-dynamic-array-literal-body? (ast-node-get inner) name length)]
+    [(AstExpr.Ann inner _)
+      (lint-prefer-dynamic-array-literal-body? (ast-node-get inner) name length)]
+    [(AstExpr.Begin exprs)
+      (and
+        (= (lint-single-element-array-expr-list-count exprs) (+ length 1))
+        (not
+          (and
+            (= length 2)
+            (lint-prefer-dynamic-array-literal-first-write-bare-var?
+              (ast-node-get (ast-expr-list-get (& exprs) 0 0))
+              name)))
+        (lint-prefer-dynamic-array-literal-write-sequence? exprs name length 0))]
+    [_ false]))
+
+(define (lint-prefer-dynamic-array-literals-in-let-bindings
+  [bindings : AstLetBindingList]
+  [body : AstExpr]
+  [state : LintSingleElementArrayState]) : LintSingleElementArrayState
+  (lint-prefer-dynamic-array-literals-in-let-bindings-at
+    (& bindings)
+    body
+    state
+    0))
+
+(define (lint-prefer-dynamic-array-literals-in-let-bindings-at
+  [bindings : (& bindings AstLetBindingList)]
+  [body : AstExpr]
+  [state : LintSingleElementArrayState]
+  [index : i64]) : LintSingleElementArrayState
+  (if (>= index (ast-let-binding-list-len bindings))
+    state
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name-id _ init)
+        (let
+          [name : String (intern-str name-id)]
+          [length : i64
+            (lint-prefer-dynamic-array-literal-allocation-length
+              (ast-node-get init))]
+          [next : LintSingleElementArrayState
+            (if (and
+              (> length 0)
+              (not (lint-underscore-prefixed? name))
+              (lint-prefer-dynamic-array-literal-body? body name length))
+              (lint-single-element-array-state-with-findings
+                state
+                (lint-findings-add
+                  (lint-prefer-dynamic-array-literal-finding
+                    name
+                    (lint-no-effect-span (ast-node-get init)))
+                  (struct-get state findings)))
+              state)]
+          (lint-prefer-dynamic-array-literals-in-let-bindings-at
+            bindings
+            body
+            next
+            (+ index 1)))])))
+
 (define (lint-single-element-array-expr
   [expr : AstExpr]
   [state : LintSingleElementArrayState]) : LintSingleElementArrayState
@@ -4949,9 +5226,17 @@
     [(AstExpr.Let let-box)
       (match (box-get let-box)
         [(AstLet.Let bindings body)
-          (lint-single-element-array-expr
-            (ast-node-get body)
-            (lint-single-element-array-let-bindings bindings state))])]
+          (let
+            [with-dynamic-array-literals : LintSingleElementArrayState
+              (lint-prefer-dynamic-array-literals-in-let-bindings
+                bindings
+                (ast-node-get body)
+                state)]
+            (lint-single-element-array-expr
+              (ast-node-get body)
+              (lint-single-element-array-let-bindings
+                bindings
+                with-dynamic-array-literals)))])]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda _ _ body)
@@ -10088,6 +10373,18 @@
         unit
         (io.panic
           "lint: single-element-array-cell message should be registered"))
+      (if (string.eq
+        (lint-rule-suggestion (lint-rule-prefer-dynamic-array-literal-id))
+        "replace the allocation and consecutive array-set! calls with a dynamic array literal")
+        unit
+        (io.panic
+          "lint: prefer-dynamic-array-literal suggestion should be registered"))
+      (if (string.eq
+        (lint-rule-message (lint-rule-prefer-dynamic-array-literal-id))
+        "hand-filled dynamic array: prefer (make-array v0 v1 ...)")
+        unit
+        (io.panic
+          "lint: prefer-dynamic-array-literal message should be registered"))
       (if (string.eq
         (lint-rule-suggestion (lint-rule-unused-unsafe-id))
         "remove the unsafe wrapper")

@@ -40,12 +40,7 @@
       (and (= (array-ref items 0) 1) (= (array-ref copy 0) 999)))))
 
 (define (make-pairs) : (Array Pair)
-  (let
-    [items : (Array Pair) (array.make-array Pair 2)]
-    (begin
-      (array-set! items 0 (Pair 1 2))
-      (array-set! items 1 (Pair 3 4))
-      items)))
+  (make-array (Pair 1 2) (Pair 3 4)))
 
 (define (pair-score [p : Pair]) : i64
   (+ (struct-get p left) (struct-get p right)))

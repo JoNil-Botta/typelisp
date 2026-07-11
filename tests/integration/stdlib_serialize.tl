@@ -356,12 +356,7 @@
   (array (Address 111 "Oxford") (Address 222 "Paris")))
 
 (define (serialize-make-samples) : (Array i64)
-  (let
-    [samples : (Array i64) (array.make-array i64 2)]
-    (begin
-      (array-set! samples 0 7)
-      (array-set! samples 1 8)
-      samples)))
+  (make-array 7 8))
 
 (define (serialize-combo) : (Tuple
     i64

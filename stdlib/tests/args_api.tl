@@ -35,21 +35,11 @@
   (array.make-array String 0))
 
 (define (args-api-array1 [a : String]) : (Array String)
-  (let
-    [items : (Array String) (array.make-array String 1)]
-    (begin
-      (array-set! items 0 a)
-      items)))
+  (make-array a))
 
 (define (args-api-array3 [a : String] [b : String] [c : String]) : (Array
     String)
-  (let
-    [items : (Array String) (array.make-array String 3)]
-    (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
-      items)))
+  (make-array a b c))
 
 (define (args-api-array5
   [a : String]
@@ -57,15 +47,7 @@
   [c : String]
   [d : String]
   [e : String]) : (Array String)
-  (let
-    [items : (Array String) (array.make-array String 5)]
-    (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
-      (array-set! items 3 d)
-      (array-set! items 4 e)
-      items)))
+  (make-array a b c d e))
 
 (define (args-api-array6
   [a : String]
@@ -74,16 +56,7 @@
   [d : String]
   [e : String]
   [f : String]) : (Array String)
-  (let
-    [items : (Array String) (array.make-array String 6)]
-    (begin
-      (array-set! items 0 a)
-      (array-set! items 1 b)
-      (array-set! items 2 c)
-      (array-set! items 3 d)
-      (array-set! items 4 e)
-      (array-set! items 5 f)
-      items)))
+  (make-array a b c d e f))
 
 (define (args-api-expect-ok [result : args.ResultArgsParsed] [message : String]) : args.ArgsParsed
   (match result

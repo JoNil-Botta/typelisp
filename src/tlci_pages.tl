@@ -279,13 +279,7 @@
       (ptr-offset (tlci-pages-addr->ptr-u8 (struct-get region addr)) offset))))
 
 (define (tlci-pages-test-bytes [a : u8] [b : u8] [c : u8]) : (Array u8)
-  (let
-    [bytes : (Array u8) (make-array u8 3)]
-    (begin
-      (array-set! bytes 0 a)
-      (array-set! bytes 1 b)
-      (array-set! bytes 2 c)
-      bytes)))
+  (make-array a b c))
 
 (define (tlci-pages-test-release-ok? [region : TlciPageRegion]) : bool
   (match (tlci-pages-release region)

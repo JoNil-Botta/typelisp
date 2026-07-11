@@ -37,9 +37,7 @@
 (defenum DocTestLine
   (Line i64 String))
 
-(defstruct DocTestLineList
-  (slots (Array DocTestLine))
-  (len i64))
+(vector.family DocTestLine DocTestLineList doc-test-line-vec)
 
 (defenum DocTestExample
   (Example i64 i64 DocTestExpectation String))
@@ -81,23 +79,6 @@
 
 (defenum DocTestScanState
   (State DocTestExampleList DocTestErrorList i64))
-
-(define (doc-test-line-list-empty) : DocTestLineList
-  (DocTestLineList (make-array DocTestLine 0) 0))
-
-(define (doc-test-line-list-count [lines : DocTestLineList]) : i64
-  (struct-get lines len))
-
-(define (doc-test-line-list-ref [lines : DocTestLineList] [index : i64]) : DocTestLine
-  (array-ref (struct-get lines slots) index))
-
-(define (doc-test-line-list-push [lines : DocTestLineList] [line : DocTestLine]) : DocTestLineList
-  (let
-    [n : i64 (struct-get lines len)]
-    [slots : (Array DocTestLine) (struct-get lines slots)]
-    (begin
-      (array-push! slots line)
-      (DocTestLineList slots (+ n 1)))))
 
 (define (doc-test-example-list-empty) : DocTestExampleList
   (DocTestExampleList (make-array DocTestExample 0) 0))
@@ -577,10 +558,11 @@
 (define (doc-test-skip-ignored-fence-from
   [lines : DocTestLineList]
   [index : i64]) : i64
-  (if (>= index (doc-test-line-list-count lines))
-    (doc-test-line-list-count lines)
+  (if (>= index (doc-test-line-vec-len (& lines)))
+    (doc-test-line-vec-len (& lines))
     (let
-      [line : DocTestLine (doc-test-line-list-ref lines index)]
+      [line : DocTestLine
+        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 ""))]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
@@ -592,26 +574,29 @@
   [index : i64]
   [code : String]
   [collected : DocTestLineList]) : DocTestCodeCollect
-  (if (>= index (doc-test-line-list-count lines))
+  (if (>= index (doc-test-line-vec-len (& lines)))
     (DocTestCodeCollect.Collect
-      (doc-test-line-list-count lines)
+      (doc-test-line-vec-len (& lines))
       code
       collected
       false)
     (let
-      [line : DocTestLine (doc-test-line-list-ref lines index)]
+      [line : DocTestLine
+        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 ""))]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
         (DocTestCodeCollect.Collect (+ index 1) code collected true)
-        (doc-test-collect-code-inner
-          lines
-          (+ index 1)
-          (string.append code (string.append (doc-test-line-text line) "\n"))
-          (doc-test-line-list-push collected line))))))
+        (begin
+          (doc-test-line-vec-push (&mut collected) line)
+          (doc-test-collect-code-inner
+            lines
+            (+ index 1)
+            (string.append code (string.append (doc-test-line-text line) "\n"))
+            collected))))))
 
 (define (doc-test-collect-code [lines : DocTestLineList] [index : i64]) : DocTestCodeCollect
-  (doc-test-collect-code-inner lines index "" (doc-test-line-list-empty)))
+  (doc-test-collect-code-inner lines index "" (doc-test-line-vec-new)))
 
 (define (doc-test-metadata-value [line : DocTestLine] [prefix : String]) : DocTestMaybeString
   (let
@@ -789,13 +774,13 @@
   [lines : DocTestLineList]
   [metadata : DocTestRunMetadata]
   [index : i64]) : DocTestRunMetadata
-  (if (>= index (doc-test-line-list-count lines))
+  (if (>= index (doc-test-line-vec-len (& lines)))
     metadata
     (doc-test-run-metadata-parse-lines-from
       lines
       (doc-test-run-metadata-parse-line
         metadata
-        (doc-test-line-list-ref lines index))
+        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 "")))
       (+ index 1))))
 
 (define (doc-test-run-metadata-parse-lines
@@ -912,10 +897,11 @@
   [lines : DocTestLineList]
   [index : i64]
   [state : DocTestScanState]) : DocTestScanState
-  (if (>= index (doc-test-line-list-count lines))
+  (if (>= index (doc-test-line-vec-len (& lines)))
     state
     (let
-      [line : DocTestLine (doc-test-line-list-ref lines index)]
+      [line : DocTestLine
+        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 ""))]
       [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
       (if (doc-test-string-prefix? trimmed "```")
         (let
@@ -956,8 +942,8 @@
     [n : i64 (string.string-length src)]
     [pos : i64 0]
     [line-number : i64 1]
-    [module-lines : DocTestLineList (doc-test-line-list-empty)]
-    [pending-lines : DocTestLineList (doc-test-line-list-empty)]
+    [module-lines : DocTestLineList (doc-test-line-vec-new)]
+    [pending-lines : DocTestLineList (doc-test-line-vec-new)]
     [state : DocTestScanState
       (DocTestScanState.State
         (doc-test-example-list-empty)
@@ -972,33 +958,29 @@
             (match (doc-test-module-doc-comment-body line)
               [(DocTestMaybeString.Some body)
                 (begin
-                  (set! pending-lines (doc-test-line-list-empty))
-                  (set!
-                    module-lines
-                    (doc-test-line-list-push
-                      module-lines
-                      (DocTestLine.Line line-number body))))]
+                  (set! pending-lines (doc-test-line-vec-new))
+                  (doc-test-line-vec-push
+                    (&mut module-lines)
+                    (DocTestLine.Line line-number body)))]
               [(DocTestMaybeString.No)
                 (if (doc-test-string-blank? line)
                   unit
                   (begin
                     (set! state (doc-test-scan-doc-block module-lines state))
-                    (set! module-lines (doc-test-line-list-empty))
+                    (set! module-lines (doc-test-line-vec-new))
                     (match (doc-test-item-doc-comment-body line)
                       [(DocTestMaybeString.Some body)
-                        (set!
-                          pending-lines
-                          (doc-test-line-list-push
-                            pending-lines
-                            (DocTestLine.Line line-number body)))]
+                        (doc-test-line-vec-push
+                          (&mut pending-lines)
+                          (DocTestLine.Line line-number body))]
                       [(DocTestMaybeString.No)
                         (if (doc-test-supported-item-declaration? line)
                           (begin
                             (set!
                               state
                               (doc-test-scan-doc-block pending-lines state))
-                            (set! pending-lines (doc-test-line-list-empty)))
-                          (set! pending-lines (doc-test-line-list-empty)))])))])
+                            (set! pending-lines (doc-test-line-vec-new)))
+                          (set! pending-lines (doc-test-line-vec-new)))])))])
             (set! pos (doc-test-next-line-start src line-end n))
             (set! line-number (+ line-number 1)))))
       (set! state (doc-test-scan-doc-block module-lines state))
@@ -1099,6 +1081,30 @@
       (and
         (= (doc-test-error-list-count errors) 5)
         (= (doc-test-error-line (doc-test-error-list-ref errors 4)) 5)))))
+
+;; Grow the generated line collection past its initial capacity while preserving
+;; physical source-line order. Extraction uses this same helper.
+(define (doc-test-line-vector-growth-smoke-ok?) : bool
+  (let
+    [lines : DocTestLineList (doc-test-line-vec-new)]
+    [index : i64 1]
+    (begin
+      (while (<= index 5)
+        (begin
+          (doc-test-line-vec-push
+            (&mut lines)
+            (DocTestLine.Line index (string.int->string index)))
+          (set! index (+ index 1))))
+      (and
+        (= (doc-test-line-vec-len (& lines)) 5)
+        (=
+          (doc-test-line-number
+            (doc-test-line-vec-get (& lines) 0 (DocTestLine.Line 0 "")))
+          1)
+        (=
+          (doc-test-line-number
+            (doc-test-line-vec-get (& lines) 4 (DocTestLine.Line 0 "")))
+          5)))))
 
 ;; Render a failure as `path:line: message`. Fence-level extraction
 ;; errors use index `-1`; example failures include the example number in their
@@ -2845,6 +2851,9 @@ typecheck: return type mismatch"))]
     (unless
       (doc-test-error-vector-growth-smoke-ok?)
       (return (io.panic "doc-test-run: generated error vector growth mismatch")))
+    (unless
+      (doc-test-line-vector-growth-smoke-ok?)
+      (return (io.panic "doc-test-run: generated line vector growth mismatch")))
     (unless
       (doc-test-run-smoke-pass-ok?)
       (return (io.panic "doc-test-run: pass-case mismatch")))

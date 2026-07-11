@@ -2750,6 +2750,42 @@
         secondary-label)]
     [(TcMaybeAstSourceSpan.No) message]))
 
+;; Macros that read a vector element directly often expand to
+;; `(array-ref (struct-get vec slots) index)`.  The outer generated nodes do
+;; not carry a source span, but the unquoted vector expression does.  Use that
+;; span so this diagnostic points to the user's borrowed-vector argument, not
+;; only the macro's quasiquote body.
+(define (tc-vector-ref-rvalue-source-span [arg : AstExpr]) : TcMaybeAstSourceSpan
+  (match (ast-expr-unspan arg)
+    [(AstExpr.ArrayRef array-box _)
+      (match (ast-expr-unspan (ast-node-get array-box))
+        [(AstExpr.StructGet receiver-box field)
+          (if (= field (intern "slots"))
+            (tc-expr-maybe-span (ast-node-get receiver-box))
+            (TcMaybeAstSourceSpan.No))]
+        [_ (TcMaybeAstSourceSpan.No)])]
+    [_ (TcMaybeAstSourceSpan.No)]))
+
+;; A direct array read through a reference rvalue can produce a region-tagged
+;; move-only aggregate. Keep the sound confinement rejection, but make this
+;; frequent vector-iteration shape actionable without changing diagnostics for
+;; unrelated region values crossing a call boundary.
+(define (tc-region-call-arg-error [arg : AstExpr]) : String
+  (let
+    [message : String
+      "typecheck: cannot pass region-tagged value to function parameter; region value would escape"]
+    (match (tc-vector-ref-rvalue-source-span arg)
+      [(TcMaybeAstSourceSpan.Some span)
+        (tc-rich-error-one-secondary
+          span
+          (string.append
+            message
+            "; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper")
+          "a direct aggregate read through this shared vector reference is not an owned value; borrow slots from a vector place or use the generated vector get helper"
+          span
+          "this by-value argument reads an aggregate through a shared reference")]
+      [(TcMaybeAstSourceSpan.No) message])))
+
 (define (tc-spanned-escape-error
   [inner : AstExpr]
   [span : AstSourceSpan]
@@ -21805,7 +21841,7 @@
                               (tc-type-regions-all-atomic-arena-owners? env got))
                             (not (tc-type-contains-reference? got)))
                             (ResultTcUnit.Err
-                              "typecheck: cannot pass region-tagged value to function parameter; region value would escape")
+                              (tc-region-call-arg-error effective-arg))
                             (match constructor-target
                               [(AstMaybeType.Some target)
                                 (match (tc-ensure-cleanup-resource-not-stored-expr

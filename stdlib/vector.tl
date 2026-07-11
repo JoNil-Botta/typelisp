@@ -20,6 +20,12 @@
 ;# arrays. The same source API works whether aggregate elements occupy handle
 ;# slots or are stored inline in the backing array.
 ;#
+;# When reading move-only aggregate elements through a shared vector borrow,
+;# prefer the generated `get` helper (for example `bvec.get (& balls) i
+;# fallback`) or borrow `slots` from a vector place inside the iteration body.
+;# A direct `array-ref` through a reference rvalue such as `(& world.balls)`
+;# remains region-tagged and cannot be passed by value to another function.
+;#
 ;# Compiler code should use generated vectors for append-heavy private sequences
 ;# that are not part of the user-facing AST shape, such as IR instructions,
 ;# tool discovery buffers, or temporary ordered worklists. Recursive enum lists

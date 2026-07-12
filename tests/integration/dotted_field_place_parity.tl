@@ -25,13 +25,14 @@
       (ivec.push (&mut world.balls) 7)
       (set! world.count (+ world.count 1))
       (append-through-ref (&mut world))
-      (if (and (= (ivec.len (& world.balls)) 2))
-        (if (and (= (ivec.len (& world.balls)) 2) (= world.count 42))
-          (if (and
-            (= (ivec.len (& world.balls)) 2)
-            (= world.count 42)
-            (= vector.value 9))
-            42
-            0)
-          0)
-        0))))
+      (unless (and (= (ivec.len (& world.balls)) 2)) (return 0))
+      (unless
+        (and (= (ivec.len (& world.balls)) 2) (= world.count 42))
+        (return 0))
+      (unless
+        (and
+          (= (ivec.len (& world.balls)) 2)
+          (= world.count 42)
+          (= vector.value 9))
+        (return 0))
+      42)))

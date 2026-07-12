@@ -28184,7 +28184,11 @@
   (Cons i64 (Box OptReachWorklist)))
 
 (defenum OptReachState
-  (State opt_i64_i64_map.Map OptReachWorklist opt_string_i64_map.Map))
+  (State opt_i64_i64_map.Map OptReachWorklist opt_string_i64_map.Map i64))
+
+(defenum OptRuntimeStringHelper
+  (No)
+  (Some String i64))
 
 (defenum OptPrunedProgram
   (Program CompilerIrGlobalList CompilerIrFunctionList))
@@ -32471,7 +32475,7 @@
 
 (define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match state
-    [(OptReachState.State reachable worklist globals)
+    [(OptReachState.State reachable worklist globals runtime-helper-mask)
       (if (opt_i64_i64_map.contains? (& reachable) slot)
         state
         (let
@@ -32481,16 +32485,17 @@
             (OptReachState.State
               next-reachable
               (OptReachWorklist.Cons slot (box worklist))
-              globals))))]))
+              globals
+              runtime-helper-mask))))]))
 
 (define (opt-reach-add-global [state : OptReachState] [name : String]) : OptReachState
   (match state
-    [(OptReachState.State reachable worklist globals)
+    [(OptReachState.State reachable worklist globals runtime-helper-mask)
       (if (opt_string_i64_map.contains? (& globals) name)
         state
         (begin
           (opt_string_i64_map.insert-ref! (&mut globals) name 1)
-          (OptReachState.State reachable worklist globals)))]))
+          (OptReachState.State reachable worklist globals runtime-helper-mask)))]))
 
 (define (opt-reach-add-function-leaf-from
   [index : OptFunctionIndex]
@@ -32525,7 +32530,7 @@
     0
     (opt-function-index-count index)))
 
-(define (opt-runtime-prelude-string-helper-name [source-name : String]) : String
+(define (opt-runtime-prelude-string-helper [source-name : String]) : OptRuntimeStringHelper
   (let
     [start : i64 (opt-symbol-leaf-start source-name)]
     [n : i64 (string.string-length source-name)]
@@ -32537,42 +32542,55 @@
       (not (= (string.string-ref source-name start) 't'))
       (not (= (string.string-ref source-name (+ start 1)) 'l'))
       (not (= (string.string-ref source-name (+ start 2)) '_')))
-      ""
+      (OptRuntimeStringHelper.No)
       (cond
         [(opt-symbol-leaf-matches-from? source-name start "tl_int_to_string")
-          "int-to-string"]
+          (OptRuntimeStringHelper.Some "int-to-string" 1)]
         [(opt-symbol-leaf-matches-from? source-name start "tl_substring")
-          "substring"]
+          (OptRuntimeStringHelper.Some "substring" 2)]
         [(opt-symbol-leaf-matches-from? source-name start "tl_str_view")
-          "str-view"]
+          (OptRuntimeStringHelper.Some "str-view" 4)]
         [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat")
-          "string-concat"]
+          (OptRuntimeStringHelper.Some "string-concat" 8)]
         [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat3")
-          "string-concat3"]
+          (OptRuntimeStringHelper.Some "string-concat3" 16)]
         [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat4")
-          "string-concat4"]
+          (OptRuntimeStringHelper.Some "string-concat4" 32)]
         [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat5")
-          "string-concat5"]
-        [else ""]))))
+          (OptRuntimeStringHelper.Some "string-concat5" 64)]
+        [else (OptRuntimeStringHelper.No)]))))
 
 (define (opt-reach-add-runtime-prelude-string-helper
   [index : OptFunctionIndex]
   [state : OptReachState]
   [source-name : String]) : OptReachState
-  (let
-    [helper : String (opt-runtime-prelude-string-helper-name source-name)]
-    (if (string.eq helper "")
-      state
-      (opt-reach-add-function-leaf
-        index
-        (opt-reach-add-function
-          index
-          (opt-reach-add-function
-            index
+  (match (opt-runtime-prelude-string-helper source-name)
+    [(OptRuntimeStringHelper.No) state]
+    [(OptRuntimeStringHelper.Some helper helper-bit)
+      (match state
+        [(OptReachState.State _ _ _ runtime-helper-mask)
+          (if (not (= (bit-and runtime-helper-mask helper-bit) 0))
             state
-            (string.append "stdlib/runtime.tl::" helper))
-          (string.append "stdlib\\runtime.tl::" helper))
-        helper))))
+            ;; A self-compile contains hundreds of calls to the concat helpers.
+            ;; The leaf fallback scans every indexed function to retain alternate
+            ;; source-path spellings, but its result is identical after the first
+            ;; occurrence of a given fixed runtime helper.
+            (match (opt-reach-add-function-leaf
+              index
+              (opt-reach-add-function
+                index
+                (opt-reach-add-function
+                  index
+                  state
+                  (string.append "stdlib/runtime.tl::" helper))
+                (string.append "stdlib\\runtime.tl::" helper))
+              helper)
+              [(OptReachState.State reachable worklist globals mask)
+                (OptReachState.State
+                  reachable
+                  worklist
+                  globals
+                  (bit-or mask helper-bit))]))])]))
 
 (define (opt-reach-add-call-target
   [index : OptFunctionIndex]
@@ -32885,13 +32903,17 @@
 
 (define (opt-reach-process [index : OptFunctionIndex] [state : OptReachState]) : OptReachState
   (match state
-    [(OptReachState.State reachable worklist globals)
+    [(OptReachState.State reachable worklist globals runtime-helper-mask)
       (match worklist
         [(OptReachWorklist.Nil) state]
         [(OptReachWorklist.Cons slot rest)
           (let
             [popped : OptReachState
-              (OptReachState.State reachable (box-get rest) globals)]
+              (OptReachState.State
+                reachable
+                (box-get rest)
+                globals
+                runtime-helper-mask)]
             (opt-reach-process
               index
               (opt-reach-function
@@ -33151,10 +33173,11 @@
               (OptReachState.State
                 reachable
                 (OptReachWorklist.Nil)
-                reachable-globals)
+                reachable-globals
+                0)
               "main"))
           globals))
-        [(OptReachState.State reachable-out _ reachable-globals-out)
+        [(OptReachState.State reachable-out _ reachable-globals-out _)
           (OptPrunedProgram.Program
             (opt-filter-reachable-globals globals reachable-globals-out)
             (opt-filter-reachable-functions index functions reachable-out))]))

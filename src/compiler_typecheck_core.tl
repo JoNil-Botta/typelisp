@@ -46681,7 +46681,16 @@
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (macro-decl-list-reverse-into items (ast-decl-list-new)))
+  (let
+    [count : i64 (ast-decl-list-len (& items))]
+    [index : i64 count]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (ast-decl-list-push (&mut out) (ast-decl-list-ref items index))))
+      out)))
 
 (define (macro-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -46769,7 +46778,18 @@
       result)))
 
 (define (macro-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
-  (macro-decl-path-list-reverse-into items (ast-decl-path-list-new)))
+  (let
+    [count : i64 (ast-decl-path-list-len (& items))]
+    [index : i64 count]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (ast-decl-path-list-push
+            (&mut out)
+            (ast-decl-path-list-get (& items) index ""))))
+      out)))
 
 (define (macro-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]
@@ -58113,12 +58133,15 @@
                             (let
                               [_install-after-load : unit
                                 (tc-context-install-pools! cur-ctx)]
+                              [materialized-tail : AstDeclList
+                                (macro-scratch-decl-list-prefix-rev-current-suffix
+                                  (macro-scratch-decl-list-reverse
+                                    materialized-decls)
+                                  rest)]
                               [next-decls : AstDeclList
                                 (macro-scratch-decl-list-append
                                   (macro-scratch-decl-list-reverse out-rev)
-                                  (macro-scratch-decl-list-append
-                                    materialized-decls
-                                    rest))]
+                                  materialized-tail)]
                               [next-paths : AstDeclPathList
                                 (macro-scratch-decl-path-list-append
                                   (macro-scratch-decl-path-list-reverse
@@ -58171,11 +58194,7 @@
                                       (set! cur-ctx next-ctx)
                                       (set! cur-orig-decls next-decls)
                                       (set! cur-top-env next-top-env)
-                                      (set!
-                                        cur-decls
-                                        (macro-scratch-decl-list-append
-                                          materialized-decls
-                                          rest))
+                                      (set! cur-decls materialized-tail)
                                       (set!
                                         cur-paths
                                         (macro-scratch-decl-path-list-append

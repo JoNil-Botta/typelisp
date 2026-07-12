@@ -181,6 +181,21 @@ assert_profile_live_counter_eq_in() {
     fi
 }
 
+assert_profile_live_counter_at_least_in() {
+    _file=$1
+    _phase=$2
+    _min=$3
+    _stdout=$4
+    _stderr=$5
+    if ! awk -F'|' -v phase="$_phase" -v min="$_min" '
+        $1 == "compile-profile" && $2 == phase && ($5 + 0) >= min { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$_file"; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected profile live counter $_phase to be at least $_min"
+    fi
+}
+
 assert_layout_row() {
     assert_contains_in \
         "$LAYOUT_STDERR" \
@@ -266,6 +281,15 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR" \
         "lower.ast_type_pool.typecheck.capacity" \
         32768 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    # The phase reports arena destruction as a negative live delta. Exact-size
+    # declaration/path reversals keep accumulated macro scratch below 500 MB;
+    # the former grow-and-copy reversals retained roughly 600 MB here.
+    assert_profile_live_counter_at_least_in \
+        "$SELFHOST_STDERR" \
+        "typecheck.macro_scratch_release" \
+        -500000000 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
 fi

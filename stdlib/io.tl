@@ -3,8 +3,8 @@
 ;# Provides file, argv, panic, and stdio helpers through direct extern bindings
 ;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
 ;#
-;# Public platform-facing functions such as the `print` / `println` format
-;# macros, `print-string`, `panic`, `arg`,
+;# Public platform-facing functions such as the `print-format` / `println`
+;# format macros, `print-string`, `panic`, `arg`,
 ;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
 ;# helpers are stdlib definitions in this module. Programs must import this module
 ;# to use them.
@@ -37,9 +37,10 @@
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.comptime)
-(import stdlib.format)
 (import stdlib.io_core)
+(import stdlib.str_cat)
 (import stdlib.string)
+(import stdlib.text_buf)
 
 ;: Private errno-style status slot used by stdlib IO/FS helpers. This is not
 ;: libc errno; it preserves the previous backend-owned slot semantics in TL.
@@ -516,11 +517,154 @@
 (define (print-newline) : unit
   (print-string "\n"))
 
-;: Compatibility implementation for the historical `(print i64)` call.
-(define (print-i64 [value : i64]) : unit
+;: Write an integer followed by a newline.
+(define (print [value : i64]) : unit
   (begin
     (print-string (string.int->string value))
     (print-newline)))
+
+;: Render one supported format placeholder as a String expression.
+(defmacro (format-value
+  [float-formatter : comptime.Expr]
+  [value : comptime.Expr]) : String
+  (match (type-kind (comptime.expr-type value))
+    ["string" value]
+    ["i64" `(stdlib.string.int->string ,value)]
+    ["bool"
+      `(if ,value
+        "true"
+        "false")]
+    ["char" `(stdlib.text_buf.char-string ,value)]
+    ["f64" `(,float-formatter ,value)]
+    ["f32" `(,float-formatter (cast ,value : f64))]
+    [_
+      (comptime.comptime-error
+        (comptime.string-append
+          "format: unsupported argument type "
+          (type-kind (comptime.expr-type value))))]))
+
+;: Append one generated String expression to the internal format carrier.
+;:
+;: The carrier uses a non-macro head while parsing. Rebuilding its argument list
+;: through quasiquote keeps the eventual `str-cat` call flat without exposing a
+;: mutable compiler syntax list API.
+(defmacro (format-push [carrier : comptime.Expr] [piece : comptime.Expr]) : comptime.Expr
+  (match carrier
+    [(comptime.ExprCall callee pieces) `(,callee ,@pieces ,piece)]
+    [_ carrier]))
+
+;: Turn the completed internal carrier into the public single-allocation concat.
+(defmacro (format-finish [carrier : comptime.Expr]) : String
+  (match carrier
+    [(comptime.ExprCall _ pieces) `(str_cat.str-cat ,@pieces)]
+    [_ `""]))
+
+;: Parse one byte of a literal format template and extend the output carrier.
+(defmacro (format-from
+  [float-formatter : comptime.Expr]
+  [template : comptime.Expr]
+  [output-carrier : comptime.Expr]
+  [offset : comptime.Expr]
+  [arg-index : comptime.Expr]
+  [args : comptime.Expr ...]) : String
+  (match offset
+    [(comptime.ExprInt index)
+      (match arg-index
+        [(comptime.ExprInt next-arg)
+          (let
+            [text : String (comptime.expr-string-value template)]
+            [template-len : i64 (string.string-length text)]
+            [arg-count : i64 (comptime.expr-list-length args)]
+            (if (>= index template-len)
+              (if (= next-arg arg-count)
+                `(format-finish ,output-carrier)
+                (comptime.comptime-error
+                  "format: not enough placeholders for arguments"))
+              (let
+                [ch : char (string.string-ref text index)]
+                (if (= (cast ch : i64) 123)
+                  (if (>= (+ index 1) template-len)
+                    (comptime.comptime-error "format: unmatched '{'")
+                    (let
+                      [following : char (string.string-ref text (+ index 1))]
+                      (if (= (cast following : i64) 123)
+                        `(format-from
+                          ,float-formatter
+                          ,(comptime.expr-string text)
+                          (format-push
+                            ,output-carrier
+                            ,(comptime.expr-string
+                              (comptime.string-slice text index 1)))
+                          ,(comptime.expr-int (+ index 2))
+                          ,(comptime.expr-int next-arg)
+                          ,@args)
+                        (if (= (cast following : i64) 125)
+                          (if (>= next-arg arg-count)
+                            (comptime.comptime-error
+                              "format: not enough arguments for placeholders")
+                            `(format-from
+                              ,float-formatter
+                              ,(comptime.expr-string text)
+                              (format-push
+                                ,output-carrier
+                                (format-value
+                                  ,float-formatter
+                                  ,(comptime.expr-list-nth args next-arg)))
+                              ,(comptime.expr-int (+ index 2))
+                              ,(comptime.expr-int (+ next-arg 1))
+                              ,@args))
+                          (comptime.comptime-error
+                            "format: format specifiers are not supported")))))
+                  (if (= (cast ch : i64) 125)
+                    (if (>= (+ index 1) template-len)
+                      (comptime.comptime-error "format: unmatched '}'")
+                      (if (=
+                        (cast (string.string-ref text (+ index 1)) : i64)
+                        125)
+                        `(format-from
+                          ,float-formatter
+                          ,(comptime.expr-string text)
+                          (format-push
+                            ,output-carrier
+                            ,(comptime.expr-string
+                              (comptime.string-slice text index 1)))
+                          ,(comptime.expr-int (+ index 2))
+                          ,(comptime.expr-int next-arg)
+                          ,@args)
+                        (comptime.comptime-error "format: unmatched '}'")))
+                    `(format-from
+                      ,float-formatter
+                      ,(comptime.expr-string text)
+                      (format-push
+                        ,output-carrier
+                        ,(comptime.expr-string
+                          (comptime.string-slice text index 1)))
+                      ,(comptime.expr-int (+ index 1))
+                      ,(comptime.expr-int next-arg)
+                      ,@args))))))]
+        [_
+          (comptime.comptime-error
+            "format: internal argument index is not an integer")])]
+    [_ (comptime.comptime-error "format: internal offset is not an integer")]))
+
+;: Format a literal template and positional values into a freshly allocated String.
+;:
+;: `{}` consumes one argument; `{{` and `}}` produce literal braces. The
+;: template must be a source string literal so syntax is deterministic and the
+;: placeholder count is checked during macro expansion.
+(defmacro (format-with
+  [float-formatter : comptime.Expr]
+  [template : comptime.Expr]
+  [args : comptime.Expr ...]) : String
+  (if (comptime.expr-string? template)
+    `(format-from
+      ,float-formatter
+      ,(comptime.expr-string (comptime.expr-string-value template))
+      (__format-output)
+      0
+      0
+      ,@args)
+    (comptime.comptime-error "format: template must be a string literal")))
 
 ;: Format a literal template and write it to stdout without a newline.
 ;:
@@ -528,20 +672,11 @@
 ;: value and `{{` / `}}` produce literal braces. Formatting creates one final
 ;: String and `print-string` writes that body once.
 ;:
-;: For source compatibility, the historical single-i64 call `(print value)`
-;: still writes the integer followed by a newline. New formatted calls always
-;: start with a string literal, including `(print "{}" value)`.
-(defmacro (print [template : comptime.Expr] [args : comptime.Expr ...]) : unit
-  (match (type-kind (comptime.expr-type template))
-    ["i64"
-      (if (= (comptime.expr-list-length args) 0)
-        `(stdlib.io.print-i64 ,template)
-        `(stdlib.io.print-string (stdlib.format.format ,template ,@args)))]
-    ["i32"
-      (if (= (comptime.expr-list-length args) 0)
-        `(stdlib.io.print-i64 (cast ,template : i64))
-        `(stdlib.io.print-string (stdlib.format.format ,template ,@args)))]
-    [_ `(stdlib.io.print-string (stdlib.format.format ,template ,@args))]))
+;: The explicit `print-format` name preserves the historical newline-writing
+;: integer function `print` without overloading its semantics.
+(defmacro (print-format [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  `(stdlib.io.print-string
+    (stdlib.io.format-with stdlib.io.format-float-core ,template ,@args)))
 
 ;: Format a literal template, write it to stdout, then write one newline.
 ;:
@@ -549,7 +684,8 @@
 ;: explicit stream write.
 (defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
   `(let
-    [formatted : String (stdlib.format.format ,template ,@args)]
+    [formatted : String
+      (stdlib.io.format-with stdlib.io.format-float-core ,template ,@args)]
     (begin
       (stdlib.io.print-string formatted)
       (stdlib.io.print-newline))))

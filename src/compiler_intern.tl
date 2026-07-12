@@ -744,46 +744,14 @@
     (set! intern-reset-generation (+ intern-reset-generation 1))
     (set! intern-map-ready true)))
 
-(define (intern-slice-cache-lookup [text : String] [start : i64] [len : i64]) : i64
-  (begin
-    (when
-      (and
-        intern-slice-cache0-ready
-        (intern-string-slice-eq? intern-slice-cache0-name text start len))
-      (return intern-slice-cache0-id))
-    (when
-      (and
-        intern-slice-cache1-ready
-        (intern-string-slice-eq? intern-slice-cache1-name text start len))
-      (return intern-slice-cache1-id))
-    (when
-      (and
-        intern-slice-cache2-ready
-        (intern-string-slice-eq? intern-slice-cache2-name text start len))
-      (return intern-slice-cache2-id))
-    (when
-      (and
-        intern-slice-cache3-ready
-        (intern-string-slice-eq? intern-slice-cache3-name text start len))
-      (return intern-slice-cache3-id))
-    -1))
+;; Disabled for correctness: macro-generated source slices can outlive their
+;; scratch-owned String wrappers within one compile. The dedup table immediately
+;; below remains authoritative; this cache was only a four-entry fast path.
+(define (intern-slice-cache-lookup [_text : String] [_start : i64] [_len : i64]) : i64
+  -1)
 
-(define (intern-slice-cache-record [name : String] [id : i64]) : unit
-  (if (and intern-slice-cache0-ready (= intern-slice-cache0-id id))
-    unit
-    (begin
-      (set! intern-slice-cache3-name intern-slice-cache2-name)
-      (set! intern-slice-cache3-id intern-slice-cache2-id)
-      (set! intern-slice-cache3-ready intern-slice-cache2-ready)
-      (set! intern-slice-cache2-name intern-slice-cache1-name)
-      (set! intern-slice-cache2-id intern-slice-cache1-id)
-      (set! intern-slice-cache2-ready intern-slice-cache1-ready)
-      (set! intern-slice-cache1-name intern-slice-cache0-name)
-      (set! intern-slice-cache1-id intern-slice-cache0-id)
-      (set! intern-slice-cache1-ready intern-slice-cache0-ready)
-      (set! intern-slice-cache0-name name)
-      (set! intern-slice-cache0-id id)
-      (set! intern-slice-cache0-ready true))))
+(define (intern-slice-cache-record [_name : String] [_id : i64]) : unit
+  unit)
 
 ;: Intern `name`, returning its stable i64 id. Equal strings map to equal ids.
 ;: Lazily initializes the dedup table so callers need not order intern-reset!.

@@ -71,10 +71,10 @@ use.
 - `io.tl`: file I/O helpers, explicit file-handle open/close wrappers, stdio
   wrappers, argv access, panic/error, deterministic float parse/format support,
   and monomorphic Result-style I/O error APIs built as stdlib extern wrappers
-  over backend runtime symbols. Its `print` macro formats a literal template
-  without adding a newline and `println` appends one; the historical
-  single-integer `(io.print value)` call remains a newline-writing compatibility
-  form. Import it with `(import stdlib.io)`.
+  over backend runtime symbols. Its `print-format` macro formats a literal
+  template without adding a newline and `println` appends one. The explicit
+  compatibility-preserving name leaves the historical newline-writing integer
+  `(io.print value)` function unchanged. Import it with `(import stdlib.io)`.
 - `io_core.tl`: private backing module for `io.tl` file-handle table storage.
   User programs should import `stdlib.io`; this module exists to keep raw handle
   internals out of the public `stdlib.io` surface.

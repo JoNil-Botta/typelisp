@@ -756,10 +756,7 @@
                 [map : (& map Map)]
                 [key : i64]
                 [fallback : i64]) : i64
-                (base.i64-i64-map-get-value-or-ref
-                  (& (struct-get map inner))
-                  key
-                  fallback))
+                (lookup-value-or (get map key) fallback))
               (define (borrowed-value-missing [_map : (& map Map)]) : (BorrowedValueLookup
                   map)
                 (BorrowedValueMissing))
@@ -5341,55 +5338,6 @@
                           next))
                       (set! walked (+ walked 1)))))]))
           (I64I64MapMissing))))))
-
-;: Scalar lookup for callers whose value domain has an unambiguous miss value.
-(define (i64-i64-map-get-value-or-ref
-  [map : (& map I64I64Map)]
-  [key : i64]
-  [fallback : i64]) : i64
-  (let
-    [slots : (Array I64I64MapSlot) (struct-get map slots)]
-    [capacity : i64 (array-length slots)]
-    (if (<= capacity 0)
-      fallback
-      (let
-        [hash : i64 (i64-i64-map-hash-key key)]
-        [mask : i64 (- capacity 1)]
-        [cursor : i64 (bit-and hash mask)]
-        [walked : i64 0]
-        [data : (Ptr i64)
-          (unsafe
-            (ptr-cast (array-data slots) : (Ptr i64)))]
-        (begin
-          (while (< walked capacity)
-            (let
-              ;; I64I64MapSlot layout is tag, key, value, cached hash.
-              [slot : (Ptr i64)
-                (unsafe
-                  (ptr-offset data (* cursor 4)))]
-              [tag : i64
-                (unsafe
-                  (ptr-read slot))]
-              (cond
-                [(= tag 0) (return fallback)]
-                [(and
-                    (= tag 2)
-                    (=
-                      (unsafe
-                        (ptr-read (ptr-offset slot 3)))
-                      hash)
-                    (=
-                      (unsafe
-                        (ptr-read (ptr-offset slot 1)))
-                      key))
-                  (return
-                    (unsafe
-                      (ptr-read (ptr-offset slot 2))))]
-                [else
-                  (begin
-                    (set! cursor (bit-and (+ cursor 1) mask))
-                    (set! walked (+ walked 1)))])))
-          fallback)))))
 
 ;: Rehash a borrowed i64 -> i64 slot array into a fresh destination.
 (define (i64-i64-map-rehash-from-ref

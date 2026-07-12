@@ -5,8 +5,8 @@ set -eu
 #
 # A correct compiler's emitted assembly depends on the source, target, backend
 # mode, and requested optimization level. It must not depend on whether the
-# compiler binary itself was built at opt1 or opt2. This gate builds two stage2
-# compilers from the same checkout, one through opt1 and one through opt2, then
+# compiler binary itself was built at opt1 or opt2. CI supplies a converged
+# opt2-built stage4; this gate builds one opt1 compiler from current source and
 # compares their emitted assembly over a fixed Linux corpus.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -16,9 +16,9 @@ usage() {
     cat >&2 <<'EOF'
 usage: scripts/check-build-invariance.sh
 
-Requires TYPELISP_BIN to point at a Linux TypeLisp compiler. Builds opt1 and
-opt2 stage2 compilers from src/main.tl, then compares emitted assembly for a
-fixed corpus.
+Requires TYPELISP_BIN to point at CI's converged Linux opt2-built stage4
+compiler. Builds one opt1 compiler from src/main.tl, then compares emitted
+assembly for a fixed corpus.
 EOF
 }
 
@@ -123,29 +123,22 @@ compile_stage() {
     fi
 }
 
-build_stage2_for_opt() {
-    opt_level=$1
-    outdir="$WORKDIR/opt$opt_level"
+build_opt1_compiler() {
+    outdir="$WORKDIR/opt1"
     mkdir -p "$outdir"
 
-    stage1_asm="$outdir/stage1.s"
-    stage1_obj="$outdir/stage1.$NL_OBJ_EXT"
-    stage1_bin="$outdir/stage1$NL_BIN_EXT"
-    stage2_asm="$outdir/stage2.s"
-    stage2_obj="$outdir/stage2.$NL_OBJ_EXT"
-    stage2_bin="$outdir/stage2$NL_BIN_EXT"
+    opt1_asm="$outdir/opt1.s"
+    opt1_obj="$outdir/opt1.$NL_OBJ_EXT"
+    opt1_bin="$outdir/opt1$NL_BIN_EXT"
 
-    compile_stage "$opt_level" "stage0-to-stage1" "$COMPILER" "$stage1_asm" "$outdir/stage1.stdout" "$outdir/stage1.stderr"
-    assemble_and_link "build-invariance opt$opt_level stage1" "$stage1_asm" "$stage1_obj" "$stage1_bin"
+    compile_stage 1 "stage4-to-opt1" "$COMPILER" "$opt1_asm" "$outdir/opt1.stdout" "$outdir/opt1.stderr"
+    assemble_and_link "build-invariance opt1 compiler" "$opt1_asm" "$opt1_obj" "$opt1_bin"
 
-    compile_stage "$opt_level" "stage1-to-stage2" "$stage1_bin" "$stage2_asm" "$outdir/stage2.stdout" "$outdir/stage2.stderr"
-    assemble_and_link "build-invariance opt$opt_level stage2" "$stage2_asm" "$stage2_obj" "$stage2_bin"
-
-    if [ ! -x "$stage2_bin" ]; then
-        chmod +x "$stage2_bin" 2>/dev/null || true
+    if [ ! -x "$opt1_bin" ]; then
+        chmod +x "$opt1_bin" 2>/dev/null || true
     fi
-    if [ ! -x "$stage2_bin" ]; then
-        echo "[build-invariance] opt$opt_level stage2 compiler is not executable: $stage2_bin" >&2
+    if [ ! -x "$opt1_bin" ]; then
+        echo "[build-invariance] opt1 compiler is not executable: $opt1_bin" >&2
         exit 1
     fi
 }
@@ -248,11 +241,14 @@ compare_case() {
     fi
 }
 
-echo "[build-invariance] seed compiler: $COMPILER"
-build_stage2_for_opt 1
-OPT1_STAGE2="$WORKDIR/opt1/stage2$NL_BIN_EXT"
-build_stage2_for_opt 2
-OPT2_STAGE2="$WORKDIR/opt2/stage2$NL_BIN_EXT"
+echo "[build-invariance] incoming opt2-built stage4 compiler: $COMPILER"
+construction_start=$(date +%s)
+build_opt1_compiler
+OPT1_COMPILER="$WORKDIR/opt1/opt1$NL_BIN_EXT"
+OPT2_STAGE4="$COMPILER"
+construction_end=$(date +%s)
+construction_seconds=$((construction_end - construction_start))
+echo "[build-invariance] compiler construction: ${construction_seconds}s"
 
 CORPUS="$WORKDIR/corpus.txt"
 LEFT_DIR="$WORKDIR/compare/opt1-built"
@@ -261,6 +257,7 @@ write_corpus "$CORPUS"
 rm -rf "$LEFT_DIR" "$RIGHT_DIR"
 mkdir -p "$LEFT_DIR" "$RIGHT_DIR"
 
+corpus_start=$(date +%s)
 case_count=0
 while IFS='|' read -r name source opt_level; do
     [ -n "$name" ] || continue
@@ -270,10 +267,13 @@ while IFS='|' read -r name source opt_level; do
     fi
     left="$LEFT_DIR/$name.s"
     right="$RIGHT_DIR/$name.s"
-    compile_case "opt1-built" "$OPT1_STAGE2" "$name" "$source" "$opt_level" "$left"
-    compile_case "opt2-built" "$OPT2_STAGE2" "$name" "$source" "$opt_level" "$right"
+    compile_case "opt1-built" "$OPT1_COMPILER" "$name" "$source" "$opt_level" "$left"
+    compile_case "opt2-built" "$OPT2_STAGE4" "$name" "$source" "$opt_level" "$right"
     compare_case "$name" "$left" "$right"
     case_count=$((case_count + 1))
 done < "$CORPUS"
+corpus_end=$(date +%s)
+corpus_seconds=$((corpus_end - corpus_start))
 
+echo "[build-invariance] corpus comparison: ${corpus_seconds}s"
 echo "build-invariance check passed for $case_count case(s)"

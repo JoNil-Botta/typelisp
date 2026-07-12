@@ -32,6 +32,7 @@
 (import (hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.string)
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
+(cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -119,6 +120,28 @@
   compile-profile
   (define compiler-opt-profile-detail-start-ms : i64
     0))
+
+(cfg
+  compile-profile-summary
+  (define (compiler-opt-profile-summary-reset!) : unit
+    (cps.compiler-profile-summary-reset!)))
+
+(cfg
+  compile-profile-summary
+  (define (compiler-opt-profile-summary-emit) : unit
+    (begin
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-optimizer-pass
+        "optimizer"
+        "pass")
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-optimizer-function
+        "optimizer"
+        "function")
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-optimizer-module
+        "optimizer"
+        "module"))))
 
 (cfg
   compile-profile
@@ -296,18 +319,31 @@
   (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) compiler-opt-profile-detail-start-ms)]
-      (if (>= elapsed 1)
-        (io.print-error
-          (string.append
-            "compile-profile-detail|optimize."
+      (cfg
+        compile-profile-summary
+        (if (string.eq phase "function")
+          (begin
+            (cps.compiler-profile-summary-note!
+              cps.compiler-profile-summary-optimizer-function
+              name
+              elapsed)
+            (cps.compiler-profile-summary-note-module!
+              cps.compiler-profile-summary-optimizer-module
+              name
+              elapsed))
+          unit)
+        (if (>= elapsed 1)
+          (io.print-error
             (string.append
-              phase
+              "compile-profile-detail|optimize."
               (string.append
-                "|"
+                phase
                 (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))))
-        unit))))
+                  "|"
+                  (string.append
+                    (string.int->string elapsed)
+                    (string.append "|" (string.append name "\n")))))))
+          unit)))))
 
 (cfg
   compile-profile
@@ -317,18 +353,24 @@
     [start-ms : i64]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) start-ms)]
-      (if (>= elapsed 1)
-        (io.print-error
-          (string.append
-            "compile-profile-detail|optimize.pass."
+      (cfg
+        compile-profile-summary
+        (cps.compiler-profile-summary-note!
+          cps.compiler-profile-summary-optimizer-pass
+          pass
+          elapsed)
+        (if (>= elapsed 1)
+          (io.print-error
             (string.append
-              pass
+              "compile-profile-detail|optimize.pass."
               (string.append
-                "|"
+                pass
                 (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))))
-        unit))))
+                  "|"
+                  (string.append
+                    (string.int->string elapsed)
+                    (string.append "|" (string.append name "\n")))))))
+          unit)))))
 
 (cfg
   compile-profile
@@ -339,13 +381,16 @@
     [start-ms : i64]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) start-ms)]
-      (io.print-error
-        (string.concat5
-          "compile-profile-detail|optimize.escape."
-          phase
-          "|"
-          (string.int->string elapsed)
-          (string.concat5 "|" (string.int->string level) "|" name "\n"))))))
+      (cfg
+        compile-profile-summary
+        unit
+        (io.print-error
+          (string.concat5
+            "compile-profile-detail|optimize.escape."
+            phase
+            "|"
+            (string.int->string elapsed)
+            (string.concat5 "|" (string.int->string level) "|" name "\n")))))))
 
 (cfg
   compile-profile
@@ -19570,14 +19615,19 @@
   (if (>= index count)
     acc
     (let
-      [dst : i64 (opt-gvn-instr-dst (array-ref slots index))]
+      [instr : CompilerIrInstr (array-ref slots index)]
+      [dst : i64 (opt-gvn-instr-dst instr)]
+      [next : opt_i64_i64_map.Map
+        (if (opt-gvn-record-candidate? instr)
+          (opt-gvn-defs-add acc (- 0 1))
+          acc)]
       (opt-gvn-sources-instr-seq-from
         slots
         (+ index 1)
         count
         (if (= dst (- 0 1))
-          acc
-          (opt-gvn-defs-add acc dst))))))
+          next
+          (opt-gvn-defs-add next dst))))))
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
@@ -19596,6 +19646,16 @@
               acc))])]
     [(CompilerIrBlockList.Array seq)
       (opt-gvn-sources-blocks (compiler-ir-block-seq-to-list seq) acc)]))
+
+;; Candidate count shares the map's -1 no-destination sentinel. Var ids are
+;; non-negative, so stability queries never observe this reserved entry.
+(define (opt-gvn-record-candidate? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.CpuId _ _ _ _) true]
+    [(CompilerIrInstr.Xgetbv _ _) true]
+    [_ false]))
 
 (define (opt-gvn-block-id [doms : OptDomInfo] [label : String]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
@@ -19623,34 +19683,6 @@
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources index))]
     [_ false]))
-
-(define (opt-gvn-record-count-instr-seq-from
-  [sources : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : i64
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    0
-    (+
-      (if (opt-gvn-recordable-instr?
-        (compiler-ir-instr-seq-ref instrs index)
-        sources)
-        1
-        0)
-      (opt-gvn-record-count-instr-seq-from sources instrs (+ index 1)))))
-
-(define (opt-gvn-record-count-blocks
-  [sources : opt_i64_i64_map.Map]
-  [blocks : CompilerIrBlockList]) : i64
-  (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (+
-            (opt-gvn-record-count-instr-seq-from sources instrs 0)
-            (opt-gvn-record-count-blocks sources (box-get rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-gvn-record-count-blocks sources (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
   (opt-global-fact-bucket-capacity count))
@@ -20050,8 +20082,7 @@
       (opt-gvn-sources-blocks
         blocks
         (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
-    [table : OptGvnMap
-      (opt-gvn-map-empty (opt-gvn-record-count-blocks sources blocks))]
+    [table : OptGvnMap (opt-gvn-map-empty (opt-gvn-count sources (- 0 1)))]
     [gvn : CompilerIrBlockList
       (opt-gvn-rewrite-dom context table sources blocks)]
     [hs : OptLoadHeaderSet (opt-load-header-set-from-function params gvn)]
@@ -34279,6 +34310,9 @@
                   (cfg
                     compile-profile
                     (compiler-opt-profile-finish "functions"))
+                  (cfg
+                    compile-profile-summary
+                    (compiler-opt-profile-summary-emit))
                   (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                   (cfg compile-profile (compiler-opt-profile-start))
                   (let
@@ -34597,6 +34631,9 @@
                     (cfg
                       compile-profile
                       (compiler-opt-profile-finish "functions"))
+                    (cfg
+                      compile-profile-summary
+                      (compiler-opt-profile-summary-emit))
                     (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
@@ -50118,18 +50155,21 @@
     [report : OptScratchScopeReport]) : unit
     (match report
       [(OptScratchScopeReport.Report allocs bytes blocker)
-        (if (> allocs 0)
-          (io.print-error
-            (compiler-opt-scratch-region-report-line
-              (compiler-opt-scratch-region-report-status blocker)
-              scope
-              function
-              label
-              latch
-              allocs
-              bytes
-              (compiler-opt-scratch-region-report-reason blocker)))
-          unit)])))
+        (cfg
+          compile-profile-summary
+          unit
+          (if (> allocs 0)
+            (io.print-error
+              (compiler-opt-scratch-region-report-line
+                (compiler-opt-scratch-region-report-status blocker)
+                scope
+                function
+                label
+                latch
+                allocs
+                bytes
+                (compiler-opt-scratch-region-report-reason blocker)))
+            unit))])))
 
 (cfg
   compile-profile

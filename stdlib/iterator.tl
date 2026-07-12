@@ -4,9 +4,11 @@
 ;# The stdlib iterator protocol is a module-level convention for future macros:
 ;# a collection module exposes an `iterator` operation that returns iterator
 ;# state, and the iterator state's module exposes `next`, taking `&mut Iter` and
-;# returning an option-like result. The current flat stdlib compatibility names
-;# keep their module prefix, so this module's first concrete iterator is
-;# `range` / `range-inclusive`, `i64-range-iterator`, and `i64-range-next`.
+;# returning an option-like result. Generated `Vec<T>` modules implement that
+;# canonical pair with `IterNext.Item (& source T)` for shared traversal. The
+;# current flat stdlib compatibility names keep their module prefix, so this
+;# module's first concrete iterator is `range` / `range-inclusive`,
+;# `i64-range-iterator`, and `i64-range-next`.
 ;#
 ;# `next` never uses sentinels, panics, or exceptions for exhaustion. It returns
 ;# a concrete `Done` variant, and repeated calls after exhaustion keep returning

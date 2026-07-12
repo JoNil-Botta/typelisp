@@ -34,6 +34,17 @@ mkdir -p "$WORKDIR"
 PROFILE_ASM="$WORKDIR/typelisp-profile.s"
 PROFILE_OBJ="$WORKDIR/typelisp-profile.$NL_OBJ_EXT"
 PROFILE_BIN="$WORKDIR/typelisp-profile$NL_BIN_EXT"
+SUMMARY_ASM="$WORKDIR/typelisp-summary.s"
+SUMMARY_OBJ="$WORKDIR/typelisp-summary.$NL_OBJ_EXT"
+SUMMARY_BIN="$WORKDIR/typelisp-summary$NL_BIN_EXT"
+SUMMARY_BUILD_STDOUT="$WORKDIR/summary-build.stdout"
+SUMMARY_BUILD_STDERR="$WORKDIR/summary-build.stderr"
+SUMMARY_CHECK_STDOUT="$WORKDIR/summary-check.stdout"
+SUMMARY_CHECK_STDERR="$WORKDIR/summary-check.stderr"
+SUMMARY_OUTPUT_ASM="$WORKDIR/summary-output.s"
+NORMAL_CHECK_STDOUT="$WORKDIR/normal-check.stdout"
+NORMAL_CHECK_STDERR="$WORKDIR/normal-check.stderr"
+NORMAL_OUTPUT_ASM="$WORKDIR/normal-output.s"
 BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
@@ -56,6 +67,9 @@ REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
 REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
 LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
+CONCAT_ASM="$WORKDIR/profile-string-concat.s"
+CONCAT_STDOUT="$WORKDIR/profile-string-concat.stdout"
+CONCAT_STDERR="$WORKDIR/profile-string-concat.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
 OPT_STDOUT="$WORKDIR/profile-opt.stdout"
 OPT_STDERR="$WORKDIR/profile-opt.stderr"
@@ -240,6 +254,93 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     fail "profile-enabled CLI link failed"
 fi
 
+echo "[compile-profile] compile compact-summary CLI"
+if ! "$COMPILER" compile src/main.tl \
+    -o "$SUMMARY_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --cfg compile-profile \
+    --cfg compile-profile-summary \
+    > "$SUMMARY_BUILD_STDOUT" 2> "$SUMMARY_BUILD_STDERR"; then
+    show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
+    fail "compact-summary CLI compile failed"
+fi
+if ! assemble_and_link compile-profile-summary-cli \
+    "$SUMMARY_ASM" "$SUMMARY_OBJ" "$SUMMARY_BIN" \
+    >> "$SUMMARY_BUILD_STDOUT" 2>> "$SUMMARY_BUILD_STDERR"; then
+    show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
+    fail "compact-summary CLI link failed"
+fi
+
+echo "[compile-profile] verify compact summary schema and bound"
+if ! "$SUMMARY_BIN" compile tests/integration/arithmetic.tl \
+    -o "$SUMMARY_OUTPUT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$SUMMARY_CHECK_STDOUT" 2> "$SUMMARY_CHECK_STDERR"; then
+    show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+    fail "compact-summary fixture compile failed"
+fi
+assert_contains_in "$SUMMARY_CHECK_STDERR" \
+    "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls" \
+    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+for row in \
+    'optimizer|pass' 'optimizer|function' 'optimizer|module' \
+    'backend|function' 'backend|module'; do
+    assert_contains_in "$SUMMARY_CHECK_STDERR" \
+        "compile-profile-summary|$row|" \
+        "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+    assert_contains_in "$SUMMARY_CHECK_STDERR" \
+        "compile-profile-summary|$row|0|<remainder>|" \
+        "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+done
+assert_contains_in "$SUMMARY_CHECK_STDERR" "compile-profile|total|" \
+    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+assert_not_contains_in "$SUMMARY_CHECK_STDERR" "compile-profile-detail|" \
+    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+summary_lines=$(grep -c '^compile-profile-summary|' "$SUMMARY_CHECK_STDERR")
+if [ "$summary_lines" -gt 46 ]; then
+    show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+    fail "compact summary exceeded 46 rows: $summary_lines"
+fi
+if ! awk -F'|' '
+    $1 == "compile-profile-summary" && $2 != "scope" {
+        key = $2 "|" $3
+        if ($4 != 0 && $4 != previous[key] + 1) bad = 1
+        if ($4 != 0) previous[key] = $4
+    }
+    END { exit bad ? 1 : 0 }
+' "$SUMMARY_CHECK_STDERR"; then
+    fail "compact summary ranks are not stable ascending rows"
+fi
+
+echo "[compile-profile] verify normal compiler has no profile output"
+if ! "$COMPILER" compile tests/integration/arithmetic.tl \
+    -o "$NORMAL_OUTPUT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$NORMAL_CHECK_STDOUT" 2> "$NORMAL_CHECK_STDERR"; then
+    show_failure_logs "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+    fail "normal fixture compile failed"
+fi
+assert_not_contains_in "$NORMAL_CHECK_STDERR" "compile-profile" \
+    "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+
+expected_heavy_sources='compiler_typecheck_smoke|src/tests/compiler_typecheck_smoke.tl
+compiler_lower_smoke|src/tests/compiler_lower_smoke.tl
+compiler_backend_smoke|src/tests/compiler_backend_smoke.tl
+doc_test_smoke|src/tests/doc_test_smoke.tl
+compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl
+compiler_driver_state_smoke|src/tests/compiler_driver_state_smoke.tl'
+actual_heavy_sources=$(scripts/measure-heavy-closure-profile.sh --list)
+if [ "$actual_heavy_sources" != "$expected_heavy_sources" ]; then
+    fail "heavy-closure harness source list changed"
+fi
+
 # A source selfhost compile exercises the compiler's embedded canonical stdlib
 # payloads. On Windows it is the allocation boundary that small new modules
 # (such as the clone declaration-macro handoff) previously crossed. Keep the
@@ -262,7 +363,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        4194304 \
+        4259840 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
@@ -294,6 +395,42 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDERR"
 fi
 
+echo "[compile-profile] compile deep string concat fixture"
+if ! "$PROFILE_BIN" compile tests/integration/string_concat_deep.tl \
+    -o "$CONCAT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    --opt-level 0 \
+    > "$CONCAT_STDOUT" 2> "$CONCAT_STDERR"; then
+    show_failure_logs "$CONCAT_STDOUT" "$CONCAT_STDERR"
+    fail "profiled deep string concat fixture compile failed"
+fi
+
+# Two 16-leaf trees flatten once each. The first group holds five leaves and
+# each carry group adds four, yielding three concat5 calls plus one concat4
+# call per tree. These counters make both the traversal and fan-in invariant
+# observable without depending on assembly formatting.
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.string_concat.trees" \
+    2 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.string_concat.leaves" \
+    32 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.string_concat.runtime_calls" \
+    8 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
+
 echo "[compile-profile] check macro detail fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \
     --stdlib-root . \
@@ -323,6 +460,9 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_hits
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.env.module_local_misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_materializations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_memo_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_builds|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_hits|"
+assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.generated_module_catalog_validations|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_rebuilds|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_reuses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.macro.live_registry_rebuilds|"
@@ -473,15 +613,33 @@ fi
 # counter cannot isolate a single identity, but with three identical imports at
 # least two of them must resolve through the memo, and at least one module must
 # have been materialized.
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_memo_hits" \
     2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_materializations" \
+    1 \
+    "$CROSS_SINGLE_STDOUT" \
+    "$CROSS_SINGLE_STDERR"
+assert_profile_counter_eq_in \
+    "$CROSS_SINGLE_STDERR" \
+    "typecheck.macro.generated_module_catalog_builds" \
+    1 \
+    "$CROSS_SINGLE_STDOUT" \
+    "$CROSS_SINGLE_STDERR"
+assert_profile_counter_eq_in \
+    "$CROSS_SINGLE_STDERR" \
+    "typecheck.macro.generated_module_catalog_hits" \
+    2 \
+    "$CROSS_SINGLE_STDOUT" \
+    "$CROSS_SINGLE_STDERR"
+assert_profile_counter_eq_in \
+    "$CROSS_SINGLE_STDERR" \
+    "typecheck.macro.generated_module_catalog_validations" \
     1 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"

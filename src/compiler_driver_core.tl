@@ -86,14 +86,14 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
-;; A selfhost CLI expands from roughly 1.4M parsed nodes to just under 4M
-;; macro-expanded nodes. Starting the load pool at 2M forces a 2M -> 4M grow;
-;; bump arenas retain the superseded backing array until macro expansion is
-;; detached. Reserve the observed expansion capacity up front so embedded
-;; stdlib growth does not turn that transient double allocation into a Windows
+;; A selfhost CLI expands from roughly 1.4M parsed nodes to just over 4M
+;; macro-expanded nodes. Starting the load pool at 2M forces a grow; bump
+;; arenas retain the superseded backing array until macro expansion is detached.
+;; Leave one 64K-node page above the observed source so embedded stdlib and
+;; lowerer growth do not turn that transient double allocation into a Windows
 ;; selfhost headroom failure.
 (define compiler-driver-compile-load-expr-pool-initial-capacity : i64
-  4194304)
+  4259840)
 
 ;; Reachability compaction retains about 1.4M nodes for the selfhost CLI, well
 ;; below the expanding load pool's capacity. Keep its pool at 2M: it overlaps
@@ -558,8 +558,19 @@
       (set! compiler-driver-profile-total-start-live (profile.alloc-live))
       (set! compiler-driver-profile-best-peak 0)
       (ci.intern-profile-reset!)
+      (cfg
+        compile-profile-summary
+        (begin
+          (compiler-opt-profile-summary-reset!)
+          (compiler-backend-profile-summary-reset!))
+        unit)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
+      (cfg
+        compile-profile-summary
+        (io.print-error
+          "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls\n")
+        unit)
       (compiler-driver-profile-start-phase))))
 
 (cfg

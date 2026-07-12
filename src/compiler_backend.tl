@@ -1,6 +1,7 @@
 ;; compiler_backend.tl - Selfhost CompilerIrProgram -> x86_64 .s emitter.
 (cfg (any compile-profile regalloc-census scavenge-census) (import stdlib.io))
 (cfg compile-profile (import stdlib.profile))
+(cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import "compiler_lower.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
@@ -49,6 +50,24 @@
   compile-profile
   (define compiler-backend-profile-detail-start-ms : i64
     0))
+
+(cfg
+  compile-profile-summary
+  (define (compiler-backend-profile-summary-reset!) : unit
+    unit))
+
+(cfg
+  compile-profile-summary
+  (define (compiler-backend-profile-summary-emit) : unit
+    (begin
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-backend-function
+        "backend"
+        "function")
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-backend-module
+        "backend"
+        "module"))))
 
 (cfg
   compile-profile
@@ -104,18 +123,31 @@
     (let
       [elapsed : i64
         (- (profile.now-ms) compiler-backend-profile-detail-start-ms)]
-      (if (>= elapsed 1)
-        (io.print-error
-          (string.append
-            "compile-profile-detail|backend."
+      (cfg
+        compile-profile-summary
+        (if (string.eq phase "function")
+          (begin
+            (cps.compiler-profile-summary-note!
+              cps.compiler-profile-summary-backend-function
+              name
+              elapsed)
+            (cps.compiler-profile-summary-note-module!
+              cps.compiler-profile-summary-backend-module
+              name
+              elapsed))
+          unit)
+        (if (>= elapsed 1)
+          (io.print-error
             (string.append
-              phase
+              "compile-profile-detail|backend."
               (string.append
-                "|"
+                phase
                 (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))))
-        unit))))
+                  "|"
+                  (string.append
+                    (string.int->string elapsed)
+                    (string.append "|" (string.append name "\n")))))))
+          unit)))))
 
 (cfg
   compile-profile
@@ -47385,6 +47417,9 @@ tl_tlci_call_image_entry:
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish "functions"))
+                (cfg
+                  compile-profile-summary
+                  (compiler-backend-profile-summary-emit))
                 (cfg compile-profile (compiler-backend-profile-start))
                 (match (compiler-backend-emit-closure-entry-adapters-buffer-into
                   target
@@ -47481,6 +47516,9 @@ tl_tlci_call_image_entry:
                 (cfg
                   compile-profile
                   (compiler-backend-profile-finish "functions"))
+                (cfg
+                  compile-profile-summary
+                  (compiler-backend-profile-summary-emit))
                 (ResultCompilerBackendBuffer.Err message))]))))))
 
 (define (compiler-backend-emit-program-target-with-mode-buffer-and-crt

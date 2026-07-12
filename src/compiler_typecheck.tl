@@ -315,6 +315,38 @@
   "(define (id [x : i64]) : i64 x)
 (define (main) : i64 (id true))")
 
+(define (compiler-typecheck-mismatch-detail-tests-ok?) : bool
+  (and
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-bad-call-source)
+      "typecheck: argument type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (let [x : i64 \"hello\"] x))"
+      "typecheck: let binding type mismatch: expected i64, found String")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (let [x : i64 0] (begin (set! x true) x)))"
+      "typecheck: assignment type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (ann true : i64))"
+      "typecheck: annotation type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 true)"
+      "typecheck: return type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64 (begin (lambda () : i64 true) 0))"
+      "typecheck: lambda return type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(define (main) : i64
+  (let [pair : (Tuple i64 bool) (tuple true false)] 0))"
+      "typecheck: tuple element type mismatch: expected i64, found bool")
+    (compiler-typecheck-error-ok?
+      "(defstruct Left (value i64))
+(defstruct Right (value i64))
+(define (take [value : Left]) : i64 value.value)
+(define (main) : i64 (take (Right 1)))"
+      "typecheck: argument type mismatch: expected Left, found Right")))
+
 (define (compiler-typecheck-branch-mismatch-source) : String
   "(define (main [flag : bool]) : i64
   (if flag 1 false))")
@@ -736,7 +768,7 @@
     (compiler-typecheck-ok-score? (compiler-typecheck-return-source) 10)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-return-mismatch-source)
-      "typecheck: return type mismatch")
+      "typecheck: return type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-return-outside-source)
       "typecheck: return requires enclosing function")
@@ -766,7 +798,7 @@
       "typecheck: tuple index out of bounds")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-array-mismatch-source)
-      "typecheck: array elements must have same type")
+      "typecheck: array elements must have same type: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-string-index-source)
       "typecheck: string index must be integer")
@@ -778,10 +810,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-never-branch-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-foreach-body-source)
-      "typecheck: foreach body must be unit")
+      "typecheck: foreach body must be unit: expected unit, found i64")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-lambda-ret-source)
-      "typecheck: lambda return type mismatch")
+      "typecheck: lambda return type mismatch: expected i64, found bool")
     (compiler-typecheck-return-tests-ok?)))
 
 (define (compiler-typecheck-nominal-source) : String
@@ -855,7 +887,7 @@
         [message-ok : bool
           (string.eq
             (compiler-diagnostic-message (box-get diag))
-            "typecheck: return type mismatch")]
+            "typecheck: return type mismatch: expected i64, found bool")]
         [path-ok : bool
           (string.eq (compiler-diagnostic-path (box-get diag)) "")]
         [line-ok : bool (= (compiler-diagnostic-line (box-get diag)) 2)]
@@ -2008,7 +2040,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-match-mismatch-source)
-        "typecheck: match arm result type mismatch")
+        "typecheck: match arm result type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2036,7 +2068,7 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-struct-constructor-mismatch-source)
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -2472,7 +2504,7 @@
       "typecheck: box-get requires Box type")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-set-mismatch-source)
-      "typecheck: box assignment type mismatch")
+      "typecheck: box assignment type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-box-take-non-box-source)
       "typecheck: box-take requires Box type")))
@@ -2773,7 +2805,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-resource-with-shadow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-resource-with-cleanup-mismatch-source)
-      "typecheck: with cleanup function type mismatch")
+      "typecheck: with cleanup function type mismatch: expected i32, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-resource-with-cleanup-return-source)
       "typecheck: with cleanup function type mismatch")
@@ -2923,12 +2955,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-cleanup-struct-cleanup-mismatch-source)
-        "typecheck: struct Bad field fd cleanup function close-bool type mismatch")
+        "typecheck: struct Bad field fd cleanup function close-bool type mismatch: expected (-> i64 unit), found (-> bool unit)")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-cleanup-struct-cleanup-return-source)
-        "typecheck: struct Bad field fd cleanup function close-fd type mismatch")
+        "typecheck: struct Bad field fd cleanup function close-fd type mismatch: expected (-> i64 unit), found (-> i64 i64)")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -3017,12 +3049,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-cleanup-enum-cleanup-mismatch-source)
-        "typecheck: enum Bad variant A cleanup function close-bool type mismatch")
+        "typecheck: enum Bad variant A cleanup function close-bool type mismatch: expected (-> i64 unit), found (-> bool unit)")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-cleanup-enum-cleanup-return-source)
-        "typecheck: enum Bad variant A cleanup function close-fd type mismatch")
+        "typecheck: enum Bad variant A cleanup function close-fd type mismatch: expected (-> i64 unit), found (-> i64 i64)")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -3049,7 +3081,7 @@
       "typecheck: try requires enclosing Result-like function")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-result-try-incompatible-error-source)
-      "typecheck: try error type mismatch")
+      "typecheck: try error type mismatch: expected String, found i64")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-option-try-carrier-mismatch-source)
       "typecheck: try carrier mismatch")
@@ -3362,7 +3394,7 @@
       "typecheck: ptr-write! requires a MutPtr pointer operand")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-write-mismatch-source)
-      "typecheck: ptr-write! value type mismatch")
+      "typecheck: ptr-write! value type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-raw-pointer-offset-bad-source)
       "typecheck: ptr-offset requires an integer offset")
@@ -3392,7 +3424,7 @@
       "typecheck: atomic-load requires unsafe context")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-atomic-pointer-store-mismatch-source)
-      "typecheck: atomic value type mismatch")
+      "typecheck: atomic value type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-atomic-pointer-add-const-source)
       "typecheck: atomic-add! requires a MutPtr pointer operand")
@@ -3404,7 +3436,7 @@
       "typecheck: volatile-load requires unsafe context")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-volatile-pointer-store-mismatch-source)
-      "typecheck: volatile value type mismatch")
+      "typecheck: volatile value type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-volatile-pointer-store-const-source)
       "typecheck: volatile-store! requires a MutPtr pointer operand")
@@ -3499,7 +3531,7 @@
       (compiler-typecheck-extern-head-varargs-typed-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-extern-head-varargs-typed-mismatch-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected f64, found bool")
     (compiler-typecheck-ok?
       (compiler-typecheck-extern-head-varargs-tail-enum-source))
     (compiler-typecheck-error-ok?
@@ -4511,22 +4543,22 @@
   (and
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-if-cond-source)
-      "typecheck: if condition must be bool")
+      "typecheck: if condition must be bool: expected bool, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-while-cond-source)
-      "typecheck: while condition must be bool")
+      "typecheck: while condition must be bool: expected bool, found i64")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-while-body-source)
-      "typecheck: while body must be unit")
+      "typecheck: while body must be unit: expected unit, found i64")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-set-mismatch-source)
-      "typecheck: assignment type mismatch")
+      "typecheck: assignment type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-let-mismatch-source)
-      "typecheck: let binding type mismatch")
+      "typecheck: let binding type mismatch: expected i64, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-stmt-ann-mismatch-source)
-      "typecheck: annotation type mismatch")
+      "typecheck: annotation type mismatch: expected i64, found bool")
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-while-source))
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-if-set-source))
     (compiler-typecheck-ok? (compiler-typecheck-stmt-ok-cast-ann-source))
@@ -4829,7 +4861,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-scalar-cond-bad-source)
-            "typecheck: if condition must be bool")))
+            "typecheck: if condition must be bool: expected bool, found i32")))
       (set!
         ok
         (and
@@ -4921,7 +4953,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-scalar-f64-to-f32-bad-source)
-            "typecheck: return type mismatch")))
+            "typecheck: return type mismatch: expected f32, found f64")))
       (set!
         ok
         (and
@@ -5181,7 +5213,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-arm-mismatch-source)
-            "typecheck: match arm result type mismatch")))
+            "typecheck: match arm result type mismatch: expected i64, found bool")))
       (set!
         ok
         (and
@@ -5245,7 +5277,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-string-payload-source)
-            "typecheck: match arm result type mismatch")))
+            "typecheck: match arm result type mismatch: expected i64, found String")))
       (set!
         ok
         (and
@@ -5372,7 +5404,7 @@
           ok
           (compiler-typecheck-error-ok?
             (compiler-typecheck-match-bad-scalar-arm-source)
-            "typecheck: match arm result type mismatch")))
+            "typecheck: match arm result type mismatch: expected i64, found bool")))
       (set!
         ok
         (and
@@ -5593,7 +5625,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-argv-builtin-ok-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-builtin-bad-index-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected i64, found String")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-argv-builtin-bad-arg-arity-source)
       "typecheck: call arity mismatch: io.arg expected 1 argument, got 2 arguments")
@@ -5728,7 +5760,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-lambda-ok-inferred-ret-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-lambda-bad-ret-source)
-      "typecheck: lambda return type mismatch")
+      "typecheck: lambda return type mismatch: expected bool, found i64")
     (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-scalar-source))
     (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-multi-source))
     (compiler-typecheck-ok? (compiler-typecheck-lambda-capture-string-source))
@@ -5845,10 +5877,10 @@
       "typecheck: spmd-broadcast lane must be uniform")
     (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref xs i) true))) 0))"
-      "typecheck: spmd-broadcast lane must have type i64")
+      "typecheck: spmd-broadcast lane must have type i64: expected i64, found bool")
     (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [out : (Array i64)] [n : i64]) : i64 (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-shuffle (array-ref xs i) true))) 0))"
-      "typecheck: spmd-shuffle lane must have type i64")
+      "typecheck: spmd-shuffle lane must have type i64: expected i64, found bool")
     (compiler-typecheck-error-ok?
       "(define (main [bs : (Array bool)] [out : (Array bool)] [n : i64]) : bool (begin (foreach ([i : i64 0 n]) (array-set! out i (spmd-broadcast (array-ref bs i) 0))) true))"
       "typecheck: spmd-broadcast value must have type i32, u32, i64, u64, f32, or f64; bool broadcast remains deferred")
@@ -5933,12 +5965,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [a : (Array i64)]) : unit (array-set! a 0 true))"
-        "typecheck: array-set! value type mismatch")
+        "typecheck: array-set! value type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         "(define (f [a : (Array i64)]) : unit (array-push! a true))"
-        "typecheck: array-push! value type mismatch")
+        "typecheck: array-push! value type mismatch: expected i64, found bool")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6109,7 +6141,7 @@
       "compile-time evaluation cannot reference runtime variable 'x'")
     (compiler-typecheck-error-ok?
       "(define (main) : i64 (comptime (< 1 2)))"
-      "typecheck: return type mismatch")
+      "typecheck: return type mismatch: expected i64, found bool")
     (compiler-typecheck-stdlib-comptime-surface-tests-ok?)))
 
 ;; IO-builtin signature rules: whole-file helpers and file-handle status
@@ -6251,7 +6283,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [c : String]) : unit (io.write-file 5 c))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6263,19 +6295,19 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : i64]) : String (io.read-file p))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected String, found i64")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : String]) : i64 (io.file-open-status p \"r\"))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected i64, found String")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [from : String]) : i64 (rename-status from 5))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6293,13 +6325,13 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f) : i64 (io.file-close-status \"h\"))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected i64, found String")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [h : i64]) : i64 (io.file-write-status h 5))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6311,7 +6343,7 @@
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-fs-source
           "(define (f [p : String] [c : String]) : i64 (io.write-file p c))")
-        "typecheck: return type mismatch")
+        "typecheck: return type mismatch: expected i64, found unit")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
@@ -6938,10 +6970,10 @@
     (compiler-typecheck-ok? (compiler-typecheck-quote-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-quote-bad-unquote-source)
-      "typecheck: unquote expects Expr")
+      "typecheck: unquote expects Expr: expected Expr, found i64")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-quote-bad-splice-source)
-      "typecheck: unquote-splicing expects ExprList")))
+      "typecheck: unquote-splicing expects ExprList: expected ExprList, found i64")))
 
 (define (compiler-typecheck-defmacro-tests-ok?) : bool
   (and
@@ -6958,7 +6990,7 @@
       "typecheck: macro body produced type does not match declaration")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-body-type-source)
-      "typecheck: macro body must return Expr")
+      "typecheck: macro body must return Expr: expected Expr, found bool")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-defmacro-unsafe-source)
       "typecheck: comptime purity rejects unsafe block; reference path: bad -> unsafe")
@@ -9640,7 +9672,7 @@
     (compiler-typecheck-ok? (compiler-typecheck-builtin-shadow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-cross-module-mismatch-source)
-      "typecheck: argument type mismatch")))
+      "typecheck: argument type mismatch: expected i64, found bool")))
 
 (define (compiler-typecheck-self-test-diagnostics) : unit
   (begin
@@ -9659,6 +9691,9 @@
     (if (compiler-typecheck-diagnostic-code-tests-ok?)
       unit
       (io.panic "typecheck: diagnostic code tests failed"))
+    (if (compiler-typecheck-mismatch-detail-tests-ok?)
+      unit
+      (io.panic "typecheck: mismatch detail tests failed"))
     (if (compiler-typecheck-escape-diagnostic-tests-ok?)
       unit
       (io.panic "typecheck: escape diagnostic tests failed"))
@@ -9681,7 +9716,7 @@
       (io.panic "typecheck: unbound-name diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
       (compiler-typecheck-bad-call-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected i64, found bool")
       unit
       (io.panic "typecheck: bad-call diagnostic test failed"))
     (if (compiler-typecheck-error-ok?
@@ -9896,19 +9931,19 @@
     (compiler-typecheck-ok? (compiler-typecheck-runtime-builtin-shadow-source))
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-string-bad-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected String, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-str-bad-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected String, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-print-error-bad-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected String, found i32")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-xgetbv-bad-source)
       "typecheck: xgetbv index must be integer")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-cpuid-bad-source)
-      "typecheck: argument type mismatch")
+      "typecheck: argument type mismatch: expected i64, found String")
     (compiler-typecheck-runtime-stdlib-no-import-tests-ok?)
     (compiler-typecheck-error-ok?
       (compiler-typecheck-runtime-builtin-string-ref-bad-index-source)
@@ -9986,12 +10021,12 @@
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.panic 5))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected String, found i32")
         unit
         (set! ok false))
       (if (compiler-typecheck-error-ok?
         (compiler-typecheck-with-io-source "(define (f) : i64 (io.error true))")
-        "typecheck: argument type mismatch")
+        "typecheck: argument type mismatch: expected String, found bool")
         unit
         (set! ok false))
       ok)))

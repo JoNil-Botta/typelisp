@@ -26,11 +26,12 @@
 ;# arrays. The same source API works whether aggregate elements occupy handle
 ;# slots or are stored inline in the backing array.
 ;#
-;# When reading move-only aggregate elements through a shared vector borrow,
-;# prefer the generated `get` helper (for example `bvec.get (& balls) i
-;# fallback`) or borrow `slots` from a vector place inside the iteration body.
-;# A direct `array-ref` through a reference rvalue such as `(& world.balls)`
-;# remains region-tagged and cannot be passed by value to another function.
+;# Shared traversal uses the generated `iterator` / `next` pair. Its
+;# `IterNext.Item` payload is a borrow of the original vector element, so
+;# move-only aggregate elements are read or drawn without a copy or move. The
+;# iterator and every yielded item retain a shared source borrow until their
+;# final use; mutation, growth, moving, or mutable borrowing of the vector then
+;# becomes available again.
 ;#
 ;# Compiler code should use generated vectors for append-heavy private sequences
 ;# that are not part of the user-facing AST shape, such as IR instructions,
@@ -194,11 +195,22 @@
             [pop-name : Expr (expr-var "Pop")]
             [pop-empty-name : Expr (expr-var "Pop.Empty")]
             [pop-ok-name : Expr (expr-var "Pop.Ok")]
+            [iter-name : Expr (expr-var "Iter")]
+            [iter-next-name : Expr (expr-var "IterNext")]
+            [iter-done-name : Expr (expr-var "IterNext.Done")]
+            [iter-item-name : Expr (expr-var "IterNext.Item")]
             [iter-mut-name : Expr (expr-var "IterMut")]
             [iter-mut-next-name : Expr (expr-var "IterMutNext")]
             [iter-mut-done-name : Expr (expr-var "IterMutNext.Done")]
             [iter-mut-item-name : Expr (expr-var "IterMutNext.Item")]
             [kind : String (type-kind T)]
+            ;; Borrowed String storage has the public immutable `str` view
+            ;; type. Other shared items retain their concrete element type,
+            ;; including move-only aggregates.
+            [iter-item-type : Expr
+              (match kind
+                ["string" (expr-var "str")]
+                [_ `,T])]
             ;; String elements are immutable by language policy, so their iterator
             ;; item is the ordinary borrowed `str` view. Other element kinds yield
             ;; an exclusive reference to their concrete element type.
@@ -284,6 +296,19 @@
               (defenum ,pop-name
                 (Empty)
                 (Ok ,T))
+              ;; Shared iteration retains the vector's source borrow. `next`
+              ;; reborrows an element through the stored array reference, so an
+              ;; Item keeps the source lifetime rather than the short borrow of
+              ;; iterator state.
+              (defstruct ,iter-name
+                (:lifetimes source)
+                (slots (& source (Array ,T)))
+                (len i64)
+                (index i64))
+              (defenum ,iter-next-name
+                (:lifetimes source)
+                (Done)
+                (Item (& source ,iter-item-type)))
               ;; This state owns the vector's exclusive source borrow. `next-mut`
               ;; reborrows one element from that stored reference, so the item keeps
               ;; the vector lifetime rather than the short borrow of the state.
@@ -304,6 +329,19 @@
                 (struct-get v len))
               (define (is-empty? [v : (& v ,vec-name)]) : bool
                 (<= (len v) 0))
+              (define (iterator [v : (& source ,vec-name)]) : (,iter-name
+                  source)
+                (,iter-name (& (struct-get v slots)) (struct-get v len) 0))
+              (define (next [iter : (&mut state (,iter-name source))]) : (,iter-next-name
+                  source)
+                (let
+                  [index : i64 (struct-get iter index)]
+                  (if (>= index (struct-get iter len))
+                    (,iter-done-name)
+                    (begin
+                      (set! (struct-get iter index) (+ index 1))
+                      (,iter-item-name
+                        (& (array-ref (struct-get iter slots) index)))))))
               (define (iterator-mut [v : (&mut source ,vec-name)]) : (,iter-mut-name
                   source)
                 (,iter-mut-name

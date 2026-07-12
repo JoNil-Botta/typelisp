@@ -162,8 +162,9 @@ Inline stdlib coverage:
   text buffer from an inner active arena, empty buffers, repeated appends,
   char/int append helpers, buffer concatenation, clear/reset behavior, and
   rendering.
-- `vector_api.tl` covers generated `i64` and `String` vector modules, including
-  growth, mutation, pop, snapshot, reversal, and value containment.
+- `vector_api.tl` covers generated scalar, String, and aggregate vector modules,
+  including shared/mutable iterator modes, growth, mutation, pop, snapshot,
+  reversal, and value containment.
 - `vector_slice.tl` owns inline tests for the lifetime-scoped `(slice i64)`
   generated module API, including vector and array constructors, invalid ranges
   producing empty views, sub-slicing, fallback reads, value-threaded iteration,

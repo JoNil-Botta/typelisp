@@ -14,6 +14,7 @@ raw_pointer_register_addr_of|tests/integration/raw_pointer_register_addr_of.tl|0
 auto_borrow_call|tests/integration/auto_borrow_call.tl|42|-|-|stdlib/string.tl
 borrow_reborrow_stored_reference|tests/integration/borrow_reborrow_stored_reference.tl|0|-|-|-
 borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_stored_reference_aggregate.tl|42|-|-|-
+vector_shared_iterator|tests/integration/vector_shared_iterator.tl|42|-|-|stdlib/vector.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-

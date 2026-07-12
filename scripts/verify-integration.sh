@@ -17,20 +17,26 @@ cd "$ROOT"
 
 usage() {
     cat >&2 <<'EOF'
-usage: scripts/verify-integration.sh [--self-test-empty-compile-diagnostic]
+usage: scripts/verify-integration.sh [--self-test-empty-compile-diagnostic | --validate-manifest-only]
 
 Runs manifest-driven native integration tests.
 --self-test-empty-compile-diagnostic exercises the compile-failure diagnostic
 helper without invoking a compiler or native toolchain.
+--validate-manifest-only validates the host manifest and exits before builds.
 EOF
 }
 
 SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=0
+VALIDATE_MANIFEST_ONLY=0
 case "${1:-}" in
     "")
         ;;
     --self-test-empty-compile-diagnostic)
         SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC=1
+        shift
+        ;;
+    --validate-manifest-only)
+        VALIDATE_MANIFEST_ONLY=1
         shift
         ;;
     -h | --help)
@@ -402,104 +408,17 @@ EOF
 }
 
 validate_manifest() {
-    _cases="$WORKDIR/manifest-cases.txt"
     _known="$WORKDIR/manifest-known.txt"
     _known_sorted="$WORKDIR/manifest-known.sorted"
-    _dupes="$WORKDIR/manifest-dupes.txt"
     _actual="$WORKDIR/integration-sources.txt"
-    _line_no=0
-    : > "$_cases"
+    _catalog="$WORKDIR/repository-files.txt"
     : > "$_known"
 
-    while IFS= read -r _line || [ -n "$_line" ]; do
-        _line_no=$((_line_no + 1))
-        case "$_line" in
-            "" | \#*) continue ;;
-        esac
-
-        _fields=$(printf '%s\n' "$_line" | awk -F'|' '{ print NF }')
-        if [ "$_fields" -ne 6 ] && [ "$_fields" -ne 7 ]; then
-            echo "manifest line $_line_no must have 6 fields, or 7 with an extra field: $_line" >&2
-            exit 1
-        fi
-
-        IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps _extra <<EOF
-$_line
-EOF
-
-        case "$_name" in
-            "" | *[!A-Za-z0-9_]*)
-                echo "manifest line $_line_no has invalid case name: $_name" >&2
-                exit 1
-                ;;
-        esac
-        case "$_source" in
-            "" | /* | *..* | *.tl) ;;
-            *)
-                echo "manifest line $_line_no has invalid source path: $_source" >&2
-                exit 1
-                ;;
-        esac
-        case "$_source" in
-            "" | /* | *..*)
-                echo "manifest line $_line_no has unsafe source path: $_source" >&2
-                exit 1
-                ;;
-        esac
-        case "$_want" in
-            "" | *[!0-9]*)
-                echo "manifest line $_line_no has invalid exit code for $_name: $_want" >&2
-                exit 1
-                ;;
-        esac
-        case "${_extra:-}" in
-            "" | expected-stderr:?*) ;;
-            expected-stderr:)
-                echo "manifest line $_line_no has empty expected stderr for $_name" >&2
-                exit 1
-                ;;
-            *)
-                echo "manifest line $_line_no has invalid extra field for $_name: $_extra" >&2
-                exit 1
-                ;;
-        esac
-
-        _source_path="$ROOT/$_source"
-        if [ ! -f "$_source_path" ]; then
-            echo "manifest line $_line_no names missing source: $_source" >&2
-            exit 1
-        fi
-
-        printf '%s\n' "$_name" >> "$_cases"
-        case "$_source" in
-            tests/integration/*.tl)
-                basename "$_source" .tl >> "$_known"
-                ;;
-        esac
-
-        _source_dir=$(dirname -- "$_source_path")
-        for _dep in $(deps_or_empty "$_deps"); do
-            case "$_dep" in
-                /* | *..*)
-                    echo "manifest line $_line_no has unsafe dependency path: $_dep" >&2
-                    exit 1
-                    ;;
-            esac
-            _dep_src=$(dep_source_path "$_dep" "$_source_dir")
-            case "$_dep_src" in
-                "$ROOT"/tests/integration/*.tl)
-                    basename "$_dep_src" .tl >> "$_known"
-                    ;;
-            esac
-        done
-    done < "$NORMALIZED_MANIFEST"
-
-    sort "$_cases" | uniq -d > "$_dupes"
-    if [ -s "$_dupes" ]; then
-        echo "manifest has duplicate integration case(s):" >&2
-        sed 's/^/  /' "$_dupes" >&2
-        exit 1
-    fi
+    find benchmarks examples src stdlib tests/integration -type f -print |
+        sed 's#^\./##' > "$_catalog"
+    awk -v catalog="$_catalog" -v known_out="$_known" \
+        -f "$ROOT/scripts/validate-integration-manifest.awk" \
+        "$_catalog" "$NORMALIZED_MANIFEST"
 
     if [ "$HOST_OS" = windows ]; then
         windows_integration_non_applicable_cases >> "$_known"
@@ -1895,6 +1814,10 @@ windows_print_manifest_summary() {
 }
 
 validate_manifest
+if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
+    echo "integration manifest validation passed for $HOST_OS"
+    exit 0
+fi
 
 failed=0
 ran=0

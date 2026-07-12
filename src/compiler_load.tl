@@ -95,6 +95,23 @@
   (CompilerLoadSurfaceMacroDecls)
   (CompilerLoadSurfaceMacroOther))
 
+;; A summary determines which structurally-observed uses make a lazy alias
+;; materialize. Ordinary module surfaces need either an alias-qualified use or
+;; a visible declaration name; a declaration-macro-only surface needs an
+;; alias-qualified use, while all observable surfaces stay eager.
+(defenum CompilerLoadLazyImportPolicy
+  (CompilerLoadLazyImportEager)
+  (CompilerLoadLazyImportQualified)
+  (CompilerLoadLazyImportDirect))
+
+;; This is intentionally a three-bit observation rather than a source-text
+;; heuristic. The importer AST can prove qualified and direct demand, and
+;; marks macro-generated or otherwise unresolved demand conservatively.
+(defstruct CompilerLoadLazyAliasDemand
+  (qualified bool)
+  (direct bool)
+  (unknown bool))
+
 (defenum CompilerLoadSurfaceDeclKind
   (CompilerLoadSurfaceValue)
   (CompilerLoadSurfaceFunction)
@@ -160,7 +177,8 @@
   (has-tests bool)
   (has-export-metadata bool)
   (has-generated-decls bool)
-  (has-decl-emitting-macro bool))
+  (has-decl-emitting-macro bool)
+  (lazy-policy CompilerLoadLazyImportPolicy))
 
 (defenum CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryNil)
@@ -178,10 +196,6 @@
 
 (define compiler-load-active-surface-summaries : CompilerLoadSurfaceSummaryList
   (CompilerLoadSurfaceSummaryNil))
-(define compiler-load-stdlib-array-surface-summary : CompilerLoadMaybeSurfaceSummary
-  (CompilerLoadNoSurfaceSummary))
-(define compiler-load-stdlib-result-surface-summary : CompilerLoadMaybeSurfaceSummary
-  (CompilerLoadNoSurfaceSummary))
 (define compiler-load-surface-summary-load-depth : i64
   0)
 (define compiler-load-lazy-import-skip-record-count : i64
@@ -1086,62 +1100,6 @@
     (<= idx 0)
     (not (compiler-load-symbol-char? (string.string-ref source (- idx 1))))))
 
-(define (compiler-load-source-name-after-ok? [source : String] [end : i64]) : bool
-  (or
-    (>= end (string.string-length source))
-    (not (compiler-load-symbol-char? (string.string-ref source end)))))
-
-(define (compiler-load-source-name-token-at?
-  [source : String]
-  [name : String]
-  [idx : i64]) : bool
-  (let
-    [end : i64 (+ idx (string.string-length name))]
-    (and
-      (compiler-load-source-name-before-ok? source idx)
-      (compiler-load-string-prefix-at? source name idx)
-      (compiler-load-source-name-after-ok? source end))))
-
-(define (compiler-load-source-has-name-token-from?
-  [source : String]
-  [name : String]
-  [start : i64]) : bool
-  (let
-    [n : i64 (string.string-length source)]
-    [name-len : i64 (string.string-length name)]
-    (if (= name-len 0)
-      false
-      (let
-        [name-first : char (string.string-ref name 0)]
-        [idx : i64 start]
-        [found : bool false]
-        (begin
-          (while (and (not found) (<= (+ idx name-len) n))
-            (if (and
-              (= (string.string-ref source idx) name-first)
-              (compiler-load-source-name-token-at? source name idx))
-              (set! found true)
-              (set! idx (+ idx 1))))
-          found)))))
-
-(define (compiler-load-source-alias-after-ok? [source : String] [end : i64]) : bool
-  (if (>= end (string.string-length source))
-    true
-    (let
-      [c : char (string.string-ref source end)]
-      (or (= c '.') (= c '/') (not (compiler-load-symbol-char? c))))))
-
-(define (compiler-load-source-alias-token-at?
-  [source : String]
-  [alias : String]
-  [idx : i64]) : bool
-  (let
-    [end : i64 (+ idx (string.string-length alias))]
-    (and
-      (compiler-load-source-name-before-ok? source idx)
-      (compiler-load-string-prefix-at? source alias idx)
-      (compiler-load-source-alias-after-ok? source end))))
-
 (define (compiler-load-source-qualified-alias-token-at?
   [source : String]
   [alias : String]
@@ -1218,73 +1176,6 @@
       source
       alias
       start)))
-
-(define (compiler-load-source-bare-alias-before-ok?
-  [source : String]
-  [idx : i64]) : bool
-  (if (<= idx 0)
-    true
-    (let
-      [prev : char (string.string-ref source (- idx 1))]
-      (and
-        (not (= prev '.'))
-        (not (= prev '/'))
-        (not (compiler-load-symbol-char? prev))))))
-
-(define (compiler-load-source-bare-alias-token-at?
-  [source : String]
-  [alias : String]
-  [idx : i64]) : bool
-  (let
-    [end : i64 (+ idx (string.string-length alias))]
-    (and
-      (compiler-load-source-bare-alias-before-ok? source idx)
-      (compiler-load-string-prefix-at? source alias idx)
-      (compiler-load-source-alias-after-ok? source end))))
-
-(define (compiler-load-source-has-alias-token-from?
-  [source : String]
-  [alias : String]
-  [start : i64]) : bool
-  (let
-    [n : i64 (string.string-length source)]
-    [alias-len : i64 (string.string-length alias)]
-    (if (= alias-len 0)
-      false
-      (let
-        [alias-first : char (string.string-ref alias 0)]
-        [idx : i64 start]
-        [found : bool false]
-        (begin
-          (while (and (not found) (<= (+ idx alias-len) n))
-            (if (and
-              (= (string.string-ref source idx) alias-first)
-              (compiler-load-source-alias-token-at? source alias idx))
-              (set! found true)
-              (set! idx (+ idx 1))))
-          found)))))
-
-(define (compiler-load-source-has-bare-alias-token-from?
-  [source : String]
-  [alias : String]
-  [start : i64]) : bool
-  (let
-    [n : i64 (string.string-length source)]
-    [alias-len : i64 (string.string-length alias)]
-    (if (= alias-len 0)
-      false
-      (let
-        [alias-first : char (string.string-ref alias 0)]
-        [idx : i64 start]
-        [found : bool false]
-        (begin
-          (while (and (not found) (<= (+ idx alias-len) n))
-            (if (and
-              (= (string.string-ref source idx) alias-first)
-              (compiler-load-source-bare-alias-token-at? source alias idx))
-              (set! found true)
-              (set! idx (+ idx 1))))
-          found)))))
 
 (define (compiler-load-source-for-lazy-scan [path : String]) : CompilerLoadMaybeString
   (if (io.file-exists? path)
@@ -2654,12 +2545,6 @@
     (set!
       compiler-load-active-surface-summaries
       (CompilerLoadSurfaceSummaryNil))
-    (set!
-      compiler-load-stdlib-array-surface-summary
-      (CompilerLoadNoSurfaceSummary))
-    (set!
-      compiler-load-stdlib-result-surface-summary
-      (CompilerLoadNoSurfaceSummary))
     (set! compiler-load-lazy-import-skip-record-count 0)))
 
 (define (compiler-load-surface-summary-load-enter!) : unit
@@ -2687,36 +2572,32 @@
     compiler-load-lazy-import-skip-record-count
     (+ compiler-load-lazy-import-skip-record-count 1)))
 
-(define (compiler-load-stdlib-array-module-id? [module-id : String]) : bool
-  (or
-    (compiler-load-string-eq? module-id "stdlib.array")
-    (compiler-load-string-eq? module-id "stdlib/array")
-    (compiler-load-string-eq? module-id "stdlib/array.tl")))
-
-(define (compiler-load-stdlib-result-module-id? [module-id : String]) : bool
-  (or
-    (compiler-load-string-eq? module-id "stdlib.result")
-    (compiler-load-string-eq? module-id "stdlib/result")
-    (compiler-load-string-eq? module-id "stdlib/result.tl")))
+(define (compiler-load-surface-summary-source-active?
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [source-path : String]) : bool
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) false]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (or
+        (string.eq (struct-get summary source-path) source-path)
+        (compiler-load-surface-summary-source-active?
+          (box-get rest)
+          source-path))]))
 
 (define (compiler-load-record-surface-summary!
   [summary : CompilerLoadSurfaceSummary]) : unit
-  (begin
-    (if (compiler-load-stdlib-array-module-id? (struct-get summary module-id))
-      (set!
-        compiler-load-stdlib-array-surface-summary
-        (CompilerLoadSomeSurfaceSummary summary))
-      unit)
-    (if (compiler-load-stdlib-result-module-id? (struct-get summary module-id))
-      (set!
-        compiler-load-stdlib-result-surface-summary
-        (CompilerLoadSomeSurfaceSummary summary))
-      unit)
-    (set!
+  (let
+    [source-path : String
+      (compiler-load-normalize-path (struct-get summary source-path))]
+    (if (compiler-load-surface-summary-source-active?
       compiler-load-active-surface-summaries
-      (CompilerLoadSurfaceSummaryCons
-        summary
-        (box compiler-load-active-surface-summaries)))))
+      source-path)
+      unit
+      (set!
+        compiler-load-active-surface-summaries
+        (CompilerLoadSurfaceSummaryCons
+          summary
+          (box compiler-load-active-surface-summaries))))))
 
 (define (compiler-load-surface-summary-find-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -2730,39 +2611,36 @@
           (box-get rest)
           source-path))]))
 
-(define (compiler-load-record-surface-summary-if-inactive!
-  [summary : CompilerLoadSurfaceSummary]) : unit
-  (match (compiler-load-surface-summary-find-source-in
-    compiler-load-active-surface-summaries
-    (struct-get summary source-path))
-    [(CompilerLoadSomeSurfaceSummary _) unit]
-    [(CompilerLoadNoSurfaceSummary)
-      (compiler-load-record-surface-summary! summary)]))
-
 (define (compiler-load-surface-summary-find-source [source-path : String]) : CompilerLoadMaybeSurfaceSummary
-  (let
-    [normalized : String (compiler-load-normalize-path source-path)]
-    (if (compiler-load-string-eq? normalized "stdlib/array.tl")
-      (match compiler-load-stdlib-array-surface-summary
-        [(CompilerLoadSomeSurfaceSummary summary)
-          (CompilerLoadSomeSurfaceSummary summary)]
-        [(CompilerLoadNoSurfaceSummary)
-          (compiler-load-surface-summary-find-source-in
-            compiler-load-active-surface-summaries
-            normalized)])
-      (if (compiler-load-string-eq? normalized "stdlib/result.tl")
-        (match compiler-load-stdlib-result-surface-summary
-          [(CompilerLoadSomeSurfaceSummary summary)
-            (CompilerLoadSomeSurfaceSummary summary)]
-          [(CompilerLoadNoSurfaceSummary)
-            (compiler-load-surface-summary-find-source-in
-              compiler-load-active-surface-summaries
-              normalized)])
-        (compiler-load-surface-summary-find-source-in
-          compiler-load-active-surface-summaries
-          normalized)))))
+  (compiler-load-surface-summary-find-source-in
+    compiler-load-active-surface-summaries
+    (compiler-load-normalize-path source-path)))
 
-(define (compiler-load-stdlib-surface-summary-load-with-pools
+(define (compiler-load-surface-summary-remove-source-in
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [source-path : String]) : CompilerLoadSurfaceSummaryList
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadSurfaceSummaryNil)]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (if (string.eq (struct-get summary source-path) source-path)
+        (compiler-load-surface-summary-remove-source-in
+          (box-get rest)
+          source-path)
+        (CompilerLoadSurfaceSummaryCons
+          summary
+          (box
+            (compiler-load-surface-summary-remove-source-in
+              (box-get rest)
+              source-path))))]))
+
+(define (compiler-load-surface-summary-remove-source! [source-path : String]) : unit
+  (set!
+    compiler-load-active-surface-summaries
+    (compiler-load-surface-summary-remove-source-in
+      compiler-load-active-surface-summaries
+      (compiler-load-normalize-path source-path))))
+
+(define (compiler-load-surface-summary-load-with-pools
   [path : String]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
@@ -2802,7 +2680,7 @@
           [(ResultCompilerLoadSurfaceSummary.Err _) unit])]
       [(ResultAstProgramDiagnostic.Err _) unit])))
 
-(define (compiler-load-stdlib-surface-summary-ensure-with-pools
+(define (compiler-load-surface-summary-ensure-with-pools
   [path : String]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
@@ -2812,7 +2690,7 @@
   (match (compiler-load-surface-summary-find-source path)
     [(CompilerLoadSomeSurfaceSummary _) unit]
     [(CompilerLoadNoSurfaceSummary)
-      (compiler-load-stdlib-surface-summary-load-with-pools
+      (compiler-load-surface-summary-load-with-pools
         path
         stdlib-roots
         expected-module
@@ -2820,58 +2698,22 @@
         cfgs
         pools)]))
 
-(define (compiler-load-stdlib-array-surface-summary-ensure-with-pools
+(define (compiler-load-surface-summary-refresh-with-pools
   [path : String]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
-  (match compiler-load-stdlib-array-surface-summary
-    [(CompilerLoadSomeSurfaceSummary summary)
-      (compiler-load-record-surface-summary-if-inactive! summary)]
-    [(CompilerLoadNoSurfaceSummary)
-      (compiler-load-stdlib-surface-summary-ensure-with-pools
-        path
-        stdlib-roots
-        expected-module
-        import-root
-        cfgs
-        pools)]))
-
-(define (compiler-load-stdlib-result-surface-summary-ensure-with-pools
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
-  [import-root : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
-  (match compiler-load-stdlib-result-surface-summary
-    [(CompilerLoadSomeSurfaceSummary summary)
-      (compiler-load-record-surface-summary-if-inactive! summary)]
-    [(CompilerLoadNoSurfaceSummary)
-      (compiler-load-stdlib-surface-summary-ensure-with-pools
-        path
-        stdlib-roots
-        expected-module
-        import-root
-        cfgs
-        pools)]))
-
-(define (compiler-load-stdlib-result-surface-summary-refresh-with-pools
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
-  [import-root : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
-  (compiler-load-stdlib-surface-summary-load-with-pools
-    path
-    stdlib-roots
-    expected-module
-    import-root
-    cfgs
-    pools))
+  (begin
+    (compiler-load-surface-summary-remove-source! path)
+    (compiler-load-surface-summary-load-with-pools
+      path
+      stdlib-roots
+      expected-module
+      import-root
+      cfgs
+      pools)))
 
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -2902,144 +2744,947 @@
     (compiler-load-surface-summary-decls-require-eager?
       (struct-get summary decls))))
 
-(define (compiler-load-surface-summary-requires-eager-for-lazy-import?
-  [summary : CompilerLoadSurfaceSummary]) : bool
-  (if (compiler-load-stdlib-result-module-id? (struct-get summary module-id))
-    (or
-      (struct-get summary has-tests)
-      (struct-get summary has-export-metadata)
-      (struct-get summary has-generated-decls)
-      (compiler-load-surface-summary-decls-require-eager?
-        (struct-get summary decls)))
-    (compiler-load-surface-summary-requires-eager? summary)))
+(define (compiler-load-lazy-alias-demand-none) : CompilerLoadLazyAliasDemand
+  (CompilerLoadLazyAliasDemand false false false))
 
-(define (compiler-load-lazy-variant-name-used?
-  [variant : AstVariantDef]
-  [source : String]
-  [start : i64]) : bool
-  (match variant
-    [(AstVariantDef.Def name _ _)
-      (compiler-load-source-has-name-token-from? source (intern-str name) start)]))
+(define (compiler-load-lazy-alias-demand-qualified) : CompilerLoadLazyAliasDemand
+  (CompilerLoadLazyAliasDemand true false false))
 
-(define (compiler-load-lazy-variant-list-name-used?
+(define (compiler-load-lazy-alias-demand-direct) : CompilerLoadLazyAliasDemand
+  (CompilerLoadLazyAliasDemand false true false))
+
+(define (compiler-load-lazy-alias-demand-unknown) : CompilerLoadLazyAliasDemand
+  (CompilerLoadLazyAliasDemand false false true))
+
+(define (compiler-load-lazy-alias-demand-merge
+  [left : CompilerLoadLazyAliasDemand]
+  [right : CompilerLoadLazyAliasDemand]) : CompilerLoadLazyAliasDemand
+  (CompilerLoadLazyAliasDemand
+    (or (struct-get left qualified) (struct-get right qualified))
+    (or (struct-get left direct) (struct-get right direct))
+    (or (struct-get left unknown) (struct-get right unknown))))
+
+(define (compiler-load-lazy-name-qualified-by? [name : String] [alias : String]) : bool
+  (let
+    [name-len : i64 (string.string-length name)]
+    [alias-len : i64 (string.string-length alias)]
+    (and
+      (> alias-len 0)
+      (> name-len alias-len)
+      (compiler-load-string-prefix-at? name alias 0)
+      (let
+        [separator : char (string.string-ref name alias-len)]
+        (or (= separator '.') (= separator '/'))))))
+
+(define (compiler-load-lazy-surface-variant-direct-name?
   [variants : AstVariantDefList]
-  [source : String]
-  [start : i64]) : bool
-  (compiler-load-lazy-variant-list-name-used-at? (& variants) source start 0))
+  [name : String]) : bool
+  (compiler-load-lazy-surface-variant-direct-name-at? (& variants) name 0))
 
-(define (compiler-load-lazy-variant-list-name-used-at?
+(define (compiler-load-lazy-surface-variant-direct-name-at?
   [variants : (& variants AstVariantDefList)]
-  [source : String]
-  [start : i64]
+  [name : String]
   [index : i64]) : bool
   (if (>= index (ast-variant-def-list-len variants))
     false
-    (or
-      (compiler-load-lazy-variant-name-used?
-        (ast-variant-def-list-get variants index (ast-variant-def-fallback))
-        source
-        start)
-      (compiler-load-lazy-variant-list-name-used-at?
-        variants
-        source
-        start
-        (+ index 1)))))
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def variant-name _ _)
+        (or
+          (string.eq (intern-str variant-name) name)
+          (compiler-load-lazy-surface-variant-direct-name-at?
+            variants
+            name
+            (+ index 1)))])))
 
-(define (compiler-load-lazy-surface-signature-name-used?
-  [signature : CompilerLoadSurfaceSignature]
-  [source : String]
-  [start : i64]) : bool
-  (match signature
-    [(CompilerLoadSurfaceEnumSignature _ _ variants)
-      (compiler-load-lazy-variant-list-name-used? variants source start)]
-    [_ false]))
-
-(define (compiler-load-lazy-surface-decl-name-used?
+(define (compiler-load-lazy-surface-decl-direct-name?
   [decl : CompilerLoadSurfaceDecl]
-  [source : String]
-  [start : i64]) : bool
+  [name : String]) : bool
   (or
-    (compiler-load-source-has-name-token-from?
-      source
-      (struct-get decl name)
-      start)
-    (compiler-load-lazy-surface-signature-name-used?
-      (struct-get decl signature)
-      source
-      start)))
+    (string.eq (struct-get decl name) name)
+    (match (struct-get decl signature)
+      [(CompilerLoadSurfaceEnumSignature _ _ variants)
+        (compiler-load-lazy-surface-variant-direct-name? variants name)]
+      [_ false])))
 
-(define (compiler-load-lazy-surface-decls-name-used?
+(define (compiler-load-lazy-surface-decls-direct-name?
   [decls : CompilerLoadSurfaceDeclList]
-  [source : String]
-  [start : i64]) : bool
+  [name : String]) : bool
   (match decls
     [(CompilerLoadSurfaceDeclNil) false]
     [(CompilerLoadSurfaceDeclCons decl rest)
       (or
-        (compiler-load-lazy-surface-decl-name-used? decl source start)
-        (compiler-load-lazy-surface-decls-name-used?
-          (box-get rest)
-          source
-          start))]))
+        (compiler-load-lazy-surface-decl-direct-name? decl name)
+        (compiler-load-lazy-surface-decls-direct-name? (box-get rest) name))]))
 
-(define (compiler-load-lazy-module-used-after?
-  [importer-path : String]
+(define (compiler-load-lazy-name-demand
+  [name : i64]
+  [alias : String]
   [summary : CompilerLoadSurfaceSummary]
-  [alias : String]
-  [span : AstSourceSpan]
-  [include-direct-names : bool]) : bool
-  (match (compiler-load-source-for-lazy-scan importer-path)
-    [(CompilerLoadNoString) true]
-    [(CompilerLoadSomeString source)
-      (let
-        [start : i64 (compiler-load-source-scan-start span source)]
-        (if (compiler-load-source-has-alias-token-from? source alias start)
-          true
-          (if include-direct-names
-            (compiler-load-lazy-surface-decls-name-used?
-              (struct-get summary decls)
-              source
-              start)
-            false)))]))
-
-(define (compiler-load-stdlib-array-canonical-importer?
-  [importer-path : String]) : bool
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (let
-    [normalized : String (compiler-load-normalize-path importer-path)]
-    (or
-      (compiler-load-string-eq? normalized "stdlib/vector.tl")
-      (compiler-load-string-eq? normalized "stdlib/hashmap.tl")
-      (compiler-load-string-eq? normalized "stdlib/str_cat.tl"))))
+    [text : String (intern-str name)]
+    (cond
+      [(compiler-load-lazy-name-qualified-by? text alias)
+        (compiler-load-lazy-alias-demand-qualified)]
+      [(sym_i64_env.sym-i64-contains-id locals name)
+        (compiler-load-lazy-alias-demand-none)]
+      [(or
+          (string.eq text alias)
+          (compiler-load-lazy-surface-decls-direct-name?
+            (struct-get summary decls)
+            text))
+        (compiler-load-lazy-alias-demand-direct)]
+      [else (compiler-load-lazy-alias-demand-none)])))
 
-(define (compiler-load-stdlib-array-alias-used-after?
-  [importer-path : String]
-  [alias : String]
-  [span : AstSourceSpan]) : bool
-  (match (compiler-load-source-for-lazy-scan importer-path)
-    [(CompilerLoadNoString) true]
-    [(CompilerLoadSomeString source)
-      (compiler-load-source-has-bare-alias-token-from?
-        source
-        alias
-        (compiler-load-source-scan-start span source))]))
+(define (compiler-load-surface-decl-decl-emitting?
+  [decl : CompilerLoadSurfaceDecl]) : bool
+  (and
+    (match (struct-get decl kind)
+      [(CompilerLoadSurfaceMacro) true]
+      [_ false])
+    (match (struct-get decl macro-result)
+      [(CompilerLoadSurfaceMacroModule) true]
+      [(CompilerLoadSurfaceMacroDecls) true]
+      [_ false])))
 
-(define (compiler-load-stdlib-result-alias-used-after?
-  [importer-path : String]
+(define (compiler-load-surface-decls-decl-emitting-only?
+  [decls : CompilerLoadSurfaceDeclList]) : bool
+  (match decls
+    [(CompilerLoadSurfaceDeclNil) false]
+    [(CompilerLoadSurfaceDeclCons decl rest)
+      (and
+        (compiler-load-surface-decl-decl-emitting? decl)
+        (match (box-get rest)
+          [(CompilerLoadSurfaceDeclNil) true]
+          [_ (compiler-load-surface-decls-decl-emitting-only? (box-get rest))]))]))
+
+(define (compiler-load-surface-lazy-policy
+  [decls : CompilerLoadSurfaceDeclList]
+  [has-tests : bool]
+  [has-export-metadata : bool]
+  [has-generated-decls : bool]
+  [has-decl-emitting-macro : bool]) : CompilerLoadLazyImportPolicy
+  (if (or
+    has-tests
+    has-export-metadata
+    has-generated-decls
+    (compiler-load-surface-summary-decls-require-eager? decls))
+    (CompilerLoadLazyImportEager)
+    (if has-decl-emitting-macro
+      (if (compiler-load-surface-decls-decl-emitting-only? decls)
+        (CompilerLoadLazyImportQualified)
+        (CompilerLoadLazyImportEager))
+      (CompilerLoadLazyImportDirect))))
+
+(define (compiler-load-lazy-alias-demand-requires-load?
+  [policy : CompilerLoadLazyImportPolicy]
+  [demand : CompilerLoadLazyAliasDemand]) : bool
+  (match policy
+    [(CompilerLoadLazyImportEager) true]
+    [(CompilerLoadLazyImportQualified)
+      (or (struct-get demand qualified) (struct-get demand unknown))]
+    [(CompilerLoadLazyImportDirect)
+      (or
+        (struct-get demand qualified)
+        (struct-get demand direct)
+        (struct-get demand unknown))]))
+
+(define (compiler-load-lazy-type-id-demand
+  [type-id : i64]
   [alias : String]
-  [span : AstSourceSpan]) : bool
-  (match (compiler-load-source-for-lazy-scan importer-path)
-    [(CompilerLoadNoString) true]
-    [(CompilerLoadSomeString source)
-      (compiler-load-source-has-qualified-alias-token-from?
-        source
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-type-demand (ty-node-get type-id) alias summary locals))
+
+(define (compiler-load-lazy-type-list-demand-at?
+  [types : (& types AstTypeList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-type-list-len types))
+    (compiler-load-lazy-alias-demand-none)
+    (compiler-load-lazy-alias-demand-merge
+      (compiler-load-lazy-type-id-demand
+        (ast-type-list-get types index (ast-type-id-fallback))
         alias
-        (compiler-load-source-scan-start span source))]))
+        summary
+        locals)
+      (compiler-load-lazy-type-list-demand-at?
+        types
+        alias
+        summary
+        locals
+        (+ index 1)))))
+
+(define (compiler-load-lazy-type-list-demand
+  [types : AstTypeList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-type-list-demand-at? (& types) alias summary locals 0))
+
+(define (compiler-load-lazy-type-demand
+  [ty : AstType]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match ty
+    [(AstType.Func args ret)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-type-list-demand
+          (box-get args)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-type-id-demand ret alias summary locals))]
+    [(AstType.Tuple items)
+      (compiler-load-lazy-type-list-demand (box-get items) alias summary locals)]
+    [(AstType.Array elem _)
+      (compiler-load-lazy-type-id-demand elem alias summary locals)]
+    [(AstType.DynArray elem)
+      (compiler-load-lazy-type-id-demand elem alias summary locals)]
+    [(AstType.Box elem)
+      (compiler-load-lazy-type-id-demand elem alias summary locals)]
+    [(AstType.Region _ inner)
+      (compiler-load-lazy-type-id-demand inner alias summary locals)]
+    [(AstType.Ref _ inner)
+      (compiler-load-lazy-type-id-demand inner alias summary locals)]
+    [(AstType.MutRef _ inner)
+      (compiler-load-lazy-type-id-demand inner alias summary locals)]
+    [(AstType.Enum name)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstType.EnumArgs name _)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstType.Struct name)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstType.StructArgs name _)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstType.Var name)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstType.VarArgs name _)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstType.Ptr inner)
+      (compiler-load-lazy-type-id-demand inner alias summary locals)]
+    [(AstType.MutPtr inner)
+      (compiler-load-lazy-type-id-demand inner alias summary locals)]
+    [_ (compiler-load-lazy-alias-demand-none)]))
+
+(define (compiler-load-lazy-maybe-type-demand
+  [maybe-ty : AstMaybeType]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match maybe-ty
+    [(AstMaybeType.No) (compiler-load-lazy-alias-demand-none)]
+    [(AstMaybeType.Some ty)
+      (compiler-load-lazy-type-demand ty alias summary locals)]))
+
+(define (compiler-load-lazy-param-list-demand-at?
+  [params : (& params AstParamList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-param-list-len params))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param _ ty _)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-type-demand ty alias summary locals)
+          (compiler-load-lazy-param-list-demand-at?
+            params
+            alias
+            summary
+            locals
+            (+ index 1)))])))
+
+(define (compiler-load-lazy-param-list-demand
+  [params : AstParamList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-param-list-demand-at? (& params) alias summary locals 0))
+
+(define (compiler-load-lazy-param-list-locals-at
+  [params : (& params AstParamList)]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-param-list-len params))
+    locals
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name _ _)
+        (compiler-load-lazy-param-list-locals-at
+          params
+          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (+ index 1))])))
+
+(define (compiler-load-lazy-param-list-locals
+  [params : AstParamList]
+  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (compiler-load-lazy-param-list-locals-at (& params) locals 0))
+
+(define (compiler-load-lazy-pattern-demand
+  [pattern : AstPattern]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match pattern
+    [(AstPattern.Var _ maybe-ty)
+      (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)]
+    [(AstPattern.Tuple patterns)
+      (compiler-load-lazy-pattern-list-demand
+        (box-get patterns)
+        alias
+        summary
+        locals)]
+    [(AstPattern.Variant name patterns)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-name-demand name alias summary locals)
+        (compiler-load-lazy-pattern-list-demand
+          (box-get patterns)
+          alias
+          summary
+          locals))]
+    [_ (compiler-load-lazy-alias-demand-none)]))
+
+(define (compiler-load-lazy-pattern-list-demand-at?
+  [patterns : (& patterns AstPatternList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (struct-get patterns len))
+    (compiler-load-lazy-alias-demand-none)
+    (compiler-load-lazy-alias-demand-merge
+      (compiler-load-lazy-pattern-demand
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        alias
+        summary
+        locals)
+      (compiler-load-lazy-pattern-list-demand-at?
+        patterns
+        alias
+        summary
+        locals
+        (+ index 1)))))
+
+(define (compiler-load-lazy-pattern-list-demand
+  [patterns : AstPatternList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-pattern-list-demand-at?
+    (& patterns)
+    alias
+    summary
+    locals
+    0))
+
+(define (compiler-load-lazy-pattern-locals
+  [pattern : AstPattern]
+  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (match pattern
+    [(AstPattern.Var name _) (sym_i64_env.sym-i64-bind-id locals name 1)]
+    [(AstPattern.Binding name) (sym_i64_env.sym-i64-bind-id locals name 1)]
+    [(AstPattern.Tuple patterns)
+      (compiler-load-lazy-pattern-list-locals (box-get patterns) locals)]
+    [(AstPattern.Variant _ patterns)
+      (compiler-load-lazy-pattern-list-locals (box-get patterns) locals)]
+    [_ locals]))
+
+(define (compiler-load-lazy-pattern-list-locals-at
+  [patterns : (& patterns AstPatternList)]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (struct-get patterns len))
+    locals
+    (compiler-load-lazy-pattern-list-locals-at
+      patterns
+      (compiler-load-lazy-pattern-locals
+        (ast-pattern-list-get patterns index (ast-pattern-fallback))
+        locals)
+      (+ index 1))))
+
+(define (compiler-load-lazy-pattern-list-locals
+  [patterns : AstPatternList]
+  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (compiler-load-lazy-pattern-list-locals-at (& patterns) locals 0))
+
+(define (compiler-load-lazy-expr-list-demand-at?
+  [exprs : (& exprs AstExprList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-expr-list-len exprs))
+    (compiler-load-lazy-alias-demand-none)
+    (compiler-load-lazy-alias-demand-merge
+      (compiler-load-lazy-expr-demand
+        (ast-node-get (ast-expr-list-get exprs index 0))
+        alias
+        summary
+        locals)
+      (compiler-load-lazy-expr-list-demand-at?
+        exprs
+        alias
+        summary
+        locals
+        (+ index 1)))))
+
+(define (compiler-load-lazy-expr-list-demand
+  [exprs : AstExprList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-expr-list-demand-at? (& exprs) alias summary locals 0))
+
+(define (compiler-load-lazy-let-bindings-demand-at?
+  [bindings : (& bindings AstLetBindingList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-let-binding-list-len bindings))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name maybe-ty init)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-expr-demand
+              (ast-node-get init)
+              alias
+              summary
+              locals)
+            (compiler-load-lazy-let-bindings-demand-at?
+              bindings
+              alias
+              summary
+              (sym_i64_env.sym-i64-bind-id locals name 1)
+              (+ index 1))))])))
+
+(define (compiler-load-lazy-let-bindings-locals-at
+  [bindings : (& bindings AstLetBindingList)]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-let-binding-list-len bindings))
+    locals
+    (match (ast-let-binding-list-get bindings index (ast-let-binding-fallback))
+      [(AstLetBinding.Binding name _ _)
+        (compiler-load-lazy-let-bindings-locals-at
+          bindings
+          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (+ index 1))])))
+
+(define (compiler-load-lazy-match-arms-demand-at?
+  [arms : (& arms AstMatchArmList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-match-arm-list-len arms))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
+      [(AstMatchArm.Arm pattern body)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-pattern-demand pattern alias summary locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-expr-demand
+              (ast-node-get body)
+              alias
+              summary
+              (compiler-load-lazy-pattern-locals pattern locals))
+            (compiler-load-lazy-match-arms-demand-at?
+              arms
+              alias
+              summary
+              locals
+              (+ index 1))))])))
+
+(define (compiler-load-lazy-match-arms-demand
+  [arms : AstMatchArmList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-match-arms-demand-at? (& arms) alias summary locals 0))
+
+(define (compiler-load-lazy-expr-demand
+  [expr : AstExpr]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.Literal _) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.Var name)
+      (compiler-load-lazy-name-demand name alias summary locals)]
+    [(AstExpr.Binary _ left right)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get left)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get right)
+          alias
+          summary
+          locals))]
+    [(AstExpr.Unary _ inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.Call func args)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get func)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-list-demand args alias summary locals))]
+    [(AstExpr.If condition then-branch else-branch)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get condition)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-expr-demand
+            (ast-node-get then-branch)
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-expr-demand
+            (ast-node-get else-branch)
+            alias
+            summary
+            locals)))]
+    [(AstExpr.Let let-box)
+      (match (box-get let-box)
+        [(AstLet.Let bindings body)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-let-bindings-demand-at?
+              (& bindings)
+              alias
+              summary
+              locals
+              0)
+            (compiler-load-lazy-expr-demand
+              (ast-node-get body)
+              alias
+              summary
+              (compiler-load-lazy-let-bindings-locals-at (& bindings) locals 0)))])]
+    [(AstExpr.Lambda lambda-box)
+      (match (box-get lambda-box)
+        [(AstLambda.Lambda params ret body)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-param-list-demand params alias summary locals)
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-maybe-type-demand ret alias summary locals)
+              (compiler-load-lazy-expr-demand
+                (ast-node-get body)
+                alias
+                summary
+                (compiler-load-lazy-param-list-locals params locals))))])]
+    [(AstExpr.Tuple exprs)
+      (compiler-load-lazy-expr-list-demand exprs alias summary locals)]
+    [(AstExpr.TupleRef tuple _)
+      (compiler-load-lazy-expr-demand (ast-node-get tuple) alias summary locals)]
+    [(AstExpr.Array exprs)
+      (compiler-load-lazy-expr-list-demand exprs alias summary locals)]
+    [(AstExpr.DynArray exprs)
+      (compiler-load-lazy-expr-list-demand exprs alias summary locals)]
+    [(AstExpr.MakeArray elem length)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-type-demand elem alias summary locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get length)
+          alias
+          summary
+          locals))]
+    [(AstExpr.ArrayRef items index)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get items)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get index)
+          alias
+          summary
+          locals))]
+    [(AstExpr.ArraySet items index value)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get items)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-expr-demand
+            (ast-node-get index)
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-expr-demand
+            (ast-node-get value)
+            alias
+            summary
+            locals)))]
+    [(AstExpr.ArrayPush items value)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get items)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals))]
+    [(AstExpr.StringRef text index)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get text)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get index)
+          alias
+          summary
+          locals))]
+    [(AstExpr.While condition body)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get condition)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get body)
+          alias
+          summary
+          locals))]
+    [(AstExpr.Begin exprs)
+      (compiler-load-lazy-expr-list-demand exprs alias summary locals)]
+    [(AstExpr.Unsafe exprs)
+      (compiler-load-lazy-expr-list-demand exprs alias summary locals)]
+    [(AstExpr.Set target value)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-name-demand target alias summary locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals))]
+    [(AstExpr.Ann inner ty)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-type-demand ty alias summary locals))]
+    [(AstExpr.Cast inner ty)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-type-demand ty alias summary locals))]
+    [(AstExpr.Borrow _ _ place)
+      (compiler-load-lazy-expr-demand (ast-node-get place) alias summary locals)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee arms)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-expr-demand
+              (ast-node-get scrutinee)
+              alias
+              summary
+              locals)
+            (compiler-load-lazy-match-arms-demand arms alias summary locals))])]
+    [(AstExpr.StructGet receiver _)
+      (compiler-load-lazy-expr-demand
+        (ast-node-get receiver)
+        alias
+        summary
+        locals)]
+    [(AstExpr.StructSet receiver _ value)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get receiver)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals))]
+    [(AstExpr.WithEscape scratch body)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get scratch)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-list-demand body alias summary locals))]
+    [(AstExpr.WithScratch body)
+      (compiler-load-lazy-expr-list-demand body alias summary locals)]
+    [(AstExpr.InArena arena body)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get arena)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-list-demand body alias summary locals))]
+    [(AstExpr.Box inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.BoxGet inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.BoxTake inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.BoxSet inner value)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals))]
+    [(AstExpr.TypeLiteral ty)
+      (compiler-load-lazy-type-demand ty alias summary locals)]
+    [(AstExpr.Init maybe-ty)
+      (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)]
+    [(AstExpr.Try inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.Return inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.Break) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.Continue) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.PtrNull ty)
+      (compiler-load-lazy-type-demand ty alias summary locals)]
+    [(AstExpr.PtrNullCheck inner)
+      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.BinaryData _) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.SpmdProgramIndex) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.SpmdProgramCount) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.ProgramArgc) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.ProgramArgv) (compiler-load-lazy-alias-demand-none)]
+    [(AstExpr.ProgramEnvp) (compiler-load-lazy-alias-demand-none)]
+    ;; Macro-generated and uncommon AST shapes are an explicit eager fence.
+    [_ (compiler-load-lazy-alias-demand-unknown)]))
+
+(define (compiler-load-lazy-module-macro-demand
+  [call-expr : AstExpr]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  ;; A module macro can introduce declarations that are not visible in the
+  ;; static surface. If its direct macro name belongs to this import (through
+  ;; either its local alias or canonical module ID), retain the source module
+  ;; instead of assuming a later typechecker fast path can materialize it.
+  ;; This keeps arbitrary generated-module macros correct.
+  (match call-expr
+    [(AstExpr.Spanned inner _)
+      (compiler-load-lazy-module-macro-demand
+        (ast-node-get inner)
+        alias
+        summary
+        locals)]
+    [(AstExpr.Call func args)
+      (let
+        [function-demand : CompilerLoadLazyAliasDemand
+          (compiler-load-lazy-module-macro-demand
+            (ast-node-get func)
+            alias
+            summary
+            locals)]
+        [macro-demand : CompilerLoadLazyAliasDemand
+          (if (struct-get function-demand direct)
+            (compiler-load-lazy-alias-demand-unknown)
+            function-demand)]
+        (compiler-load-lazy-alias-demand-merge
+          macro-demand
+          (compiler-load-lazy-expr-list-demand args alias summary locals)))]
+    [(AstExpr.Var name)
+      (let
+        [name-demand : CompilerLoadLazyAliasDemand
+          (compiler-load-lazy-name-demand name alias summary locals)]
+        (if (or
+          (struct-get name-demand direct)
+          (compiler-load-lazy-name-qualified-by?
+            (intern-str name)
+            (struct-get summary module-id)))
+          (compiler-load-lazy-alias-demand-unknown)
+          name-demand))]
+    [_ (compiler-load-lazy-alias-demand-unknown)]))
+
+(define (compiler-load-lazy-module-macro-qualified-by?
+  [call-expr : AstExpr]
+  [module-id : String]) : bool
+  ;; A moduleless source file has a path-derived summary ID, but a caller can
+  ;; still invoke its macro through the canonical dotted import ID. Keep that
+  ;; import loaded when the macro target uses that spelling.
+  (match call-expr
+    [(AstExpr.Spanned inner _)
+      (compiler-load-lazy-module-macro-qualified-by?
+        (ast-node-get inner)
+        module-id)]
+    [(AstExpr.Call func _)
+      (compiler-load-lazy-module-macro-qualified-by?
+        (ast-node-get func)
+        module-id)]
+    [(AstExpr.Var name)
+      (compiler-load-lazy-name-qualified-by? (intern-str name) module-id)]
+    [_ false]))
+
+(define (compiler-load-lazy-decl-module-macro-qualified-by?
+  [decl : AstDecl]
+  [module-id : String]) : bool
+  (match decl
+    [(AstDecl.ModuleBody _ body)
+      (compiler-load-lazy-decl-list-module-macro-qualified-by?
+        (box-get body)
+        module-id)]
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+      (compiler-load-lazy-module-macro-qualified-by?
+        (ast-node-get call-expr)
+        module-id)]
+    [(AstDecl.Unsafe inner)
+      (compiler-load-lazy-decl-module-macro-qualified-by?
+        (box-get inner)
+        module-id)]
+    [_ false]))
+
+(define (compiler-load-lazy-decl-list-module-macro-qualified-by?
+  [decls : AstDeclList]
+  [module-id : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (compiler-load-lazy-decl-module-macro-qualified-by? decl module-id)
+        (compiler-load-lazy-decl-list-module-macro-qualified-by? rest module-id))]))
+
+(define (compiler-load-lazy-decl-demand
+  [decl : AstDecl]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match decl
+    [(AstDecl.Module _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.ModuleBody _ body)
+      (compiler-load-lazy-decl-list-demand (box-get body) alias summary locals)]
+    [(AstDecl.Def _ maybe-ty body)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get body)
+          alias
+          summary
+          locals))]
+    [(AstDecl.DefFn _ params ret body _)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-param-list-demand params alias summary locals)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-type-demand ret alias summary locals)
+          (compiler-load-lazy-expr-demand
+            (ast-node-get body)
+            alias
+            summary
+            (compiler-load-lazy-param-list-locals params locals))))]
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+      (compiler-load-lazy-module-macro-demand
+        (ast-node-get call-expr)
+        alias
+        summary
+        locals)]
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.MacroDecls _ _) _ _ _ _))
+      (compiler-load-lazy-alias-demand-unknown)]
+    [(AstDecl.Import _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.Test _ body _)
+      (compiler-load-lazy-expr-demand (ast-node-get body) alias summary locals)]
+    [(AstDecl.Unsafe inner)
+      (compiler-load-lazy-decl-demand (box-get inner) alias summary locals)]
+    ;; Macro/declaration generation and aggregate declarations can add names
+    ;; after this walk. They must retain the conservative eager fallback.
+    [_ (compiler-load-lazy-alias-demand-unknown)]))
+
+(define (compiler-load-lazy-decl-list-demand
+  [decls : AstDeclList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) (compiler-load-lazy-alias-demand-none)]
+    [(AstDeclListStep.Cons decl rest)
+      (let
+        [head : CompilerLoadLazyAliasDemand
+          (compiler-load-lazy-decl-demand decl alias summary locals)]
+        (if (or (struct-get head qualified) (struct-get head unknown))
+          head
+          (compiler-load-lazy-alias-demand-merge
+            head
+            (compiler-load-lazy-decl-list-demand rest alias summary locals))))]))
+
+(define (compiler-load-lazy-empty-surface-summary) : CompilerLoadSurfaceSummary
+  ;; The first structural pass only decides whether a qualified or unresolved
+  ;; use already forces loading. It deliberately has no visible names, so a
+  ;; possible direct-name use still asks the real summary cache for policy.
+  (CompilerLoadSurfaceSummary
+    ""
+    ""
+    ""
+    ""
+    (CompilerLoadSurfaceImportNil)
+    (CompilerLoadSurfaceDeclNil)
+    false
+    false
+    false
+    false
+    (CompilerLoadLazyImportDirect)))
+
+(define (compiler-load-lazy-import-preload-demand
+  [candidate : bool]
+  [alias : AstMaybeImportAlias]
+  [rest : AstDeclList]
+  [pools : AstNodePoolContext]) : CompilerLoadLazyAliasDemand
+  ;; Most real module imports are immediately used through `alias.member`.
+  ;; Such use (and any unresolved generated use) must load anyway, so avoid a
+  ;; speculative second parse that only creates a summary we cannot use.
+  ;; Direct names remain summary-driven because their ownership and policy are
+  ;; part of the imported module surface.
+  (let
+    [_install-pools : unit (ast-node-pool-context-install! pools)]
+    (if candidate
+      (match alias
+        [(AstMaybeImportAlias.Some alias-name)
+          (compiler-load-lazy-decl-list-demand
+            rest
+            alias-name
+            (compiler-load-lazy-empty-surface-summary)
+            (sym_i64_env.sym-i64-empty))]
+        [(AstMaybeImportAlias.No) (compiler-load-lazy-alias-demand-none)])
+      (compiler-load-lazy-alias-demand-none))))
 
 (define (compiler-load-lazy-import-preload-candidate?
   [importer-path : String]
   [kind : AstImportKind]
-  [import-path : String]
-  [resolved : String]
   [alias : AstMaybeImportAlias]) : bool
   (and
     (compiler-load-lazy-imports-enabled?)
@@ -3049,12 +3694,7 @@
       [_ false])
     (match alias
       [(AstMaybeImportAlias.Some _) true]
-      [(AstMaybeImportAlias.No) false])
-    (or
-      (compiler-load-string-eq? import-path "stdlib.array")
-      (compiler-load-stdlib-array-module-id? resolved)
-      (compiler-load-string-eq? import-path "stdlib.result")
-      (compiler-load-stdlib-result-module-id? resolved))))
+      [(AstMaybeImportAlias.No) false])))
 
 (define (compiler-load-lazy-import-preload-summary-with-pools
   [resolved : String]
@@ -3063,72 +3703,67 @@
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
-  (if (compiler-load-stdlib-array-module-id? resolved)
-    (compiler-load-stdlib-array-surface-summary-ensure-with-pools
-      resolved
-      stdlib-roots
-      expected-module
-      import-root
-      cfgs
-      pools)
-    (if (compiler-load-stdlib-result-module-id? resolved)
-      (compiler-load-stdlib-result-surface-summary-ensure-with-pools
-        resolved
-        stdlib-roots
-        expected-module
-        import-root
-        cfgs
-        pools)
-      unit)))
+  (compiler-load-surface-summary-ensure-with-pools
+    resolved
+    stdlib-roots
+    expected-module
+    import-root
+    cfgs
+    pools))
 
 (define (compiler-load-lazy-import-skip?
   [importer-path : String]
   [kind : AstImportKind]
+  [import-path : String]
   [resolved : String]
   [alias : AstMaybeImportAlias]
-  [span : AstSourceSpan]) : bool
-  (if (or
-    (not (compiler-load-lazy-imports-enabled?))
-    (compiler-load-prelude-importer? importer-path))
-    false
-    (match (compiler-load-surface-summary-find-source resolved)
-      [(CompilerLoadNoSurfaceSummary) false]
-      [(CompilerLoadSomeSurfaceSummary summary)
-        (if (compiler-load-surface-summary-requires-eager-for-lazy-import?
-          summary)
-          false
-          (match kind
-            [(AstImportKind.Module)
-              (match alias
-                [(AstMaybeImportAlias.Some alias-name)
-                  (if (compiler-load-stdlib-array-module-id?
-                    (struct-get summary module-id))
-                    (and
-                      (not
-                        (compiler-load-stdlib-array-canonical-importer?
-                          importer-path))
-                      (not
-                        (compiler-load-stdlib-array-alias-used-after?
-                          importer-path
-                          alias-name
-                          span)))
-                    (if (compiler-load-stdlib-result-module-id?
-                      (struct-get summary module-id))
-                      (not
-                        (compiler-load-stdlib-result-alias-used-after?
-                          importer-path
-                          alias-name
-                          span))
-                      (not
-                        (compiler-load-lazy-module-used-after?
-                          importer-path
-                          summary
-                          alias-name
-                          span
-                          (not (compiler-load-stdlib-import? resolved))))))]
-                [(AstMaybeImportAlias.No) false])]
-            [(AstImportKind.Path) false]
-            [_ false]))])))
+  [rest : AstDeclList]
+  [pools : AstNodePoolContext]
+  [preload-demand : CompilerLoadLazyAliasDemand]) : bool
+  (let
+    [_install-pools : unit (ast-node-pool-context-install! pools)]
+    (if (or
+      (not (compiler-load-lazy-imports-enabled?))
+      (compiler-load-prelude-importer? importer-path))
+      false
+      (match (compiler-load-surface-summary-find-source resolved)
+        [(CompilerLoadNoSurfaceSummary) false]
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (let
+            [policy : CompilerLoadLazyImportPolicy
+              (struct-get summary lazy-policy)]
+            (match kind
+              [(AstImportKind.Module)
+                (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
+                  rest
+                  import-path)
+                  false
+                  (match alias
+                    [(AstMaybeImportAlias.Some alias-name)
+                      (match policy
+                        [(CompilerLoadLazyImportEager) false]
+                        [(CompilerLoadLazyImportQualified)
+                          (not
+                            (compiler-load-lazy-alias-demand-requires-load?
+                              policy
+                              (compiler-load-lazy-decl-list-demand
+                                rest
+                                alias-name
+                                summary
+                                (sym_i64_env.sym-i64-empty))))]
+                        [(CompilerLoadLazyImportDirect)
+                          (if (struct-get preload-demand direct)
+                            false
+                            (not
+                              (compiler-load-lazy-alias-demand-requires-load?
+                                policy
+                                (compiler-load-lazy-decl-list-demand
+                                  rest
+                                  alias-name
+                                  summary
+                                  (sym_i64_env.sym-i64-empty)))))])]
+                    [(AstMaybeImportAlias.No) false]))]
+              [_ false]))]))))
 
 (define (compiler-load-surface-zero-span) : AstSourceSpan
   (ast-source-span 0 0 0 0))
@@ -3641,7 +4276,13 @@
       (struct-get build has-tests)
       (struct-get build has-export-metadata)
       (struct-get build has-generated-decls)
-      (struct-get build has-decl-emitting-macro))))
+      (struct-get build has-decl-emitting-macro)
+      (compiler-load-surface-lazy-policy
+        (struct-get build decls)
+        (struct-get build has-tests)
+        (struct-get build has-export-metadata)
+        (struct-get build has-generated-decls)
+        (struct-get build has-decl-emitting-macro)))))
 
 (define (compiler-load-surface-summary-build
   [path : String]
@@ -3948,11 +4589,22 @@
                       (compiler-load-lazy-import-preload-candidate?
                         importer-path
                         kind
-                        import-path
-                        resolved
                         alias)]
+                    [preload-demand : CompilerLoadLazyAliasDemand
+                      (compiler-load-lazy-import-preload-demand
+                        preload-candidate
+                        alias
+                        rest
+                        pools)]
+                    [preload-summary-needed : bool
+                      (and
+                        preload-candidate
+                        (not
+                          (or
+                            (struct-get preload-demand qualified)
+                            (struct-get preload-demand unknown))))]
                     [_preload-summary : unit
-                      (if preload-candidate
+                      (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-pools
                           resolved
                           stdlib-roots
@@ -3962,13 +4614,16 @@
                           pools)
                         unit)]
                     [preload-skip : bool
-                      (if preload-candidate
+                      (if preload-summary-needed
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
+                          import-path
                           resolved
                           alias
-                          span)
+                          rest
+                          pools
+                          preload-demand)
                         false)]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
@@ -3993,15 +4648,7 @@
                           imported-modules
                           import-seen)
                         (let
-                          [lazy-skip : bool
-                            (if preload-skip
-                              true
-                              (compiler-load-lazy-import-skip?
-                                importer-path
-                                kind
-                                resolved
-                                alias
-                                span))]
+                          [lazy-skip : bool preload-skip]
                           [after-import-seen : sym_i64_env.SymI64Env
                             (if lazy-skip
                               seen
@@ -6171,27 +6818,43 @@
                         (compiler-load-lazy-import-preload-candidate?
                           importer-path
                           kind
-                          import-path
-                          resolved
                           alias))]
+                    [preload-pools : AstNodePoolContext
+                      (ast-node-pool-context-capture-active)]
+                    [preload-demand : CompilerLoadLazyAliasDemand
+                      (compiler-load-lazy-import-preload-demand
+                        preload-candidate
+                        alias
+                        rest
+                        preload-pools)]
+                    [preload-summary-needed : bool
+                      (and
+                        preload-candidate
+                        (not
+                          (or
+                            (struct-get preload-demand qualified)
+                            (struct-get preload-demand unknown))))]
                     [_preload-summary : unit
-                      (if preload-candidate
+                      (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-pools
                           resolved
                           stdlib-roots
                           expected-module
                           manifest-dir
                           cfgs
-                          (ast-node-pool-context-capture-active))
+                          preload-pools)
                         unit)]
                     [preload-skip : bool
-                      (if preload-candidate
+                      (if preload-summary-needed
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
+                          import-path
                           resolved
                           alias
-                          span)
+                          rest
+                          preload-pools
+                          preload-demand)
                         false)]
                     (match (if preload-skip
                       (ResultCompilerLoadWithPaths.Ok
@@ -6225,15 +6888,7 @@
                           imported-modules
                           import-seen)
                         (let
-                          [lazy-skip : bool
-                            (if preload-skip
-                              true
-                              (compiler-load-lazy-import-skip?
-                                importer-path
-                                kind
-                                resolved
-                                alias
-                                span))]
+                          [lazy-skip : bool preload-skip]
                           [after-import-seen : sym_i64_env.SymI64Env
                             (if lazy-skip
                               seen

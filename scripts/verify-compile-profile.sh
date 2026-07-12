@@ -40,6 +40,10 @@ CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
 VECTOR_STDOUT="$WORKDIR/profile-vector.stdout"
 VECTOR_STDERR="$WORKDIR/profile-vector.stderr"
+VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
+VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
+VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
+VECTOR_FULL_STDERR="$WORKDIR/profile-vector-full.stderr"
 GEN_IMPORT_STDOUT="$WORKDIR/profile-generated-import.stdout"
 GEN_IMPORT_STDERR="$WORKDIR/profile-generated-import.stderr"
 RESULT_IMPORT_STDOUT="$WORKDIR/profile-result-import.stdout"
@@ -273,6 +277,54 @@ assert_profile_counter_eq_in \
     3 \
     "$VECTOR_STDOUT" \
     "$VECTOR_STDERR"
+
+echo "[compile-profile] compare compact and full canonical vector modules"
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$VECTOR_CORE_STDOUT" 2> "$VECTOR_CORE_STDERR"; then
+    show_failure_logs "$VECTOR_CORE_STDOUT" "$VECTOR_CORE_STDERR"
+    fail "profiled compact vector fixture check failed"
+fi
+if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_full.tl \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$VECTOR_FULL_STDOUT" 2> "$VECTOR_FULL_STDERR"; then
+    show_failure_logs "$VECTOR_FULL_STDOUT" "$VECTOR_FULL_STDERR"
+    fail "profiled full vector fixture check failed"
+fi
+
+assert_contains_in \
+    "$VECTOR_CORE_STDERR" \
+    "stdlib.vector/vector arity=2 calls=1" \
+    "$VECTOR_CORE_STDOUT" \
+    "$VECTOR_CORE_STDERR"
+assert_contains_in \
+    "$VECTOR_FULL_STDERR" \
+    "stdlib.vector/vector arity=1 calls=1" \
+    "$VECTOR_FULL_STDOUT" \
+    "$VECTOR_FULL_STDERR"
+
+VECTOR_CORE_MACRO_ALLOC=$(awk -F'|' \
+    '$1 == "compile-profile" && $2 == "typecheck.macro_walk" { print $4 }' \
+    "$VECTOR_CORE_STDERR")
+VECTOR_FULL_MACRO_ALLOC=$(awk -F'|' \
+    '$1 == "compile-profile" && $2 == "typecheck.macro_walk" { print $4 }' \
+    "$VECTOR_FULL_STDERR")
+case "$VECTOR_CORE_MACRO_ALLOC:$VECTOR_FULL_MACRO_ALLOC" in
+    *[!0-9:]* | :* | *:)
+        show_failure_logs "$VECTOR_CORE_STDOUT" "$VECTOR_CORE_STDERR"
+        show_failure_logs "$VECTOR_FULL_STDOUT" "$VECTOR_FULL_STDERR"
+        fail "could not parse vector macro-walk allocation counters"
+        ;;
+esac
+VECTOR_MACRO_ALLOC_SAVINGS=$((VECTOR_FULL_MACRO_ALLOC - VECTOR_CORE_MACRO_ALLOC))
+if [ "$VECTOR_MACRO_ALLOC_SAVINGS" -lt 250000 ]; then
+    show_failure_logs "$VECTOR_CORE_STDOUT" "$VECTOR_CORE_STDERR"
+    show_failure_logs "$VECTOR_FULL_STDOUT" "$VECTOR_FULL_STDERR"
+    fail "compact vector macro-walk savings regressed: core=$VECTOR_CORE_MACRO_ALLOC full=$VECTOR_FULL_MACRO_ALLOC savings=$VECTOR_MACRO_ALLOC_SAVINGS"
+fi
+echo "[compile-profile] vector macro-walk allocation core=$VECTOR_CORE_MACRO_ALLOC full=$VECTOR_FULL_MACRO_ALLOC savings=$VECTOR_MACRO_ALLOC_SAVINGS"
 
 echo "[compile-profile] check generated import fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_generated_import.tl \

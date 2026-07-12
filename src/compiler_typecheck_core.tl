@@ -48041,28 +48041,40 @@
 (define (macro-generated-identity-shortcut-safe-params?
   [ctx : TcContext]
   [definition-module : String]
-  [params : AstMacroParamList]) : bool
+  [params : AstMacroParamList]
+  [args : AstExprList]) : bool
   (macro-generated-identity-shortcut-safe-params-at?
     ctx
     definition-module
     (& params)
+    (& args)
     0))
 
 (define (macro-generated-identity-shortcut-safe-params-at?
   [ctx : TcContext]
   [definition-module : String]
   [params : (& params AstMacroParamList)]
+  [args : (& args AstExprList)]
   [index : i64]) : bool
   (if (>= index (ast-macro-param-list-len params))
     true
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty variadic)
         (and
-          (not (macro-identity-syntax-param-type? ctx definition-module ty))
+          (if (macro-identity-syntax-param-type? ctx definition-module ty)
+            ;; A syntax parameter can choose output by syntax even when its
+            ;; value-derived identity key collides, so it normally disables
+            ;; the authoritative memo shortcut. An empty trailing variadic
+            ;; syntax parameter has no operand syntax to distinguish and is
+            ;; therefore safe; this preserves the identity of legacy calls
+            ;; when a generator adds an optional syntax capability tail.
+            (and variadic (>= index (struct-get args len)))
+            true)
           (macro-generated-identity-shortcut-safe-params-at?
             ctx
             definition-module
             params
+            args
             (+ index 1)))])))
 
 (define (macro-expr-list-with-head-symbol
@@ -56006,7 +56018,8 @@
                                   (if (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
                                     definition-module
-                                    params)
+                                    params
+                                    expanded-args)
                                     (macro-generated-module-memo-get identity)
                                     CompilerNoString)]
                                 (match shortcut-target

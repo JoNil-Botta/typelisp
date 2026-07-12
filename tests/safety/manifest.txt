@@ -91,6 +91,8 @@ vector_iter_mut_push_live_reject|check-fail|tests/safety/vector_iter_mut_push_li
 vector_iter_mut_set_live_reject|check-fail|tests/safety/vector_iter_mut_set_live_reject.tl|-|cannot read mutably borrowed place `values`
 vector_iter_mut_pop_live_reject|check-fail|tests/safety/vector_iter_mut_pop_live_reject.tl|-|cannot read mutably borrowed place `values`
 vector_iter_mut_escape_reject|check-fail|tests/safety/vector_iter_mut_escape_reject.tl|-|reference value would escape lexical scope
+vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact/pop
+vector_full_noncloneable_pop_reject|check-fail|tests/safety/vector_full_noncloneable_pop_reject.tl|-|typecheck: clone unsupported type VectorFullRawHolder
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`

@@ -197,6 +197,15 @@ insert_after_last_import() {
     mv "$tmp_file" "$file"
 }
 
+ensure_import_after_last_import() {
+    file=$1
+    line=$2
+    if grep -F -x -- "$line" "$file" >/dev/null 2>&1; then
+        return
+    fi
+    insert_after_last_import "$file" "$line"
+}
+
 insert_after_exact_line() {
     file=$1
     anchor=$2
@@ -229,7 +238,7 @@ prepare_variant() {
     case "$name" in
         format_tokens)
             file="$dst/format_tokens.tl"
-            insert_after_last_import "$file" "(import stdlib.result)"
+            ensure_import_after_last_import "$file" "(import stdlib.result)"
             insert_after_exact_line \
                 "$file" \
                 "  (span FormatSourceSpan))" \
@@ -237,12 +246,12 @@ prepare_variant() {
             ;;
         lex)
             file="$dst/lex.tl"
-            insert_after_last_import "$file" "(import stdlib.result)"
+            ensure_import_after_last_import "$file" "(import stdlib.result)"
             insert_after_last_import "$file" "(import (result i64 String) as result_lex_i64_unused)"
             ;;
         compiler_ctfe)
             file="$dst/compiler_ctfe.tl"
-            insert_after_last_import "$file" "(import stdlib.result)"
+            ensure_import_after_last_import "$file" "(import stdlib.result)"
             insert_after_last_import \
                 "$file" \
                 "(import (result (Tuple i64 i64) (Box CompilerDiagnostic)) as result_ctfe_i64_arg_unused)"

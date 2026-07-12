@@ -17,7 +17,11 @@
       "target/cl_lazy_dotted/entry.tl"
       "(module lazy.dotted.entry)
 (import nested.dep as dep)
-(define (main) : i64 42)")
+;; dep.get in a comment must not demand the import.
+(define (main) : i64
+  (begin
+    \"dep.get\"
+    42))")
     (match (compiler-load-file-with-paths
       "target/cl_lazy_dotted/entry.tl"
       (sym_i64_env.sym-i64-empty))
@@ -134,13 +138,76 @@
       (sym_i64_env.sym-i64-empty))
       [(ResultCompilerLoadWithPaths.Ok decls _ _ seen)
         (and
-          (= (compiler-load-lazy-import-skip-count) 1)
+          (= (compiler-load-lazy-import-skip-count) 0)
           (compiler-load-decl-list-has-import-alias?
             decls
             "stdlib.result"
             "result")
           (sym_i64_env.sym-i64-contains seen "lazy.stdlib.result.entry")
-          (not (sym_i64_env.sym-i64-contains seen "stdlib.result")))]
+          (sym_i64_env.sym-i64-contains seen "stdlib.result"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-direct-module-macro-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_module_macro")
+    (io.write-file
+      "target/cl_lazy_module_macro/entry.tl"
+      "(module lazy.module.macro.entry)
+(import stdlib.option)
+(import (option i64) as option_i64)
+(define (main) : i64 42)")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_module_macro/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 0)
+          (sym_i64_env.sym-i64-contains seen "lazy.module.macro.entry")
+          (sym_i64_env.sym-i64-contains seen "stdlib.option"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-unused-module-macro-import-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_unused_module_macro")
+    (io.write-file
+      "target/cl_lazy_unused_module_macro/entry.tl"
+      "(module lazy.unused.module.macro.entry)
+(import stdlib.option)
+(define (main) : i64 42)")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_unused_module_macro/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 1)
+          (sym_i64_env.sym-i64-contains seen "lazy.unused.module.macro.entry")
+          (not (sym_i64_env.sym-i64-contains seen "stdlib.option")))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-aliased-module-macro-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_aliased_module_macro")
+    (compiler-load-test-mkdir "target/cl_lazy_aliased_module_macro/generic")
+    (compiler-load-test-mkdir
+      "target/cl_lazy_aliased_module_macro/generic/macro")
+    (io.write-file
+      "target/cl_lazy_aliased_module_macro/generic/macro/dep.tl"
+      "(module generic.macro.dep)
+(defmacro (make [T : type]) : Module (expr-unit))")
+    (io.write-file
+      "target/cl_lazy_aliased_module_macro/entry.tl"
+      "(module lazy.aliased.module.macro.entry)
+(import generic.macro.dep as api)
+(import (make i64) as made)
+(define (main) : i64 42)")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_aliased_module_macro/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 0)
+          (sym_i64_env.sym-i64-contains seen "lazy.aliased.module.macro.entry")
+          (sym_i64_env.sym-i64-contains seen "generic.macro.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (package-lazy-unused-dotted-import-ok?) : bool
@@ -197,6 +264,116 @@
           (sym_i64_env.sym-i64-contains seen "nested.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
+(define (lazy-local-alias-does-not-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_local_alias")
+    (compiler-load-test-mkdir "target/cl_lazy_local_alias/generic")
+    (compiler-load-test-mkdir "target/cl_lazy_local_alias/generic/local")
+    (io.write-file
+      "target/cl_lazy_local_alias/generic/local/dep.tl"
+      "(module generic.local.dep)
+(define (get) : i64 7)")
+    (io.write-file
+      "target/cl_lazy_local_alias/entry.tl"
+      "(module generic.local.entry)
+(import generic.local.dep as dep)
+(define (main) : i64
+  (let
+    [dep : i64 42]
+    dep))")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_local_alias/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 1)
+          (sym_i64_env.sym-i64-contains seen "generic.local.entry")
+          (not (sym_i64_env.sym-i64-contains seen "generic.local.dep")))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-generic-qualified-surface-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_generic_surface")
+    (compiler-load-test-mkdir "target/cl_lazy_generic_surface/generic")
+    (compiler-load-test-mkdir "target/cl_lazy_generic_surface/generic/surface")
+    (io.write-file
+      "target/cl_lazy_generic_surface/generic/surface/dep.tl"
+      "(module generic.surface.dep)
+(defenum Choice (Empty) (Full i64))
+(define (get) : i64 7)
+(defmacro (number) : Expr 5)")
+    (io.write-file
+      "target/cl_lazy_generic_surface/entry.tl"
+      "(module generic.surface.entry)
+(import generic.surface.dep as dep)
+(define (score [value : dep.Choice]) : i64
+  (match value
+    [(dep.Choice.Empty) 0]
+    [(dep.Choice.Full n) (+ n (dep.get))]))
+(define (main) : i64 (dep.number))")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_generic_surface/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 0)
+          (sym_i64_env.sym-i64-contains seen "generic.surface.entry")
+          (sym_i64_env.sym-i64-contains seen "generic.surface.dep"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-generic-direct-surface-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_generic_direct")
+    (compiler-load-test-mkdir "target/cl_lazy_generic_direct/generic")
+    (compiler-load-test-mkdir "target/cl_lazy_generic_direct/generic/direct")
+    (io.write-file
+      "target/cl_lazy_generic_direct/generic/direct/dep.tl"
+      "(module generic.direct.dep)
+(define (get) : i64 7)")
+    (io.write-file
+      "target/cl_lazy_generic_direct/entry.tl"
+      "(module generic.direct.entry)
+(import generic.direct.dep as dep)
+(define (main) : i64 (get))")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_generic_direct/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 0)
+          (sym_i64_env.sym-i64-contains seen "generic.direct.entry")
+          (sym_i64_env.sym-i64-contains seen "generic.direct.dep"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-cfg-selected-surface-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_cfg_surface")
+    (compiler-load-test-mkdir "target/cl_lazy_cfg_surface/generic")
+    (compiler-load-test-mkdir "target/cl_lazy_cfg_surface/generic/cfg")
+    (io.write-file
+      "target/cl_lazy_cfg_surface/generic/cfg/dep.tl"
+      "(module generic.cfg.dep)
+(cfg feature (define (get) : i64 7))")
+    (io.write-file
+      "target/cl_lazy_cfg_surface/entry.tl"
+      "(module generic.cfg.entry)
+(import generic.cfg.dep as dep)
+(cfg feature (define (main) : i64 (dep.get)))")
+    (let
+      [cfgs : sym_i64_env.SymI64Env
+        (compiler-cfg-enable (compiler-cfg-empty) "feature")]
+      (match (compiler-load-file-with-paths-and-roots-cfg
+        "target/cl_lazy_cfg_surface/entry.tl"
+        (sym_i64_env.sym-i64-empty)
+        (svec.new)
+        cfgs)
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+          (and
+            (= (compiler-load-lazy-import-skip-count) 0)
+            (sym_i64_env.sym-i64-contains seen "generic.cfg.entry")
+            (sym_i64_env.sym-i64-contains seen "generic.cfg.dep"))]
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
+
 (define (main) : i64
   (begin
     (unless
@@ -215,9 +392,30 @@
       (lazy-stdlib-result-macro-import-ok?)
       (return (io.panic "lazy stdlib.result macro import smoke mismatch")))
     (unless
+      (lazy-direct-module-macro-demand-ok?)
+      (return (io.panic "lazy direct module macro demand smoke mismatch")))
+    (unless
+      (lazy-unused-module-macro-import-ok?)
+      (return (io.panic "lazy unused module macro import smoke mismatch")))
+    (unless
+      (lazy-aliased-module-macro-demand-ok?)
+      (return (io.panic "lazy aliased module macro demand smoke mismatch")))
+    (unless
       (package-lazy-unused-dotted-import-ok?)
       (return (io.panic "package lazy unused dotted import smoke mismatch")))
     (unless
       (package-lazy-used-dotted-import-ok?)
       (return (io.panic "package lazy used dotted import smoke mismatch")))
+    (unless
+      (lazy-local-alias-does-not-demand-ok?)
+      (return (io.panic "lazy local alias demand smoke mismatch")))
+    (unless
+      (lazy-generic-qualified-surface-demand-ok?)
+      (return (io.panic "lazy generic qualified surface demand smoke mismatch")))
+    (unless
+      (lazy-generic-direct-surface-demand-ok?)
+      (return (io.panic "lazy generic direct surface demand smoke mismatch")))
+    (unless
+      (lazy-cfg-selected-surface-demand-ok?)
+      (return (io.panic "lazy cfg-selected surface demand smoke mismatch")))
     42))

@@ -51013,10 +51013,10 @@
   [target-module : String]
   [lookup-name : String]) : unit
   (if (and
-    (compiler-load-stdlib-result-module-id? target-module)
+    (string.eq target-module "stdlib.result")
     (string.eq lookup-name "result"))
     (begin
-      (compiler-load-stdlib-result-surface-summary-refresh-with-pools
+      (compiler-load-surface-summary-refresh-with-pools
         "stdlib/result.tl"
         (svec.new)
         (AstMaybeModuleName.Some "stdlib.result")

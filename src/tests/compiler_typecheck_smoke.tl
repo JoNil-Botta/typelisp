@@ -2847,7 +2847,7 @@
                 (ast-program decls)
                 paths)
                 [(ResultCompilerTypecheckChecked.Ok _ _ _)
-                  (and (> skip-count 0) (not result-materialized))]
+                  (and (= skip-count 0) result-materialized)]
                 [(ResultCompilerTypecheckChecked.Err diag)
                   (let
                     [message : String

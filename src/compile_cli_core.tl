@@ -1008,6 +1008,13 @@
   (if (>= index (cli_svec.len entries))
     0
     (let
+      ;; lint-allow: unused-variable
+      [ordinal : i64 (/ index 2)]
+      [_profile-start : unit
+        (cfg
+          compile-profile
+          (compiler-driver-batch-profile-start-entry! ordinal)
+          unit)]
       [input-path : String (cli_svec.get entries index "")]
       [output-path : String (cli_svec.get entries (+ index 1) "")]
       ;; Each batch entry gets a destroyable scratch arena, not just a lexical
@@ -1032,6 +1039,11 @@
             backend-mode
             opt-level
             false))]
+      [_profile-emit : unit
+        (cfg
+          compile-profile
+          (compiler-driver-batch-profile-mark! ordinal "emit-complete")
+          unit)]
       ;; The compile grew `scratch` past its first 64 MiB segment; the arena's
       ;; live chain is reachable only from its newest segment (the active arena
       ;; right after the balanced compile), not the make() root handle.
@@ -1041,11 +1053,18 @@
           (arena.set! home))
         ;; Clear compile state while the entry scratch arena is still mapped:
         ;; loader/typecheck caches may hold scratch-backed nodes until reset.
-        (compiler-driver-state-reset-file-state! state)
+        (cfg
+          compile-profile
+          (compiler-driver-state-reset-file-state-profiled! state ordinal)
+          (compiler-driver-state-reset-file-state! state))
         (unsafe
           (begin
             (arena.set! home)
             (arena.destroy scratch-end)))
+        (cfg
+          compile-profile
+          (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")
+          unit)
         (if (= status 0)
           (compile-cli-run-batch-entries-from
             state

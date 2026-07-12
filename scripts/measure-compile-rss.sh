@@ -15,7 +15,8 @@ usage() {
 usage: scripts/measure-compile-rss.sh [options] [typelisp-bin]
 
 Options:
-  --mode <single|manifest-chunk|all>  Workload(s) to run (default all).
+  --mode <single|manifest-chunk|manifest-full|heavy-batch|all>
+                                      Workload(s) to run (default all).
   --input <file.tl>                   Single compile input (default src/doc_test.tl).
   --chunk-id <NNNN|N>                 Manifest chunk to run (default 0002).
   --manifest <path>                   Compile manifest (default src/compile_manifest.txt).
@@ -37,6 +38,7 @@ Environment:
 
 Outputs:
   target/compile-rss/measurements.tsv
+  target/compile-rss/batch-profile.tsv
   target/compile-rss/**/{stdout,stderr,time,argv}.*
 EOF
 }
@@ -149,8 +151,8 @@ fi
 [ "$#" -eq 0 ] || fail "unexpected extra argument: $1"
 
 case "$MODE" in
-    single | manifest-chunk | all) ;;
-    *) fail "--mode must be single, manifest-chunk, or all" ;;
+    single | manifest-chunk | manifest-full | heavy-batch | all) ;;
+    *) fail "--mode must be single, manifest-chunk, manifest-full, heavy-batch, or all" ;;
 esac
 
 case "$BATCH_SIZE" in
@@ -201,6 +203,8 @@ fi
 
 MEASUREMENTS="$WORKDIR/measurements.tsv"
 printf 'workload\tinput\tchunk_id\tchunk_ordinal\tchunk_count\tbatch_size\tentry_count\texit_code\telapsed_ms\tmax_rss_kb\tstdout\tstderr\ttime_log\targv_log\n' > "$MEASUREMENTS"
+PROFILE_MEASUREMENTS="$WORKDIR/batch-profile.tsv"
+printf 'workload\tentry_ordinal\tmarker\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\tmax_rss_kb\n' > "$PROFILE_MEASUREMENTS"
 
 parse_max_rss_kb() {
     time_log=$1
@@ -274,6 +278,12 @@ run_measured() {
         show_logs "$stdout" "$stderr"
         fail "$workload exited $code"
     fi
+    awk -F'|' -v workload="$workload" -v rss="$max_rss" '
+        $1 == "compile-batch-profile" && $2 ~ /^[0-9]+$/ {
+            printf "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+                workload, $2, $3, $4, $5, $6, $7, rss
+        }
+    ' "$stderr" >> "$PROFILE_MEASUREMENTS"
 }
 
 manifest_path() {
@@ -419,12 +429,93 @@ run_manifest_chunk() {
             --stdlib-root "$ROOT/stdlib"
 }
 
+verify_batch_single_parity() {
+    list=$1
+    label=$2
+    parity_dir="$WORKDIR/$label/single-parity"
+    rm -rf "$parity_dir"
+    mkdir -p "$parity_dir"
+    ordinal=0
+    while IFS='|' read -r input output; do
+        [ -n "$input" ] || continue
+        single="$parity_dir/$(printf '%04d' "$ordinal").s"
+        "$COMPILER" compile "$input" -o "$single" \
+            --target "$TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src" \
+            > "$parity_dir/$(printf '%04d' "$ordinal").stdout" \
+            2> "$parity_dir/$(printf '%04d' "$ordinal").stderr" ||
+            fail "$label one-entry compile failed at ordinal $ordinal"
+        cmp "$output" "$single" >/dev/null ||
+            fail "$label batch assembly differs from one-entry output at ordinal $ordinal"
+        ordinal=$((ordinal + 1))
+    done < "$list"
+    echo "[compile-rss] $label batch/single assembly parity passed for $ordinal entries"
+}
+
+run_manifest_full() {
+    prepare_manifest_chunks
+    batch_input="$WORKDIR/manifest/compile-batch.txt"
+    entry_count=$(wc -l < "$batch_input" | tr -d ' ')
+    run_measured \
+        manifest-full \
+        "$batch_input" \
+        all \
+        1 \
+        1 \
+        "$entry_count" \
+        "$entry_count" \
+        "$WORKDIR/manifest/full" \
+        "$COMPILER" compile --batch "$batch_input" \
+            --target "$TARGET" \
+            --stdlib-root "$ROOT/stdlib"
+    verify_batch_single_parity "$batch_input" "manifest/full"
+}
+
+run_heavy_batch() {
+    heavy_dir="$WORKDIR/heavy"
+    heavy_list="$heavy_dir/compile-batch.txt"
+    rm -rf "$heavy_dir"
+    mkdir -p "$heavy_dir/outputs"
+    : > "$heavy_list"
+    while IFS='|' read -r case_id source; do
+        [ -n "$case_id" ] || continue
+        printf '%s|%s\n' \
+            "$(compiler_batch_path "$ROOT/$source")" \
+            "$(compiler_batch_path "$heavy_dir/outputs/$case_id.s")" >> "$heavy_list"
+    done <<EOF
+$(scripts/measure-heavy-closure-profile.sh --list)
+EOF
+    entry_count=$(wc -l < "$heavy_list" | tr -d ' ')
+    [ "$entry_count" -gt 0 ] || fail "heavy batch source list is empty"
+    run_measured \
+        heavy-batch \
+        "$heavy_list" \
+        - \
+        - \
+        - \
+        "$entry_count" \
+        "$entry_count" \
+        "$heavy_dir/run" \
+        "$COMPILER" compile --batch "$heavy_list" \
+            --target "$TARGET" \
+            --stdlib-root "$ROOT/stdlib" \
+            --stdlib-root "$ROOT/src"
+    verify_batch_single_parity "$heavy_list" "heavy"
+}
+
 case "$MODE" in
     single)
         run_single
         ;;
     manifest-chunk)
         run_manifest_chunk
+        ;;
+    manifest-full)
+        run_manifest_full
+        ;;
+    heavy-batch)
+        run_heavy_batch
         ;;
     all)
         run_single

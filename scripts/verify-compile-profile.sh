@@ -59,6 +59,9 @@ LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
 OPT_STDOUT="$WORKDIR/profile-opt.stdout"
 OPT_STDERR="$WORKDIR/profile-opt.stderr"
+SELFHOST_ASM="$WORKDIR/profile-selfhost.s"
+SELFHOST_STDOUT="$WORKDIR/profile-selfhost.stdout"
+SELFHOST_STDERR="$WORKDIR/profile-selfhost.stderr"
 
 fail() {
     echo "FAIL: $*" >&2
@@ -160,6 +163,24 @@ assert_profile_counter_eq_in() {
     fi
 }
 
+# Lowerer counters use the same six-field phase schema, with their value in
+# the live-delta column. Keep this separate from the ordinary profile counters
+# above, whose value lives in the elapsed-ms column.
+assert_profile_live_counter_eq_in() {
+    _file=$1
+    _phase=$2
+    _want=$3
+    _stdout=$4
+    _stderr=$5
+    if ! awk -F'|' -v phase="$_phase" -v want="$_want" '
+        $1 == "compile-profile" && $2 == phase && ($5 + 0) == want { found = 1 }
+        END { exit found ? 0 : 1 }
+    ' "$_file"; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "expected profile live counter $_phase to equal $_want"
+    fi
+}
+
 assert_layout_row() {
     assert_contains_in \
         "$LAYOUT_STDERR" \
@@ -202,6 +223,51 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI link failed"
+fi
+
+# A source selfhost compile exercises the compiler's embedded canonical stdlib
+# payloads. On Windows it is the allocation boundary that small new modules
+# (such as the clone declaration-macro handoff) previously crossed. Keep the
+# expanding source pool and compact checked/lowered pool independently sized;
+# a grow here retains the old backing array in a bump arena and consumes the
+# headroom this probe protects.
+if [ "$NL_HOST_OS" = windows ]; then
+    echo "[compile-profile] selfhost embedded-stdlib allocation probe"
+    if ! "$PROFILE_BIN" compile src/main.tl \
+        -o "$SELFHOST_ASM" \
+        --target "$NL_BOOTSTRAP_TARGET" \
+        $(native_target_cfg_args) \
+        --stdlib-root stdlib \
+        --stdlib-root src \
+        --cfg compile-profile \
+        > "$SELFHOST_STDOUT" 2> "$SELFHOST_STDERR"; then
+        show_failure_logs "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
+        fail "profile-enabled selfhost compile failed"
+    fi
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_expr_pool.macro_expand.capacity" \
+        4194304 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_expr_pool.typecheck.capacity" \
+        2097152 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_type_pool.macro_expand.capacity" \
+        32768 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
+    assert_profile_live_counter_eq_in \
+        "$SELFHOST_STDERR" \
+        "lower.ast_type_pool.typecheck.capacity" \
+        32768 \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
 fi
 
 echo "[compile-profile] check macro detail fixture"

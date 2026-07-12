@@ -86,17 +86,37 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
-(define compiler-driver-compile-expr-pool-initial-capacity : i64
+;; A selfhost CLI expands from roughly 1.4M parsed nodes to just under 4M
+;; macro-expanded nodes. Starting the load pool at 2M forces a 2M -> 4M grow;
+;; bump arenas retain the superseded backing array until macro expansion is
+;; detached. Reserve the observed expansion capacity up front so embedded
+;; stdlib growth does not turn that transient double allocation into a Windows
+;; selfhost headroom failure.
+(define compiler-driver-compile-load-expr-pool-initial-capacity : i64
+  4194304)
+
+;; Reachability compaction retains about 1.4M nodes for the selfhost CLI, well
+;; below the expanding load pool's capacity. Keep its pool at 2M: it overlaps
+;; the load pool briefly while compaction copies the reachable program, so
+;; giving both pools a 4M backing array would erase the headroom reclaimed
+;; above.
+(define compiler-driver-checked-lower-expr-pool-initial-capacity : i64
   2097152)
+
+;; Type nodes are hash-consed. The selfhost CLI retains roughly 5K unique type
+;; nodes even after macro expansion, so the former 262K-node reserve and its
+;; equally large dedup table were mostly dead allocation in both overlapping
+;; pool arenas. The pool grows safely when an unusually type-heavy program
+;; needs more room.
 (define compiler-driver-compile-type-pool-initial-capacity : i64
-  262144)
+  32768)
 
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
     [pool-arena : i64 (arena.tl_arena_make)]
     [pools : AstNodePoolContext
       (ast-node-pool-context-new-with-capacities-in-arena
-        compiler-driver-compile-expr-pool-initial-capacity
+        compiler-driver-compile-load-expr-pool-initial-capacity
         compiler-driver-compile-type-pool-initial-capacity
         pool-arena)]
     [state : CompilerDriverState
@@ -191,7 +211,7 @@
   (let
     [pool-arena : i64 (arena.tl_arena_make)]
     (ast-node-pool-context-new-with-capacities-in-arena
-      compiler-driver-compile-expr-pool-initial-capacity
+      compiler-driver-checked-lower-expr-pool-initial-capacity
       compiler-driver-compile-type-pool-initial-capacity
       pool-arena)))
 
@@ -223,7 +243,7 @@
       [new-arena : i64 (arena.tl_arena_make)]
       [pools : AstNodePoolContext
         (ast-node-pool-context-new-with-capacities-in-arena
-          compiler-driver-compile-expr-pool-initial-capacity
+          compiler-driver-compile-load-expr-pool-initial-capacity
           compiler-driver-compile-type-pool-initial-capacity
           new-arena)]
       (begin

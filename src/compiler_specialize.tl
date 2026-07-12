@@ -632,9 +632,13 @@
     [(CompilerCtfeValue.Unit) "unit"]
     [(CompilerCtfeValue.Type ty) (string.append "type_" (spec-type-key ty))]
     [(CompilerCtfeValue.Expr _ _) "Expr"]
+    [(CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
     [(CompilerCtfeValue.ExprList _) "expr-list"]
+    [(CompilerCtfeValue.CapturedExprList _ _) "expr-list"]
     [(CompilerCtfeValue.ExprClause _) "expr-clause"]
+    [(CompilerCtfeValue.CapturedExprClause _ _) "expr-clause"]
     [(CompilerCtfeValue.ExprClauseList _) "expr-clause-list"]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _) "expr-clause-list"]
     [(CompilerCtfeValue.ExprBindingClause _) "expr-binding-clause"]
     [(CompilerCtfeValue.ExprBindingClauseList _) "expr-binding-clause-list"]
     [(CompilerCtfeValue.Pattern _) "pattern"]
@@ -1644,10 +1648,17 @@
     [(CompilerCtfeValue.Unit) (ctfe-type-eq ty (AstType.Unit))]
     [(CompilerCtfeValue.Type _) false]
     [(CompilerCtfeValue.Expr _ _) (ctfe-type-eq ty (AstType.Expr))]
+    [(CompilerCtfeValue.CapturedExpr _ _ _) (ctfe-type-eq ty (AstType.Expr))]
     [(CompilerCtfeValue.ExprList _) (ctfe-type-eq ty (AstType.ExprList))]
+    [(CompilerCtfeValue.CapturedExprList _ _)
+      (ctfe-type-eq ty (AstType.ExprList))]
     [(CompilerCtfeValue.ExprClause _)
       (ctfe-type-eq ty (AstType.Var (intern "ExprClause")))]
+    [(CompilerCtfeValue.CapturedExprClause _ _)
+      (ctfe-type-eq ty (AstType.Var (intern "ExprClause")))]
     [(CompilerCtfeValue.ExprClauseList _)
+      (ctfe-type-eq ty (AstType.Var (intern "ExprClauseList")))]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _)
       (ctfe-type-eq ty (AstType.Var (intern "ExprClauseList")))]
     [(CompilerCtfeValue.ExprBindingClause _)
       (ctfe-type-eq ty (AstType.Var (intern "ExprBindingClause")))]
@@ -1682,9 +1693,13 @@
     [(CompilerCtfeValue.Unit) "unit"]
     [(CompilerCtfeValue.Type _) "type"]
     [(CompilerCtfeValue.Expr _ _) "Expr"]
+    [(CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
     [(CompilerCtfeValue.ExprList _) "expr-list"]
+    [(CompilerCtfeValue.CapturedExprList _ _) "expr-list"]
     [(CompilerCtfeValue.ExprClause _) "ExprClause"]
+    [(CompilerCtfeValue.CapturedExprClause _ _) "ExprClause"]
     [(CompilerCtfeValue.ExprClauseList _) "ExprClauseList"]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _) "ExprClauseList"]
     [(CompilerCtfeValue.ExprBindingClause _) "ExprBindingClause"]
     [(CompilerCtfeValue.ExprBindingClauseList _) "ExprBindingClauseList"]
     [(CompilerCtfeValue.Pattern _) "Pattern"]
@@ -2038,7 +2053,19 @@
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time Expr value into runtime expression")))]
+    [(CompilerCtfeValue.CapturedExpr _ _ _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time Expr value into runtime expression")))]
     [(CompilerCtfeValue.ExprList _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprList value into runtime expression")))]
+    [(CompilerCtfeValue.CapturedExprList _ _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
@@ -2050,7 +2077,19 @@
           (spec-diagnostic-at-expr
             origin
             "cannot substitute compile-time ExprClause value into runtime expression")))]
+    [(CompilerCtfeValue.CapturedExprClause _ _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprClause value into runtime expression")))]
     [(CompilerCtfeValue.ExprClauseList _)
+      (ResultSpecSubExpr.Err
+        (box
+          (spec-diagnostic-at-expr
+            origin
+            "cannot substitute compile-time ExprClauseList value into runtime expression")))]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr

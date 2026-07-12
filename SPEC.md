@@ -659,6 +659,16 @@ fixed-arity builders that take a callee expression, a place, and zero, one, or t
 ordinary captured expressions respectively. They build the same ordinary call
 with an inferred `(&mut place)` first argument without requiring a temporary
 argument-list value.
+`expr-list-fold-if(items, when-true, when-false, continue-on-true)` builds one
+right-associated `if` chain from a dense `ExprList`: every item is a condition,
+and `continue-on-true` selects whether the accumulated suffix belongs in the
+true or false branch. `expr-clause-list-fold-if(items, missing-final,
+else-not-final)` performs the corresponding `ExprClauseList` fold: a final
+`else` supplies the initial result, a missing final `else` yields
+`missing-final`, and a non-final `else` yields `else-not-final`. These are
+generic macro sequence operations, not macro-name hooks; user-defined macros
+may use them to construct iterative syntax without recursively emitting macro
+calls. Each consumed input charges the shared deterministic CTFE fuel budget.
 The generated program typechecks the resulting borrow and call normally, so a
 mutable-borrow receiver must still be a caller place and every supplied
 argument is evaluated once in source order.
@@ -927,6 +937,11 @@ macro body:
   string slicing, string length, `int->string`, layout/reflection queries, and the
   `Expr`/`ExprList`/`ExprClause` constructor and inspector surface are
   available.
+- CTFE lexical `let` bindings may be updated with `set!` and used by `while`.
+  This is compile-time-local mutation only: assignments store only CTFE values,
+  cannot address runtime places, and every loop iteration shares the enclosing
+  deterministic fuel budget. A non-terminating loop reports the normal
+  compile-time evaluation-limit diagnostic.
 - Macro and generator code may call `(comptime-error message)` where
   `message` is a compile-time `String`. It returns `never`, aborts the
   current CTFE expansion/evaluation, reports `message` at the call

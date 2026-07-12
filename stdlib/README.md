@@ -50,7 +50,8 @@ use.
   `MatchArm`, `MatchArmList`, `TypeInfo`, and dense sequence wrappers), plus
   exported compile-time helper signatures such as `expr-int`, `expr-string?`,
   `expr-string-value`, `string-slice`,
-  `expr-list-nth`, `expr-clause-list->expr-list`, `pattern-variant`,
+  `expr-list-nth`, `expr-list-fold-if`, `expr-clause-list-fold-if`,
+  `expr-clause-list->expr-list`, `pattern-variant`,
   `pattern-list-bindings`, `match-arm`, and `expr-match`. `expr-type` returns
   the produced type of a captured expression for macro-time reflection. Dense
   sequence accessors use the public `items` and `len` fields in ordinary stdlib

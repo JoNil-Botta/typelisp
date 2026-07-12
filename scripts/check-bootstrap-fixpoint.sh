@@ -25,6 +25,7 @@ cd "$ROOT"
 # assemble_and_link.
 . "$ROOT/scripts/lib-native-link.sh"
 native_link_detect_host
+. "$ROOT/scripts/lib-bootstrap-ctfe.sh"
 
 if [ "$#" -gt 1 ]; then
     echo "usage: $0 [typelisp-binary]" >&2
@@ -46,6 +47,13 @@ if [ ! -x "$COMPILER" ]; then
     echo "typelisp compiler is not executable: $COMPILER" >&2
     exit 1
 fi
+
+# The seed is invoked from a scratch directory when it needs the legacy
+# prelude, so normalize a caller-provided relative path while we are at ROOT.
+case "$COMPILER" in
+    /* | [A-Za-z]:[\\/]*) ;;
+    *) COMPILER="$ROOT/$COMPILER" ;;
+esac
 
 
 assert_contains() {
@@ -114,6 +122,13 @@ WORKDIR="$ROOT/target/bootstrap-fixpoint"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 configure_toolchain
+
+SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_macro_builders_legacy_stdlib "$ROOT" "$COMPILER" "$WORKDIR")
+if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
+    echo "[bootstrap] seed lacks current CTFE macro builders; using the legacy prelude for stage0 -> stage1"
+else
+    echo "[bootstrap] seed supports current CTFE macro builders; using iterative core macros"
+fi
 
 STAGE1_ASM="$WORKDIR/stage1.s"
 STAGE1_OBJ="$WORKDIR/stage1.$OBJ_EXT"
@@ -284,7 +299,16 @@ BOOTSTRAP_SRC=src/main.tl
 # to confirm the fixpoint (stage3 == stage4); it is byte-identical to stage3 and
 # is what every downstream gate runs on.
 echo "[bootstrap] stage0 -> stage1.s"
-run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
+    SEED_BOOTSTRAP_CWD="$WORKDIR/seed-bootstrap-cwd"
+    mkdir -p "$SEED_BOOTSTRAP_CWD"
+    (
+        cd "$SEED_BOOTSTRAP_CWD"
+        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
+    )
+else
+    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+fi
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 

@@ -1,6 +1,7 @@
 ; sym_i64_env module - Immutable scoped interned-symbol -> i64 table.
 ; Functional binding, head-first lookup, shadowing.
 (import compiler_intern as ci)
+(import stdlib.io)
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -16,7 +17,7 @@
     [name-id : i64 (ci.intern-lookup-preserving-generated-id-or name -1)]
     (if (>= name-id 0)
       name-id
-      (panic name))))
+      (io.panic name))))
 
 (define (sym-i64-bind [e : SymI64Env] [k : String] [v : i64]) : SymI64Env
   (sym-i64-bind-id e (sym-i64-existing-id k) v))

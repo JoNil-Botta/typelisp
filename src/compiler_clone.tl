@@ -30,11 +30,11 @@
 ;; The large startup-owned table does not grow for compiler-sized programs, so
 ;; entries remain valid across the scratch arenas used by clone discovery.
 (define clone-helper-name-ids : clone_id_map.Map
-  (clone_id_map.with-capacity 65536))
+  (clone_id_map.with-capacity 16384))
 (define clone-helper-acc-name-ids : clone_id_map.Map
-  (clone_id_map.with-capacity 65536))
+  (clone_id_map.with-capacity 16384))
 (define clone-helper-rev-name-ids : clone_id_map.Map
-  (clone_id_map.with-capacity 65536))
+  (clone_id_map.with-capacity 16384))
 
 (define (clone-helper-name-id-bind! [type-key-id : i64] [helper-name-id : i64]) : unit
   (clone_id_map.insert-ref!

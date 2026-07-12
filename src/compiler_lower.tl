@@ -1443,10 +1443,7 @@
   (if (< source-id 0)
     false
     (>=
-      (lower_i64_i64_map.get-value-or
-        (& (struct-get cache ids))
-        source-id
-        -1)
+      (lower_i64_i64_map.get-value-or (& (struct-get cache ids)) source-id -1)
       0)))
 
 (define (lower-name-cache-resolve

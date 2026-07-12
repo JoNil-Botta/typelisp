@@ -20467,8 +20467,7 @@
 ;; add the joined display spelling to the interner.
 (define (compiler-backend-ir-name-id-or [name : String] [fallback : i64]) : i64
   (match (compiler-ir-logical-name-id name)
-    [(CompilerIrMaybeNameId.Some name-id)
-      (compiler-symbol-name-id-key name-id)]
+    [(CompilerIrMaybeNameId.Some name-id) (compiler-symbol-name-id-key name-id)]
     [(CompilerIrMaybeNameId.No start)
       (let
         [slash : i64 (compiler-ir-logical-name-last-slash name start)]
@@ -21250,12 +21249,12 @@
     (if (>= logical-slot 0)
       (backend_i64_i64_map.LookupFound logical-slot)
       (match (backend_string_i64_map.get
-          (& (struct-get index extern-link-references))
-          name)
-          [(backend_string_i64_map.LookupFound slot)
-            (backend_i64_i64_map.LookupFound slot)]
-          [(backend_string_i64_map.LookupMissing)
-            (backend_i64_i64_map.LookupMissing)]))))
+        (& (struct-get index extern-link-references))
+        name)
+        [(backend_string_i64_map.LookupFound slot)
+          (backend_i64_i64_map.LookupFound slot)]
+        [(backend_string_i64_map.LookupMissing)
+          (backend_i64_i64_map.LookupMissing)]))))
 
 (define (compiler-backend-index-extern-call-info
   [index : CompilerBackendProgramIndex]

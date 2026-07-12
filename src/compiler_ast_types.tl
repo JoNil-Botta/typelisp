@@ -618,16 +618,17 @@
 ;; The pool is process-global and reset per compile (see ast-node-pool-reset!),
 ;; reusing one backing array; AstNodeId values stay valid because the pool only
 ;; grows within a compile (callers truncate via ast-node-pool-mark/reset on parse
-;; error). The initial capacity is sized large
-;; enough for selfhost-sized programs to avoid persistent growth arrays.
+;; error). Production compiles install a state-owned, selfhost-sized pool before
+;; parsing. This process-global compatibility seed remains large enough for
+;; standalone compiler-module tests without retaining a second selfhost pool.
 ;; Two flat globals (array + count) rather than a reassigned struct: the hot
 ;; push/get paths are inlined everywhere, and a global-struct reassign in that
 ;; hot path tripped an opt2 miscompile. Plain mutable globals keep codegen simple.
 (define ast-node-pool-slots : (Array AstExpr)
-  (array.make-array AstExpr 3145728))
+  (array.make-array AstExpr 262144))
 
 ;; The program (base) arena, captured at global-init while it is the
-;; active arena (the pool make-array above proves an allocation has happened, so
+;; active arena (the seed make-array above proves an allocation has happened, so
 ;; this is the real base handle, not the pre-allocation 0 sentinel). The node
 ;; pools live here for the whole program; a grow MUST allocate the new backing
 ;; array here too, otherwise -- if the grow fires while a transient scratch arena

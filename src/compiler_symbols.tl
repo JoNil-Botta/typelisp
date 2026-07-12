@@ -243,8 +243,7 @@
     ;; Pair and triple keys use 18-bit lanes. Fold every lane into the low bits
     ;; before the power-of-two mask so equal field/variant ids in different
     ;; owners do not form one long linear-probe cluster.
-    [folded : i64
-      (bit-xor key (bit-xor (shr key 18) (shr key 36)))]
+    [folded : i64 (bit-xor key (bit-xor (shr key 18) (shr key 36)))]
     (bit-and (* folded 6364136223846793005) (- capacity 1))))
 
 (define (compiler-symbol-map-lookup-handle-id
@@ -318,7 +317,9 @@
                     (ptr-write! (ptr-offset value-data target) handle))
                   (set! (struct-get map len) (+ (struct-get map len) 1))
                   (if (>= first-deleted 0)
-                    (set! (struct-get map deleted) (- (struct-get map deleted) 1))
+                    (set!
+                      (struct-get map deleted)
+                      (- (struct-get map deleted) 1))
                     unit)
                   (return unit)))]
             [(= present -1)

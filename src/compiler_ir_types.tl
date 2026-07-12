@@ -85,26 +85,37 @@
 
 (define (compiler-ir-logical-name-source-start [name : String]) : i64
   (let
-    [data : (Ptr u8) (unsafe (string-data (& name)))]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& name)))]
     [i : i64 (- (string.string-length name) 2)]
     (begin
       (while (>= i 0)
         (if (and
-          (= (unsafe (ptr-read (ptr-offset data i))) (cast 58 : u8))
-          (= (unsafe (ptr-read (ptr-offset data (+ i 1)))) (cast 58 : u8)))
+          (=
+            (unsafe
+              (ptr-read (ptr-offset data i)))
+            (cast 58 : u8))
+          (=
+            (unsafe
+              (ptr-read (ptr-offset data (+ i 1))))
+            (cast 58 : u8)))
           (return (+ i 2))
           (set! i (- i 1))))
       0)))
 
-(define (compiler-ir-logical-name-last-slash
-  [name : String]
-  [start : i64]) : i64
+(define (compiler-ir-logical-name-last-slash [name : String] [start : i64]) : i64
   (let
-    [data : (Ptr u8) (unsafe (string-data (& name)))]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& name)))]
     [i : i64 (- (string.string-length name) 1)]
     (begin
       (while (>= i start)
-        (if (= (unsafe (ptr-read (ptr-offset data i))) (cast 47 : u8))
+        (if (=
+          (unsafe
+            (ptr-read (ptr-offset data i)))
+          (cast 47 : u8))
           (return i)
           (set! i (- i 1))))
       -1)))

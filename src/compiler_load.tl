@@ -3845,9 +3845,9 @@
                             (not
                               (compiler-load-lazy-alias-demand-requires-load?
                                 policy
-                              (compiler-load-lazy-decl-list-demand
-                                rest
-                                (intern-str alias-name)
+                                (compiler-load-lazy-decl-list-demand
+                                  rest
+                                  (intern-str alias-name)
                                   summary
                                   (sym_i64_env.sym-i64-empty)))))])]
                     [(AstMaybeImportAlias.No) false]))]

@@ -32,7 +32,7 @@
 ;; compatibility String constructor's assigned ids in an id-keyed registry so a
 ;; repeated constructor call carries the first generated id forward.
 (define ctfe-generated-name-ids : (Box ctfe_key_map.Map)
-  (box (ctfe_key_map.with-capacity 65536)))
+  (box (ctfe_key_map.with-capacity 1)))
 (define ctfe-generated-name-cache-generation : i64
   -1)
 (define ctfe-generated-name-cache-pool : i64
@@ -49,7 +49,7 @@
       (begin
         (set!
           (box-get ctfe-generated-name-ids)
-          (ctfe_key_map.with-capacity 65536))
+          (ctfe_key_map.with-capacity 32768))
         (set! ctfe-generated-name-cache-generation generation)
         (set! ctfe-generated-name-cache-pool pool)))))
 

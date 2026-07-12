@@ -160,13 +160,13 @@
 (define intern-pool-base-id-slots : (Array i64)
   (make-array i64 262144))
 (define intern-pointer-id-slots : (Array i64)
-  (make-array i64 262144))
+  (make-array i64 1))
 (define intern-pointer-key-slots : (Array i64)
-  (make-array i64 262144))
+  (make-array i64 1))
 (define intern-reader-pointer-slots : (Array i64)
-  (make-array i64 262144))
+  (make-array i64 1))
 (define intern-reader-id-slots : (Array i64)
-  (make-array i64 262144))
+  (make-array i64 1))
 (define intern-pool-count : i64
   0)
 (define intern-generated-next-id : i64
@@ -186,6 +186,7 @@
 
 (define intern-map-slots : (Array InternSlot)
   (make-array InternSlot 262144))
+
 ;; Compact read lanes for post-parse lookup. InternCompatState keeps the
 ;; authoritative enum map; these process-local lanes are rebuilt whenever a
 ;; state is installed and updated alongside global insertions.
@@ -234,6 +235,18 @@
 (define intern-persistent-storage-enabled : bool
   false)
 
+;; CompilerDriverState installs its owned pointer indexes before reset. Keep
+;; the compatibility globals cheap at process startup, while preserving direct
+;; compiler_intern users that reset the default table without a driver state.
+(define (intern-pointer-storage-ensure!) : unit
+  (if (= (array-length intern-pointer-id-slots) (intern-capacity))
+    unit
+    (begin
+      (set! intern-pointer-id-slots (make-array i64 262144))
+      (set! intern-pointer-key-slots (make-array i64 262144))
+      (set! intern-reader-pointer-slots (make-array i64 262144))
+      (set! intern-reader-id-slots (make-array i64 262144)))))
+
 (define (intern-map-read-lanes-rebuild!) : unit
   (let
     [index : i64 0]
@@ -241,8 +254,7 @@
     (while (< index count)
       (begin
         (match (array-ref intern-map-slots index)
-          [(InternEmpty)
-            (array-set! intern-map-id-slots index 0)]
+          [(InternEmpty) (array-set! intern-map-id-slots index 0)]
           [(InternUsed _ id hash)
             (begin
               (array-set! intern-map-id-slots index (+ id 1))
@@ -345,47 +357,49 @@
               (ptr->int (ptr-cast (array-data next-map-slots) : (Ptr u8))))
             : i64)))]
     (begin
-    (set! intern-pool-slots (struct-get state pool-slots))
-    (set! intern-pool-qualified-slots (struct-get state pool-qualified-slots))
-    (set! intern-pool-last-slash-slots (struct-get state pool-last-slash-slots))
-    (set! intern-pool-first-dot-slots (struct-get state pool-first-dot-slots))
-    (set!
-      intern-pool-leading-dot-id-slots
-      (struct-get state pool-leading-dot-id-slots))
-    (set! intern-pool-module-id-slots (struct-get state pool-module-id-slots))
-    (set! intern-pool-base-id-slots (struct-get state pool-base-id-slots))
-    (set! intern-pointer-id-slots (struct-get state pointer-id-slots))
-    (set! intern-pointer-key-slots (struct-get state pointer-key-slots))
-    (set! intern-reader-pointer-slots (struct-get state reader-pointer-slots))
-    (set! intern-reader-id-slots (struct-get state reader-id-slots))
-    (set! intern-pool-count (array-ref (struct-get state pool-count) 0))
-    (set!
-      intern-generated-next-id
-      (array-ref (struct-get state generated-next-id) 0))
-    (set! intern-map-slots next-map-slots)
-    (if map-changed
-      (if (array-ref (struct-get state map-ready) 0)
-        (intern-map-read-lanes-rebuild!)
-        (intern-map-read-lanes-clear!))
-      unit)
-    (set! intern-map-ready (array-ref (struct-get state map-ready) 0))
-    (set!
-      intern-reset-generation
-      (array-ref (struct-get state reset-generation) 0))
-    (set! intern-name-cache-ready false)
-    (set! intern-slice-cache0-ready false)
-    (set! intern-slice-cache1-ready false)
-    (set! intern-slice-cache2-ready false)
-    (set! intern-slice-cache3-ready false)
-    (set!
-      intern-persistent-arena
-      (array-ref (struct-get state persistent-arena) 0))
-    (set!
-      intern-persistent-arena-floor-mark
-      (array-ref (struct-get state persistent-arena-floor-mark) 0))
-    (set!
-      intern-persistent-storage-enabled
-      (array-ref (struct-get state persistent-storage-enabled) 0)))))
+      (set! intern-pool-slots (struct-get state pool-slots))
+      (set! intern-pool-qualified-slots (struct-get state pool-qualified-slots))
+      (set!
+        intern-pool-last-slash-slots
+        (struct-get state pool-last-slash-slots))
+      (set! intern-pool-first-dot-slots (struct-get state pool-first-dot-slots))
+      (set!
+        intern-pool-leading-dot-id-slots
+        (struct-get state pool-leading-dot-id-slots))
+      (set! intern-pool-module-id-slots (struct-get state pool-module-id-slots))
+      (set! intern-pool-base-id-slots (struct-get state pool-base-id-slots))
+      (set! intern-pointer-id-slots (struct-get state pointer-id-slots))
+      (set! intern-pointer-key-slots (struct-get state pointer-key-slots))
+      (set! intern-reader-pointer-slots (struct-get state reader-pointer-slots))
+      (set! intern-reader-id-slots (struct-get state reader-id-slots))
+      (set! intern-pool-count (array-ref (struct-get state pool-count) 0))
+      (set!
+        intern-generated-next-id
+        (array-ref (struct-get state generated-next-id) 0))
+      (set! intern-map-slots next-map-slots)
+      (if map-changed
+        (if (array-ref (struct-get state map-ready) 0)
+          (intern-map-read-lanes-rebuild!)
+          (intern-map-read-lanes-clear!))
+        unit)
+      (set! intern-map-ready (array-ref (struct-get state map-ready) 0))
+      (set!
+        intern-reset-generation
+        (array-ref (struct-get state reset-generation) 0))
+      (set! intern-name-cache-ready false)
+      (set! intern-slice-cache0-ready false)
+      (set! intern-slice-cache1-ready false)
+      (set! intern-slice-cache2-ready false)
+      (set! intern-slice-cache3-ready false)
+      (set!
+        intern-persistent-arena
+        (array-ref (struct-get state persistent-arena) 0))
+      (set!
+        intern-persistent-arena-floor-mark
+        (array-ref (struct-get state persistent-arena-floor-mark) 0))
+      (set!
+        intern-persistent-storage-enabled
+        (array-ref (struct-get state persistent-storage-enabled) 0)))))
 
 (define (intern-compat-state-capture-from-globals! [state : InternCompatState]) : unit
   (begin
@@ -1407,6 +1421,7 @@
 ;: is mandatory before the first probe; this runs it once (idempotent).
 (define (intern-reset!) : unit
   (begin
+    (intern-pointer-storage-ensure!)
     (set! intern-pool-count 0)
     (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-slots))
@@ -1418,6 +1433,7 @@
 
 (define (intern-reset-to! [mark : i64]) : unit
   (begin
+    (intern-pointer-storage-ensure!)
     (set! intern-pool-count mark)
     (set! intern-generated-next-id (- (intern-capacity) 1))
     (intern-fill-empty 0 (array-length intern-map-slots))
@@ -1653,13 +1669,17 @@
         (while (< steps capacity)
           (let
             [stored : i64
-              (unsafe (ptr-read (ptr-offset ids cursor)))]
+              (unsafe
+                (ptr-read (ptr-offset ids cursor)))]
             (if (= stored 0)
               (return (InternLookupMissing))
               (let
                 [slot-id : i64 (- stored 1)]
                 (if (and
-                  (= (unsafe (ptr-read (ptr-offset hashes cursor))) hash)
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset hashes cursor)))
+                    hash)
                   (intern-private-string-eq-places
                     (array-ref intern-pool-slots slot-id)
                     name))

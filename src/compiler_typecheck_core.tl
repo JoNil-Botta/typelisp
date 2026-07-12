@@ -3574,11 +3574,11 @@
 ;; them back to an O(top-env) compatibility scan. This hot side table avoids
 ;; the allocation and generic-map dispatch cost paid by every top-level bind.
 (define tc-topenv-membership-overflow-capacity : i64
-  131072)
+  65536)
 (define tc-topenv-membership-overflow-keys : (Array i64)
-  (array.make-array i64 131072))
+  (array.make-array i64 65536))
 (define tc-topenv-membership-overflow-flags : (Array i64)
-  (array.make-array i64 131072))
+  (array.make-array i64 65536))
 (define tc-topenv-membership-overflow-complete : bool
   true)
 (define tc-topenv-membership-gen : i64
@@ -8560,8 +8560,7 @@
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
               (let
-                [index : i64
-                  (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                 (if (>= index 0)
                   (begin
                     ;; AstType is multi-word; keep this checked value read.
@@ -8597,8 +8596,7 @@
           [(TcTypeEnv.Nil) (set! done true)]
           [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
             (let
-              [index : i64
-                (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+              [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
               (if (>= index 0)
                 (begin
                   (set! found true)
@@ -8630,8 +8628,7 @@
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
               (let
-                [index : i64
-                  (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                [index : i64 (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
                 (if (>= index 0)
                   (begin
                     ;; AstType read stays checked; the flag is scalar i64.
@@ -9064,13 +9061,13 @@
       id)))
 
 (define tc-generated-qualified-name-ids : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 65536))
+  (tc_i64_i64_map.with-capacity 1))
 (define tc-generated-qualified-name-ids-generation : i64
   -1)
 (define tc-generated-qualified-name-ids-pool : i64
   -1)
 (define tc-generated-module-name-ids : tc_i64_i64_map.Map
-  (tc_i64_i64_map.with-capacity 65536))
+  (tc_i64_i64_map.with-capacity 1))
 (define tc-generated-module-name-ids-generation : i64
   -1)
 (define tc-generated-module-name-ids-pool : i64
@@ -9130,7 +9127,7 @@
             (arena.tl_arena_set (tc-generated-name-id-cache-arena-handle)))
           (set!
             tc-generated-qualified-name-ids
-            (tc_i64_i64_map.with-capacity 65536))
+            (tc_i64_i64_map.with-capacity 32768))
           (unsafe
             (arena.tl_arena_set prev-arena))
           (set! tc-generated-qualified-name-ids-generation generation)
@@ -9189,7 +9186,7 @@
             (arena.tl_arena_set (tc-generated-name-id-cache-arena-handle)))
           (set!
             tc-generated-module-name-ids
-            (tc_i64_i64_map.with-capacity 65536))
+            (tc_i64_i64_map.with-capacity 32768))
           (unsafe
             (arena.tl_arena_set prev-arena))
           (set! tc-generated-module-name-ids-generation generation)
@@ -11134,8 +11131,8 @@
 (define (tc-qualified-name-module-id [name-id : i64]) : i64
   (if (and (>= name-id 0) (< name-id (intern-capacity)))
     (if (intern-qualified? name-id)
-        (intern-qualified-module-id name-id)
-        -1)
+      (intern-qualified-module-id name-id)
+      -1)
     (if (compiler-composite-triple-key-id? name-id)
       (compiler-composite-triple-left-id name-id)
       (if (compiler-composite-pair-key-id? name-id)
@@ -11145,8 +11142,8 @@
 (define (tc-qualified-name-base-id [name-id : i64]) : i64
   (if (and (>= name-id 0) (< name-id (intern-capacity)))
     (if (intern-qualified? name-id)
-        (intern-qualified-base-id name-id)
-        name-id)
+      (intern-qualified-base-id name-id)
+      name-id)
     (if (compiler-composite-triple-key-id? name-id)
       (compiler-composite-pair-key-id
         (compiler-composite-triple-middle-id name-id)
@@ -11308,22 +11305,20 @@
             prefix-id)))]
     [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
       (let
-        [prefix-index : i64
-          (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
+        [prefix-index : i64 (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
         (if (>= prefix-index 0)
           (let
-            [name-index : i64
-              (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+            [name-index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
             (if (>= name-index 0)
               (< prefix-index name-index)
               true))
           (if partial
             (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
               false
-                (tc-source-leading-segment-wins-over-exact-id?
-                  (box-get below)
-                  name-id
-                  prefix-id))
+              (tc-source-leading-segment-wins-over-exact-id?
+                (box-get below)
+                name-id
+                prefix-id))
             false)))]))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
@@ -12124,10 +12119,7 @@
               [_
                 (let
                   [slot : i64
-                    (tc_i64_i64_map.get-value-or
-                      (& modules)
-                      cur-module-id
-                      -1)]
+                    (tc_i64_i64_map.get-value-or (& modules) cur-module-id -1)]
                   (if (>= slot 0)
                     (let
                       [cursor : i64 (array-ref ends slot)]
@@ -12167,10 +12159,7 @@
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (tc-module-decl-index-slot [module-id : i64]) : i64
-  (tc_i64_i64_map.get-value-or
-    (& tc-module-decl-index-modules)
-    module-id
-    -1))
+  (tc_i64_i64_map.get-value-or (& tc-module-decl-index-modules) module-id -1))
 
 (define (tc-decl-list-module-imports-stdlib-string?
   [decls : AstDeclList]
@@ -13321,9 +13310,13 @@
               [resolved : i64
                 (if (>= module-handle 0)
                   module-key-id
-                  (if (>= fallback-handle 0) fallback-key-id -1))]
+                  (if (>= fallback-handle 0)
+                    fallback-key-id
+                    -1))]
               [resolved-handle : i64
-                (if (>= module-handle 0) module-handle fallback-handle)]
+                (if (>= module-handle 0)
+                  module-handle
+                  fallback-handle)]
               (begin
                 (tc-source-qualified-variant-key-handle-cache-put!
                   module-id
@@ -35985,11 +35978,16 @@
 
 (define (tc-qualified-name-last-slash [name : String]) : i64
   (let
-    [data : (Ptr u8) (unsafe (string-data (& name)))]
+    [data : (Ptr u8)
+      (unsafe
+        (string-data (& name)))]
     [i : i64 (- (string.string-length name) 1)]
     (begin
       (while (>= i 0)
-        (if (= (unsafe (ptr-read (ptr-offset data i))) (cast 47 : u8))
+        (if (=
+          (unsafe
+            (ptr-read (ptr-offset data i)))
+          (cast 47 : u8))
           (return i)
           (set! i (- i 1))))
       -1)))

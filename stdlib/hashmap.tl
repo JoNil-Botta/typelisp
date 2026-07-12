@@ -5367,14 +5367,24 @@
               [slot : (Ptr i64)
                 (unsafe
                   (ptr-offset data (* cursor 4)))]
-              [tag : i64 (unsafe (ptr-read slot))]
+              [tag : i64
+                (unsafe
+                  (ptr-read slot))]
               (cond
                 [(= tag 0) (return fallback)]
                 [(and
-                  (= tag 2)
-                  (= (unsafe (ptr-read (ptr-offset slot 3))) hash)
-                  (= (unsafe (ptr-read (ptr-offset slot 1))) key))
-                  (return (unsafe (ptr-read (ptr-offset slot 2))))]
+                    (= tag 2)
+                    (=
+                      (unsafe
+                        (ptr-read (ptr-offset slot 3)))
+                      hash)
+                    (=
+                      (unsafe
+                        (ptr-read (ptr-offset slot 1)))
+                      key))
+                  (return
+                    (unsafe
+                      (ptr-read (ptr-offset slot 2))))]
                 [else
                   (begin
                     (set! cursor (bit-and (+ cursor 1) mask))

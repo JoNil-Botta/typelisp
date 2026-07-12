@@ -3405,7 +3405,7 @@
     [(AstExpr.Set name rhs-box)
       (let
         [rhs : AstExpr (ctfe-ast-get env rhs-box)]
-        (ctfe-eval-set (intern-str name) rhs expr env fuel))]
+        (ctfe-eval-set name rhs expr env fuel))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
         [(AstMatch.Match scrutinee-box arms)
@@ -7705,14 +7705,14 @@
 ;; lexical `let` bindings above. The right-hand side has already been evaluated
 ;; to a CompilerCtfeValue, so this cannot materialize or mutate a runtime value.
 (define (ctfe-eval-set
-  [name : String]
+  [name-id : i64]
   [rhs : AstExpr]
   [origin : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (match (compiler-ctfe-eval rhs env fuel)
     [(ResultCtfe.Ok value rhs-fuel)
-      (if (ctfe-env-set-local! env name value)
+      (if (ctfe-env-set-local-id! env name-id value)
         (ResultCtfe.Ok (CompilerCtfeValue.Unit) rhs-fuel)
         (ResultCtfe.Err
           (box
@@ -14149,18 +14149,19 @@
     [zero : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 0)))]
     [one : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 1)))]
     [three : i64 (ctfe-ast-push env (AstExpr.Literal (ast-lit-int 3)))]
-    [i-var : i64 (ctfe-ast-push env (AstExpr.Var (intern "i")))]
+    [i-id : i64 (ctfe-materialize-generated-name-id "i")]
+    [i-var : i64 (ctfe-ast-push env (AstExpr.Var i-id))]
     [loop-cond : i64
       (ast-expr-binary-with-pools pools (AstBinOp.Lt) i-var three)]
     [increment : i64
       (ast-expr-binary-with-pools pools (AstBinOp.Add) i-var one)]
-    [set-i : i64 (ast-expr-set-with-pools pools "i" increment)]
+    [set-i : i64 (ast-expr-set-id-with-pools pools i-id increment)]
     [loop-body : i64
       (ctfe-ast-push
         env
         (AstExpr.Begin (ast-expr-cons set-i (ast-expr-list-new))))]
     [loop : i64 (ast-expr-while-with-pools pools loop-cond loop-body)]
-    [loop-result : i64 (ctfe-ast-push env (AstExpr.Var (intern "i")))]
+    [loop-result : i64 (ctfe-ast-push env (AstExpr.Var i-id))]
     [loop-body-result : i64
       (ctfe-ast-push
         env
@@ -14168,13 +14169,14 @@
           (ast-expr-cons loop (ast-expr-cons loop-result (ast-expr-list-new)))))]
     [loop-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "i" (AstMaybeType.Some (AstType.I64)) zero)
+        (ast-let-binding-id i-id (AstMaybeType.Some (AstType.I64)) zero)
         (ast-let-binding-list-new))]
     [loop-let : i64
       (ast-expr-let-with-pools pools loop-bindings loop-body-result)]
+    [outer-id : i64 (ctfe-materialize-generated-name-id "outer")]
     [immutable-env : CtfeEnv
-      (ctfe-env-extend env "outer" (CompilerCtfeValue.I64 0))]
-    [immutable-set : i64 (ast-expr-set-with-pools pools "outer" one)]
+      (ctfe-env-extend-id env outer-id (CompilerCtfeValue.I64 0))]
+    [immutable-set : i64 (ast-expr-set-id-with-pools pools outer-id one)]
     [true-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
     [unit-lit : i64 (ctfe-ast-push env (AstExpr.Literal AstLiteral.Unit))]

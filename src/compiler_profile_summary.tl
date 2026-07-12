@@ -228,9 +228,8 @@
 (define (compiler-profile-summary-exact-scope? [scope : i64]) : bool
   (or
     (= scope compiler-profile-summary-optimizer-pass)
-    (or
-      (= scope compiler-profile-summary-optimizer-module)
-      (= scope compiler-profile-summary-backend-module))))
+    (= scope compiler-profile-summary-optimizer-module)
+    (= scope compiler-profile-summary-backend-module)))
 
 (define (compiler-profile-summary-exact-scope-capacity [scope : i64]) : i64
   (if (= scope compiler-profile-summary-optimizer-pass)

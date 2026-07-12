@@ -58133,12 +58133,15 @@
                             (let
                               [_install-after-load : unit
                                 (tc-context-install-pools! cur-ctx)]
+                              [materialized-tail : AstDeclList
+                                (macro-scratch-decl-list-prefix-rev-current-suffix
+                                  (macro-scratch-decl-list-reverse
+                                    materialized-decls)
+                                  rest)]
                               [next-decls : AstDeclList
                                 (macro-scratch-decl-list-append
                                   (macro-scratch-decl-list-reverse out-rev)
-                                  (macro-scratch-decl-list-append
-                                    materialized-decls
-                                    rest))]
+                                  materialized-tail)]
                               [next-paths : AstDeclPathList
                                 (macro-scratch-decl-path-list-append
                                   (macro-scratch-decl-path-list-reverse
@@ -58191,11 +58194,7 @@
                                       (set! cur-ctx next-ctx)
                                       (set! cur-orig-decls next-decls)
                                       (set! cur-top-env next-top-env)
-                                      (set!
-                                        cur-decls
-                                        (macro-scratch-decl-list-append
-                                          materialized-decls
-                                          rest))
+                                      (set! cur-decls materialized-tail)
                                       (set!
                                         cur-paths
                                         (macro-scratch-decl-path-list-append

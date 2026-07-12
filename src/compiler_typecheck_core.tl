@@ -56209,58 +56209,50 @@
   [target-module : String]
   [alias : AstMaybeImportAlias]
   [catalog : AstDeclList]) : MacroGeneratedModuleCatalogDemand
-  ;; Keep exact collection bounded for very large flattened root modules. Such
-  ;; programs remain correct via the required conservative Full fallback; the
-  ;; loader can later provide a per-file demand index without rewalking tens of
-  ;; thousands of unrelated declarations for every generated import.
-  (if (> (ast-decl-list-len (& orig-decls)) 8192)
-    MacroGeneratedModuleCatalogDemand.Full
-    (let
-      [prev-persist : bool (intern-persistent-storage-on?)]
-      [enclosing : i64 (arena.tl_arena_current)]
-      [scratch : i64 (tc-fn-scratch-arena-get)]
-      (begin
-        (intern-persistent-storage-enable!)
-        (unsafe
-          (arena.tl_arena_set scratch))
-        (let
-          [mark : i64 (arena.tl_region_mark)]
-          [importer-decls : AstDeclList
-            (macro-collect-module-body-decls orig-decls importer-module "")]
-          [raw : MacroGeneratedModuleCatalogDemand
-            (macro-generated-catalog-demand
-              importer-decls
-              target-module
-              alias
-              catalog)]
-          [scratch-head : i64 (arena.tl_arena_current)]
-          (begin
-            (unsafe
-              (arena.tl_arena_set enclosing))
-            (let
-              [escaped : MacroGeneratedModuleCatalogDemand
-                (match raw
-                  [MacroGeneratedModuleCatalogDemand.None
-                    MacroGeneratedModuleCatalogDemand.None]
-                  [MacroGeneratedModuleCatalogDemand.Full
-                    MacroGeneratedModuleCatalogDemand.Full]
-                  [(MacroGeneratedModuleCatalogDemand.Partial selected)
-                    (MacroGeneratedModuleCatalogDemand.Partial
-                      (macro-decl-list-append selected (ast-decl-list-new)))])]
-              [new-enclosing : i64 (arena.tl_arena_current)]
-              (begin
-                (compiler-load-lazy-qualified-observer-reset!)
-                (unsafe
-                  (arena.tl_arena_set scratch-head)
-                  (arena.tl_region_reset mark)
-                  (arena.tl_arena_set new-enclosing))
-                (tc-fn-scratch-arena-release-after-overflow!
-                  scratch
-                  scratch-head)
-                (if prev-persist
-                  unit
-                  (intern-persistent-storage-disable!))
-                escaped))))))))
+  (let
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (tc-fn-scratch-arena-get)]
+    (begin
+      (intern-persistent-storage-enable!)
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [mark : i64 (arena.tl_region_mark)]
+        [importer-decls : AstDeclList
+          (macro-collect-module-body-decls orig-decls importer-module "")]
+        [raw : MacroGeneratedModuleCatalogDemand
+          (macro-generated-catalog-demand
+            importer-decls
+            target-module
+            alias
+            catalog)]
+        [scratch-head : i64 (arena.tl_arena_current)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (let
+            [escaped : MacroGeneratedModuleCatalogDemand
+              (match raw
+                [MacroGeneratedModuleCatalogDemand.None
+                  MacroGeneratedModuleCatalogDemand.None]
+                [MacroGeneratedModuleCatalogDemand.Full
+                  MacroGeneratedModuleCatalogDemand.Full]
+                [(MacroGeneratedModuleCatalogDemand.Partial selected)
+                  (MacroGeneratedModuleCatalogDemand.Partial
+                    (macro-decl-list-append selected (ast-decl-list-new)))])]
+            [new-enclosing : i64 (arena.tl_arena_current)]
+            (begin
+              (compiler-load-lazy-qualified-observer-reset!)
+              (unsafe
+                (arena.tl_arena_set scratch-head)
+                (arena.tl_region_reset mark)
+                (arena.tl_arena_set new-enclosing))
+              (tc-fn-scratch-arena-release-after-overflow! scratch scratch-head)
+              (if prev-persist
+                unit
+                (intern-persistent-storage-disable!))
+              escaped)))))))
 
 (define (macro-generated-catalog-summary
   [target-module : String]
@@ -56748,93 +56740,109 @@
       (match demand
         [MacroGeneratedModuleCatalogDemand.Full false]
         [_ true])]
-    (begin
-      ;; Store a first-seen catalog before an unused import returns. Never
-      ;; replace an existing entry here: syntax parameters can share an identity
-      ;; while producing incompatible output, which the replay path diagnoses.
-      (if memoize?
-        (match (macro-generated-module-memo-get identity)
-          [CompilerNoString
-            (begin
-              (macro-generated-module-memo-put!
-                identity
-                target-module
-                (ast-decl-list-new)
-                catalog)
-              (cfg
-                compile-profile
-                (compiler-tc-macro-profile-note-generated-module-catalog-build))
-              (cfg
-                compile-profile
-                (compiler-tc-macro-profile-note-generated-module-catalog-declarations
-                  (ast-decl-list-len (& catalog)))))]
-          [(CompilerSomeString _) unit])
-        unit)
-      (if (and
-        partial-safe?
-        target-fresh?
-        needs-catalog-validation?
-        (or
-          (not catalog-reusable?)
-          (not (macro-generated-module-memo-validated? identity))))
-        (match (macro-generated-catalog-validation-message
-          ctx
-          orig-decls
-          target-module
+    [full-catalog-materialized? : bool
+      (if (and catalog-from-memo? (not needs-catalog-validation?))
+        (match (macro-generated-target-replay
+          (macro-generated-catalog-current-body identity target-module)
           catalog)
-          [(MacroMaybeCatalogDiagnostic.No)
-            (begin
-              (if (and memoize? catalog-reusable?)
-                (macro-generated-module-memo-mark-validated! identity)
-                unit)
-              (macro-expand-module-catalog-after-validation
-                ctx
-                top-env
-                orig-decls
-                module
-                target-module
-                alias
-                span
-                decl-path
-                identity
-                memoize?
-                catalog-from-memo?
-                catalog
-                demand
-                call-expr))]
-          [(MacroMaybeCatalogDiagnostic.Some diag)
-            (if (macro-generated-catalog-validation-needs-full? (box-get diag))
-              (macro-expand-module-catalog-after-validation
-                ctx
-                top-env
-                orig-decls
-                module
-                target-module
-                alias
-                span
-                decl-path
-                identity
-                memoize?
-                catalog-from-memo?
-                catalog
-                MacroGeneratedModuleCatalogDemand.Full
-                call-expr)
-              (ResultMacroDeclExpansion.Err diag))])
-        (macro-expand-module-catalog-after-validation
-          ctx
-          top-env
-          orig-decls
-          module
-          target-module
-          alias
-          span
-          decl-path
-          identity
-          memoize?
-          catalog-from-memo?
-          catalog
-          demand
-          call-expr)))))
+          [(MacroGeneratedTargetReplay.ReplayCompatible) true]
+          [_ false])
+        false)]
+    (if full-catalog-materialized?
+      (let
+        [expanded : AstDeclList
+          (macro-module-import-marker-decls target-module alias span)]
+        (ResultMacroDeclExpansion.Ok
+          expanded
+          (macro-paths-for-decls expanded decl-path)))
+      (begin
+        ;; Store a first-seen catalog before an unused import returns. Never
+        ;; replace an existing entry here: syntax parameters can share an identity
+        ;; while producing incompatible output, which the replay path diagnoses.
+        (if memoize?
+          (match (macro-generated-module-memo-get identity)
+            [CompilerNoString
+              (begin
+                (macro-generated-module-memo-put!
+                  identity
+                  target-module
+                  (ast-decl-list-new)
+                  catalog)
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-note-generated-module-catalog-build))
+                (cfg
+                  compile-profile
+                  (compiler-tc-macro-profile-note-generated-module-catalog-declarations
+                    (ast-decl-list-len (& catalog)))))]
+            [(CompilerSomeString _) unit])
+          unit)
+        (if (and
+          partial-safe?
+          target-fresh?
+          needs-catalog-validation?
+          (or
+            (not catalog-reusable?)
+            (not (macro-generated-module-memo-validated? identity))))
+          (match (macro-generated-catalog-validation-message
+            ctx
+            orig-decls
+            target-module
+            catalog)
+            [(MacroMaybeCatalogDiagnostic.No)
+              (begin
+                (if (and memoize? catalog-reusable?)
+                  (macro-generated-module-memo-mark-validated! identity)
+                  unit)
+                (macro-expand-module-catalog-after-validation
+                  ctx
+                  top-env
+                  orig-decls
+                  module
+                  target-module
+                  alias
+                  span
+                  decl-path
+                  identity
+                  memoize?
+                  catalog-from-memo?
+                  catalog
+                  demand
+                  call-expr))]
+            [(MacroMaybeCatalogDiagnostic.Some diag)
+              (if (macro-generated-catalog-validation-needs-full?
+                (box-get diag))
+                (macro-expand-module-catalog-after-validation
+                  ctx
+                  top-env
+                  orig-decls
+                  module
+                  target-module
+                  alias
+                  span
+                  decl-path
+                  identity
+                  memoize?
+                  catalog-from-memo?
+                  catalog
+                  MacroGeneratedModuleCatalogDemand.Full
+                  call-expr)
+                (ResultMacroDeclExpansion.Err diag))])
+          (macro-expand-module-catalog-after-validation
+            ctx
+            top-env
+            orig-decls
+            module
+            target-module
+            alias
+            span
+            decl-path
+            identity
+            memoize?
+            catalog-from-memo?
+            catalog
+            demand
+            call-expr))))))
 
 (define (macro-expand-module-catalog-after-validation
   [ctx : TcContext]

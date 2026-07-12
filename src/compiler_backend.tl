@@ -53140,8 +53140,16 @@ tl_tlci_call_image_entry:
                 [else true])]
             [call? : bool
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]
-            [single-dest? : bool
-              (compiler-backend-peephole-mnemonic-single-dest? data ms mlen)]
+            [single-dest?
+              : bool
+              ;; The clobber transfer handles moves, labels, non-clobbering
+              ;; directives/branches, and calls before consulting this field.
+              (and
+                (not is-movq)
+                (not is-label)
+                clears
+                (not call?)
+                (compiler-backend-peephole-mnemonic-single-dest? data ms mlen))]
             [last-reg : i64
               (if (or single-dest? zext?)
                 (compiler-backend-peephole-last-operand-reg-index

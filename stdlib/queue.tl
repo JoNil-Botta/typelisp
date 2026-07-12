@@ -217,7 +217,7 @@
       (defmacro (pop-back! [place : Expr]) : ,pop-name
         (expr-mut-call0 (expr-var ,pop-back-helper-name) place)))))
 
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 (cfg test (import (deque i64) as deque_i64))
 (cfg test (import (deque i64) as deque_i64_again))
 
@@ -242,21 +242,24 @@
       (let
         [empty : deque_i64.Deque (deque_i64.with-capacity 2)]
         (begin
-          (assert-i64-eq (deque_i64.len (& empty)) 0 "empty len")
-          (assert-i64-eq (deque_i64.capacity (& empty)) 2 "empty capacity")
-          (assert-true (deque_i64.is-empty? (& empty)) "empty predicate")
-          (assert-i64-eq
+          (test.assert-i64-eq (deque_i64.len (& empty)) 0 "empty len")
+          (test.assert-i64-eq (deque_i64.capacity (& empty)) 2 "empty capacity")
+          (test.assert-true (deque_i64.is-empty? (& empty)) "empty predicate")
+          (test.assert-i64-eq
             (deque_i64.peek-front (& empty) -1)
             -1
             "empty front fallback")
-          (assert-i64-eq
+          (test.assert-i64-eq
             (deque_i64.peek-back (& empty) -1)
             -1
             "empty back fallback")
-          (assert-i64-eq (deque_i64.get (& empty) 0 -1) -1 "empty get fallback")
+          (test.assert-i64-eq
+            (deque_i64.get (& empty) 0 -1)
+            -1
+            "empty get fallback")
           (let
             [zero-cap : deque_i64.Deque (deque_i64.with-capacity 0)]
-            (assert-i64-eq
+            (test.assert-i64-eq
               (deque_i64.capacity (& zero-cap))
               1
               "zero capacity clamps"))))
@@ -266,29 +269,36 @@
           (deque_i64.push-back! q 10)
           (deque_i64.push-back! q 20)
           (deque_i64.push-back! q 30)
-          (assert-i64-eq (deque_i64.len (& q)) 3 "three pushes len")
-          (assert-i64-eq
+          (test.assert-i64-eq (deque_i64.len (& q)) 3 "three pushes len")
+          (test.assert-i64-eq
             (deque_i64.peek-front (& q) -1)
             10
             "front after pushes")
-          (assert-i64-eq (deque_i64.peek-back (& q) -1) 30 "back after pushes")
-          (assert-i64-eq (deque_i64.get (& q) 1 -1) 20 "middle read")
-          (assert-i64-eq (deque_i64.get (& q) -1 -1) -1 "negative fallback")
-          (assert-i64-eq (deque_i64.get (& q) 3 -1) -1 "at-len fallback")
+          (test.assert-i64-eq
+            (deque_i64.peek-back (& q) -1)
+            30
+            "back after pushes")
+          (test.assert-i64-eq (deque_i64.get (& q) 1 -1) 20 "middle read")
+          (test.assert-i64-eq
+            (deque_i64.get (& q) -1 -1)
+            -1
+            "negative fallback")
+          (test.assert-i64-eq (deque_i64.get (& q) 3 -1) -1 "at-len fallback")
           (match (deque_i64.pop-front! q)
             [(deque_i64.Pop.Ok value)
               (begin
-                (assert-i64-eq value 10 "pop-front value")
-                (assert-i64-eq
+                (test.assert-i64-eq value 10 "pop-front value")
+                (test.assert-i64-eq
                   (deque_i64.peek-front (& q) -1)
                   20
                   "front advances"))]
-            [deque_i64.Pop.Empty (assert-true false "pop-front should succeed")])
+            [deque_i64.Pop.Empty
+              (test.assert-true false "pop-front should succeed")])
           (match (deque_i64.pop-front! q)
             [(deque_i64.Pop.Ok value)
-              (assert-i64-eq value 20 "second pop-front value")]
+              (test.assert-i64-eq value 20 "second pop-front value")]
             [deque_i64.Pop.Empty
-              (assert-true false "second pop-front should succeed")])))
+              (test.assert-true false "second pop-front should succeed")])))
       (let
         [wrapped : deque_i64.Deque (deque_i64.with-capacity 3)]
         (begin
@@ -296,45 +306,65 @@
           (deque_i64.push-back! wrapped 2)
           (deque_i64.push-back! wrapped 3)
           (match (deque_i64.pop-front! wrapped)
-            [(deque_i64.Pop.Ok value) (assert-i64-eq value 1 "wrap seed pop")]
+            [(deque_i64.Pop.Ok value)
+              (test.assert-i64-eq value 1 "wrap seed pop")]
             [deque_i64.Pop.Empty
-              (assert-true false "wrap seed pop should succeed")])
+              (test.assert-true false "wrap seed pop should succeed")])
           (deque_i64.push-back! wrapped 4)
           (deque_i64.push-back! wrapped 5)
-          (assert-i64-eq
+          (test.assert-i64-eq
             (deque_i64.capacity (& wrapped))
             6
             "wrapped growth capacity")
-          (assert-i64-eq (deque_i64.len (& wrapped)) 4 "wrapped growth len")
-          (assert-i64-eq (deque_i64.get (& wrapped) 0 -1) 2 "wrapped get 0")
-          (assert-i64-eq (deque_i64.get (& wrapped) 1 -1) 3 "wrapped get 1")
-          (assert-i64-eq (deque_i64.get (& wrapped) 2 -1) 4 "wrapped get 2")
-          (assert-i64-eq (deque_i64.get (& wrapped) 3 -1) 5 "wrapped get 3")
-          (assert-i64-eq
+          (test.assert-i64-eq
+            (deque_i64.len (& wrapped))
+            4
+            "wrapped growth len")
+          (test.assert-i64-eq
+            (deque_i64.get (& wrapped) 0 -1)
+            2
+            "wrapped get 0")
+          (test.assert-i64-eq
+            (deque_i64.get (& wrapped) 1 -1)
+            3
+            "wrapped get 1")
+          (test.assert-i64-eq
+            (deque_i64.get (& wrapped) 2 -1)
+            4
+            "wrapped get 2")
+          (test.assert-i64-eq
+            (deque_i64.get (& wrapped) 3 -1)
+            5
+            "wrapped get 3")
+          (test.assert-i64-eq
             (deque_i64.peek-front (& wrapped) -1)
             2
             "wrapped front")
-          (assert-i64-eq (deque_i64.peek-back (& wrapped) -1) 5 "wrapped back")))
+          (test.assert-i64-eq
+            (deque_i64.peek-back (& wrapped) -1)
+            5
+            "wrapped back")))
       (let
         [dq : deque_i64.Deque (deque_i64.with-capacity 2)]
         (begin
           (deque_i64.push-back! dq 20)
           (deque_i64.push-front! dq 10)
-          (assert-i64-eq (deque_i64.get (& dq) 0 -1) 10 "push-front get 0")
-          (assert-i64-eq (deque_i64.get (& dq) 1 -1) 20 "push-front get 1")
+          (test.assert-i64-eq (deque_i64.get (& dq) 0 -1) 10 "push-front get 0")
+          (test.assert-i64-eq (deque_i64.get (& dq) 1 -1) 20 "push-front get 1")
           (match (deque_i64.pop-back! dq)
             [(deque_i64.Pop.Ok back-value)
-              (assert-i64-eq back-value 20 "pop-back value")]
-            [deque_i64.Pop.Empty (assert-true false "pop-back should succeed")])
+              (test.assert-i64-eq back-value 20 "pop-back value")]
+            [deque_i64.Pop.Empty
+              (test.assert-true false "pop-back should succeed")])
           (match (deque_i64.pop-front! dq)
             [(deque_i64.Pop.Ok front-value)
-              (assert-i64-eq front-value 10 "final pop-front value")]
+              (test.assert-i64-eq front-value 10 "final pop-front value")]
             [deque_i64.Pop.Empty
-              (assert-true false "final pop-front should succeed")])
-          (assert-true (deque_i64.is-empty? (& dq)) "drained deque empty")
+              (test.assert-true false "final pop-front should succeed")])
+          (test.assert-true (deque_i64.is-empty? (& dq)) "drained deque empty")
           (deque_i64.push-back! dq 99)
-          (assert-i64-eq (deque_i64.len (& dq)) 1 "reuse after drain len")
-          (assert-i64-eq
+          (test.assert-i64-eq (deque_i64.len (& dq)) 1 "reuse after drain len")
+          (test.assert-i64-eq
             (deque_i64.peek-front (& dq) -1)
             99
             "reuse after drain value")))
@@ -342,43 +372,49 @@
         [mut : deque_i64.Deque (deque_i64.with-capacity 1)]
         (begin
           (deque_i64.push-back! mut 1)
-          (assert-i64-eq (deque_i64.len (& mut)) 1 "mutable push len")
-          (assert-i64-eq (deque_i64.capacity (& mut)) 1 "mutable push capacity")
+          (test.assert-i64-eq (deque_i64.len (& mut)) 1 "mutable push len")
+          (test.assert-i64-eq
+            (deque_i64.capacity (& mut))
+            1
+            "mutable push capacity")
           (deque_i64.push-front! mut 0)
-          (assert-i64-eq (deque_i64.len (& mut)) 2 "mutable growth len")
-          (assert-i64-eq
+          (test.assert-i64-eq (deque_i64.len (& mut)) 2 "mutable growth len")
+          (test.assert-i64-eq
             (deque_i64.capacity (& mut))
             2
             "mutable growth capacity")
-          (assert-i64-eq (deque_i64.get (& mut) 0 -1) 0 "mutable get front")
-          (assert-i64-eq (deque_i64.get (& mut) 1 -1) 1 "mutable get back")
+          (test.assert-i64-eq
+            (deque_i64.get (& mut) 0 -1)
+            0
+            "mutable get front")
+          (test.assert-i64-eq (deque_i64.get (& mut) 1 -1) 1 "mutable get back")
           (match (deque_i64.pop-back! mut)
             [(deque_i64.Pop.Ok back-value)
-              (assert-i64-eq back-value 1 "mutable pop-back value")]
+              (test.assert-i64-eq back-value 1 "mutable pop-back value")]
             [deque_i64.Pop.Empty
-              (assert-true false "mutable pop-back should succeed")])
-          (assert-i64-eq (deque_i64.len (& mut)) 1 "mutable pop-back len")
-          (assert-i64-eq
+              (test.assert-true false "mutable pop-back should succeed")])
+          (test.assert-i64-eq (deque_i64.len (& mut)) 1 "mutable pop-back len")
+          (test.assert-i64-eq
             (deque_i64.peek-front (& mut) -1)
             0
             "mutable pop-back leaves front")
           (deque_i64.push-back! mut 2)
           (match (deque_i64.pop-front! mut)
             [(deque_i64.Pop.Ok front-value)
-              (assert-i64-eq front-value 0 "mutable pop-front value")]
+              (test.assert-i64-eq front-value 0 "mutable pop-front value")]
             [deque_i64.Pop.Empty
-              (assert-true false "mutable pop-front should succeed")])
-          (assert-i64-eq (deque_i64.len (& mut)) 1 "mutable pop-front len")
-          (assert-i64-eq
+              (test.assert-true false "mutable pop-front should succeed")])
+          (test.assert-i64-eq (deque_i64.len (& mut)) 1 "mutable pop-front len")
+          (test.assert-i64-eq
             (deque_i64.peek-front (& mut) -1)
             2
             "mutable pop-front leaves next")
           (deque-test-push-through-duplicate-import (&mut mut) 7)
-          (assert-i64-eq
+          (test.assert-i64-eq
             (deque-test-len-through-duplicate-import (& mut))
             2
             "duplicate deque import shares type")
-          (assert-i64-eq
+          (test.assert-i64-eq
             (deque_i64_again.peek-back (& mut) -1)
             7
             "duplicate deque import shares operations")))
@@ -389,8 +425,8 @@
           (match (deque_i64.pop-front! front-empty)
             [deque_i64.Pop.Empty unit]
             [(deque_i64.Pop.Ok _)
-              (assert-true false "empty pop-front should be empty")])
+              (test.assert-true false "empty pop-front should be empty")])
           (match (deque_i64.pop-back! back-empty)
             [deque_i64.Pop.Empty unit]
             [(deque_i64.Pop.Ok _)
-              (assert-true false "empty pop-back should be empty")]))))))
+              (test.assert-true false "empty pop-back should be empty")]))))))

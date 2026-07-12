@@ -6496,6 +6496,16 @@ every element zero-initialized per section 5.12.1, and `array-ref` /
     0))  ; prints hello + newline, returns 0
 ```
 
+`io.print-format` and `io.println` are format-backed macros. Their first argument
+is a Rust-style literal template using `{}` placeholders and `{{` / `}}`
+escapes; `print-format` writes exactly the formatted text and `println` performs
+one additional newline write. The explicit compatibility-preserving
+`print-format` name leaves the historical newline-writing integer
+`(io.print value)` function unchanged. `print-string`, `print-str`,
+`print-newline`, `print-error`, `print-bool`, `print-char`, and `print-float`
+retain their existing behavior, as do the low-level borrowed `stdout-write` and
+`stderr-write` helpers.
+
 ### Extern call
 
 ```lisp test=run name=extern-tl-alloc exit=0 stdout=""

@@ -575,7 +575,7 @@
           (module ,module-name))])))
 
 ;; Inline test coverage.
-(cfg test (import "test.tl"))
+(cfg test (import stdlib.test))
 (cfg test (import (set String) as strset))
 (cfg test (import (set i64) as i64set))
 (cfg test (import (set i64) as i64set_again))
@@ -602,48 +602,48 @@
         (begin
           (strset.insert! s "alpha")
           (strset.insert! s "alpha")
-          (assert-i64-eq
+          (test.assert-i64-eq
             (strset.len (& s))
             1
             "duplicate String insert is idempotent")
-          (assert-true
+          (test.assert-true
             (strset.contains-borrowed? (& s) (& borrowed-key))
             "borrowed String contains finds owned key")
           (strset.insert! s "a")
           (strset.insert! s "e")
-          (assert-true
+          (test.assert-true
             (strset.contains? (& s) "e")
             "String collision chain lookup")
           (strset.remove! s "a")
-          (assert-false
+          (test.assert-false
             (strset.contains? (& s) "a")
             "String remove tombstones key")
-          (assert-true
+          (test.assert-true
             (strset.contains? (& s) "e")
             "String tombstone preserves later collision")
           (strset.insert! s "i")
-          (assert-true
+          (test.assert-true
             (strset.contains? (& s) "i")
             "String insert reuses tombstone slot")
           (strset.remove-borrowed! s (& borrowed-key))
-          (assert-false
+          (test.assert-false
             (strset.contains-borrowed? (& s) (& borrowed-key))
             "borrowed String remove removes key")
           (let
             [len-before-missing : i64 (strset.len (& s))]
             (begin
               (strset.remove! s "missing")
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (strset.len (& s))
                 len-before-missing
                 "missing String remove is no-op")))
           (strset.insert! s "one")
           (strset.insert! s "two")
           (strset.insert! s "three")
-          (assert-true
+          (test.assert-true
             (> (strset.capacity (& s)) 4)
             "String set grows and rehashes")
-          (assert-true
+          (test.assert-true
             (strset.contains? (& s) "e")
             "String set keeps old key after resize")
           (let
@@ -660,14 +660,14 @@
                       unit
                       (set! iter-monotonic false))
                     (set! iter-index next))))
-              (assert-i64-eq
+              (test.assert-i64-eq
                 iter-count
                 (strset.len (& s))
                 "String set iteration visits every key")
-              (assert-true
+              (test.assert-true
                 iter-monotonic
                 "String set iteration is ascending bucket order")))
-          (assert-true
+          (test.assert-true
             (>
               (set-test-string-entry-len-or
                 (strset.entry-at (& s) (strset.next-occupied (& s) 0))
@@ -690,18 +690,22 @@
           (i64set.insert! s 1)
           (i64set.insert! s 5)
           (i64set.insert! s 1)
-          (assert-i64-eq
+          (test.assert-i64-eq
             (i64set.len (& s))
             2
             "duplicate i64 insert is idempotent")
-          (assert-true (i64set.contains? (& s) 5) "i64 collision lookup")
+          (test.assert-true (i64set.contains? (& s) 5) "i64 collision lookup")
           (i64set.remove! s 1)
-          (assert-false (i64set.contains? (& s) 1) "i64 remove tombstones key")
-          (assert-true
+          (test.assert-false
+            (i64set.contains? (& s) 1)
+            "i64 remove tombstones key")
+          (test.assert-true
             (i64set.contains? (& s) 5)
             "i64 tombstone preserves later collision")
           (i64set.insert! s 9)
-          (assert-true (i64set.contains? (& s) 9) "i64 tombstone slot reused")
+          (test.assert-true
+            (i64set.contains? (& s) 9)
+            "i64 tombstone slot reused")
           (let
             [len-before-missing : i64 (i64set.len (& s))]
             [sum-before-growth : i64 0]
@@ -716,18 +720,18 @@
                       (i64set.entry-key-or (i64set.entry-at (& s) sum-index) 0)))
                   (set! sum-index (i64set.next-occupied (& s) (+ sum-index 1)))))
               (i64set.remove! s 999)
-              (assert-i64-eq
+              (test.assert-i64-eq
                 (i64set.len (& s))
                 len-before-missing
                 "missing i64 remove is no-op")
-              (assert-i64-eq
+              (test.assert-i64-eq
                 sum-before-growth
                 14
                 "i64 set iteration exposes live keys")))
           (i64set.insert! s 10)
           (i64set.insert! s 11)
           (i64set.insert! s 12)
-          (assert-true
+          (test.assert-true
             (> (i64set.capacity (& s)) 4)
             "i64 set grows and rehashes")
           (let
@@ -740,11 +744,11 @@
                   (set!
                     iter-index
                     (i64set.next-occupied (& s) (+ iter-index 1)))))
-              (assert-i64-eq
+              (test.assert-i64-eq
                 iter-count
                 (i64set.len (& s))
                 "i64 set iteration visits every key")))
-          (assert-i64-eq
+          (test.assert-i64-eq
             (i64set_again.len (& s))
             (i64set.len (& s))
             "duplicate set macro requests share the generated type")

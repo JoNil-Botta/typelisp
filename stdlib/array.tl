@@ -5,7 +5,7 @@
 ;# enables these helpers by default and expands them to private compiler
 ;# intrinsics.
 ;#
-;# Usage: `(import "stdlib/array.tl")`
+;# Usage: `(import stdlib.array)`
 (import stdlib.comptime)
 
 ;: Allocate a dynamic array with `count` live elements initialized under ZII.

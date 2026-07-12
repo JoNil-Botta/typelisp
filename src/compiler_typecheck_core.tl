@@ -18935,6 +18935,7 @@
       (ResultTcType.Err "String value is compile-time only")]
     [(CompilerCtfeValue.Unit) (ResultTcType.Ok (AstType.Unit))]
     [(CompilerCtfeValue.Expr _ _) (ResultTcType.Ok (AstType.Expr))]
+    [(CompilerCtfeValue.CapturedExpr _ _ _) (ResultTcType.Ok (AstType.Expr))]
     [(CompilerCtfeValue.Type ty)
       (ResultTcType.Err
         (string.append
@@ -18943,9 +18944,15 @@
             (tc-type-render (tc-resolve-type ctx ty))
             " is compile-time only")))]
     [(CompilerCtfeValue.ExprList _) (ResultTcType.Ok (AstType.ExprList))]
+    [(CompilerCtfeValue.CapturedExprList _ _)
+      (ResultTcType.Ok (AstType.ExprList))]
     [(CompilerCtfeValue.ExprClause _)
       (ResultTcType.Ok (tc-macro-expr-clause-type))]
+    [(CompilerCtfeValue.CapturedExprClause _ _)
+      (ResultTcType.Ok (tc-macro-expr-clause-type))]
     [(CompilerCtfeValue.ExprClauseList _)
+      (ResultTcType.Ok (tc-macro-expr-clause-list-type))]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _)
       (ResultTcType.Ok (tc-macro-expr-clause-list-type))]
     [(CompilerCtfeValue.ExprBindingClause _)
       (ResultTcType.Ok (tc-macro-expr-binding-clause-type))]
@@ -52770,6 +52777,34 @@
       (ctfe-untyped-expr-type))
     resolved-expected))
 
+;; Concrete variadic operands are checked before their transformer runs. That
+;; check can advance the active caller pool beyond the definition pool held by
+;; the CTFE environment. Preserve the newer pool on the bound syntax list so
+;; CTFE constructors do not allocate over the checked operands.
+(define (macro-captured-syntax-pools [env : CtfeEnv]) : CtfeMaybeSyntaxPools
+  (let
+    [definition-pools : AstNodePoolContext (ctfe-env-pools env)]
+    [caller-pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    (if (>
+      (ast-node-pool-context-expr-len caller-pools)
+      (ast-node-pool-context-expr-len definition-pools))
+      (CtfeMaybeSyntaxPools.Some caller-pools)
+      (CtfeMaybeSyntaxPools.None))))
+
+(define (macro-captured-expr-list-value [env : CtfeEnv] [args : AstExprList]) : CompilerCtfeValue
+  (match (macro-captured-syntax-pools env)
+    [(CtfeMaybeSyntaxPools.Some pools)
+      (CompilerCtfeValue.CapturedExprList args pools)]
+    [(CtfeMaybeSyntaxPools.None) (CompilerCtfeValue.ExprList args)]))
+
+(define (macro-captured-expr-clause-list-value
+  [env : CtfeEnv]
+  [clauses : AstExprClauseList]) : CompilerCtfeValue
+  (match (macro-captured-syntax-pools env)
+    [(CtfeMaybeSyntaxPools.Some pools)
+      (CompilerCtfeValue.CapturedExprClauseList clauses pools)]
+    [(CtfeMaybeSyntaxPools.None) (CompilerCtfeValue.ExprClauseList clauses)]))
+
 (define (macro-bind-variadic-param
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -52798,7 +52833,7 @@
             (ctfe-env-extend
               env
               (intern-str name)
-              (CompilerCtfeValue.ExprClauseList clauses)))]
+              (macro-captured-expr-clause-list-value env clauses)))]
         [(ResultMacroClauseList.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-binding-clause? ctx fallback-module ty)
       (match (macro-expr-binding-clause-list-from-args args)
@@ -52821,7 +52856,7 @@
             (ctfe-env-extend
               env
               (intern-str name)
-              (CompilerCtfeValue.ExprList args)))]
+              (macro-captured-expr-list-value env args)))]
         [(ResultMacroCheck.Err diag) (ResultMacroEnv.Err diag)])]))
 
 ;; A direct caller string literal is the one `Expr` shape that public macro
@@ -54335,6 +54370,33 @@
                         macro-name
                         definition-module)
                       (+ depth 1))))
+                (ResultMacroExpr.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      call-expr
+                      "typecheck: macro expansion produced type does not match declaration"))))]
+            [(CompilerCtfeValue.CapturedExpr expanded produced pools)
+              (if (tc-macro-produced-type-compatible? ctx ret produced)
+                (begin
+                  ;; CTFE built this syntax beside the checked caller operands.
+                  ;; Install that pool only after evaluating the transformer
+                  ;; body, then continue through the ordinary hygiene and
+                  ;; recursive-expansion path.
+                  (tc-install-pools! pools)
+                  (tc-context-capture-active-pools! ctx)
+                  (macro-expand-expr
+                    ctx
+                    type-env
+                    decls
+                    (+ depth 1)
+                    (ast-node-get
+                      (macro-hygiene-expr
+                        (ast-node-get expanded)
+                        MacroHygieneEnv.Nil
+                        (macro-hygiene-context-macro-name
+                          macro-name
+                          definition-module)
+                        (+ depth 1)))))
                 (ResultMacroExpr.Err
                   (box
                     (ctfe-diagnostic-at-expr

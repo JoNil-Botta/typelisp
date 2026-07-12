@@ -355,9 +355,16 @@
   ;; A user-facing `Expr` code fragment plus its internally checked produced
   ;; type. The type is not part of the source-level Expr type.
   (Expr i64 AstType)
+  ;; Macro arguments can reside in a newer caller pool than the transformer's
+  ;; definition body. Keep that ownership with syntax selected from a captured
+  ;; variadic argument so CTFE builders never overwrite the caller's nodes.
+  (CapturedExpr i64 AstType AstNodePoolContext)
   (ExprList AstExprList)
+  (CapturedExprList AstExprList AstNodePoolContext)
   (ExprClause AstExprClause)
+  (CapturedExprClause AstExprClause AstNodePoolContext)
   (ExprClauseList AstExprClauseList)
+  (CapturedExprClauseList AstExprClauseList AstNodePoolContext)
   (ExprBindingClause AstExprBindingClause)
   (ExprBindingClauseList AstExprBindingClauseList)
   (Pattern AstPattern)
@@ -434,6 +441,10 @@
 (defenum CtfeValueList
   (Nil)
   (Cons CompilerCtfeValue (Box CtfeValueList)))
+
+(defenum CtfeMaybeSyntaxPools
+  (None)
+  (Some AstNodePoolContext))
 
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
@@ -750,6 +761,49 @@
     [(CtfeEnv.Nil pools _ _) pools]
     [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-pools (box-get rest))]
     [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-pools (box-get rest))]))
+
+(define (ctfe-value-syntax-pools [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
+  (match value
+    [(CompilerCtfeValue.CapturedExpr _ _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [(CompilerCtfeValue.CapturedExprList _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [(CompilerCtfeValue.CapturedExprClause _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [(CompilerCtfeValue.CapturedExprClauseList _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [_ (CtfeMaybeSyntaxPools.None)]))
+
+;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
+;; selected from a variadic caller argument may belong to a newer pool. Scan
+;; the bindings for that pool and use it exclusively for newly constructed
+;; syntax so generated nodes and captured children always share ownership.
+(define (ctfe-env-syntax-pools [env : CtfeEnv]) : CtfeMaybeSyntaxPools
+  (match env
+    [(CtfeEnv.Nil _ _ _) (CtfeMaybeSyntaxPools.None)]
+    [(CtfeEnv.Cons _ value _ rest)
+      (match (ctfe-value-syntax-pools value)
+        [(CtfeMaybeSyntaxPools.Some pools) (CtfeMaybeSyntaxPools.Some pools)]
+        [(CtfeMaybeSyntaxPools.None) (ctfe-env-syntax-pools (box-get rest))])]
+    [(CtfeEnv.LocalCons _ value _ rest)
+      (match (ctfe-value-syntax-pools (box-get value))
+        [(CtfeMaybeSyntaxPools.Some pools) (CtfeMaybeSyntaxPools.Some pools)]
+        [(CtfeMaybeSyntaxPools.None) (ctfe-env-syntax-pools (box-get rest))])]))
+
+(define (ctfe-syntax-ast-push [env : CtfeEnv] [node : AstExpr]) : i64
+  (match (ctfe-env-syntax-pools env)
+    [(CtfeMaybeSyntaxPools.Some pools)
+      (ast-node-pool-context-expr-push pools node)]
+    [(CtfeMaybeSyntaxPools.None) (ctfe-ast-push env node)]))
+
+(define (ctfe-syntax-expr-value [env : CtfeEnv] [node : i64] [ty : AstType]) : CompilerCtfeValue
+  (match (ctfe-env-syntax-pools env)
+    [(CtfeMaybeSyntaxPools.Some pools)
+      (CompilerCtfeValue.CapturedExpr node ty pools)]
+    [(CtfeMaybeSyntaxPools.None) (CompilerCtfeValue.Expr node ty)]))
+
+(define (ctfe-syntax-expr-push [env : CtfeEnv] [node : AstExpr] [ty : AstType]) : CompilerCtfeValue
+  (ctfe-syntax-expr-value env (ctfe-syntax-ast-push env node) ty))
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : AstNodePoolContext]) : CtfeEnv
   (match env
@@ -1484,9 +1538,13 @@
     [(CompilerCtfeValue.Unit) "unit"]
     [(CompilerCtfeValue.Type _) "type"]
     [(CompilerCtfeValue.Expr _ _) "Expr"]
+    [(CompilerCtfeValue.CapturedExpr _ _ _) "Expr"]
     [(CompilerCtfeValue.ExprList _) "expr-list"]
+    [(CompilerCtfeValue.CapturedExprList _ _) "expr-list"]
     [(CompilerCtfeValue.ExprClause _) "ExprClause"]
+    [(CompilerCtfeValue.CapturedExprClause _ _) "ExprClause"]
     [(CompilerCtfeValue.ExprClauseList _) "ExprClauseList"]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _) "ExprClauseList"]
     [(CompilerCtfeValue.ExprBindingClause _) "ExprBindingClause"]
     [(CompilerCtfeValue.ExprBindingClauseList _) "ExprBindingClauseList"]
     [(CompilerCtfeValue.Pattern _) "Pattern"]
@@ -1911,6 +1969,8 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CompilerCtfeValue.CapturedExpr _ _ _)
+      (ctfe-eval-bin-comptime-metadata "Expr" expr)]
     [(CompilerCtfeValue.ExprList a)
       (match rv
         [(CompilerCtfeValue.ExprList b)
@@ -1936,6 +1996,8 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CompilerCtfeValue.CapturedExprList _ _)
+      (ctfe-eval-bin-comptime-metadata "ExprList" expr)]
     [(CompilerCtfeValue.ExprClause a)
       (match rv
         [(CompilerCtfeValue.ExprClause b)
@@ -1961,6 +2023,8 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CompilerCtfeValue.CapturedExprClause _ _)
+      (ctfe-eval-bin-comptime-metadata "ExprClause" expr)]
     [(CompilerCtfeValue.ExprClauseList a)
       (match rv
         [(CompilerCtfeValue.ExprClauseList b)
@@ -1987,6 +2051,8 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _)
+      (ctfe-eval-bin-comptime-metadata "ExprClauseList" expr)]
     [(CompilerCtfeValue.ExprBindingClause a)
       (match rv
         [(CompilerCtfeValue.ExprBindingClause b)
@@ -4431,8 +4497,9 @@
           (match value
             [(CompilerCtfeValue.Bool b)
               (ResultCtfe.Ok
-                (CompilerCtfeValue.Expr
-                  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool b)))
+                (ctfe-syntax-expr-push
+                  env
+                  (AstExpr.Literal (AstLiteral.Bool b))
                   (AstType.Bool))
                 arg-fuel)]
             [_
@@ -4455,6 +4522,10 @@
           (match value
             [(CompilerCtfeValue.Expr node ty)
               (ResultCtfe.Ok (CompilerCtfeValue.Expr node ty) arg-fuel)]
+            [(CompilerCtfeValue.CapturedExpr node ty pools)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.CapturedExpr node ty pools)
+                arg-fuel)]
             [_
               (ResultCtfe.Err
                 (box (ctfe-diagnostic-at-expr expr "expr-splice expects Expr")))])]
@@ -4478,8 +4549,9 @@
           (match value
             [(CompilerCtfeValue.I64 n)
               (ResultCtfe.Ok
-                (CompilerCtfeValue.Expr
-                  (ctfe-ast-push env (AstExpr.Literal (ast-lit-int n)))
+                (ctfe-syntax-expr-push
+                  env
+                  (AstExpr.Literal (ast-lit-int n))
                   (AstType.I64))
                 arg-fuel)]
             [_
@@ -4503,8 +4575,9 @@
           (match value
             [(CompilerCtfeValue.String text)
               (ResultCtfe.Ok
-                (CompilerCtfeValue.Expr
-                  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String text)))
+                (ctfe-syntax-expr-push
+                  env
+                  (AstExpr.Literal (AstLiteral.String text))
                   (AstType.String))
                 arg-fuel)]
             [_
@@ -4575,8 +4648,9 @@
           (match value
             [(CompilerCtfeValue.String name)
               (ResultCtfe.Ok
-                (CompilerCtfeValue.Expr
-                  (ctfe-ast-push env (AstExpr.Var (intern name)))
+                (ctfe-syntax-expr-push
+                  env
+                  (AstExpr.Var (intern name))
                   (ctfe-untyped-expr-type))
                 arg-fuel)]
             [_
@@ -5195,7 +5269,15 @@
               (ResultCtfe.Ok
                 (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
                 arg-fuel)]
+            [(CompilerCtfeValue.CapturedExprList nodes _)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
+                arg-fuel)]
             [(CompilerCtfeValue.ExprClauseList clauses)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
+                arg-fuel)]
+            [(CompilerCtfeValue.CapturedExprClauseList clauses _)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
                 arg-fuel)]
@@ -5285,7 +5367,7 @@
     then-ty
     (ctfe-untyped-expr-type)))
 
-(define (ctfe-eval-expr-if-call
+(define (ctfe-eval-expr-if-call-plain
   [args : AstExprList]
   [expr : AstExpr]
   [env : CtfeEnv]
@@ -5357,6 +5439,98 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))))
+
+;; A captured variadic macro argument retains its caller pool. The iterative
+;; core builders construct every participating Expr in that same pool, so an
+;; `expr-if` can link the nodes without touching the transformer's older body
+;; pool. Ordinary CTFE stays on the established plain implementation above.
+(define (ctfe-eval-expr-if-call-captured
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 3)
+    (let
+      [cond-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [then-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      [else-arg : AstExpr (ctfe-expr-arg args 2 env)]
+      (match (compiler-ctfe-eval cond-arg env fuel)
+        [(ResultCtfe.Ok cond-val cond-fuel)
+          (match cond-val
+            [(CompilerCtfeValue.CapturedExpr cond-node cond-ty pools)
+              (if (ctfe-expr-if-condition-type-ok? env cond-ty)
+                (match (compiler-ctfe-eval then-arg env cond-fuel)
+                  [(ResultCtfe.Ok then-val then-fuel)
+                    (match then-val
+                      [(CompilerCtfeValue.CapturedExpr then-node then-ty _)
+                        (match (compiler-ctfe-eval else-arg env then-fuel)
+                          [(ResultCtfe.Ok else-val else-fuel)
+                            (match else-val
+                              [(CompilerCtfeValue.CapturedExpr
+                                  else-node
+                                  else-ty
+                                  _)
+                                (if (ctfe-expr-if-branch-types-compatible?
+                                  env
+                                  then-ty
+                                  else-ty)
+                                  (ResultCtfe.Ok
+                                    (CompilerCtfeValue.CapturedExpr
+                                      (ast-expr-if-with-pools
+                                        pools
+                                        cond-node
+                                        then-node
+                                        else-node)
+                                      (ctfe-expr-if-result-type
+                                        env
+                                        then-ty
+                                        else-ty)
+                                      pools)
+                                    else-fuel)
+                                  (ResultCtfe.Err
+                                    (box
+                                      (ctfe-diagnostic-at-expr
+                                        expr
+                                        "expr-if branch types must match"))))]
+                              [_
+                                (ResultCtfe.Err
+                                  (box
+                                    (ctfe-diagnostic-at-expr
+                                      expr
+                                      "expr-if else branch expects Expr")))])]
+                          [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+                      [_
+                        (ResultCtfe.Err
+                          (box
+                            (ctfe-diagnostic-at-expr
+                              expr
+                              "expr-if then branch expects Expr")))])]
+                  [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])
+                (ResultCtfe.Err
+                  (box
+                    (ctfe-diagnostic-at-expr
+                      expr
+                      "expr-if condition must produce bool"))))]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-if condition expects Expr")))])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box (ctfe-diagnostic-at-expr expr "expr-if expects exactly three args")))))
+
+(define (ctfe-eval-expr-if-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match (ctfe-env-syntax-pools env)
+    [(CtfeMaybeSyntaxPools.Some _)
+      (ctfe-eval-expr-if-call-captured args expr env fuel)]
+    [(CtfeMaybeSyntaxPools.None)
+      (ctfe-eval-expr-if-call-plain args expr env fuel)]))
 
 (define (ctfe-eval-pattern-wildcard-call
   [args : AstExprList]
@@ -6343,6 +6517,15 @@
             (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
             fuel)]
         [else (ctfe-comptime-field-error field expr)])]
+    [(CompilerCtfeValue.CapturedExprList nodes pools)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (ResultCtfe.Ok (CompilerCtfeValue.CapturedExprList nodes pools) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-expr-list-length nodes))
+            fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
     [(CompilerCtfeValue.ExprClause clause)
       (cond
         [(ctfe-comptime-field-name? field "first")
@@ -6358,10 +6541,38 @@
               (ctfe-untyped-expr-type))
             fuel)]
         [else (ctfe-comptime-field-error field expr)])]
+    [(CompilerCtfeValue.CapturedExprClause clause pools)
+      (cond
+        [(ctfe-comptime-field-name? field "first")
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.CapturedExpr
+              (ctfe-expr-clause-first clause)
+              (ctfe-untyped-expr-type)
+              pools)
+            fuel)]
+        [(ctfe-comptime-field-name? field "second")
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.CapturedExpr
+              (ctfe-expr-clause-second clause)
+              (ctfe-untyped-expr-type)
+              pools)
+            fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
     [(CompilerCtfeValue.ExprClauseList clauses)
       (cond
         [(ctfe-comptime-field-name? field "items")
           (ResultCtfe.Ok (CompilerCtfeValue.ExprClauseList clauses) fuel)]
+        [(ctfe-comptime-field-name? field "len")
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
+            fuel)]
+        [else (ctfe-comptime-field-error field expr)])]
+    [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
+      (cond
+        [(ctfe-comptime-field-name? field "items")
+          (ResultCtfe.Ok
+            (CompilerCtfeValue.CapturedExprClauseList clauses pools)
+            fuel)]
         [(ctfe-comptime-field-name? field "len")
           (ResultCtfe.Ok
             (CompilerCtfeValue.I64 (ctfe-expr-clause-list-length clauses))
@@ -6526,12 +6737,29 @@
             (ctfe-expr-list-nth nodes index)
             (ctfe-untyped-expr-type))
           fuel))]
+    [(CompilerCtfeValue.CapturedExprList nodes pools)
+      (if (or (< index 0) (>= index (ctfe-expr-list-length nodes)))
+        (ctfe-comptime-array-index-error expr)
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.CapturedExpr
+            (ctfe-expr-list-nth nodes index)
+            (ctfe-untyped-expr-type)
+            pools)
+          fuel))]
     [(CompilerCtfeValue.ExprClauseList clauses)
       (if (or (< index 0) (>= index (ctfe-expr-clause-list-length clauses)))
         (ctfe-comptime-array-index-error expr)
         (ResultCtfe.Ok
           (CompilerCtfeValue.ExprClause
             (ctfe-expr-clause-list-nth clauses index))
+          fuel))]
+    [(CompilerCtfeValue.CapturedExprClauseList clauses pools)
+      (if (or (< index 0) (>= index (ctfe-expr-clause-list-length clauses)))
+        (ctfe-comptime-array-index-error expr)
+        (ResultCtfe.Ok
+          (CompilerCtfeValue.CapturedExprClause
+            (ctfe-expr-clause-list-nth clauses index)
+            pools)
           fuel))]
     [(CompilerCtfeValue.ExprBindingClauseList clauses)
       (if (or
@@ -6986,6 +7214,13 @@
         (match value
           [(CompilerCtfeValue.Expr node ty)
             (ctfe-match-expr-variant variant args node ty env)]
+          [(CompilerCtfeValue.CapturedExpr node ty pools)
+            (ctfe-match-expr-variant
+              variant
+              args
+              node
+              ty
+              (ctfe-env-rebase-pools env pools))]
           [(CompilerCtfeValue.TypeInfo ty)
             (ctfe-match-type-info-variant variant args ty env)]
           [(CompilerCtfeValue.TypeInfoBox ty)
@@ -7006,6 +7241,21 @@
                   (CompilerCtfeValue.Expr
                     (ctfe-expr-clause-second clause)
                     (ctfe-untyped-expr-type)))
+                env)
+              (CtfePatternMatch.No))]
+          [(CompilerCtfeValue.CapturedExprClause clause pools)
+            (if (ctfe-pattern-variant-name? variant "ExprClause")
+              (ctfe-match-pattern-list
+                args
+                (ctfe-value-list2
+                  (CompilerCtfeValue.CapturedExpr
+                    (ctfe-expr-clause-first clause)
+                    (ctfe-untyped-expr-type)
+                    pools)
+                  (CompilerCtfeValue.CapturedExpr
+                    (ctfe-expr-clause-second clause)
+                    (ctfe-untyped-expr-type)
+                    pools))
                 env)
               (CtfePatternMatch.No))]
           [_ (CtfePatternMatch.No)]))]
@@ -10995,9 +11245,13 @@
     [(CompilerCtfeValue.Unit) (AstLiteral.Unit)]
     [(CompilerCtfeValue.Type _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.Expr _ _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.CapturedExpr _ _ _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.ExprList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.CapturedExprList _ _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.ExprClause _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.CapturedExprClause _ _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.ExprClauseList _) (AstLiteral.Unit)]
+    [(CompilerCtfeValue.CapturedExprClauseList _ _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.ExprBindingClause _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.ExprBindingClauseList _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.Pattern _) (AstLiteral.Unit)]

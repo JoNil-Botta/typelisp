@@ -114,7 +114,7 @@ run_case() {
     : "$expected_terminal_code"   # accepted for call-site compatibility; unused
     # Run the case once. A crash is a real bug, not a flake — do not retry it.
     set +e
-    "$@" > "$out" 2> "$err"
+    "$@" < /dev/null > "$out" 2> "$err"
     code=$?
     set -e
 }
@@ -129,13 +129,14 @@ assemble_link_windows() {
     _label=$4
     _out=$5
     _err=$6
-    if ! clang --target=x86_64-pc-windows-msvc -c "$_asm" -o "$_obj" >> "$_out" 2>> "$_err"; then
+    if ! clang --target=x86_64-pc-windows-msvc -c "$_asm" -o "$_obj" \
+        < /dev/null >> "$_out" 2>> "$_err"; then
         show_stream_if_nonempty stderr "$_err"
         fail "$_label assemble failed"
     fi
     if ! lld-link -NOLOGO "$(cygpath -aw "$_obj")" "-OUT:$(cygpath -aw "$_bin")" \
         -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
-        >> "$_out" 2>> "$_err"; then
+        < /dev/null >> "$_out" 2>> "$_err"; then
         show_stream_if_nonempty stderr "$_err"
         fail "$_label link failed"
     fi
@@ -180,12 +181,12 @@ build_selfhost_checker() {
             sed 's/^/  /' "$err" >&2 || true
             fail "src/main.tl compile failed with exit $code"
         fi
-        if ! as "$asm" -o "$obj" >> "$out" 2>> "$err"; then
+        if ! as "$asm" -o "$obj" < /dev/null >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
             fail "src/main.tl assemble failed"
         fi
         if ! ld "$obj" -o "$CHECK_BIN" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
-            >> "$out" 2>> "$err"; then
+            < /dev/null >> "$out" 2>> "$err"; then
             show_stream_if_nonempty stderr "$err"
             fail "src/main.tl link failed"
         fi
@@ -247,13 +248,13 @@ build_case_program() {
             show_stream_if_nonempty stderr "$build_err"
             fail "$case_id compile failed with exit $code"
         fi
-        if ! as "$asm" -o "$obj" >> "$build_out" 2>> "$build_err"; then
+        if ! as "$asm" -o "$obj" < /dev/null >> "$build_out" 2>> "$build_err"; then
             show_stream_if_nonempty stdout "$build_out"
             show_stream_if_nonempty stderr "$build_err"
             fail "$case_id assemble failed"
         fi
         if ! ld "$obj" -o "$program" -static -e "$(linux_entry_symbol_for_asm "$asm")" \
-            >> "$build_out" 2>> "$build_err"; then
+            < /dev/null >> "$build_out" 2>> "$build_err"; then
             show_stream_if_nonempty stdout "$build_out"
             show_stream_if_nonempty stderr "$build_err"
             fail "$case_id link failed"
@@ -272,12 +273,16 @@ run_program_case() {
     run_case "$out" "$err" "$expected_code" "$program"
 }
 
-build_selfhost_checker
-
 checked=0
-while IFS='|' read -r case_id mode source expected_code stderr_contains; do
+run_manifest_case() {
+    case_id=$1
+    mode=$2
+    source=$3
+    expected_code=$4
+    stderr_contains=$5
+
     case "$case_id" in
-        "" | \#*) continue ;;
+        "" | \#*) return ;;
     esac
     [ -n "$mode" ] || fail "$case_id missing mode"
     [ -n "$source" ] || fail "$case_id missing source"
@@ -319,6 +324,38 @@ while IFS='|' read -r case_id mode source expected_code stderr_contains; do
             fail "$case_id has unknown safety corpus mode: $mode"
             ;;
     esac
-done < "$NORMALIZED_MANIFEST"
+}
+
+# Invoke the callback in this shell so its counters/state remain visible, but
+# replace stdin for the whole callback. This protects the manifest reader from
+# every compiler, build tool, and generated program launched by a case, even if
+# a future call site forgets the explicit run_case redirection.
+for_each_manifest_case() {
+    manifest=$1
+    callback=$2
+    while IFS='|' read -r field1 field2 field3 field4 field5; do
+        "$callback" "$field1" "$field2" "$field3" "$field4" "$field5" \
+            < /dev/null
+    done < "$manifest"
+}
+
+# Focused runner regression: the callback deliberately drains stdin. Without
+# the callback redirection, it consumes the second manifest row and count is 1.
+manifest_runner_self_test() {
+    self_test_manifest="$WORKDIR/manifest-stdin-self-test.txt"
+    printf '%s\n' 'first||||' 'second||||' > "$self_test_manifest"
+    self_test_count=0
+    manifest_runner_stdin_consumer() {
+        cat > /dev/null
+        self_test_count=$((self_test_count + 1))
+    }
+    for_each_manifest_case "$self_test_manifest" manifest_runner_stdin_consumer
+    [ "$self_test_count" -eq 2 ] || \
+        fail "manifest stdin isolation self-test processed $self_test_count of 2 cases"
+}
+
+manifest_runner_self_test
+build_selfhost_checker
+for_each_manifest_case "$NORMALIZED_MANIFEST" run_manifest_case
 
 echo "safety corpus verification passed for $checked case(s)"

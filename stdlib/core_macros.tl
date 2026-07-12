@@ -24,40 +24,22 @@
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `true`.
 (defmacro (and [args : bool ...]) : bool
-  (let
-    [index : i64 (comptime.expr-list-length args)]
-    [out : comptime.Expr (comptime.expr-bool true)]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (set!
-            out
-            (comptime.expr-if
-              (comptime.expr-list-nth args index)
-              out
-              (comptime.expr-bool false)))))
-      out)))
+  (comptime.expr-list-fold-if
+    args
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    true))
 
 ;: Short-circuiting boolean disjunction.
 ;:
 ;: All operands must be bool-valued. With no operands, this macro expands to
 ;: `false`.
 (defmacro (or [args : bool ...]) : bool
-  (let
-    [index : i64 (comptime.expr-list-length args)]
-    [out : comptime.Expr (comptime.expr-bool false)]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
-          (set!
-            out
-            (comptime.expr-if
-              (comptime.expr-list-nth args index)
-              (comptime.expr-bool true)
-              out))))
-      out)))
+  (comptime.expr-list-fold-if
+    args
+    (comptime.expr-bool true)
+    (comptime.expr-bool false)
+    false))
 
 ;: Evaluate `body` expressions only when `condition` is true.
 ;:
@@ -87,37 +69,47 @@
 ;: `(cond [test1 value1] [test2 value2] [else fallback])`. Conditions and
 ;: results are captured as `ExprClause` operands; the expanded `if` chain
 ;: performs the ordinary post-expansion bool/result typechecking.
-(defmacro (cond [arms : ExprClause ...]) : Expr
-  (let
-    [n : i64 (comptime.expr-clause-list-length arms)]
-    [index : i64 n]
-    [out : comptime.Expr (comptime.expr-var "core-cond-missing-else")]
-    (begin
-      (while (> index 0)
-        (begin
-          (set! index (- index 1))
+(cfg
+  test
+  (defmacro (core-macros-user-clause-fold [arms : ExprClause ...]) : Expr
+    (let
+      [n : i64 (comptime.expr-clause-list-length arms)]
+      (if (= n 0)
+        (comptime.expr-var "core-cond-missing-else")
+        (let
+          [index : i64 (- n 1)]
           (match (comptime.expr-clause-list-nth arms index)
-            [(ExprClause test result)
-              (match test
-                [(comptime.ExprVar name)
-                  (if (string-eq name "else")
-                    (set!
-                      out
-                      (if (= (+ index 1) n)
-                        result
-                        (comptime.expr-var "core-cond-else-must-be-final")))
-                    (set!
-                      out
-                      (if (= (+ index 1) n)
-                        (comptime.expr-var "core-cond-missing-else")
-                        (comptime.expr-if test result out))))]
-                [_
-                  (set!
-                    out
-                    (if (= (+ index 1) n)
-                      (comptime.expr-var "core-cond-missing-else")
-                      (comptime.expr-if test result out)))])])))
-      out)))
+            [(ExprClause final-test final-result)
+              (let
+                [out : comptime.Expr
+                  (match final-test
+                    [(comptime.ExprVar name)
+                      (if (string-eq name "else")
+                        final-result
+                        (comptime.expr-var "core-cond-missing-else"))]
+                    [_ (comptime.expr-var "core-cond-missing-else")])]
+                (begin
+                  (while (> index 0)
+                    (begin
+                      (set! index (- index 1))
+                      (match (comptime.expr-clause-list-nth arms index)
+                        [(ExprClause test result)
+                          (match test
+                            [(comptime.ExprVar name)
+                              (if (string-eq name "else")
+                                (set!
+                                  out
+                                  (comptime.expr-var
+                                    "core-cond-else-must-be-final"))
+                                (set! out (comptime.expr-if test result out)))]
+                            [_ (set! out (comptime.expr-if test result out))])])))
+                  out))]))))))
+
+(defmacro (cond [arms : ExprClause ...]) : Expr
+  (comptime.expr-clause-list-fold-if
+    arms
+    (comptime.expr-var "core-cond-missing-else")
+    (comptime.expr-var "core-cond-else-must-be-final")))
 
 (cfg
   test
@@ -136,6 +128,15 @@
                 out
                 (comptime.expr-bool false)))))
         out))))
+
+(cfg
+  test
+  (defmacro (core-macros-user-if-fold [args : bool ...]) : bool
+    (comptime.expr-list-fold-if
+      args
+      (comptime.expr-bool true)
+      (comptime.expr-bool false)
+      true)))
 
 (test
   core-macros-api
@@ -229,6 +230,22 @@
         (begin
           (/ 1 0)
           unit))
+      (if (not
+        (core-macros-user-if-fold
+          true
+          true
+          true
+          true
+          true
+          true
+          false
+          (begin
+            (set! short 1000)
+            true)))
+        unit
+        (begin
+          (/ 1 0)
+          unit))
       (when true (set! value 1))
       (when false (set! value 1000))
       (unless false (set! value (+ value 41)))
@@ -254,6 +271,11 @@
           (/ 1 0)
           unit))
       (if (= (cond [false 0] [false 1] [true 42] [else 99]) 42)
+        unit
+        (begin
+          (/ 1 0)
+          unit))
+      (if (= (core-macros-user-clause-fold [false 0] [else 42]) 42)
         unit
         (begin
           (/ 1 0)

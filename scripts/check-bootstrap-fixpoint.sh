@@ -123,11 +123,11 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 configure_toolchain
 
-SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_while_legacy_stdlib "$ROOT" "$COMPILER" "$WORKDIR")
+SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_macro_builders_legacy_stdlib "$ROOT" "$COMPILER" "$WORKDIR")
 if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-    echo "[bootstrap] seed lacks CTFE while; using the legacy prelude for stage0 -> stage1"
+    echo "[bootstrap] seed lacks current CTFE macro builders; using the legacy prelude for stage0 -> stage1"
 else
-    echo "[bootstrap] seed supports CTFE while; using iterative core macros"
+    echo "[bootstrap] seed supports current CTFE macro builders; using iterative core macros"
 fi
 
 STAGE1_ASM="$WORKDIR/stage1.s"

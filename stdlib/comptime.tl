@@ -240,6 +240,33 @@
 (define (expr-if [cond : Expr] [then-expr : Expr] [else-expr : Expr]) : Expr
   (expr-if cond then-expr else-expr))
 
+;: Build a right-associated conditional chain from an expression sequence.
+;:
+;: Each sequence item becomes an `if` condition. `when-true` and `when-false`
+;: are the terminal branches; `continue-on-true` selects whether the accumulated
+;: suffix is placed in the true branch (`true`) or false branch (`false`). This
+;: lets user macros construct iterative short-circuit syntax without recursively
+;: emitting more macro calls.
+(define (expr-list-fold-if
+  [items : ExprList]
+  [when-true : Expr]
+  [when-false : Expr]
+  [continue-on-true : bool]) : Expr
+  (expr-list-fold-if items when-true when-false continue-on-true))
+
+;: Build a right-associated conditional chain from expression clauses.
+;:
+;: The final `[else result]` supplies the initial result. A non-`else` final
+;: clause yields `missing-final`; an `else` before the final clause yields
+;: `else-not-final`. Other clauses become `(if test result suffix)`. This is a
+;: sequence primitive, so user macros can construct conditional chains without
+;: recursively emitting macro calls.
+(define (expr-clause-list-fold-if
+  [items : ExprClauseList]
+  [missing-final : Expr]
+  [else-not-final : Expr]) : Expr
+  (expr-clause-list-fold-if items missing-final else-not-final))
+
 ;: Build a wildcard match pattern during macro CTFE.
 (define (pattern-wildcard) : Pattern
   (pattern-wildcard))

@@ -25,7 +25,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 101))
+  (array.make-array i64 103))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -140,6 +140,8 @@
       (ctfe-builtin-set! 98 "expr-mut-call0")
       (ctfe-builtin-set! 99 "expr-mut-call1")
       (ctfe-builtin-set! 100 "expr-mut-call2")
+      (ctfe-builtin-set! 101 "expr-list-fold-if")
+      (ctfe-builtin-set! 102 "expr-clause-list-fold-if")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -446,6 +448,18 @@
   (None)
   (Some AstNodePoolContext))
 
+(define (ctfe-value-syntax-pools [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
+  (match value
+    [(CompilerCtfeValue.CapturedExpr _ _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [(CompilerCtfeValue.CapturedExprList _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [(CompilerCtfeValue.CapturedExprClause _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [(CompilerCtfeValue.CapturedExprClauseList _ pools)
+      (CtfeMaybeSyntaxPools.Some pools)]
+    [_ (CtfeMaybeSyntaxPools.None)]))
+
 ;; CTFE-owned type layout metadata. The typechecker/lowerer build this from
 ;; their `TcContext` without making CTFE import typecheck.
 ;;
@@ -512,14 +526,26 @@
 ;; binding sits at the front so lookup finds the most recent shadowing binding
 ;; first; metadata lives at the root and is shared by extensions. `LocalCons`
 ;; is the deliberately narrow mutable cell used for CTFE `let` bindings.
+;; `syntax-pools` is inherited by each extension so constructing captured syntax
+;; stays O(1), including inside iterative transformer-local bindings.
 (defenum CtfeEnv
-  (Nil AstNodePoolContext CtfeLayoutInfoList CtfeReflectInfoList)
-  (Cons String CompilerCtfeValue AstType (Box CtfeEnv))
-  (LocalCons String (Box CompilerCtfeValue) AstType (Box CtfeEnv)))
+  (Nil
+    AstNodePoolContext
+    CtfeMaybeSyntaxPools
+    CtfeLayoutInfoList
+    CtfeReflectInfoList)
+  (Cons String CompilerCtfeValue AstType CtfeMaybeSyntaxPools (Box CtfeEnv))
+  (LocalCons
+    String
+    (Box CompilerCtfeValue)
+    AstType
+    CtfeMaybeSyntaxPools
+    (Box CtfeEnv)))
 
 (define (ctfe-env-empty-with-pools [pools : AstNodePoolContext]) : CtfeEnv
   (CtfeEnv.Nil
     pools
+    (CtfeMaybeSyntaxPools.None)
     (ctfe-layout-info-list-empty)
     (ctfe-reflect-info-list-empty)))
 
@@ -529,7 +555,11 @@
 (define (ctfe-env-with-layouts-and-pools
   [layouts : CtfeLayoutInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnv.Nil pools layouts (ctfe-reflect-info-list-empty)))
+  (CtfeEnv.Nil
+    pools
+    (CtfeMaybeSyntaxPools.None)
+    layouts
+    (ctfe-reflect-info-list-empty)))
 
 (define (ctfe-env-with-layouts [layouts : CtfeLayoutInfoList]) : CtfeEnv
   (ctfe-env-with-layouts-and-pools
@@ -539,7 +569,11 @@
 (define (ctfe-env-with-reflections-and-pools
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnv.Nil pools (ctfe-layout-info-list-empty) reflections))
+  (CtfeEnv.Nil
+    pools
+    (CtfeMaybeSyntaxPools.None)
+    (ctfe-layout-info-list-empty)
+    reflections))
 
 (define (ctfe-env-with-reflections [reflections : CtfeReflectInfoList]) : CtfeEnv
   (ctfe-env-with-reflections-and-pools
@@ -550,7 +584,7 @@
   [layouts : CtfeLayoutInfoList]
   [reflections : CtfeReflectInfoList]
   [pools : AstNodePoolContext]) : CtfeEnv
-  (CtfeEnv.Nil pools layouts reflections))
+  (CtfeEnv.Nil pools (CtfeMaybeSyntaxPools.None) layouts reflections))
 
 (define (ctfe-env-with-metadata
   [layouts : CtfeLayoutInfoList]
@@ -564,14 +598,24 @@
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]) : CtfeEnv
-  (CtfeEnv.Cons name value (ctfe-value-default-cast-type value) (box env)))
+  (CtfeEnv.Cons
+    name
+    value
+    (ctfe-value-default-cast-type value)
+    (ctfe-env-syntax-pools-for-value env value)
+    (box env)))
 
 (define (ctfe-env-extend-typed
   [env : CtfeEnv]
   [name : String]
   [value : CompilerCtfeValue]
   [ty : AstType]) : CtfeEnv
-  (CtfeEnv.Cons name value ty (box env)))
+  (CtfeEnv.Cons
+    name
+    value
+    ty
+    (ctfe-env-syntax-pools-for-value env value)
+    (box env)))
 
 ;; Only CTFE lexical `let` bindings receive mutable cells. This keeps compiler
 ;; metadata, macro parameters, and all runtime-only forms outside the mutation
@@ -581,7 +625,12 @@
   [name : String]
   [value : CompilerCtfeValue]
   [ty : AstType]) : CtfeEnv
-  (CtfeEnv.LocalCons name (box value) ty (box env)))
+  (CtfeEnv.LocalCons
+    name
+    (box value)
+    ty
+    (ctfe-env-syntax-pools-for-value env value)
+    (box env)))
 
 (define (ctfe-layout-field-list-with-capacity [capacity : i64]) : CtfeLayoutFieldList
   (CtfeLayoutFieldList (array.make-array CtfeLayoutField capacity) 0))
@@ -746,49 +795,38 @@
 
 (define (ctfe-env-layouts [env : CtfeEnv]) : CtfeLayoutInfoList
   (match env
-    [(CtfeEnv.Nil _ layouts _) layouts]
-    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-layouts (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
+    [(CtfeEnv.Nil _ _ layouts _) layouts]
+    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-layouts (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-layouts (box-get rest))]))
 
 (define (ctfe-env-reflections [env : CtfeEnv]) : CtfeReflectInfoList
   (match env
-    [(CtfeEnv.Nil _ _ reflections) reflections]
-    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-reflections (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
+    [(CtfeEnv.Nil _ _ _ reflections) reflections]
+    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-reflections (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-reflections (box-get rest))]))
 
 (define (ctfe-env-pools [env : CtfeEnv]) : AstNodePoolContext
   (match env
-    [(CtfeEnv.Nil pools _ _) pools]
-    [(CtfeEnv.Cons _ _ _ rest) (ctfe-env-pools (box-get rest))]
-    [(CtfeEnv.LocalCons _ _ _ rest) (ctfe-env-pools (box-get rest))]))
-
-(define (ctfe-value-syntax-pools [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
-  (match value
-    [(CompilerCtfeValue.CapturedExpr _ _ pools)
-      (CtfeMaybeSyntaxPools.Some pools)]
-    [(CompilerCtfeValue.CapturedExprList _ pools)
-      (CtfeMaybeSyntaxPools.Some pools)]
-    [(CompilerCtfeValue.CapturedExprClause _ pools)
-      (CtfeMaybeSyntaxPools.Some pools)]
-    [(CompilerCtfeValue.CapturedExprClauseList _ pools)
-      (CtfeMaybeSyntaxPools.Some pools)]
-    [_ (CtfeMaybeSyntaxPools.None)]))
+    [(CtfeEnv.Nil pools _ _ _) pools]
+    [(CtfeEnv.Cons _ _ _ _ rest) (ctfe-env-pools (box-get rest))]
+    [(CtfeEnv.LocalCons _ _ _ _ rest) (ctfe-env-pools (box-get rest))]))
 
 ;; A transformer reads its definition body from `ctfe-env-pools`, but syntax
-;; selected from a variadic caller argument may belong to a newer pool. Scan
-;; the bindings for that pool and use it exclusively for newly constructed
-;; syntax so generated nodes and captured children always share ownership.
+;; selected from a variadic caller argument may belong to a newer pool. Carry
+;; that pool on every environment extension so generated nodes and captured
+;; children always share ownership without rescanning lexical locals.
 (define (ctfe-env-syntax-pools [env : CtfeEnv]) : CtfeMaybeSyntaxPools
   (match env
-    [(CtfeEnv.Nil _ _ _) (CtfeMaybeSyntaxPools.None)]
-    [(CtfeEnv.Cons _ value _ rest)
-      (match (ctfe-value-syntax-pools value)
-        [(CtfeMaybeSyntaxPools.Some pools) (CtfeMaybeSyntaxPools.Some pools)]
-        [(CtfeMaybeSyntaxPools.None) (ctfe-env-syntax-pools (box-get rest))])]
-    [(CtfeEnv.LocalCons _ value _ rest)
-      (match (ctfe-value-syntax-pools (box-get value))
-        [(CtfeMaybeSyntaxPools.Some pools) (CtfeMaybeSyntaxPools.Some pools)]
-        [(CtfeMaybeSyntaxPools.None) (ctfe-env-syntax-pools (box-get rest))])]))
+    [(CtfeEnv.Nil _ syntax-pools _ _) syntax-pools]
+    [(CtfeEnv.Cons _ _ _ syntax-pools _) syntax-pools]
+    [(CtfeEnv.LocalCons _ _ _ syntax-pools _) syntax-pools]))
+
+(define (ctfe-env-syntax-pools-for-value
+  [env : CtfeEnv]
+  [value : CompilerCtfeValue]) : CtfeMaybeSyntaxPools
+  (match (ctfe-value-syntax-pools value)
+    [(CtfeMaybeSyntaxPools.Some pools) (CtfeMaybeSyntaxPools.Some pools)]
+    [(CtfeMaybeSyntaxPools.None) (ctfe-env-syntax-pools env)]))
 
 (define (ctfe-syntax-ast-push [env : CtfeEnv] [node : AstExpr]) : i64
   (match (ctfe-env-syntax-pools env)
@@ -807,19 +845,21 @@
 
 (define (ctfe-env-rebase-pools [env : CtfeEnv] [pools : AstNodePoolContext]) : CtfeEnv
   (match env
-    [(CtfeEnv.Nil _ layouts reflections)
-      (CtfeEnv.Nil pools layouts reflections)]
-    [(CtfeEnv.Cons key value ty rest)
+    [(CtfeEnv.Nil _ syntax-pools layouts reflections)
+      (CtfeEnv.Nil pools syntax-pools layouts reflections)]
+    [(CtfeEnv.Cons key value ty syntax-pools rest)
       (CtfeEnv.Cons
         key
         value
         ty
+        syntax-pools
         (box (ctfe-env-rebase-pools (box-get rest) pools)))]
-    [(CtfeEnv.LocalCons key value ty rest)
+    [(CtfeEnv.LocalCons key value ty syntax-pools rest)
       (CtfeEnv.LocalCons
         key
         value
         ty
+        syntax-pools
         (box (ctfe-env-rebase-pools (box-get rest) pools)))]))
 
 (define (ctfe-ast-get [env : CtfeEnv] [id : i64]) : AstExpr
@@ -847,24 +887,24 @@
 
 (define (ctfe-env-lookup [env : CtfeEnv] [name : String]) : CtfeMaybeValue
   (match env
-    [(CtfeEnv.Nil _ _ _) (CtfeMaybeValue.None)]
-    [(CtfeEnv.Cons key value _ rest)
+    [(CtfeEnv.Nil _ _ _ _) (CtfeMaybeValue.None)]
+    [(CtfeEnv.Cons key value _ _ rest)
       (if (string.eq key name)
         (CtfeMaybeValue.Some value)
         (ctfe-env-lookup (box-get rest) name))]
-    [(CtfeEnv.LocalCons key value _ rest)
+    [(CtfeEnv.LocalCons key value _ _ rest)
       (if (string.eq key name)
         (CtfeMaybeValue.Some (box-get value))
         (ctfe-env-lookup (box-get rest) name))]))
 
 (define (ctfe-env-lookup-type [env : CtfeEnv] [name : String]) : AstMaybeType
   (match env
-    [(CtfeEnv.Nil _ _ _) (AstMaybeType.No)]
-    [(CtfeEnv.Cons key _ ty rest)
+    [(CtfeEnv.Nil _ _ _ _) (AstMaybeType.No)]
+    [(CtfeEnv.Cons key _ ty _ rest)
       (if (string.eq key name)
         (AstMaybeType.Some ty)
         (ctfe-env-lookup-type (box-get rest) name))]
-    [(CtfeEnv.LocalCons key _ ty rest)
+    [(CtfeEnv.LocalCons key _ ty _ rest)
       (if (string.eq key name)
         (AstMaybeType.Some ty)
         (ctfe-env-lookup-type (box-get rest) name))]))
@@ -876,12 +916,12 @@
   [name : String]
   [value : CompilerCtfeValue]) : bool
   (match env
-    [(CtfeEnv.Nil _ _ _) false]
-    [(CtfeEnv.Cons key _ _ rest)
+    [(CtfeEnv.Nil _ _ _ _) false]
+    [(CtfeEnv.Cons key _ _ _ rest)
       (if (string.eq key name)
         false
         (ctfe-env-set-local! (box-get rest) name value))]
-    [(CtfeEnv.LocalCons key cell _ rest)
+    [(CtfeEnv.LocalCons key cell _ _ rest)
       (if (string.eq key name)
         (begin
           (set! (box-get cell) value)
@@ -5532,6 +5572,439 @@
     [(CtfeMaybeSyntaxPools.None)
       (ctfe-eval-expr-if-call-plain args expr env fuel)]))
 
+;; Fold a captured expression sequence directly into an `if` chain. This is a
+;; sequence operation rather than a macro-name hook: any user transformer can
+;; choose either branch orientation and arbitrary terminal syntax. Charge one
+;; CTFE fuel unit per constructed `if`, matching an explicit iterative builder.
+(define (ctfe-eval-expr-list-fold-if-plain-at
+  [items : AstExprList]
+  [index : i64]
+  [when-true-node : i64]
+  [when-false-node : i64]
+  [continue-on-true : bool]
+  [out-node : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (< index 0)
+    (ResultCtfe.Ok (CompilerCtfeValue.Expr out-node result-ty) fuel)
+    (if (<= fuel 0)
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "compile-time evaluation limit exceeded")))
+      (let
+        [cond-node : i64 (ctfe-expr-list-nth items index)]
+        [then-node : i64
+          (if continue-on-true
+            out-node
+            when-true-node)]
+        [else-node : i64
+          (if continue-on-true
+            when-false-node
+            out-node)]
+        (ctfe-eval-expr-list-fold-if-plain-at
+          items
+          (- index 1)
+          when-true-node
+          when-false-node
+          continue-on-true
+          (ast-expr-if-with-pools
+            (ctfe-env-pools env)
+            cond-node
+            then-node
+            else-node)
+          result-ty
+          expr
+          env
+          (- fuel 1))))))
+
+(define (ctfe-eval-expr-list-fold-if-captured-at
+  [items : AstExprList]
+  [pools : AstNodePoolContext]
+  [index : i64]
+  [when-true-node : i64]
+  [when-false-node : i64]
+  [continue-on-true : bool]
+  [out-node : i64]
+  [result-ty : AstType]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (< index 0)
+    (ResultCtfe.Ok
+      (CompilerCtfeValue.CapturedExpr out-node result-ty pools)
+      fuel)
+    (if (<= fuel 0)
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "compile-time evaluation limit exceeded")))
+      (let
+        [cond-node : i64 (ctfe-expr-list-nth items index)]
+        [then-node : i64
+          (if continue-on-true
+            out-node
+            when-true-node)]
+        [else-node : i64
+          (if continue-on-true
+            when-false-node
+            out-node)]
+        (ctfe-eval-expr-list-fold-if-captured-at
+          items
+          pools
+          (- index 1)
+          when-true-node
+          when-false-node
+          continue-on-true
+          (ast-expr-if-with-pools pools cond-node then-node else-node)
+          result-ty
+          expr
+          env
+          (- fuel 1))))))
+
+(define (ctfe-expr-list-fold-if-terminal-type-error [expr : AstExpr]) : ResultCtfe
+  (ResultCtfe.Err
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        "expr-list-fold-if terminal branch types must match"))))
+
+(define (ctfe-eval-expr-list-fold-if-values
+  [items-value : CompilerCtfeValue]
+  [when-true-value : CompilerCtfeValue]
+  [when-false-value : CompilerCtfeValue]
+  [continue-on-true : bool]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match items-value
+    [(CompilerCtfeValue.ExprList items)
+      (match when-true-value
+        [(CompilerCtfeValue.Expr when-true-node when-true-ty)
+          (match when-false-value
+            [(CompilerCtfeValue.Expr when-false-node when-false-ty)
+              (if (ctfe-expr-if-branch-types-compatible?
+                env
+                when-true-ty
+                when-false-ty)
+                (ctfe-eval-expr-list-fold-if-plain-at
+                  items
+                  (- (ctfe-expr-list-length items) 1)
+                  when-true-node
+                  when-false-node
+                  continue-on-true
+                  (if continue-on-true
+                    when-true-node
+                    when-false-node)
+                  (ctfe-expr-if-result-type env when-true-ty when-false-ty)
+                  expr
+                  env
+                  fuel)
+                (ctfe-expr-list-fold-if-terminal-type-error expr))]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-list-fold-if terminal branches must be Expr")))])]
+        [_
+          (ResultCtfe.Err
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                "expr-list-fold-if terminal branches must be Expr")))])]
+    [(CompilerCtfeValue.CapturedExprList items pools)
+      (match when-true-value
+        [(CompilerCtfeValue.CapturedExpr when-true-node when-true-ty _)
+          (match when-false-value
+            [(CompilerCtfeValue.CapturedExpr when-false-node when-false-ty _)
+              (if (ctfe-expr-if-branch-types-compatible?
+                env
+                when-true-ty
+                when-false-ty)
+                (ctfe-eval-expr-list-fold-if-captured-at
+                  items
+                  pools
+                  (- (ctfe-expr-list-length items) 1)
+                  when-true-node
+                  when-false-node
+                  continue-on-true
+                  (if continue-on-true
+                    when-true-node
+                    when-false-node)
+                  (ctfe-expr-if-result-type env when-true-ty when-false-ty)
+                  expr
+                  env
+                  fuel)
+                (ctfe-expr-list-fold-if-terminal-type-error expr))]
+            [_
+              (ResultCtfe.Err
+                (box
+                  (ctfe-diagnostic-at-expr
+                    expr
+                    "expr-list-fold-if terminal branches must be Expr")))])]
+        [_
+          (ResultCtfe.Err
+            (box
+              (ctfe-diagnostic-at-expr
+                expr
+                "expr-list-fold-if terminal branches must be Expr")))])]
+    [_
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr expr "expr-list-fold-if expects an ExprList")))]))
+
+(define (ctfe-eval-expr-list-fold-if-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 4)
+    (let
+      [items-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [when-true-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      [when-false-arg : AstExpr (ctfe-expr-arg args 2 env)]
+      [continue-arg : AstExpr (ctfe-expr-arg args 3 env)]
+      (match (compiler-ctfe-eval items-arg env fuel)
+        [(ResultCtfe.Ok items-value items-fuel)
+          (match (compiler-ctfe-eval when-true-arg env items-fuel)
+            [(ResultCtfe.Ok when-true-value when-true-fuel)
+              (match (compiler-ctfe-eval when-false-arg env when-true-fuel)
+                [(ResultCtfe.Ok when-false-value when-false-fuel)
+                  (match (compiler-ctfe-eval continue-arg env when-false-fuel)
+                    [(ResultCtfe.Ok continue-value continue-fuel)
+                      (match continue-value
+                        [(CompilerCtfeValue.Bool continue-on-true)
+                          (ctfe-eval-expr-list-fold-if-values
+                            items-value
+                            when-true-value
+                            when-false-value
+                            continue-on-true
+                            expr
+                            env
+                            continue-fuel)]
+                        [_
+                          (ResultCtfe.Err
+                            (box
+                              (ctfe-diagnostic-at-expr
+                                expr
+                                "expr-list-fold-if continuation must be bool")))])]
+                    [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box (ctfe-diagnostic-at-expr expr "expr-list-fold-if expects four args")))))
+
+(define (ctfe-expr-else-with-pools? [pools : AstNodePoolContext] [node : i64]) : bool
+  (match (ast-expr-unspan-with-pools
+    pools
+    (ast-node-pool-context-expr-get pools node))
+    [(AstExpr.Var name) (string.eq (intern-str name) "else")]
+    [_ false]))
+
+(define (ctfe-eval-expr-clause-list-fold-if-plain-at
+  [items : AstExprClauseList]
+  [index : i64]
+  [out-node : i64]
+  [else-not-final-node : i64]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (< index 0)
+    (ResultCtfe.Ok
+      (CompilerCtfeValue.Expr out-node (ctfe-untyped-expr-type))
+      fuel)
+    (if (<= fuel 0)
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "compile-time evaluation limit exceeded")))
+      (let
+        [clause : AstExprClause (ctfe-expr-clause-list-nth items index)]
+        [test-node : i64 (ctfe-expr-clause-first clause)]
+        [result-node : i64 (ctfe-expr-clause-second clause)]
+        [pools : AstNodePoolContext (ctfe-env-pools env)]
+        (ctfe-eval-expr-clause-list-fold-if-plain-at
+          items
+          (- index 1)
+          (if (ctfe-expr-else-with-pools? pools test-node)
+            else-not-final-node
+            (ast-expr-if-with-pools pools test-node result-node out-node))
+          else-not-final-node
+          expr
+          env
+          (- fuel 1))))))
+
+(define (ctfe-eval-expr-clause-list-fold-if-captured-at
+  [items : AstExprClauseList]
+  [pools : AstNodePoolContext]
+  [index : i64]
+  [out-node : i64]
+  [else-not-final-node : i64]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (< index 0)
+    (ResultCtfe.Ok
+      (CompilerCtfeValue.CapturedExpr out-node (ctfe-untyped-expr-type) pools)
+      fuel)
+    (if (<= fuel 0)
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "compile-time evaluation limit exceeded")))
+      (let
+        [clause : AstExprClause (ctfe-expr-clause-list-nth items index)]
+        [test-node : i64 (ctfe-expr-clause-first clause)]
+        [result-node : i64 (ctfe-expr-clause-second clause)]
+        (ctfe-eval-expr-clause-list-fold-if-captured-at
+          items
+          pools
+          (- index 1)
+          (if (ctfe-expr-else-with-pools? pools test-node)
+            else-not-final-node
+            (ast-expr-if-with-pools pools test-node result-node out-node))
+          else-not-final-node
+          expr
+          env
+          (- fuel 1))))))
+
+(define (ctfe-expr-clause-list-fold-if-terminal-error [expr : AstExpr]) : ResultCtfe
+  (ResultCtfe.Err
+    (box
+      (ctfe-diagnostic-at-expr
+        expr
+        "expr-clause-list-fold-if terminal values must be Expr"))))
+
+(define (ctfe-eval-expr-clause-list-fold-if-values
+  [items-value : CompilerCtfeValue]
+  [missing-value : CompilerCtfeValue]
+  [else-not-final-value : CompilerCtfeValue]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (match items-value
+    [(CompilerCtfeValue.ExprClauseList items)
+      (match missing-value
+        [(CompilerCtfeValue.Expr missing-node missing-ty)
+          (match else-not-final-value
+            [(CompilerCtfeValue.Expr else-not-final-node _)
+              (let
+                [n : i64 (ctfe-expr-clause-list-length items)]
+                (if (= n 0)
+                  (ResultCtfe.Ok
+                    (CompilerCtfeValue.Expr missing-node missing-ty)
+                    fuel)
+                  (if (<= fuel 0)
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "compile-time evaluation limit exceeded")))
+                    (let
+                      [final-clause : AstExprClause
+                        (ctfe-expr-clause-list-nth items (- n 1))]
+                      [final-test : i64 (ctfe-expr-clause-first final-clause)]
+                      [final-result : i64
+                        (ctfe-expr-clause-second final-clause)]
+                      [pools : AstNodePoolContext (ctfe-env-pools env)]
+                      (ctfe-eval-expr-clause-list-fold-if-plain-at
+                        items
+                        (- n 2)
+                        (if (ctfe-expr-else-with-pools? pools final-test)
+                          final-result
+                          missing-node)
+                        else-not-final-node
+                        expr
+                        env
+                        (- fuel 1))))))]
+            [_ (ctfe-expr-clause-list-fold-if-terminal-error expr)])]
+        [_ (ctfe-expr-clause-list-fold-if-terminal-error expr)])]
+    [(CompilerCtfeValue.CapturedExprClauseList items pools)
+      (match missing-value
+        [(CompilerCtfeValue.CapturedExpr missing-node missing-ty _)
+          (match else-not-final-value
+            [(CompilerCtfeValue.CapturedExpr else-not-final-node _ _)
+              (let
+                [n : i64 (ctfe-expr-clause-list-length items)]
+                (if (= n 0)
+                  (ResultCtfe.Ok
+                    (CompilerCtfeValue.CapturedExpr
+                      missing-node
+                      missing-ty
+                      pools)
+                    fuel)
+                  (if (<= fuel 0)
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "compile-time evaluation limit exceeded")))
+                    (let
+                      [final-clause : AstExprClause
+                        (ctfe-expr-clause-list-nth items (- n 1))]
+                      [final-test : i64 (ctfe-expr-clause-first final-clause)]
+                      [final-result : i64
+                        (ctfe-expr-clause-second final-clause)]
+                      (ctfe-eval-expr-clause-list-fold-if-captured-at
+                        items
+                        pools
+                        (- n 2)
+                        (if (ctfe-expr-else-with-pools? pools final-test)
+                          final-result
+                          missing-node)
+                        else-not-final-node
+                        expr
+                        env
+                        (- fuel 1))))))]
+            [_ (ctfe-expr-clause-list-fold-if-terminal-error expr)])]
+        [_ (ctfe-expr-clause-list-fold-if-terminal-error expr)])]
+    [_
+      (ResultCtfe.Err
+        (box
+          (ctfe-diagnostic-at-expr
+            expr
+            "expr-clause-list-fold-if expects an ExprClauseList")))]))
+
+(define (ctfe-eval-expr-clause-list-fold-if-call
+  [args : AstExprList]
+  [expr : AstExpr]
+  [env : CtfeEnv]
+  [fuel : i64]) : ResultCtfe
+  (if (= (ctfe-expr-arg-count args) 3)
+    (let
+      [items-arg : AstExpr (ctfe-expr-arg args 0 env)]
+      [missing-arg : AstExpr (ctfe-expr-arg args 1 env)]
+      [else-not-final-arg : AstExpr (ctfe-expr-arg args 2 env)]
+      (match (compiler-ctfe-eval items-arg env fuel)
+        [(ResultCtfe.Ok items-value items-fuel)
+          (match (compiler-ctfe-eval missing-arg env items-fuel)
+            [(ResultCtfe.Ok missing-value missing-fuel)
+              (match (compiler-ctfe-eval else-not-final-arg env missing-fuel)
+                [(ResultCtfe.Ok else-not-final-value else-not-final-fuel)
+                  (ctfe-eval-expr-clause-list-fold-if-values
+                    items-value
+                    missing-value
+                    else-not-final-value
+                    expr
+                    env
+                    else-not-final-fuel)]
+                [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+            [(ResultCtfe.Err diag) (ResultCtfe.Err diag)])]
+        [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
+    (ResultCtfe.Err
+      (box
+        (ctfe-diagnostic-at-expr
+          expr
+          "expr-clause-list-fold-if expects three args")))))
+
 (define (ctfe-eval-pattern-wildcard-call
   [args : AstExprList]
   [expr : AstExpr]
@@ -6348,6 +6821,10 @@
             (ctfe-eval-expr-splice-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 35))
             (ctfe-eval-expr-if-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 101))
+            (ctfe-eval-expr-list-fold-if-call args expr env fuel)]
+          [(= call-id (ctfe-builtin-ref 102))
+            (ctfe-eval-expr-clause-list-fold-if-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 36))
             (ctfe-eval-pattern-wildcard-call args expr fuel)]
           [(= call-id (ctfe-builtin-ref 37))

@@ -49,11 +49,11 @@ rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 mkdir -p "$(dirname -- "$OUT")"
 
-SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_while_legacy_stdlib "$ROOT" "$SEED" "$WORKDIR")
+SEED_CTFE_COMPAT_STDLIB=$(bootstrap_seed_ctfe_macro_builders_legacy_stdlib "$ROOT" "$SEED" "$WORKDIR")
 if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
-    echo "[build-stage0] seed lacks CTFE while; using the legacy prelude for stage1"
+    echo "[build-stage0] seed lacks current CTFE macro builders; using the legacy prelude for stage1"
 else
-    echo "[build-stage0] seed supports CTFE while; using iterative core macros"
+    echo "[build-stage0] seed supports current CTFE macro builders; using iterative core macros"
 fi
 
 COMPILE_STDOUT="$WORKDIR/compile.stdout"

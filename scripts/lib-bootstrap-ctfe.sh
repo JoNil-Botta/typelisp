@@ -1,20 +1,20 @@
 #!/usr/bin/env sh
 
-# lib-bootstrap-ctfe.sh - seed compatibility selection for CTFE loop bootstrap.
+# lib-bootstrap-ctfe.sh - seed compatibility selection for CTFE macro builders.
 #
-# A published seed that predates CTFE `while` can still build the first compiler
-# through bootstrap/stdlib/core_macros.tl. Newer seeds must use the normal
-# iterative macros, so probe the actual capability instead of permanently
-# pinning every bootstrap to the legacy expansion path.
+# A published seed that predates CTFE `while` or the generic expression-list
+# fold can still build the first compiler through bootstrap/stdlib/core_macros.tl.
+# Newer seeds must use the normal iterative macros, so probe the actual
+# capability instead of permanently pinning every bootstrap to the legacy path.
 
-bootstrap_seed_ctfe_while_legacy_stdlib() {
+bootstrap_seed_ctfe_macro_builders_legacy_stdlib() {
     root=$1
     compiler=$2
     workdir=$3
-    stdout="$workdir/seed-ctfe-while-probe.stdout"
-    stderr="$workdir/seed-ctfe-while-probe.stderr"
+    stdout="$workdir/seed-ctfe-builder-probe.stdout"
+    stderr="$workdir/seed-ctfe-builder-probe.stderr"
     legacy_stdlib="$root/bootstrap/stdlib"
-    probe_cwd="$workdir/seed-ctfe-while-probe-cwd"
+    probe_cwd="$workdir/seed-ctfe-builder-probe-cwd"
     mkdir -p "$probe_cwd"
 
     # The compiler gives a local ./stdlib precedence over --stdlib-root. Run
@@ -35,7 +35,17 @@ bootstrap_seed_ctfe_while_legacy_stdlib() {
         return 0
     fi
 
-    echo "[bootstrap] seed CTFE while capability probe failed unexpectedly" >&2
+    # A seed with CTFE locals/loops but without expr-list-fold-if reaches the
+    # fallback declaration as an ordinary call. The probe contains no other
+    # unsupported call, so this exact diagnostic safely selects the legacy
+    # prelude for its stage0 -> stage1 transition.
+    if grep -qF "'function call' is not supported in compile-time evaluation" \
+        "$stdout" "$stderr"; then
+        printf '%s\n' "$legacy_stdlib"
+        return 0
+    fi
+
+    echo "[bootstrap] seed CTFE macro-builder capability probe failed unexpectedly" >&2
     echo "[bootstrap] stdout:" >&2
     sed 's/^/  /' "$stdout" >&2 || true
     echo "[bootstrap] stderr:" >&2

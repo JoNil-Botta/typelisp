@@ -2040,6 +2040,18 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-module-catalog-builds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-module-catalog-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-module-catalog-validations : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-vector-family-fast-expansions : i64
     0))
 (cfg
@@ -2139,6 +2151,9 @@
     (begin
       (set! compiler-tc-macro-generated-module-materializations 0)
       (set! compiler-tc-macro-generated-module-memo-hits 0)
+      (set! compiler-tc-macro-generated-module-catalog-builds 0)
+      (set! compiler-tc-macro-generated-module-catalog-hits 0)
+      (set! compiler-tc-macro-generated-module-catalog-validations 0)
       (set! compiler-tc-macro-vector-family-fast-expansions 0)
       (set! compiler-tc-macro-live-rebuilds 0)
       (set! compiler-tc-macro-live-reuses 0)
@@ -2184,6 +2199,27 @@
     (set!
       compiler-tc-macro-generated-module-memo-hits
       (+ compiler-tc-macro-generated-module-memo-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-catalog-build) : unit
+    (set!
+      compiler-tc-macro-generated-module-catalog-builds
+      (+ compiler-tc-macro-generated-module-catalog-builds 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-catalog-hit) : unit
+    (set!
+      compiler-tc-macro-generated-module-catalog-hits
+      (+ compiler-tc-macro-generated-module-catalog-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-catalog-validation) : unit
+    (set!
+      compiler-tc-macro-generated-module-catalog-validations
+      (+ compiler-tc-macro-generated-module-catalog-validations 1))))
 
 (cfg
   compile-profile
@@ -2715,6 +2751,15 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_memo_hits"
         compiler-tc-macro-generated-module-memo-hits)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_catalog_builds"
+        compiler-tc-macro-generated-module-catalog-builds)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_catalog_hits"
+        compiler-tc-macro-generated-module-catalog-hits)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_catalog_validations"
+        compiler-tc-macro-generated-module-catalog-validations)
       (compiler-tc-macro-counter-profile-line
         "live_rebuilds"
         compiler-tc-macro-live-rebuilds)
@@ -47832,6 +47877,13 @@
 ;; target in macro-generated-module-memo-put!.
 (define macro-generated-module-memo-summaries : (Array AstDeclList)
   (array.make-array AstDeclList 4096))
+
+;; The full parsed, generated-meta-wrapped module body is the immutable
+;; canonical catalog for this identity. The current summary may later become a
+;; demand-selected subset (#4831), so it must not be used as the source of
+;; truth for a repeat import.
+(define macro-generated-module-memo-catalogs : (Array AstDeclList)
+  (array.make-array AstDeclList 4096))
 (define macro-generated-module-memo-count : i64
   0)
 (define macro-generated-module-memo-generation : i64
@@ -47855,6 +47907,10 @@
             (array-set! macro-generated-module-memo-keys i 0)
             (array-set!
               macro-generated-module-memo-summaries
+              i
+              (ast-decl-list-new))
+            (array-set!
+              macro-generated-module-memo-catalogs
               i
               (ast-decl-list-new))
             (set! i (+ i 1))))
@@ -47912,7 +47968,8 @@
 (define (macro-generated-module-memo-put!
   [identity : String]
   [target-module : String]
-  [summary : AstDeclList]) : unit
+  [summary : AstDeclList]
+  [catalog : AstDeclList]) : unit
   (let
     [identity-id : i64 (intern identity)]
     [target-id : i64 (intern target-module)]
@@ -47944,6 +48001,10 @@
                       macro-generated-module-memo-summaries
                       cursor
                       summary)
+                    (array-set!
+                      macro-generated-module-memo-catalogs
+                      cursor
+                      catalog)
                     (set!
                       macro-generated-module-memo-count
                       (+ macro-generated-module-memo-count 1))
@@ -47958,6 +48019,9 @@
                         macro-generated-module-memo-summaries
                         cursor
                         summary)
+                      ;; A same-identity catalog is immutable. Syntax-sensitive
+                      ;; calls bypass the shortcut and retain the existing
+                      ;; incompatible-output diagnostic instead of replacing it.
                       (set! done true))
                     (begin
                       (set!
@@ -47996,6 +48060,43 @@
                     (set!
                       out
                       (array-ref macro-generated-module-memo-summaries cursor))
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- macro-generated-module-memo-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+;; Retrieve the immutable full catalog for a canonical identity. It is separate
+;; from the materialized summary so later demand selection can reuse parsed
+;; declarations without re-running CTFE or reconstructing them from a program.
+(define (macro-generated-module-memo-get-catalog [identity : String]) : AstDeclList
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-module-memo-ensure!)
+      (let
+        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : AstDeclList (ast-decl-list-new)]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps macro-generated-module-memo-capacity))
+            (let
+              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set!
+                      out
+                      (array-ref macro-generated-module-memo-catalogs cursor))
                     (set! done true))
                   (begin
                     (set!
@@ -55608,7 +55709,21 @@
       [(ResultMacroDeclExpansion.Ok _ _)
         (begin
           (if memoize?
-            (macro-generated-module-memo-put! identity target-module summary)
+            (begin
+              ;; This full materialization is the behavior-preserving
+              ;; validation lane for #4830: every catalog declaration remains
+              ;; in the ordinary parent walk exactly once. Record the complete
+              ;; module list separately from the mutable materialized summary.
+              (macro-generated-module-memo-put!
+                identity
+                target-module
+                summary
+                summary)
+              (cfg
+                compile-profile
+                (begin
+                  (compiler-tc-macro-profile-note-generated-module-catalog-build)
+                  (compiler-tc-macro-profile-note-generated-module-catalog-validation))))
             unit)
           (cfg
             compile-profile
@@ -56192,7 +56307,9 @@
                                     (begin
                                       (cfg
                                         compile-profile
-                                        (compiler-tc-macro-profile-note-generated-module-memo-hit))
+                                        (begin
+                                          (compiler-tc-macro-profile-note-generated-module-memo-hit)
+                                          (compiler-tc-macro-profile-note-generated-module-catalog-hit)))
                                       (let
                                         [expanded : AstDeclList
                                           (macro-module-import-marker-decls

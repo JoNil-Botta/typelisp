@@ -99,6 +99,24 @@
 
 (derived-name-family lsp-decl-list)
 
+;; Keep later registry owners precise after the generated `IntVec`/probe
+;; declarations have been spliced into this module.
+(defenum IntVecLater
+  (IntVecLaterEmpty)
+  (IntVecLaterValue i64))
+
+(defstruct IntVecLaterRecord
+  (value i64))
+
+(define (int-vec-later-registry-score
+  [value : IntVecLater]
+  [record : IntVecLaterRecord]) : i64
+  (+
+    (match value
+      [(IntVecLaterEmpty) 0]
+      [(IntVecLaterValue payload) payload])
+    (struct-get record value)))
+
 (define (int-vec-fill [n : i64]) : IntVec
   (let
     [v : IntVec (int-vec-new)]
@@ -186,3 +204,10 @@
     (lsp-decl-list-push (lsp-decl-list-new))
     42
     "declaration macro derives identifiers from prefix strings"))
+
+(test
+  generated-vector-splice-keeps-later-registry-members
+  (test.assert-i64-eq
+    (int-vec-later-registry-score (IntVecLaterValue 40) (IntVecLaterRecord 2))
+    42
+    "generated declaration splice preserves later variant and field resolution"))

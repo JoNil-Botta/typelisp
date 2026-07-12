@@ -210,6 +210,62 @@
           (sym_i64_env.sym-i64-contains seen "generic.macro.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
+(define (lazy-qualified-module-macro-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_qualified_module_macro")
+    (compiler-load-test-mkdir "target/cl_lazy_qualified_module_macro/generic")
+    (compiler-load-test-mkdir
+      "target/cl_lazy_qualified_module_macro/generic/macro")
+    (io.write-file
+      "target/cl_lazy_qualified_module_macro/generic/macro/dep.tl"
+      "(module generic.macro.dep)
+(defmacro (make [T : type]) : Module (expr-unit))")
+    (io.write-file
+      "target/cl_lazy_qualified_module_macro/entry.tl"
+      "(module lazy.qualified.module.macro.entry)
+(import generic.macro.dep as api)
+(import (generic.macro.dep.make i64) as made)
+(define (main) : i64 42)")
+    (match (compiler-load-file-with-paths
+      "target/cl_lazy_qualified_module_macro/entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+        (and
+          (= (compiler-load-lazy-import-skip-count) 0)
+          (sym_i64_env.sym-i64-contains
+            seen
+            "lazy.qualified.module.macro.entry")
+          (sym_i64_env.sym-i64-contains seen "generic.macro.dep"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (lazy-stdlib-vector-qualified-module-macro-demand-ok?) : bool
+  (begin
+    (compiler-load-test-mkdir "target/cl_lazy_stdlib_vector_module_macro")
+    (io.write-file
+      "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
+      "(module lazy.stdlib.vector.module.macro.entry)
+(import stdlib.vector)
+(import (stdlib.vector.vector i64) as vec)
+(define (main) : i64 42)")
+    (let
+      [cfgs : sym_i64_env.SymI64Env
+        (compiler-cfg-enable
+          (compiler-cfg-empty)
+          "feature-compiler-private-string-intrinsics")]
+      (match (compiler-load-file-with-paths-and-roots-cfg
+        "target/cl_lazy_stdlib_vector_module_macro/entry.tl"
+        (sym_i64_env.sym-i64-empty)
+        (svec.new)
+        cfgs)
+        [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
+          (and
+            (= (compiler-load-lazy-import-skip-count) 0)
+            (sym_i64_env.sym-i64-contains
+              seen
+              "lazy.stdlib.vector.module.macro.entry")
+            (sym_i64_env.sym-i64-contains seen "stdlib.vector"))]
+        [(ResultCompilerLoadWithPaths.Err _) false]))))
+
 (define (package-lazy-unused-dotted-import-ok?) : bool
   (begin
     (compiler-load-test-mkdir "target/cl_pkg_lazy_dotted")
@@ -400,6 +456,14 @@
     (unless
       (lazy-aliased-module-macro-demand-ok?)
       (return (io.panic "lazy aliased module macro demand smoke mismatch")))
+    (unless
+      (lazy-qualified-module-macro-demand-ok?)
+      (return (io.panic "lazy qualified module macro demand smoke mismatch")))
+    (unless
+      (lazy-stdlib-vector-qualified-module-macro-demand-ok?)
+      (return
+        (io.panic
+          "lazy stdlib.vector qualified module macro demand smoke mismatch")))
     (unless
       (package-lazy-unused-dotted-import-ok?)
       (return (io.panic "package lazy unused dotted import smoke mismatch")))

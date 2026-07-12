@@ -3492,9 +3492,10 @@
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   ;; A module macro can introduce declarations that are not visible in the
-  ;; static surface. If its direct macro name belongs to this import, retain
-  ;; the source module instead of assuming a later typechecker fast path can
-  ;; materialize it. This keeps arbitrary generated-module macros correct.
+  ;; static surface. If its direct macro name belongs to this import (through
+  ;; either its local alias or canonical module ID), retain the source module
+  ;; instead of assuming a later typechecker fast path can materialize it.
+  ;; This keeps arbitrary generated-module macros correct.
   (match call-expr
     [(AstExpr.Spanned inner _)
       (compiler-load-lazy-module-macro-demand
@@ -3505,7 +3506,7 @@
     [(AstExpr.Call func args)
       (let
         [function-demand : CompilerLoadLazyAliasDemand
-          (compiler-load-lazy-expr-demand
+          (compiler-load-lazy-module-macro-demand
             (ast-node-get func)
             alias
             summary
@@ -3521,10 +3522,62 @@
       (let
         [name-demand : CompilerLoadLazyAliasDemand
           (compiler-load-lazy-name-demand name alias summary locals)]
-        (if (struct-get name-demand direct)
+        (if (or
+          (struct-get name-demand direct)
+          (compiler-load-lazy-name-qualified-by?
+            (intern-str name)
+            (struct-get summary module-id)))
           (compiler-load-lazy-alias-demand-unknown)
           name-demand))]
     [_ (compiler-load-lazy-alias-demand-unknown)]))
+
+(define (compiler-load-lazy-module-macro-qualified-by?
+  [call-expr : AstExpr]
+  [module-id : String]) : bool
+  ;; A moduleless source file has a path-derived summary ID, but a caller can
+  ;; still invoke its macro through the canonical dotted import ID. Keep that
+  ;; import loaded when the macro target uses that spelling.
+  (match call-expr
+    [(AstExpr.Spanned inner _)
+      (compiler-load-lazy-module-macro-qualified-by?
+        (ast-node-get inner)
+        module-id)]
+    [(AstExpr.Call func _)
+      (compiler-load-lazy-module-macro-qualified-by?
+        (ast-node-get func)
+        module-id)]
+    [(AstExpr.Var name)
+      (compiler-load-lazy-name-qualified-by? (intern-str name) module-id)]
+    [_ false]))
+
+(define (compiler-load-lazy-decl-module-macro-qualified-by?
+  [decl : AstDecl]
+  [module-id : String]) : bool
+  (match decl
+    [(AstDecl.ModuleBody _ body)
+      (compiler-load-lazy-decl-list-module-macro-qualified-by?
+        (box-get body)
+        module-id)]
+    [(AstDecl.Import
+        (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
+      (compiler-load-lazy-module-macro-qualified-by?
+        (ast-node-get call-expr)
+        module-id)]
+    [(AstDecl.Unsafe inner)
+      (compiler-load-lazy-decl-module-macro-qualified-by?
+        (box-get inner)
+        module-id)]
+    [_ false]))
+
+(define (compiler-load-lazy-decl-list-module-macro-qualified-by?
+  [decls : AstDeclList]
+  [module-id : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (compiler-load-lazy-decl-module-macro-qualified-by? decl module-id)
+        (compiler-load-lazy-decl-list-module-macro-qualified-by? rest module-id))]))
 
 (define (compiler-load-lazy-decl-demand
   [decl : AstDecl]
@@ -3661,6 +3714,7 @@
 (define (compiler-load-lazy-import-skip?
   [importer-path : String]
   [kind : AstImportKind]
+  [import-path : String]
   [resolved : String]
   [alias : AstMaybeImportAlias]
   [rest : AstDeclList]
@@ -3680,22 +3734,15 @@
               (struct-get summary lazy-policy)]
             (match kind
               [(AstImportKind.Module)
-                (match alias
-                  [(AstMaybeImportAlias.Some alias-name)
-                    (match policy
-                      [(CompilerLoadLazyImportEager) false]
-                      [(CompilerLoadLazyImportQualified)
-                        (not
-                          (compiler-load-lazy-alias-demand-requires-load?
-                            policy
-                            (compiler-load-lazy-decl-list-demand
-                              rest
-                              alias-name
-                              summary
-                              (sym_i64_env.sym-i64-empty))))]
-                      [(CompilerLoadLazyImportDirect)
-                        (if (struct-get preload-demand direct)
-                          false
+                (if (compiler-load-lazy-decl-list-module-macro-qualified-by?
+                  rest
+                  import-path)
+                  false
+                  (match alias
+                    [(AstMaybeImportAlias.Some alias-name)
+                      (match policy
+                        [(CompilerLoadLazyImportEager) false]
+                        [(CompilerLoadLazyImportQualified)
                           (not
                             (compiler-load-lazy-alias-demand-requires-load?
                               policy
@@ -3703,8 +3750,19 @@
                                 rest
                                 alias-name
                                 summary
-                                (sym_i64_env.sym-i64-empty)))))])]
-                  [(AstMaybeImportAlias.No) false])]
+                                (sym_i64_env.sym-i64-empty))))]
+                        [(CompilerLoadLazyImportDirect)
+                          (if (struct-get preload-demand direct)
+                            false
+                            (not
+                              (compiler-load-lazy-alias-demand-requires-load?
+                                policy
+                                (compiler-load-lazy-decl-list-demand
+                                  rest
+                                  alias-name
+                                  summary
+                                  (sym_i64_env.sym-i64-empty)))))])]
+                    [(AstMaybeImportAlias.No) false]))]
               [_ false]))]))))
 
 (define (compiler-load-surface-zero-span) : AstSourceSpan
@@ -4560,6 +4618,7 @@
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
+                          import-path
                           resolved
                           alias
                           rest
@@ -6790,6 +6849,7 @@
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
+                          import-path
                           resolved
                           alias
                           rest

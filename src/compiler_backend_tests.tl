@@ -4709,6 +4709,451 @@
       "backend: register-group load requires var operand")
     (compiler-backend-register-group-call-arg-error-ok?)))
 
+(define (compiler-backend-descriptor-pair-consumer) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "descriptor_pair_consume"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "handle" (AstType.String) 0)
+      CompilerIrParamList.Nil)
+    (AstType.I64)
+    3
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Gep
+            1
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.I64 8)
+            (AstType.U8))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 2 (CompilerIrValue.Var 1) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 2)))
+              CompilerIrInstrList.Nil))))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-descriptor-pair-main) : CompilerIrFunction
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    (CompilerIrFunction.Function
+      "main"
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      18
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Alloc 0 (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Alloc 1 (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.AddrOf 2 1)
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.StorePtr
+                    (CompilerIrValue.Var 2)
+                    (CompilerIrValue.I64 123)
+                    (AstType.U64))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Gep
+                      3
+                      (CompilerIrValue.Var 2)
+                      (CompilerIrValue.I64 8)
+                      (AstType.U8))
+                    (compiler-ir-instr-cons
+                      (CompilerIrInstr.StorePtr
+                        (CompilerIrValue.Var 3)
+                        (CompilerIrValue.I64 42)
+                        (AstType.I64))
+                      (compiler-ir-instr-cons
+                        (CompilerIrInstr.Mov
+                          4
+                          (CompilerIrValue.Var 2)
+                          (AstType.String))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Load
+                            5
+                            (CompilerIrValue.Var 4)
+                            (AstType.U64))
+                          (compiler-ir-instr-cons
+                            (CompilerIrInstr.Gep
+                              6
+                              (CompilerIrValue.Var 4)
+                              (CompilerIrValue.I64 8)
+                              (AstType.U8))
+                            (compiler-ir-instr-cons
+                              (CompilerIrInstr.Load
+                                7
+                                (CompilerIrValue.Var 6)
+                                (AstType.I64))
+                              (compiler-ir-instr-cons
+                                (ir-instr-descriptor-pair-pack
+                                  8
+                                  (CompilerIrValue.Var 5)
+                                  (CompilerIrValue.Var 7)
+                                  kind)
+                                (compiler-ir-instr-cons
+                                  (CompilerIrInstr.Mov
+                                    9
+                                    (CompilerIrValue.Var 8)
+                                    (AstType.String))
+                                  (compiler-ir-instr-cons
+                                    (ir-instr-descriptor-pair-data
+                                      10
+                                      (CompilerIrValue.Var 9))
+                                    (compiler-ir-instr-cons
+                                      (ir-instr-descriptor-pair-length
+                                        11
+                                        (CompilerIrValue.Var 9))
+                                      (compiler-ir-instr-cons
+                                        (CompilerIrInstr.Alloc 12 (AstType.U64))
+                                        (compiler-ir-instr-cons
+                                          (CompilerIrInstr.Alloc
+                                            13
+                                            (AstType.I64))
+                                          (compiler-ir-instr-cons
+                                            (CompilerIrInstr.AddrOf 14 13)
+                                            (compiler-ir-instr-cons
+                                              (CompilerIrInstr.StorePtr
+                                                (CompilerIrValue.Var 14)
+                                                (CompilerIrValue.Var 10)
+                                                (AstType.U64))
+                                              (compiler-ir-instr-cons
+                                                (CompilerIrInstr.Gep
+                                                  15
+                                                  (CompilerIrValue.Var 14)
+                                                  (CompilerIrValue.I64 8)
+                                                  (AstType.U8))
+                                                (compiler-ir-instr-cons
+                                                  (CompilerIrInstr.StorePtr
+                                                    (CompilerIrValue.Var 15)
+                                                    (CompilerIrValue.Var 11)
+                                                    (AstType.I64))
+                                                  (compiler-ir-instr-cons
+                                                    (CompilerIrInstr.Mov
+                                                      16
+                                                      (CompilerIrValue.Var 14)
+                                                      (AstType.String))
+                                                    (compiler-ir-instr-cons
+                                                      (CompilerIrInstr.Call
+                                                        17
+                                                        "descriptor_pair_consume"
+                                                        (CompilerIrCallArgs.One
+                                                          (CompilerIrValue.Var
+                                                            16))
+                                                        (AstType.I64))
+                                                      (compiler-ir-instr-cons
+                                                        (CompilerIrInstr.Return
+                                                          (CompilerIrMaybeValue.Some
+                                                            (CompilerIrValue.Var
+                                                              17)))
+                                                        CompilerIrInstrList.Nil))))))))))))))))))))))))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-backend-descriptor-pair-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (compiler-backend-descriptor-pair-main)
+      (compiler-ir-function-cons
+        (compiler-backend-descriptor-pair-consumer)
+        CompilerIrFunctionList.Nil))
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-descriptor-pair-spill-order-ok?) : bool
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    [ty : AstType (compiler-ir-descriptor-pair-handle-type kind)]
+    [program : CompilerIrProgram (compiler-backend-descriptor-pair-program)]
+    [index : CompilerBackendProgramIndex
+      (match program
+        [(CompilerIrProgram.Program _ functions externs)
+          (compiler-backend-program-index-build functions externs)])]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%r13"))
+            CompilerRegAssignmentList.Nil)))]
+    [_group-enable : unit
+      (begin
+        (compiler-backend-current-slot-vars-set! 3)
+        (compiler-backend-group-vars-enable!
+          (compiler-live-set1 0)
+          (compiler-live-set-empty)))]
+    [packed : ResultCompilerBackend
+      (compiler-backend-emit-pack
+        assignments
+        0
+        (compiler-ir-value-cons
+          (CompilerIrValue.I64 123)
+          (compiler-ir-value-cons
+            (CompilerIrValue.I64 42)
+            CompilerIrValueList.Nil))
+        ty
+        3
+        index
+        (compiler-diagnostic-at-start "" ""))]
+    [data : ResultCompilerBackend
+      (compiler-backend-emit-word
+        assignments
+        1
+        (CompilerIrValue.Var 0)
+        0
+        (AstType.U64)
+        3
+        (compiler-diagnostic-at-start "" ""))]
+    [length : ResultCompilerBackend
+      (compiler-backend-emit-word
+        assignments
+        2
+        (CompilerIrValue.Var 0)
+        1
+        (AstType.I64)
+        3
+        (compiler-diagnostic-at-start "" ""))]
+    [_group-disable : unit (compiler-backend-group-vars-disable!)]
+    (and
+      (match packed
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "$123, -8(%rbp)")
+            (compiler-backend-string-contains? asm "$42, -16(%rbp)"))]
+        [(ResultCompilerBackend.Err _) false])
+      (match data
+        [(ResultCompilerBackend.Ok asm)
+          (compiler-backend-string-contains? asm "-8(%rbp), %r12")]
+        [(ResultCompilerBackend.Err _) false])
+      (match length
+        [(ResultCompilerBackend.Ok asm)
+          (compiler-backend-string-contains? asm "-16(%rbp), %r13")]
+        [(ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-descriptor-pair-register-order-ok?) : bool
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    [ty : AstType (compiler-ir-descriptor-pair-handle-type kind)]
+    [program : CompilerIrProgram (compiler-backend-descriptor-pair-program)]
+    [index : CompilerBackendProgramIndex
+      (match program
+        [(CompilerIrProgram.Program _ functions externs)
+          (compiler-backend-program-index-build functions externs)])]
+    [assignments : CompilerRegAssignmentList
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          0
+          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            1
+            (CompilerRegLocation.Register "%rbx"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              2
+              (CompilerRegLocation.Register "%rsi"))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                3
+                (CompilerRegLocation.RegisterPair "%r14" "%r15"))
+              CompilerRegAssignmentList.Nil))))]
+    [_group-enable : unit
+      (begin
+        (compiler-backend-current-slot-vars-set! 4)
+        (compiler-backend-group-vars-enable!
+          (compiler-live-set-insert (compiler-live-set1 0) 3)
+          (compiler-live-set-empty)))]
+    [packed : ResultCompilerBackend
+      (compiler-backend-emit-pack
+        assignments
+        0
+        (compiler-ir-value-cons
+          (CompilerIrValue.I64 123)
+          (compiler-ir-value-cons
+            (CompilerIrValue.I64 42)
+            CompilerIrValueList.Nil))
+        ty
+        4
+        index
+        (compiler-diagnostic-at-start "" ""))]
+    [data : ResultCompilerBackend
+      (compiler-backend-emit-word
+        assignments
+        1
+        (CompilerIrValue.Var 0)
+        0
+        (AstType.U64)
+        4
+        (compiler-diagnostic-at-start "" ""))]
+    [length : ResultCompilerBackend
+      (compiler-backend-emit-word
+        assignments
+        2
+        (CompilerIrValue.Var 0)
+        1
+        (AstType.I64)
+        4
+        (compiler-diagnostic-at-start "" ""))]
+    [copied : ResultCompilerBackend
+      (compiler-backend-emit-mov
+        assignments
+        3
+        (CompilerIrValue.Var 0)
+        ty
+        index
+        4)]
+    [_group-disable : unit (compiler-backend-group-vars-disable!)]
+    (and
+      (match packed
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "$123, %r12")
+            (compiler-backend-string-contains? asm "$42, %r13"))]
+        [(ResultCompilerBackend.Err _) false])
+      (match data
+        [(ResultCompilerBackend.Ok asm)
+          (compiler-backend-string-contains? asm "%r12, %rbx")]
+        [(ResultCompilerBackend.Err _) false])
+      (match length
+        [(ResultCompilerBackend.Ok asm)
+          (compiler-backend-string-contains? asm "%r13, %rsi")]
+        [(ResultCompilerBackend.Err _) false])
+      (match copied
+        [(ResultCompilerBackend.Ok asm)
+          (and
+            (compiler-backend-string-contains? asm "%r12, %rax")
+            (compiler-backend-string-contains? asm "%r13, %rdx")
+            (compiler-backend-string-contains? asm "%rax, %r14")
+            (compiler-backend-string-contains? asm "%rdx, %r15"))]
+        [(ResultCompilerBackend.Err _) false]))))
+
+(define (compiler-backend-descriptor-pair-object-main) : CompilerIrFunction
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    (CompilerIrFunction.Function
+      "main"
+      CompilerIrParamList.Nil
+      (AstType.I64)
+      4
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (ir-instr-descriptor-pair-pack
+              0
+              (CompilerIrValue.I64 123)
+              (CompilerIrValue.I64 42)
+              kind)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.String))
+              (compiler-ir-instr-cons
+                (ir-instr-descriptor-pair-data 2 (CompilerIrValue.Var 1))
+                (compiler-ir-instr-cons
+                  (ir-instr-descriptor-pair-length 3 (CompilerIrValue.Var 1))
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Return
+                      (CompilerIrMaybeValue.Some (CompilerIrValue.Var 3)))
+                    CompilerIrInstrList.Nil))))))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-backend-descriptor-pair-object-program) : CompilerIrProgram
+  (CompilerIrProgram.Program
+    CompilerIrGlobalList.Nil
+    (compiler-ir-function-cons
+      (compiler-backend-descriptor-pair-object-main)
+      CompilerIrFunctionList.Nil)
+    CompilerIrExternList.Nil))
+
+(define (compiler-backend-descriptor-pair-object-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (match (compiler-backend-emit-program-object-image-target
+    (compiler-backend-descriptor-pair-object-program)
+    target
+    (compiler-source-spans-empty)
+    true)
+    [(ResultCompilerBackendObject.Ok image)
+      (let
+        [sections : cobj.CompilerObjectSectionList (struct-get image sections)]
+        [renders : bool
+          (match target
+            [(CompilerBackendTarget.Linux)
+              (match (elf.compiler-object-elf-render image)
+                [(elf.ResultCompilerObjectElf.Ok _) true]
+                [(elf.ResultCompilerObjectElf.Err _) false])]
+            [(CompilerBackendTarget.Windows)
+              (match (coff.compiler-object-coff-render image)
+                [(coff.ResultCompilerObjectCoff.Ok _) true]
+                [(coff.ResultCompilerObjectCoff.Err _) false])])]
+        (and
+          renders
+          ;; Four scalar vars plus a four-slot word1 region.
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-prologue-bytes
+              (compiler-backend-frame-size 8)))
+          ;; Pack word1, copy it to the next pair, then extract it.
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-store-slot-bytes 4 "%rdx"))
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-load-rbp-disp-bytes
+              (compiler-backend-object-slot-disp 4)
+              "%rdx"))
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-store-slot-bytes 5 "%rdx"))
+          (cobj.compiler-object-section-contains-bytes?
+            sections
+            (compiler-backend-object-load-rbp-disp-bytes
+              (compiler-backend-object-slot-disp 5)
+              "%rax"))))]
+    [(ResultCompilerBackendObject.Err _) false]))
+
+(define (compiler-backend-descriptor-pair-target-ok?
+  [target : CompilerBackendTarget]) : bool
+  (let
+    [program : CompilerIrProgram (compiler-backend-descriptor-pair-program)]
+    [program-index : CompilerBackendProgramIndex
+      (match program
+        [(CompilerIrProgram.Program _ functions externs)
+          (compiler-backend-program-index-build functions externs)])]
+    (and
+      ;; The materialized String still consumes one ordinary ABI slot.
+      (= (compiler-backend-group-word-count program-index (AstType.String)) 1)
+      (not (compiler-backend-group-type? program-index (AstType.String)))
+      (match (compiler-backend-emit-program-for-target program target)
+        [(ResultCompilerBackend.Ok asm)
+          (compiler-backend-string-contains? asm "    call _tl_f1\n")]
+        [(ResultCompilerBackend.Err _) false])
+      (match (compiler-backend-emit-program-object-image-target
+        program
+        target
+        (compiler-source-spans-empty)
+        true)
+        [(ResultCompilerBackendObject.Ok _) true]
+        [(ResultCompilerBackendObject.Err _) false])
+      (compiler-backend-descriptor-pair-object-target-ok? target))))
+
+(define (compiler-backend-descriptor-pair-ok?) : bool
+  (and
+    (compiler-backend-descriptor-pair-spill-order-ok?)
+    (compiler-backend-descriptor-pair-register-order-ok?)
+    (compiler-backend-descriptor-pair-target-ok? (CompilerBackendTarget.Linux))
+    (compiler-backend-descriptor-pair-target-ok?
+      (CompilerBackendTarget.Windows))))
+
 (define (compiler-backend-reg-part-entry-ok?
   [reg : String]
   [reg32 : String]
@@ -20958,7 +21403,8 @@
         (compiler-backend-implicit-main-ok?))
       (and
         (compiler-backend-aggregate-ok?)
-        (compiler-backend-pack-immediate-word-shape-ok?)))
+        (compiler-backend-pack-immediate-word-shape-ok?)
+        (compiler-backend-descriptor-pair-ok?)))
     (backend-and8
       (compiler-backend-literal-payload-ok?)
       (and

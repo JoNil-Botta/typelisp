@@ -9742,12 +9742,18 @@
               (if (= index 0)
                 reg-a
                 reg-b))]
-          [(CompilerRegLocation.Spill _)
-            (ResultCompilerBackend.Err
-              (box
-                (compiler-diagnostic-at-start
-                  ""
-                  "backend: register-group var assigned spill slot")))]
+          [(CompilerRegLocation.Spill offset)
+            (if (compiler-backend-group-var? var)
+              (ResultCompilerBackend.Ok
+                (compiler-backend-frame-offset
+                  (if (= index 0)
+                    offset
+                    (- offset 8))))
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler-diagnostic-at-start
+                    ""
+                    "backend: register-group var assigned spill slot"))))]
           [(CompilerRegLocation.Register _)
             (ResultCompilerBackend.Err
               (box
@@ -20966,6 +20972,25 @@
     compiler-backend-group-vars-enabled
     (compiler-live-set-contains? compiler-backend-group-vars var)))
 
+(define (compiler-backend-value-group-var? [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var var) (compiler-backend-group-var? var)]
+    [_ false]))
+
+;; Internal structural groups (including descriptor pairs) deliberately retain
+;; their one-word source handle type as provenance. Copies must therefore use
+;; the per-function group-var set, while calls, returns, globals, and parameters
+;; continue to use nominal type classification and preserve the source ABI.
+(define (compiler-backend-copy-group?
+  [index : CompilerBackendProgramIndex]
+  [ty : AstType]
+  [dst : i64]
+  [src : CompilerIrValue]) : bool
+  (or
+    (compiler-backend-group-type? index ty)
+    (compiler-backend-group-var? dst)
+    (compiler-backend-value-group-var? src)))
+
 (define (compiler-backend-addressable-group-var? [var : i64]) : bool
   (and
     compiler-backend-group-vars-enabled
@@ -24377,7 +24402,9 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  (if (compiler-backend-group-type? program-index ty)
+  (if (or
+    (compiler-backend-group-type? program-index ty)
+    (compiler-backend-group-var? dst))
     (match (compiler-backend-emit-phi-group-word-save
       assignments
       dst
@@ -24414,7 +24441,9 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
   [vars : i64]) : ResultCompilerBackend
-  (if (compiler-backend-group-type? program-index ty)
+  (if (or
+    (compiler-backend-group-type? program-index ty)
+    (compiler-backend-group-var? dst))
     (match (compiler-backend-emit-phi-group-word-restore
       assignments
       dst
@@ -24587,7 +24616,10 @@
     [(CompilerBackendPhiCopy.Copy dst source ty)
       (and
         (not (compiler-backend-float-type? ty))
-        (not (compiler-backend-group-type? program-index ty))
+        (not
+          (or
+            (compiler-backend-group-type? program-index ty)
+            (compiler-backend-group-var? dst)))
         (not
           (string.eq (compiler-backend-var-register-home assignments dst) ""))
         (match source
@@ -24873,7 +24905,7 @@
         (ResultCompilerBackend.Ok "")
         ;; A register-group phi value carries two words -- copy both halves
         ;; (rax:rdx) through the group ABI, not just word0 via the scalar path.
-        (if (compiler-backend-group-type? program-index ty)
+        (if (compiler-backend-copy-group? program-index ty dst value)
           (match value
             [(CompilerIrValue.Var src-id)
               (match (compiler-backend-emit-phi-var-source-direct
@@ -26537,10 +26569,10 @@
     ;; value onto itself -- emit nothing instead of round-tripping both words
     ;; through the group-return register pair.
     [(and
-        (compiler-backend-group-type? program-index ty)
+        (compiler-backend-copy-group? program-index ty dst src)
         (compiler-backend-value-same-home? assignments dst src))
       (ResultCompilerBackend.Ok "")]
-    [(compiler-backend-group-type? program-index ty)
+    [(compiler-backend-copy-group? program-index ty dst src)
       (match (compiler-backend-emit-group-load
         assignments
         src
@@ -48345,6 +48377,107 @@ tl_tlci_call_image_entry:
     dst
     "%rax"))
 
+(define (compiler-backend-object-group-word-var [var : i64] [word-index : i64]) : i64
+  (if (= word-index 0)
+    var
+    (+ compiler-backend-current-slot-vars var)))
+
+(define (compiler-backend-object-load-group-word-to-reg
+  [parts : CompilerBackendObjectParts]
+  [var : i64]
+  [word-index : i64]
+  [reg : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-nonempty-bytes
+    parts
+    (compiler-backend-object-load-rbp-disp-bytes
+      (compiler-backend-object-slot-disp
+        (compiler-backend-object-group-word-var var word-index))
+      reg)))
+
+(define (compiler-backend-object-store-reg-to-group-word
+  [parts : CompilerBackendObjectParts]
+  [var : i64]
+  [word-index : i64]
+  [reg : String]) : CompilerBackendObjectParts
+  (compiler-backend-object-add-nonempty-bytes
+    parts
+    (compiler-backend-object-store-slot-bytes
+      (compiler-backend-object-group-word-var var word-index)
+      reg)))
+
+(define (compiler-backend-object-move-group-value-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [src : CompilerIrValue]) : CompilerBackendObjectParts
+  (match src
+    [(CompilerIrValue.Var src-var)
+      (compiler-backend-object-store-reg-to-group-word
+        (compiler-backend-object-store-reg-to-group-word
+          (compiler-backend-object-load-group-word-to-reg
+            (compiler-backend-object-load-group-word-to-reg
+              parts
+              src-var
+              0
+              "%rax")
+            src-var
+            1
+            "%rdx")
+          dst
+          0
+          "%rax")
+        dst
+        1
+        "%rdx")]
+    [_ (compiler-backend-object-value-ref parts site src)]))
+
+(define (compiler-backend-object-pack-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [words : CompilerIrValueList]) : CompilerBackendObjectParts
+  (match (compiler-ir-value-list-force-cons words)
+    [(CompilerIrValueList.Cons word0 rest0)
+      (match (compiler-ir-value-list-force-cons (box-get rest0))
+        [(CompilerIrValueList.Cons word1 _)
+          (compiler-backend-object-store-reg-to-group-word
+            (compiler-backend-object-store-reg-to-group-word
+              (compiler-backend-object-load-value-to-reg
+                (compiler-backend-object-load-value-to-reg
+                  parts
+                  site
+                  word0
+                  "%rax")
+                site
+                word1
+                "%rdx")
+              dst
+              0
+              "%rax")
+            dst
+            1
+            "%rdx")]
+        [_ (compiler-backend-object-value-list-ref parts site words)])]
+    [_ (compiler-backend-object-value-list-ref parts site words)]))
+
+(define (compiler-backend-object-word-to-var
+  [parts : CompilerBackendObjectParts]
+  [site : String]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [word-index : i64]) : CompilerBackendObjectParts
+  (match src
+    [(CompilerIrValue.Var src-var)
+      (compiler-backend-object-store-reg-to-var
+        (compiler-backend-object-load-group-word-to-reg
+          parts
+          src-var
+          word-index
+          "%rax")
+        dst
+        "%rax")]
+    [_ (compiler-backend-object-value-ref parts site src)]))
+
 (define (compiler-backend-object-load-ptr-to-var
   [parts : CompilerBackendObjectParts]
   [site : String]
@@ -48796,7 +48929,9 @@ tl_tlci_call_image_entry:
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match instr
     [(CompilerIrInstr.Mov dst src ty)
-      (compiler-backend-object-move-value-to-var parts function dst src ty)]
+      (if (compiler-backend-copy-group? program-index ty dst src)
+        (compiler-backend-object-move-group-value-to-var parts function dst src)
+        (compiler-backend-object-move-value-to-var parts function dst src ty))]
     [(CompilerIrInstr.BinOp dst op lhs rhs ty)
       (compiler-backend-object-binop parts function dst op lhs rhs ty)]
     [(CompilerIrInstr.UnOp _ op src ty)
@@ -49090,10 +49225,10 @@ tl_tlci_call_image_entry:
             (compiler-backend-object-value-ref parts function active-mask)
             function
             args)])]
-    [(CompilerIrInstr.Pack _ words _)
-      (compiler-backend-object-value-list-ref parts function words)]
-    [(CompilerIrInstr.Word _ src _ _)
-      (compiler-backend-object-value-ref parts function src)]
+    [(CompilerIrInstr.Pack dst words _)
+      (compiler-backend-object-pack-to-var parts function dst words)]
+    [(CompilerIrInstr.Word dst src index _)
+      (compiler-backend-object-word-to-var parts function dst src index)]
     [(CompilerIrInstr.TailCallIndirect callee args _)
       (compiler-backend-object-call-args
         (compiler-backend-object-value-ref parts function callee)
@@ -49249,13 +49384,26 @@ tl_tlci_call_image_entry:
     [(CompilerIrFunctionList.Nil) parts]
     [(CompilerIrFunctionList.Cons func rest)
       (match func
-        [(CompilerIrFunction.Function name params _ vars blocks)
+        [(CompilerIrFunction.Function name params ret-ty vars blocks)
           (let
             [symbol : String
               (compiler-backend-function-symbol-index program-index name)]
             [label-scope : String
               (compiler-backend-function-label-scope program-index name)]
-            (compiler-backend-object-functions
+            [types : CompilerRegVarTypes
+              (compiler-reg-function-var-types
+                (CompilerIrFunction.Function name params ret-ty vars blocks))]
+            [groups : CompilerLiveI64Set
+              (compiler-reg-function-group-vars
+                (CompilerIrFunction.Function name params ret-ty vars blocks)
+                (struct-get types entries))]
+            [_group-enable : unit
+              (begin
+                (compiler-backend-current-slot-vars-set! vars)
+                (compiler-backend-group-vars-enable!
+                  groups
+                  (compiler-live-set-empty)))]
+            [emitted : CompilerBackendObjectParts
               (compiler-backend-object-blocks
                 (compiler-backend-object-param-spills
                   (compiler-backend-object-add-nonempty-bytes
@@ -49267,7 +49415,10 @@ tl_tlci_call_image_entry:
                         (cobj.CompilerObjectSymbolKind.Function))
                       (cobj.CompilerObjectX64Instr.Label symbol))
                     (compiler-backend-object-prologue-bytes
-                      (compiler-backend-frame-size vars)))
+                      (compiler-backend-frame-size
+                        (if (> (compiler-live-set-count groups) 0)
+                          (* vars 2)
+                          vars))))
                   target
                   params
                   0)
@@ -49276,7 +49427,10 @@ tl_tlci_call_image_entry:
                 label-scope
                 blocks
                 plan
-                program-index)
+                program-index)]
+            [_group-disable : unit (compiler-backend-group-vars-disable!)]
+            (compiler-backend-object-functions
+              emitted
               target
               (box-get rest)
               plan
@@ -49300,13 +49454,26 @@ tl_tlci_call_image_entry:
   (if (>= index (compiler-ir-function-seq-count functions))
     parts
     (match (compiler-ir-function-seq-ref functions index)
-      [(CompilerIrFunction.Function name params _ vars blocks)
+      [(CompilerIrFunction.Function name params ret-ty vars blocks)
         (let
           [symbol : String
             (compiler-backend-function-symbol-index program-index name)]
           [label-scope : String
             (compiler-backend-function-label-scope program-index name)]
-          (compiler-backend-object-function-seq
+          [types : CompilerRegVarTypes
+            (compiler-reg-function-var-types
+              (CompilerIrFunction.Function name params ret-ty vars blocks))]
+          [groups : CompilerLiveI64Set
+            (compiler-reg-function-group-vars
+              (CompilerIrFunction.Function name params ret-ty vars blocks)
+              (struct-get types entries))]
+          [_group-enable : unit
+            (begin
+              (compiler-backend-current-slot-vars-set! vars)
+              (compiler-backend-group-vars-enable!
+                groups
+                (compiler-live-set-empty)))]
+          [emitted : CompilerBackendObjectParts
             (compiler-backend-object-blocks
               (compiler-backend-object-param-spills
                 (compiler-backend-object-add-nonempty-bytes
@@ -49318,7 +49485,10 @@ tl_tlci_call_image_entry:
                       (cobj.CompilerObjectSymbolKind.Function))
                     (cobj.CompilerObjectX64Instr.Label symbol))
                   (compiler-backend-object-prologue-bytes
-                    (compiler-backend-frame-size vars)))
+                    (compiler-backend-frame-size
+                      (if (> (compiler-live-set-count groups) 0)
+                        (* vars 2)
+                        vars))))
                 target
                 params
                 0)
@@ -49327,7 +49497,10 @@ tl_tlci_call_image_entry:
               label-scope
               blocks
               plan
-              program-index)
+              program-index)]
+          [_group-disable : unit (compiler-backend-group-vars-disable!)]
+          (compiler-backend-object-function-seq
+            emitted
             target
             functions
             plan

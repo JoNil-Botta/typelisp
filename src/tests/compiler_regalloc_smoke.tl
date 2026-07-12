@@ -83,9 +83,79 @@
           (compiler-live-set-contains? ineligible 1)
           (compiler-live-set-contains? ineligible 2))])))
 
+(define (compiler-reg-smoke-descriptor-pair-function) : CompilerIrFunction
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    (CompilerIrFunction.Function
+      "descriptor_pair"
+      (compiler-ir-param-cons
+        (CompilerIrParam.Param "handle" (AstType.String) 0)
+        CompilerIrParamList.Nil)
+      (AstType.I64)
+      8
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "entry"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (AstType.U64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Gep
+                2
+                (CompilerIrValue.Var 0)
+                (CompilerIrValue.I64 8)
+                (AstType.U8))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
+                (compiler-ir-instr-cons
+                  (ir-instr-descriptor-pair-pack
+                    4
+                    (CompilerIrValue.Var 1)
+                    (CompilerIrValue.Var 3)
+                    kind)
+                  (compiler-ir-instr-cons
+                    (CompilerIrInstr.Mov
+                      5
+                      (CompilerIrValue.Var 4)
+                      (AstType.String))
+                    (compiler-ir-instr-cons
+                      (ir-instr-descriptor-pair-data 6 (CompilerIrValue.Var 5))
+                      (compiler-ir-instr-cons
+                        (ir-instr-descriptor-pair-length
+                          7
+                          (CompilerIrValue.Var 5))
+                        (compiler-ir-instr-cons
+                          (CompilerIrInstr.Return
+                            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+                          CompilerIrInstrList.Nil)))))))))
+        CompilerIrBlockList.Nil))))
+
+(define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
+  (let
+    [func : CompilerIrFunction (compiler-reg-smoke-descriptor-pair-function)]
+    [types : CompilerRegVarTypes (compiler-reg-function-var-types func)]
+    [groups : CompilerLiveI64Set
+      (compiler-reg-function-group-vars
+        func
+        (compiler-reg-var-types-list types))]
+    (and
+      ;; Source handles remain scalar even though structurally-created pair
+      ;; vars with the same provenance type occupy two homes.
+      (not (compiler-reg-type-register-group? (AstType.String)))
+      (not (compiler-reg-type-register-group? (AstType.DynArray 1)))
+      (= (compiler-live-set-count groups) 2)
+      (not (compiler-live-set-contains? groups 0))
+      (compiler-live-set-contains? groups 4)
+      (compiler-live-set-contains? groups 5)
+      (not (compiler-live-set-contains? groups 6))
+      (not (compiler-live-set-contains? groups 7)))))
+
 (define (main) : i64
   (let
     [base : i64 (compiler-regalloc-self-test)]
-    (if (and (= base 42) (compiler-reg-smoke-spmd-call-shape-ok?))
+    (if (and
+      (= base 42)
+      (compiler-reg-smoke-spmd-call-shape-ok?)
+      (compiler-reg-smoke-descriptor-pair-group-ok?))
       42
       1)))

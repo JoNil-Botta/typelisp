@@ -190,6 +190,21 @@
     CompilerIrSpmdCallArgList
     CompilerIrSpmdCallResult))
 
+;; Internal scalarized view of a source descriptor handle. This is deliberately
+;; NOT an AstType: String and compatibility DynArray values remain one-word
+;; pointers everywhere source types, layouts, and ABIs are classified. A value
+;; created through this kind is instead seeded structurally by Pack/Word as a
+;; two-GP-word register group: word0 is data_ptr and word1 is the nonnegative
+;; length. Callers must materialize those words into descriptor storage before
+;; crossing a source storage or ABI boundary.
+(defenum CompilerIrDescriptorPairKind
+  (OwnedString)
+  (DynamicArray i64))
+
+(defenum CompilerIrMaybeDescriptorPairKind
+  (No)
+  (Some CompilerIrDescriptorPairKind))
+
 (defenum CompilerIrInstr
   (Mov i64 CompilerIrValue AstType)
   (Alloc i64 AstType)
@@ -241,19 +256,52 @@
   (Branch CompilerIrValue String String)
   (Return CompilerIrMaybeValue)
   (Phi i64 CompilerIrPhiInputList AstType)
-  ;; Multi-word register-resident aggregates: a small (<=16 B) inline
-  ;; struct/enum whose fields are all word-class can live in N general-purpose
-  ;; registers (N = ceil(size/8)) instead of a memory slot. CompilerIrInstr.Pack forms
-  ;; such a group var `dst` (typed `ty`, the aggregate type) from its N word
-  ;; values (low word first, e.g. word0 = enum tag); CompilerIrInstr.Word extracts word
-  ;; `index` of a group value into a scalar `dst`. The register allocator gives a
-  ;; group var N adjacent home registers (or an N*8-byte spill slot); the backend
-  ;; lowers Pack/Word as register/slot word moves -- the value never round-trips
-  ;; through memory.
+  ;; Multi-word register groups. A small (<=16 B) inline struct/enum whose fields
+  ;; are all word-class can live in N general-purpose registers (N =
+  ;; ceil(size/8)). The internal descriptor-pair capability above also uses a
+  ;; two-word group while retaining its source handle type solely as provenance;
+  ;; structural Pack/Word use, not source-type classification, marks that value
+  ;; as a group. Pack forms `dst` from low word first and Word extracts `index`.
+  ;; The allocator gives a group N adjacent homes (or an N*8-byte spill slot),
+  ;; and the backend lowers the operations as register/slot word moves.
   (Pack i64 CompilerIrValueList AstType)
   (Word i64 CompilerIrValue i64 AstType)
   (TailCallIndirect CompilerIrValue CompilerIrCallArgs AstType)
   (Switch CompilerIrValue i64 CompilerIrSwitchCaseList String))
+
+(define (compiler-ir-descriptor-pair-kind-for-handle-type [ty : AstType]) : CompilerIrMaybeDescriptorPairKind
+  (match ty
+    [(AstType.String)
+      (CompilerIrMaybeDescriptorPairKind.Some
+        (CompilerIrDescriptorPairKind.OwnedString))]
+    [(AstType.DynArray elem)
+      (CompilerIrMaybeDescriptorPairKind.Some
+        (CompilerIrDescriptorPairKind.DynamicArray elem))]
+    [_ (CompilerIrMaybeDescriptorPairKind.No)]))
+
+(define (compiler-ir-descriptor-pair-handle-type
+  [kind : CompilerIrDescriptorPairKind]) : AstType
+  (match kind
+    [(CompilerIrDescriptorPairKind.OwnedString) (AstType.String)]
+    [(CompilerIrDescriptorPairKind.DynamicArray elem) (AstType.DynArray elem)]))
+
+(define (ir-instr-descriptor-pair-pack
+  [dst : i64]
+  [data : CompilerIrValue]
+  [length : CompilerIrValue]
+  [kind : CompilerIrDescriptorPairKind]) : CompilerIrInstr
+  (CompilerIrInstr.Pack
+    dst
+    (compiler-ir-value-cons
+      data
+      (compiler-ir-value-cons length CompilerIrValueList.Nil))
+    (compiler-ir-descriptor-pair-handle-type kind)))
+
+(define (ir-instr-descriptor-pair-data [dst : i64] [pair : CompilerIrValue]) : CompilerIrInstr
+  (CompilerIrInstr.Word dst pair 0 (AstType.U64)))
+
+(define (ir-instr-descriptor-pair-length [dst : i64] [pair : CompilerIrValue]) : CompilerIrInstr
+  (CompilerIrInstr.Word dst pair 1 (AstType.I64)))
 
 (define (ir-instr-vector-bin-op
   [dst : i64]
@@ -6023,6 +6071,82 @@
       (string.eq (compiler-ir-value-list-render words) "%10, %20")
       (string.eq (compiler-ir-value-list-describe words) "%10, %20"))))
 
+(define (compiler-ir-descriptor-pair-capability-ok?) : bool
+  (let
+    [string-kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    [array-kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.DynamicArray 77)]
+    [pack : CompilerIrInstr
+      (ir-instr-descriptor-pair-pack
+        30
+        (CompilerIrValue.Var 10)
+        (CompilerIrValue.Var 20)
+        string-kind)]
+    [data : CompilerIrInstr
+      (ir-instr-descriptor-pair-data 31 (CompilerIrValue.Var 30))]
+    [length : CompilerIrInstr
+      (ir-instr-descriptor-pair-length 32 (CompilerIrValue.Var 30))]
+    (and
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type (AstType.String))
+        [(CompilerIrMaybeDescriptorPairKind.Some kind)
+          (match kind
+            [(CompilerIrDescriptorPairKind.OwnedString) true]
+            [_ false])]
+        [(CompilerIrMaybeDescriptorPairKind.No) false])
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type
+        (AstType.DynArray 77))
+        [(CompilerIrMaybeDescriptorPairKind.Some kind)
+          (match kind
+            [(CompilerIrDescriptorPairKind.DynamicArray elem) (= elem 77)]
+            [_ false])]
+        [(CompilerIrMaybeDescriptorPairKind.No) false])
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type
+        (AstType.Array 77 4))
+        [(CompilerIrMaybeDescriptorPairKind.No) true]
+        [_ false])
+      (match (compiler-ir-descriptor-pair-kind-for-handle-type (AstType.Str))
+        [(CompilerIrMaybeDescriptorPairKind.No) true]
+        [_ false])
+      (match (compiler-ir-descriptor-pair-handle-type array-kind)
+        [(AstType.DynArray elem) (= elem 77)]
+        [_ false])
+      (match pack
+        [(CompilerIrInstr.Pack dst words ty)
+          (and
+            (= dst 30)
+            (match ty
+              [(AstType.String) true]
+              [_ false])
+            (match words
+              [(CompilerIrValueList.Array seq)
+                (and
+                  (= (struct-get seq len) 2)
+                  (compiler-ir-value-seq-entry-var? seq 0 10)
+                  (compiler-ir-value-seq-entry-var? seq 1 20))]
+              [_ false]))]
+        [_ false])
+      (match data
+        [(CompilerIrInstr.Word dst (CompilerIrValue.Var src) index ty)
+          (and
+            (= dst 31)
+            (= src 30)
+            (= index 0)
+            (match ty
+              [(AstType.U64) true]
+              [_ false]))]
+        [_ false])
+      (match length
+        [(CompilerIrInstr.Word dst (CompilerIrValue.Var src) index ty)
+          (and
+            (= dst 32)
+            (= src 30)
+            (= index 1)
+            (match ty
+              [(AstType.I64) true]
+              [_ false]))]
+        [_ false]))))
+
 (define (compiler-ir-phi-input-seq-entry-var-label?
   [seq : CompilerIrPhiInputSeq]
   [index : i64]
@@ -6176,6 +6300,7 @@
     (unless (compiler-ir-param-list-dense-order-ok?) (return 1))
     (unless (compiler-ir-c-abi-return-slot-dense-order-ok?) (return 1))
     (unless (compiler-ir-pack-value-list-dense-order-ok?) (return 1))
+    (unless (compiler-ir-descriptor-pair-capability-ok?) (return 1))
     (unless (compiler-ir-phi-input-dense-order-ok?) (return 1))
     (unless (compiler-ir-switch-case-dense-order-ok?) (return 1))
     42))

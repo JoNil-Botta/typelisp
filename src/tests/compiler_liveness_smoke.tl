@@ -35,9 +35,46 @@
         (compiler-live-instr-defs instr)
         (compiler-live-set1 6)))))
 
+(define (compiler-live-smoke-descriptor-pair-use-def-ok?) : bool
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    [pack : CompilerIrInstr
+      (ir-instr-descriptor-pair-pack
+        3
+        (CompilerIrValue.Var 1)
+        (CompilerIrValue.Var 2)
+        kind)]
+    [data : CompilerIrInstr
+      (ir-instr-descriptor-pair-data 4 (CompilerIrValue.Var 3))]
+    [length : CompilerIrInstr
+      (ir-instr-descriptor-pair-length 5 (CompilerIrValue.Var 3))]
+    (and
+      (compiler-live-set-eq?
+        (compiler-live-instr-uses pack)
+        (compiler-live-set2 1 2))
+      (compiler-live-set-eq?
+        (compiler-live-instr-defs pack)
+        (compiler-live-set1 3))
+      (compiler-live-set-eq?
+        (compiler-live-instr-uses data)
+        (compiler-live-set1 3))
+      (compiler-live-set-eq?
+        (compiler-live-instr-defs data)
+        (compiler-live-set1 4))
+      (compiler-live-set-eq?
+        (compiler-live-instr-uses length)
+        (compiler-live-set1 3))
+      (compiler-live-set-eq?
+        (compiler-live-instr-defs length)
+        (compiler-live-set1 5)))))
+
 (define (main) : i64
   (let
     [base : i64 (compiler-live-self-test)]
-    (if (and (= base 42) (compiler-live-smoke-spmd-call-use-def-ok?))
+    (if (and
+      (= base 42)
+      (compiler-live-smoke-spmd-call-use-def-ok?)
+      (compiler-live-smoke-descriptor-pair-use-def-ok?))
       42
       1)))

@@ -9781,6 +9781,93 @@
               (compiler-ir-value-cons w1 CompilerIrValueList.Nil))
             ty)])]))
 
+;; Internal descriptor-pair transport. Source String/DynArray values remain
+;; one-word pointers; only values built by this helper become structural
+;; Pack/Word groups. The pair order matches descriptor storage exactly:
+;; data_ptr in word0, nonnegative length in word1.
+(define (lower-emit-descriptor-pair
+  [state : LowerState]
+  [data : CompilerIrValue]
+  [length : CompilerIrValue]
+  [kind : CompilerIrDescriptorPairKind]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc allocated var-id)
+      (LowerExpr.Expr
+        (lower-state-emit
+          allocated
+          (ir-instr-descriptor-pair-pack var-id data length kind))
+        (CompilerIrValue.Var var-id)
+        (compiler-ir-descriptor-pair-handle-type kind))]))
+
+(define (lower-copy-descriptor-pair
+  [state : LowerState]
+  [pair : CompilerIrValue]
+  [kind : CompilerIrDescriptorPairKind]) : ResultLowerExpr
+  ;; Mov/Phi group closure in regalloc propagates structural group-ness to the
+  ;; copy even though its provenance type is still the one-word source handle.
+  (lower-materialize state pair (compiler-ir-descriptor-pair-handle-type kind)))
+
+(define (lower-descriptor-pair-data
+  [state : LowerState]
+  [pair : CompilerIrValue]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc allocated var-id)
+      (LowerExpr.Expr
+        (lower-state-emit allocated (ir-instr-descriptor-pair-data var-id pair))
+        (CompilerIrValue.Var var-id)
+        (AstType.U64))]))
+
+(define (lower-descriptor-pair-length
+  [state : LowerState]
+  [pair : CompilerIrValue]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc allocated var-id)
+      (LowerExpr.Expr
+        (lower-state-emit
+          allocated
+          (ir-instr-descriptor-pair-length var-id pair))
+        (CompilerIrValue.Var var-id)
+        (AstType.I64))]))
+
+(define (lower-load-descriptor-pair-from-handle
+  [state : LowerState]
+  [handle : CompilerIrValue]
+  [kind : CompilerIrDescriptorPairKind]) : LowerExpr
+  (match (lower-load-at-offset state handle 0 (AstType.U64))
+    [(LowerExpr.Expr data-state data _)
+      (match (lower-load-at-offset data-state handle 8 (AstType.I64))
+        [(LowerExpr.Expr length-state length _)
+          (lower-emit-descriptor-pair length-state data length kind)])]))
+
+(define (lower-store-descriptor-pair-at-ptr
+  [state : LowerState]
+  [storage : CompilerIrValue]
+  [pair : CompilerIrValue]) : LowerState
+  (match (lower-descriptor-pair-data state pair)
+    [(LowerExpr.Expr data-state data _)
+      (match (lower-descriptor-pair-length data-state pair)
+        [(LowerExpr.Expr length-state length _)
+          (lower-store-at-offset
+            (lower-store-at-offset length-state storage 0 data (AstType.U64))
+            storage
+            8
+            length
+            (AstType.I64))])]))
+
+(define (lower-materialize-descriptor-pair-at-ptr
+  [state : LowerState]
+  [storage : CompilerIrValue]
+  [pair : CompilerIrValue]
+  [kind : CompilerIrDescriptorPairKind]) : ResultLowerExpr
+  ;; `storage` owns the boundary lifetime: pass the original descriptor handle
+  ;; to preserve identity, a caller/result slot for ABI transfer, or stable
+  ;; aggregate/global/capture storage. This helper never returns a pointer to a
+  ;; hidden temporary whose lifetime could be too short.
+  (lower-materialize
+    (lower-store-descriptor-pair-at-ptr state storage pair)
+    storage
+    (compiler-ir-descriptor-pair-handle-type kind)))
+
 (define (lower-load-register-resident-from-ptr
   [ctx : TcContext]
   [state : LowerState]
@@ -55566,10 +55653,163 @@
         (set! ok false))
       ok)))
 
+(define (compiler-lower-descriptor-pair-test-state) : LowerState
+  ;; Var 0 models an incoming ordinary one-word String handle.
+  (LowerState.State
+    1
+    0
+    0
+    "entry"
+    (compiler-ir-instr-builder-new)
+    (compiler-ir-block-builder-new)
+    (compiler-ir-function-builder-new)
+    "descriptor_pair_test"
+    (box (compiler-source-spans-empty))
+    (lower-empty-global-name-cache)
+    (LowerTypeCache.No)
+    (CompilerLowerMode.Scalar)
+    (lower_i64_i64_map.with-capacity 8)
+    0
+    1))
+
+(define (compiler-lower-descriptor-pair-test-instr-count
+  [instrs : CompilerIrInstrList]
+  [kind : i64]) : i64
+  (match instrs
+    [(CompilerIrInstrList.Nil) 0]
+    [(CompilerIrInstrList.Cons instr rest)
+      (+
+        (match instr
+          [(CompilerIrInstr.Pack _ _ ty)
+            (if (= kind 0)
+              (match ty
+                [(AstType.String) 1]
+                [_ 0])
+              0)]
+          [(CompilerIrInstr.Word _ _ index ty)
+            (cond
+              [(and (= kind 1) (= index 0))
+                (match ty
+                  [(AstType.U64) 1]
+                  [_ 0])]
+              [(and (= kind 2) (= index 1))
+                (match ty
+                  [(AstType.I64) 1]
+                  [_ 0])]
+              [else 0])]
+          [(CompilerIrInstr.StorePtr _ _ ty)
+            (cond
+              [(= kind 3)
+                (match ty
+                  [(AstType.U64) 1]
+                  [_ 0])]
+              [(= kind 4)
+                (match ty
+                  [(AstType.I64) 1]
+                  [_ 0])]
+              [else 0])]
+          [(CompilerIrInstr.Mov _ _ ty)
+            (if (= kind 5)
+              (match ty
+                [(AstType.String) 1]
+                [_ 0])
+              0)]
+          [_ 0])
+        (compiler-lower-descriptor-pair-test-instr-count (box-get rest) kind))]))
+
+(define (compiler-lower-descriptor-pair-capability-ok?) : bool
+  (let
+    [kind : CompilerIrDescriptorPairKind
+      (CompilerIrDescriptorPairKind.OwnedString)]
+    [loaded : LowerExpr
+      (lower-load-descriptor-pair-from-handle
+        (compiler-lower-descriptor-pair-test-state)
+        (CompilerIrValue.Var 0)
+        kind)]
+    (match loaded
+      [(LowerExpr.Expr load-state pair _)
+        (match (lower-copy-descriptor-pair load-state pair kind)
+          [(ResultLowerExpr.Ok (LowerExpr.Expr copy-state copied _))
+            (match (lower-descriptor-pair-data copy-state copied)
+              [(LowerExpr.Expr data-state _ _)
+                (match (lower-descriptor-pair-length data-state copied)
+                  [(LowerExpr.Expr length-state _ _)
+                    (match (lower-materialize-descriptor-pair-at-ptr
+                      length-state
+                      (CompilerIrValue.Var 0)
+                      copied
+                      kind)
+                      [(ResultLowerExpr.Ok
+                          (LowerExpr.Expr final-state materialized ty))
+                        (match final-state
+                          [(LowerState.State
+                              next-var
+                              _
+                              _
+                              _
+                              instr-builder
+                              _
+                              _
+                              _
+                              _
+                              _
+                              _
+                              _
+                              _
+                              _
+                              _)
+                            (let
+                              [instrs : CompilerIrInstrList
+                                (compiler-ir-instr-builder-to-list
+                                  instr-builder)]
+                              (and
+                                (= next-var 14)
+                                (match materialized
+                                  [(CompilerIrValue.Var id) (= id 13)]
+                                  [_ false])
+                                (match ty
+                                  [(AstType.String) true]
+                                  [_ false])
+                                (=
+                                  (compiler-lower-descriptor-pair-test-instr-count
+                                    instrs
+                                    0)
+                                  1)
+                                (=
+                                  (compiler-lower-descriptor-pair-test-instr-count
+                                    instrs
+                                    1)
+                                  2)
+                                (=
+                                  (compiler-lower-descriptor-pair-test-instr-count
+                                    instrs
+                                    2)
+                                  2)
+                                (=
+                                  (compiler-lower-descriptor-pair-test-instr-count
+                                    instrs
+                                    3)
+                                  1)
+                                (=
+                                  (compiler-lower-descriptor-pair-test-instr-count
+                                    instrs
+                                    4)
+                                  1)
+                                (=
+                                  (compiler-lower-descriptor-pair-test-instr-count
+                                    instrs
+                                    5)
+                                  2)))])]
+                      [(ResultLowerExpr.Err _) false])])])]
+          [(ResultLowerExpr.Err _) false])])))
+
 (define (compiler-lower-front-half-tests-ok?) : bool
   (let
     [ok : bool true]
     (begin
+      (if (compiler-lower-descriptor-pair-capability-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-and-or-short-circuit-shape-ok?)
         unit
         (set! ok false))

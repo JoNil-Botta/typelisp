@@ -1513,6 +1513,16 @@
       (compiler-typecheck-smoke-comptime-error-decls-source)
       "custom decl macro failure")))
 
+(define (compiler-typecheck-smoke-module-catalog-invalid-unused-source) : String
+  "(defmacro (catalog [T : type]) : Module
+  `(begin
+    (module generated.catalog_invalid)
+    (defstruct Item (value ,T))
+    (define (answer) : i64 42)
+    (define (invalid-unused-helper) : i64 true)))
+(import (catalog i64) as catalog_i64)
+(define (main) : i64 (catalog_i64.answer))")
+
 (define (compiler-typecheck-smoke-require [ok : bool] [name : String]) : bool
   (if ok
     true
@@ -1520,6 +1530,11 @@
 
 (define (compiler-typecheck-smoke-module-macro-identity-tests-ok?) : bool
   (and
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-module-catalog-invalid-unused-source)
+        "typecheck: return type mismatch")
+      "typecheck: generated module catalog skipped invalid unused helper")
     (compiler-typecheck-smoke-require
       (compiler-typecheck-ok?
         (compiler-typecheck-smoke-module-macro-import-evaluated-key-source))

@@ -46681,7 +46681,16 @@
       result)))
 
 (define (macro-decl-list-reverse [items : AstDeclList]) : AstDeclList
-  (macro-decl-list-reverse-into items (ast-decl-list-new)))
+  (let
+    [count : i64 (ast-decl-list-len (& items))]
+    [index : i64 count]
+    [out : AstDeclList (ast-decl-list-with-capacity count)]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (ast-decl-list-push (&mut out) (ast-decl-list-ref items index))))
+      out)))
 
 (define (macro-decl-list-append-from
   [out : (&mut out AstDeclList)]
@@ -46769,7 +46778,18 @@
       result)))
 
 (define (macro-decl-path-list-reverse [items : AstDeclPathList]) : AstDeclPathList
-  (macro-decl-path-list-reverse-into items (ast-decl-path-list-new)))
+  (let
+    [count : i64 (ast-decl-path-list-len (& items))]
+    [index : i64 count]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    (begin
+      (while (> index 0)
+        (begin
+          (set! index (- index 1))
+          (ast-decl-path-list-push
+            (&mut out)
+            (ast-decl-path-list-get (& items) index ""))))
+      out)))
 
 (define (macro-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]

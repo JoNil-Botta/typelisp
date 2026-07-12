@@ -1418,7 +1418,7 @@
                       ""
                       (intern "")
                       pools-a)]
-                  [lower-state : LowerState
+                  [_lower-state : LowerState
                     (LowerState.State
                       0
                       0
@@ -1536,23 +1536,6 @@
                       ""
                       (intern "")
                       pools-a)]
-                  [lower-state : LowerState
-                    (LowerState.State
-                      0
-                      0
-                      0
-                      "entry"
-                      (compiler-ir-instr-builder-new)
-                      (compiler-ir-block-builder-new)
-                      (compiler-ir-function-builder-new)
-                      "loop"
-                      (box (compiler-source-spans-empty))
-                      (lower-empty-global-name-cache)
-                      (lower-type-cache-from-env (TcTypeEnv.Nil))
-                      (CompilerLowerMode.Scalar)
-                      (lower_i64_i64_map.with-capacity 8)
-                      0
-                      0)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [rvo-has-return : bool

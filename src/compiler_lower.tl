@@ -3621,7 +3621,6 @@
   [decls : AstDeclList]
   [names : LowerNameEnv]
   [base-cache : LowerNameCache]
-  [module : String]
   [module-id : i64]) : LowerNameEnv
   ;; Build aliases into a fresh overlay so empty-alias duplicate checks do not
   ;; rescan the whole base env for every imported decl.
@@ -4039,7 +4038,6 @@
               decls
               (LowerNameEnv.Nil)
               name-cache
-              module
               module-id)]
           (lower-module-local-envs-list
             top-env
@@ -6190,14 +6188,12 @@
           decls
           base-names
           base-cache
-          module
           module-id)]
       [alias-only-names : LowerNameEnv
         (lower-name-env-with-import-aliases-in-module-cache
           decls
           (LowerNameEnv.Nil)
           base-cache
-          module
           module-id)]
       (lower-name-cache-overlay
         (lower-function-body-local-names-in-module-resolve
@@ -24825,52 +24821,52 @@
               direct-variant-module-id
               (tc-qualified-name-module-id enum-name-id))
             true)))]
-    (if direct-variant-owner-matches
-      direct-variant-handle
-      (if (compiler-symbols-handle-found? source-handle)
-        source-handle
-        (if (and (>= enum-name-id 0) (>= variant-name-id 0))
-          (let
-            [direct-enum-handle : i64
-              (compiler-symbols-lookup-type-id-or symbols enum-name-id fallback)]
-            [enum-base-id : i64
-              (if (>= enum-name-id 0)
-                (lower-existing-name-id-or
-                  (tc-qualified-name-base
-                    (tc-nominal-name-id-display enum-name-id))
-                  -1)
-                -1)]
-            [enum-handle : i64
-              (if (compiler-symbols-handle-found? direct-enum-handle)
-                direct-enum-handle
-                (if (>= enum-base-id 0)
-                  (compiler-symbols-lookup-type-id-or
-                    symbols
-                    (compiler-symbol-module-key-id-by-id
-                      (tc-context-module-id ctx)
-                      enum-base-id)
-                    fallback)
-                  fallback))]
-            (if (compiler-symbols-handle-found? enum-handle)
-              (let
-                [enum-index : i64 (compiler-symbol-handle-index enum-handle)]
-                [module-id : i64
-                  (compiler-symbols-owner-module-id-at-index-or
-                    symbols
-                    enum-index
-                    (compiler-symbol-root-module-id))]
-                [key-id : i64
+    (cond
+      [direct-variant-owner-matches direct-variant-handle]
+      [(compiler-symbols-handle-found? source-handle) source-handle]
+      [(and (>= enum-name-id 0) (>= variant-name-id 0))
+        (let
+          [direct-enum-handle : i64
+            (compiler-symbols-lookup-type-id-or symbols enum-name-id fallback)]
+          [enum-base-id : i64
+            (if (>= enum-name-id 0)
+              (lower-existing-name-id-or
+                (tc-qualified-name-base
+                  (tc-nominal-name-id-display enum-name-id))
+                -1)
+              -1)]
+          [enum-handle : i64
+            (cond
+              [(compiler-symbols-handle-found? direct-enum-handle)
+                direct-enum-handle]
+              [(>= enum-base-id 0)
+                (compiler-symbols-lookup-type-id-or
+                  symbols
                   (compiler-symbol-module-key-id-by-id
-                    module-id
-                    (compiler-enum-qualified-variant-name-id
-                      enum-base-id
-                      variant-name-id))]
-                (compiler-registries-lookup-variant-key-id-or
-                  (tc-context-registries ctx)
-                  key-id
-                  fallback))
-              fallback))
-          fallback)))))
+                    (tc-context-module-id ctx)
+                    enum-base-id)
+                  fallback)]
+              [else fallback])]
+          (if (compiler-symbols-handle-found? enum-handle)
+            (let
+              [enum-index : i64 (compiler-symbol-handle-index enum-handle)]
+              [module-id : i64
+                (compiler-symbols-owner-module-id-at-index-or
+                  symbols
+                  enum-index
+                  (compiler-symbol-root-module-id))]
+              [key-id : i64
+                (compiler-symbol-module-key-id-by-id
+                  module-id
+                  (compiler-enum-qualified-variant-name-id
+                    enum-base-id
+                    variant-name-id))]
+              (compiler-registries-lookup-variant-key-id-or
+                (tc-context-registries ctx)
+                key-id
+                fallback))
+            fallback))]
+      [else fallback])))
 
 (define (lower-call-non-builtin
   [ctx : TcContext]
@@ -25388,10 +25384,6 @@
                     ;; calling runtime symbols. Other `length` argument types keep
                     ;; the ordinary direct-call path.
                     (let
-                      [source-name : String
-                        (if hygiene-global
-                          (tc-hygiene-global-call-name raw-text)
-                          raw-text)]
                       [source-id : i64
                         (if hygiene-global
                           (macro-hygiene-global-source-name-id-or
@@ -41948,7 +41940,6 @@
   (let
     [source-name : String (lower-hygiene-source-name name)]
     [symbols : CompilerSymbols (tc-context-symbols ctx)]
-    [registries : CompilerRegistries (tc-context-registries ctx)]
     [variant-name : String
       (lower-variant-constructor-lookup-name ctx source-name ret-ty)]
     [struct-name : String

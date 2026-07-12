@@ -8745,7 +8745,6 @@
   [name-id : i64]) : ResultTcType
   (if (tc-env-key-has-name-id? name-id)
     (let
-      [name : String (intern-str name-id)]
       [env-name-id : i64 (tc-env-name-key-id name-id)]
       [found : ResultTcType
         (match (tc-lookup-id env env-name-id)
@@ -8883,22 +8882,21 @@
   (let
     [name : String (intern-str name-id)]
     [def-ctx : TcContext (tc-context-with-module ctx module)]
-    (begin
-      (if (>= (intern-first-dot name-id) 0)
-        (tc-lookup-dotted-source-visible def-ctx env name)
-        (match (tc-hygiene-definition-env ctx module)
-          [(ResultTcEnv.Ok def-env)
-            (let
-              [env-name-id : i64 (tc-env-name-key-id name-id)]
-              (match (tc-lookup-unsafe-id def-env env-name-id)
-                [(ResultTcTypeUnsafe.Ok ty unsafe)
-                  (if unsafe
-                    (match (tc-require-unsafe env name)
-                      [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
-                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])
-                    (ResultTcType.Ok ty))]
-                [(ResultTcTypeUnsafe.Err message) (ResultTcType.Err message)]))]
-          [(ResultTcEnv.Err message) (ResultTcType.Err message)])))))
+    (if (>= (intern-first-dot name-id) 0)
+      (tc-lookup-dotted-source-visible def-ctx env name)
+      (match (tc-hygiene-definition-env ctx module)
+        [(ResultTcEnv.Ok def-env)
+          (let
+            [env-name-id : i64 (tc-env-name-key-id name-id)]
+            (match (tc-lookup-unsafe-id def-env env-name-id)
+              [(ResultTcTypeUnsafe.Ok ty unsafe)
+                (if unsafe
+                  (match (tc-require-unsafe env name)
+                    [(ResultTcUnit.Ok) (ResultTcType.Ok ty)]
+                    [(ResultTcUnit.Err message) (ResultTcType.Err message)])
+                  (ResultTcType.Ok ty))]
+              [(ResultTcTypeUnsafe.Err message) (ResultTcType.Err message)]))]
+        [(ResultTcEnv.Err message) (ResultTcType.Err message)]))))
 
 (define (tc-hygiene-global-binding-unsafe-scan
   [root : TcTypeEnv]
@@ -11129,28 +11127,34 @@
         (compiler-composite-triple-key-id? name-id)))))
 
 (define (tc-qualified-name-module-id [name-id : i64]) : i64
-  (if (and (>= name-id 0) (< name-id (intern-capacity)))
-    (if (intern-qualified? name-id)
-      (intern-qualified-module-id name-id)
-      -1)
-    (if (compiler-composite-triple-key-id? name-id)
-      (compiler-composite-triple-left-id name-id)
-      (if (compiler-composite-pair-key-id? name-id)
-        (compiler-composite-pair-left-id name-id)
-        -1))))
+  (cond
+    [(and
+        (>= name-id 0)
+        (< name-id (intern-capacity))
+        (intern-qualified? name-id))
+      (intern-qualified-module-id name-id)]
+    [(and (>= name-id 0) (< name-id (intern-capacity))) -1]
+    [(compiler-composite-triple-key-id? name-id)
+      (compiler-composite-triple-left-id name-id)]
+    [(compiler-composite-pair-key-id? name-id)
+      (compiler-composite-pair-left-id name-id)]
+    [else -1]))
 
 (define (tc-qualified-name-base-id [name-id : i64]) : i64
-  (if (and (>= name-id 0) (< name-id (intern-capacity)))
-    (if (intern-qualified? name-id)
-      (intern-qualified-base-id name-id)
-      name-id)
-    (if (compiler-composite-triple-key-id? name-id)
+  (cond
+    [(and
+        (>= name-id 0)
+        (< name-id (intern-capacity))
+        (intern-qualified? name-id))
+      (intern-qualified-base-id name-id)]
+    [(and (>= name-id 0) (< name-id (intern-capacity))) name-id]
+    [(compiler-composite-triple-key-id? name-id)
       (compiler-composite-pair-key-id
         (compiler-composite-triple-middle-id name-id)
-        (compiler-composite-triple-right-id name-id))
-      (if (compiler-composite-pair-key-id? name-id)
-        (compiler-composite-pair-right-id name-id)
-        name-id))))
+        (compiler-composite-triple-right-id name-id))]
+    [(compiler-composite-pair-key-id? name-id)
+      (compiler-composite-pair-right-id name-id)]
+    [else name-id]))
 
 (define (tc-name-qualified? [name : String]) : bool
   (and
@@ -11967,7 +11971,7 @@
 (define (tc-stdlib-string-qualified-helper-id?
   [lookup-id : i64]
   [base-id : i64]
-  [base : String]) : bool
+  [_base : String]) : bool
   (and
     (tc-name-qualified-id? lookup-id)
     (= (tc-qualified-name-base-id lookup-id) base-id)
@@ -12781,45 +12785,44 @@
   [source-name : String]) : String
   (let
     [source-id : i64 (tc-existing-name-id source-name)]
-    (if (< source-id 0)
-      source-name
-      (if (tc-name-qualified-id? source-id)
-        source-name
-        (if (>= (intern-first-dot source-id) 0)
-          (match (tc-source-name-lookup-key-with-field-check
-            ctx
-            env
-            source-name
-            source-id
-            true)
-            [(ResultTcString.Ok lookup-name) lookup-name]
-            [(ResultTcString.Err _) source-name])
-          source-name)))))
+    (cond
+      [(< source-id 0) source-name]
+      [(tc-name-qualified-id? source-id) source-name]
+      [(>= (intern-first-dot source-id) 0)
+        (match (tc-source-name-lookup-key-with-field-check
+          ctx
+          env
+          source-name
+          source-id
+          true)
+          [(ResultTcString.Ok lookup-name) lookup-name]
+          [(ResultTcString.Err _) source-name])]
+      [else source-name])))
 
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [source-name : String]
   [source-id : i64]) : i64
-  (if (< source-id 0)
-    source-id
-    (if (and
-      (not (tc-hygiene-local-name? source-name))
-      (tc-name-qualified-id? source-id))
-      source-id
-      (if (>= (intern-first-dot source-id) 0)
-        (match (tc-source-name-lookup-key-with-field-check-lookup
-          ctx
-          env
-          source-name
-          source-id
-          true)
-          [(TcNameLookup.Ok lookup-name lookup-id)
-            (begin
-              (cbi.compiler-builtin-refresh!)
-              lookup-id)]
-          [(TcNameLookup.Err _) source-id])
-        source-id))))
+  (cond
+    [(< source-id 0) source-id]
+    [(and
+        (not (tc-hygiene-local-name? source-name))
+        (tc-name-qualified-id? source-id))
+      source-id]
+    [(>= (intern-first-dot source-id) 0)
+      (match (tc-source-name-lookup-key-with-field-check-lookup
+        ctx
+        env
+        source-name
+        source-id
+        true)
+        [(TcNameLookup.Ok lookup-name lookup-id)
+          (begin
+            (cbi.compiler-builtin-refresh!)
+            lookup-id)]
+        [(TcNameLookup.Err _) source-id])]
+    [else source-id]))
 
 (define (tc-call-variant-name-id?
   [ctx : TcContext]
@@ -13710,7 +13713,7 @@
 (define (tc-resolved-current-module-nominal-type-with-args
   [ctx : TcContext]
   [name : String]
-  [name-id : i64]
+  [_name-id : i64]
   [handle : i64]
   [lifetimes : AstLifetimeList]) : AstType
   (match (tc-nominal-owner-name ctx handle)
@@ -18115,11 +18118,11 @@
 
 (define (tc-type-env-scoped-carrier-smoke?) : bool
   (let
-    [outer-id : i64 (intern "outer")]
-    [inner-id : i64 (intern "inner")]
-    [resource-id : i64 (intern "resource")]
-    [arena-id : i64 (intern "arena")]
-    [atomic-id : i64 (intern "atomic")]
+    [_outer-id : i64 (intern "outer")]
+    [_inner-id : i64 (intern "inner")]
+    [_resource-id : i64 (intern "resource")]
+    [_arena-id : i64 (intern "arena")]
+    [_atomic-id : i64 (intern "atomic")]
     [base : TcTypeEnv
       (tc-env-with-cache
         (tc-push-region-id (tc-empty-env) (intern "cached-base")))]
@@ -18497,8 +18500,8 @@
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let
-    [lane-id : i64 (intern "lane")]
-    [idx-id : i64 (intern "idx")]
+    [_lane-id : i64 (intern "lane")]
+    [_idx-id : i64 (intern "idx")]
     [env : TcTypeEnv
       (tc-bind-id
         (tc-bind-id (tc-empty-env) (intern "x") (AstType.I64))
@@ -21836,33 +21839,31 @@
   [ret : AstType]) : ResultTcType
   (let
     [nid : i64 (tc-expr-var-name-id func)]
-    (begin
-      (if (>= nid 0)
-        (let
-          [handle : i64
-            (tc-source-variant-handle-for-enum-id-or
-              ctx
-              enum-name-id
-              nid
-              (compiler-symbols-missing-handle))]
-          (begin
-            (if (compiler-symbols-handle-found? handle)
-              (if (tc-nominal-name-id-eq?
-                (tc-variant-owner-id-or ctx handle -1)
-                enum-name-id)
-                (match (compiler-registries-variant-fields-indexed
-                  (tc-context-symbols ctx)
-                  handle)
-                  [(ResultAstTypeList.Ok fields)
-                    (if (ast-type-list-empty? (& fields))
-                      (ResultTcType.Ok (tc-tag-active-region env ret))
-                      (ResultTcType.Err "typecheck: arity mismatch"))]
-                  [(ResultAstTypeList.Err message) (ResultTcType.Err message)])
-                (ResultTcType.Err "typecheck: call target is not a function"))
-              (if (tc-name-qualified-id? enum-name-id)
-                (ResultTcType.Ok (tc-tag-active-region env ret))
-                (ResultTcType.Err "typecheck: call target is not a function")))))
-        (ResultTcType.Err "typecheck: call target is not a function")))))
+    (if (>= nid 0)
+      (let
+        [handle : i64
+          (tc-source-variant-handle-for-enum-id-or
+            ctx
+            enum-name-id
+            nid
+            (compiler-symbols-missing-handle))]
+        (if (compiler-symbols-handle-found? handle)
+          (if (tc-nominal-name-id-eq?
+            (tc-variant-owner-id-or ctx handle -1)
+            enum-name-id)
+            (match (compiler-registries-variant-fields-indexed
+              (tc-context-symbols ctx)
+              handle)
+              [(ResultAstTypeList.Ok fields)
+                (if (ast-type-list-empty? (& fields))
+                  (ResultTcType.Ok (tc-tag-active-region env ret))
+                  (ResultTcType.Err "typecheck: arity mismatch"))]
+              [(ResultAstTypeList.Err message) (ResultTcType.Err message)])
+            (ResultTcType.Err "typecheck: call target is not a function"))
+          (if (tc-name-qualified-id? enum-name-id)
+            (ResultTcType.Ok (tc-tag-active-region env ret))
+            (ResultTcType.Err "typecheck: call target is not a function"))))
+      (ResultTcType.Err "typecheck: call target is not a function"))))
 
 (define (tc-call-region-args-allowed-for-func
   [ctx : TcContext]
@@ -22959,32 +22960,31 @@
       (if (= (struct-get (& args) len) 1)
         (let
           [owner-expr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
-          (let
-            [nid : i64 (tc-expr-var-name-id (ast-node-get func-box))]
-            (if (>= nid 0)
-              (let
-                [name : String (intern-str nid)]
-                [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name nid)]
-                (if (tc-arena-safe-call-name-id?
-                  ctx
-                  env
-                  name
-                  nid
-                  lookup-id
-                  "phase")
-                  (let
-                    [oid : i64 (tc-expr-var-name-id owner-expr)]
-                    (if (>= oid 0)
-                      (let
-                        [owner : String (intern-str oid)]
-                        (if (or
-                          (tc-ordinary-arena-owner-active? env owner)
-                          (tc-atomic-arena-owner-active? env owner))
-                          (TcMaybeString.Some owner)
-                          (TcMaybeString.No)))
-                      (TcMaybeString.No)))
-                  (TcMaybeString.No)))
-              (TcMaybeString.No))))
+          [nid : i64 (tc-expr-var-name-id (ast-node-get func-box))]
+          (if (>= nid 0)
+            (let
+              [name : String (intern-str nid)]
+              [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name nid)]
+              (if (tc-arena-safe-call-name-id?
+                ctx
+                env
+                name
+                nid
+                lookup-id
+                "phase")
+                (let
+                  [oid : i64 (tc-expr-var-name-id owner-expr)]
+                  (if (>= oid 0)
+                    (let
+                      [owner : String (intern-str oid)]
+                      (if (or
+                        (tc-ordinary-arena-owner-active? env owner)
+                        (tc-atomic-arena-owner-active? env owner))
+                        (TcMaybeString.Some owner)
+                        (TcMaybeString.No)))
+                    (TcMaybeString.No)))
+                (TcMaybeString.No)))
+            (TcMaybeString.No)))
         (TcMaybeString.No))]
     [_ (TcMaybeString.No)]))
 
@@ -24824,66 +24824,64 @@
                           "typecheck: call target is not a function")]))]
                 [(ResultTcType.Err message) (ResultTcType.Err message)]))])]
       [_
-        (begin
-          (match (tc-expr-id ctx env func-id)
-            [(ResultTcType.Ok fn-ty)
-              (match fn-ty
-                [(AstType.Func params ret)
-                  (tc-call-function-type
-                    ctx
-                    env
-                    func
-                    args
-                    (box-get params)
-                    (ty-node-get ret))]
-                [(AstType.Region _ inner)
-                  (match (ty-node-get inner)
-                    [(AstType.Func params ret)
-                      (match (tc-check-call-args-with-message
+        (match (tc-expr-id ctx env func-id)
+          [(ResultTcType.Ok fn-ty)
+            (match fn-ty
+              [(AstType.Func params ret)
+                (tc-call-function-type
+                  ctx
+                  env
+                  func
+                  args
+                  (box-get params)
+                  (ty-node-get ret))]
+              [(AstType.Region _ inner)
+                (match (ty-node-get inner)
+                  [(AstType.Func params ret)
+                    (match (tc-check-call-args-with-message
+                      ctx
+                      env
+                      args
+                      (box-get params)
+                      false
+                      (AstMaybeType.No)
+                      (TcArityMessage.Detailed func args (box-get params))
+                      (tc-expr-c-abi-fnptr? ctx env func))
+                      [(ResultTcUnit.Ok)
+                        (ResultTcType.Ok
+                          (tc-tag-active-region env (ty-node-get ret)))]
+                      [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
+                  [(AstType.Enum enum-name)
+                    (if (ast-expr-list-empty? (& args))
+                      (tc-nullary-variant-call-expr
                         ctx
                         env
-                        args
-                        (box-get params)
-                        false
-                        (AstMaybeType.No)
-                        (TcArityMessage.Detailed func args (box-get params))
-                        (tc-expr-c-abi-fnptr? ctx env func))
-                        [(ResultTcUnit.Ok)
-                          (ResultTcType.Ok
-                            (tc-tag-active-region env (ty-node-get ret)))]
-                        [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                    [(AstType.Enum enum-name)
-                      (if (ast-expr-list-empty? (& args))
-                        (tc-nullary-variant-call-expr
-                          ctx
-                          env
-                          func
-                          enum-name
-                          (ty-node-get inner))
-                        (ResultTcType.Err "typecheck: arity mismatch"))]
-                    [(AstType.EnumArgs enum-name _)
-                      (if (ast-expr-list-empty? (& args))
-                        (tc-nullary-variant-call-expr
-                          ctx
-                          env
-                          func
-                          enum-name
-                          (ty-node-get inner))
-                        (ResultTcType.Err "typecheck: arity mismatch"))]
-                    [_
-                      (ResultTcType.Err
-                        "typecheck: call target is not a function")])]
-                [(AstType.Enum enum-name)
-                  (if (ast-expr-list-empty? (& args))
-                    (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                    (ResultTcType.Err "typecheck: arity mismatch"))]
-                [(AstType.EnumArgs enum-name _)
-                  (if (ast-expr-list-empty? (& args))
-                    (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
-                    (ResultTcType.Err "typecheck: arity mismatch"))]
-                [_
-                  (ResultTcType.Err "typecheck: call target is not a function")])]
-            [(ResultTcType.Err message) (ResultTcType.Err message)]))])))
+                        func
+                        enum-name
+                        (ty-node-get inner))
+                      (ResultTcType.Err "typecheck: arity mismatch"))]
+                  [(AstType.EnumArgs enum-name _)
+                    (if (ast-expr-list-empty? (& args))
+                      (tc-nullary-variant-call-expr
+                        ctx
+                        env
+                        func
+                        enum-name
+                        (ty-node-get inner))
+                      (ResultTcType.Err "typecheck: arity mismatch"))]
+                  [_
+                    (ResultTcType.Err
+                      "typecheck: call target is not a function")])]
+              [(AstType.Enum enum-name)
+                (if (ast-expr-list-empty? (& args))
+                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
+                  (ResultTcType.Err "typecheck: arity mismatch"))]
+              [(AstType.EnumArgs enum-name _)
+                (if (ast-expr-list-empty? (& args))
+                  (tc-nullary-variant-call-expr ctx env func enum-name fn-ty)
+                  (ResultTcType.Err "typecheck: arity mismatch"))]
+              [_ (ResultTcType.Err "typecheck: call target is not a function")])]
+          [(ResultTcType.Err message) (ResultTcType.Err message)])])))
 
 (define (tc-call-expr
   [ctx : TcContext]
@@ -24892,76 +24890,70 @@
   [args : AstExprList]) : ResultTcType
   (match (ast-expr-unspan func)
     [(AstExpr.Var raw-name)
-      (begin
-        (if (or (< raw-name 0) (>= raw-name (intern-capacity)))
-          (tc-call-expr-ordinary ctx env func args)
-          (let
-            [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
-            [name-id : i64 (tc-builtin-name-id name)]
-            [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
-            (if (or
-              (< name-id 0)
-              (compiler-composite-triple-key-id? lookup-id)
-              (tc-call-variant-name-id? ctx name name-id))
-              (tc-call-expr-ordinary ctx env func args)
-              (let
-                [arena-call-kind : i64
-                  (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
-                (cond
-                  [(and
-                      (tc-layout-query-name? name)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-layout-query-runtime-call name args)]
-                  [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
-                    (tc-one-length-handle-builtin-call
-                      ctx
-                      env
-                      args
-                      (AstType.I64))]
-                  [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
-                    (tc-array-length-call ctx env name func args)]
-                  [(and
-                      (cbi.compiler-builtin-typecheck-string-ref-call-id?
-                        name-id)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-string-ref-call ctx env args)]
-                  [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
-                    (tc-string-ref-call ctx env args)]
-                  [(and
-                      (tc-atomic-pointer-name? name)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-atomic-pointer-call ctx env name args)]
-                  [(= arena-call-kind (tc-arena-safe-call-kind-phase))
-                    (tc-phase-call ctx env args)]
-                  [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
-                    (tc-rewind-safe-call ctx env args)]
-                  [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
-                    (tc-destroy-safe-call ctx env args)]
-                  [(and
-                      (tc-borrowed-string-builtin-id? name-id)
-                      (tc-default-builtin-unshadowed-id? env name-id))
-                    (tc-borrowed-string-builtin-call ctx env name args)]
-                  [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
-                    (tc-borrowed-string-builtin-call
-                      ctx
-                      env
-                      "__tl_string_eq"
-                      args)]
-                  [(tc-string-to-int-helper-call-id? env lookup-id)
-                    (tc-borrowed-string-builtin-call
-                      ctx
-                      env
-                      "__tl_string_to_int"
-                      args)]
-                  [(and
-                      (ctfe-reflection-query-name? name)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-reflection-query-runtime-call name)]
-                  [(and
-                      (cbi.compiler-builtin-typecheck-clone-id? name-id)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-clone-call ctx env args)]
-                  [else (tc-call-expr-ordinary ctx env func args)]))))))]
+      (if (or (< raw-name 0) (>= raw-name (intern-capacity)))
+        (tc-call-expr-ordinary ctx env func args)
+        (let
+          [name : String (tc-hygiene-global-call-name (intern-str raw-name))]
+          [name-id : i64 (tc-builtin-name-id name)]
+          [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+          (if (or
+            (< name-id 0)
+            (compiler-composite-triple-key-id? lookup-id)
+            (tc-call-variant-name-id? ctx name name-id))
+            (tc-call-expr-ordinary ctx env func args)
+            (let
+              [arena-call-kind : i64
+                (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
+              (cond
+                [(and
+                    (tc-layout-query-name? name)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-layout-query-runtime-call name args)]
+                [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
+                  (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
+                [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
+                  (tc-array-length-call ctx env name func args)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-string-ref-call ctx env args)]
+                [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
+                  (tc-string-ref-call ctx env args)]
+                [(and
+                    (tc-atomic-pointer-name? name)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-atomic-pointer-call ctx env name args)]
+                [(= arena-call-kind (tc-arena-safe-call-kind-phase))
+                  (tc-phase-call ctx env args)]
+                [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
+                  (tc-rewind-safe-call ctx env args)]
+                [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
+                  (tc-destroy-safe-call ctx env args)]
+                [(and
+                    (tc-borrowed-string-builtin-id? name-id)
+                    (tc-default-builtin-unshadowed-id? env name-id))
+                  (tc-borrowed-string-builtin-call ctx env name args)]
+                [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
+                  (tc-borrowed-string-builtin-call
+                    ctx
+                    env
+                    "__tl_string_eq"
+                    args)]
+                [(tc-string-to-int-helper-call-id? env lookup-id)
+                  (tc-borrowed-string-builtin-call
+                    ctx
+                    env
+                    "__tl_string_to_int"
+                    args)]
+                [(and
+                    (ctfe-reflection-query-name? name)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-reflection-query-runtime-call name)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-clone-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-clone-call ctx env args)]
+                [else (tc-call-expr-ordinary ctx env func args)])))))]
     [_ (tc-call-expr-ordinary ctx env func args)]))
 
 (define (tc-str-ref-type? [ty : AstType]) : bool
@@ -25878,84 +25870,76 @@
                     source-id
                     (tc-existing-name-id name)))
                 raw-name))]
-          [lookup-id : i64
-            (begin
-              (tc-call-builtin-lookup-id ctx env name name-id))]
-          (begin
-            (if (or
-              (< name-id 0)
-              (compiler-composite-triple-key-id? lookup-id)
-              (tc-call-variant-name-id? ctx name name-id))
-              (tc-call-expr-ordinary-id ctx env func-id args)
-              (let
-                [arena-call-kind : i64
-                  (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
-                (cond
-                  [(and
-                      (tc-layout-query-name? name)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-layout-query-runtime-call name args)]
-                  [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
-                    (tc-one-length-handle-builtin-call
-                      ctx
-                      env
-                      args
-                      (AstType.I64))]
-                  [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
-                    (tc-array-length-call ctx env name func args)]
-                  [(and
-                      (cbi.compiler-builtin-typecheck-string-ref-call-id?
-                        name-id)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-string-ref-call ctx env args)]
-                  [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
-                    (tc-string-ref-call ctx env args)]
-                  [(and
-                      (tc-atomic-pointer-name? name)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-atomic-pointer-call ctx env name args)]
-                  [(= arena-call-kind (tc-arena-safe-call-kind-phase))
-                    (tc-phase-call ctx env args)]
-                  [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
-                    (tc-rewind-safe-call ctx env args)]
-                  [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
-                    (tc-destroy-safe-call ctx env args)]
-                  [(and
-                      (cbi.compiler-builtin-typecheck-tls-current-arena-id?
-                        name-id)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-tls-current-arena-call ctx env name-id args)]
-                  [(and
-                      (tc-borrowed-string-builtin-id? name-id)
-                      (tc-default-builtin-unshadowed-id? env name-id))
-                    (tc-borrowed-string-builtin-call ctx env name args)]
-                  [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
-                    (tc-borrowed-string-builtin-call
-                      ctx
-                      env
-                      "__tl_string_eq"
-                      args)]
-                  [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
-                    (tc-two-string-handle-builtin-call
-                      ctx
-                      env
-                      args
-                      (AstType.String))]
-                  [(tc-string-to-int-helper-call-id? env lookup-id)
-                    (tc-borrowed-string-builtin-call
-                      ctx
-                      env
-                      "__tl_string_to_int"
-                      args)]
-                  [(and
-                      (ctfe-reflection-query-name? name)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-reflection-query-runtime-call name)]
-                  [(and
-                      (cbi.compiler-builtin-typecheck-clone-id? name-id)
-                      (not (tc-name-bound-id? env name-id)))
-                    (tc-clone-call ctx env args)]
-                  [else (tc-call-expr-ordinary-id ctx env func-id args)])))))]
+          [lookup-id : i64 (tc-call-builtin-lookup-id ctx env name name-id)]
+          (if (or
+            (< name-id 0)
+            (compiler-composite-triple-key-id? lookup-id)
+            (tc-call-variant-name-id? ctx name name-id))
+            (tc-call-expr-ordinary-id ctx env func-id args)
+            (let
+              [arena-call-kind : i64
+                (tc-arena-safe-call-kind-id ctx env name-id lookup-id)]
+              (cond
+                [(and
+                    (tc-layout-query-name? name)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-layout-query-runtime-call name args)]
+                [(tc-string-length-helper-call-id? ctx env name-id lookup-id)
+                  (tc-one-length-handle-builtin-call ctx env args (AstType.I64))]
+                [(cbi.compiler-builtin-typecheck-length-call-id? name-id)
+                  (tc-array-length-call ctx env name func args)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-string-ref-call-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-string-ref-call ctx env args)]
+                [(tc-string-ref-helper-call-id? ctx env name-id lookup-id)
+                  (tc-string-ref-call ctx env args)]
+                [(and
+                    (tc-atomic-pointer-name? name)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-atomic-pointer-call ctx env name args)]
+                [(= arena-call-kind (tc-arena-safe-call-kind-phase))
+                  (tc-phase-call ctx env args)]
+                [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
+                  (tc-rewind-safe-call ctx env args)]
+                [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
+                  (tc-destroy-safe-call ctx env args)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-tls-current-arena-id?
+                      name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-tls-current-arena-call ctx env name-id args)]
+                [(and
+                    (tc-borrowed-string-builtin-id? name-id)
+                    (tc-default-builtin-unshadowed-id? env name-id))
+                  (tc-borrowed-string-builtin-call ctx env name args)]
+                [(tc-string-eq-helper-call-id? ctx env name-id lookup-id)
+                  (tc-borrowed-string-builtin-call
+                    ctx
+                    env
+                    "__tl_string_eq"
+                    args)]
+                [(tc-string-copy-helper-call-id? ctx env name-id lookup-id)
+                  (tc-two-string-handle-builtin-call
+                    ctx
+                    env
+                    args
+                    (AstType.String))]
+                [(tc-string-to-int-helper-call-id? env lookup-id)
+                  (tc-borrowed-string-builtin-call
+                    ctx
+                    env
+                    "__tl_string_to_int"
+                    args)]
+                [(and
+                    (ctfe-reflection-query-name? name)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-reflection-query-runtime-call name)]
+                [(and
+                    (cbi.compiler-builtin-typecheck-clone-id? name-id)
+                    (not (tc-name-bound-id? env name-id)))
+                  (tc-clone-call ctx env args)]
+                [else (tc-call-expr-ordinary-id ctx env func-id args)]))))]
       [_ (tc-call-expr-ordinary-id ctx env func-id args)])))
 
 (define (tc-let-bindings
@@ -25982,7 +25966,7 @@
     [(AstMaybeType.No) (tc-expr ctx env init)]))
 
 (define (tc-let-binding-plain-expected-ok
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [maybe-ty : AstMaybeType]
   [init-ty : AstType]) : ResultTcUnit
   (match maybe-ty
@@ -25991,7 +25975,7 @@
     [(AstMaybeType.No) ResultTcUnit.Ok]))
 
 (define (tc-let-binding-plain-bind-type
-  [ctx : TcContext]
+  [_ctx : TcContext]
   [maybe-ty : AstMaybeType]
   [init-ty : AstType]) : AstType
   (match maybe-ty
@@ -36116,43 +36100,44 @@
   ;; Intern variant-name once; read both id-keyed slots. Refs #4427.
   (let
     [variant-id : i64 (tc-existing-name-id variant-name)]
-    (if (< variant-id 0)
-      (if (>= (tc-name-first-dot variant-name) 0)
-        variant-name
-        (tc-qualified-variant-name enum-name variant-name))
-      (if (tc-name-qualified-id? variant-id)
-        variant-name
-        (if (>= (intern-first-dot variant-id) 0)
-          (let
-            [current-module-id : i64 (tc-context-module-id ctx)]
-            (match (tc-enum-qualified-variant-lookup-key-from-id
-              ctx
-              variant-name
-              variant-id
-              current-module-id)
-              [(ResultTcString.Ok lookup-name) lookup-name]
-              [(ResultTcString.Err _)
-                (match (tc-dotted-type-name-lookup-key-from-id
-                  ctx
-                  variant-name
-                  variant-id)
-                  [(ResultTcString.Ok lookup-name) lookup-name]
-                  [(ResultTcString.Err _) variant-name])]))
-          (let
-            [handle : i64
-              (compiler-registries-lookup-variant-or
-                (tc-context-registries ctx)
+    (cond
+      [(< variant-id 0)
+        (if (>= (tc-name-first-dot variant-name) 0)
+          variant-name
+          (tc-qualified-variant-name enum-name variant-name))]
+      [(tc-name-qualified-id? variant-id) variant-name]
+      [(>= (intern-first-dot variant-id) 0)
+        (let
+          [current-module-id : i64 (tc-context-module-id ctx)]
+          (match (tc-enum-qualified-variant-lookup-key-from-id
+            ctx
+            variant-name
+            variant-id
+            current-module-id)
+            [(ResultTcString.Ok lookup-name) lookup-name]
+            [(ResultTcString.Err _)
+              (match (tc-dotted-type-name-lookup-key-from-id
+                ctx
                 variant-name
-                (compiler-symbols-missing-handle))]
-            (if (compiler-symbols-handle-found? handle)
-              (match (tc-variant-owner-name ctx handle)
-                [(ResultTcString.Ok owner)
-                  (if (string.eq owner enum-name)
-                    variant-name
-                    (tc-qualified-variant-name enum-name variant-name))]
-                [(ResultTcString.Err _)
-                  (tc-qualified-variant-name enum-name variant-name)])
-              (tc-qualified-variant-name enum-name variant-name))))))))
+                variant-id)
+                [(ResultTcString.Ok lookup-name) lookup-name]
+                [(ResultTcString.Err _) variant-name])]))]
+      [else
+        (let
+          [handle : i64
+            (compiler-registries-lookup-variant-or
+              (tc-context-registries ctx)
+              variant-name
+              (compiler-symbols-missing-handle))]
+          (if (compiler-symbols-handle-found? handle)
+            (match (tc-variant-owner-name ctx handle)
+              [(ResultTcString.Ok owner)
+                (if (string.eq owner enum-name)
+                  variant-name
+                  (tc-qualified-variant-name enum-name variant-name))]
+              [(ResultTcString.Err _)
+                (tc-qualified-variant-name enum-name variant-name)])
+            (tc-qualified-variant-name enum-name variant-name)))])))
 
 (define (tc-qualified-variant-handle-for-enum-or
   [ctx : TcContext]
@@ -39005,7 +38990,7 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : i64]
-  [name-text : String]
+  [_name-text : String]
   [value-box : i64]) : ResultTcType
   (let
     [value : AstExpr (ast-node-get value-box)]
@@ -43043,59 +43028,57 @@
     (let
       [phase-box : i64 (ast-expr-list-get (& args) 0 0)]
       [phase-expr : AstExpr (ast-node-get phase-box)]
-      (let
-        [pid : i64 (tc-expr-var-name-id phase-expr)]
-        (if (>= pid 0)
-          (let
-            [phase : String (intern-str pid)]
-            (match (tc-arena-phase-token-region-active env phase)
-              [(TcMaybeString.Some region)
-                (match (tc-arena-phase-token-owner-active env phase)
-                  [(TcMaybeString.Some owner)
-                    (match (if (tc-atomic-arena-owner-active? env owner)
-                      (tc-move-check-atomic-arena-users-released
-                        ctx
+      [pid : i64 (tc-expr-var-name-id phase-expr)]
+      (if (>= pid 0)
+        (let
+          [phase : String (intern-str pid)]
+          (match (tc-arena-phase-token-region-active env phase)
+            [(TcMaybeString.Some region)
+              (match (tc-arena-phase-token-owner-active env phase)
+                [(TcMaybeString.Some owner)
+                  (match (if (tc-atomic-arena-owner-active? env owner)
+                    (tc-move-check-atomic-arena-users-released
+                      ctx
+                      env
+                      locals
+                      moved
+                      owner)
+                    (TcMoveResult.Ok moved))
+                    [(TcMoveResult.Ok moved1)
+                      (match (tc-move-consume-local
+                        locals
+                        loop-carried
+                        moved1
+                        phase
+                        origin)
+                        [(TcMoveResult.Ok moved2)
+                          (tc-move-mark-region-locals
+                            env
+                            locals
+                            loop-carried
+                            moved2
+                            region
+                            origin)]
+                        [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+                [(TcMaybeString.No)
+                  (match (tc-move-consume-local
+                    locals
+                    loop-carried
+                    moved
+                    phase
+                    origin)
+                    [(TcMoveResult.Ok moved2)
+                      (tc-move-mark-region-locals
                         env
                         locals
-                        moved
-                        owner)
-                      (TcMoveResult.Ok moved))
-                      [(TcMoveResult.Ok moved1)
-                        (match (tc-move-consume-local
-                          locals
-                          loop-carried
-                          moved1
-                          phase
-                          origin)
-                          [(TcMoveResult.Ok moved2)
-                            (tc-move-mark-region-locals
-                              env
-                              locals
-                              loop-carried
-                              moved2
-                              region
-                              origin)]
-                          [(TcMoveResult.Err message)
-                            (TcMoveResult.Err message)])]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                  [(TcMaybeString.No)
-                    (match (tc-move-consume-local
-                      locals
-                      loop-carried
-                      moved
-                      phase
-                      origin)
-                      [(TcMoveResult.Ok moved2)
-                        (tc-move-mark-region-locals
-                          env
-                          locals
-                          loop-carried
-                          moved2
-                          region
-                          origin)]
-                      [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
-              [(TcMaybeString.No) (TcMoveResult.Ok moved)]))
-          (TcMoveResult.Ok moved))))))
+                        loop-carried
+                        moved2
+                        region
+                        origin)]
+                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])])]
+            [(TcMaybeString.No) (TcMoveResult.Ok moved)]))
+        (TcMoveResult.Ok moved)))))
 
 (define (tc-move-safe-arena-destroy-effect
   [ctx : TcContext]
@@ -43110,41 +43093,40 @@
     (let
       [owner-box : i64 (ast-expr-list-get (& args) 0 0)]
       [owner-expr : AstExpr (ast-node-get owner-box)]
-      (let
-        [oid : i64 (tc-expr-var-name-id owner-expr)]
-        (if (>= oid 0)
-          (let
-            [owner : String (intern-str oid)]
-            (if (or
-              (tc-ordinary-arena-owner-active? env owner)
-              (tc-atomic-arena-owner-active? env owner))
-              (match (if (tc-atomic-arena-owner-active? env owner)
-                (tc-move-check-atomic-arena-users-released
-                  ctx
-                  env
+      [oid : i64 (tc-expr-var-name-id owner-expr)]
+      (if (>= oid 0)
+        (let
+          [owner : String (intern-str oid)]
+          (if (or
+            (tc-ordinary-arena-owner-active? env owner)
+            (tc-atomic-arena-owner-active? env owner))
+            (match (if (tc-atomic-arena-owner-active? env owner)
+              (tc-move-check-atomic-arena-users-released
+                ctx
+                env
+                locals
+                moved
+                owner)
+              (TcMoveResult.Ok moved))
+              [(TcMoveResult.Ok moved1)
+                (match (tc-move-consume-local
                   locals
-                  moved
-                  owner)
-                (TcMoveResult.Ok moved))
-                [(TcMoveResult.Ok moved1)
-                  (match (tc-move-consume-local
-                    locals
-                    loop-carried
-                    moved1
-                    owner
-                    origin)
-                    [(TcMoveResult.Ok moved2)
-                      (tc-move-mark-owner-region-locals
-                        env
-                        locals
-                        loop-carried
-                        moved2
-                        owner
-                        origin)]
-                    [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-                [(TcMoveResult.Err message) (TcMoveResult.Err message)])
-              (TcMoveResult.Ok moved)))
-          (TcMoveResult.Ok moved))))))
+                  loop-carried
+                  moved1
+                  owner
+                  origin)
+                  [(TcMoveResult.Ok moved2)
+                    (tc-move-mark-owner-region-locals
+                      env
+                      locals
+                      loop-carried
+                      moved2
+                      owner
+                      origin)]
+                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+              [(TcMoveResult.Err message) (TcMoveResult.Err message)])
+            (TcMoveResult.Ok moved)))
+        (TcMoveResult.Ok moved)))))
 
 (define (tc-move-check-safe-arena-call-effects
   [ctx : TcContext]
@@ -46354,27 +46336,26 @@
     (let
       [phase-box : i64 (ast-expr-list-get (& args) 0 0)]
       [phase-expr : AstExpr (ast-node-get phase-box)]
-      (let
-        [pid : i64 (tc-expr-var-name-id phase-expr)]
-        (if (>= pid 0)
-          (let
-            [phase : String (intern-str pid)]
-            (match (tc-borrow-check-assign-conflict borrowed phase primary)
-              [(ResultTcUnit.Ok)
-                (match (tc-arena-phase-token-region-active env phase)
-                  [(TcMaybeString.Some region)
-                    (tc-borrow-check-region-invalidation-scan
-                      ctx
-                      env
-                      locals
-                      borrowed
-                      region
-                      TcStringList.Nil
-                      (tc-moved-len locals)
-                      primary)]
-                  [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])]
-              [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))
-          (TcBorrowCheckResult.Ok borrowed))))))
+      [pid : i64 (tc-expr-var-name-id phase-expr)]
+      (if (>= pid 0)
+        (let
+          [phase : String (intern-str pid)]
+          (match (tc-borrow-check-assign-conflict borrowed phase primary)
+            [(ResultTcUnit.Ok)
+              (match (tc-arena-phase-token-region-active env phase)
+                [(TcMaybeString.Some region)
+                  (tc-borrow-check-region-invalidation-scan
+                    ctx
+                    env
+                    locals
+                    borrowed
+                    region
+                    TcStringList.Nil
+                    (tc-moved-len locals)
+                    primary)]
+                [(TcMaybeString.No) (TcBorrowCheckResult.Ok borrowed)])]
+            [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)]))
+        (TcBorrowCheckResult.Ok borrowed)))))
 
 (define (tc-borrow-check-safe-arena-destroy-effect
   [ctx : TcContext]
@@ -46388,28 +46369,27 @@
     (let
       [owner-box : i64 (ast-expr-list-get (& args) 0 0)]
       [owner-expr : AstExpr (ast-node-get owner-box)]
-      (let
-        [oid : i64 (tc-expr-var-name-id owner-expr)]
-        (if (>= oid 0)
-          (let
-            [owner : String (intern-str oid)]
-            (if (or
-              (tc-ordinary-arena-owner-active? env owner)
-              (tc-atomic-arena-owner-active? env owner))
-              (match (tc-borrow-check-assign-conflict borrowed owner primary)
-                [(ResultTcUnit.Ok)
-                  (tc-borrow-check-owner-invalidation-scan
-                    ctx
-                    env
-                    locals
-                    borrowed
-                    owner
-                    TcStringList.Nil
-                    (tc-moved-len locals)
-                    primary)]
-                [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
-              (TcBorrowCheckResult.Ok borrowed)))
-          (TcBorrowCheckResult.Ok borrowed))))))
+      [oid : i64 (tc-expr-var-name-id owner-expr)]
+      (if (>= oid 0)
+        (let
+          [owner : String (intern-str oid)]
+          (if (or
+            (tc-ordinary-arena-owner-active? env owner)
+            (tc-atomic-arena-owner-active? env owner))
+            (match (tc-borrow-check-assign-conflict borrowed owner primary)
+              [(ResultTcUnit.Ok)
+                (tc-borrow-check-owner-invalidation-scan
+                  ctx
+                  env
+                  locals
+                  borrowed
+                  owner
+                  TcStringList.Nil
+                  (tc-moved-len locals)
+                  primary)]
+              [(ResultTcUnit.Err message) (TcBorrowCheckResult.Err message)])
+            (TcBorrowCheckResult.Ok borrowed)))
+        (TcBorrowCheckResult.Ok borrowed)))))
 
 (define (tc-borrow-check-safe-arena-call-effects
   [ctx : TcContext]

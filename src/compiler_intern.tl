@@ -228,6 +228,8 @@
   -1)
 (define intern-slice-cache3-ready : bool
   false)
+(define intern-pointer-storage-arena : i64
+  (tl_arena_make))
 (define intern-persistent-arena : i64
   (tl_arena_make))
 (define intern-persistent-arena-floor-mark : i64
@@ -241,11 +243,24 @@
 (define (intern-pointer-storage-ensure!) : unit
   (if (= (array-length intern-pointer-id-slots) (intern-capacity))
     unit
-    (begin
-      (set! intern-pointer-id-slots (make-array i64 262144))
-      (set! intern-pointer-key-slots (make-array i64 262144))
-      (set! intern-reader-pointer-slots (make-array i64 262144))
-      (set! intern-reader-id-slots (make-array i64 262144)))))
+    (let
+      [prev-arena : i64 (tl_arena_current)]
+      [_set-arena : unit
+        (unsafe
+          (tl_arena_set intern-pointer-storage-arena))]
+      [pointer-id-slots : (Array i64) (make-array i64 262144)]
+      [pointer-key-slots : (Array i64) (make-array i64 262144)]
+      [reader-pointer-slots : (Array i64) (make-array i64 262144)]
+      [reader-id-slots : (Array i64) (make-array i64 262144)]
+      [storage-arena : i64 (tl_arena_current)]
+      (begin
+        (unsafe
+          (tl_arena_set prev-arena))
+        (set! intern-pointer-storage-arena storage-arena)
+        (set! intern-pointer-id-slots pointer-id-slots)
+        (set! intern-pointer-key-slots pointer-key-slots)
+        (set! intern-reader-pointer-slots reader-pointer-slots)
+        (set! intern-reader-id-slots reader-id-slots)))))
 
 (define (intern-map-read-lanes-rebuild!) : unit
   (let
@@ -933,8 +948,7 @@
                         intern-profile-pointer-hit-count
                         (+ intern-profile-pointer-hit-count 1)))
                     (return id))
-                  (begin
-                    (set! cursor (bit-and (+ cursor 1) mask)))))))))
+                  (set! cursor (bit-and (+ cursor 1) mask))))))))
       -1)))
 
 (define (intern-pointer-id-record! [name : String] [id : i64]) : unit
@@ -997,9 +1011,8 @@
             (return unit)
             (if (and
               (= (array-ref intern-pointer-key-slots cursor) needle)
-              (and
-                (= (intern-pointer-slot-len stored) needle-len)
-                (= (intern-pointer-slot-id stored) id)))
+              (= (intern-pointer-slot-len stored) needle-len)
+              (= (intern-pointer-slot-id stored) id))
               (begin
                 (array-set! intern-pointer-key-slots cursor 0)
                 (return unit))
@@ -2046,6 +2059,33 @@
         (intern-reset!)
         ok))))
 
+(define (intern-pointer-storage-arena-tests-ok?) : bool
+  (begin
+    (intern-reset!)
+    (set! intern-pointer-id-slots (make-array i64 1))
+    (set! intern-pointer-key-slots (make-array i64 1))
+    (set! intern-reader-pointer-slots (make-array i64 1))
+    (set! intern-reader-id-slots (make-array i64 1))
+    (let
+      [home : i64 (tl_arena_current)]
+      [scratch : i64 (tl_arena_make)]
+      (begin
+        (unsafe
+          (tl_arena_set scratch))
+        (intern-reset!)
+        (let
+          [id : i64 (intern "scratch-pointer-storage")]
+          (begin
+            (unsafe
+              (tl_arena_set home))
+            (unsafe
+              (tl_arena_destroy scratch))
+            (let
+              [ok : bool (= (intern-pointer-id-lookup (intern-str id)) id)]
+              (begin
+                (intern-reset!)
+                ok))))))))
+
 (define (intern-persistent-arena-tests-ok?) : bool
   (begin
     (intern-reset!)
@@ -2192,6 +2232,7 @@
         (unless (intern-name-dotted? "point.x") (set! ok false))
         (unless (= (intern-name-first-dot "point.x") 5) (set! ok false))
         (unless (intern-slice-tests-ok?) (set! ok false))
+        (unless (intern-pointer-storage-arena-tests-ok?) (set! ok false))
         (unless (intern-generated-name-tests-ok?) (set! ok false))
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))
         (unless (intern-reset-to-tests-ok?) (set! ok false))

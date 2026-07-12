@@ -28,30 +28,30 @@
     [stride : i64 (ci.intern-capacity)]
     [stride2 : i64 (* stride stride)]
     [triple-offset : i64 (+ stride stride2)]
-    (if (and
-      (>= name-id triple-offset)
-      (< name-id (+ triple-offset (* stride2 stride))))
-      (let
-        [raw : i64 (- name-id triple-offset)]
-        [module-id : i64 (/ raw stride2)]
-        [enum-id : i64 (% (/ raw stride) stride)]
-        [variant-id : i64 (% raw stride)]
-        (string.append
-          (ci.intern-str module-id)
+    (cond
+      [(and
+          (>= name-id triple-offset)
+          (< name-id (+ triple-offset (* stride2 stride))))
+        (let
+          [raw : i64 (- name-id triple-offset)]
+          [module-id : i64 (/ raw stride2)]
+          [enum-id : i64 (% (/ raw stride) stride)]
+          [variant-id : i64 (% raw stride)]
           (string.append
-            "/"
+            (ci.intern-str module-id)
             (string.append
-              (ci.intern-str enum-id)
-              (string.append "." (ci.intern-str variant-id))))))
-      (if (and (>= name-id stride) (< name-id (+ stride stride2)))
+              "/"
+              (string.append
+                (ci.intern-str enum-id)
+                (string.append "." (ci.intern-str variant-id))))))]
+      [(and (>= name-id stride) (< name-id (+ stride stride2)))
         (let
           [raw : i64 (- name-id stride)]
           (string.append
             (ci.intern-str (/ raw stride))
-            (string.append "/" (ci.intern-str (% raw stride)))))
-        (if (and (>= name-id 0) (< name-id stride))
-          (ci.intern-str name-id)
-          "<structural-nominal>")))))
+            (string.append "/" (ci.intern-str (% raw stride)))))]
+      [(and (>= name-id 0) (< name-id stride)) (ci.intern-str name-id)]
+      [else "<structural-nominal>"])))
 
 ;; String-taking constructors are compatibility boundaries only. Source names
 ;; must already have been assigned ids by the parser before an AST is built.

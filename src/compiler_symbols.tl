@@ -424,18 +424,16 @@
       option_i64.None)))
 
 (define (compiler-symbol-require-existing-name-id [name : String]) : i64
-  (begin
-    (match (compiler-symbol-existing-name-id name)
-      [(option_i64.Some name-id) name-id]
-      [(option_i64.None)
-        (io.panic
-          (string.append "symbols: name was not interned while parsing: " name))])))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id) name-id]
+    [(option_i64.None)
+      (io.panic
+        (string.append "symbols: name was not interned while parsing: " name))]))
 
 (define (compiler-symbol-existing-name-id-or [name : String] [fallback : i64]) : i64
-  (begin
-    (match (compiler-symbol-existing-name-id name)
-      [(option_i64.Some name-id) name-id]
-      [(option_i64.None) fallback])))
+  (match (compiler-symbol-existing-name-id name)
+    [(option_i64.Some name-id) name-id]
+    [(option_i64.None) fallback]))
 
 ;; A generated public declaration may reuse a spelling that was already
 ;; assigned a source id by the parser. Keep its generated identity as the
@@ -465,10 +463,9 @@
 (define (compiler-symbol-map-lookup
   [map : (& map CompilerSymbolMap)]
   [name : String]) : option_i64.Option
-  (begin
-    (match (compiler-symbol-key-from-string name)
-      [(option_i64.Some key-id) (compiler-symbol-map-lookup-id map key-id)]
-      [(option_i64.None) option_i64.None])))
+  (match (compiler-symbol-key-from-string name)
+    [(option_i64.Some key-id) (compiler-symbol-map-lookup-id map key-id)]
+    [(option_i64.None) option_i64.None]))
 
 (define (compiler-symbol-map-contains-id?
   [map : (& map CompilerSymbolMap)]
@@ -751,19 +748,20 @@
 (define (compiler-struct-field-key-id-by-id
   [struct-name-id : i64]
   [field-name-id : i64]) : i64
-  (if (compiler-composite-pair-key-id? struct-name-id)
-    (compiler-composite-triple-key-id
-      (compiler-composite-pair-left-id struct-name-id)
-      (compiler-composite-pair-right-id struct-name-id)
-      field-name-id)
-    (if (>= struct-name-id (intern-capacity))
-      (compiler-composite-pair-key-id struct-name-id field-name-id)
-      (if (intern-qualified? struct-name-id)
-        (compiler-composite-triple-key-id
-          (intern-qualified-module-id struct-name-id)
-          (intern-qualified-base-id struct-name-id)
-          field-name-id)
-        (compiler-composite-pair-key-id struct-name-id field-name-id)))))
+  (cond
+    [(compiler-composite-pair-key-id? struct-name-id)
+      (compiler-composite-triple-key-id
+        (compiler-composite-pair-left-id struct-name-id)
+        (compiler-composite-pair-right-id struct-name-id)
+        field-name-id)]
+    [(>= struct-name-id (intern-capacity))
+      (compiler-composite-pair-key-id struct-name-id field-name-id)]
+    [(intern-qualified? struct-name-id)
+      (compiler-composite-triple-key-id
+        (intern-qualified-module-id struct-name-id)
+        (intern-qualified-base-id struct-name-id)
+        field-name-id)]
+    [else (compiler-composite-pair-key-id struct-name-id field-name-id)]))
 
 (define (compiler-struct-field-key-id
   [struct-name : String]
@@ -809,19 +807,20 @@
 (define (compiler-symbol-module-key-by-id [module-id : i64] [name-id : i64]) : String
   (let
     [name : String
-      (if (compiler-composite-triple-key-id? name-id)
-        (compiler-symbol-module-key
-          (intern-str (compiler-composite-triple-left-id name-id))
-          (compiler-enum-qualified-variant-name
-            (intern-str (compiler-composite-triple-middle-id name-id))
-            (intern-str (compiler-composite-triple-right-id name-id))))
-        (if (compiler-composite-pair-key-id? name-id)
+      (cond
+        [(compiler-composite-triple-key-id? name-id)
+          (compiler-symbol-module-key
+            (intern-str (compiler-composite-triple-left-id name-id))
+            (compiler-enum-qualified-variant-name
+              (intern-str (compiler-composite-triple-middle-id name-id))
+              (intern-str (compiler-composite-triple-right-id name-id))))]
+        [(compiler-composite-pair-key-id? name-id)
           (compiler-enum-qualified-variant-name
             (intern-str (compiler-composite-pair-left-id name-id))
-            (intern-str (compiler-composite-pair-right-id name-id)))
-          (if (and (>= name-id 0) (< name-id (intern-capacity)))
-            (intern-str name-id)
-            "<structural-symbol>")))]
+            (intern-str (compiler-composite-pair-right-id name-id)))]
+        [(and (>= name-id 0) (< name-id (intern-capacity)))
+          (intern-str name-id)]
+        [else "<structural-symbol>"])]
     (if (or
       (compiler-composite-triple-key-id? name-id)
       (compiler-symbol-root-module-id? module-id))
@@ -933,30 +932,30 @@
       option_i64.None
       (let
         [tail-tail-id : i64 (intern-dotted-tail-id tail-id)]
-        (if (intern-qualified? name-id)
-          (if (< tail-tail-id 0)
+        (cond
+          [(and (intern-qualified? name-id) (< tail-tail-id 0))
             (option_i64.Some
               (compiler-symbol-module-key-id-by-id
                 (intern-qualified-module-id name-id)
                 (compiler-enum-qualified-variant-name-id
                   (intern-leading-dot-id base-id)
-                  tail-id)))
-            option_i64.None)
-          (if (< tail-tail-id 0)
+                  tail-id)))]
+          [(intern-qualified? name-id) option_i64.None]
+          [(< tail-tail-id 0)
             (option_i64.Some
               (compiler-symbol-module-key-id-by-id
                 default-module-id
                 (compiler-enum-qualified-variant-name-id
                   (intern-leading-dot-id base-id)
-                  tail-id)))
-            (if (< (intern-dotted-tail-id tail-tail-id) 0)
-              (option_i64.Some
-                (compiler-symbol-module-key-id-by-id
-                  (intern-leading-dot-id base-id)
-                  (compiler-enum-qualified-variant-name-id
-                    (intern-leading-dot-id tail-id)
-                    tail-tail-id)))
-              option_i64.None)))))))
+                  tail-id)))]
+          [(< (intern-dotted-tail-id tail-tail-id) 0)
+            (option_i64.Some
+              (compiler-symbol-module-key-id-by-id
+                (intern-leading-dot-id base-id)
+                (compiler-enum-qualified-variant-name-id
+                  (intern-leading-dot-id tail-id)
+                  tail-tail-id)))]
+          [else option_i64.None])))))
 
 (define (compiler-symbol-dotted-variant-key-id-in-module
   [name-id : i64]
@@ -1016,7 +1015,8 @@
                     module-id)]
                 (if (or
                   (< resolved-module-id -1)
-                  (or (<= enum-len 0) (<= variant-len 0)))
+                  (<= enum-len 0)
+                  (<= variant-len 0))
                   option_i64.None
                   (match (compiler-symbol-existing-name-slice-id
                     base
@@ -1508,9 +1508,8 @@
 (define (compiler-symbols-comptime-module-id? [module-id : i64]) : bool
   (and
     (not (compiler-symbol-root-module-id? module-id))
-    (and
-      (< module-id (intern-capacity))
-      (compiler-symbols-comptime-module? (intern-str module-id)))))
+    (< module-id (intern-capacity))
+    (compiler-symbols-comptime-module? (intern-str module-id))))
 
 (define (compiler-symbols-add-type-in-module
   [symbols : CompilerSymbols]
@@ -1739,14 +1738,13 @@
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : option_i64.Option
-  (begin
-    (let
-      [missing : i64 -2]
-      [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
-      [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
-      (if (or (= module-id missing) (= name-id missing))
-        option_i64.None
-        (compiler-symbols-lookup-value-in-module-id symbols module-id name-id)))))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
+    (if (or (= module-id missing) (= name-id missing))
+      option_i64.None
+      (compiler-symbols-lookup-value-in-module-id symbols module-id name-id))))
 
 (define (compiler-symbols-lookup-value-in-module-id
   [symbols : CompilerSymbols]
@@ -1762,14 +1760,13 @@
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : option_i64.Option
-  (begin
-    (let
-      [missing : i64 -2]
-      [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
-      [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
-      (if (or (= module-id missing) (= name-id missing))
-        option_i64.None
-        (compiler-symbols-lookup-type-in-module-id symbols module-id name-id)))))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
+    (if (or (= module-id missing) (= name-id missing))
+      option_i64.None
+      (compiler-symbols-lookup-type-in-module-id symbols module-id name-id))))
 
 (define (compiler-symbols-lookup-type-in-module-id
   [symbols : CompilerSymbols]
@@ -1785,14 +1782,13 @@
   [symbols : CompilerSymbols]
   [module : String]
   [name : String]) : option_i64.Option
-  (begin
-    (let
-      [missing : i64 -2]
-      [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
-      [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
-      (if (or (= module-id missing) (= name-id missing))
-        option_i64.None
-        (compiler-symbols-lookup-macro-in-module-id symbols module-id name-id)))))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [name-id : i64 (compiler-symbol-existing-name-id-or name missing)]
+    (if (or (= module-id missing) (= name-id missing))
+      option_i64.None
+      (compiler-symbols-lookup-macro-in-module-id symbols module-id name-id))))
 
 (define (compiler-symbols-lookup-macro-in-module-id
   [symbols : CompilerSymbols]
@@ -1863,23 +1859,22 @@
   [module : String]
   [type-name : String]
   [field-name : String]) : option_i64.Option
-  (begin
-    (let
-      [missing : i64 -2]
-      [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
-      [type-name-id : i64
-        (compiler-symbol-existing-name-id-or type-name missing)]
-      [field-name-id : i64
-        (compiler-symbol-existing-name-id-or field-name missing)]
-      (if (or
-        (= module-id missing)
-        (or (= type-name-id missing) (= field-name-id missing)))
-        option_i64.None
-        (compiler-registries-lookup-field-in-module-id
-          registries
-          module-id
-          type-name-id
-          field-name-id)))))
+  (let
+    [missing : i64 -2]
+    [module-id : i64 (compiler-symbol-existing-module-id-or module missing)]
+    [type-name-id : i64 (compiler-symbol-existing-name-id-or type-name missing)]
+    [field-name-id : i64
+      (compiler-symbol-existing-name-id-or field-name missing)]
+    (if (or
+      (= module-id missing)
+      (= type-name-id missing)
+      (= field-name-id missing))
+      option_i64.None
+      (compiler-registries-lookup-field-in-module-id
+        registries
+        module-id
+        type-name-id
+        field-name-id))))
 
 (define (compiler-registries-lookup-field-in-module-id
   [registries : CompilerRegistries]

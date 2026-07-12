@@ -1347,6 +1347,15 @@ growing, moving, or mutably borrowing that source projection is rejected until
 the returned reference/result's last use; disjoint sibling projections remain
 independent.
 
+**Shared collection iterators.** A generated collection iterator may store an
+`(& source Collection)` projection and return a result carrying an `(& source
+T)` item. The iterator state and every yielded item retain a shared borrow of
+the source, so reads may coexist but moving, mutating, growing, or mutably
+borrowing the collection is rejected until the relevant state/result's last
+use. Repeated exhausted steps return a concrete `Done` result. `String`
+elements retain the language's immutable-text rule and use `(& source str)`
+items under this convention.
+
 **Lending collection iterators.** A generated mutable collection iterator may
 store an `(&mut source Collection)` projection and return a result carrying an
 `(&mut source T)` item. This is a lending operation: the iterator state keeps

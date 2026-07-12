@@ -18,7 +18,7 @@
 (defenum MdTableRow
   (Row svec.Vec))
 
-(vector.family MdTableRow MdTableRowList md-table-row-list)
+(import (vector.vector MdTableRow core) as md_table_rows)
 
 (defenum MdBlock
   (Heading i64 String)
@@ -27,16 +27,16 @@
   (BulletList svec.Vec)
   (NumberedList svec.Vec)
   (CodeFence String String String)
-  (Table svec.Vec MdTableRowList)
+  (Table svec.Vec md_table_rows.Vec)
   (Blank))
 
-(vector.family MdBlock MdBlockList md-block-list)
+(import (vector.vector MdBlock core) as md_blocks)
 
 (defenum MdScanBlock
   (Block i64 MdBlock))
 
 (defenum MdScanRows
-  (Rows i64 MdTableRowList))
+  (Rows i64 md_table_rows.Vec))
 
 (defenum MdMaybeBlock
   (No)
@@ -46,20 +46,20 @@
   (No)
   (Some String))
 
-(define (md-table-row-list-empty) : MdTableRowList
-  (md-table-row-list-new))
+(define (md-table-row-list-empty) : md_table_rows.Vec
+  (md_table_rows.new))
 
-(define (md-table-row-list-count [items : MdTableRowList]) : i64
-  (md-table-row-list-len (& items)))
+(define (md-table-row-list-count [items : md_table_rows.Vec]) : i64
+  (md_table_rows.len (& items)))
 
-(define (md-table-row-list-ref [items : MdTableRowList] [index : i64]) : MdTableRow
-  (md-table-row-list-get (& items) index (MdTableRow.Row (svec.new))))
+(define (md-table-row-list-ref [items : md_table_rows.Vec] [index : i64]) : MdTableRow
+  (md_table_rows.get (& items) index (MdTableRow.Row (svec.new))))
 
-(define (md-block-list-empty) : MdBlockList
-  (md-block-list-new))
+(define (md-block-list-empty) : md_blocks.Vec
+  (md_blocks.new))
 
-(define (md-block-list-count [items : MdBlockList]) : i64
-  (md-block-list-len (& items)))
+(define (md-block-list-count [items : md_blocks.Vec]) : i64
+  (md_blocks.len (& items)))
 
 (define (md-string-list-count [items : svec.Vec]) : i64
   (svec.len (& items)))
@@ -96,22 +96,22 @@
     [(MdTableRow.Row cells) (md-string-list-eq2? cells first second)]))
 
 (define (md-table-row-list-eq1?
-  [rows : MdTableRowList]
+  [rows : md_table_rows.Vec]
   [first : String]
   [second : String]) : bool
   (if (= (md-table-row-list-count rows) 1)
     (md-table-row-eq2? (md-table-row-list-ref rows 0) first second)
     false))
 
-(define (md-block-list-ref [items : MdBlockList] [index : i64]) : MdMaybeBlock
+(define (md-block-list-ref [items : md_blocks.Vec] [index : i64]) : MdMaybeBlock
   (if (if (>= index 0)
     (< index (md-block-list-count items))
     false)
-    (MdMaybeBlock.Some (md-block-list-get (& items) index MdBlock.Blank))
+    (MdMaybeBlock.Some (md_blocks.get (& items) index MdBlock.Blank))
     MdMaybeBlock.No))
 
 (define (md-check-heading?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [level : i64]
   [text : String]) : bool
@@ -123,7 +123,7 @@
         [_ false])]
     [(MdMaybeBlock.No) false]))
 
-(define (md-check-blank? [blocks : MdBlockList] [index : i64]) : bool
+(define (md-check-blank? [blocks : md_blocks.Vec] [index : i64]) : bool
   (match (md-block-list-ref blocks index)
     [(MdMaybeBlock.Some block)
       (match block
@@ -132,7 +132,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-paragraph?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [text : String]) : bool
   (match (md-block-list-ref blocks index)
@@ -143,7 +143,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-blockquote2?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [first : String]
   [second : String]) : bool
@@ -155,7 +155,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-bullet-list2?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [first : String]
   [second : String]) : bool
@@ -167,7 +167,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-numbered-list2?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [first : String]
   [second : String]) : bool
@@ -179,7 +179,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-code-fence?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [lang : String]
   [meta : String]
@@ -196,7 +196,7 @@
     [(MdMaybeBlock.No) false]))
 
 (define (md-check-table1?
-  [blocks : MdBlockList]
+  [blocks : md_blocks.Vec]
   [index : i64]
   [header-first : String]
   [header-second : String]
@@ -211,6 +211,36 @@
             (md-table-row-list-eq1? rows row-first row-second))]
         [_ false])]
     [(MdMaybeBlock.No) false]))
+
+(define (md-vector-core-test-row [first : String] [second : String]) : MdTableRow
+  (let
+    [cells : svec.Vec (svec.with-capacity 2)]
+    (begin
+      (svec.push (&mut cells) first)
+      (svec.push (&mut cells) second)
+      (MdTableRow.Row cells))))
+
+(define (md-vector-core-growth-order?) : bool
+  (let
+    [rows : md_table_rows.Vec (md_table_rows.with-capacity 1)]
+    [blocks : md_blocks.Vec (md_blocks.with-capacity 1)]
+    (begin
+      (md_table_rows.push (&mut rows) (md-vector-core-test-row "r0" "a"))
+      (md_table_rows.push (&mut rows) (md-vector-core-test-row "r1" "b"))
+      (md_table_rows.push (&mut rows) (md-vector-core-test-row "r2" "c"))
+      (md_blocks.push (&mut blocks) (MdBlock.Paragraph "first"))
+      (md_blocks.push (&mut blocks) MdBlock.Blank)
+      (md_blocks.push (&mut blocks) (MdBlock.Heading 2 "third"))
+      (and
+        (= (md_table_rows.len (& rows)) 3)
+        (= (md_table_rows.capacity (& rows)) 4)
+        (md-table-row-eq2? (md-table-row-list-ref rows 0) "r0" "a")
+        (md-table-row-eq2? (md-table-row-list-ref rows 2) "r2" "c")
+        (= (md_blocks.len (& blocks)) 3)
+        (= (md_blocks.capacity (& blocks)) 4)
+        (md-check-paragraph? blocks 0 "first")
+        (md-check-blank? blocks 1)
+        (md-check-heading? blocks 2 2 "third")))))
 
 (define (md-inline-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -618,7 +648,7 @@
 (define (md-scan-table-rows [src : String] [pos : i64] [n : i64]) : MdScanRows
   (let
     [scan-pos : i64 pos]
-    [rows : MdTableRowList (md-table-row-list-empty)]
+    [rows : md_table_rows.Vec (md-table-row-list-empty)]
     [done : bool false]
     (begin
       (while (and (not done) (< scan-pos n))
@@ -629,7 +659,7 @@
           [next : i64 (md-next-line-start src line-end n)]
           (if (md-pipe-row-line? line)
             (begin
-              (md-table-row-list-push
+              (md_table_rows.push
                 (&mut rows)
                 (MdTableRow.Row (md-split-pipe-row line)))
               (set! scan-pos next))
@@ -691,17 +721,17 @@
       [(md-numbered-start? line) (md-scan-numbered-list src pos n)]
       [else (md-scan-paragraph src pos n)])))
 
-(define (md-scan-blocks [src : String]) : MdBlockList
+(define (md-scan-blocks [src : String]) : md_blocks.Vec
   (let
     [n : i64 (string.string-length (& src))]
     [pos : i64 0]
-    [blocks : MdBlockList (md-block-list-empty)]
+    [blocks : md_blocks.Vec (md-block-list-empty)]
     (begin
       (while (< pos n)
         (match (md-scan-block-at src pos n)
           [(MdScanBlock.Block next block)
             (begin
-              (md-block-list-push (&mut blocks) block)
+              (md_blocks.push (&mut blocks) block)
               (set! pos next))]))
       blocks)))
 
@@ -920,17 +950,17 @@
     [(MdTableRow.Row cells)
       (str_cat.str-cat "<tr>" (md-render-table-data-cells cells) "</tr>\n")]))
 
-(define (md-render-table-rows-from [rows : MdTableRowList] [index : i64]) : String
+(define (md-render-table-rows-from [rows : md_table_rows.Vec] [index : i64]) : String
   (if (>= index (md-table-row-list-count rows))
     ""
     (str_cat.str-cat
       (md-render-table-row (md-table-row-list-ref rows index))
       (md-render-table-rows-from rows (+ index 1)))))
 
-(define (md-render-table-rows [rows : MdTableRowList]) : String
+(define (md-render-table-rows [rows : md_table_rows.Vec]) : String
   (md-render-table-rows-from rows 0))
 
-(define (md-render-table [header : svec.Vec] [rows : MdTableRowList]) : String
+(define (md-render-table [header : svec.Vec] [rows : md_table_rows.Vec]) : String
   (str_cat.str-cat
     "<table>\n<thead>\n<tr>"
     (md-render-table-header-cells header)
@@ -949,14 +979,14 @@
     [(MdBlock.Table header rows) (md-render-table header rows)]
     [(MdBlock.Blank) ""]))
 
-(define (md-render-blocks-from [blocks : MdBlockList] [index : i64]) : String
+(define (md-render-blocks-from [blocks : md_blocks.Vec] [index : i64]) : String
   (if (>= index (md-block-list-count blocks))
     ""
     (str_cat.str-cat
-      (md-render-block (md-block-list-get (& blocks) index MdBlock.Blank))
+      (md-render-block (md_blocks.get (& blocks) index MdBlock.Blank))
       (md-render-blocks-from blocks (+ index 1)))))
 
-(define (md-render-blocks [blocks : MdBlockList]) : String
+(define (md-render-blocks [blocks : md_blocks.Vec]) : String
   (md-render-blocks-from blocks 0))
 
 (define (md-render-html [src : String]) : String
@@ -997,7 +1027,9 @@
             (set! i (+ i 1))))
         found))))
 
-(define (md-render-block-smoke-result [fixture : String] [blocks : MdBlockList]) : i64
+(define (md-render-block-smoke-result
+  [fixture : String]
+  [blocks : md_blocks.Vec]) : i64
   (let
     [html : String (md-render-blocks blocks)]
     (begin
@@ -1057,7 +1089,7 @@
         "1. first\n2. second\n"
         "```typelisp run expect=42\n(define x : i64 1)\n; <tag> & value\n```\n"
         "| Name | Type |\n| --- | --- |\n| x | i64 |\n")]
-    [blocks : MdBlockList (md-scan-blocks fixture)]
+    [blocks : md_blocks.Vec (md-scan-blocks fixture)]
     (begin
       (unless (= (md-block-list-count blocks) 8) (return 100))
       (unless (md-check-heading? blocks 0 1 "Title `x`") (return 101))
@@ -1077,6 +1109,7 @@
           "(define x : i64 1)\n; <tag> & value\n")
         (return 107))
       (unless (md-check-table1? blocks 7 "Name" "Type" "x" "i64") (return 108))
+      (unless (md-vector-core-growth-order?) (return 118))
       (md-render-block-smoke-result fixture blocks))))
 
 (define (compiler-doc-md-self-test) : i64

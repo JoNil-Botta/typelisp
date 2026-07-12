@@ -2757,6 +2757,18 @@
 (import (catalog) as api)
 (define (main) : i64 (api.score 41))")
 
+(define (compiler-typecheck-smoke-generic-catalog-cycle-source) : String
+  "(defmacro (catalog) : Module
+  `(begin
+    (module generated.generic_catalog_cycle)
+    (define (even [value : i64]) : bool
+      (if (= value 0) true (odd (- value 1))))
+    (define (odd [value : i64]) : bool
+      (if (= value 0) false (even (- value 1))))
+    (define (unused) : i64 0)))
+(import (catalog) as api)
+(define (main) : i64 (if (api.even 42) 42 0))")
+
 ;; The canonical target spelling is observable after a first alias has caused
 ;; the catalog to exist. Its member demand must union with alias demand without
 ;; re-evaluating the Module macro.
@@ -2995,6 +3007,29 @@
       "generic catalog closure retained unused")
     (compiler-typecheck-smoke-require
       (compiler-typecheck-ok?
+        (compiler-typecheck-smoke-generic-catalog-cycle-source))
+      "generic catalog cyclic closure typecheck")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-smoke-generic-catalog-expanded-name?
+        (compiler-typecheck-smoke-generic-catalog-cycle-source)
+        "generated.generic_catalog_cycle"
+        "even")
+      "generic catalog cyclic closure missing even")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-smoke-generic-catalog-expanded-name?
+        (compiler-typecheck-smoke-generic-catalog-cycle-source)
+        "generated.generic_catalog_cycle"
+        "odd")
+      "generic catalog cyclic closure missing odd")
+    (compiler-typecheck-smoke-require
+      (not
+        (compiler-typecheck-smoke-generic-catalog-expanded-name?
+          (compiler-typecheck-smoke-generic-catalog-cycle-source)
+          "generated.generic_catalog_cycle"
+          "unused"))
+      "generic catalog cyclic closure retained unused")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-ok?
         (compiler-typecheck-smoke-generic-catalog-canonical-source))
       "generic catalog canonical typecheck")
     (compiler-typecheck-smoke-require
@@ -3069,99 +3104,7 @@
         (compiler-typecheck-smoke-generic-catalog-invalid-source)
         "typecheck: value definition type mismatch: expected i64, found bool")
       "generic catalog invalid helper accepted or changed diagnostic")
-    (and
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-type-only-source))
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-type-only-source)
-        "generated.generic_catalog"
-        "Choice")
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-type-only-source)
-          "generated.generic_catalog"
-          "make"))
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-type-only-source)
-          "generated.generic_catalog"
-          "score"))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-later-helper-source))
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-later-helper-source)
-        "generated.generic_catalog"
-        "Choice")
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-later-helper-source)
-        "generated.generic_catalog"
-        "make")
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-later-helper-source)
-          "generated.generic_catalog"
-          "score"))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-closure-source))
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-closure-source)
-        "generated.generic_catalog_closure"
-        "score")
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-closure-source)
-        "generated.generic_catalog_closure"
-        "bonus")
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-closure-source)
-          "generated.generic_catalog_closure"
-          "unused"))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-canonical-source))
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-canonical-source)
-        "generated.generic_catalog_canonical"
-        "Choice")
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-canonical-source)
-        "generated.generic_catalog_canonical"
-        "make")
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-name?
-          (compiler-typecheck-smoke-generic-catalog-canonical-source)
-          "generated.generic_catalog_canonical"
-          "score"))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-unused-source))
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-module?
-          (compiler-typecheck-smoke-generic-catalog-unused-source)
-          "generated.generic_catalog"))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-shadowed-alias-source))
-      (not
-        (compiler-typecheck-smoke-generic-catalog-expanded-module?
-          (compiler-typecheck-smoke-generic-catalog-shadowed-alias-source)
-          "generated.generic_catalog_shadow"))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-full-source))
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-full-source)
-        "generated.generic_catalog"
-        "score")
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-unqualified-source))
-      (compiler-typecheck-smoke-generic-catalog-expanded-name?
-        (compiler-typecheck-smoke-generic-catalog-unqualified-source)
-        "generated.generic_catalog"
-        "score")
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-qualified-macro-source))
-      (compiler-typecheck-ok?
-        (compiler-typecheck-smoke-generic-catalog-direct-macro-source))
-      (compiler-typecheck-error-ok?
-        (compiler-typecheck-smoke-generic-catalog-invalid-source)
-        "typecheck: value definition type mismatch: expected i64, found bool"))))
+    true))
 
 (define (compiler-typecheck-smoke-lazy-import-str-cat-source) : String
   "(module main)

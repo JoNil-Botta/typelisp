@@ -2061,6 +2061,18 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-macro-generated-module-catalog-declarations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-module-materialized-declarations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-macro-generated-module-replay-additions : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-live-rebuilds : i64
     0))
 (cfg
@@ -2159,6 +2171,9 @@
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
       (set! compiler-tc-macro-generated-module-catalog-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-validations 0)
+      (set! compiler-tc-macro-generated-module-catalog-declarations 0)
+      (set! compiler-tc-macro-generated-module-materialized-declarations 0)
+      (set! compiler-tc-macro-generated-module-replay-additions 0)
       (set! compiler-tc-macro-live-rebuilds 0)
       (set! compiler-tc-macro-live-reuses 0)
       (set! compiler-tc-macro-live-registry-rebuilds 0)
@@ -2224,6 +2239,30 @@
     (set!
       compiler-tc-macro-generated-module-catalog-validations
       (+ compiler-tc-macro-generated-module-catalog-validations 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-catalog-declarations
+    [count : i64]) : unit
+    (set!
+      compiler-tc-macro-generated-module-catalog-declarations
+      (+ compiler-tc-macro-generated-module-catalog-declarations count))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-materialized-declarations
+    [count : i64]) : unit
+    (set!
+      compiler-tc-macro-generated-module-materialized-declarations
+      (+ compiler-tc-macro-generated-module-materialized-declarations count))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-macro-profile-note-generated-module-replay-additions
+    [count : i64]) : unit
+    (set!
+      compiler-tc-macro-generated-module-replay-additions
+      (+ compiler-tc-macro-generated-module-replay-additions count))))
 
 (cfg
   compile-profile
@@ -2760,6 +2799,18 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_catalog_hits"
         compiler-tc-macro-generated-module-catalog-hits)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_catalog_validations"
+        compiler-tc-macro-generated-module-catalog-validations)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_catalog_declarations"
+        compiler-tc-macro-generated-module-catalog-declarations)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_materialized_declarations"
+        compiler-tc-macro-generated-module-materialized-declarations)
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_replay_additions"
+        compiler-tc-macro-generated-module-replay-additions)
       (compiler-tc-macro-counter-profile-line
         "live_rebuilds"
         compiler-tc-macro-live-rebuilds)
@@ -47969,16 +48020,21 @@
       (macro-module-import-marker-decls target-module alias span)]
     [missing-body : AstDeclList
       (macro-decls-missing-generated-body generated-body existing-body)]
-    (match (ast-decl-list-step missing-body)
-      [(AstDeclListStep.Nil) marker-decls]
-      [_
-        (macro-decl-list-append
-          (ast-decl-list-prepend-builder
-            (ast-decl-module target-module)
-            missing-body)
-          (ast-decl-list-prepend-builder
-            (ast-decl-module owner-module)
-            marker-decls))])))
+    (begin
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-note-generated-module-replay-additions
+          (ast-decl-list-len (& missing-body))))
+      (match (ast-decl-list-step missing-body)
+        [(AstDeclListStep.Nil) marker-decls]
+        [_
+          (macro-decl-list-append
+            (ast-decl-list-prepend-builder
+              (ast-decl-module target-module)
+              missing-body)
+            (ast-decl-list-prepend-builder
+              (ast-decl-module owner-module)
+              marker-decls))]))))
 
 (define (macro-find-generated-identity-module-in
   [decls : AstDeclList]
@@ -56444,189 +56500,198 @@
         identity
         target-module
         generated-body)]
-    (macro-materialized-record-result
-      identity
-      target-module
-      summary
-      catalog
-      memoize?
-      (match (macro-find-module-body-decls orig-decls target-module)
-        [(MacroMaybeDeclList.Some existing-body)
-          (if (macro-decls-contain-generated-key? existing-body identity)
-            (if trusted-catalog?
-              ;; A shortcut hit reuses this exact canonical catalog. The
-              ;; installed body may already contain its macro-expanded form,
-              ;; so comparing it structurally with the retained parsed catalog
-              ;; would turn a compatible repeat into a false incompatibility.
-              ;; Replay only declarations still missing from the selected
-              ;; surface, then bind the requested alias marker.
-              (match (macro-check-generated-import-collisions
-                orig-decls
-                generated-body
-                module
-                alias
-                identity)
-                [CompilerNoString
-                  (let
-                    [expanded : AstDeclList
-                      (macro-module-replay-marker-decls
-                        target-module
-                        module
-                        alias
-                        span
-                        generated-body
-                        existing-body)]
-                    (ResultMacroDeclExpansion.Ok
-                      expanded
-                      (macro-paths-for-decls expanded decl-path)))]
-                [(CompilerSomeString message)
-                  (ResultMacroDeclExpansion.Err
-                    (box (macro-generated-import-diag span message)))])
-              ;: The module for this identity is already materialized and recorded in
-              ;: the content-addressed memo. Compatible repeats are deduped without
-              ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
-              ;: (an `Expr`/clause parameter) can still reach here having produced a
-              ;: body that differs from the recorded one even though the canonical
-              ;: identity matches -- it switches on the argument's syntactic shape,
-              ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
-              ;: collide on one identity with different payloads. Detect that
-              ;: same-identity collision instead of silently reusing the recorded
-              ;: body; a compatible re-materialization still binds via the replay
-              ;: marker/alias import.
-              (match (macro-generated-target-replay
-                existing-body
-                (macro-decls-filter-generated-key generated-body identity))
-                [(MacroGeneratedTargetReplay.ReplayIncompatible)
-                  (ResultMacroDeclExpansion.Err
-                    (box
-                      (macro-module-incompatible-output-diag call-expr identity)))]
-                [_
-                  (match (macro-check-generated-import-collisions
-                    orig-decls
-                    generated-body
-                    module
-                    alias
-                    identity)
-                    [CompilerNoString
-                      (let
-                        [expanded : AstDeclList
-                          (macro-module-replay-marker-decls
-                            target-module
-                            module
-                            alias
-                            span
-                            generated-body
-                            existing-body)]
-                        (ResultMacroDeclExpansion.Ok
-                          expanded
-                          (macro-paths-for-decls expanded decl-path)))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])]))
-            (let
-              [generated-key-body : AstDeclList
-                (macro-decls-filter-generated-key generated-body identity)]
-              (match (macro-generated-target-replay
-                existing-body
-                generated-key-body)
-                [(MacroGeneratedTargetReplay.ReplayCompatible)
-                  (match (macro-check-generated-import-collisions
-                    orig-decls
-                    generated-body
-                    module
-                    alias
-                    identity)
-                    [CompilerNoString
-                      (let
-                        [expanded : AstDeclList
-                          (macro-module-replay-marker-decls
-                            target-module
-                            module
-                            alias
-                            span
-                            generated-body
-                            existing-body)]
-                        (ResultMacroDeclExpansion.Ok
-                          expanded
-                          (macro-paths-for-decls expanded decl-path)))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])]
-                [(MacroGeneratedTargetReplay.ReplayAppendMissing)
-                  (match (macro-check-generated-import-collisions
-                    orig-decls
-                    generated-body
-                    module
-                    alias
-                    identity)
-                    [CompilerNoString
-                      (let
-                        [expanded : AstDeclList
-                          (macro-module-replay-marker-decls
-                            target-module
-                            module
-                            alias
-                            span
-                            generated-body
-                            existing-body)]
-                        (ResultMacroDeclExpansion.Ok
-                          expanded
-                          (macro-paths-for-decls expanded decl-path)))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])]
-                [(MacroGeneratedTargetReplay.ReplayIncompatible)
-                  (ResultMacroDeclExpansion.Err
-                    (box
-                      (macro-module-incompatible-output-diag call-expr identity)))]
-                [(MacroGeneratedTargetReplay.NoReplay)
-                  (match (macro-check-generated-import-collisions
-                    orig-decls
-                    generated-body
-                    module
-                    alias
-                    identity)
-                    [CompilerNoString
-                      (let
-                        [expanded : AstDeclList
-                          (macro-decl-list-append
-                            materialized
-                            (ast-decl-list-prepend-builder
-                              (ast-decl-module module)
-                              (macro-module-import-marker-decls
-                                target-module
-                                alias
-                                span)))]
-                        (ResultMacroDeclExpansion.Ok
-                          expanded
-                          (macro-paths-for-decls expanded decl-path)))]
-                    [(CompilerSomeString message)
-                      (ResultMacroDeclExpansion.Err
-                        (box (macro-generated-import-diag span message)))])])))]
-        [(MacroMaybeDeclList.No)
-          (match (macro-check-generated-import-collisions
-            orig-decls
-            generated-body
-            module
-            alias
-            identity)
-            [CompilerNoString
+    (begin
+      (cfg
+        compile-profile
+        (compiler-tc-macro-profile-note-generated-module-materialized-declarations
+          (ast-decl-list-len (& generated-body))))
+      (macro-materialized-record-result
+        identity
+        target-module
+        summary
+        catalog
+        memoize?
+        (match (macro-find-module-body-decls orig-decls target-module)
+          [(MacroMaybeDeclList.Some existing-body)
+            (if (macro-decls-contain-generated-key? existing-body identity)
+              (if trusted-catalog?
+                ;; A shortcut hit reuses this exact canonical catalog. The
+                ;; installed body may already contain its macro-expanded form,
+                ;; so comparing it structurally with the retained parsed catalog
+                ;; would turn a compatible repeat into a false incompatibility.
+                ;; Replay only declarations still missing from the selected
+                ;; surface, then bind the requested alias marker.
+                (match (macro-check-generated-import-collisions
+                  orig-decls
+                  generated-body
+                  module
+                  alias
+                  identity)
+                  [CompilerNoString
+                    (let
+                      [expanded : AstDeclList
+                        (macro-module-replay-marker-decls
+                          target-module
+                          module
+                          alias
+                          span
+                          generated-body
+                          existing-body)]
+                      (ResultMacroDeclExpansion.Ok
+                        expanded
+                        (macro-paths-for-decls expanded decl-path)))]
+                  [(CompilerSomeString message)
+                    (ResultMacroDeclExpansion.Err
+                      (box (macro-generated-import-diag span message)))])
+                ;: The module for this identity is already materialized and recorded in
+                ;: the content-addressed memo. Compatible repeats are deduped without
+                ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
+                ;: (an `Expr`/clause parameter) can still reach here having produced a
+                ;: body that differs from the recorded one even though the canonical
+                ;: identity matches -- it switches on the argument's syntactic shape,
+                ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
+                ;: collide on one identity with different payloads. Detect that
+                ;: same-identity collision instead of silently reusing the recorded
+                ;: body; a compatible re-materialization still binds via the replay
+                ;: marker/alias import.
+                (match (macro-generated-target-replay
+                  existing-body
+                  (macro-decls-filter-generated-key generated-body identity))
+                  [(MacroGeneratedTargetReplay.ReplayIncompatible)
+                    (ResultMacroDeclExpansion.Err
+                      (box
+                        (macro-module-incompatible-output-diag
+                          call-expr
+                          identity)))]
+                  [_
+                    (match (macro-check-generated-import-collisions
+                      orig-decls
+                      generated-body
+                      module
+                      alias
+                      identity)
+                      [CompilerNoString
+                        (let
+                          [expanded : AstDeclList
+                            (macro-module-replay-marker-decls
+                              target-module
+                              module
+                              alias
+                              span
+                              generated-body
+                              existing-body)]
+                          (ResultMacroDeclExpansion.Ok
+                            expanded
+                            (macro-paths-for-decls expanded decl-path)))]
+                      [(CompilerSomeString message)
+                        (ResultMacroDeclExpansion.Err
+                          (box (macro-generated-import-diag span message)))])]))
               (let
-                [expanded : AstDeclList
-                  (macro-decl-list-append
-                    materialized
-                    (ast-decl-list-prepend-builder
-                      (ast-decl-module module)
-                      (macro-module-import-marker-decls
-                        target-module
-                        alias
-                        span)))]
-                (ResultMacroDeclExpansion.Ok
-                  expanded
-                  (macro-paths-for-decls expanded decl-path)))]
-            [(CompilerSomeString message)
-              (ResultMacroDeclExpansion.Err
-                (box (macro-generated-import-diag span message)))])]))))
+                [generated-key-body : AstDeclList
+                  (macro-decls-filter-generated-key generated-body identity)]
+                (match (macro-generated-target-replay
+                  existing-body
+                  generated-key-body)
+                  [(MacroGeneratedTargetReplay.ReplayCompatible)
+                    (match (macro-check-generated-import-collisions
+                      orig-decls
+                      generated-body
+                      module
+                      alias
+                      identity)
+                      [CompilerNoString
+                        (let
+                          [expanded : AstDeclList
+                            (macro-module-replay-marker-decls
+                              target-module
+                              module
+                              alias
+                              span
+                              generated-body
+                              existing-body)]
+                          (ResultMacroDeclExpansion.Ok
+                            expanded
+                            (macro-paths-for-decls expanded decl-path)))]
+                      [(CompilerSomeString message)
+                        (ResultMacroDeclExpansion.Err
+                          (box (macro-generated-import-diag span message)))])]
+                  [(MacroGeneratedTargetReplay.ReplayAppendMissing)
+                    (match (macro-check-generated-import-collisions
+                      orig-decls
+                      generated-body
+                      module
+                      alias
+                      identity)
+                      [CompilerNoString
+                        (let
+                          [expanded : AstDeclList
+                            (macro-module-replay-marker-decls
+                              target-module
+                              module
+                              alias
+                              span
+                              generated-body
+                              existing-body)]
+                          (ResultMacroDeclExpansion.Ok
+                            expanded
+                            (macro-paths-for-decls expanded decl-path)))]
+                      [(CompilerSomeString message)
+                        (ResultMacroDeclExpansion.Err
+                          (box (macro-generated-import-diag span message)))])]
+                  [(MacroGeneratedTargetReplay.ReplayIncompatible)
+                    (ResultMacroDeclExpansion.Err
+                      (box
+                        (macro-module-incompatible-output-diag
+                          call-expr
+                          identity)))]
+                  [(MacroGeneratedTargetReplay.NoReplay)
+                    (match (macro-check-generated-import-collisions
+                      orig-decls
+                      generated-body
+                      module
+                      alias
+                      identity)
+                      [CompilerNoString
+                        (let
+                          [expanded : AstDeclList
+                            (macro-decl-list-append
+                              materialized
+                              (ast-decl-list-prepend-builder
+                                (ast-decl-module module)
+                                (macro-module-import-marker-decls
+                                  target-module
+                                  alias
+                                  span)))]
+                          (ResultMacroDeclExpansion.Ok
+                            expanded
+                            (macro-paths-for-decls expanded decl-path)))]
+                      [(CompilerSomeString message)
+                        (ResultMacroDeclExpansion.Err
+                          (box (macro-generated-import-diag span message)))])])))]
+          [(MacroMaybeDeclList.No)
+            (match (macro-check-generated-import-collisions
+              orig-decls
+              generated-body
+              module
+              alias
+              identity)
+              [CompilerNoString
+                (let
+                  [expanded : AstDeclList
+                    (macro-decl-list-append
+                      materialized
+                      (ast-decl-list-prepend-builder
+                        (ast-decl-module module)
+                        (macro-module-import-marker-decls
+                          target-module
+                          alias
+                          span)))]
+                  (ResultMacroDeclExpansion.Ok
+                    expanded
+                    (macro-paths-for-decls expanded decl-path)))]
+              [(CompilerSomeString message)
+                (ResultMacroDeclExpansion.Err
+                  (box (macro-generated-import-diag span message)))])])))))
 
 (define (macro-expand-module-catalog
   [ctx : TcContext]
@@ -56678,11 +56743,19 @@
       (if memoize?
         (match (macro-generated-module-memo-get identity)
           [CompilerNoString
-            (macro-generated-module-memo-put!
-              identity
-              target-module
-              (ast-decl-list-new)
-              catalog)]
+            (begin
+              (macro-generated-module-memo-put!
+                identity
+                target-module
+                (ast-decl-list-new)
+                catalog)
+              (cfg
+                compile-profile
+                (compiler-tc-macro-profile-note-generated-module-catalog-build))
+              (cfg
+                compile-profile
+                (compiler-tc-macro-profile-note-generated-module-catalog-declarations
+                  (ast-decl-list-len (& catalog)))))]
           [(CompilerSomeString _) unit])
         unit)
       (if (and

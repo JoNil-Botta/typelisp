@@ -636,7 +636,7 @@
         (if (= (compiler-diagnostic-line (box-get diag)) 1)
           (string.eq
             (compiler-diagnostic-message (box-get diag))
-            "typecheck: return type mismatch")
+            "typecheck: return type mismatch: expected i64, found bool")
           false)
         false)]))
 

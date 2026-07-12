@@ -1533,7 +1533,7 @@
     (compiler-typecheck-smoke-require
       (compiler-typecheck-error-ok?
         (compiler-typecheck-smoke-module-catalog-invalid-unused-source)
-        "typecheck: return type mismatch")
+        "typecheck: return type mismatch: expected i64, found bool")
       "typecheck: generated module catalog skipped invalid unused helper")
     (compiler-typecheck-smoke-require
       (compiler-typecheck-ok?

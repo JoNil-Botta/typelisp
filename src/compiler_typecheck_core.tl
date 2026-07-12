@@ -46101,6 +46101,100 @@
 (define (macro-live-registries-invalidate!) : unit
   (set! macro-live-registries-fallback true))
 
+;; A direct generated declaration splice is safe to rebase when it has only a
+;; positional registry effect. Imports can add aliases and macro definitions
+;; change the hoisted macro namespace, so both retain the full-rebuild path.
+;; Keep this an explicit whitelist: a future declaration form must opt in only
+;; after proving that registry remapping preserves its semantics.
+(define (macro-decl-registry-incremental-safe? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ _ _) true]
+    [(AstDecl.DefFn _ _ _ _ _) true]
+    [(AstDecl.Extern _ _ _ _) true]
+    [(AstDecl.DefEnum _ _ _) true]
+    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+    [(AstDecl.DefStruct _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+    [(AstDecl.DefDispatch _ _) true]
+    [(AstDecl.Test _ _ _) true]
+    [(AstDecl.Import _) false]
+    [(AstDecl.IncludeStr _ _) false]
+    [(AstDecl.IncludeBin _ _) false]
+    [(AstDecl.DefMacro _ _ _ _) false]
+    [(AstDecl.Unsafe inner-box)
+      (macro-decl-registry-incremental-safe? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-registry-incremental-safe? (box-get template-box))]
+    [_ false]))
+
+(define (macro-decls-registry-incremental-safe? [decls : AstDeclList]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) true]
+    [(AstDeclListStep.Cons decl rest)
+      (and
+        (macro-decl-registry-incremental-safe? decl)
+        (macro-decls-registry-incremental-safe? rest))]))
+
+;; An existing unqualified import aliases every nominal member of its target
+;; module. If a generated splice adds a member to that target, repairing only
+;; direct registry entries would leave the import alias stale, so retain the
+;; established whole-registry rebuild in that case.
+(define (macro-decl-has-unqualified-import-of-module?
+  [decl : AstDecl]
+  [module : String]) : bool
+  (match decl
+    [(AstDecl.Import
+        (AstImportSpec.Spec
+          _
+          _
+          (AstMaybeModuleName.Some target-module)
+          (AstMaybeImportAlias.Some alias)
+          _))
+      (and (string.eq target-module module) (string.eq alias ""))]
+    [(AstDecl.Unsafe inner-box)
+      (macro-decl-has-unqualified-import-of-module? (box-get inner-box) module)]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (macro-decl-has-unqualified-import-of-module?
+        (box-get template-box)
+        module)]
+    [(AstDecl.ModuleBody _ body-box)
+      (macro-decls-have-unqualified-import-of-module? (box-get body-box) module)]
+    [_ false]))
+
+(define (macro-decls-have-unqualified-import-of-module?
+  [decls : AstDeclList]
+  [module : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (macro-decl-has-unqualified-import-of-module? decl module)
+        (macro-decls-have-unqualified-import-of-module? rest module))]))
+
+;; Rebase the cached registry across an additive generated splice before the
+;; fresh symbol build. The symbol table still rebuilds to preserve all ordinary
+;; duplicate/shadowing diagnostics; this path only avoids rewalking unrelated
+;; enum/struct registry entries. On any incremental registry error, retain the
+;; conservative full rebuild so its established diagnostic behavior wins.
+(define (macro-live-registries-insert-decls!
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [insertion-index : i64]
+  [module : String]) : bool
+  (match (compiler-registries-insert-decls
+    macro-live-registries-value
+    decls
+    paths
+    insertion-index
+    module)
+    [(ResultCompilerRegistries.Ok registries)
+      (begin
+        (set! macro-live-registries-value registries)
+        (set! macro-live-registries-ready true)
+        (set! macro-live-registries-fallback false)
+        true)]
+    [(ResultCompilerRegistries.Err _) false]))
+
 ;; Return the live symbols (building both symbols and registries on demand),
 ;; reusing the cached pair across passes unless a rebuild was requested. Errors
 ;; from a fresh build propagate as ResultCompilerSymbols.Err; the registries are
@@ -57402,29 +57496,6 @@
         (ctfe-decl-has-type-literal? decl)
         (ctfe-program-has-type-literal? rest))]))
 
-(define (macro-decl-registry-relevant? [decl : AstDecl]) : bool
-  (match decl
-    [(AstDecl.DefEnum _ _ _) true]
-    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
-    [(AstDecl.DefStruct _ _ _ _) true]
-    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
-    [(AstDecl.Import _) true]
-    [(AstDecl.Unsafe inner-box)
-      (macro-decl-registry-relevant? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (macro-decl-registry-relevant? (box-get template-box))]
-    [(AstDecl.ModuleBody _ body-box)
-      (macro-decls-registry-relevant? (box-get body-box))]
-    [_ false]))
-
-(define (macro-decls-registry-relevant? [decls : AstDeclList]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
-      (or
-        (macro-decl-registry-relevant? decl)
-        (macro-decls-registry-relevant? rest))]))
-
 ;; Reflection metadata only needs a refresh when a splice introduces a nominal
 ;; declaration. Keep ordinary expression/function splices on the shared CTFE
 ;; environment so the cache still avoids whole-program metadata walks.
@@ -57853,11 +57924,24 @@
                                       (macro-scratch-decl-path-list-reverse
                                         out-paths-rev)
                                       spliced-path-tail)]
+                                  [splice-index : i64
+                                    (compiler-decl-list-index-count out-rev)]
                                   (begin
-                                    (if (macro-decls-registry-relevant?
-                                      expanded)
-                                      (macro-live-registries-invalidate!)
-                                      unit)
+                                    (if (and
+                                      (macro-decls-registry-incremental-safe?
+                                        expanded)
+                                      (not
+                                        (macro-decls-have-unqualified-import-of-module?
+                                          next-decls
+                                          cur-module)))
+                                      (if (macro-live-registries-insert-decls!
+                                        expanded
+                                        expanded-paths
+                                        splice-index
+                                        cur-module)
+                                        unit
+                                        (macro-live-registries-invalidate!))
+                                      (macro-live-registries-invalidate!))
                                     (if (macro-decls-reflection-relevant?
                                       expanded)
                                       (compiler-typecheck-ctfe-env-cache-clear!)
@@ -57978,10 +58062,11 @@
                                 ;; before the context rebuild consumes its
                                 ;; visible-name set.
                                 (macro-live-symbols-invalidate!)
-                                (if (macro-decls-registry-relevant?
-                                  materialized-decls)
-                                  (macro-live-registries-invalidate!)
-                                  unit)
+                                ;; Source-file materialization can insert any
+                                ;; index-bearing declaration or alias surface,
+                                ;; so retain the full registry rebuild even
+                                ;; when it contains no nominal declaration.
+                                (macro-live-registries-invalidate!)
                                 (if (macro-decls-reflection-relevant?
                                   materialized-decls)
                                   (compiler-typecheck-ctfe-env-cache-clear!)

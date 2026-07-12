@@ -3814,6 +3814,90 @@
           decls
           (compiler-symbol-path-list-repeat decls "")))]))
 
+;; Registry handles encode the flattened declaration owner index. A generated
+;; declaration splice before an existing owner therefore needs to move the
+;; cached handle forward by the number of index-bearing declarations inserted.
+;; Updating the maps in place is proportional to the registry, rather than to
+;; the whole program, and preserves the ordinary positional-handle ABI used by
+;; typechecking and lowering.
+(define (compiler-registry-handle-shift-owner-index
+  [handle : i64]
+  [insertion-index : i64]
+  [delta : i64]) : i64
+  (let
+    [owner-index : i64 (compiler-registry-handle-owner-index handle)]
+    (if (>= owner-index insertion-index)
+      (compiler-registry-make-handle
+        (compiler-registry-handle-kind handle)
+        (+ owner-index delta)
+        (compiler-registry-handle-child-index handle))
+      handle)))
+
+(define (compiler-registry-shift-map-owner-indices!
+  [map : (&mut map CompilerSymbolMap)]
+  [insertion-index : i64]
+  [delta : i64]) : unit
+  (if (<= delta 0)
+    unit
+    (let
+      [capacity : i64 (array-length (struct-get map keys))]
+      [index : i64 0]
+      (while (< index capacity)
+        (begin
+          (if (> (array-ref (struct-get map keys) index) 0)
+            (let
+              [handle : i64 (array-ref (struct-get map values) index)]
+              (array-set!
+                (struct-get map values)
+                index
+                (compiler-registry-handle-shift-owner-index
+                  handle
+                  insertion-index
+                  delta)))
+            unit)
+          (set! index (+ index 1)))))))
+
+(define (compiler-registries-shift-owner-indices
+  [registries : CompilerRegistries]
+  [insertion-index : i64]
+  [delta : i64]) : CompilerRegistries
+  (match registries
+    [(CompilerRegistries variants fields)
+      (begin
+        (compiler-registry-shift-map-owner-indices!
+          (&mut variants)
+          insertion-index
+          delta)
+        (compiler-registry-shift-map-owner-indices!
+          (&mut fields)
+          insertion-index
+          delta)
+        (CompilerRegistries variants fields))]))
+
+;; Extend an existing registry across an additive declaration splice. Callers
+;; must conservatively reject imports and other surfaces that can alter alias
+;; resolution; this helper only repairs positional owner handles and registers
+;; the declarations newly inserted at `insertion-index`.
+(define (compiler-registries-insert-decls
+  [registries : CompilerRegistries]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [insertion-index : i64]
+  [module : String]) : ResultCompilerRegistries
+  (let
+    [added-count : i64 (compiler-decl-list-index-count decls)]
+    [shifted : CompilerRegistries
+      (compiler-registries-shift-owner-indices
+        registries
+        insertion-index
+        added-count)]
+    (build-compiler-registry-list-in-module
+      decls
+      paths
+      shifted
+      insertion-index
+      module)))
+
 (define (build-compiler-registries-diagnostic-with-symbols-and-paths
   [program : AstProgram]
   [_symbols : CompilerSymbols]
@@ -4435,6 +4519,143 @@
       (= (compiler-registry-handle-owner-index handle) 1234)
       (= (compiler-registry-handle-child-index handle) 5))))
 
+;; A threshold-sized registry map must shift every owner handle without moving
+;; its scalar key/value storage.
+(define (compiler-registry-shift-map-full-ok?) : bool
+  (let
+    [map : CompilerSymbolMap (compiler-symbol-map-empty)]
+    [entry-count : i64 192]
+    [index : i64 0]
+    [ok : bool true]
+    (begin
+      (while (< index entry-count)
+        (begin
+          (compiler-symbol-map-put!
+            (&mut map)
+            index
+            (compiler-registry-make-handle
+              (compiler-symbol-kind-enum-variant)
+              index
+              0))
+          (set! index (+ index 1))))
+      (compiler-registry-shift-map-owner-indices! (&mut map) 0 1)
+      (set! index 0)
+      (while (< index entry-count)
+        (begin
+          (if (=
+            (compiler-registry-lookup-score
+              (compiler-symbol-map-lookup-id (& map) index)
+              (compiler-symbol-kind-enum-variant)
+              (+ index 1)
+              0)
+            1)
+            unit
+            (set! ok false))
+          (set! index (+ index 1))))
+      ok)))
+
+(define (compiler-registries-incremental-base-source) : String
+  "(module nested
+  (defenum Later (Empty) (Value i64))
+  (defstruct Record (value i64)))")
+
+(define (compiler-registries-incremental-splice-source) : String
+  "(defstruct Inserted (id i64))")
+
+(define (compiler-registries-incremental-combined-source) : String
+  "(module nested
+  (defstruct Inserted (id i64))
+  (defenum Later (Empty) (Value i64))
+  (defstruct Record (value i64)))")
+
+(define (compiler-registries-incremental-later-variant-ok?
+  [symbols : CompilerSymbols]
+  [registries : CompilerRegistries]) : bool
+  (match (compiler-registries-lookup-variant registries "nested/Later.Value")
+    [(option_i64.Some handle)
+      (and
+        (=
+          (compiler-registry-lookup-score
+            (option_i64.Some handle)
+            (compiler-symbol-kind-enum-variant)
+            1
+            1)
+          1)
+        (match (compiler-registries-variant-fields-indexed symbols handle)
+          [(ResultAstTypeList.Ok types)
+            (if (= (ast-type-list-len (& types)) 1)
+              (match (ty-node-get
+                (ast-type-list-get (& types) 0 (ast-type-id-fallback)))
+                [(AstType.I64) true]
+                [_ false])
+              false)]
+          [(ResultAstTypeList.Err _) false]))]
+    [(option_i64.None) false]))
+
+(define (compiler-registries-incremental-later-field-ok?
+  [symbols : CompilerSymbols]
+  [registries : CompilerRegistries]) : bool
+  (match (compiler-registries-lookup-struct-field
+    registries
+    "nested/Record"
+    "value")
+    [(option_i64.Some handle)
+      (and
+        (=
+          (compiler-registry-lookup-score
+            (option_i64.Some handle)
+            (compiler-symbol-kind-struct-field)
+            2
+            0)
+          1)
+        (match (compiler-registries-struct-field-type-indexed symbols handle)
+          [(ResultAstType.Ok (AstType.I64)) true]
+          [(ResultAstType.Ok _) false]
+          [(ResultAstType.Err _) false]))]
+    [(option_i64.None) false]))
+
+;; A generated nominal splice at the start of a nested module must leave later
+;; enum-variant and struct-field handles pointing at their shifted owners.
+(define (compiler-registries-incremental-splice-ok?) : bool
+  (match (parse-ast-source (compiler-registries-incremental-base-source))
+    [(ResultAstProgram.Ok base-program)
+      (match (build-compiler-registries base-program)
+        [(ResultCompilerRegistries.Ok base-registries)
+          (match (parse-ast-source
+            (compiler-registries-incremental-splice-source))
+            [(ResultAstProgram.Ok splice-program)
+              (match splice-program
+                [(AstProgram.Program splice-box)
+                  (let
+                    [splice-decls : AstDeclList (box-get splice-box)]
+                    [splice-paths : AstDeclPathList
+                      (compiler-symbol-path-list-repeat splice-decls "")]
+                    (match (compiler-registries-insert-decls
+                      base-registries
+                      splice-decls
+                      splice-paths
+                      0
+                      "nested")
+                      [(ResultCompilerRegistries.Ok rebased-registries)
+                        (match (parse-ast-source
+                          (compiler-registries-incremental-combined-source))
+                          [(ResultAstProgram.Ok combined-program)
+                            (match (build-compiler-symbols combined-program)
+                              [(ResultCompilerSymbols.Ok combined-symbols)
+                                (and
+                                  (compiler-registries-incremental-later-variant-ok?
+                                    combined-symbols
+                                    rebased-registries)
+                                  (compiler-registries-incremental-later-field-ok?
+                                    combined-symbols
+                                    rebased-registries))]
+                              [(ResultCompilerSymbols.Err _) false])]
+                          [(ResultAstProgram.Err _) false])]
+                      [(ResultCompilerRegistries.Err _) false]))])]
+            [(ResultAstProgram.Err _) false])]
+        [(ResultCompilerRegistries.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
 (define (compiler-symbols-comptime-decl-source) : String
   "(comptime-decl (defstruct Point (x i64) (y i64)))
 (comptime-decl (defenum Maybe (None) (Some i64)))
@@ -4871,6 +5092,12 @@
                     unit
                     (set! ok false))
                   (if (compiler-registry-large-owner-handle-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-registry-shift-map-full-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-registries-incremental-splice-ok?)
                     unit
                     (set! ok false))
                   (if (compiler-symbols-comptime-decl-ok?)

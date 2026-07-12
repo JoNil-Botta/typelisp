@@ -194,10 +194,19 @@ check_group_pair_phi_home() {
 check_csr_push_prologue() {
     _asm=$(compile_gate csr_push_prologue tests/integration/csr_push_prologue.tl)
     _body=$(function_body "$_asm" _tl_csr_push_prologue_churn3)
+    _saved=0
     for _reg in r12 r13 r14 r15 rbx rbp; do
-        assert_contains "$_body" "pushq %$_reg" csr-push-prologue
-        assert_contains "$_body" "popq %$_reg" csr-push-prologue
+        _pushes=$(count_fixed "$_body" "pushq %$_reg")
+        _pops=$(count_fixed "$_body" "popq %$_reg")
+        if [ "$_pushes" -ne "$_pops" ] || [ "$_pushes" -gt 1 ]; then
+            fail "csr-push-prologue unbalanced %$_reg save/restore: $_pushes push, $_pops pop"
+        fi
+        _saved=$((_saved + _pushes))
     done
+    if [ "$_saved" -lt 3 ]; then
+        fail "csr-push-prologue expected at least 3 pushed CSR homes, got $_saved"
+    fi
+    assert_regex_count_eq "$_body" '^[[:space:]]+subq \$[0-9]+, %rsp$' 1 csr-push-prologue
     assert_not_matches "$_body" '^[[:space:]]+movq %r(12|13|14|15|bx|bp), -?[0-9]+\(%rsp\)$' csr-push-prologue
 }
 
@@ -321,7 +330,11 @@ check_param_pin_interval() {
 
 check_gep_value_direct() {
     _asm=$(compile_gate gep_value_direct tests/integration/gep_value_direct.tl)
-    _body=$(function_body "$_asm" _tl_gep_value_direct_cat)
+    _label=$(grep -E '^_tl_.*stdlib_string_append:$' "$_asm" | sed -n '1s/:$//p')
+    if [ -z "$_label" ]; then
+        fail "gep-value-direct missing string.append function"
+    fi
+    _body=$(function_body "$_asm" "$_label")
     assert_matches "$_body" '^[[:space:]]+leaq \(%r[a-z0-9]+,%r[a-z0-9]+,1\), %rdi$' gep-value-direct
     assert_not_matches "$_body" '^[[:space:]]+addq .*%rdi$' gep-value-direct
     assert_fixed_count_eq "$_body" 'call tl_memcpy' 2 gep-value-direct

@@ -28,9 +28,15 @@
 ;; default-shadow flags, scan-through, partial, rest, below. The flag arrays
 ;; parallel `values`:
 ;; the raw C fnptr flag records whether the head-most binding is a raw C
-;; function pointer value, and the default-shadow flag is 1 when the head-most
-;; binding sits above the first default-boundary marker (replaces the former
-;; whole-env shadows map).
+;; function pointer value, and bit 0 of the packed default-shadow sidecar is set
+;; when the head-most binding sits above the first default-boundary marker
+;; (replaces the former whole-env shadows map).
+;; The default-shadow array is a packed ordinary-marker sidecar: bit 0 records
+;; the default-boundary fact, while bits 1-3 record whether the head-most
+;; ordinary binding is paired with a cleanup, ordinary-arena, or atomic-arena
+;; owner marker.  This preserves the persistent env's snapshot semantics while
+;; letting owner queries use the existing relevance index instead of mirroring
+;; every bind into the scoped runtime.
 ;; `scan-through` is true for threshold-compaction caches created in the
 ;; middle of function-body spines: marker-position scans (active region,
 ;; return type, unsafe context, cleanup owners, lifetimes, lambda capture
@@ -4840,13 +4846,66 @@
     8
     (* count 2)))
 
+(define tc-env-cache-flag-default-shadow : i64
+  1)
+(define tc-env-cache-flag-cleanup-owner : i64
+  2)
+(define tc-env-cache-flag-ordinary-arena-owner : i64
+  4)
+(define tc-env-cache-flag-atomic-arena-owner : i64
+  8)
+(define tc-env-cache-sidecar-position-scale : i64
+  16)
+
+(define (tc-env-cache-binding-sidecar-flags
+  [rest-env : TcTypeEnv]
+  [name-id : i64]
+  [default-shadow : bool]
+  [cleanup-marker-id : i64]
+  [ordinary-arena-marker-id : i64]
+  [atomic-arena-marker-id : i64]) : i64
+  (let
+    [base : i64
+      (if default-shadow
+        tc-env-cache-flag-default-shadow
+        0)]
+    (match rest-env
+      [(TcTypeEnv.Bind marker-id marker-ty _)
+        (let
+          [marker-flag : i64
+            (cond
+              [(= marker-id cleanup-marker-id) tc-env-cache-flag-cleanup-owner]
+              [(= marker-id ordinary-arena-marker-id)
+                tc-env-cache-flag-ordinary-arena-owner]
+              [(= marker-id atomic-arena-marker-id)
+                tc-env-cache-flag-atomic-arena-owner]
+              [else 0])]
+          (if (= marker-flag 0)
+            base
+            (match marker-ty
+              [(AstType.Var owner)
+                (if (= owner name-id)
+                  (+ base marker-flag)
+                  base)]
+              [_ base])))]
+      [_ base])))
+
+(define (tc-env-cache-owner-marker-head-id?
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [marker-id : i64]) : bool
+  (match env
+    [(TcTypeEnv.Bind key (AstType.Var owner) _)
+      (and (= key marker-id) (= owner name-id))]
+    [_ false]))
+
 ;; Cache construction is the dominant i64 map workload of a self-compile
 ;; (~16% of stage2 CPU before this change): the previous shape walked the
 ;; spine FOUR times per compaction (entry count, shadow count, entry fill,
 ;; shadow fill) and built a second whole-env map just to answer "is this
 ;; default builtin shadowed?". Default-shadow membership is now a per-entry
 ;; flag array parallel to `values`/`unsafe-flags`, computed during the single
-;; entry fill walk: an entry's flag is 1 when its head-most binding sits
+;; entry fill walk: an entry's low bit is set when its head-most binding sits
 ;; above the first default-boundary marker. Head-first walk order means a
 ;; name bound both above and below the boundary keeps its head-most (above)
 ;; occurrence, which matches the old any-occurrence-above map exactly.
@@ -4861,7 +4920,8 @@
   [ty : AstType]
   [unsafe : bool]
   [c-abi-fnptr : bool]
-  [shadow : bool]) : bool
+  [sidecar-flags : i64]
+  [position : i64]) : bool
   (if (tc_i64_i64_map.insert-if-absent-ref! ids name-id next)
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-cache-entry))
@@ -4881,9 +4941,7 @@
       (array-set!
         shadow-flags
         next
-        (if shadow
-          1
-          0))
+        (+ sidecar-flags (* position tc-env-cache-sidecar-position-scale)))
       true)
     false))
 
@@ -4899,6 +4957,10 @@
     [cur : TcTypeEnv env]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
+    [position : i64 0]
+    [cleanup-marker-id : i64 (tc-cleanup-owner-marker-id)]
+    [ordinary-arena-marker-id : i64 (tc-ordinary-arena-owner-marker-id)]
+    [atomic-arena-marker-id : i64 (tc-atomic-arena-owner-marker-id)]
     [cur-above-boundary : bool above-boundary]
     [done : bool false]
     (begin
@@ -4926,10 +4988,18 @@
                   ty
                   (tc-binding-unsafe-marker-head-id? rest-env name-id)
                   (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-                  still-above)
+                  (tc-env-cache-binding-sidecar-flags
+                    rest-env
+                    name-id
+                    still-above
+                    cleanup-marker-id
+                    ordinary-arena-marker-id
+                    atomic-arena-marker-id)
+                  position)
                   (set! next (+ next 1))
                   unit)
                 (set! cur rest-env)
+                (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
           [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]))
       cur-ids)))
@@ -4948,6 +5018,10 @@
     [left : i64 remaining]
     [cur-ids : tc_i64_i64_map.Map ids]
     [next : i64 0]
+    [position : i64 0]
+    [cleanup-marker-id : i64 (tc-cleanup-owner-marker-id)]
+    [ordinary-arena-marker-id : i64 (tc-ordinary-arena-owner-marker-id)]
+    [atomic-arena-marker-id : i64 (tc-atomic-arena-owner-marker-id)]
     [cur-above-boundary : bool above-boundary]
     [done : bool false]
     (begin
@@ -4972,11 +5046,19 @@
                   ty
                   (tc-binding-unsafe-marker-head-id? rest-env name-id)
                   (tc-c-abi-fnptr-marker-near-id? rest-env name-id 3)
-                  still-above)
+                  (tc-env-cache-binding-sidecar-flags
+                    rest-env
+                    name-id
+                    still-above
+                    cleanup-marker-id
+                    ordinary-arena-marker-id
+                    atomic-arena-marker-id)
+                  position)
                   (set! next (+ next 1))
                   unit)
                 (set! left (- left 1))
                 (set! cur rest-env)
+                (set! position (+ position 1))
                 (set! cur-above-boundary still-above)))]
           [(TcTypeEnv.Cache _ _ _ _ _ scan-through partial rest _)
             (if (and scan-through partial)
@@ -5007,16 +5089,18 @@
           c-abi-fnptr-flags
           shadow-flags
           true)]
-      (TcTypeEnv.Cache
-        ids
-        values
-        unsafe-flags
-        c-abi-fnptr-flags
-        shadow-flags
-        scan-through
-        false
-        (box env)
-        (box env)))))
+      (begin
+        (array-set! shadow-flags (- capacity 1) count)
+        (TcTypeEnv.Cache
+          ids
+          values
+          unsafe-flags
+          c-abi-fnptr-flags
+          shadow-flags
+          scan-through
+          false
+          (box env)
+          (box env))))))
 
 (define (tc-env-with-partial-local-cache [env : TcTypeEnv]) : TcTypeEnv
   (tc-env-with-cache-prefix-layer
@@ -5048,16 +5132,18 @@
           c-abi-fnptr-flags
           shadow-flags
           true)]
-      (TcTypeEnv.Cache
-        ids
-        values
-        unsafe-flags
-        c-abi-fnptr-flags
-        shadow-flags
-        scan-through
-        true
-        (box env)
-        (box below)))))
+      (begin
+        (array-set! shadow-flags (- capacity 1) count)
+        (TcTypeEnv.Cache
+          ids
+          values
+          unsafe-flags
+          c-abi-fnptr-flags
+          shadow-flags
+          scan-through
+          true
+          (box env)
+          (box below))))))
 
 (define (tc-env-with-cache-layer-over-explicit [env : TcTypeEnv]) : TcTypeEnv
   (let
@@ -8650,69 +8736,42 @@
 (define (tc-atomic-arena-owner-marker-entry? [key : i64] [ty : AstType]) : bool
   (tc-arena-owner-marker-entry? (tc-atomic-arena-owner-marker-id) key ty))
 
-(define (tc-arena-owner-marker-head?
+(define (tc-owner-active-indexed-id?
   [env : TcTypeEnv]
-  [name : String]
-  [marker-id : i64]) : bool
+  [name-id : i64]
+  [marker-id : i64]
+  [sidecar-flag : i64]) : bool
   (match env
     [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ _ _) false]
-    [(TcTypeEnv.Bind key ty _)
-      (tc-arena-owner-marker-for? marker-id key ty name)]))
-
-(define (tc-cleanup-owner-marker-head? [env : TcTypeEnv] [name : String]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ _ _ _ _) false]
-    [(TcTypeEnv.Bind key ty _) (tc-cleanup-owner-marker-for? key ty name)]))
-
-(define (tc-cleanup-owner-active-scan-id?
-  [env : TcTypeEnv]
-  [name : String]
-  [name-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-cleanup-owner-active-scan-id? (box-get rest) name name-id)
-        false)]
-    [(TcTypeEnv.Bind key ty rest)
+    [(TcTypeEnv.Cache ids _ _ _ sidecar-flags _ partial _ below)
+      (match (tc_i64_i64_map.get (& ids) name-id)
+        [(tc_i64_i64_map.LookupFound index)
+          (not (= (bit-and (array-ref sidecar-flags index) sidecar-flag) 0))]
+        [(tc_i64_i64_map.LookupMissing)
+          (if partial
+            (tc-owner-active-indexed-id?
+              (box-get below)
+              name-id
+              marker-id
+              sidecar-flag)
+            false)])]
+    [(TcTypeEnv.Bind key _ rest)
       (if (= key name-id)
-        (tc-cleanup-owner-marker-head? (box-get rest) name)
-        (tc-cleanup-owner-active-scan-id? (box-get rest) name name-id))]))
-
-(define (tc-cleanup-owner-active-scan? [env : TcTypeEnv] [name : String]) : bool
-  (tc-cleanup-owner-active-scan-id? env name (tc-name-id name)))
+        (tc-env-cache-owner-marker-head-id? (box-get rest) name-id marker-id)
+        (tc-owner-active-indexed-id?
+          (box-get rest)
+          name-id
+          marker-id
+          sidecar-flag))]))
 
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-cleanup-owner-active-scan? (box-get rest) name)]
-      [_ (tc-cleanup-owner-active-scan? env name)])))
-
-(define (tc-arena-owner-active-scan?
-  [env : TcTypeEnv]
-  [name : String]
-  [marker-id : i64]) : bool
-  (tc-arena-owner-active-scan-id? env name (tc-name-id name) marker-id))
-
-(define (tc-arena-owner-active-scan-id?
-  [env : TcTypeEnv]
-  [name : String]
-  [name-id : i64]
-  [marker-id : i64]) : bool
-  (match env
-    [(TcTypeEnv.Nil) false]
-    [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ rest _)
-      (if scan-through
-        (tc-arena-owner-active-scan-id? (box-get rest) name name-id marker-id)
-        false)]
-    [(TcTypeEnv.Bind key _ rest)
-      (if (= key name-id)
-        (tc-arena-owner-marker-head? (box-get rest) name marker-id)
-        (tc-arena-owner-active-scan-id? (box-get rest) name name-id marker-id))]))
+    (tc-owner-active-indexed-id?
+      env
+      (tc-name-id name)
+      (tc-cleanup-owner-marker-id)
+      tc-env-cache-flag-cleanup-owner)))
 
 (define (tc-arena-owner-active?
   [env : TcTypeEnv]
@@ -8720,10 +8779,13 @@
   [marker-id : i64]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-arena-owner-active-scan? (box-get rest) name marker-id)]
-      [_ (tc-arena-owner-active-scan? env name marker-id)])))
+    (tc-owner-active-indexed-id?
+      env
+      (tc-name-id name)
+      marker-id
+      (if (= marker-id (tc-ordinary-arena-owner-marker-id))
+        tc-env-cache-flag-ordinary-arena-owner
+        tc-env-cache-flag-atomic-arena-owner))))
 
 (define (tc-ordinary-arena-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (tc-arena-owner-active? env name (tc-ordinary-arena-owner-marker-id)))
@@ -8945,6 +9007,45 @@
         [_ false])]
     [else false]))
 
+(define (tc-env-cache-covered-count [sidecar-flags : (Array i64)]) : i64
+  (array-ref sidecar-flags (- (array-length sidecar-flags) 1)))
+
+;; Return the head-first lexical rank of an ordinary binding, or -1.  Local
+;; cache layers store the original spine position in the packed sidecar, so a
+;; miss can jump over the covered window while preserving the exact ordering
+;; used by lifetime outlives checks.  Marker-owned lifetime spellings still use
+;; the established scan below.
+(define (tc-ordinary-binding-rank-id-from
+  [env : TcTypeEnv]
+  [name-id : i64]
+  [base : i64]) : i64
+  (match env
+    [(TcTypeEnv.Nil) -1]
+    [(TcTypeEnv.Bind key _ rest)
+      (if (= key name-id)
+        base
+        (tc-ordinary-binding-rank-id-from (box-get rest) name-id (+ base 1)))]
+    [(TcTypeEnv.Cache ids _ _ _ sidecar-flags scan-through partial _ below)
+      (if scan-through
+        (match (tc_i64_i64_map.get (& ids) name-id)
+          [(tc_i64_i64_map.LookupFound index)
+            (+
+              base
+              (/
+                (array-ref sidecar-flags index)
+                tc-env-cache-sidecar-position-scale))]
+          [(tc_i64_i64_map.LookupMissing)
+            (if partial
+              (tc-ordinary-binding-rank-id-from
+                (box-get below)
+                name-id
+                (+ base (tc-env-cache-covered-count sidecar-flags)))
+              -1)])
+        -1)]))
+
+(define (tc-ordinary-binding-rank [env : TcTypeEnv] [name : String]) : i64
+  (tc-ordinary-binding-rank-id-from env (tc-name-id name) 0))
+
 (define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (match env
     [(TcTypeEnv.Nil) false]
@@ -8960,10 +9061,12 @@
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (match env
-      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-        (tc-lifetime-visible-scan? (box-get rest) lifetime)]
-      [_ (tc-lifetime-visible-scan? env lifetime)])))
+    (or
+      (>= (tc-ordinary-binding-rank env lifetime) 0)
+      (match env
+        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+          (tc-lifetime-visible-scan? (box-get rest) lifetime)]
+        [_ (tc-lifetime-visible-scan? env lifetime)]))))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
@@ -9020,7 +9123,12 @@
   [target : String]) : bool
   (begin
     (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-lifetime-outlives-binding-scan env lifetime target false)))
+    (let
+      [lifetime-rank : i64 (tc-ordinary-binding-rank env lifetime)]
+      [target-rank : i64 (tc-ordinary-binding-rank env target)]
+      (if (and (>= lifetime-rank 0) (>= target-rank 0))
+        (> lifetime-rank target-rank)
+        (tc-lifetime-outlives-binding-scan env lifetime target false)))))
 
 (define (tc-reference-lifetimes-outlive-binding?
   [env : TcTypeEnv]
@@ -9084,13 +9192,20 @@
   [env : TcTypeEnv]
   [value-lifetime : String]
   [target-lifetime : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-lifetime-outlives-lifetime-scan
-      env
-      value-lifetime
-      target-lifetime
-      false)))
+  (if (string.eq value-lifetime target-lifetime)
+    true
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (let
+        [value-rank : i64 (tc-ordinary-binding-rank env value-lifetime)]
+        [target-rank : i64 (tc-ordinary-binding-rank env target-lifetime)]
+        (if (and (>= value-rank 0) (>= target-rank 0))
+          (> value-rank target-rank)
+          (tc-lifetime-outlives-lifetime-scan
+            env
+            value-lifetime
+            target-lifetime
+            false))))))
 
 (define (tc-reference-lifetimes-outlive-lifetime?
   [env : TcTypeEnv]
@@ -15776,6 +15891,9 @@
         (AstType.String))]
     [deep : TcTypeEnv
       (tc-type-env-bind-many marked (+ (* (tc-local-cache-threshold) 2) 8))]
+    [resource-shadow : TcTypeEnv (tc-bind deep "resource" (AstType.Bool))]
+    [shadow-layer : TcTypeEnv
+      (tc-type-env-bind-many resource-shadow (- (tc-local-cache-threshold) 1))]
     [below-base : TcTypeEnv
       (tc-type-env-bind-many base (+ (* (tc-local-cache-threshold) 2) 8))]
     (and
@@ -15801,6 +15919,9 @@
       (not (tc-lifetime-outlives-binding? deep "resource" "arena"))
       (tc-lifetime-outlives-lifetime? deep "arena" "resource")
       (not (tc-lifetime-outlives-lifetime? deep "resource" "arena"))
+      (not (tc-cleanup-owner-active? shadow-layer "resource"))
+      (tc-ordinary-arena-owner-active? shadow-layer "arena")
+      (tc-atomic-arena-owner-active? shadow-layer "atomic-arena")
       (tc-region-outlives-or-matches deep "arena" "arena")
       (match (tc-active-region below-base)
         [(TcMaybeString.No) true]
@@ -19614,7 +19735,11 @@
     [(TcTypeEnv.Cache ids _ _ _ shadow-flags _ partial _ below)
       (match (tc_i64_i64_map.get (& ids) name-id)
         [(tc_i64_i64_map.LookupFound index)
-          (not (= (array-ref shadow-flags index) 1))]
+          (=
+            (bit-and
+              (array-ref shadow-flags index)
+              tc-env-cache-flag-default-shadow)
+            0)]
         [(tc_i64_i64_map.LookupMissing)
           (if partial
             (tc-default-builtin-unshadowed-scan-id? (box-get below) name-id)

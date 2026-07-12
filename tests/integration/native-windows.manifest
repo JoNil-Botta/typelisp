@@ -214,6 +214,7 @@ stdlib_substring_range_overflow_trap|tests/integration/stdlib_substring_range_ov
 stdlib_substring_start_past_end_trap|tests/integration/stdlib_substring_start_past_end_trap.tl|134|-|-|stdlib/string.tl|expected-stderr:tl: array index out of bounds\n
 stdlib_test|tests/integration/stdlib_test.tl|42|-|-|stdlib/test.tl stdlib/io.tl stdlib/string.tl
 string_append|tests/integration/string_append.tl|0|[]\nright\nleft\nfoobar\nabcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n|-|stdlib/io.tl stdlib/string.tl
+string_concat_deep|tests/integration/string_concat_deep.tl|42|-|-|stdlib/string.tl
 string_eq|tests/integration/string_eq.tl|0|true\ntrue\ntrue\nfalse\nfalse\ntrue\nfalse\n|-|stdlib/io.tl stdlib/string.tl
 string_length|tests/integration/string_length.tl|5|-|-|stdlib/string.tl
 string_match|tests/integration/string_match.tl|42|-|-|-

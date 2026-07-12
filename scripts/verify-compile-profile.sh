@@ -67,6 +67,9 @@ REPLAY_STDOUT="$WORKDIR/profile-generated-replay.stdout"
 REPLAY_STDERR="$WORKDIR/profile-generated-replay.stderr"
 LAYOUT_STDOUT="$WORKDIR/profile-layout.stdout"
 LAYOUT_STDERR="$WORKDIR/profile-layout.stderr"
+CONCAT_ASM="$WORKDIR/profile-string-concat.s"
+CONCAT_STDOUT="$WORKDIR/profile-string-concat.stdout"
+CONCAT_STDERR="$WORKDIR/profile-string-concat.stderr"
 OPT_ASM="$WORKDIR/profile-opt.s"
 OPT_STDOUT="$WORKDIR/profile-opt.stdout"
 OPT_STDERR="$WORKDIR/profile-opt.stderr"
@@ -360,7 +363,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        4194304 \
+        4259840 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
@@ -391,6 +394,42 @@ if [ "$NL_HOST_OS" = windows ]; then
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
 fi
+
+echo "[compile-profile] compile deep string concat fixture"
+if ! "$PROFILE_BIN" compile tests/integration/string_concat_deep.tl \
+    -o "$CONCAT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    --opt-level 0 \
+    > "$CONCAT_STDOUT" 2> "$CONCAT_STDERR"; then
+    show_failure_logs "$CONCAT_STDOUT" "$CONCAT_STDERR"
+    fail "profiled deep string concat fixture compile failed"
+fi
+
+# Two 16-leaf trees flatten once each. The first group holds five leaves and
+# each carry group adds four, yielding three concat5 calls plus one concat4
+# call per tree. These counters make both the traversal and fan-in invariant
+# observable without depending on assembly formatting.
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.string_concat.trees" \
+    2 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.string_concat.leaves" \
+    32 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
+assert_profile_live_counter_eq_in \
+    "$CONCAT_STDERR" \
+    "lower.string_concat.runtime_calls" \
+    8 \
+    "$CONCAT_STDOUT" \
+    "$CONCAT_STDERR"
 
 echo "[compile-profile] check macro detail fixture"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_macro_detail.tl \

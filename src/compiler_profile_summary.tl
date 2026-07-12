@@ -1,5 +1,4 @@
 ;; compiler_profile_summary.tl - bounded deterministic compile-profile reports.
-(import stdlib.array)
 (import stdlib.hash)
 (import stdlib.io)
 (import stdlib.string)

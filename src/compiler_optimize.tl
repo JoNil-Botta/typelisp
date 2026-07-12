@@ -19615,14 +19615,19 @@
   (if (>= index count)
     acc
     (let
-      [dst : i64 (opt-gvn-instr-dst (array-ref slots index))]
+      [instr : CompilerIrInstr (array-ref slots index)]
+      [dst : i64 (opt-gvn-instr-dst instr)]
+      [next : opt_i64_i64_map.Map
+        (if (opt-gvn-record-candidate? instr)
+          (opt-gvn-defs-add acc (- 0 1))
+          acc)]
       (opt-gvn-sources-instr-seq-from
         slots
         (+ index 1)
         count
         (if (= dst (- 0 1))
-          acc
-          (opt-gvn-defs-add acc dst))))))
+          next
+          (opt-gvn-defs-add next dst))))))
 
 (define (opt-gvn-sources-blocks
   [blocks : CompilerIrBlockList]
@@ -19641,6 +19646,16 @@
               acc))])]
     [(CompilerIrBlockList.Array seq)
       (opt-gvn-sources-blocks (compiler-ir-block-seq-to-list seq) acc)]))
+
+;; Candidate count shares the map's -1 no-destination sentinel. Var ids are
+;; non-negative, so stability queries never observe this reserved entry.
+(define (opt-gvn-record-candidate? [instr : CompilerIrInstr]) : bool
+  (match instr
+    [(CompilerIrInstr.BinOp _ _ _ _ _) true]
+    [(CompilerIrInstr.UnOp _ _ _ _) true]
+    [(CompilerIrInstr.CpuId _ _ _ _) true]
+    [(CompilerIrInstr.Xgetbv _ _) true]
+    [_ false]))
 
 (define (opt-gvn-block-id [doms : OptDomInfo] [label : String]) : i64
   (match (opt-cfg-index-id (struct-get doms index) label)
@@ -19668,34 +19683,6 @@
         (opt-gvn-stable-var? sources dst)
         (opt-gvn-value-stable? sources index))]
     [_ false]))
-
-(define (opt-gvn-record-count-instr-seq-from
-  [sources : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : i64
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    0
-    (+
-      (if (opt-gvn-recordable-instr?
-        (compiler-ir-instr-seq-ref instrs index)
-        sources)
-        1
-        0)
-      (opt-gvn-record-count-instr-seq-from sources instrs (+ index 1)))))
-
-(define (opt-gvn-record-count-blocks
-  [sources : opt_i64_i64_map.Map]
-  [blocks : CompilerIrBlockList]) : i64
-  (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (+
-            (opt-gvn-record-count-instr-seq-from sources instrs 0)
-            (opt-gvn-record-count-blocks sources (box-get rest)))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-gvn-record-count-blocks sources (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-gvn-bucket-capacity [count : i64]) : i64
   (opt-global-fact-bucket-capacity count))
@@ -20095,8 +20082,7 @@
       (opt-gvn-sources-blocks
         blocks
         (opt-gvn-sources-params params (opt_i64_i64_map.with-capacity 64)))]
-    [table : OptGvnMap
-      (opt-gvn-map-empty (opt-gvn-record-count-blocks sources blocks))]
+    [table : OptGvnMap (opt-gvn-map-empty (opt-gvn-count sources (- 0 1)))]
     [gvn : CompilerIrBlockList
       (opt-gvn-rewrite-dom context table sources blocks)]
     [hs : OptLoadHeaderSet (opt-load-header-set-from-function params gvn)]

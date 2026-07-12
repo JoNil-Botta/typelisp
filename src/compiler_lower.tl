@@ -584,7 +584,7 @@
 
 (defenum LowerMaybeStringConcatCall
   (No)
-  (Some AstExpr AstExpr))
+  (Some i64 i64))
 
 (defenum ResultLowerStringValues
   (Ok LowerState CompilerIrValueList i64)
@@ -627,6 +627,23 @@
 (cfg
   compile-profile
   (define compiler-lower-profile-detail-start-ms : i64
+    0))
+
+;; Deep string concat lowering has a deliberately bounded fan-in. Keep these
+;; counters in the compile-profile build so the regression fixture can prove
+;; that a wide tree is flattened once and emitted as a small number of runtime
+;; calls.
+(cfg
+  compile-profile
+  (define compiler-lower-profile-string-concat-trees : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-string-concat-leaves : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-string-concat-runtime-calls : i64
     0))
 
 (cfg
@@ -710,6 +727,28 @@
           (string.append
             "|0|0"
             (string.append (compiler-lower-profile-field value) "|0\n")))))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-string-concat-reset) : unit
+    (begin
+      (set! compiler-lower-profile-string-concat-trees 0)
+      (set! compiler-lower-profile-string-concat-leaves 0)
+      (set! compiler-lower-profile-string-concat-runtime-calls 0))))
+
+(cfg
+  compile-profile
+  (define (compiler-lower-profile-string-concat-finish) : unit
+    (begin
+      (compiler-lower-profile-counter
+        "string_concat.trees"
+        compiler-lower-profile-string-concat-trees)
+      (compiler-lower-profile-counter
+        "string_concat.leaves"
+        compiler-lower-profile-string-concat-leaves)
+      (compiler-lower-profile-counter
+        "string_concat.runtime_calls"
+        compiler-lower-profile-string-concat-runtime-calls))))
 
 (cfg
   compile-profile
@@ -4738,6 +4777,115 @@
           (lower-reach-add-source all-functions names seeded module-source)
           helper)))))
 
+;; `lower-string-concat` emits one of these fixed ABI calls after source
+;; reachability has already completed. Root their TypeLisp runtime exports from
+;; the source call so pruning cannot leave the generated call unresolved.
+(define (lower-reach-add-string-concat-runtime
+  [all-functions : lower_string_i64_map.Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]) : LowerReachState
+  (lower-reach-add-runtime-prelude-string-helper-resolved
+    all-functions
+    names
+    (lower-reach-add-runtime-prelude-string-helper-resolved
+      all-functions
+      names
+      (lower-reach-add-runtime-prelude-string-helper-resolved
+        all-functions
+        names
+        (lower-reach-add-runtime-prelude-string-helper-resolved
+          all-functions
+          names
+          state
+          "tl_string_concat")
+        "tl_string_concat3")
+      "tl_string_concat4")
+    "tl_string_concat5"))
+
+(define (lower-reach-legacy-string-concat-source? [source-name : String]) : bool
+  (let
+    [raw-name : String (lower-hygiene-source-name source-name)]
+    (or
+      ;; These legacy intrinsics have no source definition to resolve. A user
+      ;; definition with the same spelling can retain unused runtime exports,
+      ;; but it cannot change the source program's behavior.
+      (string.eq raw-name "string-append")
+      (string.eq raw-name "string-concat"))))
+
+(define (lower-reach-stdlib-string-concat-logical?
+  [names : LowerNameCache]
+  [logical-name : String]) : bool
+  ;; Alias spellings are no longer present once the reach worklist reaches the
+  ;; public wrapper. Compare its resolved logical identity instead, so a
+  ;; compiler-fused `string_mod.append` (or macro-generated alias) also keeps
+  ;; the post-prune runtime ABI exports.
+  (or
+    (string.eq
+      logical-name
+      (lower-name-cache-resolve-source
+        names
+        (compiler-symbol-module-key "stdlib.string" "append")))
+    (string.eq
+      logical-name
+      (lower-name-cache-resolve-source
+        names
+        (compiler-symbol-module-key "stdlib.string" "concat")))))
+
+(define (lower-reach-public-string-concat-source?
+  [names : LowerNameCache]
+  [source-name : String]) : bool
+  ;; Resolve aliases before deciding whether this source call can be fused. The
+  ;; generated runtime calls need reachability roots only for a nested public
+  ;; tree, not for every ordinary `string.append` wrapper call.
+  (lower-reach-stdlib-string-concat-logical?
+    names
+    (lower-name-cache-resolve-hygiene names source-name)))
+
+(define (lower-reach-string-concat-call?
+  [pools : AstNodePoolContext]
+  [names : LowerNameCache]
+  [expr : AstExpr]) : bool
+  (match (ast-expr-unspan-with-pools pools expr)
+    [(AstExpr.Call callee-box args)
+      (let
+        [callee : AstExpr (ast-node-pool-context-expr-get pools callee-box)]
+        (match (ast-expr-unspan-with-pools pools callee)
+          [(AstExpr.Var name)
+            (and
+              (= (struct-get (& args) len) 2)
+              (or
+                (lower-reach-legacy-string-concat-source? (intern-str name))
+                (lower-reach-public-string-concat-source?
+                  names
+                  (intern-str name))))]
+          [_ false]))]
+    [_ false]))
+
+(define (lower-reach-public-string-concat-tree?
+  [pools : AstNodePoolContext]
+  [names : LowerNameCache]
+  [callee : AstExpr]
+  [args : AstExprList]) : bool
+  (if (= (struct-get (& args) len) 2)
+    (match (ast-expr-unspan-with-pools pools callee)
+      [(AstExpr.Var name)
+        (and
+          (lower-reach-public-string-concat-source? names (intern-str name))
+          (let
+            [left : AstExpr
+              (ast-node-pool-context-expr-get
+                pools
+                (ast-expr-list-get (& args) 0 0))]
+            [right : AstExpr
+              (ast-node-pool-context-expr-get
+                pools
+                (ast-expr-list-get (& args) 1 0))]
+            (or
+              (lower-reach-string-concat-call? pools names left)
+              (lower-reach-string-concat-call? pools names right))))]
+      [_ false])
+    false))
+
 (define (lower-reach-string-snapshot-source-call? [name-id : i64]) : bool
   (let
     [name : String (tc-hygiene-global-call-name (intern-str name-id))]
@@ -5030,6 +5178,18 @@
         [callee : AstExpr (ast-node-pool-context-expr-get pools callee-box)]
         [callee-state : LowerReachState
           (lower-reach-call-callee pools all-functions names state callee)]
+        [concat-state : LowerReachState
+          (match (ast-expr-unspan-with-pools pools callee)
+            [(AstExpr.Var name)
+              (if (or
+                (lower-reach-legacy-string-concat-source? (intern-str name))
+                (lower-reach-public-string-concat-tree? pools names callee args))
+                (lower-reach-add-string-concat-runtime
+                  all-functions
+                  names
+                  callee-state)
+                callee-state)]
+            [_ callee-state])]
         [runtime-state : LowerReachState
           (match (ast-expr-unspan-with-pools pools callee)
             [(AstExpr.Var name)
@@ -5037,9 +5197,9 @@
                 (lower-reach-add-string-snapshot-runtime
                   all-functions
                   names
-                  callee-state)
-                callee-state)]
-            [_ callee-state])]
+                  concat-state)
+                concat-state)]
+            [_ concat-state])]
         (lower-reach-expr-list pools all-functions names runtime-state args))]
     [(AstExpr.If cond-box then-expr-box else-expr-box)
       (let
@@ -10424,12 +10584,54 @@
 (define (lower-length-handle-type? [ctx : TcContext] [ty : AstType]) : bool
   (or (lower-string-handle-type? ctx ty) (lower-bytes-handle-type? ctx ty)))
 
-(define (lower-string-concat-builtin-name? [name : String]) : bool
+(define (lower-string-concat-legacy-name? [name : String]) : bool
   (or (string.eq name "string-append") (string.eq name "string-concat")))
+
+(define (lower-string-concat-public-target? [name : String]) : bool
+  ;; Dotted imports resolve to module-key names before direct-call lowering.
+  ;; Match that identity instead of the source spelling, so aliases remain
+  ;; eligible while same-shaped user functions remain ordinary calls.
+  (or
+    (string.eq name (compiler-symbol-module-key "stdlib.string" "append"))
+    (string.eq name (compiler-symbol-module-key "stdlib.string" "concat"))))
+
+(define (lower-string-concat-public-source-name? [name : String]) : bool
+  ;; These canonical spellings dominate compiler source and must not re-run
+  ;; dotted-import resolution at every node of one deep tree. A local binding
+  ;; is still rejected by the caller before this fast path is used.
+  (or
+    (string.eq name "string.append")
+    (string.eq name "string.concat")
+    (string.eq name "stdlib.string.append")
+    (string.eq name "stdlib.string.concat")))
+
+;; A tail call first runs direct-call/TCO eligibility checks over its arguments.
+;; Those checks typecheck the whole argument subtree, which is needlessly
+;; expensive for a concat tree that will lower to runtime calls rather than a
+;; tail call. Recognize the public concat target once at the root and take the
+;; ordinary return-expression path directly.
+(define (lower-string-concat-call-source?
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [name-id : i64]) : bool
+  (let
+    [raw-name : String (tc-hygiene-global-call-name (intern-str name-id))]
+    (and
+      (not (tc-dotted-local-field-name? type-env raw-name))
+      (or
+        (and
+          (lower-string-concat-legacy-name? raw-name)
+          (lower-builtin-call-available-id? ctx env name-id))
+        (match (lower-source-name-lookup-key ctx type-env raw-name)
+          [(ResultTcString.Ok lookup-name)
+            (lower-string-concat-public-target? lookup-name)]
+          [(ResultTcString.Err _) false])))))
 
 (define (lower-string-concat-call-parts
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
   [expr : AstExpr]) : LowerMaybeStringConcatCall
   (match (ast-expr-unspan-with-pools (tc-context-pools ctx) expr)
     [(AstExpr.Call callee-box args)
@@ -10437,45 +10639,66 @@
         (tc-context-pools ctx)
         (tc-context-expr-get ctx callee-box))
         [(AstExpr.Var name)
-          (if (and
-            (lower-string-concat-builtin-name? (intern-str name))
-            (lower-builtin-call-available-id? ctx env name))
+          (let
+            [raw-name : String (tc-hygiene-global-call-name (intern-str name))]
             (if (= (struct-get (& args) len) 2)
-              (let
-                [left : AstExpr
-                  (tc-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
-                [right : AstExpr
-                  (tc-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
-                (LowerMaybeStringConcatCall.Some left right))
-              (LowerMaybeStringConcatCall.No))
-            (LowerMaybeStringConcatCall.No))]
+              (if (or
+                (and
+                  (lower-string-concat-public-source-name? raw-name)
+                  (not (tc-dotted-local-field-name? type-env raw-name))
+                  (not (sym_i64_env.sym-i64-contains env raw-name))
+                  (not (lower-top-level-value-defined? ctx raw-name)))
+                (and
+                  (lower-string-concat-legacy-name? raw-name)
+                  (lower-builtin-call-available-id? ctx env name))
+                (match (lower-source-name-lookup-key ctx type-env raw-name)
+                  [(ResultTcString.Ok lookup-name)
+                    (lower-string-concat-public-target? lookup-name)]
+                  [(ResultTcString.Err _) false]))
+                (LowerMaybeStringConcatCall.Some
+                  (ast-expr-list-get (& args) 0 0)
+                  (ast-expr-list-get (& args) 1 0))
+                (LowerMaybeStringConcatCall.No))
+              (LowerMaybeStringConcatCall.No)))]
         [_ (LowerMaybeStringConcatCall.No)])]
     [_ (LowerMaybeStringConcatCall.No)]))
 
-(define (lower-string-concat-exprs-right
+(define (lower-string-concat-work-pop [pending : (&mut pending AstExprList)]) : i64
+  (let
+    [index : i64 (- (struct-get pending len) 1)]
+    (begin
+      (set! (struct-get pending len) index)
+      (array-ref (struct-get pending slots) index))))
+
+;; Flatten the complete binary concat tree without recursively lowering its
+;; children. The explicit LIFO worklist pushes right before left, preserving
+;; source evaluation order without the retained LowerState chain that made deep
+;; left/right trees grow superlinearly.
+(define (lower-string-concat-exprs-all
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
-  [left : AstExpr]
-  [right : AstExpr]
-  [remaining : i64]) : AstExprList
-  (if (<= remaining 2)
-    (ast-expr-cons
-      (ast-node-push left)
-      (ast-expr-cons (ast-node-push right) (ast-expr-list-new)))
-    (match (lower-string-concat-call-parts ctx env right)
-      [(LowerMaybeStringConcatCall.Some nested-left nested-right)
-        (ast-expr-cons
-          (ast-node-push left)
-          (lower-string-concat-exprs-right
-            ctx
-            env
-            nested-left
-            nested-right
-            (- remaining 1)))]
-      [(LowerMaybeStringConcatCall.No)
-        (ast-expr-cons
-          (ast-node-push left)
-          (ast-expr-cons (ast-node-push right) (ast-expr-list-new)))])))
+  [type-env : TcTypeEnv]
+  [exprs : AstExprList]) : AstExprList
+  (let
+    [pending : AstExprList (ast-expr-list-with-capacity 16)]
+    [out : AstExprList (ast-expr-list-with-capacity 16)]
+    (begin
+      (ast-expr-list-push (&mut pending) (ast-expr-list-get (& exprs) 1 0))
+      (ast-expr-list-push (&mut pending) (ast-expr-list-get (& exprs) 0 0))
+      (while (not (ast-expr-list-empty? (& pending)))
+        (let
+          [expr-id : i64 (lower-string-concat-work-pop (&mut pending))]
+          [expr : AstExpr (tc-context-expr-get ctx expr-id)]
+          (begin
+            (match (lower-string-concat-call-parts ctx env type-env expr)
+              [(LowerMaybeStringConcatCall.Some nested-left nested-right)
+                (begin
+                  (ast-expr-list-push (&mut pending) nested-right)
+                  (ast-expr-list-push (&mut pending) nested-left))]
+              [(LowerMaybeStringConcatCall.No)
+                (ast-expr-list-push (&mut out) expr-id)])
+            unit)))
+      out)))
 
 (define (lower-string-concat-runtime-name [count : i64]) : String
   (cond
@@ -10484,24 +10707,6 @@
     [(= count 5) "tl_string_concat5"]
     [else "tl_string_concat"]))
 
-(define (lower-string-concat-values-rev
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [exprs : AstExprList]
-  [acc : CompilerIrValueList]
-  [count : i64]) : ResultLowerStringValues
-  (lower-string-concat-values-rev-at
-    ctx
-    state
-    env
-    type-env
-    (& exprs)
-    0
-    acc
-    count))
-
 (define (lower-string-concat-values-rev-at
   [ctx : TcContext]
   [state : LowerState]
@@ -10509,9 +10714,10 @@
   [type-env : TcTypeEnv]
   [exprs : (& exprs AstExprList)]
   [index : i64]
+  [end : i64]
   [acc : CompilerIrValueList]
   [count : i64]) : ResultLowerStringValues
-  (if (>= index (struct-get exprs len))
+  (if (>= index end)
     (ResultLowerStringValues.Ok state acc count)
     (let
       [expr : AstExpr
@@ -10530,9 +10736,10 @@
                       type-env
                       exprs
                       (+ index 1)
-                      (compiler-ir-value-cons
+                      end
+                      (compiler-ir-value-cons-linked
                         len
-                        (compiler-ir-value-cons ptr acc))
+                        (compiler-ir-value-cons-linked ptr acc))
                       (+ count 1))])
                 (ResultLowerStringValues.Err
                   (box
@@ -10541,38 +10748,146 @@
                       "lower: string-concat requires String"))))])]
         [(ResultLowerExpr.Err message) (ResultLowerStringValues.Err message)]))))
 
+(define (lower-string-concat-emit
+  [state : LowerState]
+  [values-rev : CompilerIrValueList]
+  [count : i64]) : LowerExpr
+  (begin
+    (cfg
+      compile-profile
+      (set!
+        compiler-lower-profile-string-concat-runtime-calls
+        (+ compiler-lower-profile-string-concat-runtime-calls 1)))
+    (match (lower-state-alloc-var state)
+      [(LowerAlloc.Alloc allocated var-id)
+        (LowerExpr.Expr
+          (lower-state-emit
+            allocated
+            (CompilerIrInstr.Call
+              var-id
+              (lower-string-concat-runtime-name count)
+              (compiler-ir-call-args-from-list
+                (compiler-ir-value-list-reverse-onto
+                  values-rev
+                  CompilerIrValueList.Nil))
+              (AstType.String)))
+          (CompilerIrValue.Var var-id)
+          (AstType.String))])))
+
+(define (lower-string-concat-exprs-batched-group
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [end : i64]
+  [acc : CompilerIrValueList]
+  [count : i64]) : ResultLowerExpr
+  (match (lower-string-concat-values-rev-at
+    ctx
+    state
+    env
+    type-env
+    exprs
+    index
+    end
+    acc
+    count)
+    [(ResultLowerStringValues.Ok values-state values-rev value-count)
+      (match (lower-string-concat-emit values-state values-rev value-count)
+        [(LowerExpr.Expr call-state call-value _)
+          (lower-string-concat-exprs-batched
+            ctx
+            call-state
+            env
+            type-env
+            exprs
+            end
+            (LowerMaybeIrValue.Some call-value))])]
+    [(ResultLowerStringValues.Err message) (ResultLowerExpr.Err message)]))
+
+(define (lower-string-concat-exprs-batched
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [exprs : (& exprs AstExprList)]
+  [index : i64]
+  [carry : LowerMaybeIrValue]) : ResultLowerExpr
+  (let
+    [remaining : i64 (- (struct-get exprs len) index)]
+    (if (<= remaining 0)
+      (match carry
+        [(LowerMaybeIrValue.Some value)
+          (ResultLowerExpr.Ok (LowerExpr.Expr state value (AstType.String)))]
+        [(LowerMaybeIrValue.No)
+          (ResultLowerExpr.Err
+            (box (lower-diagnostic "lower: string-concat requires arguments")))])
+      (match carry
+        [(LowerMaybeIrValue.No)
+          (let
+            [take : i64
+              (if (> remaining 5)
+                5
+                remaining)]
+            (lower-string-concat-exprs-batched-group
+              ctx
+              state
+              env
+              type-env
+              exprs
+              index
+              (+ index take)
+              CompilerIrValueList.Nil
+              0))]
+        [(LowerMaybeIrValue.Some value)
+          (match (lower-string-fields state value)
+            [(LowerStringFields.Fields carry-state ptr len)
+              (let
+                [take : i64
+                  (if (> remaining 4)
+                    4
+                    remaining)]
+                (lower-string-concat-exprs-batched-group
+                  ctx
+                  carry-state
+                  env
+                  type-env
+                  exprs
+                  index
+                  (+ index take)
+                  (compiler-ir-value-cons-linked
+                    len
+                    (compiler-ir-value-cons-linked ptr CompilerIrValueList.Nil))
+                  1))])]))))
+
 (define (lower-string-concat-exprs
   [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [exprs : AstExprList]) : ResultLowerExpr
-  (match (lower-string-concat-values-rev
-    ctx
-    state
-    env
-    type-env
-    exprs
-    CompilerIrValueList.Nil
-    0)
-    [(ResultLowerStringValues.Ok values-state values-rev count)
-      (match (lower-state-alloc-var values-state)
-        [(LowerAlloc.Alloc allocated var-id)
-          (ResultLowerExpr.Ok
-            (LowerExpr.Expr
-              (lower-state-emit
-                allocated
-                (CompilerIrInstr.Call
-                  var-id
-                  (lower-string-concat-runtime-name count)
-                  (compiler-ir-call-args-from-list
-                    (compiler-ir-value-list-reverse-onto
-                      values-rev
-                      CompilerIrValueList.Nil))
-                  (AstType.String)))
-              (CompilerIrValue.Var var-id)
-              (AstType.String)))])]
-    [(ResultLowerStringValues.Err message) (ResultLowerExpr.Err message)]))
+  (begin
+    (cfg
+      compile-profile
+      (begin
+        (set!
+          compiler-lower-profile-string-concat-trees
+          (+ compiler-lower-profile-string-concat-trees 1))
+        (set!
+          compiler-lower-profile-string-concat-leaves
+          (+
+            compiler-lower-profile-string-concat-leaves
+            (struct-get (& exprs) len)))))
+    (lower-string-concat-exprs-batched
+      ctx
+      state
+      env
+      type-env
+      (& exprs)
+      0
+      (LowerMaybeIrValue.No))))
 
 (define (lower-supported-reference-referent-type?
   [ctx : TcContext]
@@ -21570,14 +21885,21 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [left : AstExpr]
-  [right : AstExpr]) : ResultLowerExpr
-  (lower-string-concat-exprs
-    ctx
-    state
-    env
-    type-env
-    (lower-string-concat-exprs-right ctx env left right 5)))
+  [name : String]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [origin : AstExpr]) : ResultLowerExpr
+  (let
+    [exprs : AstExprList (lower-string-concat-exprs-all ctx env type-env args)]
+    ;; A single public stdlib wrapper call already has compact, stable codegen.
+    ;; Keep it on the ordinary direct-call path; only a nested public tree needs
+    ;; the fused runtime batches. Legacy intrinsics have always used the runtime
+    ;; path, including their two-leaf form.
+    (if (and
+      (lower-string-concat-public-target? name)
+      (= (struct-get (& exprs) len) 2))
+      (lower-direct-call ctx state env type-env name args result-ty origin)
+      (lower-string-concat-exprs ctx state env type-env exprs))))
 
 (define (lower-c-abi-runtime-handle-extern? [name : String]) : bool
   (or
@@ -23426,12 +23748,7 @@
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
   (if (= (struct-get (& args) len) 2)
-    (let
-      [left : AstExpr
-        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
-      [right : AstExpr
-        (lower-context-expr-get ctx (ast-expr-list-get (& args) 1 0))]
-      (lower-string-concat ctx state env type-env left right))
+    (lower-string-concat ctx state env type-env name args result-ty origin)
     (lower-direct-call ctx state env type-env name args result-ty origin)))
 
 (define (lower-string-runtime-call
@@ -24785,6 +25102,20 @@
                             state
                             env
                             type-env
+                            args
+                            result-ty
+                            origin)]
+                        [(or
+                            (lower-string-concat-public-target? name)
+                            (and
+                              builtin-available
+                              (lower-string-concat-legacy-name? name)))
+                          (lower-string-concat-call
+                            ctx
+                            state
+                            env
+                            type-env
+                            name
                             args
                             result-ty
                             origin)]
@@ -41497,6 +41828,10 @@
                   "lower: comptime-error is compile-time only")))]
           [(and
               unshadowed
+              (lower-string-concat-call-source? ctx env type-env name))
+            (lower-return-expr ctx state env type-env origin ret-ty sret-var)]
+          [(and
+              unshadowed
               ;; Only suppress TCO when THIS call actually involves inline
               ;; aggregates (sret/by-value risk); a broad inline-aggregates-mode guard
               ;; disabled tail-call optimization for every call (mode is always on),
@@ -44903,6 +45238,9 @@
                       compile-profile
                       (compiler-lower-profile-finish "prune_apply"))
                     (cfg compile-profile (compiler-lower-profile-start))
+                    (cfg
+                      compile-profile
+                      (compiler-lower-profile-string-concat-reset))
                     (match (lower-compiler-program-checked-with-names-mode
                       ctx
                       top-env
@@ -44911,6 +45249,9 @@
                       mode)
                       [(ResultCompilerLower.Ok ir spans)
                         (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-string-concat-finish))
                           (cfg
                             compile-profile
                             (compiler-lower-profile-finish "decls"))
@@ -44923,6 +45264,9 @@
                           (ResultCompilerLower.Ok ir spans))]
                       [(ResultCompilerLower.Err diag)
                         (begin
+                          (cfg
+                            compile-profile
+                            (compiler-lower-profile-string-concat-finish))
                           (cfg
                             compile-profile
                             (compiler-lower-profile-finish "decls"))
@@ -46676,6 +47020,8 @@
 (define (compiler-lower-string-concat-fusion-source) : String
   "(define (string.append [left : String] [right : String]) : String
   left)
+(define (shadowed-tail) : String
+  (string.append \"x\" \"y\"))
 (define (main) : i64
   (let
     [three : String (string.append \"a\" (string.append \"b\" \"c\"))]

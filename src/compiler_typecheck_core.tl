@@ -3167,7 +3167,10 @@
   [message : String]) : ResultTcUnit
   (if (tc-type-compatible? expected actual)
     ResultTcUnit.Ok
-    (ResultTcUnit.Err (tc-locate-error-at-expr expr message))))
+    (ResultTcUnit.Err
+      (tc-locate-error-at-expr
+        expr
+        (tc-type-mismatch-message actual expected message)))))
 
 (define (tc-empty-env) : TcTypeEnv
   TcTypeEnv.Nil)
@@ -6338,6 +6341,17 @@
     [(AstType.Var name) (intern-str name)]
     [(AstType.VarArgs name lifetimes)
       (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]))
+
+(define (tc-type-mismatch-message
+  [actual : AstType]
+  [expected : AstType]
+  [message : String]) : String
+  (str_cat.str-cat
+    message
+    ": expected "
+    (tc-type-render (tc-type-without-regions expected))
+    ", found "
+    (tc-type-render (tc-type-without-regions actual))))
 
 (define (tc-default-env) : TcTypeEnv
   (tc-bind (tc-default-env-base) (tc-default-boundary-name) (AstType.Unit)))
@@ -18407,7 +18421,7 @@
 (define (tc-expect [actual : AstType] [expected : AstType] [message : String]) : ResultTcUnit
   (if (tc-type-compatible? expected actual)
     ResultTcUnit.Ok
-    (ResultTcUnit.Err message)))
+    (ResultTcUnit.Err (tc-type-mismatch-message actual expected message))))
 
 (define (tc-contextual-result-type [expected : AstType] [actual : AstType]) : AstType
   (if (tc-type-contains-any-region actual)

@@ -2184,7 +2184,7 @@
                 (string.eq (compiler-diagnostic-path (box-get diag)) dep)
                 (string.eq
                   (compiler-diagnostic-message (box-get diag))
-                  "typecheck: value definition type mismatch"))]
+                  "typecheck: value definition type mismatch: expected i64, found bool"))]
             [(ResultCompilerTypecheck.Ok _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 

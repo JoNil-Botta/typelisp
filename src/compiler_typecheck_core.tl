@@ -46182,6 +46182,23 @@
   (No)
   (Some AstDeclList))
 
+;; A catalog may be absent from the parent program (None), materialized as a
+;; selected dependency closure, or retained in full when an alias use/output
+;; shape cannot be classified safely.
+(defenum MacroGeneratedModuleCatalogDemand
+  (None)
+  (Partial AstDeclList)
+  (Full))
+
+;; One structural importer scan yields both the caller alias demand and the
+;; canonical generated-module demand, including the first member observed under
+;; either root.
+(defstruct MacroGeneratedCatalogDemandObservation
+  (alias-demand CompilerLoadLazyAliasDemand)
+  (alias-members sym_i64_env.SymI64Env)
+  (target-demand CompilerLoadLazyAliasDemand)
+  (target-members sym_i64_env.SymI64Env))
+
 (defenum MacroHygieneEnv
   (Nil)
   (Bind String String (Box MacroHygieneEnv)))
@@ -47825,6 +47842,20 @@
 ;; target in macro-generated-module-memo-put!.
 (define macro-generated-module-memo-summaries : (Array AstDeclList)
   (array.make-array AstDeclList 4096))
+
+;; The canonical catalog is deliberately separate from the materialized
+;; summary. A Module macro is evaluated and parsed once per identity, then the
+;; catalog is retained even when the importer initially needs no declarations
+;; (or only a small closure). Later aliases select and append missing catalog
+;; declarations without re-running CTFE.
+(define macro-generated-module-memo-catalogs : (Array AstDeclList)
+  (array.make-array AstDeclList 4096))
+
+;; A partial materialization validates its full catalog before pruning. Keep
+;; that fence per identity so later aliases do not re-typecheck the same hidden
+;; declarations merely because they request another member.
+(define macro-generated-module-memo-validated : (Array i64)
+  (array.make-array i64 4096))
 (define macro-generated-module-memo-count : i64
   0)
 (define macro-generated-module-memo-generation : i64
@@ -47850,6 +47881,11 @@
               macro-generated-module-memo-summaries
               i
               (ast-decl-list-new))
+            (array-set!
+              macro-generated-module-memo-catalogs
+              i
+              (ast-decl-list-new))
+            (array-set! macro-generated-module-memo-validated i 0)
             (set! i (+ i 1))))
         (set! macro-generated-module-memo-count 0)
         (set! macro-generated-module-memo-generation (intern-generation))
@@ -47896,16 +47932,14 @@
                     (set! steps (+ steps 1)))))))
           out)))))
 
-;; Store identity -> (canonical target module, export-summary). Idempotent:
-;; re-storing an equal entry just refreshes the target + summary. The memo
-;; short-circuits re-expansion, so this is normally reached at most once per
-;; identity for the whole program. `summary` is the materialized module decl list
-;; (module header + generated body) that env-extend-with-module folds into the
-;; live top-env (plan P2).
+;; Store identity -> (canonical target module, materialized summary, canonical
+;; catalog). Re-storing an equal entry refreshes the target + summary while
+;; retaining the one parsed catalog for later demand selection.
 (define (macro-generated-module-memo-put!
   [identity : String]
   [target-module : String]
-  [summary : AstDeclList]) : unit
+  [summary : AstDeclList]
+  [catalog : AstDeclList]) : unit
   (let
     [identity-id : i64 (intern identity)]
     [target-id : i64 (intern target-module)]
@@ -47937,6 +47971,10 @@
                       macro-generated-module-memo-summaries
                       cursor
                       summary)
+                    (array-set!
+                      macro-generated-module-memo-catalogs
+                      cursor
+                      catalog)
                     (set!
                       macro-generated-module-memo-count
                       (+ macro-generated-module-memo-count 1))
@@ -47951,6 +47989,10 @@
                         macro-generated-module-memo-summaries
                         cursor
                         summary)
+                      (array-set!
+                        macro-generated-module-memo-catalogs
+                        cursor
+                        catalog)
                       (set! done true))
                     (begin
                       (set!
@@ -47998,6 +48040,108 @@
                         (- macro-generated-module-memo-capacity 1)))
                     (set! steps (+ steps 1)))))))
           out)))))
+
+;; Retrieve the full parsed/wrapped catalog for an identity. An empty list is a
+;; valid catalog for a Module macro that only declares its target module.
+(define (macro-generated-module-memo-get-catalog [identity : String]) : AstDeclList
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-module-memo-ensure!)
+      (let
+        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : AstDeclList (ast-decl-list-new)]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps macro-generated-module-memo-capacity))
+            (let
+              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set!
+                      out
+                      (array-ref macro-generated-module-memo-catalogs cursor))
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- macro-generated-module-memo-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (macro-generated-module-memo-validated? [identity : String]) : bool
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-module-memo-ensure!)
+      (let
+        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [out : bool false]
+        [done : bool false]
+        (begin
+          (while (if done
+            false
+            (< steps macro-generated-module-memo-capacity))
+            (let
+              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+              (if (= slot 0)
+                (set! done true)
+                (if (= slot key)
+                  (begin
+                    (set!
+                      out
+                      (=
+                        (array-ref macro-generated-module-memo-validated cursor)
+                        1))
+                    (set! done true))
+                  (begin
+                    (set!
+                      cursor
+                      (bit-and
+                        (+ cursor 1)
+                        (- macro-generated-module-memo-capacity 1)))
+                    (set! steps (+ steps 1)))))))
+          out)))))
+
+(define (macro-generated-module-memo-mark-validated! [identity : String]) : unit
+  (let
+    [identity-id : i64 (intern identity)]
+    (begin
+      (macro-generated-module-memo-ensure!)
+      (let
+        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
+        [key : i64 (+ identity-id 1)]
+        [steps : i64 0]
+        [done : bool false]
+        (while (if done
+          false
+          (< steps macro-generated-module-memo-capacity))
+          (let
+            [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
+            (if (= slot 0)
+              (set! done true)
+              (if (= slot key)
+                (begin
+                  (array-set! macro-generated-module-memo-validated cursor 1)
+                  (set! done true))
+                (begin
+                  (set!
+                    cursor
+                    (bit-and
+                      (+ cursor 1)
+                      (- macro-generated-module-memo-capacity 1)))
+                  (set! steps (+ steps 1)))))))
+        unit))))
 
 (defenum MacroMaybeSpliceDecls
   (No)
@@ -51846,24 +51990,6 @@
   [_call-expr : AstExpr]) : ResultMacroCallDecl
   (macro-prelude-resolve (tc-context-symbols ctx) lookup-name))
 
-(define (macro-refresh-stdlib-result-surface-if-needed!
-  [ctx : TcContext]
-  [target-module : String]
-  [lookup-name : String]) : unit
-  (if (and
-    (string.eq target-module "stdlib.result")
-    (string.eq lookup-name "result"))
-    (begin
-      (compiler-load-surface-summary-refresh-with-pools
-        "stdlib/result.tl"
-        (svec.new)
-        (AstMaybeModuleName.Some "stdlib.result")
-        "stdlib"
-        (compiler-cfg-empty)
-        (tc-context-pools ctx))
-      (macro-surface-call-decl-cache-reset!))
-    unit))
-
 (define (macro-unqualified-imported-target-call-decl
   [ctx : TcContext]
   [target-module : String]
@@ -51891,27 +52017,7 @@
         [(MacroMaybeDecl.Some macro-name def-module params ret body)
           (ResultMacroCallDecl.Ok
             (MacroMaybeDecl.Some macro-name def-module params ret body))]
-        [(MacroMaybeDecl.No)
-          (begin
-            (macro-refresh-stdlib-result-surface-if-needed!
-              ctx
-              target-module
-              lookup-name)
-            (match (macro-surface-call-decl-in-module target-module lookup-name)
-              [(MacroMaybeDecl.Some
-                  retry-name
-                  retry-module
-                  retry-params
-                  retry-ret
-                  retry-body)
-                (ResultMacroCallDecl.Ok
-                  (MacroMaybeDecl.Some
-                    retry-name
-                    retry-module
-                    retry-params
-                    retry-ret
-                    retry-body))]
-              [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))]))))
+        [(MacroMaybeDecl.No) (ResultMacroCallDecl.Ok (MacroMaybeDecl.No))]))))
 
 (define (macro-unqualified-imported-call-target
   [ctx : TcContext]
@@ -53935,352 +54041,6 @@
         [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
     (macro-vector-family-fast-arity-error call-expr)))
 
-;; Fast path for stdlib.result's small generated module macro. The public macro
-;; is a deterministic quasiquote, so direct AST construction avoids CTFE
-;; evaluation and macro-output parsing for otherwise-unused generated imports.
-(define (macro-result-module-macro?
-  [macro-name : String]
-  [definition-module : String]) : bool
-  (and
-    (string.eq definition-module "stdlib.result")
-    (tc-name-base-eq? macro-name "result")))
-
-(define (macro-generated-result-source-helper-at?
-  [source : String]
-  [alias-len : i64]
-  [idx : i64]
-  [n : i64]) : bool
-  (let
-    [member-start : i64 (+ (+ idx alias-len) 1)]
-    (if (< member-start n)
-      (let
-        [member-head : char (string.string-ref source member-start)]
-        (and (>= member-head 'a') (<= member-head 'z')))
-      false)))
-
-(define (macro-generated-result-source-enum-only-scan?
-  [source : String]
-  [alias : String]
-  [start : i64]) : bool
-  (let
-    [n : i64 (string.string-length source)]
-    [alias-len : i64 (string.string-length alias)]
-    (if (= alias-len 0)
-      false
-      (let
-        [alias-first : char (string.string-ref alias 0)]
-        [idx : i64 start]
-        [found : bool false]
-        [helper : bool false]
-        (begin
-          (while (and (not helper) (<= (+ idx alias-len) n))
-            (if (and
-              (= (string.string-ref source idx) alias-first)
-              (compiler-load-source-qualified-alias-token-at? source alias idx))
-              (begin
-                (set! found true)
-                (if (macro-generated-result-source-helper-at?
-                  source
-                  alias-len
-                  idx
-                  n)
-                  (set! helper true)
-                  unit))
-              unit)
-            (set! idx (+ idx 1)))
-          (and found (not helper)))))))
-
-(define (macro-generated-result-source-enum-only?
-  [decl-path : String]
-  [alias : AstMaybeImportAlias]
-  [span : AstSourceSpan]) : bool
-  (match alias
-    [(AstMaybeImportAlias.Some alias-name)
-      (if (string.eq alias-name "")
-        false
-        (match (compiler-load-source-for-lazy-scan decl-path)
-          [(CompilerLoadNoString) false]
-          [(CompilerLoadSomeString source)
-            (macro-generated-result-source-enum-only-scan?
-              source
-              alias-name
-              (compiler-load-source-scan-start span source))]))]
-    [(AstMaybeImportAlias.No) false]))
-
-(cfg
-  test
-  (test
-    macro-generated-result-source-helper-scan
-    (let
-      [enum-source : String
-        "(define (main) : i64 (match value [(r.Ok v) v] [(r.Err _) 0]))"]
-      [helper-source : String "(define (main) : i64 (r.value-or (r.ok 1) 0))"]
-      (begin
-        (test.assert-true
-          (macro-generated-result-source-enum-only-scan? enum-source "r" 0)
-          "result enum-only source should report enum-only use")
-        (test.assert-true
-          (not
-            (macro-generated-result-source-enum-only-scan? helper-source "r" 0))
-          "result helper source should report lowercase helper members")))))
-
-(define (macro-result-var [name : String]) : i64
-  (ast-node-push (AstExpr.Var (intern name))))
-
-(define (macro-result-bool [value : bool]) : i64
-  (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
-
-(define (macro-result-expr-list1 [a : i64]) : AstExprList
-  (ast-expr-cons a (ast-expr-list-new)))
-
-(define (macro-result-expr-list2 [a : i64] [b : i64]) : AstExprList
-  (ast-expr-cons a (macro-result-expr-list1 b)))
-
-(define (macro-result-param [name : String] [ty : AstType]) : AstParam
-  (ast-param name ty false))
-
-(define (macro-result-param-list1 [a : AstParam]) : AstParamList
-  (ast-param-cons a (ast-param-list-new)))
-
-(define (macro-result-param-list2 [a : AstParam] [b : AstParam]) : AstParamList
-  (ast-param-cons a (macro-result-param-list1 b)))
-
-(define (macro-result-type-list1 [ty : AstType]) : AstTypeList
-  (ast-type-cons ty (ast-type-list-new)))
-
-(define (macro-result-cleanup-list1) : AstVariantPayloadCleanupList
-  (ast-variant-payload-cleanup-cons
-    AstVariantPayloadCleanup.No
-    (ast-variant-payload-cleanup-list-new)))
-
-(define (macro-result-call [name : String] [args : AstExprList]) : i64
-  (ast-expr-call (macro-result-var name) args))
-
-(define (macro-result-call1 [name : String] [a : i64]) : i64
-  (macro-result-call name (macro-result-expr-list1 a)))
-
-(define (macro-result-enum-decl [ok-ty : AstType] [err-ty : AstType]) : AstDecl
-  (ast-decl-def-enum
-    "Result"
-    AstEnumCleanup.No
-    (ast-variant-def-cons
-      (ast-variant-def
-        "Ok"
-        (macro-result-type-list1 ok-ty)
-        (macro-result-cleanup-list1))
-      (ast-variant-def-cons
-        (ast-variant-def
-          "Err"
-          (macro-result-type-list1 err-ty)
-          (macro-result-cleanup-list1))
-        (ast-variant-def-list-new)))))
-
-(define (macro-result-result-ty) : AstType
-  (AstType.Var (intern "Result")))
-
-(define (macro-result-ok-decl [ok-ty : AstType]) : AstDecl
-  (ast-decl-def-fn
-    "ok"
-    (macro-result-param-list1 (macro-result-param "value" ok-ty))
-    (macro-result-result-ty)
-    (macro-result-call1 "Ok" (macro-result-var "value"))))
-
-(define (macro-result-err-decl [err-ty : AstType]) : AstDecl
-  (ast-decl-def-fn
-    "err"
-    (macro-result-param-list1 (macro-result-param "error" err-ty))
-    (macro-result-result-ty)
-    (macro-result-call1 "Err" (macro-result-var "error"))))
-
-(define (macro-result-pattern1 [variant : String] [payload : AstPattern]) : AstPattern
-  (ast-pat-variant variant (ast-pattern-cons payload (ast-pattern-list-new))))
-
-(define (macro-result-match-arm
-  [variant : String]
-  [payload : AstPattern]
-  [body : i64]) : AstMatchArm
-  (ast-match-arm (macro-result-pattern1 variant payload) body))
-
-(define (macro-result-match2
-  [scrutinee : i64]
-  [first : AstMatchArm]
-  [second : AstMatchArm]) : i64
-  (ast-expr-match
-    scrutinee
-    (ast-match-arm-cons
-      first
-      (ast-match-arm-cons second (ast-match-arm-list-new)))))
-
-(define (macro-result-predicate-decl
-  [name : String]
-  [ok-value : bool]
-  [err-value : bool]) : AstDecl
-  (ast-decl-def-fn
-    name
-    (macro-result-param-list1
-      (macro-result-param "value" (ast-ty-ref "value" (macro-result-result-ty))))
-    (AstType.Bool)
-    (macro-result-match2
-      (macro-result-var "value")
-      (macro-result-match-arm
-        "Ok"
-        AstPattern.Wildcard
-        (macro-result-bool ok-value))
-      (macro-result-match-arm
-        "Err"
-        AstPattern.Wildcard
-        (macro-result-bool err-value)))))
-
-(define (macro-result-value-or-decl [ok-ty : AstType]) : AstDecl
-  (ast-decl-def-fn
-    "value-or"
-    (macro-result-param-list2
-      (macro-result-param "value" (macro-result-result-ty))
-      (macro-result-param "fallback" ok-ty))
-    ok-ty
-    (macro-result-match2
-      (macro-result-var "value")
-      (macro-result-match-arm
-        "Ok"
-        (ast-pat-binding "inner")
-        (macro-result-var "inner"))
-      (macro-result-match-arm
-        "Err"
-        AstPattern.Wildcard
-        (macro-result-var "fallback")))))
-
-(define (macro-result-map-decl [ok-ty : AstType]) : AstDecl
-  (ast-decl-def-fn
-    "map"
-    (macro-result-param-list2
-      (macro-result-param "value" (macro-result-result-ty))
-      (macro-result-param
-        "mapper"
-        (ast-ty-func (macro-result-type-list1 ok-ty) ok-ty)))
-    (macro-result-result-ty)
-    (macro-result-match2
-      (macro-result-var "value")
-      (macro-result-match-arm
-        "Ok"
-        (ast-pat-binding "inner")
-        (macro-result-call1
-          "ok"
-          (macro-result-call1 "mapper" (macro-result-var "inner"))))
-      (macro-result-match-arm
-        "Err"
-        (ast-pat-binding "error")
-        (macro-result-call1 "err" (macro-result-var "error"))))))
-
-(define (macro-result-fast-body [ok-ty : AstType] [err-ty : AstType]) : AstDeclList
-  (ast-decl-cons
-    (macro-result-enum-decl ok-ty err-ty)
-    (ast-decl-cons
-      (macro-result-ok-decl ok-ty)
-      (ast-decl-cons
-        (macro-result-err-decl err-ty)
-        (ast-decl-cons
-          (macro-result-predicate-decl "is-ok?" true false)
-          (ast-decl-cons
-            (macro-result-predicate-decl "is-err?" false true)
-            (ast-decl-cons
-              (macro-result-value-or-decl ok-ty)
-              (ast-decl-cons (macro-result-map-decl ok-ty) (ast-decl-list-new)))))))))
-
-(define (macro-result-fast-enum-body [ok-ty : AstType] [err-ty : AstType]) : AstDeclList
-  (ast-decl-cons (macro-result-enum-decl ok-ty err-ty) (ast-decl-list-new)))
-
-(define (macro-result-fast-body-for-surface
-  [ok-ty : AstType]
-  [err-ty : AstType]
-  [enum-only? : bool]) : AstDeclList
-  (if enum-only?
-    (macro-result-fast-enum-body ok-ty err-ty)
-    (macro-result-fast-body ok-ty err-ty)))
-
-(define (macro-result-fast-decls-for-types
-  [ok-ty : AstType]
-  [err-ty : AstType]
-  [enum-only? : bool]) : AstDeclList
-  (ast-decl-cons
-    (ast-decl-module (macro-result-fast-target-module-for-types ok-ty err-ty))
-    (macro-result-fast-body-for-surface ok-ty err-ty enum-only?)))
-
-(define (macro-result-fast-target-module-for-types
-  [ok-ty : AstType]
-  [err-ty : AstType]) : String
-  (str_cat.str-cat
-    "stdlib.result.generated."
-    (ctfe-type-key ok-ty)
-    "."
-    (ctfe-type-key err-ty)))
-
-(define (macro-result-target-module-from-identity [identity : String]) : CompilerMaybeString
-  (let
-    [n : i64 (string.string-length identity)]
-    [open : i64 (tc-name-first-char identity '(')]
-    (if (and
-      (> open 0)
-      (> n (+ open 1))
-      (string.char-eq (string.string-ref identity (- n 1)) ')'))
-      (let
-        [args : String
-          (string.substring identity (+ open 1) (- (- n 1) (+ open 1)))]
-        [sep : i64 (tc-name-first-char args ';')]
-        [args-len : i64 (string.string-length args)]
-        [err-start : i64 (+ sep 1)]
-        (if (and
-          (> sep 5)
-          (< (+ err-start 5) args-len)
-          (tc-string-prefix? args "type_")
-          (tc-string-prefix?
-            (string.substring args err-start (- args-len err-start))
-            "type_"))
-          (CompilerSomeString
-            (str_cat.str-cat
-              "stdlib.result.generated."
-              (string.substring args 5 (- sep 5))
-              "."
-              (string.substring
-                args
-                (+ err-start 5)
-                (- args-len (+ err-start 5)))))
-          CompilerNoString))
-      CompilerNoString)))
-
-(define (macro-result-fast-arity-error [call-expr : AstExpr]) : ResultMacroParsedDecls
-  (ResultMacroParsedDecls.Err
-    (box
-      (ctfe-diagnostic-at-expr
-        call-expr
-        "typecheck: result expects exactly two arguments"))))
-
-(define (macro-result-fast-decls
-  [ctx : TcContext]
-  [decls : AstDeclList]
-  [fallback-module : String]
-  [args : AstExprList]
-  [enum-only? : bool]
-  [call-expr : AstExpr]) : ResultMacroParsedDecls
-  (if (= (struct-get (& args) len) 2)
-    (let
-      [ok-id : i64 (ast-expr-list-get (& args) 0 0)]
-      [err-id : i64 (ast-expr-list-get (& args) 1 0)]
-      [ok-expr : AstExpr (ast-node-get ok-id)]
-      [err-expr : AstExpr (ast-node-get err-id)]
-      (match (macro-type-arg-with-fallback ctx decls fallback-module ok-expr)
-        [(ResultMacroTypeArg.Ok ok-ty)
-          (match (macro-type-arg-with-fallback
-            ctx
-            decls
-            fallback-module
-            err-expr)
-            [(ResultMacroTypeArg.Ok err-ty)
-              (ResultMacroParsedDecls.Ok
-                (macro-result-fast-decls-for-types ok-ty err-ty enum-only?))]
-            [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)])]
-        [(ResultMacroTypeArg.Err diag) (ResultMacroParsedDecls.Err diag)]))
-    (macro-result-fast-arity-error call-expr)))
-
 ;; Avoid recursive `core-and-from`/`core-or-from` CTFE for the hot prelude macros.
 (define (macro-core-bool-lit [value : bool]) : i64
   (ast-node-push (AstExpr.Literal (AstLiteral.Bool value))))
@@ -55557,7 +55317,11 @@
             call-expr)
             [(ResultMacroCallDeclModule.Ok maybe-decl call-module)
               (let
-                [call-ctx : TcContext (tc-context-with-module ctx module)]
+                ;; A generated nested import carries the module where its
+                ;; template was defined. Resolve type operands in that context
+                ;; as well: `json.Json` captured by a root macro must not be
+                ;; looked up inside its fresh generated target module.
+                [call-ctx : TcContext (tc-context-with-module ctx call-module)]
                 (match maybe-decl
                   [(MacroMaybeDecl.Some
                       macro-name
@@ -55594,6 +55358,63 @@
             [(ResultMacroCallDeclModule.Err _) CompilerNoString]))]
       [_ CompilerNoString])))
 
+;; A nested generated body may import an identity that was previously
+;; materialized only for a smaller surface. Replacing that placeholder with a
+;; marker alone would hide any helper demanded by the new generated body. Replay
+;; the canonical catalog's missing declarations before emitting the marker; the
+;; nested/generated context is deliberately conservative Full, while ordinary
+;; source aliases still use the precise selector in macro-expand-module-import.
+(define (macro-existing-module-import-replay-or-marker
+  [orig-decls : AstDeclList]
+  [module : String]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]) : ResultMacroDeclExpansion
+  (match (macro-module-generated-identity orig-decls target-module)
+    [(CompilerSomeString identity)
+      (match (macro-find-module-body-decls orig-decls target-module)
+        [(MacroMaybeDeclList.Some existing-body)
+          (let
+            [catalog : AstDeclList
+              (macro-generated-module-memo-get-catalog identity)]
+            [expanded : AstDeclList
+              (macro-module-replay-marker-decls
+                target-module
+                module
+                alias
+                span
+                catalog
+                existing-body)]
+            [summary : AstDeclList
+              (macro-generated-catalog-summary-union
+                identity
+                target-module
+                catalog)]
+            (begin
+              (macro-generated-module-memo-put!
+                identity
+                target-module
+                summary
+                catalog)
+              (ResultMacroDeclExpansion.Ok
+                expanded
+                (macro-paths-for-decls expanded decl-path))))]
+        [(MacroMaybeDeclList.No)
+          (let
+            [expanded : AstDeclList
+              (macro-module-import-marker-decls target-module alias span)]
+            (ResultMacroDeclExpansion.Ok
+              expanded
+              (macro-paths-for-decls expanded decl-path)))])]
+    [CompilerNoString
+      (let
+        [expanded : AstDeclList
+          (macro-module-import-marker-decls target-module alias span)]
+        (ResultMacroDeclExpansion.Ok
+          expanded
+          (macro-paths-for-decls expanded decl-path)))]))
+
 (define (macro-collapse-existing-module-import-decl
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -55617,15 +55438,13 @@
                   call-id
                   context)
                   [(CompilerSomeString target-module)
-                    (let
-                      [expanded : AstDeclList
-                        (macro-module-import-marker-decls
-                          target-module
-                          alias
-                          span)]
-                      (ResultMacroDeclExpansion.Ok
-                        expanded
-                        (macro-paths-for-decls expanded decl-path)))]
+                    (macro-existing-module-import-replay-or-marker
+                      orig-decls
+                      module
+                      target-module
+                      alias
+                      span
+                      decl-path)]
                   [(CompilerNoString)
                     (macro-single-decl-expansion decl decl-path)])]
               [_ (macro-single-decl-expansion decl decl-path)])]
@@ -55641,12 +55460,13 @@
             call-id
             context)
             [(CompilerSomeString target-module)
-              (let
-                [expanded : AstDeclList
-                  (macro-module-import-marker-decls target-module alias span)]
-                (ResultMacroDeclExpansion.Ok
-                  expanded
-                  (macro-paths-for-decls expanded decl-path)))]
+              (macro-existing-module-import-replay-or-marker
+                orig-decls
+                module
+                target-module
+                alias
+                span
+                decl-path)]
             [(CompilerNoString) (macro-single-decl-expansion decl decl-path)])]
         [_ (macro-single-decl-expansion decl decl-path)])]
     [_ (macro-single-decl-expansion decl decl-path)]))
@@ -55730,17 +55550,632 @@
       identity
       " has incompatible payload")))
 
-;; Record a freshly materialized module in the content-addressed memo (plan P1).
-;; Called only on the paths that actually materialize/reference a target module
-;; body (never the surface-empty path, which emits nothing), so every later import
-;; of the same identity — in any file, in any pass — resolves to this single
-;; canonical module via macro-generated-module-memo-get and emits only a marker
-;; import. Enum-only result materializations skip this memo so a later helper
-;; import can replay missing declarations and record the full body.
+;; --- generated Module catalogs and demand surfaces -------------------------
+;;
+;; A catalog is the full parsed, generated-meta-wrapped body for one canonical
+;; Module macro identity. It is intentionally retained independently of the
+;; body currently installed in the parent program: an unused alias can validate
+;; the catalog without inserting it, and a later alias can append just the
+;; newly demanded closure without re-running CTFE.
+(define (macro-generated-catalog-template [decl : AstDecl]) : AstDecl
+  (match decl
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (macro-generated-catalog-template (box-get inner-box))]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-catalog-template (box-get inner-box))]
+    [_ decl]))
+
+(define (macro-generated-catalog-variant-name?
+  [variants : AstVariantDefList]
+  [member : String]) : bool
+  (macro-generated-catalog-variant-name-at? (& variants) member 0))
+
+(define (macro-generated-catalog-variant-name-at?
+  [variants : (& variants AstVariantDefList)]
+  [member : String]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (or
+          (string.eq (intern-str name) member)
+          (macro-generated-catalog-variant-name-at? variants member (+ index 1)))])))
+
+(define (macro-generated-catalog-decl-matches-member?
+  [decl : AstDecl]
+  [member : String]) : bool
+  (let
+    [template : AstDecl (macro-generated-catalog-template decl)]
+    (or
+      (match (macro-generated-visible-name decl)
+        [(SpecMaybeString.Some name) (string.eq name member)]
+        [(SpecMaybeString.None) false])
+      (match template
+        [(AstDecl.DefEnum _ _ variants)
+          (macro-generated-catalog-variant-name? variants member)]
+        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+          (macro-generated-catalog-variant-name? variants member)]
+        [_ false]))))
+
+(define (macro-generated-catalog-demand-observation
+  [decls : AstDeclList]
+  [alias-name : String]
+  [target-module : String]) : MacroGeneratedCatalogDemandObservation
+  (begin
+    (compiler-load-lazy-qualified-observer-begin-pair! alias-name target-module)
+    (let
+      [demand : CompilerLoadLazyAliasDemand
+        (compiler-load-lazy-decl-list-demand-full
+          decls
+          alias-name
+          (compiler-load-lazy-empty-surface-summary)
+          (sym_i64_env.sym-i64-empty))]
+      (let
+        [observed : CompilerLoadLazyQualifiedObserverResult
+          (compiler-load-lazy-qualified-observer-end-pair!)]
+        (MacroGeneratedCatalogDemandObservation
+          demand
+          (struct-get observed primary-members)
+          (CompilerLoadLazyAliasDemand
+            (struct-get observed secondary-qualified)
+            (struct-get observed secondary-direct)
+            (struct-get demand unknown))
+          (struct-get observed secondary-members))))))
+
+;; 0 = no observation, 1 = statically named observation, 2 = conservative
+;; full fallback. A direct module-alias use is handled by the caller as Full;
+;; for an individual member, exact/direct and longer-qualified names both name
+;; that member's declaration.
+(define (macro-generated-catalog-alias-demand-status
+  [demand : CompilerLoadLazyAliasDemand]) : i64
+  (if (struct-get demand unknown)
+    2
+    (if (or (struct-get demand direct) (struct-get demand qualified))
+      1
+      0)))
+
+(define (macro-generated-catalog-member-status-merge [left : i64] [right : i64]) : i64
+  (if (or (= left 2) (= right 2))
+    2
+    (if (or (= left 1) (= right 1))
+      1
+      0)))
+
+(define (macro-generated-catalog-member-demand-status
+  [alias-members : sym_i64_env.SymI64Env]
+  [target-members : sym_i64_env.SymI64Env]
+  [member : String]) : i64
+  (let
+    [found : bool
+      (or
+        (sym_i64_env.sym-i64-contains alias-members member)
+        (sym_i64_env.sym-i64-contains target-members member))]
+    (if found
+      1
+      0)))
+
+(define (macro-generated-catalog-decl-demand-status
+  [alias-members : sym_i64_env.SymI64Env]
+  [target-members : sym_i64_env.SymI64Env]
+  [decl : AstDecl]) : i64
+  (let
+    [visible-status : i64
+      (match (macro-generated-visible-name decl)
+        [(SpecMaybeString.Some name)
+          (macro-generated-catalog-member-demand-status
+            alias-members
+            target-members
+            name)]
+        [(SpecMaybeString.None) 0])]
+    (match (macro-generated-catalog-template decl)
+      [(AstDecl.DefEnum _ _ variants)
+        (macro-generated-catalog-decl-variant-demand-status
+          alias-members
+          target-members
+          variants
+          visible-status)]
+      [(AstDecl.DefEnumLifetimes _ _ _ variants)
+        (macro-generated-catalog-decl-variant-demand-status
+          alias-members
+          target-members
+          variants
+          visible-status)]
+      [_ visible-status])))
+
+(define (macro-generated-catalog-decl-variant-demand-status
+  [alias-members : sym_i64_env.SymI64Env]
+  [target-members : sym_i64_env.SymI64Env]
+  [variants : AstVariantDefList]
+  [status : i64]) : i64
+  (macro-generated-catalog-decl-variant-demand-status-at?
+    alias-members
+    target-members
+    (& variants)
+    status
+    0))
+
+(define (macro-generated-catalog-decl-variant-demand-status-at?
+  [alias-members : sym_i64_env.SymI64Env]
+  [target-members : sym_i64_env.SymI64Env]
+  [variants : (& variants AstVariantDefList)]
+  [status : i64]
+  [index : i64]) : i64
+  (if (or (= status 2) (>= index (ast-variant-def-list-len variants)))
+    status
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (macro-generated-catalog-decl-variant-demand-status-at?
+          alias-members
+          target-members
+          variants
+          (macro-generated-catalog-member-status-merge
+            status
+            (macro-generated-catalog-member-demand-status
+              alias-members
+              target-members
+              (intern-str name)))
+          (+ index 1))])))
+
+(define (macro-generated-catalog-partial-safe-decl? [decl : AstDecl]) : bool
+  (match decl
+    [(AstDecl.Def _ _ _) true]
+    [(AstDecl.DefFn _ _ _ _ _) true]
+    [(AstDecl.Extern _ _ _ _) true]
+    [(AstDecl.DefEnum _ _ _) true]
+    [(AstDecl.DefEnumLifetimes _ _ _ _) true]
+    [(AstDecl.DefStruct _ _ _ _) true]
+    [(AstDecl.DefStructLifetimes _ _ _ _ _) true]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-catalog-partial-safe-decl? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (macro-generated-catalog-partial-safe-decl? (box-get inner-box))]
+    [_ false]))
+
+(define (macro-generated-catalog-partial-safe? [catalog : AstDeclList]) : bool
+  (match (ast-decl-list-step catalog)
+    [(AstDeclListStep.Nil) true]
+    [(AstDeclListStep.Cons decl rest)
+      (and
+        (macro-generated-catalog-partial-safe-decl? decl)
+        (macro-generated-catalog-partial-safe? rest))]))
+
+(define (macro-generated-catalog-needs-expansion?
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [catalog : AstDeclList]) : bool
+  (match (ast-decl-list-step catalog)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (macro-decl-uses-macro?
+          (tc-context-with-module ctx target-module)
+          orig-decls
+          decl)
+        (macro-generated-catalog-needs-expansion?
+          ctx
+          orig-decls
+          target-module
+          rest))]))
+
+(define (macro-generated-catalog-decl-references-name?
+  [decl : AstDecl]
+  [name : String]) : bool
+  (let
+    [demand : CompilerLoadLazyAliasDemand
+      (compiler-load-lazy-decl-demand
+        decl
+        name
+        (compiler-load-lazy-empty-surface-summary)
+        (sym_i64_env.sym-i64-empty))]
+    ;; An unclassified source form cannot prove that this declaration is
+    ;; independent of the candidate. Treat it as an edge, which converges to a
+    ;; full selected catalog instead of silently dropping a dependency.
+    (or
+      (struct-get demand direct)
+      (struct-get demand qualified)
+      (struct-get demand unknown))))
+
+(define (macro-generated-catalog-decl-references-variants?
+  [source : AstDecl]
+  [variants : AstVariantDefList]) : bool
+  (macro-generated-catalog-decl-references-variants-at? source (& variants) 0))
+
+(define (macro-generated-catalog-decl-references-variants-at?
+  [source : AstDecl]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (or
+          (macro-generated-catalog-decl-references-name?
+            source
+            (intern-str name))
+          (macro-generated-catalog-decl-references-variants-at?
+            source
+            variants
+            (+ index 1)))])))
+
+(define (macro-generated-catalog-decl-references-decl?
+  [source : AstDecl]
+  [candidate : AstDecl]) : bool
+  (let
+    [visible : bool
+      (match (macro-generated-visible-name candidate)
+        [(SpecMaybeString.Some name)
+          (macro-generated-catalog-decl-references-name? source name)]
+        [(SpecMaybeString.None) false])]
+    (if visible
+      true
+      (match (macro-generated-catalog-template candidate)
+        [(AstDecl.DefEnum _ _ variants)
+          (macro-generated-catalog-decl-references-variants? source variants)]
+        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+          (macro-generated-catalog-decl-references-variants? source variants)]
+        [_ false]))))
+
+(define (macro-generated-catalog-selected-needs-decl?
+  [selected : AstDeclList]
+  [candidate : AstDecl]) : bool
+  (match (ast-decl-list-step selected)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons source rest)
+      (or
+        (macro-generated-catalog-decl-references-decl? source candidate)
+        (macro-generated-catalog-selected-needs-decl? rest candidate))]))
+
+(define (macro-generated-catalog-closure-additions
+  [catalog : AstDeclList]
+  [selected : AstDeclList]) : AstDeclList
+  (let
+    [cursor : AstDeclList catalog]
+    [out : AstDeclList selected]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons candidate rest)
+            (begin
+              (if (and
+                (not (macro-decl-list-contains-structural? out candidate))
+                (macro-generated-catalog-selected-needs-decl? out candidate))
+                (set!
+                  out
+                  (macro-decl-list-append
+                    out
+                    (ast-decl-cons candidate (ast-decl-list-new))))
+                unit)
+              (set! cursor rest))]))
+      out)))
+
+(define (macro-generated-catalog-filter-selected
+  [catalog : AstDeclList]
+  [selected : AstDeclList]) : AstDeclList
+  (let
+    [cursor : AstDeclList catalog]
+    [out : AstDeclList (ast-decl-list-new)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (if (macro-decl-list-contains-structural? selected decl)
+                (set!
+                  out
+                  (macro-decl-list-append
+                    out
+                    (ast-decl-cons decl (ast-decl-list-new))))
+                unit)
+              (set! cursor rest))]))
+      out)))
+
+(define (macro-generated-catalog-closure
+  [catalog : AstDeclList]
+  [seed : AstDeclList]) : AstDeclList
+  (let
+    [selected : AstDeclList seed]
+    [changed : bool true]
+    (begin
+      (while changed
+        (let
+          [next : AstDeclList
+            (macro-generated-catalog-closure-additions catalog selected)]
+          (begin
+            (set!
+              changed
+              (not
+                (=
+                  (ast-decl-list-len (& next))
+                  (ast-decl-list-len (& selected)))))
+            (set! selected next))))
+      (macro-generated-catalog-filter-selected catalog selected))))
+
+;; Generated declarations commonly build public helpers in dependency order
+;; (for example `with-capacity` before `new`). Keep that prefix alongside the
+;; exact structural closure: it is a cheap conservative fence for hygienic
+;; references whose generated spelling cannot be compared as a raw source
+;; identifier by the closure walker.
+(define (macro-generated-catalog-last-selected-index
+  [catalog : AstDeclList]
+  [selected : AstDeclList]
+  [index : i64]
+  [last : i64]) : i64
+  (match (ast-decl-list-step catalog)
+    [(AstDeclListStep.Nil) last]
+    [(AstDeclListStep.Cons decl rest)
+      (macro-generated-catalog-last-selected-index
+        rest
+        selected
+        (+ index 1)
+        (if (macro-decl-list-contains-structural? selected decl)
+          index
+          last))]))
+
+(define (macro-generated-catalog-prefix-count
+  [catalog : AstDeclList]
+  [count : i64]) : AstDeclList
+  (if (<= count 0)
+    (ast-decl-list-new)
+    (match (ast-decl-list-step catalog)
+      [(AstDeclListStep.Nil) (ast-decl-list-new)]
+      [(AstDeclListStep.Cons decl rest)
+        (ast-decl-cons
+          decl
+          (macro-generated-catalog-prefix-count rest (- count 1)))])))
+
+(define (macro-generated-catalog-prefix-through-selection
+  [catalog : AstDeclList]
+  [selected : AstDeclList]) : AstDeclList
+  (let
+    [last : i64
+      (macro-generated-catalog-last-selected-index catalog selected 0 -1)]
+    (if (< last 0)
+      selected
+      (macro-generated-catalog-prefix-count catalog (+ last 1)))))
+
+(define (macro-generated-catalog-demand
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [catalog : AstDeclList]) : MacroGeneratedModuleCatalogDemand
+  (match alias
+    [(AstMaybeImportAlias.No) MacroGeneratedModuleCatalogDemand.Full]
+    [(AstMaybeImportAlias.Some alias-name)
+      (if (string.eq alias-name "")
+        MacroGeneratedModuleCatalogDemand.Full
+        (let
+          [observation : MacroGeneratedCatalogDemandObservation
+            (macro-generated-catalog-demand-observation
+              orig-decls
+              alias-name
+              target-module)]
+          [alias-demand : CompilerLoadLazyAliasDemand
+            (struct-get observation alias-demand)]
+          ;; The Module macro's own quasiquoted `(module target)` is an exact
+          ;; name occurrence in `orig-decls`. It is not a caller use of the
+          ;; generated module, so it must not look like a direct target demand
+          ;; and force the whole catalog. Keep qualified/unknown target uses:
+          ;; those can still be genuine canonical-module references.
+          [raw-target-demand : CompilerLoadLazyAliasDemand
+            (struct-get observation target-demand)]
+          [target-demand : CompilerLoadLazyAliasDemand
+            (CompilerLoadLazyAliasDemand
+              (struct-get raw-target-demand qualified)
+              false
+              (struct-get raw-target-demand unknown))]
+          [root-demand : CompilerLoadLazyAliasDemand
+            (compiler-load-lazy-alias-demand-merge alias-demand target-demand)]
+          (if (or
+            (struct-get root-demand direct)
+            (struct-get root-demand unknown))
+            MacroGeneratedModuleCatalogDemand.Full
+            (if (not (struct-get root-demand qualified))
+              MacroGeneratedModuleCatalogDemand.None
+              (let
+                [cursor : AstDeclList
+                  (AstDeclList
+                    (struct-get catalog slots)
+                    (struct-get catalog offset)
+                    (struct-get catalog len)
+                    false)]
+                [seed : AstDeclList (ast-decl-list-new)]
+                [status : i64 0]
+                [done : bool false]
+                (begin
+                  (while (not done)
+                    (match (ast-decl-list-step cursor)
+                      [(AstDeclListStep.Nil) (set! done true)]
+                      [(AstDeclListStep.Cons decl rest)
+                        (let
+                          [decl-status : i64
+                            (macro-generated-catalog-decl-demand-status
+                              (struct-get observation alias-members)
+                              (struct-get observation target-members)
+                              decl)]
+                          (begin
+                            (set!
+                              status
+                              (macro-generated-catalog-member-status-merge
+                                status
+                                decl-status))
+                            (if (= decl-status 1)
+                              (set!
+                                seed
+                                (macro-decl-list-append
+                                  seed
+                                  (ast-decl-cons decl (ast-decl-list-new))))
+                              unit)
+                            (set! cursor rest)))]))
+                  (if (or (= status 2) (= (ast-decl-list-len (& seed)) 0))
+                    MacroGeneratedModuleCatalogDemand.Full
+                    (MacroGeneratedModuleCatalogDemand.Partial
+                      (macro-generated-catalog-closure
+                        catalog
+                        (macro-generated-catalog-prefix-through-selection
+                          catalog
+                          seed))))))))))]))
+
+(define (macro-generated-catalog-summary
+  [target-module : String]
+  [body : AstDeclList]) : AstDeclList
+  (ast-decl-list-prepend-builder (ast-decl-module target-module) body))
+
+(define (macro-generated-catalog-current-body
+  [identity : String]
+  [target-module : String]) : AstDeclList
+  (match (macro-find-module-body-decls
+    (macro-generated-module-memo-get-summary identity)
+    target-module)
+    [(MacroMaybeDeclList.Some body) body]
+    [(MacroMaybeDeclList.No) (ast-decl-list-new)]))
+
+(define (macro-generated-catalog-summary-union
+  [identity : String]
+  [target-module : String]
+  [selection : AstDeclList]) : AstDeclList
+  (let
+    [current : AstDeclList
+      (macro-generated-catalog-current-body identity target-module)]
+    [missing : AstDeclList
+      (macro-decls-missing-generated-body selection current)]
+    (macro-generated-catalog-summary
+      target-module
+      (macro-decl-list-append current missing))))
+
+(define (macro-generated-catalog-validate-decls
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [target-module : String]
+  [catalog : AstDeclList]) : CompilerMaybeString
+  (let
+    [cursor : AstDeclList catalog]
+    [result : CompilerMaybeString CompilerNoString]
+    [done : bool false]
+    [catalog-ctx : TcContext (tc-context-with-module ctx target-module)]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (match (tc-check-decl catalog-ctx top-env decl)
+              [(ResultTcUnit.Ok) (set! cursor rest)]
+              [(ResultTcUnit.Err message)
+                (begin
+                  (set! result (CompilerSomeString message))
+                  (set! done true))])]))
+      result)))
+
+(define (macro-generated-catalog-validation-message
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [catalog : AstDeclList]) : CompilerMaybeString
+  (let
+    ;; Rebuilding symbols, registries, and the top environment for every
+    ;; generated catalog is deliberately strict, but those structures are
+    ;; validation-only. They are rebuilt against the complete generated
+    ;; catalog so hidden declarations receive the same checks as visible ones.
+    [saved-hygiene-ready : bool tc-hygiene-active-top-env-ready]
+    [saved-hygiene-env : TcTypeEnv tc-hygiene-active-top-env]
+    (begin
+      (let
+        [summary : AstDeclList
+          (macro-generated-catalog-summary target-module catalog)]
+        [validation-program : AstProgram
+          (ast-program (macro-decl-list-append orig-decls summary))]
+        [_before-validation : unit (tc-nominal-owner-cache-reset!)]
+        [out : CompilerMaybeString
+          (match (build-compiler-symbols validation-program)
+            [(ResultCompilerSymbols.Ok symbols)
+              (match (build-compiler-registries-with-symbols
+                validation-program
+                symbols)
+                [(ResultCompilerRegistries.Ok registries)
+                  (let
+                    [validation-ctx : TcContext
+                      (TcContext
+                        validation-program
+                        symbols
+                        registries
+                        ""
+                        (tc-context-pools ctx))]
+                    (match (tc-build-top-env validation-ctx validation-program)
+                      [(ResultTcEnv.Ok validation-env)
+                        (begin
+                          (tc-hygiene-reset-active-top-env! validation-env)
+                          (tc-context-capture-active-pools! validation-ctx)
+                          (match (tc-module-local-env
+                            validation-ctx
+                            validation-env
+                            target-module)
+                            [(ResultTcEnv.Ok catalog-env)
+                              (macro-generated-catalog-validate-decls
+                                validation-ctx
+                                catalog-env
+                                target-module
+                                catalog)]
+                            [(ResultTcEnv.Err message)
+                              (CompilerSomeString message)]))]
+                      [(ResultTcEnv.Err message) (CompilerSomeString message)]))]
+                [(ResultCompilerRegistries.Err message)
+                  (CompilerSomeString message)])]
+            [(ResultCompilerSymbols.Err message) (CompilerSomeString message)])]
+        (begin
+          (begin
+            (tc-hygiene-reset-active-top-env! saved-hygiene-env)
+            (if saved-hygiene-ready
+              unit
+              (set! tc-hygiene-active-top-env-ready false))
+            (tc-nominal-owner-cache-reset!)
+            out))))))
+
+(define (macro-generated-catalog-validation-message-clean [message : String]) : String
+  (if (tc-located-error? message)
+    (compiler-diagnostic-message (tc-located-error-diag message))
+    (if (tc-rich-error? message)
+      (compiler-diagnostic-message (tc-rich-error-diag message))
+      message)))
+
+(define (macro-generated-catalog-validation-diag
+  [call-expr : AstExpr]
+  [target-module : String]
+  [message : String]) : CompilerDiagnostic
+  (ctfe-diagnostic-at-expr
+    call-expr
+    (str_cat.str-cat
+      "typecheck: generated Module macro catalog "
+      target-module
+      " is invalid: "
+      (macro-generated-catalog-validation-message-clean message))))
+
+;; The validation context intentionally does not install caller-local module
+;; aliases into a generated target. A catalog containing such a type reference
+;; is still sound to handle, but must take the conservative full-materialize
+;; path and let the ordinary expanded program resolve that context. Other
+;; validation failures (notably a bad hidden helper body) remain import-site
+;; errors.
+(define (macro-generated-catalog-validation-needs-full? [message : String]) : bool
+  (or
+    (tc-string-prefix? message "typecheck: unknown qualified name ")
+    (or
+      (tc-string-prefix? message "typecheck: unbound name ")
+      (tc-string-prefix? message "typecheck: unknown module "))))
+
+;; Record the current materialized closure while preserving the canonical full
+;; catalog. The memo is also populated before an unused catalog returns so CTFE
+;; and parsing remain once-per-identity even when no parent declarations are
+;; installed yet.
 (define (macro-materialized-record-result
   [identity : String]
   [target-module : String]
   [summary : AstDeclList]
+  [catalog : AstDeclList]
   [memoize? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (begin
@@ -55748,7 +56183,11 @@
       [(ResultMacroDeclExpansion.Ok _ _)
         (begin
           (if memoize?
-            (macro-generated-module-memo-put! identity target-module summary)
+            (macro-generated-module-memo-put!
+              identity
+              target-module
+              summary
+              catalog)
             unit)
           (cfg
             compile-profile
@@ -55765,79 +56204,102 @@
   [alias : AstMaybeImportAlias]
   [span : AstSourceSpan]
   [decl-path : String]
-  [macro-name : String]
   [identity : String]
   [memoize? : bool]
-  [body-rest : AstDeclList]
+  [trusted-catalog? : bool]
+  [catalog : AstDeclList]
+  [selected-body : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
-    ;; A generated module always emits its FULL body. There is no surface
-    ;; filter (closure filter + env/fs allow-list + whole-body drop);
-    ;; the reachability gate (run after typecheck) keeps unused parts out of
-    ;; codegen while every declaration is still fully typechecked.
-    [generated-body-raw : AstDeclList
-      (macro-wrap-generated-decls body-rest macro-name identity)]
-    [generated-body : AstDeclList
-      (macro-collapse-existing-module-imports-or-original
-        ctx
-        top-env
-        orig-decls
-        target-module
-        generated-body-raw
-        decl-path)]
+    [generated-body : AstDeclList selected-body]
     [materialized : AstDeclList
       (ast-decl-list-prepend-builder
         (ast-decl-module target-module)
         generated-body)]
+    [summary : AstDeclList
+      (macro-generated-catalog-summary-union
+        identity
+        target-module
+        generated-body)]
     (macro-materialized-record-result
       identity
       target-module
-      materialized
+      summary
+      catalog
       memoize?
       (match (macro-find-module-body-decls orig-decls target-module)
         [(MacroMaybeDeclList.Some existing-body)
           (if (macro-decls-contain-generated-key? existing-body identity)
-            ;: The module for this identity is already materialized and recorded in
-            ;: the content-addressed memo. Compatible repeats are deduped without
-            ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
-            ;: (an `Expr`/clause parameter) can still reach here having produced a
-            ;: body that differs from the recorded one even though the canonical
-            ;: identity matches -- it switches on the argument's syntactic shape,
-            ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
-            ;: collide on one identity with different payloads. Detect that
-            ;: same-identity collision instead of silently reusing the recorded
-            ;: body; a compatible re-materialization still binds via the replay
-            ;: marker/alias import.
-            (match (macro-generated-target-replay
-              existing-body
-              (macro-decls-filter-generated-key generated-body identity))
-              [(MacroGeneratedTargetReplay.ReplayIncompatible)
-                (ResultMacroDeclExpansion.Err
-                  (box
-                    (macro-module-incompatible-output-diag call-expr identity)))]
-              [_
-                (match (macro-check-generated-import-collisions
-                  orig-decls
-                  generated-body
-                  module
-                  alias
-                  identity)
-                  [CompilerNoString
-                    (let
-                      [expanded : AstDeclList
-                        (macro-module-replay-marker-decls
-                          target-module
-                          module
-                          alias
-                          span
-                          generated-body
-                          existing-body)]
-                      (ResultMacroDeclExpansion.Ok
-                        expanded
-                        (macro-paths-for-decls expanded decl-path)))]
-                  [(CompilerSomeString message)
-                    (ResultMacroDeclExpansion.Err
-                      (box (macro-generated-import-diag span message)))])])
+            (if trusted-catalog?
+              ;; A shortcut hit reuses this exact canonical catalog. The
+              ;; installed body may already contain its macro-expanded form,
+              ;; so comparing it structurally with the retained parsed catalog
+              ;; would turn a compatible repeat into a false incompatibility.
+              ;; Replay only declarations still missing from the selected
+              ;; surface, then bind the requested alias marker.
+              (match (macro-check-generated-import-collisions
+                orig-decls
+                generated-body
+                module
+                alias
+                identity)
+                [CompilerNoString
+                  (let
+                    [expanded : AstDeclList
+                      (macro-module-replay-marker-decls
+                        target-module
+                        module
+                        alias
+                        span
+                        generated-body
+                        existing-body)]
+                    (ResultMacroDeclExpansion.Ok
+                      expanded
+                      (macro-paths-for-decls expanded decl-path)))]
+                [(CompilerSomeString message)
+                  (ResultMacroDeclExpansion.Err
+                    (box (macro-generated-import-diag span message)))])
+              ;: The module for this identity is already materialized and recorded in
+              ;: the content-addressed memo. Compatible repeats are deduped without
+              ;: re-expansion via the memo shortcut (plan P1). A syntax-param macro
+              ;: (an `Expr`/clause parameter) can still reach here having produced a
+              ;: body that differs from the recorded one even though the canonical
+              ;: identity matches -- it switches on the argument's syntactic shape,
+              ;: not its value, so `(gen "i64")` and `(gen (type-key (type i64)))`
+              ;: collide on one identity with different payloads. Detect that
+              ;: same-identity collision instead of silently reusing the recorded
+              ;: body; a compatible re-materialization still binds via the replay
+              ;: marker/alias import.
+              (match (macro-generated-target-replay
+                existing-body
+                (macro-decls-filter-generated-key generated-body identity))
+                [(MacroGeneratedTargetReplay.ReplayIncompatible)
+                  (ResultMacroDeclExpansion.Err
+                    (box
+                      (macro-module-incompatible-output-diag call-expr identity)))]
+                [_
+                  (match (macro-check-generated-import-collisions
+                    orig-decls
+                    generated-body
+                    module
+                    alias
+                    identity)
+                    [CompilerNoString
+                      (let
+                        [expanded : AstDeclList
+                          (macro-module-replay-marker-decls
+                            target-module
+                            module
+                            alias
+                            span
+                            generated-body
+                            existing-body)]
+                        (ResultMacroDeclExpansion.Ok
+                          expanded
+                          (macro-paths-for-decls expanded decl-path)))]
+                    [(CompilerSomeString message)
+                      (ResultMacroDeclExpansion.Err
+                        (box (macro-generated-import-diag span message)))])]))
             (let
               [generated-key-body : AstDeclList
                 (macro-decls-filter-generated-key generated-body identity)]
@@ -55943,6 +56405,226 @@
               (ResultMacroDeclExpansion.Err
                 (box (macro-generated-import-diag span message)))])]))))
 
+(define (macro-expand-module-catalog
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]
+  [identity : String]
+  [memoize? : bool]
+  [catalog-reusable? : bool]
+  [catalog : AstDeclList]
+  [call-expr : AstExpr]) : ResultMacroDeclExpansion
+  (let
+    [partial-safe? : bool
+      (and
+        (macro-generated-catalog-partial-safe? catalog)
+        (not
+          (macro-generated-catalog-needs-expansion?
+            ctx
+            orig-decls
+            target-module
+            catalog)))]
+    [target-fresh? : bool (not (macro-module-exists? orig-decls target-module))]
+    [catalog-from-memo? : bool
+      (if catalog-reusable?
+        (match (macro-generated-module-memo-get identity)
+          [(CompilerSomeString memo-target)
+            (string.eq memo-target target-module)]
+          [CompilerNoString false])
+        false)]
+    [demand : MacroGeneratedModuleCatalogDemand
+      (if partial-safe?
+        (macro-generated-catalog-demand orig-decls target-module alias catalog)
+        MacroGeneratedModuleCatalogDemand.Full)]
+    ;; A full catalog reaches ordinary typechecking unchanged, so it already
+    ;; receives complete declaration validation. The expensive shadow check is
+    ;; needed only when demand pruning would otherwise hide declarations.
+    [needs-catalog-validation? : bool
+      (match demand
+        [MacroGeneratedModuleCatalogDemand.Full false]
+        [_ true])]
+    (begin
+      ;; Store a first-seen catalog before an unused import returns. Never
+      ;; replace an existing entry here: syntax parameters can share an identity
+      ;; while producing incompatible output, which the replay path diagnoses.
+      (if memoize?
+        (match (macro-generated-module-memo-get identity)
+          [CompilerNoString
+            (macro-generated-module-memo-put!
+              identity
+              target-module
+              (ast-decl-list-new)
+              catalog)]
+          [(CompilerSomeString _) unit])
+        unit)
+      (if (and
+        partial-safe?
+        target-fresh?
+        needs-catalog-validation?
+        (or
+          (not catalog-reusable?)
+          (not (macro-generated-module-memo-validated? identity))))
+        (match (macro-generated-catalog-validation-message
+          ctx
+          orig-decls
+          target-module
+          catalog)
+          [CompilerNoString
+            (begin
+              (if (and memoize? catalog-reusable?)
+                (macro-generated-module-memo-mark-validated! identity)
+                unit)
+              (macro-expand-module-catalog-after-validation
+                ctx
+                top-env
+                orig-decls
+                module
+                target-module
+                alias
+                span
+                decl-path
+                identity
+                memoize?
+                catalog-from-memo?
+                catalog
+                demand
+                call-expr))]
+          [(CompilerSomeString message)
+            (if (macro-generated-catalog-validation-needs-full? message)
+              (macro-expand-module-catalog-after-validation
+                ctx
+                top-env
+                orig-decls
+                module
+                target-module
+                alias
+                span
+                decl-path
+                identity
+                memoize?
+                catalog-from-memo?
+                catalog
+                MacroGeneratedModuleCatalogDemand.Full
+                call-expr)
+              (ResultMacroDeclExpansion.Err
+                (box
+                  (macro-generated-catalog-validation-diag
+                    call-expr
+                    target-module
+                    message))))])
+        (macro-expand-module-catalog-after-validation
+          ctx
+          top-env
+          orig-decls
+          module
+          target-module
+          alias
+          span
+          decl-path
+          identity
+          memoize?
+          catalog-from-memo?
+          catalog
+          demand
+          call-expr)))))
+
+(define (macro-expand-module-catalog-after-validation
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]
+  [identity : String]
+  [memoize? : bool]
+  [trusted-catalog? : bool]
+  [catalog : AstDeclList]
+  [demand : MacroGeneratedModuleCatalogDemand]
+  [call-expr : AstExpr]) : ResultMacroDeclExpansion
+  (match demand
+    [MacroGeneratedModuleCatalogDemand.None
+      (ResultMacroDeclExpansion.Ok (ast-decl-list-new) (ast-decl-path-list-new))]
+    [(MacroGeneratedModuleCatalogDemand.Partial selection)
+      (macro-expand-module-materialized
+        ctx
+        top-env
+        orig-decls
+        module
+        target-module
+        alias
+        span
+        decl-path
+        identity
+        memoize?
+        trusted-catalog?
+        catalog
+        selection
+        call-expr)]
+    [MacroGeneratedModuleCatalogDemand.Full
+      (macro-expand-module-materialized
+        ctx
+        top-env
+        orig-decls
+        module
+        target-module
+        alias
+        span
+        decl-path
+        identity
+        memoize?
+        trusted-catalog?
+        catalog
+        catalog
+        call-expr)]))
+
+(define (macro-expand-module-prepared-catalog
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [span : AstSourceSpan]
+  [decl-path : String]
+  [macro-name : String]
+  [identity : String]
+  [memoize? : bool]
+  [catalog-reusable? : bool]
+  [body : AstDeclList]
+  [call-expr : AstExpr]) : ResultMacroDeclExpansion
+  (let
+    [wrapped : AstDeclList
+      (macro-wrap-generated-decls body macro-name identity)]
+    [catalog : AstDeclList
+      (macro-collapse-existing-module-imports-or-original
+        ctx
+        top-env
+        orig-decls
+        target-module
+        wrapped
+        decl-path)]
+    (macro-expand-module-catalog
+      ctx
+      top-env
+      orig-decls
+      module
+      target-module
+      alias
+      span
+      decl-path
+      identity
+      memoize?
+      catalog-reusable?
+      catalog
+      call-expr)))
+
 (define (macro-expand-module-generated-decls
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -55957,6 +56639,7 @@
   [macro-env : CtfeEnv]
   [rewrite-imports? : bool]
   [memoize? : bool]
+  [catalog-reusable? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -56006,7 +56689,7 @@
                               macro-env
                               contextual-body))
                           contextual-body)]
-                      (macro-expand-module-materialized
+                      (macro-expand-module-prepared-catalog
                         ctx
                         top-env
                         orig-decls
@@ -56018,6 +56701,7 @@
                         macro-name
                         identity
                         memoize?
+                        catalog-reusable?
                         final-body
                         call-expr))]
                   [_
@@ -56052,7 +56736,7 @@
                           macro-env
                           contextual-body))
                       contextual-body)]
-                  (macro-expand-module-materialized
+                  (macro-expand-module-prepared-catalog
                     ctx
                     top-env
                     orig-decls
@@ -56064,6 +56748,7 @@
                     macro-name
                     identity
                     memoize?
+                    catalog-reusable?
                     final-body
                     call-expr))]
               [_
@@ -56103,7 +56788,7 @@
             call-expr)
             [(ResultMacroCallDeclModule.Ok maybe-decl call-module)
               (let
-                [call-ctx : TcContext (tc-context-with-module ctx module)]
+                [call-ctx : TcContext (tc-context-with-module ctx call-module)]
                 (match maybe-decl
                   [(MacroMaybeDecl.Some
                       macro-name
@@ -56315,16 +57000,14 @@
                             call-expr)
                             [(ResultGenKey.Ok identity _)
                               (let
-                                [result-macro? : bool
-                                  (macro-result-module-macro?
-                                    macro-name
-                                    definition-module)]
-                                [shortcut-target : CompilerMaybeString
-                                  (if (macro-generated-identity-shortcut-safe-params?
+                                [shortcut-safe? : bool
+                                  (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
                                     definition-module
                                     params
-                                    expanded-args)
+                                    expanded-args)]
+                                [shortcut-target : CompilerMaybeString
+                                  (if shortcut-safe?
                                     (macro-generated-module-memo-get identity)
                                     CompilerNoString)]
                                 (match shortcut-target
@@ -56333,44 +57016,42 @@
                                       (cfg
                                         compile-profile
                                         (compiler-tc-macro-profile-note-generated-module-memo-hit))
-                                      (let
-                                        [expanded : AstDeclList
-                                          (macro-module-import-marker-decls
-                                            target-module
-                                            alias
-                                            span)]
-                                        (ResultMacroDeclExpansion.Ok
-                                          expanded
-                                          (macro-paths-for-decls
-                                            expanded
-                                            decl-path))))]
+                                      (macro-expand-module-catalog
+                                        ctx
+                                        top-env
+                                        orig-decls
+                                        module
+                                        target-module
+                                        alias
+                                        span
+                                        decl-path
+                                        identity
+                                        true
+                                        true
+                                        (macro-generated-module-memo-get-catalog
+                                          identity)
+                                        call-expr))]
                                   [(CompilerNoString)
-                                    (if result-macro?
-                                      (let
-                                        [result-enum-only? : bool
-                                          (macro-generated-result-source-enum-only?
-                                            decl-path
-                                            alias
-                                            span)]
-                                        [fast-result : ResultMacroParsedDecls
-                                          (begin
-                                            (cfg
-                                              compile-profile
-                                              (compiler-tc-macro-profile-start))
-                                            (macro-result-fast-decls
-                                              call-ctx
-                                              orig-decls
-                                              module
-                                              expanded-args
-                                              result-enum-only?
-                                              call-expr))]
-                                        (begin
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-macro-profile-finish
+                                    (match (macro-eval-transformer-expanded-with-env
+                                      call-ctx
+                                      orig-decls
+                                      definition-module
+                                      global-env
+                                      macro-name
+                                      params
+                                      body
+                                      expanded-args
+                                      call-expr)
+                                      [(ResultMacroValueEnv.Ok value macro-env)
+                                        (let
+                                          [parse-dispatch : sym_i64_env.SymI64Env
+                                            (macro-parse-dispatch-for-macro
                                               macro-name
-                                              expanded-args))
-                                          (match fast-result
+                                              definition-module)]
+                                          (match (macro-module-decls-from-ctfe-value
+                                            value
+                                            call-expr
+                                            parse-dispatch)
                                             [(ResultMacroParsedDecls.Ok
                                                 generated)
                                               (macro-expand-module-generated-decls
@@ -56384,61 +57065,18 @@
                                                 macro-name
                                                 identity
                                                 definition-module
-                                                (ctfe-env-empty-with-pools
-                                                  (tc-context-pools call-ctx))
-                                                false
-                                                (not result-enum-only?)
+                                                macro-env
+                                                (tc-macro-param-list-needs-call-context?
+                                                  params)
+                                                true
+                                                shortcut-safe?
                                                 generated
                                                 call-expr)]
                                             [(ResultMacroParsedDecls.Err diag)
                                               (ResultMacroDeclExpansion.Err
-                                                diag)])))
-                                      (match (macro-eval-transformer-expanded-with-env
-                                        call-ctx
-                                        orig-decls
-                                        definition-module
-                                        global-env
-                                        macro-name
-                                        params
-                                        body
-                                        expanded-args
-                                        call-expr)
-                                        [(ResultMacroValueEnv.Ok
-                                            value
-                                            macro-env)
-                                          (let
-                                            [parse-dispatch : sym_i64_env.SymI64Env
-                                              (macro-parse-dispatch-for-macro
-                                                macro-name
-                                                definition-module)]
-                                            (match (macro-module-decls-from-ctfe-value
-                                              value
-                                              call-expr
-                                              parse-dispatch)
-                                              [(ResultMacroParsedDecls.Ok
-                                                  generated)
-                                                (macro-expand-module-generated-decls
-                                                  ctx
-                                                  top-env
-                                                  orig-decls
-                                                  module
-                                                  alias
-                                                  span
-                                                  decl-path
-                                                  macro-name
-                                                  identity
-                                                  definition-module
-                                                  macro-env
-                                                  (tc-macro-param-list-needs-call-context?
-                                                    params)
-                                                  true
-                                                  generated
-                                                  call-expr)]
-                                              [(ResultMacroParsedDecls.Err diag)
-                                                (ResultMacroDeclExpansion.Err
-                                                  diag)]))]
-                                        [(ResultMacroValueEnv.Err diag)
-                                          (ResultMacroDeclExpansion.Err diag)]))]))]
+                                                diag)]))]
+                                      [(ResultMacroValueEnv.Err diag)
+                                        (ResultMacroDeclExpansion.Err diag)])]))]
                             [(ResultGenKey.Err diag)
                               (ResultMacroDeclExpansion.Err diag)])]
                         [(ResultMacroExprList.Err diag)
@@ -56672,8 +57310,15 @@
             (match (macro-module-generated-identity decls target-module)
               [(CompilerSomeString identity)
                 (let
-                  [summary : AstDeclList
-                    (macro-generated-module-memo-get-summary identity)]
+                  [summary
+                    : AstDeclList
+                    ;; Extend only with declarations contributed by this splice.
+                    ;; The memo summary is the union of all prior closures; using
+                    ;; it here would bind old declarations again when a later
+                    ;; alias appends one helper.
+                    (macro-generated-catalog-summary
+                      target-module
+                      (macro-collect-module-body-decls decls target-module ""))]
                   [marker : AstDeclList
                     (macro-generated-module-marker-in
                       decls
@@ -58156,6 +58801,37 @@
                                     (if (macro-decls-reflection-relevant?
                                       expanded)
                                       (compiler-typecheck-ctfe-env-cache-clear!)
+                                      unit)
+                                    ;; Generated Module catalogs are usually
+                                    ;; inert additions, but a full catalog can
+                                    ;; legitimately introduce a defmacro. Its
+                                    ;; name must be visible to the remaining
+                                    ;; declarations in this same expansion
+                                    ;; walk (for example `api.one` immediately
+                                    ;; after `(import (catalog) as api)`).
+                                    ;; Refresh the otherwise additive-inert
+                                    ;; prescan before rebuilding the splice
+                                    ;; context so the macro-name gate and CTFE
+                                    ;; export map include that generated macro.
+                                    (if (macro-program-has-defmacro? expanded)
+                                      (begin
+                                        (macro-live-prescan-reset!)
+                                        (macro-live-prescan-ensure! next-decls)
+                                        (set!
+                                          macro-expand-expr-type-macro-names
+                                          macro-live-prescan-expr-type-names)
+                                        (set!
+                                          ctfe-needs-metadata
+                                          (or
+                                            ctfe-needs-metadata
+                                            macro-live-prescan-has-defmacro))
+                                        (set!
+                                          cur-can-share
+                                          (and
+                                            cur-can-share
+                                            (match macro-live-prescan-expr-type-names
+                                              [(TcStringList.Nil) true]
+                                              [_ false]))))
                                       unit)
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx

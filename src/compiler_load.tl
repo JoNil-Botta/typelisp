@@ -2836,6 +2836,25 @@
 (define compiler-load-lazy-qualified-observer-stack : CompilerLoadLazyQualifiedObserverStack
   (compiler-load-lazy-qualified-observer-stack-empty))
 
+(define (compiler-load-lazy-qualified-observer-reset!) : unit
+  (begin
+    (set! compiler-load-lazy-qualified-observer-active false)
+    (set! compiler-load-lazy-qualified-observer-root "")
+    (set! compiler-load-lazy-qualified-observer-root-id 0)
+    (set!
+      compiler-load-lazy-qualified-observer-members
+      (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-lazy-qualified-observer-secondary-root "")
+    (set! compiler-load-lazy-qualified-observer-secondary-root-id 0)
+    (set!
+      compiler-load-lazy-qualified-observer-secondary-members
+      (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-lazy-qualified-observer-secondary-qualified false)
+    (set! compiler-load-lazy-qualified-observer-secondary-direct false)
+    (set!
+      compiler-load-lazy-qualified-observer-stack
+      (compiler-load-lazy-qualified-observer-stack-empty))))
+
 (define (compiler-load-lazy-qualified-observer-begin-pair!
   [root : String]
   [secondary-root : String]) : unit

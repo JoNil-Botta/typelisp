@@ -56203,6 +56203,65 @@
                           catalog
                           seed))))))))))]))
 
+(define (macro-generated-catalog-demand-scoped
+  [orig-decls : AstDeclList]
+  [importer-module : String]
+  [target-module : String]
+  [alias : AstMaybeImportAlias]
+  [catalog : AstDeclList]) : MacroGeneratedModuleCatalogDemand
+  ;; Keep exact collection bounded for very large flattened root modules. Such
+  ;; programs remain correct via the required conservative Full fallback; the
+  ;; loader can later provide a per-file demand index without rewalking tens of
+  ;; thousands of unrelated declarations for every generated import.
+  (if (> (ast-decl-list-len (& orig-decls)) 8192)
+    MacroGeneratedModuleCatalogDemand.Full
+    (let
+      [prev-persist : bool (intern-persistent-storage-on?)]
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 (tc-fn-scratch-arena-get)]
+      (begin
+        (intern-persistent-storage-enable!)
+        (unsafe
+          (arena.tl_arena_set scratch))
+        (let
+          [mark : i64 (arena.tl_region_mark)]
+          [importer-decls : AstDeclList
+            (macro-collect-module-body-decls orig-decls importer-module "")]
+          [raw : MacroGeneratedModuleCatalogDemand
+            (macro-generated-catalog-demand
+              importer-decls
+              target-module
+              alias
+              catalog)]
+          [scratch-head : i64 (arena.tl_arena_current)]
+          (begin
+            (unsafe
+              (arena.tl_arena_set enclosing))
+            (let
+              [escaped : MacroGeneratedModuleCatalogDemand
+                (match raw
+                  [MacroGeneratedModuleCatalogDemand.None
+                    MacroGeneratedModuleCatalogDemand.None]
+                  [MacroGeneratedModuleCatalogDemand.Full
+                    MacroGeneratedModuleCatalogDemand.Full]
+                  [(MacroGeneratedModuleCatalogDemand.Partial selected)
+                    (MacroGeneratedModuleCatalogDemand.Partial
+                      (macro-decl-list-append selected (ast-decl-list-new)))])]
+              [new-enclosing : i64 (arena.tl_arena_current)]
+              (begin
+                (compiler-load-lazy-qualified-observer-reset!)
+                (unsafe
+                  (arena.tl_arena_set scratch-head)
+                  (arena.tl_region_reset mark)
+                  (arena.tl_arena_set new-enclosing))
+                (tc-fn-scratch-arena-release-after-overflow!
+                  scratch
+                  scratch-head)
+                (if prev-persist
+                  unit
+                  (intern-persistent-storage-disable!))
+                escaped))))))))
+
 (define (macro-generated-catalog-summary
   [target-module : String]
   [body : AstDeclList]) : AstDeclList
@@ -56260,75 +56319,117 @@
                   (set! done true))])]))
       result)))
 
+(define (macro-generated-catalog-validation-message-scratch
+  [ctx : TcContext]
+  [orig-decls : AstDeclList]
+  [target-module : String]
+  [catalog : AstDeclList]) : MacroMaybeCatalogDiagnostic
+  (with-scratch
+    (let
+      ;; Rebuilding symbols, registries, and the top environment for every
+      ;; generated catalog is deliberately strict, but those structures are
+      ;; validation-only. They are rebuilt against the complete generated
+      ;; catalog so hidden declarations receive the same checks as visible ones.
+      [saved-hygiene-ready : bool tc-hygiene-active-top-env-ready]
+      [saved-hygiene-env : TcTypeEnv tc-hygiene-active-top-env]
+      (begin
+        (let
+          [summary : AstDeclList
+            (macro-generated-catalog-summary target-module catalog)]
+          [validation-program
+            : AstProgram
+            ;; Validate the canonical generated module in isolation. References
+            ;; that require caller-local modules take the conservative Full path
+            ;; below; rebuilding the complete importer here once per catalog is
+            ;; both unnecessary and prohibitive on the Windows bootstrap arena.
+            (ast-program summary)]
+          [_before-validation : unit (tc-nominal-owner-cache-reset!)]
+          [out : MacroMaybeCatalogDiagnostic
+            (match (build-compiler-symbols validation-program)
+              [(ResultCompilerSymbols.Ok symbols)
+                (match (build-compiler-registries-with-symbols
+                  validation-program
+                  symbols)
+                  [(ResultCompilerRegistries.Ok registries)
+                    (let
+                      [validation-ctx : TcContext
+                        (TcContext
+                          validation-program
+                          symbols
+                          registries
+                          ""
+                          (tc-context-pools ctx))]
+                      (match (tc-build-top-env
+                        validation-ctx
+                        validation-program)
+                        [(ResultTcEnv.Ok validation-env)
+                          (begin
+                            (tc-hygiene-reset-active-top-env! validation-env)
+                            (tc-context-capture-active-pools! validation-ctx)
+                            (match (tc-module-local-env
+                              validation-ctx
+                              validation-env
+                              target-module)
+                              [(ResultTcEnv.Ok catalog-env)
+                                (macro-generated-catalog-validate-decls
+                                  validation-ctx
+                                  catalog-env
+                                  target-module
+                                  catalog)]
+                              [(ResultTcEnv.Err message)
+                                (MacroMaybeCatalogDiagnostic.Some
+                                  (box (tc-diag-at-start message)))]))]
+                        [(ResultTcEnv.Err message)
+                          (MacroMaybeCatalogDiagnostic.Some
+                            (box (tc-diag-at-start message)))]))]
+                  [(ResultCompilerRegistries.Err message)
+                    (MacroMaybeCatalogDiagnostic.Some
+                      (box (tc-diag-at-start message)))])]
+              [(ResultCompilerSymbols.Err message)
+                (MacroMaybeCatalogDiagnostic.Some
+                  (box (tc-diag-at-start message)))])]
+          (begin
+            (begin
+              (tc-hygiene-reset-active-top-env! saved-hygiene-env)
+              (if saved-hygiene-ready
+                unit
+                (set! tc-hygiene-active-top-env-ready false))
+              (tc-nominal-owner-cache-reset!)
+              ;; Validation indexes the scratch-owned summary. Never leave that
+              ;; global index pointing into the reclaimed validation arena.
+              (tc-module-decl-index-reset!)
+              out)))))))
+
 (define (macro-generated-catalog-validation-message
   [ctx : TcContext]
   [orig-decls : AstDeclList]
   [target-module : String]
   [catalog : AstDeclList]) : MacroMaybeCatalogDiagnostic
   (let
-    ;; Rebuilding symbols, registries, and the top environment for every
-    ;; generated catalog is deliberately strict, but those structures are
-    ;; validation-only. They are rebuilt against the complete generated
-    ;; catalog so hidden declarations receive the same checks as visible ones.
-    [saved-hygiene-ready : bool tc-hygiene-active-top-env-ready]
-    [saved-hygiene-env : TcTypeEnv tc-hygiene-active-top-env]
+    [prev-persist : bool (intern-persistent-storage-on?)]
+    [_persistent-interns : unit (intern-persistent-storage-enable!)]
+    [out : MacroMaybeCatalogDiagnostic
+      (macro-generated-catalog-validation-message-scratch
+        ctx
+        orig-decls
+        target-module
+        catalog)]
     (begin
-      (let
-        [summary : AstDeclList
-          (macro-generated-catalog-summary target-module catalog)]
-        [validation-program : AstProgram
-          (ast-program (macro-decl-list-append orig-decls summary))]
-        [_before-validation : unit (tc-nominal-owner-cache-reset!)]
-        [out : MacroMaybeCatalogDiagnostic
-          (match (build-compiler-symbols validation-program)
-            [(ResultCompilerSymbols.Ok symbols)
-              (match (build-compiler-registries-with-symbols
-                validation-program
-                symbols)
-                [(ResultCompilerRegistries.Ok registries)
-                  (let
-                    [validation-ctx : TcContext
-                      (TcContext
-                        validation-program
-                        symbols
-                        registries
-                        ""
-                        (tc-context-pools ctx))]
-                    (match (tc-build-top-env validation-ctx validation-program)
-                      [(ResultTcEnv.Ok validation-env)
-                        (begin
-                          (tc-hygiene-reset-active-top-env! validation-env)
-                          (tc-context-capture-active-pools! validation-ctx)
-                          (match (tc-module-local-env
-                            validation-ctx
-                            validation-env
-                            target-module)
-                            [(ResultTcEnv.Ok catalog-env)
-                              (macro-generated-catalog-validate-decls
-                                validation-ctx
-                                catalog-env
-                                target-module
-                                catalog)]
-                            [(ResultTcEnv.Err message)
-                              (MacroMaybeCatalogDiagnostic.Some
-                                (box (tc-diag-at-start message)))]))]
-                      [(ResultTcEnv.Err message)
-                        (MacroMaybeCatalogDiagnostic.Some
-                          (box (tc-diag-at-start message)))]))]
-                [(ResultCompilerRegistries.Err message)
-                  (MacroMaybeCatalogDiagnostic.Some
-                    (box (tc-diag-at-start message)))])]
-            [(ResultCompilerSymbols.Err message)
-              (MacroMaybeCatalogDiagnostic.Some
-                (box (tc-diag-at-start message)))])]
-        (begin
-          (begin
-            (tc-hygiene-reset-active-top-env! saved-hygiene-env)
-            (if saved-hygiene-ready
-              unit
-              (set! tc-hygiene-active-top-env-ready false))
-            (tc-nominal-owner-cache-reset!)
-            out))))))
+      (if prev-persist
+        unit
+        (intern-persistent-storage-disable!))
+      ;; The validation walk uses the ordinary checker and therefore touches
+      ;; program-derived caches. Their entries were allocated in the reclaimed
+      ;; scratch arena; clear them before returning to the parent expansion.
+      (tc-clone-able-cache-reset!)
+      (tc-macro-helper-env-cache-reset!)
+      (tc-agg-caches-reset!)
+      (tc-nominal-owner-cache-reset!)
+      (macro-alias-derived-cache-reset!)
+      (tc-lazy-import-stubs-reset!)
+      (compiler-symbols-clear-last-error!)
+      (tc-clone-able-cache-populate! ctx)
+      out)))
 
 ;; The validation context intentionally does not install caller-local module
 ;; aliases into a generated target. A catalog containing such a type reference
@@ -56341,10 +56442,8 @@
   (let
     [message : String (compiler-diagnostic-message diag)]
     (or
-      (tc-string-prefix? message "typecheck: unknown qualified name ")
-      (or
-        (tc-string-prefix? message "typecheck: unbound name ")
-        (tc-string-prefix? message "typecheck: unknown module ")))))
+      (tc-string-prefix? message "typecheck: unknown ")
+      (tc-string-prefix? message "typecheck: unbound name "))))
 
 ;; Record the current materialized closure while preserving the canonical full
 ;; catalog. The memo is also populated before an unused catalog returns so CTFE
@@ -56612,6 +56711,7 @@
   [identity : String]
   [memoize? : bool]
   [catalog-reusable? : bool]
+  [select-demand? : bool]
   [catalog : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -56633,8 +56733,13 @@
           [CompilerNoString false])
         false)]
     [demand : MacroGeneratedModuleCatalogDemand
-      (if partial-safe?
-        (macro-generated-catalog-demand orig-decls target-module alias catalog)
+      (if (and select-demand? partial-safe?)
+        (macro-generated-catalog-demand-scoped
+          orig-decls
+          module
+          target-module
+          alias
+          catalog)
         MacroGeneratedModuleCatalogDemand.Full)]
     ;; A full catalog reaches ordinary typechecking unchanged, so it already
     ;; receives complete declaration validation. The expensive shadow check is
@@ -56795,6 +56900,7 @@
   [identity : String]
   [memoize? : bool]
   [catalog-reusable? : bool]
+  [select-demand? : bool]
   [body : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -56820,6 +56926,7 @@
       identity
       memoize?
       catalog-reusable?
+      select-demand?
       catalog
       call-expr)))
 
@@ -56838,6 +56945,7 @@
   [rewrite-imports? : bool]
   [memoize? : bool]
   [catalog-reusable? : bool]
+  [select-demand? : bool]
   [generated : AstDeclList]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (let
@@ -56900,6 +57008,7 @@
                         identity
                         memoize?
                         catalog-reusable?
+                        select-demand?
                         final-body
                         call-expr))]
                   [_
@@ -56947,6 +57056,7 @@
                     identity
                     memoize?
                     catalog-reusable?
+                    select-demand?
                     final-body
                     call-expr))]
               [_
@@ -57174,41 +57284,80 @@
                                       (cfg
                                         compile-profile
                                         (compiler-tc-macro-profile-note-generated-module-catalog-hit))
-                                      (macro-expand-module-catalog
-                                        ctx
-                                        top-env
-                                        orig-decls
-                                        module
-                                        target-module
-                                        alias
-                                        span
-                                        decl-path
-                                        identity
-                                        true
-                                        true
-                                        (macro-generated-module-memo-get-catalog
-                                          identity)
-                                        call-expr))]
+                                      (if (macro-result-module-macro?
+                                        macro-name
+                                        definition-module)
+                                        ;; Preserve the existing stdlib.result
+                                        ;; memo shortcut until #4832 removes
+                                        ;; that specialized dispatcher. Generic
+                                        ;; user Module macros take the exact
+                                        ;; demand/closure path below.
+                                        (let
+                                          [catalog : AstDeclList
+                                            (macro-generated-module-memo-get-catalog
+                                              identity)]
+                                          [marker : AstDeclList
+                                            (macro-module-import-marker-decls
+                                              target-module
+                                              alias
+                                              span)]
+                                          [expanded : AstDeclList
+                                            (match (macro-find-module-body-decls
+                                              orig-decls
+                                              target-module)
+                                              [(MacroMaybeDeclList.Some _)
+                                                marker]
+                                              [(MacroMaybeDeclList.No)
+                                                (macro-decl-list-append
+                                                  (ast-decl-list-prepend-builder
+                                                    (ast-decl-module
+                                                      target-module)
+                                                    catalog)
+                                                  (ast-decl-list-prepend-builder
+                                                    (ast-decl-module module)
+                                                    marker))])]
+                                          (ResultMacroDeclExpansion.Ok
+                                            expanded
+                                            (macro-paths-for-decls
+                                              expanded
+                                              decl-path)))
+                                        (macro-expand-module-catalog
+                                          ctx
+                                          top-env
+                                          orig-decls
+                                          module
+                                          target-module
+                                          alias
+                                          span
+                                          decl-path
+                                          identity
+                                          true
+                                          true
+                                          true
+                                          (macro-generated-module-memo-get-catalog
+                                            identity)
+                                          call-expr)))]
                                   [(CompilerNoString)
                                     (if (macro-result-module-macro?
                                       macro-name
                                       definition-module)
                                       (let
+                                        [result-enum-only? : bool
+                                          (macro-generated-result-source-enum-only?
+                                            decl-path
+                                            alias
+                                            span)]
                                         [fast-result : ResultMacroParsedDecls
                                           (begin
                                             (cfg
                                               compile-profile
                                               (compiler-tc-macro-profile-start))
-                                            ;; Always construct the complete
-                                            ;; catalog. Generic demand/closure
-                                            ;; selection below decides which
-                                            ;; declarations reach the parent.
                                             (macro-result-fast-decls
                                               call-ctx
                                               orig-decls
                                               module
                                               expanded-args
-                                              false
+                                              result-enum-only?
                                               call-expr))]
                                         (begin
                                           (cfg
@@ -57233,8 +57382,9 @@
                                                 (ctfe-env-empty-with-pools
                                                   (tc-context-pools call-ctx))
                                                 false
-                                                true
+                                                (not result-enum-only?)
                                                 shortcut-safe?
+                                                false
                                                 generated
                                                 call-expr)]
                                             [(ResultMacroParsedDecls.Err diag)
@@ -57280,6 +57430,7 @@
                                                     params)
                                                   true
                                                   shortcut-safe?
+                                                  true
                                                   generated
                                                   call-expr)]
                                               [(ResultMacroParsedDecls.Err diag)

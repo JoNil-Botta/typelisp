@@ -182,6 +182,7 @@ region_reset_preserve|tests/integration/region_reset_preserve.tl|62|-|-|stdlib/s
 region_reset_overflow_retains|tests/integration/region_reset_overflow_retains.tl|42|-|-|-
 region_reset_invalid_trap|tests/integration/region_reset_invalid_trap.tl|134|-|-|-|expected-stderr:tl: invalid region mark\n
 print|tests/integration/print.tl|0|42\nfalse\n|-|-
+io_format_print|tests/integration/io_format_print.tl|0|Ada:-7:true:x:1.5 {done}\n42\n|-|-
 print_char|tests/integration/print_char.tl|0|A\n|-|-
 print_float|tests/integration/print_float.tl|0|1.5\n|-|-
 print_string|tests/integration/print_string.tl|0|hello\nworld\n|-|-

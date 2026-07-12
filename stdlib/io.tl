@@ -3,7 +3,8 @@
 ;# Provides file, argv, panic, and stdio helpers through direct extern bindings
 ;# to platform FFI symbols plus low-level language forms for argv and raw bytes.
 ;#
-;# Public platform-facing functions such as `print-string`, `panic`, `arg`,
+;# Public platform-facing functions such as the `print` / `println` format
+;# macros, `print-string`, `panic`, `arg`,
 ;# `read-file`, `write-file`, file-handle status helpers, and stdin/stdout
 ;# helpers are stdlib definitions in this module. Programs must import this module
 ;# to use them.
@@ -35,6 +36,8 @@
 ;# ```
 (import stdlib.array)
 (import stdlib.byte_buf_core)
+(import stdlib.comptime)
+(import stdlib.format)
 (import stdlib.io_core)
 (import stdlib.string)
 
@@ -513,11 +516,43 @@
 (define (print-newline) : unit
   (print-string "\n"))
 
-;: Write an integer followed by a newline.
-(define (print [value : i64]) : unit
+;: Compatibility implementation for the historical `(print i64)` call.
+(define (print-i64 [value : i64]) : unit
   (begin
     (print-string (string.int->string value))
     (print-newline)))
+
+;: Format a literal template and write it to stdout without a newline.
+;:
+;: The template and arguments follow `stdlib.format.format`: `{}` consumes one
+;: value and `{{` / `}}` produce literal braces. Formatting creates one final
+;: String and `print-string` writes that body once.
+;:
+;: For source compatibility, the historical single-i64 call `(print value)`
+;: still writes the integer followed by a newline. New formatted calls always
+;: start with a string literal, including `(print "{}" value)`.
+(defmacro (print [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  (match (type-kind (comptime.expr-type template))
+    ["i64"
+      (if (= (comptime.expr-list-length args) 0)
+        `(stdlib.io.print-i64 ,template)
+        `(stdlib.io.print-string (stdlib.format.format ,template ,@args)))]
+    ["i32"
+      (if (= (comptime.expr-list-length args) 0)
+        `(stdlib.io.print-i64 (cast ,template : i64))
+        `(stdlib.io.print-string (stdlib.format.format ,template ,@args)))]
+    [_ `(stdlib.io.print-string (stdlib.format.format ,template ,@args))]))
+
+;: Format a literal template, write it to stdout, then write one newline.
+;:
+;: The formatted body is built once and written once; the newline is a second,
+;: explicit stream write.
+(defmacro (println [template : comptime.Expr] [args : comptime.Expr ...]) : unit
+  `(let
+    [formatted : String (stdlib.format.format ,template ,@args)]
+    (begin
+      (stdlib.io.print-string formatted)
+      (stdlib.io.print-newline))))
 
 ;: Write a boolean followed by a newline.
 (define (print-bool [value : bool]) : unit

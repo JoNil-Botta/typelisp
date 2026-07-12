@@ -143,6 +143,26 @@ fail() {
     exit 1
 }
 
+preserve_missing_final_newline() {
+    original_file=$1
+    transformed_file=$2
+    original_bytes=$(wc -c < "$original_file" | tr -d '[:space:]')
+    [ "$original_bytes" -gt 0 ] || return 0
+
+    original_last_byte=$(tail -c 1 "$original_file" |
+        od -An -t x1 | tr -d '[:space:]')
+    [ "$original_last_byte" != 0a ] || return 0
+
+    transformed_bytes=$(wc -c < "$transformed_file" | tr -d '[:space:]')
+    [ "$transformed_bytes" -gt 0 ] || return 1
+    without_final_newline="$transformed_file.no-final-newline"
+    if ! head -c $((transformed_bytes - 1)) "$transformed_file" > "$without_final_newline"; then
+        rm -f "$without_final_newline"
+        return 1
+    fi
+    mv "$without_final_newline" "$transformed_file"
+}
+
 show_logs() {
     stdout=$1
     stderr=$2
@@ -170,7 +190,7 @@ insert_after_last_import() {
     line=$2
     tmp_file=$file.tmp
     awk -v line="$line" '
-        /^\(import / {
+        /^\(import / && inserted == 0 {
             pending = pending $0 "\n"
             next
         }
@@ -194,6 +214,10 @@ insert_after_last_import() {
             }
         }
     ' "$file" > "$tmp_file"
+    preserve_missing_final_newline "$file" "$tmp_file" || {
+        rm -f "$tmp_file"
+        fail "could not preserve final newline state for $file"
+    }
     mv "$tmp_file" "$file"
 }
 
@@ -227,6 +251,10 @@ insert_after_exact_line() {
     ' "$file" > "$tmp_file" || {
         rm -f "$tmp_file"
         fail "anchor not found in $file: $anchor"
+    }
+    preserve_missing_final_newline "$file" "$tmp_file" || {
+        rm -f "$tmp_file"
+        fail "could not preserve final newline state for $file"
     }
     mv "$tmp_file" "$file"
 }
@@ -280,11 +308,184 @@ variant_import() {
     esac
 }
 
+variant_import_line() {
+    case "$1" in
+        format_tokens)
+            printf '%s\n' "(import (result i64 FormatSourceError) as result_fmt_i64_unused)"
+            ;;
+        lex)
+            printf '%s\n' "(import (result i64 String) as result_lex_i64_unused)"
+            ;;
+        compiler_ctfe)
+            printf '%s\n' "(import (result (Tuple i64 i64) (Box CompilerDiagnostic)) as result_ctfe_i64_arg_unused)"
+            ;;
+        *) fail "unknown variant: $1" ;;
+    esac
+}
+
+count_exact_line() {
+    count_file=$1
+    count_line=$2
+    awk -v line="$count_line" '
+        $0 == line { count = count + 1 }
+        END { print count + 0 }
+    ' "$count_file"
+}
+
+first_exact_line() {
+    first_file=$1
+    first_line=$2
+    awk -v line="$first_line" '
+        $0 == line {
+            print NR
+            exit
+        }
+    ' "$first_file"
+}
+
+first_line_containing() {
+    containing_file=$1
+    containing_text=$2
+    awk -v text="$containing_text" '
+        index($0, text) != 0 {
+            print NR
+            exit
+        }
+    ' "$containing_file"
+}
+
+show_prepared_difference() {
+    expected=$1
+    actual=$2
+    if command -v diff >/dev/null 2>&1; then
+        diff -u "$expected" "$actual" | sed -n '1,200p' >&2 || true
+    else
+        cmp -l "$expected" "$actual" | sed -n '1,80p' >&2 || true
+    fi
+}
+
+filter_prepared_injections() {
+    source_file=$1
+    output_file=$2
+    stdlib_import=$3
+    drop_stdlib_import=$4
+    synthetic_import=$5
+    awk \
+        -v stdlib_import="$stdlib_import" \
+        -v drop_stdlib_import="$drop_stdlib_import" \
+        -v synthetic_import="$synthetic_import" '
+        $0 == synthetic_import {
+            synthetic_count = synthetic_count + 1
+            next
+        }
+        drop_stdlib_import == 1 && $0 == stdlib_import {
+            stdlib_count = stdlib_count + 1
+            next
+        }
+        { print }
+        END {
+            if (synthetic_count != 1) {
+                exit 1
+            }
+            if (drop_stdlib_import == 1 && stdlib_count != 1) {
+                exit 1
+            }
+        }
+    ' "$source_file" > "$output_file" || return 1
+    preserve_missing_final_newline "$source_file" "$output_file"
+}
+
+verify_compiler_ctfe_import_order() {
+    base_file=$1
+    variant_file=$2
+    ctfe_import=$(awk '
+        /^\(import \(result .* as result_ctfe_i64_arg\)$/ {
+            print
+            exit
+        }
+    ' "$base_file")
+    [ -n "$ctfe_import" ] || fail "compiler_ctfe base source has no result_ctfe_i64_arg import"
+    ctfe_import_line=$(first_exact_line "$variant_file" "$ctfe_import")
+    ctfe_first_use=$(first_line_containing "$variant_file" "result_ctfe_i64_arg.")
+    [ -n "$ctfe_import_line" ] || fail "compiler_ctfe variant lost result_ctfe_i64_arg import"
+    [ -n "$ctfe_first_use" ] || fail "compiler_ctfe variant has no result_ctfe_i64_arg qualified use"
+    if [ "$ctfe_import_line" -ge "$ctfe_first_use" ]; then
+        fail "compiler_ctfe variant moved result_ctfe_i64_arg import after its first qualified use"
+    fi
+}
+
+verify_prepared_variant() {
+    name=$1
+    source=$(variant_source "$name")
+    source_name=${source##*/}
+    base_dir="$WORKDIR/base/src"
+    variant_dir="$WORKDIR/$name/src"
+    base_file="$base_dir/$source_name"
+    variant_file="$variant_dir/$source_name"
+    stdlib_import="(import stdlib.result)"
+    synthetic_import=$(variant_import_line "$name")
+
+    [ -f "$base_file" ] || fail "base source is missing $source"
+    [ -f "$variant_file" ] || fail "$name source is missing $source"
+    base_stdlib_count=$(count_exact_line "$base_file" "$stdlib_import")
+    variant_stdlib_count=$(count_exact_line "$variant_file" "$stdlib_import")
+    base_synthetic_count=$(count_exact_line "$base_file" "$synthetic_import")
+    variant_synthetic_count=$(count_exact_line "$variant_file" "$synthetic_import")
+    drop_stdlib_import=0
+
+    [ "$base_synthetic_count" -eq 0 ] || fail "base $source already contains the synthetic $name import"
+    [ "$variant_synthetic_count" -eq 1 ] || fail "$name must contain exactly one synthetic import"
+
+    if [ "$base_stdlib_count" -eq 0 ]; then
+        [ "$variant_stdlib_count" -eq 1 ] || fail "$name must add exactly one stdlib.result import"
+        drop_stdlib_import=1
+    elif [ "$variant_stdlib_count" -ne "$base_stdlib_count" ]; then
+        fail "$name changed the number of stdlib.result imports"
+    fi
+
+    for base_candidate in "$base_dir"/*.tl; do
+        [ -f "$base_candidate" ] || continue
+        candidate_name=${base_candidate##*/}
+        variant_candidate="$variant_dir/$candidate_name"
+        [ -f "$variant_candidate" ] || fail "$name is missing copied source $candidate_name"
+        if [ "$candidate_name" != "$source_name" ] && ! cmp -s "$base_candidate" "$variant_candidate"; then
+            echo "[result-import-cost] unexpected $name change in $candidate_name" >&2
+            show_prepared_difference "$base_candidate" "$variant_candidate"
+            fail "$name changed a source outside $source"
+        fi
+    done
+    for variant_candidate in "$variant_dir"/*.tl; do
+        [ -f "$variant_candidate" ] || continue
+        candidate_name=${variant_candidate##*/}
+        [ -f "$base_dir/$candidate_name" ] || fail "$name added unexpected source $candidate_name"
+    done
+
+    filtered="$WORKDIR/logs/$name.source-without-injections.tl"
+    if ! filter_prepared_injections \
+        "$variant_file" \
+        "$filtered" \
+        "$stdlib_import" \
+        "$drop_stdlib_import" \
+        "$synthetic_import"; then
+        fail "$name did not contain exactly the expected injected imports"
+    fi
+    if ! cmp -s "$base_file" "$filtered"; then
+        echo "[result-import-cost] prepared $name differs from base beyond injected imports" >&2
+        show_prepared_difference "$base_file" "$filtered"
+        fail "$name source preparation changed existing declarations"
+    fi
+
+    if [ "$name" = compiler_ctfe ]; then
+        verify_compiler_ctfe_import_order "$base_file" "$variant_file"
+    fi
+}
+
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR/logs"
 copy_src_tree "$WORKDIR/base/src"
 for variant in $VARIANTS; do
     prepare_variant "$variant"
+    verify_prepared_variant "$variant"
 done
 
 VARIANTS_TSV="$WORKDIR/variants.tsv"

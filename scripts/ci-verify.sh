@@ -284,6 +284,7 @@ run_with_compiler "$STAGE2_BIN" "TypeLisp source lint" scripts/check-tl-lint.sh
 run_with_compiler "$STAGE2_BIN" "no-libc dependency guard" scripts/verify-no-libc.sh
 run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
 run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
+run_with_compiler "$STAGE2_BIN" "stage2 result-import harness integrity" scripts/verify-result-import-harness.sh
 run_with_compiler "$STAGE2_BIN" "stage2 opt2-built CLI compile + cross-fixpoint regression" scripts/check-opt2-cli-regression.sh
 if [ "$HOST_OS" = linux ]; then
     run_with_compiler "$STAGE2_BIN" "stage2 opt1/opt2 build-invariance" scripts/check-build-invariance.sh

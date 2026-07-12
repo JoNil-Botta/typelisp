@@ -34879,99 +34879,7 @@
         (ResultTcEnv.Err "typecheck: literal pattern type mismatch"))]
     [(ResultTcType.Err message) (ResultTcEnv.Err message)]))
 
-(define (tc-maybe-name-id-debug [value : TcMaybeNameId]) : String
-  (match value
-    [(TcMaybeNameId.Some name-id)
-      (string.append
-        (intern-str name-id)
-        (string.append "#" (string.int->string name-id)))]
-    [(TcMaybeNameId.No) "<none>"]))
-
-(define (tc-module-name-id-debug [decls : AstDeclList] [name : String]) : String
-  (let
-    [index : i64 0]
-    [count : i64 (ast-decl-list-len (& decls))]
-    [offset : i64 (struct-get decls offset)]
-    [found-id : i64 -1]
-    [matches : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (match (ast-decl-unwrapped
-            (array-ref (struct-get decls slots) (+ offset index)))
-            [(AstDecl.Module module-id)
-              (if (string.eq (intern-str module-id) name)
-                (begin
-                  (if (< found-id 0)
-                    (set! found-id module-id)
-                    unit)
-                  (set! matches (+ matches 1)))
-                unit)]
-            [(AstDecl.ModuleBody module-id _)
-              (if (string.eq (intern-str module-id) name)
-                (begin
-                  (if (< found-id 0)
-                    (set! found-id module-id)
-                    unit)
-                  (set! matches (+ matches 1)))
-                unit)]
-            [_ unit])
-          (set! index (+ index 1))))
-      (if (< found-id 0)
-        "<none>"
-        (str_cat.str-cat
-          "#"
-          (string.int->string found-id)
-          " (count "
-          (string.int->string matches)
-          ")")))))
-
-(define (tc-scalar-match-alias-debug [ctx : TcContext] [scrut-ty : AstType]) : String
-  (match scrut-ty
-    [(AstType.Var name-id)
-      (let
-        [first-dot : i64 (intern-first-dot name-id)]
-        (if (< first-dot 0)
-          ""
-          (let
-            [alias-id : i64 (intern-leading-dot-id name-id)]
-            (match (tc-context-program ctx)
-              [(AstProgram.Program decls-box)
-                (let
-                  [decls : AstDeclList (box-get decls-box)]
-                  [module-id : i64 (tc-context-module-id ctx)]
-                  [cached-target : String
-                    (tc-maybe-name-id-debug
-                      (tc-source-dotted-alias-target-id
-                        decls
-                        module-id
-                        alias-id))]
-                  [scanned-target : String
-                    (tc-maybe-name-id-debug
-                      (macro-import-alias-target-ids
-                        decls
-                        module-id
-                        alias-id
-                        cbi.compiler-builtin-id-fix-empty))]
-                  [target-modules : String
-                    (match (tc-source-dotted-alias-target-id
-                      decls
-                      module-id
-                      alias-id)
-                      [(TcMaybeNameId.Some target-id)
-                        (tc-module-name-id-debug decls (intern-str target-id))]
-                      [(TcMaybeNameId.No) "<none>"])]
-                  (str_cat.str-cat
-                    "; alias target is "
-                    cached-target
-                    ", direct scan is "
-                    scanned-target
-                    ", matching module declarations are "
-                    target-modules))]))))]
-    [_ ""]))
-
 (define (tc-bind-scalar-match-pattern
-  [ctx : TcContext]
   [env : TcTypeEnv]
   [scrut-ty : AstType]
   [pattern : AstPattern]) : ResultTcEnv
@@ -34983,15 +34891,7 @@
       (if (tc-box-pattern-name? name)
         (ResultTcEnv.Err "typecheck: box pattern requires Box scrutinee")
         (ResultTcEnv.Err
-          (string.append
-            "typecheck: scalar match only supports literal, binding, or wildcard patterns; scrutinee type is "
-            (string.append
-              (tc-type-render scrut-ty)
-              (string.append
-                ", variant pattern is "
-                (string.append
-                  (intern-str name)
-                  (tc-scalar-match-alias-debug ctx scrut-ty)))))))]
+          "typecheck: scalar match only supports literal, binding, or wildcard patterns"))]
     [_
       (ResultTcEnv.Err
         "typecheck: scalar match only supports literal, binding, or wildcard patterns")]))
@@ -35640,7 +35540,7 @@
               [_
                 (ResultTcEnv.Err
                   "typecheck: scalar match only supports literal, binding, or wildcard patterns")])]
-          [_ (tc-bind-scalar-match-pattern ctx env scrut-ty pattern)]))]
+          [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))]
     [(AstType.Enum enum-name)
       (match pattern
         [(AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -35725,7 +35625,7 @@
     [(AstType.Var name)
       (if (= name cbi.compiler-builtin-id-fix-ExprClause)
         (tc-bind-expr-clause-match-pattern ctx env pattern)
-        (tc-bind-scalar-match-pattern ctx env scrut-ty pattern))]
+        (tc-bind-scalar-match-pattern env scrut-ty pattern))]
     [(AstType.Box inner-ty)
       (match pattern
         [(AstPattern.Wildcard) (ResultTcEnv.Ok env)]
@@ -35740,7 +35640,7 @@
               (ResultTcEnv.Err
                 "typecheck: Box match only supports (box ...), binding, or wildcard patterns")))]
         [_ (ResultTcEnv.Err "typecheck: unsupported Box match pattern")])]
-    [_ (tc-bind-scalar-match-pattern ctx env scrut-ty pattern)]))
+    [_ (tc-bind-scalar-match-pattern env scrut-ty pattern)]))
 
 (define (tc-match-arm-type
   [ctx : TcContext]

@@ -40,6 +40,11 @@ borrow_foreach_body_after_last_use_ok|check-ok|tests/safety/borrow_foreach_body_
 lending_iterator_after_last_use_ok|check-ok|tests/safety/lending_iterator_after_last_use_ok.tl|-|-
 lending_iterator_loop_after_last_use_ok|check-ok|tests/safety/lending_iterator_loop_after_last_use_ok.tl|-|-
 vector_iter_mut_after_last_use_ok|check-ok|tests/safety/vector_iter_mut_after_last_use_ok.tl|-|-
+reborrow_stored_reference_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_reference_item_after_last_use_ok.tl|-|-
+reborrow_stored_mut_reference_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_mut_reference_item_after_last_use_ok.tl|-|-
+reborrow_stored_reference_item_disjoint_sibling_ok|check-ok|tests/safety/reborrow_stored_reference_item_disjoint_sibling_ok.tl|-|-
+reborrow_stored_dead_sibling_after_use_ok|check-ok|tests/safety/reborrow_stored_dead_sibling_after_use_ok.tl|-|-
+reborrow_stored_generated_vector_item_after_last_use_ok|check-ok|tests/safety/reborrow_stored_generated_vector_item_after_last_use_ok.tl|-|-
 
 # Static rejection areas.
 unsupported_cast_reject|check-fail|tests/safety/unsupported_cast_reject.tl|-|cast requires
@@ -93,6 +98,11 @@ vector_iter_mut_pop_live_reject|check-fail|tests/safety/vector_iter_mut_pop_live
 vector_iter_mut_escape_reject|check-fail|tests/safety/vector_iter_mut_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact/pop
 vector_full_noncloneable_pop_reject|check-fail|tests/safety/vector_full_noncloneable_pop_reject.tl|-|typecheck: clone unsupported type VectorFullRawHolder
+reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
+reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
+reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
+reborrow_stored_nested_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
+reborrow_stored_generated_vector_item_source_live_reject|check-fail|tests/safety/reborrow_stored_generated_vector_item_source_live_reject.tl|-|cannot read mutably borrowed place `values`
 borrow_if_before_last_use_reject|check-fail|tests/safety/borrow_if_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_before_last_use_reject|check-fail|tests/safety/borrow_while_before_last_use_reject.tl|-|cannot assign to borrowed place `n`
 borrow_while_stored_loop_carried_reject|check-fail|tests/safety/borrow_while_stored_loop_carried_reject.tl|-|cannot assign to borrowed place `n`

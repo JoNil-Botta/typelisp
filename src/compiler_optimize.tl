@@ -28189,36 +28189,6 @@
       (+ 1 (opt-function-list-count (box-get rest)))]
     [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-count seq)]))
 
-(define (opt-function-logical-name-source-start [name : String]) : i64
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length name)]
-    [start : i64 0]
-    (begin
-      (while (< (+ i 1) n)
-        (begin
-          (if (and
-            (string.char-eq (string.string-ref name i) ':')
-            (string.char-eq (string.string-ref name (+ i 1)) ':'))
-            (set! start (+ i 2))
-            unit)
-          (set! i (+ i 1))))
-      start)))
-
-(define (opt-function-logical-name-last-slash [name : String] [start : i64]) : i64
-  (let
-    [i : i64 start]
-    [n : i64 (string.string-length name)]
-    [slash : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '/')
-            (set! slash i)
-            unit)
-          (set! i (+ i 1))))
-      slash)))
-
 (define (opt-function-logical-name-prefix-at?
   [name : String]
   [prefix : String]
@@ -28262,14 +28232,14 @@
             n)]
         [module-id : i64
           (if (>= slash start)
-            (match (ci.intern-lookup
+            (match (ci.intern-lookup-content
               (string.substring name start (- slash start)))
               [(InternLookupFound id) id]
               [(InternLookupMissing) -2])
             (clone-root-module-id))]
         (if (or (< module-id (clone-root-module-id)) (<= type-end type-start))
           fallback
-          (match (ci.intern-lookup
+          (match (ci.intern-lookup-content
             (string.substring name type-start (- type-end type-start)))
             [(InternLookupFound type-name-id)
               (let
@@ -28285,29 +28255,29 @@
 (define (opt-function-logical-name-id [name : String]) : CompilerIrMaybeNameId
   (match (compiler-ir-logical-name-id name)
     [(CompilerIrMaybeNameId.Some name-id) (CompilerIrMaybeNameId.Some name-id)]
-    [(CompilerIrMaybeNameId.No)
+    [(CompilerIrMaybeNameId.No start)
       (let
-        [start : i64 (opt-function-logical-name-source-start name)]
-        [slash : i64 (opt-function-logical-name-last-slash name start)]
+        [slash : i64 (compiler-ir-logical-name-last-slash name start)]
         [n : i64 (string.string-length name)]
         [clone-id : i64 (opt-function-clone-name-id-or name start slash -1)]
         (if (>= clone-id 0)
           (CompilerIrMaybeNameId.Some clone-id)
           (if (>= slash start)
-            (match (ci.intern-lookup
+            (match (ci.intern-lookup-content
               (string.substring name start (- slash start)))
               [(InternLookupFound module-id)
-                (match (ci.intern-lookup
+                (match (ci.intern-lookup-content
                   (string.substring name (+ slash 1) (- n (+ slash 1))))
                   [(InternLookupFound base-id)
                     (CompilerIrMaybeNameId.Some
                       (clone-name-pair-key-id module-id base-id))]
-                  [(InternLookupMissing) (CompilerIrMaybeNameId.No)])]
-              [(InternLookupMissing) (CompilerIrMaybeNameId.No)])
-            (match (ci.intern-lookup (string.substring name start (- n start)))
+                  [(InternLookupMissing) (CompilerIrMaybeNameId.No 0)])]
+              [(InternLookupMissing) (CompilerIrMaybeNameId.No 0)])
+            (match (ci.intern-lookup-content
+              (string.substring name start (- n start)))
               [(InternLookupFound source-id)
                 (CompilerIrMaybeNameId.Some source-id)]
-              [(InternLookupMissing) (CompilerIrMaybeNameId.No)]))))]))
+              [(InternLookupMissing) (CompilerIrMaybeNameId.No 0)]))))]))
 
 (define (opt-function-name-index-add
   [names : OptFunctionNameIndex]
@@ -28321,7 +28291,7 @@
       (match (opt-function-logical-name-id name)
         [(CompilerIrMaybeNameId.Some name-id)
           (opt_i64_i64_map.insert-ref! (&mut ids) name-id slot)]
-        [(CompilerIrMaybeNameId.No) unit])
+        [(CompilerIrMaybeNameId.No _) unit])
       (OptFunctionNameIndex ids fallback))))
 
 (define (opt-function-index-fill
@@ -28382,22 +28352,28 @@
 (define (opt-function-index-slot-id [index : OptFunctionIndex] [name-id : i64]) : option_i64.Option
   (if (< name-id 0)
     (option_i64.None)
-    (match (opt_i64_i64_map.get
-      (& (struct-get (struct-get index names) ids))
-      name-id)
-      [(opt_i64_i64_map.LookupFound slot) (option_i64.Some slot)]
-      [(opt_i64_i64_map.LookupMissing) (option_i64.None)])))
+    (let
+      [slot : i64
+        (opt_i64_i64_map.get-value-or
+          (& (struct-get (struct-get index names) ids))
+          name-id
+          -1)]
+      (if (>= slot 0)
+        (option_i64.Some slot)
+        (option_i64.None)))))
 
 (define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : option_i64.Option
   (let
     [names : OptFunctionNameIndex (struct-get index names)]
     (match (opt-function-logical-name-id name)
       [(CompilerIrMaybeNameId.Some name-id)
-        (match (opt_i64_i64_map.get (& (struct-get names ids)) name-id)
-          [(opt_i64_i64_map.LookupFound slot) (option_i64.Some slot)]
-          [(opt_i64_i64_map.LookupMissing)
-            (opt-function-name-index-fallback-slot names name)])]
-      [(CompilerIrMaybeNameId.No)
+        (let
+          [slot : i64
+            (opt_i64_i64_map.get-value-or (& (struct-get names ids)) name-id -1)]
+          (if (>= slot 0)
+            (option_i64.Some slot)
+            (opt-function-name-index-fallback-slot names name)))]
+      [(CompilerIrMaybeNameId.No _)
         (opt-function-name-index-fallback-slot names name)])))
 
 ;; Resolve a function by its dense index slot (the value held in `names` and in

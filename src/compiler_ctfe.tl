@@ -4419,13 +4419,13 @@
 
 (define (ctfe-eval-reflection-query
   [name : String]
+  [name-id : i64]
   [args : AstExprList]
   [expr : AstExpr]
   [env : CtfeEnv]
   [fuel : i64]) : ResultCtfe
   (let
     [_ctfe-builtin-refresh : unit (ctfe-builtin-refresh!)]
-    [name-id : i64 (ctfe-existing-name-id name)]
     (cond
       [(ctfe-builtin-reflection-primary-id? name-id)
         (ctfe-eval-one-type-reflection name args expr env fuel)]
@@ -7033,9 +7033,17 @@
             (ctfe-existing-name-id lookup-name))]
         [source-call-name : String
           (ctfe-comptime-source-helper-call-name lookup-name)]
-        [source-call-id : i64 (ctfe-existing-name-id source-call-name)]
+        [source-call-id : i64
+          (if (string.eq source-call-name lookup-name)
+            lookup-id
+            (ctfe-existing-name-id source-call-name))]
         [call-name : String (ctfe-comptime-helper-call-name lookup-name)]
-        [call-id : i64 (ctfe-existing-name-id call-name)]
+        [call-id : i64
+          (if (string.eq call-name lookup-name)
+            lookup-id
+            (if (string.eq call-name source-call-name)
+              source-call-id
+              (ctfe-existing-name-id call-name)))]
         [string-helper-candidate : bool
           (ctfe-string-helper-candidate-name-id? lookup-name lookup-id)]
         (cond
@@ -7044,7 +7052,7 @@
           [(ctfe-builtin-offset-of-id? lookup-id)
             (ctfe-eval-offset-query args expr env fuel)]
           [(ctfe-builtin-reflection-id? call-id)
-            (ctfe-eval-reflection-query call-name args expr env fuel)]
+            (ctfe-eval-reflection-query call-name call-id args expr env fuel)]
           [(and
               string-helper-candidate
               (ctfe-string-eq-helper-name-id? lookup-name lookup-id))

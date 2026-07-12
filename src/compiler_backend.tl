@@ -20417,36 +20417,6 @@
       (+ 1 (compiler-backend-extern-list-count (box-get rest)))]
     [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
-(define (compiler-backend-logical-name-source-start [name : String]) : i64
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length name)]
-    [start : i64 0]
-    (begin
-      (while (< (+ i 1) n)
-        (begin
-          (if (and
-            (string.char-eq (string.string-ref name i) ':')
-            (string.char-eq (string.string-ref name (+ i 1)) ':'))
-            (set! start (+ i 2))
-            unit)
-          (set! i (+ i 1))))
-      start)))
-
-(define (compiler-backend-logical-name-last-slash [name : String] [start : i64]) : i64
-  (let
-    [i : i64 start]
-    [n : i64 (string.string-length name)]
-    [slash : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '/')
-            (set! slash i)
-            unit)
-          (set! i (+ i 1))))
-      slash)))
-
 (define (compiler-backend-clone-ir-name-id-or
   [name : String]
   [start : i64]
@@ -20472,14 +20442,14 @@
             n)]
         [module-id : i64
           (if (>= slash start)
-            (match (ci.intern-lookup
+            (match (ci.intern-lookup-content
               (string.substring name start (- slash start)))
               [(InternLookupFound id) id]
               [(InternLookupMissing) -2])
             (clone-root-module-id))]
         (if (or (< module-id (clone-root-module-id)) (<= type-end type-start))
           fallback
-          (match (ci.intern-lookup
+          (match (ci.intern-lookup-content
             (string.substring name type-start (- type-end type-start)))
             [(InternLookupFound type-name-id)
               (let
@@ -20496,32 +20466,32 @@
 ;; their already-parsed source identity from the module/base components; never
 ;; add the joined display spelling to the interner.
 (define (compiler-backend-ir-name-id-or [name : String] [fallback : i64]) : i64
-  (let
-    [name-id : i64 (ci.intern-lookup-preserving-generated-id-or name -1)]
-    (if (>= name-id 0)
-      (compiler-symbol-name-id-key name-id)
+  (match (compiler-ir-logical-name-id name)
+    [(CompilerIrMaybeNameId.Some name-id)
+      (compiler-symbol-name-id-key name-id)]
+    [(CompilerIrMaybeNameId.No start)
       (let
-        [start : i64 (compiler-backend-logical-name-source-start name)]
-        [slash : i64 (compiler-backend-logical-name-last-slash name start)]
+        [slash : i64 (compiler-ir-logical-name-last-slash name start)]
         [n : i64 (string.string-length name)]
         [clone-id : i64
           (compiler-backend-clone-ir-name-id-or name start slash fallback)]
         (if (>= clone-id 0)
           clone-id
           (if (>= slash start)
-            (match (ci.intern-lookup
+            (match (ci.intern-lookup-content
               (string.substring name start (- slash start)))
               [(InternLookupFound module-id)
-                (match (ci.intern-lookup
+                (match (ci.intern-lookup-content
                   (string.substring name (+ slash 1) (- n (+ slash 1))))
                   [(InternLookupFound base-id)
                     (compiler-symbol-module-key-id-by-id module-id base-id)]
                   [(InternLookupMissing) fallback])]
               [(InternLookupMissing) fallback])
-            (match (ci.intern-lookup (string.substring name start (- n start)))
+            (match (ci.intern-lookup-content
+              (string.substring name start (- n start)))
               [(InternLookupFound source-id)
                 (compiler-symbol-name-id-key source-id)]
-              [(InternLookupMissing) fallback])))))))
+              [(InternLookupMissing) fallback]))))]))
 
 ;; Backend indexing is post-parse: every IR name must already have an identity.
 ;; A missing id is an upstream invariant violation, not permission to intern.
@@ -21238,41 +21208,54 @@
   [name : String]) : backend_i64_i64_map.Lookup
   (let
     [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
-    (if (< name-id 0)
+    [slot : i64
+      (if (< name-id 0)
+        -1
+        (backend_i64_i64_map.get-value-or
+          (& (struct-get index functions))
+          name-id
+          -1))]
+    (if (< slot 0)
       (backend_i64_i64_map.LookupMissing)
-      (backend_i64_i64_map.get (& (struct-get index functions)) name-id))))
+      (backend_i64_i64_map.LookupFound slot))))
 
 (define (compiler-backend-index-extern-signature-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : backend_i64_i64_map.Lookup
   (let
     [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
-    (if (< name-id 0)
+    [slot : i64
+      (if (< name-id 0)
+        -1
+        (backend_i64_i64_map.get-value-or
+          (& (struct-get index extern-signatures))
+          name-id
+          -1))]
+    (if (< slot 0)
       (backend_i64_i64_map.LookupMissing)
-      (backend_i64_i64_map.get (& (struct-get index extern-signatures)) name-id))))
+      (backend_i64_i64_map.LookupFound slot))))
 
 (define (compiler-backend-index-extern-reference-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : backend_i64_i64_map.Lookup
   (let
     [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
-    [logical : backend_i64_i64_map.Lookup
+    [logical-slot : i64
       (if (< name-id 0)
-        (backend_i64_i64_map.LookupMissing)
-        (backend_i64_i64_map.get
+        -1
+        (backend_i64_i64_map.get-value-or
           (& (struct-get index extern-references))
-          name-id))]
-    (match logical
-      [(backend_i64_i64_map.LookupFound slot)
-        (backend_i64_i64_map.LookupFound slot)]
-      [(backend_i64_i64_map.LookupMissing)
-        (match (backend_string_i64_map.get
+          name-id
+          -1))]
+    (if (>= logical-slot 0)
+      (backend_i64_i64_map.LookupFound logical-slot)
+      (match (backend_string_i64_map.get
           (& (struct-get index extern-link-references))
           name)
           [(backend_string_i64_map.LookupFound slot)
             (backend_i64_i64_map.LookupFound slot)]
           [(backend_string_i64_map.LookupMissing)
-            (backend_i64_i64_map.LookupMissing)])])))
+            (backend_i64_i64_map.LookupMissing)]))))
 
 (define (compiler-backend-index-extern-call-info
   [index : CompilerBackendProgramIndex]
@@ -21294,10 +21277,15 @@
 (define (compiler-backend-index-function-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
-  (match (backend_i64_i64_map.get (& (struct-get index functions)) name-id)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index function-signatures) slot)]
-    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
+  (let
+    [slot : i64
+      (backend_i64_i64_map.get-value-or
+        (& (struct-get index functions))
+        name-id
+        -1)]
+    (if (>= slot 0)
+      (array-ref (struct-get index function-signatures) slot)
+      (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
@@ -21310,12 +21298,15 @@
 (define (compiler-backend-index-extern-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
-  (match (backend_i64_i64_map.get
-    (& (struct-get index extern-signatures))
-    name-id)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-signature-values) slot)]
-    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
+  (let
+    [slot : i64
+      (backend_i64_i64_map.get-value-or
+        (& (struct-get index extern-signatures))
+        name-id
+        -1)]
+    (if (>= slot 0)
+      (array-ref (struct-get index extern-signature-values) slot)
+      (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-extern-signature
   [index : CompilerBackendProgramIndex]

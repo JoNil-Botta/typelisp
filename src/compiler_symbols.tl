@@ -239,62 +239,72 @@
   -1)
 
 (define (compiler-symbol-map-first-slot [key : i64] [capacity : i64]) : i64
-  (bit-and (* key 6364136223846793005) (- capacity 1)))
+  (let
+    ;; Pair and triple keys use 18-bit lanes. Fold every lane into the low bits
+    ;; before the power-of-two mask so equal field/variant ids in different
+    ;; owners do not form one long linear-probe cluster.
+    [folded : i64
+      (bit-xor key (bit-xor (shr key 18) (shr key 36)))]
+    (bit-and (* folded 6364136223846793005) (- capacity 1))))
 
 (define (compiler-symbol-map-lookup-handle-id
   [map : (& map CompilerSymbolMap)]
   [key : i64]) : i64
   (let
-    [keys : (& map (Array i64)) (& (struct-get map keys))]
+    [keys : (Array i64) (struct-get map keys)]
+    [values : (Array i64) (struct-get map values)]
+    [key-data : (Ptr i64)
+      (unsafe
+        (ptr-cast (array-data keys) : (Ptr i64)))]
+    [value-data : (Ptr i64)
+      (unsafe
+        (ptr-cast (array-data values) : (Ptr i64)))]
     [capacity : i64 (array-length keys)]
-    (if (<= capacity 0)
-      (compiler-symbol-map-missing-handle)
-      (let
-        [encoded : i64 (+ key 1)]
-        [slot : i64 (compiler-symbol-map-first-slot key capacity)]
-        [walked : i64 0]
-        (begin
-          (while (< walked capacity)
-            (let
-              [present : i64 (array-ref keys slot)]
-              (cond
-                [(= present 0) (return (compiler-symbol-map-missing-handle))]
-                [(= present encoded)
-                  (return (array-ref (struct-get map values) slot))]
-                [else
-                  (begin
-                    (set! slot (bit-and (+ slot 1) (- capacity 1)))
-                    (set! walked (+ walked 1)))])))
-          (compiler-symbol-map-missing-handle))))))
-
-(define (compiler-symbol-map-store-new!
-  [map : (&mut map CompilerSymbolMap)]
-  [slot : i64]
-  [encoded : i64]
-  [handle : i64]
-  [reused-deleted : bool]) : unit
-  (begin
-    (array-set! (struct-get map keys) slot encoded)
-    (array-set! (struct-get map values) slot handle)
-    (set! (struct-get map len) (+ (struct-get map len) 1))
-    (if reused-deleted
-      (set! (struct-get map deleted) (- (struct-get map deleted) 1))
-      unit)))
+    [mask : i64 (- capacity 1)]
+    [encoded : i64 (+ key 1)]
+    [slot : i64 (compiler-symbol-map-first-slot key capacity)]
+    (begin
+      ;; CompilerSymbolMap always has at least four slots and grows before 75%
+      ;; used, so every probe sequence reaches an empty slot.
+      (while true
+        (let
+          [present : i64
+            (unsafe
+              (ptr-read (ptr-offset key-data slot)))]
+          (cond
+            [(= present 0) (return -1)]
+            [(= present encoded)
+              (return
+                (unsafe
+                  (ptr-read (ptr-offset value-data slot))))]
+            [else (set! slot (bit-and (+ slot 1) mask))])))
+      -1)))
 
 (define (compiler-symbol-map-put-no-grow!
   [map : (&mut map CompilerSymbolMap)]
   [key : i64]
   [handle : i64]) : unit
   (let
-    [capacity : i64 (array-length (struct-get map keys))]
+    [keys : (Array i64) (struct-get map keys)]
+    [values : (Array i64) (struct-get map values)]
+    [key-data : (MutPtr i64)
+      (unsafe
+        (ptr-cast (array-data keys) : (MutPtr i64)))]
+    [value-data : (MutPtr i64)
+      (unsafe
+        (ptr-cast (array-data values) : (MutPtr i64)))]
+    [capacity : i64 (array-length keys)]
+    [mask : i64 (- capacity 1)]
     [encoded : i64 (+ key 1)]
     [slot : i64 (compiler-symbol-map-first-slot key capacity)]
     [first-deleted : i64 -1]
-    [walked : i64 0]
     (begin
-      (while (< walked capacity)
+      ;; Growth keeps one empty slot in every probe sequence.
+      (while true
         (let
-          [present : i64 (array-ref (struct-get map keys) slot)]
+          [present : i64
+            (unsafe
+              (ptr-read (ptr-offset key-data slot)))]
           (cond
             [(= present 0)
               (let
@@ -303,31 +313,27 @@
                     first-deleted
                     slot)]
                 (begin
-                  (compiler-symbol-map-store-new!
-                    map
-                    target
-                    encoded
-                    handle
-                    (>= first-deleted 0))
+                  (unsafe
+                    (ptr-write! (ptr-offset key-data target) encoded)
+                    (ptr-write! (ptr-offset value-data target) handle))
+                  (set! (struct-get map len) (+ (struct-get map len) 1))
+                  (if (>= first-deleted 0)
+                    (set! (struct-get map deleted) (- (struct-get map deleted) 1))
+                    unit)
                   (return unit)))]
             [(= present -1)
               (begin
                 (if (< first-deleted 0)
                   (set! first-deleted slot)
                   unit)
-                (set! slot (bit-and (+ slot 1) (- capacity 1)))
-                (set! walked (+ walked 1)))]
+                (set! slot (bit-and (+ slot 1) mask)))]
             [(= present encoded)
               (begin
-                (array-set! (struct-get map values) slot handle)
+                (unsafe
+                  (ptr-write! (ptr-offset value-data slot) handle))
                 (return unit))]
-            [else
-              (begin
-                (set! slot (bit-and (+ slot 1) (- capacity 1)))
-                (set! walked (+ walked 1)))])))
-      (if (>= first-deleted 0)
-        (compiler-symbol-map-store-new! map first-deleted encoded handle true)
-        unit))))
+            [else (set! slot (bit-and (+ slot 1) mask))])))
+      unit)))
 
 (define (compiler-symbol-map-grow! [map : (&mut map CompilerSymbolMap)]) : unit
   (let
@@ -437,9 +443,11 @@
 (define (compiler-symbol-source-spelling-id-or-self [name-id : i64]) : i64
   (if (or (< name-id 0) (>= name-id (intern-capacity)))
     name-id
-    (match (intern-lookup (intern-str name-id))
-      [(InternLookupFound source-id) source-id]
-      [(InternLookupMissing) name-id])))
+    (if (< name-id (intern-pool-len))
+      name-id
+      (match (intern-lookup (intern-str name-id))
+        [(InternLookupFound source-id) source-id]
+        [(InternLookupMissing) name-id]))))
 
 (define (compiler-symbol-existing-module-id [module : String]) : i64
   (if (= (string.string-length module) 0)
@@ -874,8 +882,9 @@
   [name : String]
   [start : i64]
   [len : i64]) : option_i64.Option
-  (begin
-    (compiler-symbol-existing-name-id (string.substring name start len))))
+  (match (intern-lookup-content (string.substring name start len))
+    [(InternLookupFound name-id) (option_i64.Some name-id)]
+    [(InternLookupMissing) option_i64.None]))
 
 (define (compiler-symbol-key-from-string [name : String]) : option_i64.Option
   (match (compiler-symbol-existing-name-id name)
@@ -997,9 +1006,12 @@
                 [variant-len : i64 (- n variant-start)]
                 [resolved-module-id : i64
                   (if (>= module-end 0)
-                    (compiler-symbol-existing-name-id-or
-                      (string.substring base 0 module-end)
-                      -2)
+                    (match (compiler-symbol-existing-name-slice-id
+                      base
+                      0
+                      module-end)
+                      [(option_i64.Some module-name-id) module-name-id]
+                      [(option_i64.None) -2])
                     module-id)]
                 (if (or
                   (< resolved-module-id -1)
@@ -3622,6 +3634,22 @@
       (compiler-symbol-module-key-id-by-id module-id qualified-name-id)]
     [qualified-display-name : String
       (compiler-symbol-module-key-by-id module-id qualified-name-id)]
+    [module-name-key-id : i64
+      (compiler-symbol-module-key-id-by-id module-id name-id)]
+    [name-key-id : i64 (compiler-symbol-name-id-key name-id)]
+    [module-source-name-key-id : i64
+      (compiler-symbol-module-key-id-by-id module-id source-name-id)]
+    [source-name-key-id : i64 (compiler-symbol-name-id-key source-name-id)]
+    [enum-source-name-key-id : i64
+      (compiler-symbol-module-key-id-by-id
+        module-id
+        (compiler-enum-qualified-variant-name-id enum-name-id source-name-id))]
+    [source-qualified-key-id : i64
+      (compiler-symbol-module-key-id-by-id
+        module-id
+        (compiler-enum-qualified-variant-name-id
+          source-enum-name-id
+          source-name-id))]
     [handle : i64
       (compiler-registry-make-handle
         (compiler-symbol-kind-enum-variant)
@@ -3638,38 +3666,70 @@
               (&mut variants)
               qualified-key-id
               handle)
-            (ResultCompilerRegistries.Ok
-              (compiler-registries-add-variant-alias-key-id
-                (compiler-registries-add-variant-alias-key-id
+            (let
+              [aliases1 : CompilerRegistries
+                (if (= module-name-key-id qualified-key-id)
+                  (CompilerRegistries variants fields)
                   (compiler-registries-add-variant-alias-key-id
-                    (compiler-registries-add-variant-alias-key-id
-                      (compiler-registries-add-variant-alias-key-id
-                        (compiler-registries-add-variant-alias-key-id
-                          (CompilerRegistries variants fields)
-                          (compiler-symbol-module-key-id-by-id
-                            module-id
-                            name-id)
-                          handle)
-                        (compiler-symbol-name-id-key name-id)
-                        handle)
-                      (compiler-symbol-module-key-id-by-id
-                        module-id
-                        source-name-id)
-                      handle)
-                    (compiler-symbol-name-id-key source-name-id)
-                    handle)
-                  (compiler-symbol-module-key-id-by-id
-                    module-id
-                    (compiler-enum-qualified-variant-name-id
-                      enum-name-id
-                      source-name-id))
-                  handle)
-                (compiler-symbol-module-key-id-by-id
-                  module-id
-                  (compiler-enum-qualified-variant-name-id
-                    source-enum-name-id
-                    source-name-id))
-                handle))))])))
+                    (CompilerRegistries variants fields)
+                    module-name-key-id
+                    handle))]
+              [aliases2 : CompilerRegistries
+                (if (or
+                  (= name-key-id qualified-key-id)
+                  (= name-key-id module-name-key-id))
+                  aliases1
+                  (compiler-registries-add-variant-alias-key-id
+                    aliases1
+                    name-key-id
+                    handle))]
+              [aliases3 : CompilerRegistries
+                (if (or
+                  (= module-source-name-key-id qualified-key-id)
+                  (= module-source-name-key-id module-name-key-id)
+                  (= module-source-name-key-id name-key-id))
+                  aliases2
+                  (compiler-registries-add-variant-alias-key-id
+                    aliases2
+                    module-source-name-key-id
+                    handle))]
+              [aliases4 : CompilerRegistries
+                (if (or
+                  (= source-name-key-id qualified-key-id)
+                  (= source-name-key-id module-name-key-id)
+                  (= source-name-key-id name-key-id)
+                  (= source-name-key-id module-source-name-key-id))
+                  aliases3
+                  (compiler-registries-add-variant-alias-key-id
+                    aliases3
+                    source-name-key-id
+                    handle))]
+              [aliases5 : CompilerRegistries
+                (if (or
+                  (= enum-source-name-key-id qualified-key-id)
+                  (= enum-source-name-key-id module-name-key-id)
+                  (= enum-source-name-key-id name-key-id)
+                  (= enum-source-name-key-id module-source-name-key-id)
+                  (= enum-source-name-key-id source-name-key-id))
+                  aliases4
+                  (compiler-registries-add-variant-alias-key-id
+                    aliases4
+                    enum-source-name-key-id
+                    handle))]
+              [aliases6 : CompilerRegistries
+                (if (or
+                  (= source-qualified-key-id qualified-key-id)
+                  (= source-qualified-key-id module-name-key-id)
+                  (= source-qualified-key-id name-key-id)
+                  (= source-qualified-key-id module-source-name-key-id)
+                  (= source-qualified-key-id source-name-key-id)
+                  (= source-qualified-key-id enum-source-name-key-id))
+                  aliases5
+                  (compiler-registries-add-variant-alias-key-id
+                    aliases5
+                    source-qualified-key-id
+                    handle))]
+              (ResultCompilerRegistries.Ok aliases6))))])))
 
 (define (compiler-registries-add-field
   [registries : CompilerRegistries]

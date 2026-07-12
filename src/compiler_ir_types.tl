@@ -67,19 +67,54 @@
 ;; that ID without accepting an equal-but-distinct generated spelling. ABI/link
 ;; symbols and control-flow labels deliberately do not use this type.
 (defenum CompilerIrMaybeNameId
-  (No)
+  (No i64)
   (Some i64))
 
 (define (compiler-ir-logical-name-id [name : String]) : CompilerIrMaybeNameId
-  (match (ci.intern-lookup-preserving-generated-id name)
-    [(InternLookupFound name-id) (CompilerIrMaybeNameId.Some name-id)]
-    [(InternLookupMissing) (CompilerIrMaybeNameId.No)]))
+  (let
+    [pointer-id : i64 (ci.intern-pointer-id-lookup name)]
+    (if (>= pointer-id 0)
+      (CompilerIrMaybeNameId.Some pointer-id)
+      (let
+        [start : i64 (compiler-ir-logical-name-source-start name)]
+        (if (> start 0)
+          (CompilerIrMaybeNameId.No start)
+          (match (ci.intern-lookup-content name)
+            [(InternLookupFound name-id) (CompilerIrMaybeNameId.Some name-id)]
+            [(InternLookupMissing) (CompilerIrMaybeNameId.No 0)]))))))
+
+(define (compiler-ir-logical-name-source-start [name : String]) : i64
+  (let
+    [data : (Ptr u8) (unsafe (string-data (& name)))]
+    [i : i64 (- (string.string-length name) 2)]
+    (begin
+      (while (>= i 0)
+        (if (and
+          (= (unsafe (ptr-read (ptr-offset data i))) (cast 58 : u8))
+          (= (unsafe (ptr-read (ptr-offset data (+ i 1)))) (cast 58 : u8)))
+          (return (+ i 2))
+          (set! i (- i 1))))
+      0)))
+
+(define (compiler-ir-logical-name-last-slash
+  [name : String]
+  [start : i64]) : i64
+  (let
+    [data : (Ptr u8) (unsafe (string-data (& name)))]
+    [i : i64 (- (string.string-length name) 1)]
+    (begin
+      (while (>= i start)
+        (if (= (unsafe (ptr-read (ptr-offset data i))) (cast 47 : u8))
+          (return i)
+          (set! i (- i 1))))
+      -1)))
 
 ;; Preserve exact intern-pool storage across optimizer escape clones. A
 ;; linker-only spelling without an explicit IR ID remains cloned.
 (define (compiler-ir-clone-logical-name [name : String]) : String
-  (match (compiler-ir-logical-name-id name)
-    [(CompilerIrMaybeNameId.Some name-id)
+  (let
+    [name-id : i64 (ci.intern-pointer-id-lookup name)]
+    (if (>= name-id 0)
       (let
         [canonical : String (intern-str name-id)]
         [name-ptr : i64
@@ -98,8 +133,11 @@
             [copied : String (clone name)]
             (begin
               (ci.intern-register-generated-display-id! copied name-id)
-              copied))))]
-    [(CompilerIrMaybeNameId.No) (clone name)]))
+              copied))))
+      ;; A miss is either a linker/display spelling or a non-canonical source
+      ;; copy. Neither needs an identity registration merely to survive the
+      ;; optimizer's escape clone; consumers resolve source copies by content.
+      (clone name))))
 
 (defenum CompilerIrMaybeValue
   (No)

@@ -1287,9 +1287,9 @@
         [module : String (string.substring source-name 0 slash)]
         [base : String
           (string.substring source-name base-start (- n base-start))]
-        (match (intern-lookup module)
+        (match (intern-lookup-content module)
           [(InternLookupFound module-id)
-            (match (intern-lookup base)
+            (match (intern-lookup-content base)
               [(InternLookupFound base-id)
                 (LowerNameCacheMaybeId.Some
                   (compiler-symbol-module-key-id-by-id module-id base-id))]
@@ -1314,9 +1314,9 @@
                             base
                             variant-start
                             (- base-len variant-start))]
-                        (match (intern-lookup owner)
+                        (match (intern-lookup-content owner)
                           [(InternLookupFound owner-id)
-                            (match (intern-lookup variant)
+                            (match (intern-lookup-content variant)
                               [(InternLookupFound variant-id)
                                 (LowerNameCacheMaybeId.Some
                                   (compiler-composite-triple-key-id
@@ -1427,23 +1427,27 @@
         (LowerNameParent.Global)))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
-  (match (lower_i64_i64_map.get (& (struct-get cache ids)) source-id)
-    [(lower_i64_i64_map.LookupFound index)
-      (TcMaybeString.Some (array-ref (struct-get cache values) index))]
-    [(lower_i64_i64_map.LookupMissing)
+  (let
+    [index : i64
+      (lower_i64_i64_map.get-value-or (& (struct-get cache ids)) source-id -1)]
+    (if (>= index 0)
+      (TcMaybeString.Some (array-ref (struct-get cache values) index))
       (match (struct-get cache parent)
         [(LowerNameParent.None) (TcMaybeString.No)]
         [(LowerNameParent.Global)
-          (lower-name-cache-lookup-id lower-active-global-name-cache source-id)])]))
+          (lower-name-cache-lookup-id lower-active-global-name-cache source-id)]))))
 
 (define (lower-name-cache-contains-local-id?
   [cache : LowerNameCache]
   [source-id : i64]) : bool
   (if (< source-id 0)
     false
-    (match (lower_i64_i64_map.get (& (struct-get cache ids)) source-id)
-      [(lower_i64_i64_map.LookupFound _) true]
-      [(lower_i64_i64_map.LookupMissing) false])))
+    (>=
+      (lower_i64_i64_map.get-value-or
+        (& (struct-get cache ids))
+        source-id
+        -1)
+      0)))
 
 (define (lower-name-cache-resolve
   [cache : LowerNameCache]
@@ -1477,9 +1481,9 @@
               [base-start : i64 (+ i 1)]
               [base : String
                 (string.substring source-name base-start (- n base-start))]
-              (match (intern-lookup module)
+              (match (intern-lookup-content module)
                 [(InternLookupFound module-id)
-                  (match (intern-lookup base)
+                  (match (intern-lookup-content base)
                     [(InternLookupFound base-id)
                       (match (lower-name-cache-lookup-id
                         cache
@@ -1588,10 +1592,10 @@
     [(LowerTypeCache.No)
       (ResultTcType.Err (string.append "typecheck: unbound name " display-name))]
     [(LowerTypeCache.Some ids values _ parent)
-      (match (lower_i64_i64_map.get (& ids) name-id)
-        [(lower_i64_i64_map.LookupFound index)
-          (ResultTcType.Ok (array-ref values index))]
-        [(lower_i64_i64_map.LookupMissing)
+      (let
+        [index : i64 (lower_i64_i64_map.get-value-or (& ids) name-id -1)]
+        (if (>= index 0)
+          (ResultTcType.Ok (array-ref values index))
           (match parent
             [(LowerTypeParent.None)
               (ResultTcType.Err
@@ -1600,7 +1604,7 @@
               (lower-type-cache-lookup-id
                 lower-decls-global-type-cache
                 name-id
-                display-name)])])]))
+                display-name)])))]))
 
 (define (lower-type-cache-lookup [cache : LowerTypeCache] [name : String]) : ResultTcType
   (match (intern-lookup name)
@@ -6690,7 +6694,7 @@
     [leaf : String (lower-used-type-name-leaf source)]
     (if (string.eq leaf source)
       name
-      (match (intern-lookup leaf)
+      (match (intern-lookup-content leaf)
         [(InternLookupFound leaf-id) leaf-id]
         [(InternLookupMissing) -1]))))
 

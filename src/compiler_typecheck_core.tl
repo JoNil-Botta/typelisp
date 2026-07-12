@@ -5008,13 +5008,13 @@
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache ids _ _ c-abi-fnptr-flags _ _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound index)
-          (= (array-ref c-abi-fnptr-flags index) 1)]
-        [(tc_i64_i64_map.LookupMissing)
+      (let
+        [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+        (if (>= index 0)
+          (= (array-ref c-abi-fnptr-flags index) 1)
           (if partial
             (tc-binding-c-abi-fnptr-id? (box-get below) name-id)
-            false)])]
+            false)))]
     [(TcTypeEnv.Bind key _ rest)
       (if (= key name-id)
         (tc-c-abi-fnptr-marker-near-id? (box-get rest) name-id 3)
@@ -5029,13 +5029,13 @@
   (match env
     [(TcTypeEnv.Nil) false]
     [(TcTypeEnv.Cache ids _ unsafe-flags _ _ _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) name-id)
-        [(tc_i64_i64_map.LookupFound index)
-          (= (array-ref unsafe-flags index) 1)]
-        [(tc_i64_i64_map.LookupMissing)
+      (let
+        [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+        (if (>= index 0)
+          (= (array-ref unsafe-flags index) 1)
           (if partial
             (tc-binding-unsafe-id? (box-get below) name-id)
-            false)])]
+            false)))]
     [(TcTypeEnv.Bind key _ rest)
       (if (= key name-id)
         (tc-binding-unsafe-marker-head-id? (box-get rest) name-id)
@@ -5981,11 +5981,34 @@
   (let
     [text-len : i64 (string.string-length text)]
     [prefix-len : i64 (string.string-length prefix)]
+    [text-data : (Ptr u8)
+      (unsafe
+        (string-data (& text)))]
+    [prefix-data : (Ptr u8)
+      (unsafe
+        (string-data (& prefix)))]
+    [i : i64 0]
+    [word-end : i64 (- prefix-len 7)]
     (if (< text-len prefix-len)
       false
-      (if (= (string.string-ref text 0) (string.string-ref prefix 0))
-        (string.eq (string.substring text 0 prefix-len) prefix)
-        false))))
+      (begin
+        (while (< i word-end)
+          (if (=
+            (unsafe
+              (ptr-read (ptr-cast (ptr-offset text-data i) : (Ptr i64))))
+            (unsafe
+              (ptr-read (ptr-cast (ptr-offset prefix-data i) : (Ptr i64)))))
+            (set! i (+ i 8))
+            (return false)))
+        (while (< i prefix-len)
+          (if (=
+            (unsafe
+              (ptr-read (ptr-offset text-data i)))
+            (unsafe
+              (ptr-read (ptr-offset prefix-data i))))
+            (set! i (+ i 1))
+            (return false)))
+        true))))
 
 (define (tc-hygiene-name-base [name : String] [prefix : String]) : String
   (string.substring
@@ -8536,18 +8559,18 @@
           (match cur
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values _ _ _ _ partial _ below)
-              (match (tc_i64_i64_map.get (& ids) lookup-id)
-                ;; MUST stay `array-ref` -- inline-by-value
-                ;; `AstType` is multi-word, and the raw ptr path mis-scales it.
-                [(tc_i64_i64_map.LookupFound index)
+              (let
+                [index : i64
+                  (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                (if (>= index 0)
                   (begin
+                    ;; AstType is multi-word; keep this checked value read.
                     (set! found-ty (array-ref values index))
                     (set! found true)
-                    (set! done true))]
-                [(tc_i64_i64_map.LookupMissing)
+                    (set! done true))
                   (if partial
                     (set! cur (box-get below))
-                    (set! done true))])]
+                    (set! done true))))]
             [(TcTypeEnv.Bind key ty rest)
               (if (= key lookup-id)
                 (begin
@@ -8573,15 +8596,16 @@
         (match cur
           [(TcTypeEnv.Nil) (set! done true)]
           [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-            (match (tc_i64_i64_map.get (& ids) lookup-id)
-              [(tc_i64_i64_map.LookupFound _)
+            (let
+              [index : i64
+                (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+              (if (>= index 0)
                 (begin
                   (set! found true)
-                  (set! done true))]
-              [(tc_i64_i64_map.LookupMissing)
+                  (set! done true))
                 (if partial
                   (set! cur (box-get below))
-                  (set! done true))])]
+                  (set! done true))))]
           [(TcTypeEnv.Bind key _ rest)
             (if (= key lookup-id)
               (begin
@@ -8605,11 +8629,12 @@
           (match cur
             [(TcTypeEnv.Nil) (set! done true)]
             [(TcTypeEnv.Cache ids values unsafe-flags _ _ _ partial _ below)
-              (match (tc_i64_i64_map.get (& ids) lookup-id)
-                ;; AstType read MUST stay `array-ref`; the unsafe flag is
-                ;; scalar i64, so the raw ptr path remains sound for that array.
-                [(tc_i64_i64_map.LookupFound index)
+              (let
+                [index : i64
+                  (tc_i64_i64_map.get-value-or (& ids) lookup-id -1)]
+                (if (>= index 0)
                   (begin
+                    ;; AstType read stays checked; the flag is scalar i64.
                     (set! found-ty (array-ref values index))
                     (set!
                       found-unsafe
@@ -8621,11 +8646,10 @@
                               index)))
                         1))
                     (set! found true)
-                    (set! done true))]
-                [(tc_i64_i64_map.LookupMissing)
+                    (set! done true))
                   (if partial
                     (set! cur (box-get below))
-                    (set! done true))])]
+                    (set! done true))))]
             [(TcTypeEnv.Bind key ty rest)
               (if (= key lookup-id)
                 (begin
@@ -8998,7 +9022,7 @@
 ;; exact String object stored in the intern pool. Resolve them by source
 ;; spelling while retaining tc-existing-name-id for generated identities.
 (define (tc-source-spelling-id [name : String]) : i64
-  (match (ci.intern-lookup name)
+  (match (ci.intern-lookup-content name)
     [(InternLookupFound id) id]
     [(InternLookupMissing) -1]))
 
@@ -11095,44 +11119,46 @@
 ;; `tc-name-qualified-id? (intern name)`, so threading the already-interned id
 ;; from callers is semantics-preserving and skips the hash. Refs #4427.
 (define (tc-name-qualified-id? [name-id : i64]) : bool
-  (and
-    (>= name-id 0)
-    (or
-      (compiler-composite-pair-key-id? name-id)
-      (compiler-composite-triple-key-id? name-id)
+  (if (< name-id 0)
+    false
+    (if (< name-id (intern-capacity))
       (and
-        (< name-id (intern-capacity))
-        (not (tc-hygiene-local-name? (intern-str name-id)))
-        (intern-qualified? name-id)))))
+        (or
+          (< name-id (intern-pool-len))
+          (not (tc-hygiene-local-name? (intern-str name-id))))
+        (intern-qualified? name-id))
+      (or
+        (compiler-composite-pair-key-id? name-id)
+        (compiler-composite-triple-key-id? name-id)))))
 
 (define (tc-qualified-name-module-id [name-id : i64]) : i64
-  (if (compiler-composite-triple-key-id? name-id)
-    (compiler-composite-triple-left-id name-id)
-    (if (compiler-composite-pair-key-id? name-id)
-      (compiler-composite-pair-left-id name-id)
-      (if (and
-        (>= name-id 0)
-        (< name-id (intern-capacity))
-        (intern-qualified? name-id))
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (if (intern-qualified? name-id)
         (intern-qualified-module-id name-id)
+        -1)
+    (if (compiler-composite-triple-key-id? name-id)
+      (compiler-composite-triple-left-id name-id)
+      (if (compiler-composite-pair-key-id? name-id)
+        (compiler-composite-pair-left-id name-id)
         -1))))
 
 (define (tc-qualified-name-base-id [name-id : i64]) : i64
-  (if (compiler-composite-triple-key-id? name-id)
-    (compiler-composite-pair-key-id
-      (compiler-composite-triple-middle-id name-id)
-      (compiler-composite-triple-right-id name-id))
-    (if (compiler-composite-pair-key-id? name-id)
-      (compiler-composite-pair-right-id name-id)
-      (if (and
-        (>= name-id 0)
-        (< name-id (intern-capacity))
-        (intern-qualified? name-id))
+  (if (and (>= name-id 0) (< name-id (intern-capacity)))
+    (if (intern-qualified? name-id)
         (intern-qualified-base-id name-id)
+        name-id)
+    (if (compiler-composite-triple-key-id? name-id)
+      (compiler-composite-pair-key-id
+        (compiler-composite-triple-middle-id name-id)
+        (compiler-composite-triple-right-id name-id))
+      (if (compiler-composite-pair-key-id? name-id)
+        (compiler-composite-pair-right-id name-id)
         name-id))))
 
 (define (tc-name-qualified? [name : String]) : bool
-  (tc-name-qualified-id? (tc-existing-name-id name)))
+  (and
+    (not (tc-hygiene-local-name? name))
+    (>= (tc-qualified-name-last-slash name) 0)))
 
 (define (tc-name-first-char [name : String] [needle : char]) : i64
   (let
@@ -11281,22 +11307,24 @@
             name-id
             prefix-id)))]
     [(TcTypeEnv.Cache ids _ _ _ _ _ partial _ below)
-      (match (tc_i64_i64_map.get (& ids) prefix-id)
-        [(tc_i64_i64_map.LookupFound prefix-index)
-          (match (tc_i64_i64_map.get (& ids) name-id)
-            [(tc_i64_i64_map.LookupFound name-index)
-              (< prefix-index name-index)]
-            [(tc_i64_i64_map.LookupMissing) true])]
-        [(tc_i64_i64_map.LookupMissing)
+      (let
+        [prefix-index : i64
+          (tc_i64_i64_map.get-value-or (& ids) prefix-id -1)]
+        (if (>= prefix-index 0)
+          (let
+            [name-index : i64
+              (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+            (if (>= name-index 0)
+              (< prefix-index name-index)
+              true))
           (if partial
-            (match (tc_i64_i64_map.get (& ids) name-id)
-              [(tc_i64_i64_map.LookupFound _) false]
-              [(tc_i64_i64_map.LookupMissing)
+            (if (>= (tc_i64_i64_map.get-value-or (& ids) name-id -1) 0)
+              false
                 (tc-source-leading-segment-wins-over-exact-id?
                   (box-get below)
                   name-id
-                  prefix-id)])
-            false)])]))
+                  prefix-id))
+            false)))]))
 
 (define (tc-source-leading-segment-wins-over-exact-id-from-dot?
   [env : TcTypeEnv]
@@ -11943,10 +11971,11 @@
 
 (define (tc-stdlib-string-qualified-helper-id?
   [lookup-id : i64]
+  [base-id : i64]
   [base : String]) : bool
   (and
     (tc-name-qualified-id? lookup-id)
-    (= (tc-qualified-name-base-id lookup-id) (tc-existing-name-id base))
+    (= (tc-qualified-name-base-id lookup-id) base-id)
     (tc-stdlib-string-module-name?
       (tc-nominal-name-id-display (tc-qualified-name-module-id lookup-id)))))
 
@@ -11982,6 +12011,12 @@
 (define tc-module-decl-index-ends : (Array i64)
   (array.make-array i64 0))
 (define tc-module-decl-index-positions : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-import-index-starts : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-import-index-ends : (Array i64)
+  (array.make-array i64 0))
+(define tc-module-import-index-positions : (Array i64)
   (array.make-array i64 0))
 
 (define (tc-module-decl-index-reset!) : unit
@@ -12021,12 +12056,17 @@
       [modules : tc_i64_i64_map.Map (tc_i64_i64_map.with-capacity 512)]
       [module-count : i64 0]
       [counts : (Array i64) (array.make-array i64 (+ count 1))]
+      [import-counts : (Array i64) (array.make-array i64 (+ count 1))]
       [starts : (Array i64) (array.make-array i64 (+ count 1))]
       [ends : (Array i64) (array.make-array i64 (+ count 1))]
       [positions : (Array i64) (array.make-array i64 (+ count 1))]
+      [import-starts : (Array i64) (array.make-array i64 (+ count 1))]
+      [import-ends : (Array i64) (array.make-array i64 (+ count 1))]
+      [import-positions : (Array i64) (array.make-array i64 (+ count 1))]
       [cur-module-id : i64 empty-module-id]
       [i : i64 0]
       [running : i64 0]
+      [import-running : i64 0]
       (begin
         ;; Pass 1: assign a dense slot per module id and count its decls.
         (while (< i count)
@@ -12036,9 +12076,14 @@
               [_
                 (let
                   [slot : i64
-                    (match (tc_i64_i64_map.get (& modules) cur-module-id)
-                      [(tc_i64_i64_map.LookupFound found-slot) found-slot]
-                      [(tc_i64_i64_map.LookupMissing)
+                    (let
+                      [found-slot : i64
+                        (tc_i64_i64_map.get-value-or
+                          (& modules)
+                          cur-module-id
+                          -1)]
+                      (if (>= found-slot 0)
+                        found-slot
                         (let
                           [new-slot : i64 module-count]
                           (begin
@@ -12047,8 +12092,16 @@
                               cur-module-id
                               new-slot)
                             (set! module-count (+ module-count 1))
-                            new-slot))])]
-                  (array-set! counts slot (+ (array-ref counts slot) 1)))])
+                            new-slot))))]
+                  (array-set! counts slot (+ (array-ref counts slot) 1))
+                  (match (ast-decl-unwrapped
+                    (array-ref decl-slots (+ decl-offset i)))
+                    [(AstDecl.Import _)
+                      (array-set!
+                        import-counts
+                        slot
+                        (+ (array-ref import-counts slot) 1))]
+                    [_ unit]))])
             (set! i (+ i 1))))
         ;; Prefix sums: starts fixed, ends double as fill cursors below.
         (set! i 0)
@@ -12056,7 +12109,10 @@
           (begin
             (array-set! starts i running)
             (array-set! ends i running)
+            (array-set! import-starts i import-running)
+            (array-set! import-ends i import-running)
             (set! running (+ running (array-ref counts i)))
+            (set! import-running (+ import-running (array-ref import-counts i)))
             (set! i (+ i 1))))
         ;; Pass 2: fill program-order positions per module slot.
         (set! cur-module-id empty-module-id)
@@ -12066,19 +12122,39 @@
             (match (array-ref decl-slots (+ decl-offset i))
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [_
-                (match (tc_i64_i64_map.get (& modules) cur-module-id)
-                  [(tc_i64_i64_map.LookupFound slot)
+                (let
+                  [slot : i64
+                    (tc_i64_i64_map.get-value-or
+                      (& modules)
+                      cur-module-id
+                      -1)]
+                  (if (>= slot 0)
                     (let
                       [cursor : i64 (array-ref ends slot)]
                       (begin
                         (array-set! positions cursor i)
-                        (array-set! ends slot (+ cursor 1))))]
-                  [(tc_i64_i64_map.LookupMissing) unit])])
+                        (array-set! ends slot (+ cursor 1))
+                        (match (ast-decl-unwrapped
+                          (array-ref decl-slots (+ decl-offset i)))
+                          [(AstDecl.Import _)
+                            (let
+                              [import-cursor : i64 (array-ref import-ends slot)]
+                              (begin
+                                (array-set! import-positions import-cursor i)
+                                (array-set!
+                                  import-ends
+                                  slot
+                                  (+ import-cursor 1))))]
+                          [_ unit])))
+                    unit))])
             (set! i (+ i 1))))
         (set! tc-module-decl-index-modules modules)
         (set! tc-module-decl-index-starts starts)
         (set! tc-module-decl-index-ends ends)
         (set! tc-module-decl-index-positions positions)
+        (set! tc-module-import-index-starts import-starts)
+        (set! tc-module-import-index-ends import-ends)
+        (set! tc-module-import-index-positions import-positions)
         (set! tc-module-decl-index-decl-count count)
         (set! tc-module-decl-index-decl-offset decl-offset)
         (set! tc-module-decl-index-generation (intern-generation))
@@ -12091,9 +12167,10 @@
 
 ;; Dense slot for a module id, or -1 when the module owns no declarations.
 (define (tc-module-decl-index-slot [module-id : i64]) : i64
-  (match (tc_i64_i64_map.get (& tc-module-decl-index-modules) module-id)
-    [(tc_i64_i64_map.LookupFound slot) slot]
-    [(tc_i64_i64_map.LookupMissing) -1]))
+  (tc_i64_i64_map.get-value-or
+    (& tc-module-decl-index-modules)
+    module-id
+    -1))
 
 (define (tc-decl-list-module-imports-stdlib-string?
   [decls : AstDeclList]
@@ -12146,6 +12223,7 @@
   [env : TcTypeEnv]
   [source-match : bool]
   [lookup-id : i64]
+  [base-id : i64]
   [base : String]) : bool
   (if source-match
     (or
@@ -12153,8 +12231,8 @@
       (tc-context-imports-stdlib-string? ctx)
       (tc-stdlib-string-helper-bound-wrapper? env base)
       (tc-stdlib-string-helper-symbol-wrapper? ctx base)
-      (tc-stdlib-string-qualified-helper-id? lookup-id base))
-    (tc-stdlib-string-qualified-helper-id? lookup-id base)))
+      (tc-stdlib-string-qualified-helper-id? lookup-id base-id base))
+    (tc-stdlib-string-qualified-helper-id? lookup-id base-id base)))
 
 (define tc-source-dotted-alias-key-cache-capacity : i64
   8192)
@@ -12187,6 +12265,8 @@
 (define tc-source-qualified-variant-key-cache-name-keys : (Array i64)
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-values : (Array i64)
+  (array.make-array i64 8192))
+(define tc-source-qualified-variant-handle-cache-values : (Array i64)
   (array.make-array i64 8192))
 (define tc-source-qualified-variant-key-cache-generation : i64
   -1)
@@ -12332,6 +12412,28 @@
         (array-ref tc-source-qualified-variant-key-cache-values cursor)
         -2))))
 
+;; Returns the cached registry handle, -1 for no variant, or -2 when the key
+;; was cached without its handle.
+(define (tc-source-qualified-variant-handle-cache-get
+  [module-id : i64]
+  [name-id : i64]) : i64
+  (begin
+    (tc-source-qualified-variant-key-cache-ensure!)
+    (let
+      [cursor : i64
+        (tc-source-qualified-variant-key-cache-bucket module-id name-id)]
+      [module-key : i64 (+ module-id 1)]
+      [name-key : i64 (+ name-id 1)]
+      (if (and
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-module-keys cursor)
+          module-key)
+        (=
+          (array-ref tc-source-qualified-variant-key-cache-name-keys cursor)
+          name-key))
+        (array-ref tc-source-qualified-variant-handle-cache-values cursor)
+        -2))))
+
 (define (tc-source-dotted-alias-key-cache-put!
   [module-id : i64]
   [name-id : i64]
@@ -12389,7 +12491,20 @@
           tc-source-qualified-variant-key-cache-name-keys
           cursor
           (+ name-id 1))
-        (array-set! tc-source-qualified-variant-key-cache-values cursor value)))))
+        (array-set! tc-source-qualified-variant-key-cache-values cursor value)
+        (array-set! tc-source-qualified-variant-handle-cache-values cursor -2)))))
+
+(define (tc-source-qualified-variant-key-handle-cache-put!
+  [module-id : i64]
+  [name-id : i64]
+  [key-id : i64]
+  [handle : i64]) : unit
+  (begin
+    (tc-source-qualified-variant-key-cache-put! module-id name-id key-id)
+    (array-set!
+      tc-source-qualified-variant-handle-cache-values
+      (tc-source-qualified-variant-key-cache-bucket module-id name-id)
+      handle)))
 
 (define tc-lazy-import-stubs : TcLazyImportStubList
   (TcLazyImportStubList.Nil))
@@ -13119,28 +13234,43 @@
 
 (define (tc-enum-qualified-variant-lookup-handle
   [ctx : TcContext]
-  [name : String]
+  [_name : String]
   [name-id : i64]) : option_i64.Option
-  (if (tc-enum-qualified-variant-lookup-name-id? name-id)
-    (match ctx
-      [(TcContext _ _ registries module _ _)
-        (if (and
-          (> (string.string-length module) 0)
-          (not (tc-name-qualified-id? name-id)))
-          (match (compiler-symbol-dotted-variant-key-id-in-module
-            name-id
-            (tc-context-module-id ctx))
-            [(option_i64.Some module-key-id)
-              (match (compiler-registries-lookup-variant-key-id
-                registries
-                module-key-id)
-                [(option_i64.Some handle) (option_i64.Some handle)]
-                [(option_i64.None)
-                  (compiler-registries-lookup-variant-id registries name-id)])]
-            [(option_i64.None)
-              (compiler-registries-lookup-variant-id registries name-id)])
-          (compiler-registries-lookup-variant-id registries name-id))])
-    option_i64.None))
+  (let
+    [module-id : i64 (tc-context-module-id ctx)]
+    [cached-handle : i64
+      (tc-source-qualified-variant-handle-cache-get module-id name-id)]
+    (if (>= cached-handle 0)
+      (option_i64.Some cached-handle)
+      (if (= cached-handle -1)
+        option_i64.None
+        (match (tc-enum-qualified-variant-lookup-key-id ctx name-id module-id)
+          [(option_i64.Some key-id)
+            (let
+              [resolved-handle : i64
+                (tc-source-qualified-variant-handle-cache-get module-id name-id)]
+              (if (>= resolved-handle 0)
+                (option_i64.Some resolved-handle)
+                (match (compiler-registries-lookup-variant-key-id
+                  (tc-context-registries ctx)
+                  key-id)
+                  [(option_i64.Some handle)
+                    (begin
+                      (tc-source-qualified-variant-key-handle-cache-put!
+                        module-id
+                        name-id
+                        key-id
+                        handle)
+                      (option_i64.Some handle))]
+                  [(option_i64.None)
+                    (begin
+                      (tc-source-qualified-variant-key-handle-cache-put!
+                        module-id
+                        name-id
+                        -1
+                        -1)
+                      option_i64.None)])))]
+          [(option_i64.None) option_i64.None])))))
 
 (define (tc-enum-qualified-variant-lookup-key-id
   [ctx : TcContext]
@@ -13154,36 +13284,52 @@
             (tc-source-qualified-variant-key-cache-get module-id name-id)]
           (if (= cached -2)
             (let
-              [resolved : i64
+              [structural : bool (>= name-id (intern-capacity))]
+              [module-key-id : i64
                 (if (and
+                  (not structural)
                   (> (string.string-length module) 0)
                   (not (tc-name-qualified-id? name-id)))
-                  (let
-                    [module-key-id : i64
-                      (compiler-symbol-dotted-variant-key-id-in-module-or
-                        name-id
-                        module-id
-                        -1)]
-                    (match (compiler-registries-lookup-variant-key-id
-                      registries
-                      module-key-id)
-                      [(option_i64.Some _) module-key-id]
-                      [(option_i64.None)
-                        (match (compiler-registries-lookup-variant-id
-                          registries
-                          name-id)
-                          [(option_i64.Some _) name-id]
-                          [(option_i64.None) -1])]))
-                  (match (compiler-registries-lookup-variant-id
+                  (compiler-symbol-dotted-variant-key-id-in-module-or
+                    name-id
+                    module-id
+                    -1)
+                  -1)]
+              [module-handle : i64
+                (if (< module-key-id 0)
+                  -1
+                  (match (compiler-registries-lookup-variant-key-id
                     registries
-                    name-id)
-                    [(option_i64.Some _) name-id]
+                    module-key-id)
+                    [(option_i64.Some handle) handle]
                     [(option_i64.None) -1]))]
+              [fallback-key-id : i64
+                (if structural
+                  (compiler-symbol-name-id-key name-id)
+                  (compiler-symbol-dotted-variant-key-id-in-module-or
+                    name-id
+                    (compiler-symbol-root-module-id)
+                    -1))]
+              [fallback-handle : i64
+                (if (or (>= module-handle 0) (< fallback-key-id 0))
+                  -1
+                  (match (compiler-registries-lookup-variant-key-id
+                    registries
+                    fallback-key-id)
+                    [(option_i64.Some handle) handle]
+                    [(option_i64.None) -1]))]
+              [resolved : i64
+                (if (>= module-handle 0)
+                  module-key-id
+                  (if (>= fallback-handle 0) fallback-key-id -1))]
+              [resolved-handle : i64
+                (if (>= module-handle 0) module-handle fallback-handle)]
               (begin
-                (tc-source-qualified-variant-key-cache-put!
+                (tc-source-qualified-variant-key-handle-cache-put!
                   module-id
                   name-id
-                  resolved)
+                  resolved
+                  resolved-handle)
                 (if (< resolved 0)
                   option_i64.None
                   (option_i64.Some resolved))))
@@ -13197,72 +13343,13 @@
   [name : String]
   [name-id : i64]
   [module-id : i64]) : ResultTcString
-  (if (tc-enum-qualified-variant-lookup-name-id? name-id)
-    (match ctx
-      [(TcContext _ _ registries module _ _)
-        (let
-          [cached : i64
-            (tc-source-qualified-variant-key-cache-get module-id name-id)]
-          (if (= cached -2)
-            (if (and
-              (> (string.string-length module) 0)
-              (not (tc-name-qualified? name)))
-              (let
-                [module-key-id : i64
-                  (compiler-symbol-dotted-variant-key-id-in-module-or
-                    name-id
-                    module-id
-                    -1)]
-                (match (compiler-registries-lookup-variant-key-id
-                  registries
-                  module-key-id)
-                  [(option_i64.Some _)
-                    (let
-                      [lookup-name : String
-                        (compiler-symbol-module-key module name)]
-                      (begin
-                        (tc-source-qualified-variant-key-cache-put!
-                          module-id
-                          name-id
-                          module-key-id)
-                        (ResultTcString.Ok lookup-name)))]
-                  [(option_i64.None)
-                    (match (compiler-registries-lookup-variant-id
-                      registries
-                      name-id)
-                      [(option_i64.Some _)
-                        (begin
-                          (tc-source-qualified-variant-key-cache-put!
-                            module-id
-                            name-id
-                            name-id)
-                          (ResultTcString.Ok name))]
-                      [(option_i64.None)
-                        (begin
-                          (tc-source-qualified-variant-key-cache-put!
-                            module-id
-                            name-id
-                            -1)
-                          (ResultTcString.Err ""))])]))
-              (match (compiler-registries-lookup-variant-id registries name-id)
-                [(option_i64.Some _)
-                  (begin
-                    (tc-source-qualified-variant-key-cache-put!
-                      module-id
-                      name-id
-                      name-id)
-                    (ResultTcString.Ok name))]
-                [(option_i64.None)
-                  (begin
-                    (tc-source-qualified-variant-key-cache-put!
-                      module-id
-                      name-id
-                      -1)
-                    (ResultTcString.Err ""))]))
-            (if (< cached 0)
-              (ResultTcString.Err "")
-              (ResultTcString.Ok (tc-nominal-name-id-display cached)))))])
-    (ResultTcString.Err "")))
+  (match (tc-enum-qualified-variant-lookup-key-id ctx name-id module-id)
+    [(option_i64.Some key-id)
+      (ResultTcString.Ok
+        (if (compiler-composite-triple-key-id? key-id)
+          (tc-nominal-name-id-display key-id)
+          name))]
+    [(option_i64.None) (ResultTcString.Err "")]))
 
 (define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
   (begin
@@ -13416,9 +13503,9 @@
                         current-module-id)
                         [(option_i64.Some key-id)
                           (TcNameLookup.Ok
-                            (if (= key-id name-id)
-                              name
-                              (tc-nominal-name-id-display key-id))
+                            (if (compiler-composite-triple-key-id? key-id)
+                              (tc-nominal-name-id-display key-id)
+                              name)
                             key-id)]
                         [(option_i64.None)
                           (match (tc-source-dotted-full-path-key-from-id
@@ -14106,9 +14193,7 @@
       option_i64.None
       (let
         [alias-id : i64 (intern-leading-dot-id name-id)]
-        [base-id : i64
-          (tc-source-spelling-id
-            (string.substring name (+ first-dot 1) (- n (+ first-dot 1))))]
+        [base-id : i64 (intern-dotted-tail-id name-id)]
         (if (or (< alias-id 0) (< base-id 0))
           option_i64.None
           (match (tc-context-program ctx)
@@ -14160,9 +14245,7 @@
     (if (or (<= first-dot 0) (>= first-dot (- n 1)))
       option_i64.None
       (let
-        [base-id : i64
-          (tc-source-spelling-id
-            (string.substring name (+ first-dot 1) (- n (+ first-dot 1))))]
+        [base-id : i64 (intern-dotted-tail-id name-id)]
         [symbols : CompilerSymbols (tc-context-symbols ctx)]
         (if (or
           (< base-id 0)
@@ -21607,16 +21690,41 @@
             name-id
             (compiler-symbols-missing-handle))]
         [variant-found : bool
-          (compiler-symbols-handle-found?
-            (if non-root-bare?
-              (compiler-registries-lookup-variant-key-id-or
-                registries
-                variant-key
-                (compiler-symbols-missing-handle))
-              (compiler-registries-lookup-variant-id-or
-                registries
-                variant-key
-                (compiler-symbols-missing-handle))))]
+          (if (and
+            (not non-root-bare?)
+            (tc-enum-qualified-variant-lookup-name-id? name-id))
+            (match (tc-enum-qualified-variant-lookup-handle
+              ctx
+              (if (and (>= name-id 0) (< name-id (intern-capacity)))
+                (intern-str name-id)
+                "")
+              name-id)
+              [(option_i64.Some _) true]
+              [(option_i64.None) false])
+            (let
+              [cached : i64
+                (tc-source-qualified-variant-key-cache-get
+                  ctx-module-id
+                  name-id)]
+              (if (= cached -2)
+                (match (compiler-registries-lookup-variant-key-id
+                  registries
+                  (compiler-symbol-name-id-key variant-key))
+                  [(option_i64.Some _)
+                    (begin
+                      (tc-source-qualified-variant-key-cache-put!
+                        ctx-module-id
+                        name-id
+                        variant-key)
+                      true)]
+                  [(option_i64.None)
+                    (begin
+                      (tc-source-qualified-variant-key-cache-put!
+                        ctx-module-id
+                        name-id
+                        -1)
+                      false)])
+                (>= cached 0))))]
         (if (compiler-symbols-handle-found? handle)
           (if (=
             (compiler-symbol-handle-kind handle)
@@ -22489,9 +22597,42 @@
         (TcMaybeExternAbi.No))
       (TcMaybeExternAbi.No))))
 
+(define (tc-call-extern-abi-for-name-id [ctx : TcContext] [name-id : i64]) : TcMaybeExternAbi
+  (let
+    [name : String (intern-str name-id)]
+    (if (and
+      (tc-hygiene-global-name? name)
+      (not (ci.intern-qualified? name-id)))
+      (tc-call-extern-abi-for-name ctx name)
+      (let
+        [handle : i64
+          (if (tc-name-qualified-id? name-id)
+            (compiler-symbols-lookup-value-id-or
+              (tc-context-symbols ctx)
+              name-id
+              (compiler-symbols-missing-handle))
+            (compiler-symbols-lookup-value-in-module-id-or
+              (tc-context-symbols ctx)
+              (tc-context-module-id ctx)
+              name-id
+              (compiler-symbols-missing-handle)))]
+        (if (and
+          (compiler-symbols-handle-found? handle)
+          (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-extern)))
+          (match (compiler-symbols-decl-at-index
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle))
+            [(ResultAstDecl.Ok (AstDecl.Extern _ kind metadata _))
+              (match kind
+                [(AstExternKind.Function)
+                  (TcMaybeExternAbi.Some (ast-extern-metadata-abi metadata))]
+                [(AstExternKind.Value) (TcMaybeExternAbi.No)])]
+            [_ (TcMaybeExternAbi.No)])
+          (TcMaybeExternAbi.No))))))
+
 (define (tc-call-extern-abi [ctx : TcContext] [func : AstExpr]) : TcMaybeExternAbi
   (match (ast-expr-unspan func)
-    [(AstExpr.Var name) (tc-call-extern-abi-for-name ctx (intern-str name))]
+    [(AstExpr.Var name) (tc-call-extern-abi-for-name-id ctx name)]
     [_ (TcMaybeExternAbi.No)]))
 
 (define (tc-c-abi-fnptr-type? [ty : AstType]) : bool
@@ -25063,6 +25204,7 @@
     env
     (cbi.compiler-builtin-typecheck-public-string-length-id? source-id)
     lookup-id
+    cbi.compiler-builtin-id-string-length
     "string-length"))
 
 (define (tc-string-ref-helper-call-name?
@@ -25092,12 +25234,14 @@
         (cbi.compiler-builtin-typecheck-public-string-ref-id? source-id)
         (not (cbi.compiler-builtin-typecheck-public-char-at-id? source-id)))
       lookup-id
+      cbi.compiler-builtin-id-string-ref
       "string-ref")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
       (cbi.compiler-builtin-typecheck-public-char-at-id? source-id)
       lookup-id
+      cbi.compiler-builtin-id-char-at
       "char-at")))
 
 (define (tc-string-eq-helper-call-name?
@@ -25125,6 +25269,7 @@
       env
       (= source-id cbi.compiler-builtin-id-eq)
       lookup-id
+      cbi.compiler-builtin-id-eq
       "eq")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
@@ -25135,12 +25280,14 @@
           (cbi.compiler-builtin-typecheck-public-string-eq-question-id?
             source-id)))
       lookup-id
+      cbi.compiler-builtin-id-string-eq
       "string-eq")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
       (cbi.compiler-builtin-typecheck-public-string-eq-question-id? source-id)
       lookup-id
+      cbi.compiler-builtin-id-string-eq-question
       "string=?")))
 
 (define (tc-string-copy-helper-call-id?
@@ -25154,12 +25301,14 @@
       env
       (= source-id cbi.compiler-builtin-id-string-append)
       lookup-id
+      cbi.compiler-builtin-id-string-append
       "string-append")
     (tc-stdlib-string-helper-visible-or-wrapper-id?
       ctx
       env
       (= source-id cbi.compiler-builtin-id-string-concat)
       lookup-id
+      cbi.compiler-builtin-id-string-concat
       "string-concat")))
 
 (define (tc-string-to-int-helper-call-name?
@@ -25719,12 +25868,23 @@
         ;; Keep builtin dispatch identical to `tc-call-or-array-length`; only
         ;; the ordinary fallback needs the pooled function expression id.
         (let
+          [raw-text : String (intern-str raw-name)]
+          [hygiene-global : bool (tc-hygiene-global-name? raw-text)]
           [name : String
-            (begin
-              (tc-hygiene-global-call-name (intern-str raw-name)))]
+            (if hygiene-global
+              (tc-hygiene-global-call-name raw-text)
+              raw-text)]
           [name-id : i64
             (begin
-              (tc-builtin-name-id name))]
+              (cbi.compiler-builtin-refresh!)
+              (if hygiene-global
+                (let
+                  [source-id : i64
+                    (macro-hygiene-global-source-name-id-or raw-name -1)]
+                  (if (>= source-id 0)
+                    source-id
+                    (tc-existing-name-id name)))
+                raw-name))]
           [lookup-id : i64
             (begin
               (tc-call-builtin-lookup-id ctx env name name-id))]
@@ -35825,17 +35985,14 @@
 
 (define (tc-qualified-name-last-slash [name : String]) : i64
   (let
-    [i : i64 0]
-    [last : i64 -1]
-    [n : i64 (string.string-length name)]
+    [data : (Ptr u8) (unsafe (string-data (& name)))]
+    [i : i64 (- (string.string-length name) 1)]
     (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '/')
-            (set! last i)
-            unit)
-          (set! i (+ i 1))))
-      last)))
+      (while (>= i 0)
+        (if (= (unsafe (ptr-read (ptr-offset data i))) (cast 47 : u8))
+          (return i)
+          (set! i (- i 1))))
+      -1)))
 
 (define (tc-qualified-name-module [name : String]) : String
   (let
@@ -36094,82 +36251,66 @@
 
 (define (tc-dotted-alias-variant-key-id
   [ctx : TcContext]
-  [variant-name : String]
+  [_variant-name : String]
   [variant-name-id : i64]) : option_i64.Option
   (let
-    [first-dot : i64 (intern-first-dot variant-name-id)]
-    [n : i64 (string.string-length variant-name)]
-    [second-dot : i64 -1]
-    [i : i64 (+ first-dot 1)]
-    (begin
-      (while (and (< i n) (< second-dot 0))
-        (begin
-          (if (string.char-eq (string.string-ref variant-name i) '.')
-            (set! second-dot i)
-            unit)
-          (set! i (+ i 1))))
-      (if (or
-        (<= first-dot 0)
-        (>= first-dot (- n 1))
-        (if (< second-dot 0)
-          false
-          (or (<= second-dot (+ first-dot 1)) (>= second-dot (- n 1)))))
-        option_i64.None
-        (let
-          [alias-id : i64 (intern-leading-dot-id variant-name-id)]
-          [enum-name-id : i64
-            (if (< second-dot 0)
-              -1
-              (tc-source-spelling-id
-                (string.substring
-                  variant-name
-                  (+ first-dot 1)
-                  (- second-dot (+ first-dot 1)))))]
-          [base-start : i64
-            (if (< second-dot 0)
-              (+ first-dot 1)
-              (+ second-dot 1))]
-          [base-name-id : i64
-            (tc-source-spelling-id
-              (string.substring variant-name base-start (- n base-start)))]
-          (if (or
-            (< alias-id 0)
-            (< base-name-id 0)
-            (and (>= second-dot 0) (< enum-name-id 0)))
-            option_i64.None
-            (match (tc-context-program ctx)
-              [(AstProgram.Program decls-box)
-                (match (tc-source-dotted-alias-target-id
-                  (box-get decls-box)
-                  (tc-context-module-id ctx)
-                  alias-id)
-                  [(TcMaybeNameId.Some target-module-id)
+    [alias-id : i64 (intern-leading-dot-id variant-name-id)]
+    [tail-id : i64 (intern-dotted-tail-id variant-name-id)]
+    [tail-tail-id : i64
+      (if (>= tail-id 0)
+        (intern-dotted-tail-id tail-id)
+        -1)]
+    [enum-name-id : i64
+      (if (>= tail-tail-id 0)
+        (intern-leading-dot-id tail-id)
+        -1)]
+    [base-name-id : i64
+      (if (>= tail-tail-id 0)
+        tail-tail-id
+        tail-id)]
+    (if (or
+      (< alias-id 0)
+      (< base-name-id 0)
+      (= (string.string-length (intern-str alias-id)) 0)
+      (= (string.string-length (intern-str base-name-id)) 0)
+      (and
+        (>= tail-tail-id 0)
+        (or
+          (< enum-name-id 0)
+          (= (string.string-length (intern-str enum-name-id)) 0))))
+      option_i64.None
+      (match (tc-context-program ctx)
+        [(AstProgram.Program decls-box)
+          (match (tc-source-dotted-alias-target-id
+            (box-get decls-box)
+            (tc-context-module-id ctx)
+            alias-id)
+            [(TcMaybeNameId.Some target-module-id)
+              (let
+                [key-id : i64
+                  (compiler-symbol-module-key-id-by-id
+                    target-module-id
+                    (if (< enum-name-id 0)
+                      base-name-id
+                      (compiler-enum-qualified-variant-name-id
+                        enum-name-id
+                        base-name-id)))]
+                (match (compiler-registries-lookup-variant-key-id
+                  (tc-context-registries ctx)
+                  key-id)
+                  [(option_i64.Some _) (option_i64.Some key-id)]
+                  [(option_i64.None)
                     (let
-                      [key-id : i64
+                      [alias-key-id : i64
                         (compiler-symbol-module-key-id-by-id
                           target-module-id
-                          (if (< second-dot 0)
-                            base-name-id
-                            (compiler-enum-qualified-variant-name-id
-                              enum-name-id
-                              base-name-id)))]
+                          base-name-id)]
                       (match (compiler-registries-lookup-variant-key-id
                         (tc-context-registries ctx)
-                        key-id)
-                        [(option_i64.Some _) (option_i64.Some key-id)]
-                        [(option_i64.None)
-                          (let
-                            [alias-key-id : i64
-                              (compiler-symbol-module-key-id-by-id
-                                target-module-id
-                                base-name-id)]
-                            (match (compiler-registries-lookup-variant-key-id
-                              (tc-context-registries ctx)
-                              alias-key-id)
-                              [(option_i64.Some _)
-                                (option_i64.Some alias-key-id)]
-                              [(option_i64.None) option_i64.None]))]))]
-                  [(TcMaybeNameId.No) option_i64.None])])))))))
+                        alias-key-id)
+                        [(option_i64.Some _) (option_i64.Some alias-key-id)]
+                        [(option_i64.None) option_i64.None]))]))]
+            [(TcMaybeNameId.No) option_i64.None])]))))
 
 (define (tc-dotted-alias-variant-handle
   [ctx : TcContext]
@@ -53340,11 +53481,14 @@
     (macro-hygiene-global-source-name-id-from-generated
       generated-name-id
       fallback)
-    (match (tc_i64_i64_map.get
-      (& macro-hygiene-global-source-name-ids)
-      generated-name-id)
-      [(tc_i64_i64_map.LookupFound source-name-id) source-name-id]
-      [(tc_i64_i64_map.LookupMissing)
+    (let
+      [cached : i64
+        (tc_i64_i64_map.get-value-or
+          (& macro-hygiene-global-source-name-ids)
+          generated-name-id
+          -1)]
+      (if (>= cached 0)
+        cached
         (let
           [source-name-id : i64
             (macro-hygiene-global-source-name-id-from-generated
@@ -53356,7 +53500,7 @@
               (macro-hygiene-global-source-name-id-bind!
                 generated-name-id
                 source-name-id)
-              source-name-id)))])))
+              source-name-id)))))))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (match env
@@ -53401,6 +53545,19 @@
         (compiler-symbol-module-key definition-module base))
       (tc-hygiene-global-context-name definition-module base))))
 
+(define (macro-hygiene-global-definition-module-id [generated-name : String]) : i64
+  (match (tc-hygiene-global-decode generated-name)
+    [(TcHygieneGlobalName.Context module _)
+      (if (= (string.string-length module) 0)
+        (compiler-symbol-root-module-id)
+        (tc-existing-module-name-id module))]
+    [(TcHygieneGlobalName.Legacy lookup-name)
+      (let
+        [slash : i64 (tc-qualified-name-last-slash lookup-name)]
+        (if (<= slash 0)
+          (compiler-symbol-root-module-id)
+          (tc-existing-module-name-id (string.substring lookup-name 0 slash))))]))
+
 (define (macro-hygiene-fresh-local
   [macro-name : String]
   [depth : i64]
@@ -53423,7 +53580,15 @@
         generated-name-id)]
     [(tc_i64_i64_map.LookupMissing)
       (let
-        [generated-name-id : i64 (ci.intern-generated-name generated-name)]
+        [module-id : i64
+          (macro-hygiene-global-definition-module-id generated-name)]
+        [generated-name-id : i64
+          (if (compiler-symbol-root-module-id? module-id)
+            (ci.intern-generated-name generated-name)
+            (ci.intern-generated-qualified-name
+              generated-name
+              module-id
+              source-name-id))]
         (begin
           (tc_i64_i64_map.insert-ref!
             (&mut macro-hygiene-global-name-ids)
@@ -54339,33 +54504,18 @@
     (if (< slot 0)
       result
       (let
-        [index : i64 (array-ref tc-module-decl-index-starts slot)]
-        [end : i64 (array-ref tc-module-decl-index-ends slot)]
+        [index : i64 (array-ref tc-module-import-index-starts slot)]
+        [end : i64 (array-ref tc-module-import-index-ends slot)]
         [done : bool false]
         (begin
           (while (and (not done) (< index end))
             (let
-              [position : i64 (array-ref tc-module-decl-index-positions index)]
+              [position : i64
+                (array-ref tc-module-import-index-positions index)]
               [target : TcMaybeNameId
-                (match (ast-decl-list-ref-borrowed (& decls) position)
-                  [(AstDecl.Import _)
-                    (match (ast-decl-list-ref decls position)
-                      [(AstDecl.Import spec)
-                        (macro-import-alias-target-from-spec spec alias-id)]
-                      [_ (TcMaybeNameId.No)])]
-                  [(AstDecl.Unsafe _)
-                    (macro-import-alias-target-from-wrapped-decl
-                      (array-ref
-                        (struct-get decls slots)
-                        (+ decl-offset position))
-                      alias-id)]
-                  [(AstDecl.ComptimeDecl _ _)
-                    (macro-import-alias-target-from-wrapped-decl
-                      (array-ref
-                        (struct-get decls slots)
-                        (+ decl-offset position))
-                      alias-id)]
-                  [_ (TcMaybeNameId.No)])]
+                (macro-import-alias-target-from-wrapped-decl
+                  (array-ref (struct-get decls slots) (+ decl-offset position))
+                  alias-id)]
               (begin
                 (match target
                   [(TcMaybeNameId.Some target-id)
@@ -61564,9 +61714,10 @@
         [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _) (set! cur (box-get rest))]
         [(TcTypeEnv.Bind name-id _ rest)
           (begin
-            (match (tc_i64_i64_map.get (& ids) name-id)
-              [(tc_i64_i64_map.LookupFound index)
-                (if (and (>= index 0) (< index (array.length values)))
+            (let
+              [index : i64 (tc_i64_i64_map.get-value-or (& ids) name-id -1)]
+              (if (>= index 0)
+                (if (< index (array.length values))
                   (if (= (array-ref seen index) 0)
                     (let
                       [ty : AstType (array-ref values index)]
@@ -61589,8 +61740,8 @@
                         (string.int->string index)
                         (string.append
                           " / "
-                          (string.int->string (array.length values)))))))]
-              [(tc_i64_i64_map.LookupMissing) unit])
+                          (string.int->string (array.length values)))))))
+                unit))
             (set! cur (box-get rest)))]))))
 
 (define (tc-top-env-reresolve-caches! [ctx : TcContext] [env : TcTypeEnv]) : unit
@@ -61957,12 +62108,13 @@
                                       (not
                                         (macro-decls-have-unqualified-import-of-module?
                                           next-decls
-                                          (tc-existing-name-id cur-module))))
+                                          (tc-existing-module-name-id
+                                            cur-module))))
                                       (if (macro-live-registries-insert-decls!
                                         expanded
                                         expanded-paths
                                         splice-index
-                                        (tc-existing-name-id cur-module))
+                                        (tc-existing-module-name-id cur-module))
                                         unit
                                         (macro-live-registries-invalidate!))
                                       (macro-live-registries-invalidate!))

@@ -186,6 +186,13 @@
 
 (define intern-map-slots : (Array InternSlot)
   (make-array InternSlot 262144))
+;; Compact read lanes for post-parse lookup. InternCompatState keeps the
+;; authoritative enum map; these process-local lanes are rebuilt whenever a
+;; state is installed and updated alongside global insertions.
+(define intern-map-id-slots : (Array i64)
+  (make-array i64 262144))
+(define intern-map-hash-slots : (Array i64)
+  (make-array i64 262144))
 (define intern-map-ready : bool
   false)
 (define intern-reset-generation : i64
@@ -226,6 +233,30 @@
   0)
 (define intern-persistent-storage-enabled : bool
   false)
+
+(define (intern-map-read-lanes-rebuild!) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (array-length intern-map-slots)]
+    (while (< index count)
+      (begin
+        (match (array-ref intern-map-slots index)
+          [(InternEmpty)
+            (array-set! intern-map-id-slots index 0)]
+          [(InternUsed _ id hash)
+            (begin
+              (array-set! intern-map-id-slots index (+ id 1))
+              (array-set! intern-map-hash-slots index hash))])
+        (set! index (+ index 1))))))
+
+(define (intern-map-read-lanes-clear!) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (array-length intern-map-id-slots)]
+    (while (< index count)
+      (begin
+        (array-set! intern-map-id-slots index 0)
+        (set! index (+ index 1))))))
 
 (defstruct InternCompatState
   (pool-slots (Array String))
@@ -300,7 +331,20 @@
     : i64))
 
 (define (intern-compat-state-install! [state : InternCompatState]) : unit
-  (begin
+  (let
+    [next-map-slots : (Array InternSlot) (struct-get state map-slots)]
+    [map-changed : bool
+      (not
+        (=
+          (cast
+            (unsafe
+              (ptr->int (ptr-cast (array-data intern-map-slots) : (Ptr u8))))
+            : i64)
+          (cast
+            (unsafe
+              (ptr->int (ptr-cast (array-data next-map-slots) : (Ptr u8))))
+            : i64)))]
+    (begin
     (set! intern-pool-slots (struct-get state pool-slots))
     (set! intern-pool-qualified-slots (struct-get state pool-qualified-slots))
     (set! intern-pool-last-slash-slots (struct-get state pool-last-slash-slots))
@@ -318,7 +362,12 @@
     (set!
       intern-generated-next-id
       (array-ref (struct-get state generated-next-id) 0))
-    (set! intern-map-slots (struct-get state map-slots))
+    (set! intern-map-slots next-map-slots)
+    (if map-changed
+      (if (array-ref (struct-get state map-ready) 0)
+        (intern-map-read-lanes-rebuild!)
+        (intern-map-read-lanes-clear!))
+      unit)
     (set! intern-map-ready (array-ref (struct-get state map-ready) 0))
     (set!
       intern-reset-generation
@@ -336,7 +385,7 @@
       (array-ref (struct-get state persistent-arena-floor-mark) 0))
     (set!
       intern-persistent-storage-enabled
-      (array-ref (struct-get state persistent-storage-enabled) 0))))
+      (array-ref (struct-get state persistent-storage-enabled) 0)))))
 
 (define (intern-compat-state-capture-from-globals! [state : InternCompatState]) : unit
   (begin
@@ -822,47 +871,57 @@
 ;; pointer key beside the packed value avoids reloading the candidate String
 ;; from the pool on every post-parse probe.
 (define (intern-pointer-id-lookup [name : String]) : i64
-  (if intern-map-ready
-    (let
-      [needle : i64 (intern-string-data-pointer name)]
-      [needle-len : i64 (intern-private-string-length name)]
-      [capacity : i64 (array-length intern-pointer-id-slots)]
-      [cursor : i64 (intern-pointer-id-bucket needle needle-len capacity)]
-      [steps : i64 0]
-      (begin
-        (cfg
-          compile-profile
-          (set!
-            intern-profile-pointer-lookup-count
-            (+ intern-profile-pointer-lookup-count 1)))
-        (while (< steps capacity)
-          (let
-            [stored : i64 (array-ref intern-pointer-id-slots cursor)]
-            (begin
-              (cfg
-                compile-profile
-                (set!
-                  intern-profile-pointer-probe-count
-                  (+ intern-profile-pointer-probe-count 1)))
-              (if (= stored 0)
-                (return -1)
-                (let
-                  [id : i64 (intern-pointer-slot-id stored)]
-                  (if (and
-                    (= (array-ref intern-pointer-key-slots cursor) needle)
-                    (= (intern-pointer-slot-len stored) needle-len))
-                    (begin
-                      (cfg
-                        compile-profile
-                        (set!
-                          intern-profile-pointer-hit-count
-                          (+ intern-profile-pointer-hit-count 1)))
-                      (return id))
-                    (begin
-                      (set! cursor (intern-bucket (+ cursor 1) capacity))
-                      (set! steps (+ steps 1)))))))))
-        -1))
-    -1))
+  (let
+    [needle : i64 (intern-string-data-pointer name)]
+    [needle-len : i64 (intern-private-string-length name)]
+    [ids : (Ptr i64)
+      (unsafe
+        (ptr-cast (array-data intern-pointer-id-slots) : (Ptr i64)))]
+    [keys : (Ptr i64)
+      (unsafe
+        (ptr-cast (array-data intern-pointer-key-slots) : (Ptr i64)))]
+    [mask : i64 262143]
+    [cursor : i64
+      (bit-and
+        (bit-xor (shr needle 3) (* needle-len -7046029254386353131))
+        mask)]
+    (begin
+      (cfg
+        compile-profile
+        (set!
+          intern-profile-pointer-lookup-count
+          (+ intern-profile-pointer-lookup-count 1)))
+      (while true
+        (let
+          [stored : i64
+            (unsafe
+              (ptr-read (ptr-offset ids cursor)))]
+          (begin
+            (cfg
+              compile-profile
+              (set!
+                intern-profile-pointer-probe-count
+                (+ intern-profile-pointer-probe-count 1)))
+            (if (= stored 0)
+              (return -1)
+              (let
+                [id : i64 (- (bit-and stored 524287) 1)]
+                (if (and
+                  (=
+                    (unsafe
+                      (ptr-read (ptr-offset keys cursor)))
+                    needle)
+                  (= (shr stored 19) needle-len))
+                  (begin
+                    (cfg
+                      compile-profile
+                      (set!
+                        intern-profile-pointer-hit-count
+                        (+ intern-profile-pointer-hit-count 1)))
+                    (return id))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) mask)))))))))
+      -1)))
 
 (define (intern-pointer-id-record! [name : String] [id : i64]) : unit
   (let
@@ -1057,9 +1116,8 @@
     (> id intern-generated-next-id)
     (< id (intern-capacity))))
 
-;; Preserve a generated symbol's identity when a downstream representation
-;; owns a distinct display String. Parsed names remain content-resolved so a
-;; shared base spelling cannot collapse declarations from different modules.
+;; Preserve a generated identity when a downstream representation owns a
+;; distinct display String. Pointer identity keeps equal spellings distinct.
 (define (intern-register-generated-display-id! [name : String] [id : i64]) : unit
   (if (intern-generated-id-active? id)
     (intern-pointer-id-record! name id)
@@ -1264,6 +1322,7 @@
     unit
     (begin
       (array-set! intern-map-slots index (InternEmpty))
+      (array-set! intern-map-id-slots index 0)
       (intern-fill-empty (+ index 1) count))))
 
 (define (intern-fill-pointer-id-empty [index : i64] [count : i64]) : unit
@@ -1308,7 +1367,10 @@
     unit
     (match (array-ref intern-map-slots cursor)
       [(InternEmpty)
-        (array-set! intern-map-slots cursor (InternUsed name id hash))]
+        (begin
+          (array-set! intern-map-slots cursor (InternUsed name id hash))
+          (array-set! intern-map-id-slots cursor (+ id 1))
+          (array-set! intern-map-hash-slots cursor hash))]
       [_
         (intern-map-insert-existing-from
           name
@@ -1451,6 +1513,8 @@
                     intern-map-slots
                     cursor
                     (InternUsed persistent-name id hash))
+                  (array-set! intern-map-id-slots cursor (+ id 1))
+                  (array-set! intern-map-hash-slots cursor hash)
                   (intern-record-qualified-metadata id persistent-name)
                   (intern-name-cache-record persistent-name id)
                   (set! out id)
@@ -1529,6 +1593,8 @@
                         intern-map-slots
                         cursor
                         (InternUsed name id hash))
+                      (array-set! intern-map-id-slots cursor (+ id 1))
+                      (array-set! intern-map-hash-slots cursor hash)
                       (intern-record-qualified-metadata id name)
                       (intern-slice-cache-record name id)
                       (set! out id)
@@ -1572,32 +1638,36 @@
 (define (intern-lookup-content [name : String]) : InternLookup
   (if intern-map-ready
     (let
-      [capacity : i64 (array-length intern-map-slots)]
+      [capacity : i64 (array-length intern-map-id-slots)]
       [hash : i64 (intern-hash name)]
-      [cursor : i64 (intern-bucket hash capacity)]
+      [mask : i64 (- capacity 1)]
+      [cursor : i64 (bit-and hash mask)]
       [steps : i64 0]
-      [out : InternLookup InternLookupMissing]
-      [done : bool false]
+      [ids : (Ptr i64)
+        (unsafe
+          (ptr-cast (array-data intern-map-id-slots) : (Ptr i64)))]
+      [hashes : (Ptr i64)
+        (unsafe
+          (ptr-cast (array-data intern-map-hash-slots) : (Ptr i64)))]
       (begin
-        (while (if done
-          false
-          (< steps capacity))
-          (match (array-ref intern-map-slots cursor)
-            [(InternEmpty)
-              (begin
-                (set! out (InternLookupMissing))
-                (set! done true))]
-            [(InternUsed slot-key slot-id slot-hash)
-              (if (if (= slot-hash hash)
-                (intern-private-string-eq-places slot-key name)
-                false)
-                (begin
-                  (set! out (InternLookupFound slot-id))
-                  (set! done true))
-                (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))]))
-        out))
+        (while (< steps capacity)
+          (let
+            [stored : i64
+              (unsafe (ptr-read (ptr-offset ids cursor)))]
+            (if (= stored 0)
+              (return (InternLookupMissing))
+              (let
+                [slot-id : i64 (- stored 1)]
+                (if (and
+                  (= (unsafe (ptr-read (ptr-offset hashes cursor))) hash)
+                  (intern-private-string-eq-places
+                    (array-ref intern-pool-slots slot-id)
+                    name))
+                  (return (InternLookupFound slot-id))
+                  (begin
+                    (set! cursor (bit-and (+ cursor 1) mask))
+                    (set! steps (+ steps 1))))))))
+        (InternLookupMissing)))
     (InternLookupMissing)))
 
 (define (intern-lookup [name : String]) : InternLookup

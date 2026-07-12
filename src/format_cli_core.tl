@@ -207,13 +207,13 @@
 
 (define (fmt-package-files-from
   [check : bool]
-  [paths : PackageSourceList]
+  [paths : fmt_svec.Vec]
   [index : i64]
   [status : i64]) : i64
-  (if (>= index (package-source-list-len paths))
+  (if (>= index (fmt_svec.len (& paths)))
     status
     (let
-      [path : String (package-source-list-get paths index "")]
+      [path : String (fmt_svec.get (& paths) index "")]
       [file-status : i64 (fmt-format-file check path)]
       (fmt-package-files-from
         check
@@ -223,10 +223,7 @@
           file-status
           status)))))
 
-(define (fmt-package-files
-  [check : bool]
-  [paths : PackageSourceList]
-  [status : i64]) : i64
+(define (fmt-package-files [check : bool] [paths : fmt_svec.Vec] [status : i64]) : i64
   (fmt-package-files-from check paths 0 status))
 
 (define (fmt-package

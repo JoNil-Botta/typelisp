@@ -32,6 +32,7 @@
 (import (hashmap i64 i64) as opt_i64_i64_map)
 (import stdlib.string)
 (cfg compile-profile (import stdlib.str_cat_runtime as str_cat))
+(cfg compile-profile-summary (import compiler_profile_summary as cps))
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -119,6 +120,28 @@
   compile-profile
   (define compiler-opt-profile-detail-start-ms : i64
     0))
+
+(cfg
+  compile-profile-summary
+  (define (compiler-opt-profile-summary-reset!) : unit
+    (cps.compiler-profile-summary-reset!)))
+
+(cfg
+  compile-profile-summary
+  (define (compiler-opt-profile-summary-emit) : unit
+    (begin
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-optimizer-pass
+        "optimizer"
+        "pass")
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-optimizer-function
+        "optimizer"
+        "function")
+      (cps.compiler-profile-summary-emit
+        cps.compiler-profile-summary-optimizer-module
+        "optimizer"
+        "module"))))
 
 (cfg
   compile-profile
@@ -296,18 +319,31 @@
   (define (compiler-opt-profile-detail-finish [phase : String] [name : String]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) compiler-opt-profile-detail-start-ms)]
-      (if (>= elapsed 1)
-        (io.print-error
-          (string.append
-            "compile-profile-detail|optimize."
+      (cfg
+        compile-profile-summary
+        (if (string.eq phase "function")
+          (begin
+            (cps.compiler-profile-summary-note!
+              cps.compiler-profile-summary-optimizer-function
+              name
+              elapsed)
+            (cps.compiler-profile-summary-note-module!
+              cps.compiler-profile-summary-optimizer-module
+              name
+              elapsed))
+          unit)
+        (if (>= elapsed 1)
+          (io.print-error
             (string.append
-              phase
+              "compile-profile-detail|optimize."
               (string.append
-                "|"
+                phase
                 (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))))
-        unit))))
+                  "|"
+                  (string.append
+                    (string.int->string elapsed)
+                    (string.append "|" (string.append name "\n")))))))
+          unit)))))
 
 (cfg
   compile-profile
@@ -317,18 +353,24 @@
     [start-ms : i64]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) start-ms)]
-      (if (>= elapsed 1)
-        (io.print-error
-          (string.append
-            "compile-profile-detail|optimize.pass."
+      (cfg
+        compile-profile-summary
+        (cps.compiler-profile-summary-note!
+          cps.compiler-profile-summary-optimizer-pass
+          pass
+          elapsed)
+        (if (>= elapsed 1)
+          (io.print-error
             (string.append
-              pass
+              "compile-profile-detail|optimize.pass."
               (string.append
-                "|"
+                pass
                 (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))))
-        unit))))
+                  "|"
+                  (string.append
+                    (string.int->string elapsed)
+                    (string.append "|" (string.append name "\n")))))))
+          unit)))))
 
 (cfg
   compile-profile
@@ -339,13 +381,16 @@
     [start-ms : i64]) : unit
     (let
       [elapsed : i64 (- (profile.now-ms) start-ms)]
-      (io.print-error
-        (string.concat5
-          "compile-profile-detail|optimize.escape."
-          phase
-          "|"
-          (string.int->string elapsed)
-          (string.concat5 "|" (string.int->string level) "|" name "\n"))))))
+      (cfg
+        compile-profile-summary
+        unit
+        (io.print-error
+          (string.concat5
+            "compile-profile-detail|optimize.escape."
+            phase
+            "|"
+            (string.int->string elapsed)
+            (string.concat5 "|" (string.int->string level) "|" name "\n")))))))
 
 (cfg
   compile-profile
@@ -34279,6 +34324,9 @@
                   (cfg
                     compile-profile
                     (compiler-opt-profile-finish "functions"))
+                  (cfg
+                    compile-profile-summary
+                    (compiler-opt-profile-summary-emit))
                   (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                   (cfg compile-profile (compiler-opt-profile-start))
                   (let
@@ -34597,6 +34645,9 @@
                     (cfg
                       compile-profile
                       (compiler-opt-profile-finish "functions"))
+                    (cfg
+                      compile-profile-summary
+                      (compiler-opt-profile-summary-emit))
                     (cfg compile-profile (compiler-opt-load-cse-profile-emit))
                     (cfg compile-profile (compiler-opt-profile-start))
                     (let
@@ -50118,18 +50169,21 @@
     [report : OptScratchScopeReport]) : unit
     (match report
       [(OptScratchScopeReport.Report allocs bytes blocker)
-        (if (> allocs 0)
-          (io.print-error
-            (compiler-opt-scratch-region-report-line
-              (compiler-opt-scratch-region-report-status blocker)
-              scope
-              function
-              label
-              latch
-              allocs
-              bytes
-              (compiler-opt-scratch-region-report-reason blocker)))
-          unit)])))
+        (cfg
+          compile-profile-summary
+          unit
+          (if (> allocs 0)
+            (io.print-error
+              (compiler-opt-scratch-region-report-line
+                (compiler-opt-scratch-region-report-status blocker)
+                scope
+                function
+                label
+                latch
+                allocs
+                bytes
+                (compiler-opt-scratch-region-report-reason blocker)))
+            unit))])))
 
 (cfg
   compile-profile

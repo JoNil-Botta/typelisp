@@ -34,6 +34,17 @@ mkdir -p "$WORKDIR"
 PROFILE_ASM="$WORKDIR/typelisp-profile.s"
 PROFILE_OBJ="$WORKDIR/typelisp-profile.$NL_OBJ_EXT"
 PROFILE_BIN="$WORKDIR/typelisp-profile$NL_BIN_EXT"
+SUMMARY_ASM="$WORKDIR/typelisp-summary.s"
+SUMMARY_OBJ="$WORKDIR/typelisp-summary.$NL_OBJ_EXT"
+SUMMARY_BIN="$WORKDIR/typelisp-summary$NL_BIN_EXT"
+SUMMARY_BUILD_STDOUT="$WORKDIR/summary-build.stdout"
+SUMMARY_BUILD_STDERR="$WORKDIR/summary-build.stderr"
+SUMMARY_CHECK_STDOUT="$WORKDIR/summary-check.stdout"
+SUMMARY_CHECK_STDERR="$WORKDIR/summary-check.stderr"
+SUMMARY_OUTPUT_ASM="$WORKDIR/summary-output.s"
+NORMAL_CHECK_STDOUT="$WORKDIR/normal-check.stdout"
+NORMAL_CHECK_STDERR="$WORKDIR/normal-check.stderr"
+NORMAL_OUTPUT_ASM="$WORKDIR/normal-output.s"
 BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
@@ -238,6 +249,93 @@ if ! assemble_and_link compile-profile-cli "$PROFILE_ASM" "$PROFILE_OBJ" "$PROFI
     >> "$BUILD_STDOUT" 2>> "$BUILD_STDERR"; then
     show_failure_logs "$BUILD_STDOUT" "$BUILD_STDERR"
     fail "profile-enabled CLI link failed"
+fi
+
+echo "[compile-profile] compile compact-summary CLI"
+if ! "$COMPILER" compile src/main.tl \
+    -o "$SUMMARY_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --cfg compile-profile \
+    --cfg compile-profile-summary \
+    > "$SUMMARY_BUILD_STDOUT" 2> "$SUMMARY_BUILD_STDERR"; then
+    show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
+    fail "compact-summary CLI compile failed"
+fi
+if ! assemble_and_link compile-profile-summary-cli \
+    "$SUMMARY_ASM" "$SUMMARY_OBJ" "$SUMMARY_BIN" \
+    >> "$SUMMARY_BUILD_STDOUT" 2>> "$SUMMARY_BUILD_STDERR"; then
+    show_failure_logs "$SUMMARY_BUILD_STDOUT" "$SUMMARY_BUILD_STDERR"
+    fail "compact-summary CLI link failed"
+fi
+
+echo "[compile-profile] verify compact summary schema and bound"
+if ! "$SUMMARY_BIN" compile tests/integration/arithmetic.tl \
+    -o "$SUMMARY_OUTPUT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$SUMMARY_CHECK_STDOUT" 2> "$SUMMARY_CHECK_STDERR"; then
+    show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+    fail "compact-summary fixture compile failed"
+fi
+assert_contains_in "$SUMMARY_CHECK_STDERR" \
+    "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls" \
+    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+for row in \
+    'optimizer|pass' 'optimizer|function' 'optimizer|module' \
+    'backend|function' 'backend|module'; do
+    assert_contains_in "$SUMMARY_CHECK_STDERR" \
+        "compile-profile-summary|$row|" \
+        "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+    assert_contains_in "$SUMMARY_CHECK_STDERR" \
+        "compile-profile-summary|$row|0|<remainder>|" \
+        "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+done
+assert_contains_in "$SUMMARY_CHECK_STDERR" "compile-profile|total|" \
+    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+assert_not_contains_in "$SUMMARY_CHECK_STDERR" "compile-profile-detail|" \
+    "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+summary_lines=$(grep -c '^compile-profile-summary|' "$SUMMARY_CHECK_STDERR")
+if [ "$summary_lines" -gt 46 ]; then
+    show_failure_logs "$SUMMARY_CHECK_STDOUT" "$SUMMARY_CHECK_STDERR"
+    fail "compact summary exceeded 46 rows: $summary_lines"
+fi
+if ! awk -F'|' '
+    $1 == "compile-profile-summary" && $2 != "scope" {
+        key = $2 "|" $3
+        if ($4 != 0 && $4 != previous[key] + 1) bad = 1
+        if ($4 != 0) previous[key] = $4
+    }
+    END { exit bad ? 1 : 0 }
+' "$SUMMARY_CHECK_STDERR"; then
+    fail "compact summary ranks are not stable ascending rows"
+fi
+
+echo "[compile-profile] verify normal compiler has no profile output"
+if ! "$COMPILER" compile tests/integration/arithmetic.tl \
+    -o "$NORMAL_OUTPUT_ASM" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$NORMAL_CHECK_STDOUT" 2> "$NORMAL_CHECK_STDERR"; then
+    show_failure_logs "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+    fail "normal fixture compile failed"
+fi
+assert_not_contains_in "$NORMAL_CHECK_STDERR" "compile-profile" \
+    "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+
+expected_heavy_sources='compiler_typecheck_smoke|src/tests/compiler_typecheck_smoke.tl
+compiler_lower_smoke|src/tests/compiler_lower_smoke.tl
+compiler_backend_smoke|src/tests/compiler_backend_smoke.tl
+doc_test_smoke|src/tests/doc_test_smoke.tl
+compiler_driver_pic_smoke|src/tests/compiler_driver_pic_smoke.tl
+compiler_driver_state_smoke|src/tests/compiler_driver_state_smoke.tl'
+actual_heavy_sources=$(scripts/measure-heavy-closure-profile.sh --list)
+if [ "$actual_heavy_sources" != "$expected_heavy_sources" ]; then
+    fail "heavy-closure harness source list changed"
 fi
 
 # A source selfhost compile exercises the compiler's embedded canonical stdlib

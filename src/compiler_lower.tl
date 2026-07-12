@@ -681,18 +681,21 @@
     (let
       [elapsed : i64
         (- (profile.now-ms) compiler-lower-profile-detail-start-ms)]
-      (if (>= elapsed 1)
-        (io.print-error
-          (string.append
-            "compile-profile-detail|lower."
+      (cfg
+        compile-profile-summary
+        unit
+        (if (>= elapsed 1)
+          (io.print-error
             (string.append
-              phase
+              "compile-profile-detail|lower."
               (string.append
-                "|"
+                phase
                 (string.append
-                  (string.int->string elapsed)
-                  (string.append "|" (string.append name "\n")))))))
-        unit))))
+                  "|"
+                  (string.append
+                    (string.int->string elapsed)
+                    (string.append "|" (string.append name "\n")))))))
+          unit)))))
 
 (cfg
   compile-profile

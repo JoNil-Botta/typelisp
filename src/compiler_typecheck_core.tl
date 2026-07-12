@@ -1437,16 +1437,19 @@
     [arity : i64]
     [calls : i64]
     [total-ms : i64]) : unit
-    (io.print-error
-      (string.append
-        "compile-profile-detail|typecheck.macro_expand|"
+    (cfg
+      compile-profile-summary
+      unit
+      (io.print-error
         (string.append
-          (string.int->string total-ms)
+          "compile-profile-detail|typecheck.macro_expand|"
           (string.append
-            "|"
+            (string.int->string total-ms)
             (string.append
-              (compiler-tc-macro-profile-detail macro-name arity calls)
-              "\n")))))))
+              "|"
+              (string.append
+                (compiler-tc-macro-profile-detail macro-name arity calls)
+                "\n"))))))))
 
 (cfg
   compile-profile
@@ -2378,22 +2381,28 @@
         (set!
           compiler-tc-decl-profile-fn-expr-live
           (+ compiler-tc-decl-profile-fn-expr-live live-delta))
-        (if (>= elapsed 1)
-          (io.print-error
-            (string.append
-              "compile-profile-detail|typecheck.fn_expr|"
+        (cfg
+          compile-profile-summary
+          unit
+          (if (>= elapsed 1)
+            (io.print-error
               (string.append
-                (string.int->string elapsed)
-                (string.append "|" (string.append name "\n")))))
-          unit)
-        (if (>= live-delta 131072)
-          (io.print-error
-            (string.append
-              "compile-profile-detail|typecheck.fn_live_kb|"
+                "compile-profile-detail|typecheck.fn_expr|"
+                (string.append
+                  (string.int->string elapsed)
+                  (string.append "|" (string.append name "\n")))))
+            unit))
+        (cfg
+          compile-profile-summary
+          unit
+          (if (>= live-delta 131072)
+            (io.print-error
               (string.append
-                (string.int->string (/ live-delta 1024))
-                (string.append "|" (string.append name "\n")))))
-          unit)))))
+                "compile-profile-detail|typecheck.fn_live_kb|"
+                (string.append
+                  (string.int->string (/ live-delta 1024))
+                  (string.append "|" (string.append name "\n")))))
+            unit))))))
 
 (cfg
   compile-profile

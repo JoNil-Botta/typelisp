@@ -574,31 +574,31 @@ fi
 # counter cannot isolate a single identity, but with three identical imports at
 # least two of them must resolve through the memo, and at least one module must
 # have been materialized.
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_memo_hits" \
     2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_materializations" \
     1 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_catalog_builds" \
     1 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_catalog_hits" \
     2 \
     "$CROSS_SINGLE_STDOUT" \
     "$CROSS_SINGLE_STDERR"
-assert_profile_counter_at_least_in \
+assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_catalog_validations" \
     1 \

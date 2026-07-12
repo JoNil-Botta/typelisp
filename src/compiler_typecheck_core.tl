@@ -2755,9 +2755,6 @@
         "generated_module_catalog_hits"
         compiler-tc-macro-generated-module-catalog-hits)
       (compiler-tc-macro-counter-profile-line
-        "generated_module_catalog_validations"
-        compiler-tc-macro-generated-module-catalog-validations)
-      (compiler-tc-macro-counter-profile-line
         "live_rebuilds"
         compiler-tc-macro-live-rebuilds)
       (compiler-tc-macro-counter-profile-line
@@ -47884,23 +47881,35 @@
   4096)
 (define macro-generated-module-memo-keys : (Array i64)
   (array.make-array i64 4096))
-(define macro-generated-module-memo-targets : (Array i64)
-  (array.make-array i64 4096))
 
-;; Per-identity export-summary (plan P2): the materialized module's decl list
-;; (module header + generated body). env-extend-with-module folds this into the
-;; live top-env incrementally so a pass never has to rebuild the whole-program
-;; env just to see an already-materialized module. Populated alongside the
-;; target in macro-generated-module-memo-put!.
-(define macro-generated-module-memo-summaries : (Array AstDeclList)
-  (array.make-array AstDeclList 4096))
+;; Per-identity catalog state owns both the immutable generated body and the
+;; current materialized export summary. env-extend-with-module folds the latter
+;; into the live top-env incrementally so a pass never has to rebuild the
+;; whole-program env just to see an already-materialized module.
+(defenum MacroGeneratedCatalogValidation
+  (Pending)
+  (Validated))
 
-;; The full parsed, generated-meta-wrapped module body is the immutable
-;; canonical catalog for this identity. The current summary may later become a
-;; demand-selected subset (#4831), so it must not be used as the source of
-;; truth for a repeat import.
-(define macro-generated-module-memo-catalogs : (Array AstDeclList)
-  (array.make-array AstDeclList 4096))
+(defenum MacroGeneratedCatalogClosure
+  (Full))
+
+;; First-class immutable catalog owner. `catalog` is the complete wrapped body
+;; without its module header; `summary` is the currently materialized surface.
+;; The explicit closure field is the handoff point for #4831's later subset.
+(defenum MacroGeneratedModuleCatalogEntry
+  (Empty)
+  (Catalog
+    i64
+    AstDeclList
+    String
+    String
+    MacroGeneratedCatalogValidation
+    AstDeclList
+    MacroGeneratedCatalogClosure))
+
+(define macro-generated-module-memo-catalog-entries : (Array
+    MacroGeneratedModuleCatalogEntry)
+  (array.make-array MacroGeneratedModuleCatalogEntry 4096))
 (define macro-generated-module-memo-count : i64
   0)
 (define macro-generated-module-memo-generation : i64
@@ -47923,13 +47932,9 @@
           (begin
             (array-set! macro-generated-module-memo-keys i 0)
             (array-set!
-              macro-generated-module-memo-summaries
+              macro-generated-module-memo-catalog-entries
               i
-              (ast-decl-list-new))
-            (array-set!
-              macro-generated-module-memo-catalogs
-              i
-              (ast-decl-list-new))
+              (MacroGeneratedModuleCatalogEntry.Empty))
             (set! i (+ i 1))))
         (set! macro-generated-module-memo-count 0)
         (set! macro-generated-module-memo-generation (intern-generation))
@@ -47940,53 +47945,17 @@
     (* identity-id 2654435761)
     (- macro-generated-module-memo-capacity 1)))
 
-(define (macro-generated-module-memo-get [identity : String]) : CompilerMaybeString
-  (let
-    [identity-id : i64 (intern identity)]
-    (begin
-      (macro-generated-module-memo-ensure!)
-      (let
-        [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
-        [key : i64 (+ identity-id 1)]
-        [steps : i64 0]
-        [out : CompilerMaybeString CompilerNoString]
-        [done : bool false]
-        (begin
-          (while (if done
-            false
-            (< steps macro-generated-module-memo-capacity))
-            (let
-              [slot : i64 (array-ref macro-generated-module-memo-keys cursor)]
-              (if (= slot 0)
-                (set! done true)
-                (if (= slot key)
-                  (begin
-                    (set!
-                      out
-                      (CompilerSomeString
-                        (intern-str
-                          (array-ref macro-generated-module-memo-targets cursor))))
-                    (set! done true))
-                  (begin
-                    (set!
-                      cursor
-                      (bit-and
-                        (+ cursor 1)
-                        (- macro-generated-module-memo-capacity 1)))
-                    (set! steps (+ steps 1)))))))
-          out)))))
-
-;; Store identity -> (canonical target module, export-summary). Idempotent:
-;; re-storing an equal entry just refreshes the target + summary. The memo
-;; short-circuits re-expansion, so this is normally reached at most once per
-;; identity for the whole program. `summary` is the materialized module decl list
-;; (module header + generated body) that env-extend-with-module folds into the
-;; live top-env (plan P2).
+;; Store the first canonical catalog for an identity. Re-storing an equal
+;; identity preserves its immutable catalog, provenance, validation, and closure
+;; state while refreshing only the current materialized summary. The shortcut
+;; normally makes the insertion path run once per identity for the whole program.
 (define (macro-generated-module-memo-put!
   [identity : String]
   [target-module : String]
   [summary : AstDeclList]
-  [catalog : AstDeclList]) : unit
+  [catalog : AstDeclList]
+  [generator : String]
+  [import-path : String]) : unit
   (let
     [identity-id : i64 (intern identity)]
     [target-id : i64 (intern target-module)]
@@ -48011,34 +47980,48 @@
                   (begin
                     (array-set! macro-generated-module-memo-keys cursor key)
                     (array-set!
-                      macro-generated-module-memo-targets
+                      macro-generated-module-memo-catalog-entries
                       cursor
-                      target-id)
-                    (array-set!
-                      macro-generated-module-memo-summaries
-                      cursor
-                      summary)
-                    (array-set!
-                      macro-generated-module-memo-catalogs
-                      cursor
-                      catalog)
+                      (MacroGeneratedModuleCatalogEntry.Catalog
+                        target-id
+                        catalog
+                        generator
+                        import-path
+                        (MacroGeneratedCatalogValidation.Pending)
+                        summary
+                        (MacroGeneratedCatalogClosure.Full)))
                     (set!
                       macro-generated-module-memo-count
                       (+ macro-generated-module-memo-count 1))
                     (set! done true))
                   (if (= slot key)
                     (begin
-                      (array-set!
-                        macro-generated-module-memo-targets
-                        cursor
-                        target-id)
-                      (array-set!
-                        macro-generated-module-memo-summaries
-                        cursor
-                        summary)
                       ;; A same-identity catalog is immutable. Syntax-sensitive
                       ;; calls bypass the shortcut and retain the existing
                       ;; incompatible-output diagnostic instead of replacing it.
+                      (match (array-ref
+                        macro-generated-module-memo-catalog-entries
+                        cursor)
+                        [(MacroGeneratedModuleCatalogEntry.Catalog
+                            entry-target
+                            entry-catalog
+                            entry-generator
+                            entry-path
+                            validation
+                            _
+                            closure)
+                          (array-set!
+                            macro-generated-module-memo-catalog-entries
+                            cursor
+                            (MacroGeneratedModuleCatalogEntry.Catalog
+                              entry-target
+                              entry-catalog
+                              entry-generator
+                              entry-path
+                              validation
+                              summary
+                              closure))]
+                        [(MacroGeneratedModuleCatalogEntry.Empty) unit])
                       (set! done true))
                     (begin
                       (set!
@@ -48074,9 +48057,19 @@
                 (set! done true)
                 (if (= slot key)
                   (begin
-                    (set!
-                      out
-                      (array-ref macro-generated-module-memo-summaries cursor))
+                    (match (array-ref
+                      macro-generated-module-memo-catalog-entries
+                      cursor)
+                      [(MacroGeneratedModuleCatalogEntry.Catalog
+                          _
+                          _
+                          _
+                          _
+                          _
+                          summary
+                          _)
+                        (set! out summary)]
+                      [(MacroGeneratedModuleCatalogEntry.Empty) unit])
                     (set! done true))
                   (begin
                     (set!
@@ -48090,7 +48083,7 @@
 ;; Retrieve the immutable full catalog for a canonical identity. It is separate
 ;; from the materialized summary so later demand selection can reuse parsed
 ;; declarations without re-running CTFE or reconstructing them from a program.
-(define (macro-generated-module-memo-get-catalog [identity : String]) : AstDeclList
+(define (macro-generated-module-memo-get-catalog [identity : String]) : MacroGeneratedModuleCatalogEntry
   (let
     [identity-id : i64 (intern identity)]
     (begin
@@ -48099,7 +48092,8 @@
         [cursor : i64 (macro-generated-module-memo-bucket identity-id)]
         [key : i64 (+ identity-id 1)]
         [steps : i64 0]
-        [out : AstDeclList (ast-decl-list-new)]
+        [out : MacroGeneratedModuleCatalogEntry
+          (MacroGeneratedModuleCatalogEntry.Empty)]
         [done : bool false]
         (begin
           (while (if done
@@ -48113,7 +48107,9 @@
                   (begin
                     (set!
                       out
-                      (array-ref macro-generated-module-memo-catalogs cursor))
+                      (array-ref
+                        macro-generated-module-memo-catalog-entries
+                        cursor))
                     (set! done true))
                   (begin
                     (set!
@@ -48123,6 +48119,49 @@
                         (- macro-generated-module-memo-capacity 1)))
                     (set! steps (+ steps 1)))))))
           out)))))
+
+;; Called only after the complete expanded declaration walk succeeds. Failed
+;; catalogs remain Pending and retain their generator/import provenance.
+(define (macro-generated-module-memo-mark-validated!) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i macro-generated-module-memo-capacity)
+        (begin
+          (match (array-ref macro-generated-module-memo-catalog-entries i)
+            [(MacroGeneratedModuleCatalogEntry.Catalog
+                target
+                catalog
+                generator
+                import-path
+                validation
+                summary
+                closure)
+              (match validation
+                [(MacroGeneratedCatalogValidation.Pending)
+                  (begin
+                    (array-set!
+                      macro-generated-module-memo-catalog-entries
+                      i
+                      (MacroGeneratedModuleCatalogEntry.Catalog
+                        target
+                        catalog
+                        generator
+                        import-path
+                        (MacroGeneratedCatalogValidation.Validated)
+                        summary
+                        closure))
+                    (cfg
+                      compile-profile
+                      (compiler-tc-macro-profile-note-generated-module-catalog-validation)))]
+                [(MacroGeneratedCatalogValidation.Validated) unit])]
+            [(MacroGeneratedModuleCatalogEntry.Empty) unit])
+          (set! i (+ i 1))))
+      (cfg
+        compile-profile
+        (compiler-tc-macro-counter-profile-line
+          "generated_module_catalog_validations"
+          compiler-tc-macro-generated-module-catalog-validations)))))
 
 (defenum MacroMaybeSpliceDecls
   (No)
@@ -55262,13 +55301,16 @@
 ;; Called only on the paths that actually materialize/reference a target module
 ;; body (never the surface-empty path, which emits nothing), so every later import
 ;; of the same identity — in any file, in any pass — resolves to this single
-;; canonical module via macro-generated-module-memo-get and emits only a marker
-;; import. Enum-only result materializations skip this memo so a later helper
-;; import can replay missing declarations and record the full body.
+;; canonical module via its catalog entry and emits only a marker import.
+;; Enum-only result materializations skip this memo so a later helper import can
+;; replay missing declarations and record the full body.
 (define (macro-materialized-record-result
   [identity : String]
   [target-module : String]
   [summary : AstDeclList]
+  [catalog : AstDeclList]
+  [generator : String]
+  [import-path : String]
   [memoize? : bool]
   [result : ResultMacroDeclExpansion]) : ResultMacroDeclExpansion
   (begin
@@ -55285,12 +55327,12 @@
                 identity
                 target-module
                 summary
-                summary)
+                catalog
+                generator
+                import-path)
               (cfg
                 compile-profile
-                (begin
-                  (compiler-tc-macro-profile-note-generated-module-catalog-build)
-                  (compiler-tc-macro-profile-note-generated-module-catalog-validation))))
+                (compiler-tc-macro-profile-note-generated-module-catalog-build)))
             unit)
           (cfg
             compile-profile
@@ -55335,6 +55377,9 @@
       identity
       target-module
       materialized
+      generated-body
+      macro-name
+      decl-path
       memoize?
       (match (macro-find-module-body-decls orig-decls target-module)
         [(MacroMaybeDeclList.Some existing-body)
@@ -55817,16 +55862,24 @@
                                   (macro-result-module-macro?
                                     macro-name
                                     definition-module)]
-                                [shortcut-target : CompilerMaybeString
+                                [shortcut-catalog : MacroGeneratedModuleCatalogEntry
                                   (if (macro-generated-identity-shortcut-safe-params?
                                     call-ctx
                                     definition-module
                                     params
                                     expanded-args)
-                                    (macro-generated-module-memo-get identity)
-                                    CompilerNoString)]
-                                (match shortcut-target
-                                  [(CompilerSomeString target-module)
+                                    (macro-generated-module-memo-get-catalog
+                                      identity)
+                                    (MacroGeneratedModuleCatalogEntry.Empty))]
+                                (match shortcut-catalog
+                                  [(MacroGeneratedModuleCatalogEntry.Catalog
+                                      target-id
+                                      catalog
+                                      _
+                                      _
+                                      _
+                                      _
+                                      _)
                                     (begin
                                       (cfg
                                         compile-profile
@@ -55834,17 +55887,33 @@
                                           (compiler-tc-macro-profile-note-generated-module-memo-hit)
                                           (compiler-tc-macro-profile-note-generated-module-catalog-hit)))
                                       (let
-                                        [expanded : AstDeclList
+                                        [target-module : String
+                                          (intern-str target-id)]
+                                        [marker : AstDeclList
                                           (macro-module-import-marker-decls
                                             target-module
                                             alias
                                             span)]
+                                        [expanded : AstDeclList
+                                          (match (macro-find-module-body-decls
+                                            orig-decls
+                                            target-module)
+                                            [(MacroMaybeDeclList.Some _) marker]
+                                            [(MacroMaybeDeclList.No)
+                                              (macro-decl-list-append
+                                                (ast-decl-list-prepend-builder
+                                                  (ast-decl-module
+                                                    target-module)
+                                                  catalog)
+                                                (ast-decl-list-prepend-builder
+                                                  (ast-decl-module module)
+                                                  marker))])]
                                         (ResultMacroDeclExpansion.Ok
                                           expanded
                                           (macro-paths-for-decls
                                             expanded
                                             decl-path))))]
-                                  [(CompilerNoString)
+                                  [(MacroGeneratedModuleCatalogEntry.Empty)
                                     (if result-macro?
                                       (let
                                         [result-enum-only? : bool
@@ -59937,6 +60006,7 @@
                                     cache-scope)
                                     [(ResultCompilerTypecheck.Ok summary)
                                       (begin
+                                        (macro-generated-module-memo-mark-validated!)
                                         (tc-context-capture-active-pools! ctx)
                                         (ResultCompilerTypecheckChecked.Ok
                                           summary

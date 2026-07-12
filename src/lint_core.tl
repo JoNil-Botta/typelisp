@@ -2557,16 +2557,20 @@
           (match expected
             [(AstMaybeModuleName.No) acc]
             [(AstMaybeModuleName.Some module-name)
-              (match maybe-alias
-                [(AstMaybeImportAlias.No) acc]
-                [(AstMaybeImportAlias.Some alias)
-                  (if (and
-                    (string.eq alias (lint-module-default-alias module-name))
-                    (lint-import-span-has-explicit-alias? source span))
-                    (lint-findings-add
-                      (lint-redundant-import-alias-finding span)
-                      acc)
-                    acc)])])]
+              (let
+                [module-name : String (intern-str module-name)]
+                (match maybe-alias
+                  [(AstMaybeImportAlias.No) acc]
+                  [(AstMaybeImportAlias.Some alias)
+                    (if (and
+                      (string.eq
+                        (intern-str alias)
+                        (lint-module-default-alias module-name))
+                      (lint-import-span-has-explicit-alias? source span))
+                      (lint-findings-add
+                        (lint-redundant-import-alias-finding span)
+                        acc)
+                      acc)]))])]
         [_ acc])]))
 
 (define (lint-unused-import-add-if-needed
@@ -2587,15 +2591,18 @@
               (match maybe-alias
                 [(AstMaybeImportAlias.No) acc]
                 [(AstMaybeImportAlias.Some alias)
-                  (if (lint-underscore-prefixed? alias)
+                  (if (lint-underscore-prefixed? (intern-str alias))
                     acc
                     (if (lint-decl-list-uses-import?
                       all-decls
-                      alias
-                      module-name)
+                      (intern-str alias)
+                      (intern-str module-name))
                       acc
                       (lint-findings-add
-                        (lint-unused-import-finding module-name alias span)
+                        (lint-unused-import-finding
+                          (intern-str module-name)
+                          (intern-str alias)
+                          span)
                         acc)))])]))])))
 
 (define (lint-unused-imports-in-decl-list

@@ -5,6 +5,7 @@
 (import "compiler_load.tl")
 (import "compiler_specialize.tl")
 (import sym_i64_env)
+(import compiler_builtin_ids as cbi)
 
 (define (compiler-typecheck-prefix-cache-scope
   [kind : String]
@@ -412,6 +413,7 @@
                     symbols
                     registries
                     ""
+                    cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
                 (match (tc-program-source-types-policy-ok ctx program)
                   [(ResultTcUnit.Ok)

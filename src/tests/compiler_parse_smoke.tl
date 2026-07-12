@@ -1,5 +1,6 @@
 ;; compiler_parse_smoke.tl - Runnable structural smoke for compiler_parse_core.
 (import "../compiler_parse_core.tl")
+(import compiler_builtin_ids as cbi)
 
 (define (compiler-parse-member-origin-boundary-ok?) : bool
   (match (parse-ast-source
@@ -23,8 +24,10 @@
     [(ResultAstProgram.Err _) false]))
 
 (define (main) : i64
-  (if (and
-    (= (compiler-diagnostic-self-test) 42)
-    (compiler-parse-member-origin-boundary-ok?))
-    (compiler-parse-smoke)
-    1))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (if (and
+      (= (compiler-diagnostic-self-test) 42)
+      (compiler-parse-member-origin-boundary-ok?))
+      (compiler-parse-smoke)
+      1)))

@@ -273,7 +273,13 @@
     (intern-persistent-arena-reset!)))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
-  (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
+  (begin
+    (cbi.state-install! (array-ref (struct-get state builtin-ids) 0))
+    ;; Force the generation-guarded refresh so every compiler-builtin-id-* global
+    ;; is valid before any phase (lex/parse/load/typecheck) reads one. state-install
+    ;; restored the prior compile's ids and generation, but a reset intern table
+    ;; makes those stale until refresh re-interns against the current table.
+    (cbi.compiler-builtin-refresh!)))
 
 (define (compiler-driver-state-install-lower-arenas!
   [state : CompilerDriverState]) : unit
@@ -446,7 +452,7 @@
         ;; the escaped IR stays alive until the next file reset.
         (lower-arenas-release!)
         (compiler-driver-state-capture-active-interns! state)
-        (compiler-driver-state-capture-active-transients! state)))))
+        (compiler-driver-state-capture-active-lower-arenas! state)))))
 
 (cfg
   compile-profile
@@ -471,6 +477,22 @@
 (cfg
   compile-profile
   (define compiler-driver-profile-phase-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-slice : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-generated : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-profile-phase-start-intern-pool-len : i64
     0))
 (cfg
   compile-profile
@@ -523,6 +545,18 @@
       (set! compiler-driver-profile-phase-start-ms (profile.now-ms))
       (set! compiler-driver-profile-phase-start-total (profile.alloc-total))
       (set! compiler-driver-profile-phase-start-live (profile.alloc-live))
+      (set!
+        compiler-driver-profile-phase-start-intern
+        (ci.intern-profile-intern-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-slice
+        (ci.intern-profile-slice-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-generated
+        (ci.intern-profile-generated-value))
+      (set!
+        compiler-driver-profile-phase-start-intern-pool-len
+        (ci.intern-pool-len))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -532,6 +566,10 @@
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
+      [end-intern : i64 (ci.intern-profile-intern-value)]
+      [end-intern-slice : i64 (ci.intern-profile-slice-value)]
+      [end-intern-generated : i64 (ci.intern-profile-generated-value)]
+      [end-intern-pool-len : i64 (ci.intern-pool-len)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
           (- (profile.alloc-peak) compiler-driver-profile-phase-start-live))]
@@ -547,7 +585,67 @@
             (- end-ms compiler-driver-profile-phase-start-ms)
             (- end-total compiler-driver-profile-phase-start-total)
             (- end-live compiler-driver-profile-phase-start-live)
-            peak-delta))))))
+            peak-delta))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.phase|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (- end-intern compiler-driver-profile-phase-start-intern))
+                  "\n")))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.phase.slice|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (-
+                      end-intern-slice
+                      compiler-driver-profile-phase-start-intern-slice))
+                  "\n")))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.phase.generated|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (-
+                      end-intern-generated
+                      compiler-driver-profile-phase-start-intern-generated))
+                  "\n")))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.phase.pool|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (-
+                      end-intern-pool-len
+                      compiler-driver-profile-phase-start-intern-pool-len))
+                  "\n")))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.phase.invalid_str_ids|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string (ci.intern-profile-invalid-str-value))
+                  "\n")))))))))
 
 (cfg
   compile-profile
@@ -558,6 +656,7 @@
       (set! compiler-driver-profile-total-start-live (profile.alloc-live))
       (set! compiler-driver-profile-best-peak 0)
       (ci.intern-profile-reset!)
+      (read-profile-reset!)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
       (compiler-driver-profile-start-phase))))
@@ -571,6 +670,51 @@
         (string.append
           name
           (string.append (compiler-driver-profile-field value) "|0|0|0\n"))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-intern-hot-names) : unit
+    (let
+      [id : i64 0]
+      [count : i64 0]
+      (begin
+        (while (< id (ci.intern-pool-len))
+          (begin
+            (set! count (ci.intern-profile-id-value id))
+            (when
+              (> count 0)
+              (io.print-error
+                (string.append
+                  "compile-profile-detail|intern.name|"
+                  (string.append
+                    (string.int->string count)
+                    (string.append "|" (string.append (ci.intern-str id) "\n"))))))
+            (set! id (+ id 1))))
+        unit))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-profile-invalid-str-ids) : unit
+    (let
+      [index : i64 0]
+      [count : i64 (ci.intern-profile-invalid-str-detail-count-value)]
+      (begin
+        (while (and (< index count) (< index 256))
+          (begin
+            (io.print-error
+              (string.append
+                "compile-profile-detail|intern.invalid_str_id|"
+                (string.append
+                  (string.int->string
+                    (ci.intern-profile-invalid-str-detail-id-at index))
+                  (string.append
+                    "|"
+                    (string.append
+                      (tc-nominal-name-id-display
+                        (ci.intern-profile-invalid-str-detail-id-at index))
+                      "\n")))))
+            (set! index (+ index 1))))
+        unit))))
 
 (cfg
   compile-profile
@@ -594,7 +738,129 @@
         (ci.intern-profile-slice-value))
       (compiler-driver-profile-intern-line
         "lookup_calls"
-        (ci.intern-profile-lookup-value)))))
+        (ci.intern-profile-lookup-value))
+      (compiler-driver-profile-intern-line
+        "pointer_lookup_calls"
+        (ci.intern-profile-pointer-lookup-value))
+      (compiler-driver-profile-intern-line
+        "pointer_hits"
+        (ci.intern-profile-pointer-hit-value))
+      (compiler-driver-profile-intern-line
+        "pointer_probes"
+        (ci.intern-profile-pointer-probe-value))
+      (compiler-driver-profile-intern-line
+        "preserving_lookup_calls"
+        (ci.intern-profile-preserving-lookup-value))
+      (compiler-driver-profile-intern-line
+        "generated_allocations"
+        (ci.intern-profile-generated-value))
+      (compiler-driver-profile-intern-line
+        "invalid_str_ids"
+        (ci.intern-profile-invalid-str-value))
+      (compiler-driver-profile-intern-line
+        "invalid_str_last_id"
+        (ci.intern-profile-invalid-str-last-id-value))
+      (compiler-driver-profile-invalid-str-ids)
+      (compiler-driver-profile-intern-line
+        "source_bytes"
+        (ci.intern-profile-source-bytes-value))
+      (compiler-driver-profile-intern-line
+        "source_symbols"
+        (ci.intern-profile-source-symbol-value))
+      (compiler-driver-profile-intern-line
+        "source_symbol_bytes"
+        (ci.intern-profile-source-symbol-bytes-value))
+      (compiler-driver-profile-intern-line
+        "slice_bytes"
+        (ci.intern-profile-slice-bytes-value))
+      (compiler-driver-profile-intern-line
+        "slice_hit"
+        (ci.intern-profile-slice-hit-value))
+      (compiler-driver-profile-intern-line
+        "slice_miss"
+        (ci.intern-profile-slice-miss-value))
+      (compiler-driver-profile-intern-line
+        "hit_same_obj"
+        (ci.intern-profile-hit-same-obj-value))
+      (compiler-driver-profile-intern-line
+        "hit_diff_obj"
+        (ci.intern-profile-hit-diff-obj-value))
+      (compiler-driver-profile-intern-line
+        "miss"
+        (ci.intern-profile-miss-value))
+      (compiler-driver-profile-intern-line
+        "attrib_bind_raw"
+        (tc-attrib-bind-raw-value))
+      (compiler-driver-profile-intern-line
+        "attrib_marker_miss"
+        (tc-attrib-marker-miss-value))
+      (compiler-driver-profile-intern-line
+        "attrib_slash_qualified"
+        (tc-attrib-source-name-bound-exact-value))
+      (compiler-driver-profile-intern-line
+        "attrib_local_bound_before_mod"
+        (tc-attrib-stdlib-comptime-syntax-type-value))
+      (compiler-driver-profile-intern-line
+        "attrib_default_unshadowed"
+        (tc-attrib-dotted-type-name-lookup-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_lookup_dotted_source_visible"
+        (tc-attrib-lookup-dotted-source-visible-value))
+      (compiler-driver-profile-intern-line
+        "attrib_bind_alias_if_free"
+        (tc-attrib-bind-alias-if-free-value))
+      (compiler-driver-profile-intern-line
+        "attrib_cleanup_owner_active_scan"
+        (tc-attrib-cleanup-owner-active-scan-value))
+      (compiler-driver-profile-intern-line
+        "attrib_arena_owner_active_scan"
+        (tc-attrib-arena-owner-active-scan-value))
+      (compiler-driver-profile-intern-line
+        "attrib_source_name_lookup_key"
+        (tc-attrib-source-name-lookup-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_current_module_source_lookup_key"
+        (tc-attrib-current-module-source-lookup-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_source_dotted_full_path_key"
+        (tc-attrib-source-dotted-full-path-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_enum_qualified_variant_lookup_key"
+        (tc-attrib-enum-qualified-variant-lookup-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_leading_segment_wins"
+        (tc-attrib-leading-segment-wins-value))
+      (compiler-driver-profile-intern-line
+        "attrib_lifetime_visible"
+        (tc-attrib-lifetime-visible-value))
+      (compiler-driver-profile-intern-line
+        "attrib_bind_comptime_helper_aliases"
+        (tc-attrib-bind-comptime-helper-aliases-value))
+      (compiler-driver-profile-intern-line
+        "attrib_arena_phase_token_region"
+        (tc-attrib-arena-phase-token-region-value))
+      (compiler-driver-profile-intern-line
+        "attrib_arena_phase_token_owner"
+        (tc-attrib-arena-phase-token-owner-value))
+      (compiler-driver-profile-intern-line
+        "attrib_source_type_name_lookup_key"
+        (tc-attrib-source-type-name-lookup-key-value))
+      (compiler-driver-profile-intern-line
+        "attrib_borrow_check_body"
+        (tc-attrib-borrow-check-body-value))
+      (compiler-driver-profile-intern-line
+        "attrib_env_binding_matches_lifetime"
+        (tc-attrib-env-binding-matches-lifetime-value))
+      (compiler-driver-profile-intern-line
+        "read_symbol_id_hit"
+        (read-profile-symbol-id-hit-value))
+      (compiler-driver-profile-intern-line
+        "read_symbol_id_fallback"
+        (read-profile-symbol-id-fallback-value))
+      (compiler-driver-profile-intern-line
+        "read_stable_id_fallback"
+        (read-profile-stable-id-fallback-value))
+      (compiler-driver-profile-intern-hot-names))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

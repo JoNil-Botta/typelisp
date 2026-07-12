@@ -7,6 +7,7 @@
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
+(import compiler_intern as ci)
 (import sym_i64_env)
 (import (hashmap i64 i64) as lower_i64_i64_map)
 
@@ -421,11 +422,16 @@
   [name : String]) : AstProgram
   (let
     [elem : i64 (ast-node-pool-context-type-push pools (AstType.I64))]
+    [field-name-id : i64 (ci.intern-generated-name "items")]
+    [name-id : i64 (ci.intern-generated-name name)]
     [field : AstFieldDef
-      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
+      (ast-field-def-id
+        field-name-id
+        (AstType.Array elem 2)
+        (AstFieldCleanup.No))]
     [decl : AstDecl
-      (ast-decl-def-struct
-        name
+      (ast-decl-def-struct-id
+        name-id
         (AstStructRepr.Default)
         (AstStructCleanup.No)
         (ast-field-def-cons field (ast-field-def-list-new)))]
@@ -463,7 +469,7 @@
 
 (define (compiler-driver-state-smoke-clone-dest-program
   [pools : AstNodePoolContext]
-  [name : String]) : AstProgram
+  [name-id : i64]) : AstProgram
   (let
     [_source-decoy-type : i64
       (ast-node-pool-context-type-push pools (AstType.Bool))]
@@ -472,15 +478,20 @@
       (ast-node-pool-context-expr-push pools (AstExpr.Literal (ast-lit-int -1)))]
     [value : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Literal (ast-lit-int 91)))]
+    [field-name-id : i64 (ci.intern-generated-name "items")]
+    [value-name-id : i64 (ci.intern-generated-name "kept")]
     [field : AstFieldDef
-      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
+      (ast-field-def-id
+        field-name-id
+        (AstType.Array elem 2)
+        (AstFieldCleanup.No))]
     [struct-decl : AstDecl
-      (ast-decl-def-struct
-        name
+      (ast-decl-def-struct-id
+        name-id
         (AstStructRepr.Default)
         (AstStructCleanup.No)
         (ast-field-def-cons field (ast-field-def-list-new)))]
-    [value-decl : AstDecl (ast-decl-def "kept" AstMaybeType.No value)]
+    [value-decl : AstDecl (ast-decl-def-id value-name-id AstMaybeType.No value)]
     (ast-program
       (ast-decl-cons struct-decl (ast-decl-cons value-decl (ast-decl-list-new))))))
 
@@ -582,10 +593,11 @@
           (compiler-driver-state-pool-context state-source)]
         [dest-pools : AstNodePoolContext
           (compiler-driver-state-pool-context state-dest)]
+        [clone-name-id : i64 (ci.intern-generated-name "CloneDest")]
         [program : AstProgram
           (compiler-driver-state-smoke-clone-dest-program
             source-pools
-            "CloneDest")]
+            clone-name-id)]
         [source-expr-len-before : i64
           (ast-node-pool-context-expr-len source-pools)]
         [source-type-len-before : i64
@@ -597,7 +609,9 @@
         [dest-decoy-type : i64
           (ast-node-pool-context-type-push dest-pools (AstType.Bool))]
         [roots : CloneNameList
-          (CloneNameList.Cons "CloneDest" (box (CloneNameList.Nil)))]
+          (CloneNameList.ConsId
+            (clone-name-key-id clone-name-id)
+            (box (CloneNameList.Nil)))]
         [compacted : AstProgramCompaction
           (clone-augment-program-with-roots-from-pools
             source-pools
@@ -1284,7 +1298,13 @@
                   [(ResultCompilerRegistries.Ok registries)
                     (let
                       [ctx : TcContext
-                        (TcContext program symbols registries "" pools-a)]
+                        (TcContext
+                          program
+                          symbols
+                          registries
+                          ""
+                          (intern "")
+                          pools-a)]
                       [_ : unit (ast-node-pool-context-install! pools-b)]
                       [active-len : i64 (ty-node-pool-len)]
                       [name-id : i64 (intern "xs")]
@@ -1391,7 +1411,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -1503,7 +1529,30 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
+                  [lower-state : LowerState
+                    (LowerState.State
+                      0
+                      0
+                      0
+                      "entry"
+                      (compiler-ir-instr-builder-new)
+                      (compiler-ir-block-builder-new)
+                      (compiler-ir-function-builder-new)
+                      "loop"
+                      (box (compiler-source-spans-empty))
+                      (lower-empty-global-name-cache)
+                      (lower-type-cache-from-env (TcTypeEnv.Nil))
+                      (CompilerLowerMode.Scalar)
+                      (lower_i64_i64_map.with-capacity 8)
+                      0
+                      0)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [rvo-has-return : bool
@@ -1661,7 +1710,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [env : sym_i64_env.SymI64Env
                     (sym_i64_env.sym-i64-bind-id
                       (sym_i64_env.sym-i64-empty)
@@ -1750,7 +1805,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -1776,7 +1837,7 @@
                       lower-state
                       (sym_i64_env.sym-i64-empty)
                       (TcTypeEnv.Nil)
-                      LowerStringSet.Nil
+                      LowerIdSet.Nil
                       "i"
                       0
                       (CompilerIrValue.I64 255)
@@ -1834,7 +1895,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [rewritten : ResultLowerAstExpr
@@ -1893,6 +1960,7 @@
       (let
         [cursor : AstDeclList (box-get decls-box)]
         [done : bool false]
+        [root-name-id : i64 -1]
         (begin
           (tc-clone-root-collection-use! program)
           (while (not done)
@@ -1901,6 +1969,7 @@
               [(AstDeclListStep.Cons decl rest)
                 (begin
                   (match (ast-decl-unwrapped decl)
+                    [(AstDecl.DefStruct name _ _ _) (set! root-name-id name)]
                     [(AstDecl.DefFn name _ _ _ _)
                       (if (string.eq (intern-str name) "use-clone")
                         (begin
@@ -1909,9 +1978,7 @@
                         unit)]
                     [_ unit])
                   (set! cursor rest))]))
-          (tc-clone-root-collection-note!
-            ctx
-            (AstType.Struct (intern "CloneRootA")))
+          (tc-clone-root-collection-note! ctx (AstType.Struct root-name-id))
           (tc-clone-root-collection-finish! ctx)))]))
 
 (define (compiler-driver-state-smoke-lower-reachability-source-a) : String
@@ -2025,7 +2092,13 @@
                       [(ResultCompilerRegistries.Ok registries)
                         (let
                           [ctx : TcContext
-                            (TcContext program-a symbols registries "" pools-a)]
+                            (TcContext
+                              program-a
+                              symbols
+                              registries
+                              ""
+                              (intern "")
+                              pools-a)]
                           [names : LowerNameEnv
                             (match program-a
                               [(AstProgram.Program decls-box)
@@ -2053,9 +2126,11 @@
                                     (ast-node-pool-context-expr-len pools-b))
                                   (= active-after active-before)
                                   (match roots
-                                    [(CloneNameList.Cons name rest)
+                                    [(CloneNameList.ConsId name-id rest)
                                       (and
-                                        (string.eq name "CloneRootA")
+                                        (string.eq
+                                          (clone-name-key-string name-id)
+                                          "CloneRootA")
                                         (match (box-get rest)
                                           [(CloneNameList.Nil) true]
                                           [_ false]))]
@@ -2097,10 +2172,14 @@
               [pools-b : AstNodePoolContext
                 (compiler-driver-state-pool-context state-b)]
               (begin
+                (compiler-driver-state-capture-active-interns! state-a)
+                (compiler-driver-state-capture-active-builtins! state-a)
                 (compiler-driver-state-reset-file-state! state-b)
                 (ast-node-pool-context-type-push pools-b (AstType.Bool))
                 (ast-node-pool-context-type-push pools-b (AstType.Char))
                 (ast-node-pool-context-install! pools-b)
+                (compiler-driver-state-install-interns! state-a)
+                (compiler-driver-state-install-builtins! state-a)
                 (let
                   [active-type-len-before : i64 (ty-node-pool-len)]
                   [emitted : ResultCompilerDriver

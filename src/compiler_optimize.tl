@@ -24,6 +24,8 @@
 (import stdlib.array)
 (import stdlib.vector)
 (import "compiler_ir_types.tl")
+(import "compiler_clone.tl")
+(import compiler_intern as ci)
 (import "compiler_float.tl")
 (import stdlib.arena)
 (import stdlib.hash)
@@ -5259,10 +5261,11 @@
 
 (define (opt-extern-eq [a : CompilerIrExtern] [b : CompilerIrExtern]) : bool
   (match a
-    [(CompilerIrExtern.Extern aname aty aabi asymbol alinks aprovided)
+    [(CompilerIrExtern.Extern aid aname aty aabi asymbol alinks aprovided)
       (match b
-        [(CompilerIrExtern.Extern bname bty babi bsymbol blinks bprovided)
+        [(CompilerIrExtern.Extern bid bname bty babi bsymbol blinks bprovided)
           (and
+            (= aid bid)
             (string.eq aname bname)
             (opt-type-eq aty bty)
             (ast-extern-abi-eq? aabi babi)
@@ -27897,7 +27900,7 @@
                         (opt-dce-block-list-array-escape used blocks)]
                       [escaped : CompilerIrFunction
                         (CompilerIrFunction.Function
-                          (clone name)
+                          (compiler-ir-clone-logical-name name)
                           (compiler-ir-clone-param-list params)
                           (compiler-ir-clone-type ret-ty)
                           frame
@@ -28116,8 +28119,14 @@
   (Nil)
   (Cons i64 (Box OptSlotList)))
 
+(defstruct OptFunctionNameIndex
+  (ids opt_i64_i64_map.Map)
+  ;; Transitional exact-spelling fallback for legacy IR producers whose
+  ;; logical linker name has not acquired an ID yet.
+  (fallback opt_string_i64_map.Map))
+
 (defstruct OptFunctionIndex
-  (ids opt_string_i64_map.Map)
+  (names OptFunctionNameIndex)
   (values (Array CompilerIrFunction))
   (leaf-starts (Array i64)))
 
@@ -28126,8 +28135,10 @@
   (edges (Array OptSlotList)))
 
 (defstruct OptInlineCensus
-  (refcount opt_string_i64_map.Map)
-  (addrtaken opt_string_i64_map.Map))
+  ;; Both maps are keyed by OptFunctionIndex dense slots. IR spellings are
+  ;; resolved once at the index boundary and never retained as census keys.
+  (refcount opt_i64_i64_map.Map)
+  (addrtaken opt_i64_i64_map.Map))
 
 (defstruct OptSccResult
   (scc-of (Array i64))
@@ -28140,7 +28151,7 @@
   (State i64 i64))
 
 ;; Reachability working set keyed on each function's dense index slot (the value
-;; OptFunctionIndex.ids already maps a name to). `reachable` dedups by slot
+;; OptFunctionIndex.names already maps a name to). `reachable` dedups by slot
 ;; (I64I64Map) and the worklist carries slots, so the per-edge dedup / membership
 ;; / pop-and-resolve are O(1) i64 compares instead of re-hashing and string_eq-ing
 ;; the name (string_eq was ~6% of an opt1 self-compile, dominated by these
@@ -28178,31 +28189,165 @@
       (+ 1 (opt-function-list-count (box-get rest)))]
     [(CompilerIrFunctionList.Array seq) (compiler-ir-function-seq-count seq)]))
 
+(define (opt-function-logical-name-source-start [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length name)]
+    [start : i64 0]
+    (begin
+      (while (< (+ i 1) n)
+        (begin
+          (if (and
+            (string.char-eq (string.string-ref name i) ':')
+            (string.char-eq (string.string-ref name (+ i 1)) ':'))
+            (set! start (+ i 2))
+            unit)
+          (set! i (+ i 1))))
+      start)))
+
+(define (opt-function-logical-name-last-slash [name : String] [start : i64]) : i64
+  (let
+    [i : i64 start]
+    [n : i64 (string.string-length name)]
+    [slash : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (string.char-eq (string.string-ref name i) '/')
+            (set! slash i)
+            unit)
+          (set! i (+ i 1))))
+      slash)))
+
+(define (opt-function-logical-name-prefix-at?
+  [name : String]
+  [prefix : String]
+  [start : i64]) : bool
+  (let
+    [i : i64 0]
+    [prefix-len : i64 (string.string-length prefix)]
+    [name-len : i64 (string.string-length name)]
+    [matches : bool (and (>= start 0) (<= (+ start prefix-len) name-len))]
+    (begin
+      (while (and matches (< i prefix-len))
+        (if (string.char-eq
+          (string.string-ref name (+ start i))
+          (string.string-ref prefix i))
+          (set! i (+ i 1))
+          (set! matches false)))
+      matches)))
+
+(define (opt-function-clone-name-id-or
+  [name : String]
+  [start : i64]
+  [slash : i64]
+  [fallback : i64]) : i64
+  (let
+    [base-start : i64
+      (if (>= slash start)
+        (+ slash 1)
+        start)]
+    [n : i64 (string.string-length name)]
+    (if (not (opt-function-logical-name-prefix-at? name "clone$" base-start))
+      fallback
+      (let
+        [acc-helper : bool
+          (opt-function-logical-name-prefix-at? name "$acc" (- n 4))]
+        [rev-helper : bool
+          (opt-function-logical-name-prefix-at? name "$rev" (- n 4))]
+        [type-start : i64 (+ base-start 6)]
+        [type-end : i64
+          (if (or acc-helper rev-helper)
+            (- n 4)
+            n)]
+        [module-id : i64
+          (if (>= slash start)
+            (match (ci.intern-lookup
+              (string.substring name start (- slash start)))
+              [(InternLookupFound id) id]
+              [(InternLookupMissing) -2])
+            (clone-root-module-id))]
+        (if (or (< module-id (clone-root-module-id)) (<= type-end type-start))
+          fallback
+          (match (ci.intern-lookup
+            (string.substring name type-start (- type-end type-start)))
+            [(InternLookupFound type-name-id)
+              (let
+                [type-key-id : i64
+                  (clone-name-key-id-in-module module-id type-name-id)]
+                (if acc-helper
+                  (clone-helper-acc-name-id-for-key-or type-key-id fallback)
+                  (if rev-helper
+                    (clone-helper-rev-name-id-for-key-or type-key-id fallback)
+                    (clone-helper-name-id-for-key-or type-key-id fallback))))]
+            [(InternLookupMissing) fallback]))))))
+
+(define (opt-function-logical-name-id [name : String]) : CompilerIrMaybeNameId
+  (match (compiler-ir-logical-name-id name)
+    [(CompilerIrMaybeNameId.Some name-id) (CompilerIrMaybeNameId.Some name-id)]
+    [(CompilerIrMaybeNameId.No)
+      (let
+        [start : i64 (opt-function-logical-name-source-start name)]
+        [slash : i64 (opt-function-logical-name-last-slash name start)]
+        [n : i64 (string.string-length name)]
+        [clone-id : i64 (opt-function-clone-name-id-or name start slash -1)]
+        (if (>= clone-id 0)
+          (CompilerIrMaybeNameId.Some clone-id)
+          (if (>= slash start)
+            (match (ci.intern-lookup
+              (string.substring name start (- slash start)))
+              [(InternLookupFound module-id)
+                (match (ci.intern-lookup
+                  (string.substring name (+ slash 1) (- n (+ slash 1))))
+                  [(InternLookupFound base-id)
+                    (CompilerIrMaybeNameId.Some
+                      (clone-name-pair-key-id module-id base-id))]
+                  [(InternLookupMissing) (CompilerIrMaybeNameId.No)])]
+              [(InternLookupMissing) (CompilerIrMaybeNameId.No)])
+            (match (ci.intern-lookup (string.substring name start (- n start)))
+              [(InternLookupFound source-id)
+                (CompilerIrMaybeNameId.Some source-id)]
+              [(InternLookupMissing) (CompilerIrMaybeNameId.No)]))))]))
+
+(define (opt-function-name-index-add
+  [names : OptFunctionNameIndex]
+  [name : String]
+  [slot : i64]) : OptFunctionNameIndex
+  (let
+    [ids : opt_i64_i64_map.Map (struct-get names ids)]
+    [fallback : opt_string_i64_map.Map (struct-get names fallback)]
+    (begin
+      (opt_string_i64_map.insert-ref! (&mut fallback) name slot)
+      (match (opt-function-logical-name-id name)
+        [(CompilerIrMaybeNameId.Some name-id)
+          (opt_i64_i64_map.insert-ref! (&mut ids) name-id slot)]
+        [(CompilerIrMaybeNameId.No) unit])
+      (OptFunctionNameIndex ids fallback))))
+
 (define (opt-function-index-fill
   [functions : CompilerIrFunctionList]
-  [ids : opt_string_i64_map.Map]
+  [names : OptFunctionNameIndex]
   [values : (Array CompilerIrFunction)]
   [leaf-starts : (Array i64)]
-  [index : i64]) : opt_string_i64_map.Map
+  [index : i64]) : OptFunctionNameIndex
   (match functions
-    [(CompilerIrFunctionList.Nil) ids]
+    [(CompilerIrFunctionList.Nil) names]
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
             (array-set! values index func)
             (array-set! leaf-starts index (opt-symbol-leaf-start name))
-            (opt_string_i64_map.insert-ref! (&mut ids) name index)
             (opt-function-index-fill
               (box-get rest)
-              ids
+              (opt-function-name-index-add names name index)
               values
               leaf-starts
               (+ index 1)))])]
     [(CompilerIrFunctionList.Array seq)
       (opt-function-index-fill
         (compiler-ir-function-seq-to-list seq)
-        ids
+        names
         values
         leaf-starts
         index)]))
@@ -28213,30 +28358,50 @@
     [values : (Array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
     [leaf-starts : (Array i64) (array.make-array i64 count)]
-    [ids : opt_string_i64_map.Map
+    [names : OptFunctionNameIndex
       (opt-function-index-fill
         functions
-        (opt_string_i64_map.with-capacity (opt-function-index-capacity count))
+        (OptFunctionNameIndex
+          (opt_i64_i64_map.with-capacity (opt-function-index-capacity count))
+          (opt_string_i64_map.with-capacity (opt-function-index-capacity count)))
         values
         leaf-starts
         0)]
-    (OptFunctionIndex ids values leaf-starts)))
-
-(define (opt-function-index-defines? [index : OptFunctionIndex] [name : String]) : bool
-  (opt_string_i64_map.contains? (& (struct-get index ids)) name))
+    (OptFunctionIndex names values leaf-starts)))
 
 (define (opt-function-index-count [index : OptFunctionIndex]) : i64
   (array-length (struct-get index values)))
 
-(define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : option_i64.Option
-  (if (opt-function-index-defines? index name)
-    (match (opt_string_i64_map.get (& (struct-get index ids)) name)
-      [(opt_string_i64_map.LookupFound slot) (option_i64.Some slot)]
-      [(opt_string_i64_map.LookupMissing) (option_i64.None)])
-    (option_i64.None)))
+(define (opt-function-name-index-fallback-slot
+  [names : OptFunctionNameIndex]
+  [name : String]) : option_i64.Option
+  (match (opt_string_i64_map.get (& (struct-get names fallback)) name)
+    [(opt_string_i64_map.LookupFound slot) (option_i64.Some slot)]
+    [(opt_string_i64_map.LookupMissing) (option_i64.None)]))
 
-;; Resolve a function by its dense index slot (the value held in `ids` and in the
-;; reachability worklist). Slots only ever come from a successful `ids` lookup, so
+(define (opt-function-index-slot-id [index : OptFunctionIndex] [name-id : i64]) : option_i64.Option
+  (if (< name-id 0)
+    (option_i64.None)
+    (match (opt_i64_i64_map.get
+      (& (struct-get (struct-get index names) ids))
+      name-id)
+      [(opt_i64_i64_map.LookupFound slot) (option_i64.Some slot)]
+      [(opt_i64_i64_map.LookupMissing) (option_i64.None)])))
+
+(define (opt-function-index-slot [index : OptFunctionIndex] [name : String]) : option_i64.Option
+  (let
+    [names : OptFunctionNameIndex (struct-get index names)]
+    (match (opt-function-logical-name-id name)
+      [(CompilerIrMaybeNameId.Some name-id)
+        (match (opt_i64_i64_map.get (& (struct-get names ids)) name-id)
+          [(opt_i64_i64_map.LookupFound slot) (option_i64.Some slot)]
+          [(opt_i64_i64_map.LookupMissing)
+            (opt-function-name-index-fallback-slot names name)])]
+      [(CompilerIrMaybeNameId.No)
+        (opt-function-name-index-fallback-slot names name)])))
+
+;; Resolve a function by its dense index slot (the value held in `names` and in
+;; the reachability worklist). Slots only come from a successful name lookup, so
 ;; they are always in range.
 (define (opt-function-index-at-slot [index : OptFunctionIndex] [slot : i64]) : CompilerIrFunction
   (array-ref (struct-get index values) slot))
@@ -28375,38 +28540,38 @@
 (define (opt-inline-census-capacity [index : OptFunctionIndex]) : i64
   (opt-function-index-capacity (opt-function-index-count index)))
 
-(define (opt-inline-census-bump-map
-  [map : opt_string_i64_map.Map]
-  [name : String]) : opt_string_i64_map.Map
+(define (opt-inline-census-bump-map [map : opt_i64_i64_map.Map] [slot : i64]) : opt_i64_i64_map.Map
   (begin
-    (match (opt_string_i64_map.get (& map) name)
-      [(opt_string_i64_map.LookupFound count)
-        (opt_string_i64_map.insert-ref! (&mut map) name (+ count 1))]
-      [(opt_string_i64_map.LookupMissing)
-        (opt_string_i64_map.insert-ref! (&mut map) name 1)])
+    (match (opt_i64_i64_map.get (& map) slot)
+      [(opt_i64_i64_map.LookupFound count)
+        (opt_i64_i64_map.insert-ref! (&mut map) slot (+ count 1))]
+      [(opt_i64_i64_map.LookupMissing)
+        (opt_i64_i64_map.insert-ref! (&mut map) slot 1)])
     map))
 
 (define (opt-inline-census-add-ref
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [name : String]) : OptInlineCensus
-  (if (opt-function-index-defines? index name)
-    (OptInlineCensus
-      (opt-inline-census-bump-map (struct-get census refcount) name)
-      (struct-get census addrtaken))
-    census))
+  (match (opt-function-index-slot index name)
+    [(option_i64.Some slot)
+      (OptInlineCensus
+        (opt-inline-census-bump-map (struct-get census refcount) slot)
+        (struct-get census addrtaken))]
+    [(option_i64.None) census]))
 
 (define (opt-inline-census-add-address
   [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [name : String]) : OptInlineCensus
-  (if (opt-function-index-defines? index name)
-    (let
-      [addrtaken : opt_string_i64_map.Map (struct-get census addrtaken)]
-      (begin
-        (opt_string_i64_map.insert-ref! (&mut addrtaken) name 1)
-        (OptInlineCensus (struct-get census refcount) addrtaken)))
-    census))
+  (match (opt-function-index-slot index name)
+    [(option_i64.Some slot)
+      (let
+        [addrtaken : opt_i64_i64_map.Map (struct-get census addrtaken)]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut addrtaken) slot 1)
+          (OptInlineCensus (struct-get census refcount) addrtaken)))]
+    [(option_i64.None) census]))
 
 (define (opt-inline-census-value
   [index : OptFunctionIndex]
@@ -28796,27 +28961,38 @@
     (opt-inline-census-functions
       index
       (OptInlineCensus
-        (opt_string_i64_map.with-capacity capacity)
-        (opt_string_i64_map.with-capacity capacity))
+        (opt_i64_i64_map.with-capacity capacity)
+        (opt_i64_i64_map.with-capacity capacity))
       functions)))
 
-(define (opt-inline-census-refcount [census : OptInlineCensus] [name : String]) : i64
-  (match (opt_string_i64_map.get (& (struct-get census refcount)) name)
-    [(opt_string_i64_map.LookupFound count) count]
-    [(opt_string_i64_map.LookupMissing) 0]))
+(define (opt-inline-census-refcount
+  [index : OptFunctionIndex]
+  [census : OptInlineCensus]
+  [name : String]) : i64
+  (match (opt-function-index-slot index name)
+    [(option_i64.Some slot)
+      (match (opt_i64_i64_map.get (& (struct-get census refcount)) slot)
+        [(opt_i64_i64_map.LookupFound count) count]
+        [(opt_i64_i64_map.LookupMissing) 0])]
+    [(option_i64.None) 0]))
 
 (define (opt-inline-census-address-taken?
+  [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [name : String]) : bool
-  (opt_string_i64_map.contains? (& (struct-get census addrtaken)) name))
+  (match (opt-function-index-slot index name)
+    [(option_i64.Some slot)
+      (opt_i64_i64_map.contains? (& (struct-get census addrtaken)) slot)]
+    [(option_i64.None) false]))
 
 (define (opt-inline-census-absorbable?
+  [index : OptFunctionIndex]
   [census : OptInlineCensus]
   [caller-name : String]
   [callee-name : String]) : bool
   (and
-    (= (opt-inline-census-refcount census callee-name) 1)
-    (not (opt-inline-census-address-taken? census callee-name))
+    (= (opt-inline-census-refcount index census callee-name) 1)
+    (not (opt-inline-census-address-taken? index census callee-name))
     (not (string.eq callee-name "main"))
     (not (string.eq caller-name callee-name))))
 
@@ -29828,6 +30004,7 @@
       (opt-cfg-index-block-count index))))
 
 (define (opt-inline-tiny-predicate-callee?
+  [index : OptFunctionIndex]
   [callee : CompilerIrFunction]
   [census : OptInlineCensus]) : bool
   (match callee
@@ -29838,8 +30015,8 @@
         [instr-count : i64 (opt-inline-multiblock-cost-instrs cblocks)]
         (and
           (opt-inline-bool-type? ret)
-          (not (opt-inline-census-address-taken? census callee-name))
-          (> (opt-inline-census-refcount census callee-name) 1)
+          (not (opt-inline-census-address-taken? index census callee-name))
+          (> (opt-inline-census-refcount index census callee-name) 1)
           (opt-inline-params-sequential? cparams 0)
           (>= cvars np)
           (> block-count 1)
@@ -29944,10 +30121,12 @@
       (if (< id np)
         (opt-inline-clone-arg-at sa id)
         (CompilerIrValue.Var (opt-inline-rebase-var id np base)))]
-    [(CompilerIrValue.Global name) (CompilerIrValue.Global (clone name))]
+    [(CompilerIrValue.Global name)
+      (CompilerIrValue.Global (compiler-ir-clone-logical-name name))]
     [(CompilerIrValue.GlobalAddr name)
-      (CompilerIrValue.GlobalAddr (clone name))]
-    [(CompilerIrValue.Function name) (CompilerIrValue.Function (clone name))]
+      (CompilerIrValue.GlobalAddr (compiler-ir-clone-logical-name name))]
+    [(CompilerIrValue.Function name)
+      (CompilerIrValue.Function (compiler-ir-clone-logical-name name))]
     [(CompilerIrValue.I64 n) (CompilerIrValue.I64 n)]
     [(CompilerIrValue.F64 bits) (CompilerIrValue.F64 bits)]
     [(CompilerIrValue.Bool b) (CompilerIrValue.Bool b)]
@@ -30089,7 +30268,7 @@
     [(CompilerIrInstr.Call dst name a ty)
       (CompilerIrInstr.Call
         (opt-inline-rebase-var dst np base)
-        (clone name)
+        (compiler-ir-clone-logical-name name)
         (opt-inline-remap-args a sa np base)
         (clone ty))]
     [(CompilerIrInstr.CallIndirect dst callee a ty)
@@ -30113,7 +30292,7 @@
             slots)
           (ir-instr-call-cabi-store-result
             (opt-inline-remap-value call-base sa np base)
-            (clone name)
+            (compiler-ir-clone-logical-name name)
             (opt-inline-remap-args a sa np base)
             slots)])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
@@ -30643,6 +30822,7 @@
                     [const-args : i64 (opt-inline-args-const-count cargs)]
                     [absorbable? : bool
                       (opt-inline-census-absorbable?
+                        index
                         census
                         func-name
                         callee-name)]
@@ -30753,6 +30933,7 @@
                     [const-args : i64 (opt-inline-args-const-count cargs)]
                     [absorbable? : bool
                       (opt-inline-census-absorbable?
+                        index
                         census
                         func-name
                         callee-name)]
@@ -31017,11 +31198,15 @@
                       0))]
                 [const-args : i64 (opt-inline-args-const-count cargs)]
                 [absorbable : bool
-                  (opt-inline-census-absorbable? census func-name callee-name)]
+                  (opt-inline-census-absorbable?
+                    index
+                    census
+                    func-name
+                    callee-name)]
                 [tiny-predicate? : bool
                   (and
                     (not stage-args?)
-                    (opt-inline-tiny-predicate-callee? callee census))]
+                    (opt-inline-tiny-predicate-callee? index callee census))]
                 ;; Bounds-carrying multiblock callees stay ACYCLIC-only.
                 ;; Lifting this with rotate_ssa in place was measured and
                 ;; still regressed (array_sum +50%, crc32 +67%, vm +15%):
@@ -31603,11 +31788,15 @@
                       0))]
                 [const-args : i64 (opt-inline-args-const-count cargs)]
                 [absorbable : bool
-                  (opt-inline-census-absorbable? census func-name callee-name)]
+                  (opt-inline-census-absorbable?
+                    index
+                    census
+                    func-name
+                    callee-name)]
                 [tiny-predicate? : bool
                   (and
                     (not stage-args?)
-                    (opt-inline-tiny-predicate-callee? callee census))]
+                    (opt-inline-tiny-predicate-callee? index callee census))]
                 ;; Bounds-carrying multiblock callees stay ACYCLIC-only. See
                 ;; the non-span sequence builder above for the measured reason.
                 [bounds-ok? : bool
@@ -32433,10 +32622,9 @@
   [index : OptFunctionIndex]
   [state : OptReachState]
   [name : String]) : OptReachState
-  (match (opt_string_i64_map.get (& (struct-get index ids)) name)
-    [(opt_string_i64_map.LookupMissing) state]
-    [(opt_string_i64_map.LookupFound slot)
-      (opt-reach-add-function-slot state slot)]))
+  (match (opt-function-index-slot index name)
+    [(option_i64.None) state]
+    [(option_i64.Some slot) (opt-reach-add-function-slot state slot)]))
 
 (define (opt-reach-add-function-slot [state : OptReachState] [slot : i64]) : OptReachState
   (match state
@@ -32921,10 +33109,9 @@
   [index : OptFunctionIndex]
   [reachable : opt_i64_i64_map.Map]
   [name : String]) : bool
-  (match (opt_string_i64_map.get (& (struct-get index ids)) name)
-    [(opt_string_i64_map.LookupMissing) false]
-    [(opt_string_i64_map.LookupFound slot)
-      (opt_i64_i64_map.contains? (& reachable) slot)]))
+  (match (opt-function-index-slot index name)
+    [(option_i64.None) false]
+    [(option_i64.Some slot) (opt_i64_i64_map.contains? (& reachable) slot)]))
 
 (define (opt-filter-reachable-functions
   [index : OptFunctionIndex]
@@ -32990,12 +33177,15 @@
     [(CompilerIrExternList.Nil) state]
     [(CompilerIrExternList.Cons ext rest)
       (match ext
-        [(CompilerIrExtern.Extern name _ _ _ _ provided)
+        [(CompilerIrExtern.Extern name-id name _ _ _ _ provided)
           (opt-reach-add-provided-externs
             index
             (box-get rest)
             (if provided
-              (opt-reach-add-function index state name)
+              (match (opt-function-index-slot-id index name-id)
+                [(option_i64.Some slot)
+                  (opt-reach-add-function-slot state slot)]
+                [(option_i64.None) (opt-reach-add-function index state name)])
               state))])]
     [(CompilerIrExternList.Array seq)
       (opt-reach-add-provided-extern-seq index seq state 0)]))
@@ -33008,12 +33198,14 @@
   (if (>= seq-index (compiler-ir-extern-seq-count externs))
     state
     (match (compiler-ir-extern-seq-ref externs seq-index)
-      [(CompilerIrExtern.Extern name _ _ _ _ provided)
+      [(CompilerIrExtern.Extern name-id name _ _ _ _ provided)
         (opt-reach-add-provided-extern-seq
           index
           externs
           (if provided
-            (opt-reach-add-function index state name)
+            (match (opt-function-index-slot-id index name-id)
+              [(option_i64.Some slot) (opt-reach-add-function-slot state slot)]
+              [(option_i64.None) (opt-reach-add-function index state name)])
             state)
           (+ seq-index 1))])))
 
@@ -42499,9 +42691,9 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [census : OptInlineCensus (opt-inline-census-build index functions)]
     (and
-      (= (opt-inline-census-refcount census "inline_add") 1)
-      (not (opt-inline-census-address-taken? census "inline_add"))
-      (opt-inline-census-absorbable? census "main" "inline_add"))))
+      (= (opt-inline-census-refcount index census "inline_add") 1)
+      (not (opt-inline-census-address-taken? index census "inline_add"))
+      (opt-inline-census-absorbable? index census "main" "inline_add"))))
 
 (define (compiler-optimize-inline-census-address-ok?) : bool
   (let
@@ -42509,8 +42701,8 @@
     [index : OptFunctionIndex (opt-function-index-build functions)]
     [census : OptInlineCensus (opt-inline-census-build index functions)]
     (and
-      (opt-inline-census-address-taken? census "inline_add")
-      (not (opt-inline-census-absorbable? census "main" "inline_add")))))
+      (opt-inline-census-address-taken? index census "inline_add")
+      (not (opt-inline-census-absorbable? index census "main" "inline_add")))))
 
 (define (compiler-optimize-inline-cost-model-ok?) : bool
   (and

@@ -463,6 +463,7 @@
   ;; source names and link symbols to this same slot.
   (extern-call-infos (Array i64))
   (extern-references backend_i64_i64_map.Map)
+  (extern-link-references backend_string_i64_map.Map)
   (extern-link-symbols (Array String))
   (extern-provided (Array bool))
   ;; Aggregate type name -> machine-word count, for every register-group
@@ -553,8 +554,9 @@
 (define (compiler-backend-current-fn-win64?) : bool
   compiler-backend-current-fn-win64)
 
-;; Per-emission cache for interned user-symbol mangling. The generation guard
-;; keeps direct helper calls safe across intern-reset! reuse of numeric ids.
+;; Per-emission cache for interned user-symbol mangling. Compat states may have
+;; the same generation while assigning the same numeric id to different names,
+;; so both the generation and pool identity guard cached values.
 (define compiler-backend-user-symbol-cache-values : (Array String)
   (array.make-array String 262144))
 (define compiler-backend-user-symbol-cache-epochs : (Array i64)
@@ -565,6 +567,8 @@
   0)
 (define compiler-backend-user-symbol-cache-generation : i64
   -1)
+(define compiler-backend-user-symbol-cache-pool : i64
+  0)
 
 (define (compiler-backend-user-symbol-cache-reset!) : unit
   (begin
@@ -572,10 +576,13 @@
     (set!
       compiler-backend-user-symbol-cache-epoch
       (+ compiler-backend-user-symbol-cache-epoch 1))
-    (set! compiler-backend-user-symbol-cache-generation (ci.intern-generation))))
+    (set! compiler-backend-user-symbol-cache-generation (ci.intern-generation))
+    (set! compiler-backend-user-symbol-cache-pool (ci.intern-pool-data-addr))))
 
 (define (compiler-backend-user-symbol-cache-ensure-current!) : unit
-  (if (= compiler-backend-user-symbol-cache-generation (ci.intern-generation))
+  (if (and
+    (= compiler-backend-user-symbol-cache-generation (ci.intern-generation))
+    (= compiler-backend-user-symbol-cache-pool (ci.intern-pool-data-addr)))
     unit
     (compiler-backend-user-symbol-cache-reset!)))
 
@@ -7660,6 +7667,9 @@
       (compiler-backend-user-symbol-uncached (ci.intern-str name-id)))))
 
 (define (compiler-backend-user-symbol [name : String]) : String
+  ;; Generated ids can intentionally reuse a display spelling, so a String-only
+  ;; boundary cannot choose between those identities. Cache source identities;
+  ;; render generated display strings directly.
   (match (ci.intern-lookup name)
     [(InternLookupFound name-id) (compiler-backend-user-symbol-id name-id)]
     [(InternLookupMissing) (compiler-backend-user-symbol-uncached name)]))
@@ -7750,13 +7760,16 @@
         (compiler-backend-runtime-prelude-string-helper-symbol name)]
       (if (not (string.eq runtime-symbol ""))
         runtime-symbol
-        (if (compiler-backend-compact-function-symbol? name)
-          (match (compiler-backend-index-function-slot index name)
-            [(backend_i64_i64_map.LookupFound slot)
-              (str_cat.str-cat "_tl_f" (string.int->string slot) "")]
-            [(backend_i64_i64_map.LookupMissing)
-              (compiler-backend-user-symbol name)])
-          (compiler-backend-user-symbol name))))))
+        (match (compiler-backend-index-function-slot index name)
+          [(backend_i64_i64_map.LookupFound slot)
+            (let
+              [indexed-name : String
+                (array-ref (struct-get index function-names) slot)]
+              (if (compiler-backend-compact-function-symbol? indexed-name)
+                (str_cat.str-cat "_tl_f" (string.int->string slot) "")
+                (compiler-backend-user-symbol indexed-name)))]
+          [(backend_i64_i64_map.LookupMissing)
+            (compiler-backend-user-symbol name)])))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]
@@ -20300,7 +20313,7 @@
     [(CompilerIrExternList.Nil) (ast-type-list-new)]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+        [(CompilerIrExtern.Extern _ extern-name ty _ _ _ _)
           (if (string.eq extern-name name)
             (match ty
               [(AstType.Func args _) (box-get args)]
@@ -20316,7 +20329,7 @@
   (if (>= index (compiler-ir-extern-seq-count externs))
     (ast-type-list-new)
     (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+      [(CompilerIrExtern.Extern _ extern-name ty _ _ _ _)
         (if (string.eq extern-name name)
           (match ty
             [(AstType.Func args _) (box-get args)]
@@ -20360,7 +20373,7 @@
     [(CompilerIrExternList.Nil) (CompilerBackendMaybeSignature.No)]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+        [(CompilerIrExtern.Extern _ extern-name ty _ _ _ _)
           (if (string.eq extern-name name)
             (match ty
               [(AstType.Func args ret-ty)
@@ -20379,7 +20392,7 @@
   (if (>= index (compiler-ir-extern-seq-count externs))
     (CompilerBackendMaybeSignature.No)
     (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
+      [(CompilerIrExtern.Extern _ extern-name ty _ _ _ _)
         (if (string.eq extern-name name)
           (match ty
             [(AstType.Func args ret-ty)
@@ -20404,22 +20417,136 @@
       (+ 1 (compiler-backend-extern-list-count (box-get rest)))]
     [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
-;; Intern the name (instead of intern-lookup) so EVERY indexed entry is
-;; reachable through the id map. The lookup-only form silently skipped names
-;; that were never interned (generated helper names), which forced the query
-;; side to keep an O(n) full-array string-scan fallback for every id-map miss.
-;; Negative queries -- every "is this callee a function?" probe for an extern
-;; or runtime helper -- paid that scan against all ~6.5k function names on
-;; each call site emitted (~16% of self-compile CPU in string.eq). With the
-;; build side interning, an id-map miss is a definitive "absent" and the scan
-;; is gone.
+(define (compiler-backend-logical-name-source-start [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length name)]
+    [start : i64 0]
+    (begin
+      (while (< (+ i 1) n)
+        (begin
+          (if (and
+            (string.char-eq (string.string-ref name i) ':')
+            (string.char-eq (string.string-ref name (+ i 1)) ':'))
+            (set! start (+ i 2))
+            unit)
+          (set! i (+ i 1))))
+      start)))
+
+(define (compiler-backend-logical-name-last-slash [name : String] [start : i64]) : i64
+  (let
+    [i : i64 start]
+    [n : i64 (string.string-length name)]
+    [slash : i64 -1]
+    (begin
+      (while (< i n)
+        (begin
+          (if (string.char-eq (string.string-ref name i) '/')
+            (set! slash i)
+            unit)
+          (set! i (+ i 1))))
+      slash)))
+
+(define (compiler-backend-clone-ir-name-id-or
+  [name : String]
+  [start : i64]
+  [slash : i64]
+  [fallback : i64]) : i64
+  (let
+    [base-start : i64
+      (if (>= slash start)
+        (+ slash 1)
+        start)]
+    [n : i64 (string.string-length name)]
+    (if (not (compiler-backend-string-prefix-at? name "clone$" base-start))
+      fallback
+      (let
+        [acc-helper : bool
+          (compiler-backend-string-prefix-at? name "$acc" (- n 4))]
+        [rev-helper : bool
+          (compiler-backend-string-prefix-at? name "$rev" (- n 4))]
+        [type-start : i64 (+ base-start 6)]
+        [type-end : i64
+          (if (or acc-helper rev-helper)
+            (- n 4)
+            n)]
+        [module-id : i64
+          (if (>= slash start)
+            (match (ci.intern-lookup
+              (string.substring name start (- slash start)))
+              [(InternLookupFound id) id]
+              [(InternLookupMissing) -2])
+            (clone-root-module-id))]
+        (if (or (< module-id (clone-root-module-id)) (<= type-end type-start))
+          fallback
+          (match (ci.intern-lookup
+            (string.substring name type-start (- type-end type-start)))
+            [(InternLookupFound type-name-id)
+              (let
+                [type-key-id : i64
+                  (clone-name-key-id-in-module module-id type-name-id)]
+                (if acc-helper
+                  (clone-helper-acc-name-id-for-key-or type-key-id fallback)
+                  (if rev-helper
+                    (clone-helper-rev-name-id-for-key-or type-key-id fallback)
+                    (clone-helper-name-id-for-key-or type-key-id fallback))))]
+            [(InternLookupMissing) fallback]))))))
+
+;; Logical function names are display strings (`path::module/name`). Recover
+;; their already-parsed source identity from the module/base components; never
+;; add the joined display spelling to the interner.
+(define (compiler-backend-ir-name-id-or [name : String] [fallback : i64]) : i64
+  (let
+    [name-id : i64 (ci.intern-lookup-preserving-generated-id-or name -1)]
+    (if (>= name-id 0)
+      (compiler-symbol-name-id-key name-id)
+      (let
+        [start : i64 (compiler-backend-logical-name-source-start name)]
+        [slash : i64 (compiler-backend-logical-name-last-slash name start)]
+        [n : i64 (string.string-length name)]
+        [clone-id : i64
+          (compiler-backend-clone-ir-name-id-or name start slash fallback)]
+        (if (>= clone-id 0)
+          clone-id
+          (if (>= slash start)
+            (match (ci.intern-lookup
+              (string.substring name start (- slash start)))
+              [(InternLookupFound module-id)
+                (match (ci.intern-lookup
+                  (string.substring name (+ slash 1) (- n (+ slash 1))))
+                  [(InternLookupFound base-id)
+                    (compiler-symbol-module-key-id-by-id module-id base-id)]
+                  [(InternLookupMissing) fallback])]
+              [(InternLookupMissing) fallback])
+            (match (ci.intern-lookup (string.substring name start (- n start)))
+              [(InternLookupFound source-id)
+                (compiler-symbol-name-id-key source-id)]
+              [(InternLookupMissing) fallback])))))))
+
+;; Backend indexing is post-parse: every IR name must already have an identity.
+;; A missing id is an upstream invariant violation, not permission to intern.
 (define (compiler-backend-program-index-bind-name
   [ids : backend_i64_i64_map.Map]
   [name : String]
   [index : i64]) : backend_i64_i64_map.Map
-  (begin
-    (backend_i64_i64_map.insert-ref! (&mut ids) (ci.intern name) index)
-    ids))
+  (let
+    [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
+    (if (< name-id 0)
+      (panic
+        (string.append "backend: IR name has no pre-existing symbol id: " name))
+      (begin
+        (backend_i64_i64_map.insert-ref! (&mut ids) name-id index)
+        ids))))
+
+(define (compiler-backend-program-index-bind-extern-id
+  [ids : backend_i64_i64_map.Map]
+  [name-id : i64]
+  [index : i64]) : backend_i64_i64_map.Map
+  (if (< name-id 0)
+    (panic "backend: extern has no pre-existing symbol id")
+    (begin
+      (backend_i64_i64_map.insert-ref! (&mut ids) name-id index)
+      ids)))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
@@ -20530,7 +20657,7 @@
     [(CompilerIrExternList.Nil) signature-ids]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name ty abi _ _ _)
+        [(CompilerIrExtern.Extern extern-name-id extern-name ty abi _ _ _)
           (begin
             (array-set! names index extern-name)
             (array-set!
@@ -20543,9 +20670,9 @@
               (compiler-backend-program-index-extern-call-info ty abi))
             (compiler-backend-program-index-extern-signatures-into
               (box-get rest)
-              (compiler-backend-program-index-bind-name
+              (compiler-backend-program-index-bind-extern-id
                 signature-ids
-                extern-name
+                extern-name-id
                 index)
               names
               signatures
@@ -20560,42 +20687,41 @@
         call-infos
         index)]))
 
-;; First pass: fill the side arrays and bind the LINK SYMBOLS only.
-(define (compiler-backend-program-index-extern-references-into
+;; Link symbols are ABI spellings, not source identities. Keep their index
+;; exact-String keyed while logical extern names remain id-keyed.
+(define (compiler-backend-program-index-extern-links-into
   [externs : CompilerIrExternList]
-  [reference-ids : backend_i64_i64_map.Map]
+  [link-references : backend_string_i64_map.Map]
   [link-symbols : (Array String)]
   [provideds : (Array bool)]
-  [index : i64]) : backend_i64_i64_map.Map
+  [index : i64]) : backend_string_i64_map.Map
   (match externs
-    [(CompilerIrExternList.Nil) reference-ids]
+    [(CompilerIrExternList.Nil) link-references]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern _ _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ _ _ _ link-symbol _ provided)
           (begin
             (array-set! link-symbols index link-symbol)
             (array-set! provideds index provided)
-            (compiler-backend-program-index-extern-references-into
+            (backend_string_i64_map.insert-ref!
+              (&mut link-references)
+              link-symbol
+              index)
+            (compiler-backend-program-index-extern-links-into
               (box-get rest)
-              (compiler-backend-program-index-bind-name
-                reference-ids
-                link-symbol
-                index)
+              link-references
               link-symbols
               provideds
               (+ index 1)))])]
     [(CompilerIrExternList.Array seq)
-      (compiler-backend-program-index-extern-references-into
+      (compiler-backend-program-index-extern-links-into
         (compiler-ir-extern-seq-to-list seq)
-        reference-ids
+        link-references
         link-symbols
         provideds
         index)]))
 
-;; Second pass: bind the extern NAMES after every link symbol, so a name
-;; binding always overwrites a link-symbol binding for the same spelling.
-;; This preserves the retired scan-fallback's priority (extern names were
-;; searched before link symbols) in the single reference map.
+;; Logical extern names carry parser/generated identities.
 (define (compiler-backend-program-index-extern-reference-names-into
   [externs : CompilerIrExternList]
   [reference-ids : backend_i64_i64_map.Map]
@@ -20604,12 +20730,12 @@
     [(CompilerIrExternList.Nil) reference-ids]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name _ _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name-id _ _ _ _ _ _)
           (compiler-backend-program-index-extern-reference-names-into
             (box-get rest)
-            (compiler-backend-program-index-bind-name
+            (compiler-backend-program-index-bind-extern-id
               reference-ids
-              extern-name
+              extern-name-id
               index)
             (+ index 1))])]
     [(CompilerIrExternList.Array seq)
@@ -20622,10 +20748,10 @@
 ;; type-name -> word-count map). Empty for non-aggregate types.
 (define (compiler-backend-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstType.Struct name) (ci.intern-str name)]
-    [(AstType.StructArgs name _) (ci.intern-str name)]
-    [(AstType.Enum name) (ci.intern-str name)]
-    [(AstType.EnumArgs name _) (ci.intern-str name)]
+    [(AstType.Struct name) (tc-nominal-name-id-display name)]
+    [(AstType.StructArgs name _) (tc-nominal-name-id-display name)]
+    [(AstType.Enum name) (tc-nominal-name-id-display name)]
+    [(AstType.EnumArgs name _) (tc-nominal-name-id-display name)]
     [(AstType.Region _ inner)
       (compiler-backend-aggregate-type-name
         (ast-node-pool-reader-type-get inner))]
@@ -20900,12 +21026,14 @@
     [extern-reference-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-reference-names-into
         externs
-        (compiler-backend-program-index-extern-references-into
-          externs
-          (backend_i64_i64_map.with-capacity (+ (* extern-count 4) 1))
-          extern-link-symbols
-          extern-provided
-          0)
+        (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
+        0)]
+    [extern-link-references : backend_string_i64_map.Map
+      (compiler-backend-program-index-extern-links-into
+        externs
+        (backend_string_i64_map.with-capacity (+ (* extern-count 2) 1))
+        extern-link-symbols
+        extern-provided
         0)]
     [group-word-counts : backend_string_i64_map.Map
       (compiler-backend-collect-group-counts-functions
@@ -20924,6 +21052,7 @@
       extern-signatures
       extern-call-infos
       extern-reference-ids
+      extern-link-references
       extern-link-symbols
       extern-provided
       group-word-counts
@@ -21102,34 +21231,48 @@
         (compiler-backend-group-word-sse-bit word-index))
       0)))
 
-;; Every indexed name is interned at index-build time (see
-;; compiler-backend-program-index-bind-name), so a name the intern table has
-;; never seen cannot be in the index, and an id-map miss is definitive. The
-;; extern-reference map binds both the extern name and its link symbol, so one
-;; map probe covers both spellings.
+;; Logical IR names have ids before index construction. Extern link symbols are
+;; probed separately as exact ABI Strings.
 (define (compiler-backend-index-function-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : backend_i64_i64_map.Lookup
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id)
-      (backend_i64_i64_map.get (& (struct-get index functions)) name-id)]
-    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+  (let
+    [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
+    (if (< name-id 0)
+      (backend_i64_i64_map.LookupMissing)
+      (backend_i64_i64_map.get (& (struct-get index functions)) name-id))))
 
 (define (compiler-backend-index-extern-signature-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : backend_i64_i64_map.Lookup
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id)
-      (backend_i64_i64_map.get (& (struct-get index extern-signatures)) name-id)]
-    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+  (let
+    [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
+    (if (< name-id 0)
+      (backend_i64_i64_map.LookupMissing)
+      (backend_i64_i64_map.get (& (struct-get index extern-signatures)) name-id))))
 
 (define (compiler-backend-index-extern-reference-slot
   [index : CompilerBackendProgramIndex]
   [name : String]) : backend_i64_i64_map.Lookup
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id)
-      (backend_i64_i64_map.get (& (struct-get index extern-references)) name-id)]
-    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+  (let
+    [name-id : i64 (compiler-backend-ir-name-id-or name -1)]
+    [logical : backend_i64_i64_map.Lookup
+      (if (< name-id 0)
+        (backend_i64_i64_map.LookupMissing)
+        (backend_i64_i64_map.get
+          (& (struct-get index extern-references))
+          name-id))]
+    (match logical
+      [(backend_i64_i64_map.LookupFound slot)
+        (backend_i64_i64_map.LookupFound slot)]
+      [(backend_i64_i64_map.LookupMissing)
+        (match (backend_string_i64_map.get
+          (& (struct-get index extern-link-references))
+          name)
+          [(backend_string_i64_map.LookupFound slot)
+            (backend_i64_i64_map.LookupFound slot)]
+          [(backend_string_i64_map.LookupMissing)
+            (backend_i64_i64_map.LookupMissing)])])))
 
 (define (compiler-backend-index-extern-call-info
   [index : CompilerBackendProgramIndex]
@@ -21431,7 +21574,7 @@
     [(CompilerIrExternList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
     [(CompilerIrExternList.Cons ext rest)
       (match ext
-        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ name _ _ link-symbol _ provided)
           (if (compiler-backend-emits-extern-symbol?
             name
             link-symbol
@@ -43288,7 +43431,7 @@
     [(CompilerIrExternList.Nil) false]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
+        [(CompilerIrExtern.Extern _ extern-name _ _ link-symbol _ _)
           (if (string.eq extern-name name)
             true
             (if (string.eq link-symbol name)
@@ -43304,7 +43447,7 @@
   (if (>= index (compiler-ir-extern-seq-count externs))
     false
     (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
+      [(CompilerIrExtern.Extern _ extern-name _ _ link-symbol _ _)
         (if (string.eq extern-name name)
           true
           (if (string.eq link-symbol name)
@@ -43318,7 +43461,7 @@
     [(CompilerIrExternList.Nil) name]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
+        [(CompilerIrExtern.Extern _ extern-name _ _ link-symbol _ _)
           (if (string.eq extern-name name)
             link-symbol
             (compiler-backend-extern-list-link-symbol (box-get rest) name))])]
@@ -43332,7 +43475,7 @@
   (if (>= index (compiler-ir-extern-seq-count externs))
     name
     (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
+      [(CompilerIrExtern.Extern _ extern-name _ _ link-symbol _ _)
         (if (string.eq extern-name name)
           link-symbol
           (compiler-backend-extern-seq-link-symbol externs name (+ index 1)))])))
@@ -43589,7 +43732,7 @@
     [(CompilerIrExternList.Nil) index]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ extern-name _ _ link-symbol _ provided)
           (if provided
             (compiler-backend-runtime-index-externs index (box-get rest))
             (compiler-backend-runtime-index-externs
@@ -44408,7 +44551,7 @@
     [(CompilerIrExternList.Nil) buf]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ name _ _ link-symbol _ provided)
           (if (and
             (compiler-backend-emits-extern-symbol?
               name
@@ -49801,7 +49944,7 @@ tl_tlci_call_image_entry:
     [(CompilerIrExternList.Nil) parts]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ name _ _ link-symbol _ provided)
           (compiler-backend-object-externs
             (if (and
               (not
@@ -54954,13 +55097,25 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (compiler-ir-extern-cons
-    (compiler-ir-extern-default "tl_alloc" (AstType.I64))
+    (compiler-ir-extern-default-id
+      cbi.compiler-builtin-id-tl-alloc
+      "tl_alloc"
+      (AstType.I64))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_substring" (AstType.I64))
+      (compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-substring
+        "tl_substring"
+        (AstType.I64))
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_string_concat" (AstType.I64))
+        (compiler-ir-extern-default-id
+          cbi.compiler-builtin-id-tl-string-concat
+          "tl_string_concat"
+          (AstType.I64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_int_to_string" (AstType.String))
+          (compiler-ir-extern-default-id
+            cbi.compiler-builtin-id-tl-int-to-string
+            "tl_int_to_string"
+            (AstType.String))
           CompilerIrExternList.Nil)))))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
@@ -55223,7 +55378,10 @@ tl_tlci_call_image_entry:
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_str_view" (AstType.I64))
+      (compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-str-view
+        "tl_str_view"
+        (AstType.I64))
       CompilerIrExternList.Nil)))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
@@ -55483,7 +55641,10 @@ tl_tlci_call_image_entry:
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_substring" (AstType.I64))
+      (compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-substring
+        "tl_substring"
+        (AstType.I64))
       CompilerIrExternList.Nil)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool

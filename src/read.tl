@@ -34,6 +34,7 @@
 ;; co-located `lex.tl`.
 (import stdlib.io)
 (import stdlib.string)
+(import compiler_intern as ci)
 (import token)
 (import "lex.tl")
 
@@ -92,6 +93,119 @@
   (make-array SpannedSexpr 262144))
 (define sp-node-pool-count : i64
   0)
+
+;; Source symbols arrive here as Token.Sym ids, but the public Sexpr shape still
+;; carries String for compatibility with non-compiler readers and macro output.
+;; The intern state owns the pooled-String pointer index, so independent driver
+;; states cannot observe entries from each other's reader compatibility path.
+(cfg
+  compile-profile
+  (define read-profile-symbol-id-hit-count : i64
+    0))
+(cfg
+  compile-profile
+  (define read-profile-symbol-id-fallback-count : i64
+    0))
+(cfg
+  compile-profile
+  (define read-profile-stable-id-fallback-count : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (read-profile-reset!) : unit
+    (begin
+      (set! read-profile-symbol-id-hit-count 0)
+      (set! read-profile-symbol-id-fallback-count 0)
+      (set! read-profile-stable-id-fallback-count 0))))
+
+(cfg
+  compile-profile
+  (define (read-profile-symbol-id-hit-value) : i64
+    read-profile-symbol-id-hit-count))
+
+(cfg
+  compile-profile
+  (define (read-profile-symbol-id-fallback-value) : i64
+    read-profile-symbol-id-fallback-count))
+
+(cfg
+  compile-profile
+  (define (read-profile-stable-id-fallback-value) : i64
+    read-profile-stable-id-fallback-count))
+
+;: Recover a reader symbol's lexer id. Parser metadata may promote a string
+;: literal to a symbol; assign that spelling its sole id at this boundary.
+(define (read-symbol-id [text : String]) : i64
+  (let
+    [cached : i64 (ci.intern-reader-pointer-id-lookup text)]
+    (if (>= cached 0)
+      (begin
+        (cfg
+          compile-profile
+          (set!
+            read-profile-symbol-id-hit-count
+            (+ read-profile-symbol-id-hit-count 1)))
+        cached)
+      (begin
+        (cfg
+          compile-profile
+          (set!
+            read-profile-symbol-id-fallback-count
+            (+ read-profile-symbol-id-fallback-count 1)))
+        (match (ci.intern-lookup text)
+          [(InternLookupFound name-id)
+            (begin
+              (ci.intern-reader-pointer-id-record! text name-id)
+              name-id)]
+          [(InternLookupMissing)
+            (let
+              [name-id : i64
+                (ci.intern-source-slice
+                  text
+                  0
+                  (ci.intern-private-string-length text))]
+              (begin
+                (ci.intern-reader-pointer-id-record! text name-id)
+                name-id))])))))
+
+;: Intern a process-stable parser literal once and memoize its String object.
+(define (read-stable-symbol-id [text : String]) : i64
+  (let
+    [cached : i64 (ci.intern-reader-pointer-id-lookup text)]
+    (if (>= cached 0)
+      cached
+      (begin
+        (cfg
+          compile-profile
+          (set!
+            read-profile-stable-id-fallback-count
+            (+ read-profile-stable-id-fallback-count 1)))
+        (match (ci.intern-lookup text)
+          [(InternLookupFound id)
+            (begin
+              (ci.intern-reader-pointer-id-record! text id)
+              id)]
+          [(InternLookupMissing)
+            (let
+              [id : i64
+                (ci.intern-source-slice
+                  text
+                  0
+                  (ci.intern-private-string-length text))]
+              (begin
+                (ci.intern-reader-pointer-id-record! text id)
+                id))])))))
+
+(define (read-symbol-text-for-id [id : i64]) : String
+  (let
+    [text : String (ci.intern-str id)]
+    (begin
+      (ci.intern-reader-pointer-id-record! text id)
+      text)))
+
+(define (read-token-symbol-text [tok : token.Token]) : String
+  (read-symbol-text-for-id (token.sym-id tok)))
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
@@ -225,12 +339,15 @@
     (= t (token.tag-comma-at))))
 
 (define (read-prefix-symbol [t : i64]) : String
-  (cond
-    [(= t (token.tag-quote)) "quote"]
-    [(= t (token.tag-backtick)) "quasiquote"]
-    [(= t (token.tag-comma)) "unquote"]
-    [(= t (token.tag-comma-at)) "unquote-splicing"]
-    [else "quote"]))
+  (let
+    [id : i64
+      (cond
+        [(= t (token.tag-quote)) (read-stable-symbol-id "quote")]
+        [(= t (token.tag-backtick)) (read-stable-symbol-id "quasiquote")]
+        [(= t (token.tag-comma)) (read-stable-symbol-id "unquote")]
+        [(= t (token.tag-comma-at)) (read-stable-symbol-id "unquote-splicing")]
+        [else (read-stable-symbol-id "quote")])]
+    (read-symbol-text-for-id id)))
 
 (define (read-prefix-form [name : String] [form : Sexpr]) : Sexpr
   (sexpr-cons (Sexpr.Sym name) (sexpr-cons form Sexpr.Nil)))
@@ -330,7 +447,7 @@
             (ResultSpannedSexpr.Ok (SpannedSexpr.Float s span))))]
       [(= t (token.tag-sym))
         (let
-          [s : String (token.sym tok)]
+          [s : String (read-token-symbol-text tok)]
           (begin
             (advance cur)
             (ResultSpannedSexpr.Ok (SpannedSexpr.Sym s span))))]
@@ -452,7 +569,7 @@
             (ResultSexpr.Ok (Sexpr.Float s))))]
       [(= t (token.tag-sym))
         (let
-          [s : String (token.sym (peek-tok toks cur))]
+          [s : String (read-token-symbol-text (peek-tok toks cur))]
           (begin
             (advance cur)
             (ResultSexpr.Ok (Sexpr.Sym s))))]
@@ -575,6 +692,40 @@
   (match (read-spanned-result toks)
     [(ResultSpannedSexpr.Ok form) form]
     [(ResultSpannedSexpr.Err err) (io.panic (token.source-error-message err))]))
+
+(define (read-symbol-id-preservation-ok?) : bool
+  (match (lex-spanned-result "(alpha alpha)")
+    [(ResultSpannedTokens.Ok toks)
+      (let
+        [first-id : i64
+          (token.sym-id (token.spanned-token-token (array-ref toks 1)))]
+        [second-id : i64
+          (token.sym-id (token.spanned-token-token (array-ref toks 2)))]
+        [pool-len-before : i64 (ci.intern-pool-len)]
+        (begin
+          (sp-node-pool-reset!)
+          (match (read-spanned-result toks)
+            [(ResultSpannedSexpr.Ok form)
+              (and
+                (= pool-len-before (ci.intern-pool-len))
+                (= first-id second-id)
+                (match form
+                  [(SpannedSexpr.Cons first-node tail-node _)
+                    (match (sp-node-get first-node)
+                      [(SpannedSexpr.Sym first-text _)
+                        (match (sp-node-get tail-node)
+                          [(SpannedSexpr.Cons second-node _ _)
+                            (match (sp-node-get second-node)
+                              [(SpannedSexpr.Sym second-text _)
+                                (and
+                                  (= (read-symbol-id first-text) first-id)
+                                  (= (read-symbol-id second-text) second-id))]
+                              [_ false])]
+                          [_ false])]
+                      [_ false])]
+                  [_ false]))]
+            [(ResultSpannedSexpr.Err _) false])))]
+    [(ResultSpannedTokens.Err _) false]))
 
 (define (read [toks : (Array token.Token)]) : Sexpr
   (match (read-result toks)

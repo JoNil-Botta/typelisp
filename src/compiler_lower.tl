@@ -100,6 +100,10 @@
   (Nil)
   (Cons String (Box LowerStringSet)))
 
+(defenum LowerIdSet
+  (Nil)
+  (Cons i64 (Box LowerIdSet)))
+
 (defenum LowerSpmdInlineSubst
   (Nil)
   (Cons String AstExpr (Box LowerSpmdInlineSubst)))
@@ -132,6 +136,15 @@
   (lower_i64_i64_map.with-capacity 8))
 (define lower-reach-active-body-used-types : lower_i64_i64_map.Map
   (lower_i64_i64_map.with-capacity 8))
+
+;; Function-body paths and declaration paths come from the same immutable
+;; AstDeclPathList. Use that shared storage identity for the transient path set;
+;; source paths are not language symbols and must not be added to the interner.
+(define (lower-decl-path-storage-id [path : String]) : i64
+  (cast
+    (unsafe
+      (ptr->int (string-data (& path))))
+    : i64))
 
 (define (lower-reach-scratch-globals-reset!) : unit
   (begin
@@ -259,7 +272,7 @@
   (count i64))
 
 (defenum LowerCapture
-  (Capture String i64 AstType i64))
+  (Capture i64 i64 AstType i64))
 
 (defstruct LowerCaptureList
   (items (Array LowerCapture))
@@ -591,8 +604,8 @@
   (Err (Box CompilerDiagnostic)))
 
 (defstruct LowerCleanupStack
-  (hidden-names (Array String))
-  (cleanup-names (Array String))
+  (hidden-name-ids (Array i64))
+  (cleanup-name-ids (Array i64))
   (count i64))
 
 (defenum LowerResourceBindings
@@ -626,8 +639,35 @@
     0))
 (cfg
   compile-profile
+  (define compiler-lower-profile-start-intern : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-intern-slice : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-lower-profile-start-intern-generated : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-lower-profile-detail-start-ms : i64
     0))
+
+(define (lower-existing-name-id [value : String]) : i64
+  (let
+    [name-id : i64 (ci.intern-lookup-preserving-generated-id-or value -1)]
+    (if (>= name-id 0)
+      name-id
+      (let
+        [structural-id : i64 (lower-name-cache-source-id-value value)]
+        (if (>= structural-id 0)
+          structural-id
+          (io.panic
+            (string.append "lower: name has no pre-existing symbol id: " value)))))))
+
+(define (lower-existing-name-id-or [value : String] [fallback : i64]) : i64
+  (ci.intern-lookup-preserving-generated-id-or value fallback))
 
 (cfg
   compile-profile
@@ -641,6 +681,15 @@
       (set! compiler-lower-profile-start-ms (profile.now-ms))
       (set! compiler-lower-profile-start-total (profile.alloc-total))
       (set! compiler-lower-profile-start-live (profile.alloc-live))
+      (set!
+        compiler-lower-profile-start-intern
+        (ci.intern-profile-intern-value))
+      (set!
+        compiler-lower-profile-start-intern-slice
+        (ci.intern-profile-slice-value))
+      (set!
+        compiler-lower-profile-start-intern-generated
+        (ci.intern-profile-generated-value))
       (profile.alloc-reset-peak))))
 
 (cfg
@@ -652,21 +701,63 @@
       [end-live : i64 (profile.alloc-live)]
       [peak-delta : i64
         (- (profile.alloc-peak) compiler-lower-profile-start-live)]
-      (io.print-error
-        (string.append
-          "compile-profile|lower."
+      (begin
+        (io.print-error
           (string.append
-            phase
+            "compile-profile|lower."
             (string.append
-              (compiler-lower-profile-field
-                (- end-ms compiler-lower-profile-start-ms))
+              phase
               (string.append
                 (compiler-lower-profile-field
-                  (- end-total compiler-lower-profile-start-total))
+                  (- end-ms compiler-lower-profile-start-ms))
                 (string.append
                   (compiler-lower-profile-field
-                    (- end-live compiler-lower-profile-start-live))
-                  (string.append (compiler-lower-profile-field peak-delta) "\n"))))))))))
+                    (- end-total compiler-lower-profile-start-total))
+                  (string.append
+                    (compiler-lower-profile-field
+                      (- end-live compiler-lower-profile-start-live))
+                    (string.append
+                      (compiler-lower-profile-field peak-delta)
+                      "\n")))))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.lower_phase|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (-
+                      (ci.intern-profile-intern-value)
+                      compiler-lower-profile-start-intern))
+                  "\n")))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.lower_phase.slice|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (-
+                      (ci.intern-profile-slice-value)
+                      compiler-lower-profile-start-intern-slice))
+                  "\n")))))
+        (io.print-error
+          (string.append
+            "compile-profile-detail|intern.lower_phase.generated|"
+            (string.append
+              phase
+              (string.append
+                "|"
+                (string.append
+                  (string.int->string
+                    (-
+                      (ci.intern-profile-generated-value)
+                      compiler-lower-profile-start-intern-generated))
+                  "\n")))))))))
 
 (cfg
   compile-profile
@@ -1202,7 +1293,39 @@
               [(InternLookupFound base-id)
                 (LowerNameCacheMaybeId.Some
                   (compiler-symbol-module-key-id-by-id module-id base-id))]
-              [(InternLookupMissing) (LowerNameCacheMaybeId.No)])]
+              [(InternLookupMissing)
+                (let
+                  [i : i64 0]
+                  [base-len : i64 (string.string-length base)]
+                  [dot : i64 -1]
+                  (begin
+                    (while (and (< i base-len) (< dot 0))
+                      (begin
+                        (if (string.char-eq (string.string-ref base i) '.')
+                          (set! dot i)
+                          unit)
+                        (set! i (+ i 1))))
+                    (if (and (> dot 0) (< dot (- base-len 1)))
+                      (let
+                        [owner : String (string.substring base 0 dot)]
+                        [variant-start : i64 (+ dot 1)]
+                        [variant : String
+                          (string.substring
+                            base
+                            variant-start
+                            (- base-len variant-start))]
+                        (match (intern-lookup owner)
+                          [(InternLookupFound owner-id)
+                            (match (intern-lookup variant)
+                              [(InternLookupFound variant-id)
+                                (LowerNameCacheMaybeId.Some
+                                  (compiler-composite-triple-key-id
+                                    module-id
+                                    owner-id
+                                    variant-id))]
+                              [(InternLookupMissing) (LowerNameCacheMaybeId.No)])]
+                          [(InternLookupMissing) (LowerNameCacheMaybeId.No)]))
+                      (LowerNameCacheMaybeId.No))))])]
           [(InternLookupMissing) (LowerNameCacheMaybeId.No)])))))
 
 (define (lower-name-cache-source-id [source-name : String]) : LowerNameCacheMaybeId
@@ -1248,6 +1371,7 @@
           (let
             [next : i64 (lower_i64_i64_map.len (& ids))]
             (begin
+              (ci.intern-register-generated-display-id! logical-name source-id)
               (array-set! values next logical-name)
               (lower_i64_i64_map.insert-ref! (&mut ids) source-id next)
               (LowerNameCache ids values (struct-get cache parent))))]))))
@@ -1513,14 +1637,19 @@
   [module : String]
   [lookup-name : String]) : String
   (let
-    [lookup-name-id : i64 (intern lookup-name)]
+    [lookup-name-id : i64 (lower-existing-name-id lookup-name)]
     (if (tc-name-qualified-id? lookup-name-id)
       lookup-name
-      (if (>= (intern-first-dot lookup-name-id) 0)
-        (match (tc-source-name-lookup-key
-          (tc-context-with-module ctx module)
+      (if (and
+        (>= lookup-name-id 0)
+        (< lookup-name-id (intern-capacity))
+        (>= (intern-first-dot lookup-name-id) 0))
+        (match (tc-source-name-lookup-key-with-field-check
+          (tc-context-with-module-id ctx module (lower-existing-name-id module))
           type-env
-          lookup-name)
+          lookup-name
+          lookup-name-id
+          true)
           [(ResultTcString.Ok resolved-name) resolved-name]
           [(ResultTcString.Err _)
             (compiler-symbol-module-key module lookup-name)])
@@ -1537,17 +1666,45 @@
         (lower-hygiene-context-source-name ctx type-env module lookup-name)])
     name))
 
+(define (lower-hygiene-lookup-id-or [name : String] [fallback : i64]) : i64
+  (let
+    [slash : i64 (tc-qualified-name-last-slash name)]
+    (if (and (> slash 0) (< slash (- (string.string-length name) 1)))
+      (let
+        [base-start : i64 (+ slash 1)]
+        [module-id : i64
+          (lower-existing-name-id-or (string.substring name 0 slash) -1)]
+        [base-id : i64
+          (lower-existing-name-id-or
+            (string.substring
+              name
+              base-start
+              (- (string.string-length name) base-start))
+            -1)]
+        (if (and (>= module-id 0) (>= base-id 0))
+          (compiler-symbol-module-key-id-by-id module-id base-id)
+          fallback))
+      (lower-existing-name-id-or name fallback))))
+
 (define (lower-type-cache-lookup-hygiene
   [cache : LowerTypeCache]
   [name : String]) : ResultTcType
   (let
     [source-name : String (lower-hygiene-source-name name)]
-    (match (lower-type-cache-lookup cache source-name)
+    [generated-name-id : i64 (lower-existing-name-id-or name -1)]
+    [source-name-id : i64
+      (macro-hygiene-global-source-name-id-or generated-name-id -1)]
+    [source-key-id : i64 (tc-env-name-key-id source-name-id)]
+    [lookup-id : i64 (lower-hygiene-lookup-id-or source-name source-key-id)]
+    (match (lower-type-cache-lookup-id cache lookup-id source-name)
       [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
       [(ResultTcType.Err message)
         (match (lower-hygiene-fallback-source-name name)
           [(TcMaybeString.Some fallback)
-            (match (lower-type-cache-lookup cache fallback)
+            (match (lower-type-cache-lookup-id
+              cache
+              (lower-hygiene-lookup-id-or fallback source-key-id)
+              fallback)
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
               [(ResultTcType.Err _) (ResultTcType.Err message)])]
           [(TcMaybeString.No) (ResultTcType.Err message)])])))
@@ -1592,20 +1749,37 @@
   (let
     [source-name : String
       (lower-hygiene-source-name-in-context ctx type-env name)]
-    (if (tc-source-slash-qualified? source-name)
+    [source-id : i64 (lower-existing-name-id-or source-name -1)]
+    (if (< source-id 0)
       (ResultTcString.Ok source-name)
-      (match (tc-source-name-lookup-key ctx type-env source-name)
-        [(ResultTcString.Ok lookup-name) (ResultTcString.Ok lookup-name)]
-        [(ResultTcString.Err message)
-          (match (lower-hygiene-fallback-source-name name)
-            [(TcMaybeString.Some fallback)
-              (if (tc-source-slash-qualified? fallback)
-                (ResultTcString.Ok fallback)
-                (match (tc-source-name-lookup-key ctx type-env fallback)
-                  [(ResultTcString.Ok lookup-name)
-                    (ResultTcString.Ok lookup-name)]
-                  [(ResultTcString.Err _) (ResultTcString.Err message)]))]
-            [(TcMaybeString.No) (ResultTcString.Err message)])]))))
+      (if (tc-source-slash-qualified-id? source-name source-id)
+        (ResultTcString.Ok source-name)
+        (match (tc-source-name-lookup-key-with-field-check
+          ctx
+          type-env
+          source-name
+          source-id
+          true)
+          [(ResultTcString.Ok lookup-name) (ResultTcString.Ok lookup-name)]
+          [(ResultTcString.Err message)
+            (match (lower-hygiene-fallback-source-name name)
+              [(TcMaybeString.Some fallback)
+                (let
+                  [fallback-id : i64 (lower-existing-name-id-or fallback -1)]
+                  (if (< fallback-id 0)
+                    (ResultTcString.Ok fallback)
+                    (if (tc-source-slash-qualified-id? fallback fallback-id)
+                      (ResultTcString.Ok fallback)
+                      (match (tc-source-name-lookup-key-with-field-check
+                        ctx
+                        type-env
+                        fallback
+                        fallback-id
+                        true)
+                        [(ResultTcString.Ok lookup-name)
+                          (ResultTcString.Ok lookup-name)]
+                        [(ResultTcString.Err _) (ResultTcString.Err message)]))))]
+              [(TcMaybeString.No) (ResultTcString.Err message)])])))))
 
 (define (lower-source-name-lookup-key-after-local-field-check
   [ctx : TcContext]
@@ -1648,30 +1822,64 @@
       [(ResultTcExprId.Err message) (ResultTcType.Err message)])
     (if (tc-hygiene-global-name? name)
       (lower-type-cache-lookup-hygiene type-cache name)
-      (match (lower-source-name-lookup-key-after-local-field-check
-        ctx
-        type-env
-        name)
-        [(ResultTcString.Ok lookup-name)
-          (if (sym_i64_env.sym-i64-contains env lookup-name)
-            (tc-lookup type-env lookup-name)
-            ;; `type-cache` is the complete global type environment plus the
-            ;; current module overlay. Nonlocals therefore resolve here in
-            ;; O(1); walking `type-env` first repeated a linear global-env scan
-            ;; for every ordinary function call during lowering.
-            (match (lower-type-cache-lookup type-cache lookup-name)
-              [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-              [(ResultTcType.Err message)
-                (tc-variant-constructor-type-for-lookup-or
-                  ctx
-                  lookup-name
-                  (tc-source-lookup-display-name ctx name lookup-name)
-                  (tc-source-unbound-display-message
-                    ctx
-                    name
-                    lookup-name
-                    message))]))]
-        [(ResultTcString.Err message) (ResultTcType.Err message)]))))
+      (let
+        [name-id : i64 (lower-existing-name-id-or name -1)]
+        (if (< name-id 0)
+          (ResultTcType.Err (string.append "typecheck: unbound name " name))
+          (if (tc-source-slash-qualified-id? name name-id)
+            (let
+              [lookup-key-id : i64 (tc-env-name-key-id name-id)]
+              (match (lower-type-cache-lookup-id type-cache lookup-key-id name)
+                [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                [(ResultTcType.Err message)
+                  (match (tc-lookup-id type-env lookup-key-id)
+                    [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                    [(ResultTcType.Err _) (ResultTcType.Err message)])]))
+            (match (tc-source-name-lookup-key-with-field-check-lookup
+              ctx
+              type-env
+              name
+              name-id
+              false)
+              [(TcNameLookup.Ok lookup-name lookup-id)
+                (if (sym_i64_env.sym-i64-contains-id env lookup-id)
+                  (tc-lookup-id type-env lookup-id)
+                  ;; `type-cache` is the complete global type environment plus the
+                  ;; current module overlay. Preserve raw generated-name hits, then
+                  ;; use the canonical module/base key only as the dotted-source
+                  ;; fallback, matching typechecking without conflating the two ID
+                  ;; domains.
+                  (match (lower-type-cache-lookup-id
+                    type-cache
+                    lookup-id
+                    lookup-name)
+                    [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                    [(ResultTcType.Err message)
+                      (let
+                        [lookup-key-id : i64 (tc-env-name-key-id lookup-id)]
+                        (if (= lookup-key-id lookup-id)
+                          (tc-variant-constructor-type-for-lookup-or-id
+                            ctx
+                            lookup-name
+                            lookup-id
+                            (tc-source-unbound-display-message
+                              ctx
+                              name
+                              lookup-name
+                              message))
+                          (match (tc-lookup-id type-env lookup-key-id)
+                            [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                            [(ResultTcType.Err _)
+                              (tc-variant-constructor-type-for-lookup-or-id
+                                ctx
+                                lookup-name
+                                lookup-id
+                                (tc-source-unbound-display-message
+                                  ctx
+                                  name
+                                  lookup-name
+                                  message))])))]))]
+              [(TcNameLookup.Err message) (ResultTcType.Err message)])))))))
 
 (define (lower-lookup-type-id
   [ctx : TcContext]
@@ -1679,13 +1887,18 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
-  (let
-    [name : String (intern-str name-id)]
-    (if (tc-hygiene-global-name? name)
-      (lower-type-cache-lookup-hygiene type-cache name)
-      (if (sym_i64_env.sym-i64-contains-id env name-id)
-        (tc-lookup-id type-env name-id)
-        (lower-lookup-type ctx type-cache env type-env name)))))
+  (if (sym_i64_env.sym-i64-contains-id env name-id)
+    (tc-lookup-id type-env name-id)
+    (if (tc-env-key-has-name-id? name-id)
+      (let
+        [name : String (intern-str name-id)]
+        (if (tc-hygiene-global-name? name)
+          (lower-type-cache-lookup-hygiene type-cache name)
+          (lower-lookup-type ctx type-cache env type-env name)))
+      (lower-type-cache-lookup-id
+        type-cache
+        name-id
+        (tc-env-key-display name-id)))))
 
 ;; Growable membership set of the interned source-ids already bound into the
 ;; import-alias overlay currently being built by
@@ -1808,6 +2021,7 @@
 (define (lower-name-env-add-import-alias-binding-base-id
   [names : LowerNameEnv]
   [alias : String]
+  [alias-id : i64]
   [base-name : String]
   [base-id : i64]
   [logical-name : String]) : LowerNameEnv
@@ -1815,7 +2029,7 @@
     names
     alias
     (compiler-symbol-module-key alias base-name)
-    (compiler-symbol-module-key-id-by-id (intern alias) base-id)
+    (compiler-symbol-module-key-id-by-id alias-id base-id)
     logical-name))
 
 (define (lower-name-env-add-import-alias-binding-base-cache-id
@@ -1823,13 +2037,13 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [alias : String]
+  [alias-id : i64]
   [base-name : String]
   [base-id : i64]
   [logical-name : String]) : LowerNameEnv
   (let
     [source-name : String (compiler-symbol-module-key alias base-name)]
-    [source-id : i64
-      (compiler-symbol-module-key-id-by-id (intern alias) base-id)]
+    [source-id : i64 (compiler-symbol-module-key-id-by-id alias-id base-id)]
     (begin
       (when (< source-id 0) (set! lower-alias-overlay-valid false))
       ;; Aliased import (non-empty alias): unconditional bind; keep the overlay
@@ -1865,16 +2079,29 @@
   [module : String]
   [source-name : String]
   [logical-name : String]) : LowerNameEnv
+  (lower-name-env-add-module-binding-id
+    names
+    module
+    source-name
+    (lower-existing-name-id source-name)
+    logical-name))
+
+(define (lower-name-env-add-module-binding-id
+  [names : LowerNameEnv]
+  [module : String]
+  [source-name : String]
+  [source-id : i64]
+  [logical-name : String]) : LowerNameEnv
   (if (string.eq module "")
-    (lower-name-env-bind source-name logical-name names)
+    (lower-name-env-bind-id source-name source-id logical-name names)
     (let
-      [source-id : i64
+      [qualified-source-id : i64
         (compiler-symbol-module-key-id-by-id
-          (intern module)
-          (intern source-name))]
+          (lower-existing-name-id module)
+          source-id)]
       (lower-name-env-bind-id
         (compiler-symbol-module-key module source-name)
-        source-id
+        qualified-source-id
         logical-name
         names))))
 
@@ -1889,10 +2116,11 @@
     [(AstStructCleanup.Fn cleanup-name)
       (let
         [cleanup-str : String (intern-str cleanup-name)]
-        (lower-name-env-add-module-binding
+        (lower-name-env-add-module-binding-id
           names
           module
           cleanup-str
+          cleanup-name
           (lower-decl-logical-name entry-path decl-path module cleanup-str)))]))
 
 (define (lower-name-env-add-enum-cleanup-in-module
@@ -1906,10 +2134,11 @@
     [(AstEnumCleanup.Fn cleanup-name)
       (let
         [cleanup-str : String (intern-str cleanup-name)]
-        (lower-name-env-add-module-binding
+        (lower-name-env-add-module-binding-id
           names
           module
           cleanup-str
+          cleanup-name
           (lower-decl-logical-name entry-path decl-path module cleanup-str)))]))
 
 (define (lower-name-env-add-local-struct-cleanup
@@ -1925,7 +2154,11 @@
         (lower-name-env-bind-id
           cleanup-str
           cleanup-name
-          (lower-current-decl-logical-name-cache name-cache module cleanup-str)
+          (lower-current-decl-logical-name-cache-id
+            name-cache
+            module
+            cleanup-str
+            cleanup-name)
           names))]))
 
 (define (lower-name-env-add-local-enum-cleanup
@@ -1941,7 +2174,11 @@
         (lower-name-env-bind-id
           cleanup-str
           cleanup-name
-          (lower-current-decl-logical-name-cache name-cache module cleanup-str)
+          (lower-current-decl-logical-name-cache-id
+            name-cache
+            module
+            cleanup-str
+            cleanup-name)
           names))]))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
@@ -1952,13 +2189,32 @@
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
   (lower-name-cache-resolve-hygiene (lower-state-names state) source-name))
 
+(define (lower-resolve-name-id [state : LowerState] [source-id : i64]) : String
+  (if (and (>= source-id 0) (< source-id (intern-capacity)))
+    (lower-resolve-name state (intern-str source-id))
+    (match (lower-name-cache-lookup-id (lower-state-names state) source-id)
+      [(TcMaybeString.Some logical-name) logical-name]
+      [(TcMaybeString.No) (tc-nominal-name-id-display source-id)])))
+
 (define (lower-resolve-call-name
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [source-name : String]) : String
-  (if (sym_i64_env.sym-i64-contains env source-name)
-    source-name
-    (lower-resolve-name state source-name)))
+  (let
+    [source-id : i64 (lower-existing-name-id-or source-name -1)]
+    (if (and (>= source-id 0) (sym_i64_env.sym-i64-contains-id env source-id))
+      source-name
+      (lower-resolve-name state source-name))))
+
+(define (lower-resolve-call-name-id
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [source-id : i64]) : String
+  (if (sym_i64_env.sym-i64-contains-id env source-id)
+    (intern-str source-id)
+    (match (lower-name-cache-lookup-id (lower-state-names state) source-id)
+      [(TcMaybeString.Some logical-name) logical-name]
+      [(TcMaybeString.No) (intern-str source-id)])))
 
 (define (lower-path-separator? [c : char]) : bool
   (or (= c '/') (= c '\\')))
@@ -2236,8 +2492,8 @@
 
 (define (lower-entry-main-decl? [decl : AstDecl]) : bool
   (match decl
-    [(AstDecl.Def name _ _) (= name (intern "main"))]
-    [(AstDecl.DefFn name _ _ _ _) (= name (intern "main"))]
+    [(AstDecl.Def name _ _) (= name cbi.compiler-builtin-id-fix-main)]
+    [(AstDecl.DefFn name _ _ _ _) (= name cbi.compiler-builtin-id-fix-main)]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -2396,6 +2652,30 @@
       "main"
       resolved)))
 
+(define (lower-current-decl-logical-name-cache-id
+  [names : LowerNameCache]
+  [module : String]
+  [source-name : String]
+  [source-id : i64]) : String
+  (let
+    [key : String (compiler-symbol-module-key module source-name)]
+    [key-id : i64
+      (if (string.eq module "")
+        source-id
+        (compiler-symbol-module-key-id-by-id
+          (lower-existing-name-id module)
+          source-id))]
+    [resolved : String
+      (match (lower-name-cache-lookup-id names key-id)
+        [(TcMaybeString.Some logical-name) logical-name]
+        [(TcMaybeString.No) key])]
+    (if (and
+      (string.eq module "main")
+      (string.eq source-name "main")
+      (string.eq resolved key))
+      "main"
+      resolved)))
+
 (define (lower-name-env-add-decl-in-module
   [names : LowerNameEnv]
   [entry-path : String]
@@ -2406,33 +2686,41 @@
     [(AstDecl.Def name _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-module-binding
+        (lower-name-env-add-module-binding-id
           names
           module
           name-str
+          name
           (lower-decl-logical-name entry-path decl-path module name-str)))]
     [(AstDecl.DefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-module-binding
+        (lower-name-env-add-module-binding-id
           names
           module
           name-str
+          name
           (lower-decl-logical-name entry-path decl-path module name-str)))]
     [(AstDecl.DefDispatch name _)
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-module-binding
+        (lower-name-env-add-module-binding-id
           names
           module
           name-str
+          name
           (lower-decl-logical-name entry-path decl-path module name-str)))]
     [(AstDecl.Extern name _ _ _)
       ;; Calls resolve through the local declaration name; backend metadata owns
       ;; the exact external linker symbol.
       (let
         [name-str : String (intern-str name)]
-        (lower-name-env-add-module-binding names module name-str name-str))]
+        (lower-name-env-add-module-binding-id
+          names
+          module
+          name-str
+          name
+          name-str))]
     [(AstDecl.DefEnum _ cleanup _)
       (lower-name-env-add-enum-cleanup-in-module
         names
@@ -2508,7 +2796,7 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 (intern module)]
+    [cur-module-id : i64 (lower-existing-name-id module)]
     (begin
       (while (< index count)
         (let
@@ -2544,10 +2832,11 @@
       (let
         [name-str : String (intern-str name)]
         (if (lower-name-has-clone-prefix? name-str)
-          (lower-name-env-add-module-binding
+          (lower-name-env-add-module-binding-id
             names
             module
             name-str
+            name
             (lower-decl-logical-name entry-path decl-path module name-str))
           names))]
     [(AstDecl.ComptimeDecl _ template-box)
@@ -2580,7 +2869,7 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 (intern module)]
+    [cur-module-id : i64 (lower-existing-name-id module)]
     (begin
       (while (< index count)
         (let
@@ -2627,11 +2916,17 @@
     importer-module
     alias))
 
+(define (lower-import-alias-key-id [importer-module-id : i64] [alias-id : i64]) : i64
+  (if (= alias-id cbi.compiler-builtin-id-fix-empty)
+    importer-module-id
+    alias-id))
+
 (define (lower-name-env-add-decl-alias-in-module
   [names : LowerNameEnv]
   [entry-path : String]
   [decl-path : String]
   [alias : String]
+  [alias-id : i64]
   [module : String]
   [decl : AstDecl]
   [path-aware : bool]) : LowerNameEnv
@@ -2642,6 +2937,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           (lower-alias-logical-name
@@ -2656,6 +2952,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           (lower-alias-logical-name
@@ -2670,6 +2967,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           (lower-alias-logical-name
@@ -2684,6 +2982,7 @@
         (lower-name-env-add-import-alias-binding-base-id
           names
           alias
+          alias-id
           name-str
           name
           name-str))]
@@ -2696,6 +2995,7 @@
             (lower-name-env-add-import-alias-binding-base-id
               names
               alias
+              alias-id
               cleanup-str
               cleanup-name
               (lower-alias-logical-name
@@ -2713,6 +3013,7 @@
             (lower-name-env-add-import-alias-binding-base-id
               names
               alias
+              alias-id
               cleanup-str
               cleanup-name
               (lower-alias-logical-name
@@ -2729,6 +3030,7 @@
           entry-path
           decl-path
           alias
+          alias-id
           module
           template
           path-aware))]
@@ -2740,6 +3042,7 @@
           entry-path
           decl-path
           alias
+          alias-id
           module
           inner
           path-aware))]
@@ -2750,6 +3053,7 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [alias : String]
+  [alias-id : i64]
   [module : String]
   [decl : AstDecl]) : LowerNameEnv
   (match decl
@@ -2761,9 +3065,14 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
-          (lower-current-decl-logical-name-cache base-cache module name-str)))]
+          (lower-current-decl-logical-name-cache-id
+            base-cache
+            module
+            name-str
+            name)))]
     [(AstDecl.DefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
@@ -2772,9 +3081,14 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
-          (lower-current-decl-logical-name-cache base-cache module name-str)))]
+          (lower-current-decl-logical-name-cache-id
+            base-cache
+            module
+            name-str
+            name)))]
     [(AstDecl.DefDispatch name _)
       (let
         [name-str : String (intern-str name)]
@@ -2783,9 +3097,14 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
-          (lower-current-decl-logical-name-cache base-cache module name-str)))]
+          (lower-current-decl-logical-name-cache-id
+            base-cache
+            module
+            name-str
+            name)))]
     [(AstDecl.Extern name _ _ _)
       (let
         [name-str : String (intern-str name)]
@@ -2794,6 +3113,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           name-str
           name
           name-str))]
@@ -2808,12 +3128,14 @@
               base-cache
               dedup-base
               alias
+              alias-id
               cleanup-str
               cleanup-name
-              (lower-current-decl-logical-name-cache
+              (lower-current-decl-logical-name-cache-id
                 base-cache
                 module
-                cleanup-str)))])]
+                cleanup-str
+                cleanup-name)))])]
     [(AstDecl.DefStructLifetimes _ _ _ cleanup _)
       (match cleanup
         [(AstStructCleanup.No) names]
@@ -2825,12 +3147,14 @@
               base-cache
               dedup-base
               alias
+              alias-id
               cleanup-str
               cleanup-name
-              (lower-current-decl-logical-name-cache
+              (lower-current-decl-logical-name-cache-id
                 base-cache
                 module
-                cleanup-str)))])]
+                cleanup-str
+                cleanup-name)))])]
     [(AstDecl.ComptimeDecl _ template-box)
       (let
         [template : AstDecl (box-get template-box)]
@@ -2839,6 +3163,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           module
           template))]
     [(AstDecl.Unsafe inner-box)
@@ -2849,6 +3174,7 @@
           base-cache
           dedup-base
           alias
+          alias-id
           module
           inner))]
     [_ names]))
@@ -2858,13 +3184,14 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
-  [target-module : String]
-  [alias : String]
-  [_module : String]
+  [target-module-id : i64]
+  [alias-id : i64]
+  [_module-id : i64]
   [path-aware : bool]) : LowerNameEnv
   (let
     [cur-names : LowerNameEnv names]
-    [target-module-id : i64 (intern target-module)]
+    [target-module : String (intern-str target-module-id)]
+    [alias : String (intern-str alias-id)]
     [_ensure : unit (lower-module-decl-index-ensure! decls)]
     [slot : i64 (lower-module-decl-index-slot target-module-id)]
     (if (< slot 0)
@@ -2897,6 +3224,7 @@
                         entry-path
                         decl-path
                         alias
+                        alias-id
                         target-module
                         decl
                         path-aware))])
@@ -2956,7 +3284,7 @@
       [count : i64 (struct-get decls len)]
       [decl-offset : i64 (struct-get decls offset)]
       [decl-slots : (Array AstDecl) (struct-get decls slots)]
-      [empty-module-id : i64 (intern "")]
+      [empty-module-id : i64 cbi.compiler-builtin-id-fix-empty]
       ;; The index outlives the transient scratch arenas active during
       ;; lowering, so its backing allocations live in a dedicated arena
       ;; (same idiom as tc-hygiene-module-env-cache-arena): allocating them
@@ -3051,9 +3379,8 @@
   [base-cache : LowerNameCache]
   [dedup-base : bool]
   [names : LowerNameEnv]
-  [target-module : String]
   [target-module-id : i64]
-  [alias : String]
+  [alias-id : i64]
   [_module-id : i64]) : LowerNameEnv
   (let
     [cur-names : LowerNameEnv names]
@@ -3064,6 +3391,8 @@
       (let
         [j : i64 (array-ref lower-module-decl-index-starts slot)]
         [end : i64 (array-ref lower-module-decl-index-ends slot)]
+        [target-module : String (intern-str target-module-id)]
+        [alias : String (intern-str alias-id)]
         (begin
           (while (< j end)
             (let
@@ -3088,6 +3417,7 @@
                         base-cache
                         dedup-base
                         alias
+                        alias-id
                         target-module
                         decl))])
                 (set! j (+ j 1)))))
@@ -3106,7 +3436,7 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [cur-module-id : i64 (intern module)]
+    [cur-module-id : i64 (lower-existing-name-id module)]
     (begin
       ;; Seed the overlay membership set from the base env so the per-alias
       ;; "already bound?" check below is O(1) instead of an O(base) linear scan.
@@ -3134,8 +3464,8 @@
                     entry-path
                     cur-names
                     target-module
-                    (lower-import-alias-key (intern-str cur-module-id) alias)
-                    ""
+                    (lower-import-alias-key-id cur-module-id alias)
+                    cbi.compiler-builtin-id-fix-empty
                     path-aware))]
               [_ unit])
             (match decl
@@ -3174,8 +3504,8 @@
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
     [cur-names : LowerNameEnv names]
-    [target-module-id : i64 (intern target-current-module)]
-    [cur-module-id : i64 (intern current-module)]
+    [target-module-id : i64 (lower-existing-name-id target-current-module)]
+    [cur-module-id : i64 (lower-existing-name-id current-module)]
     (begin
       ;; Seed the overlay membership set from the base env for O(1) per-alias
       ;; dedup instead of scanning `names` on every added alias.
@@ -3205,7 +3535,7 @@
                       cur-names
                       target-module
                       alias
-                      ""
+                      cbi.compiler-builtin-id-fix-empty
                       path-aware))
                   unit)]
               [_ unit])
@@ -3280,9 +3610,8 @@
                           dedup-base
                           cur-names
                           target-module
-                          (intern target-module)
                           alias
-                          (intern "")))]
+                          cbi.compiler-builtin-id-fix-empty))]
                     [_ unit])
                   (set! j (+ j 1)))))
             cur-names))))))
@@ -3291,7 +3620,8 @@
   [decls : AstDeclList]
   [names : LowerNameEnv]
   [base-cache : LowerNameCache]
-  [module : String]) : LowerNameEnv
+  [module : String]
+  [module-id : i64]) : LowerNameEnv
   ;; Build aliases into a fresh overlay so empty-alias duplicate checks do not
   ;; rescan the whole base env for every imported decl.
   (let
@@ -3306,8 +3636,8 @@
         LowerNameEnv.Nil
         base-cache
         dedup-base
-        (intern module)
-        (intern ""))]
+        module-id
+        cbi.compiler-builtin-id-fix-empty)]
     (match names
       [(LowerNameEnv.Nil) overlay]
       [_ (lower-name-env-append overlay names)])))
@@ -3331,7 +3661,11 @@
         (lower-name-env-bind-id
           name-str
           name
-          (lower-current-decl-logical-name-cache name-cache module name-str)
+          (lower-current-decl-logical-name-cache-id
+            name-cache
+            module
+            name-str
+            name)
           names))]
     [(AstDecl.DefFn name _ _ _ _)
       (let
@@ -3339,7 +3673,11 @@
         (lower-name-env-bind-id
           name-str
           name
-          (lower-current-decl-logical-name-cache name-cache module name-str)
+          (lower-current-decl-logical-name-cache-id
+            name-cache
+            module
+            name-str
+            name)
           names))]
     [(AstDecl.DefDispatch name _)
       (let
@@ -3355,7 +3693,11 @@
         (lower-name-env-bind-id
           name-str
           name
-          (lower-current-decl-logical-name-cache name-cache module name-str)
+          (lower-current-decl-logical-name-cache-id
+            name-cache
+            module
+            name-str
+            name)
           names))]
     [(AstDecl.DefEnum _ cleanup _)
       (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
@@ -3396,22 +3738,26 @@
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
   [local-env : TcTypeEnv]
-  [module : String]
-  [name : String]) : ResultLowerModuleTypeEnvs
-  (match (tc-lookup top-env (compiler-symbol-module-key module name))
+  [module : i64]
+  [name-id : i64]) : ResultLowerModuleTypeEnvs
+  (match (tc-lookup-id
+    top-env
+    (compiler-symbol-module-key-id-by-id module name-id))
     [(ResultTcType.Ok ty)
       (ResultLowerModuleTypeEnvs.Ok
-        (tc-bind env name ty)
-        (tc-bind local-env name ty))]
+        (tc-bind-id env name-id ty)
+        (tc-bind-id local-env name-id ty))]
     [(ResultTcType.Err message) (ResultLowerModuleTypeEnvs.Err message)]))
 
 (define (lower-module-local-type-envs-bind-qualified-id-if-free
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
   [local-env : TcTypeEnv]
-  [module : String]
+  [module : i64]
   [name-id : i64]) : ResultLowerModuleTypeEnvs
-  (match (tc-lookup-id top-env (tc-module-name-id module name-id))
+  (match (tc-lookup-id
+    top-env
+    (compiler-symbol-module-key-id-by-id module name-id))
     [(ResultTcType.Ok ty)
       (ResultLowerModuleTypeEnvs.Ok
         (tc-bind-alias-id-if-free env name-id ty)
@@ -3422,7 +3768,7 @@
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
   [local-env : TcTypeEnv]
-  [module : String]
+  [module : i64]
   [variants : AstVariantDefList]) : ResultLowerModuleTypeEnvs
   (lower-module-local-type-envs-add-variants-at
     top-env
@@ -3436,7 +3782,7 @@
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
   [local-env : TcTypeEnv]
-  [module : String]
+  [module : i64]
   [variants : (& variants AstVariantDefList)]
   [index : i64]) : ResultLowerModuleTypeEnvs
   (if (>= index (struct-get variants len))
@@ -3464,7 +3810,7 @@
   [top-env : TcTypeEnv]
   [env : TcTypeEnv]
   [local-env : TcTypeEnv]
-  [module : String]
+  [module : i64]
   [decl : AstDecl]) : ResultLowerModuleTypeEnvs
   (match decl
     [(AstDecl.Def name _ _)
@@ -3473,28 +3819,28 @@
         env
         local-env
         module
-        (intern-str name))]
+        name)]
     [(AstDecl.DefFn name _ _ _ _)
       (lower-module-local-type-envs-bind-qualified
         top-env
         env
         local-env
         module
-        (intern-str name))]
+        name)]
     [(AstDecl.DefDispatch name _)
       (lower-module-local-type-envs-bind-qualified
         top-env
         env
         local-env
         module
-        (intern-str name))]
+        name)]
     [(AstDecl.Extern name _ _ _)
       (lower-module-local-type-envs-bind-qualified
         top-env
         env
         local-env
         module
-        (intern-str name))]
+        name)]
     [(AstDecl.DefEnum _ cleanup variants)
       (match (lower-module-local-type-envs-add-variants
         top-env
@@ -3512,7 +3858,7 @@
                 next-env
                 next-local-env
                 module
-                (intern-str cleanup-name))])]
+                cleanup-name)])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
@@ -3532,7 +3878,7 @@
                 next-env
                 next-local-env
                 module
-                (intern-str cleanup-name))])]
+                cleanup-name)])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.DefStruct name _ cleanup _)
@@ -3541,7 +3887,7 @@
         env
         local-env
         module
-        (intern-str name))
+        name)
         [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
           (match cleanup
             [(AstStructCleanup.No)
@@ -3552,7 +3898,7 @@
                 next-env
                 next-local-env
                 module
-                (intern-str cleanup-name))])]
+                cleanup-name)])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.DefStructLifetimes name _ _ cleanup _)
@@ -3561,7 +3907,7 @@
         env
         local-env
         module
-        (intern-str name))
+        name)
         [(ResultLowerModuleTypeEnvs.Ok next-env next-local-env)
           (match cleanup
             [(AstStructCleanup.No)
@@ -3572,7 +3918,7 @@
                 next-env
                 next-local-env
                 module
-                (intern-str cleanup-name))])]
+                cleanup-name)])]
         [(ResultLowerModuleTypeEnvs.Err message)
           (ResultLowerModuleTypeEnvs.Err message)])]
     [(AstDecl.ComptimeDecl _ template-box)
@@ -3640,7 +3986,7 @@
                   top-env
                   cur-type-env
                   cur-local-type-env
-                  target-module
+                  target-module-id
                   decl)
                   [(ResultLowerModuleTypeEnvs.Ok
                       next-type-env
@@ -3674,7 +4020,8 @@
   [top-env : TcTypeEnv]
   [names : LowerNameEnv]
   [name-cache : LowerNameCache]
-  [module : String]) : ResultLowerModuleLocalEnv
+  [module : String]
+  [module-id : i64]) : ResultLowerModuleLocalEnv
   (if (string.eq module "")
     (ResultLowerModuleLocalEnv.Ok top-env (TcTypeEnv.Nil) (LowerNameEnv.Nil))
     (match (tc-context-program ctx)
@@ -3691,7 +4038,8 @@
               decls
               (LowerNameEnv.Nil)
               name-cache
-              module)]
+              module
+              module-id)]
           (lower-module-local-envs-list
             top-env
             decls
@@ -3701,7 +4049,7 @@
             local-alias-names
             name-cache
             module
-            (intern module)))])))
+            module-id))])))
 
 (define (lower-string-set-contains? [items : LowerStringSet] [name : String]) : bool
   (match items
@@ -3715,6 +4063,19 @@
   (if (lower-string-set-contains? items name)
     items
     (LowerStringSet.Cons name (box items))))
+
+(define (lower-id-set-contains? [items : LowerIdSet] [name : i64]) : bool
+  (match items
+    [(LowerIdSet.Nil) false]
+    [(LowerIdSet.Cons item rest)
+      (if (= item name)
+        true
+        (lower-id-set-contains? (box-get rest) name))]))
+
+(define (lower-id-set-insert [items : LowerIdSet] [name : i64]) : LowerIdSet
+  (if (lower-id-set-contains? items name)
+    items
+    (LowerIdSet.Cons name (box items))))
 
 (define (lower-spmd-inline-empty-helper-stack) : LowerStringSet
   LowerStringSet.Nil)
@@ -3748,16 +4109,12 @@
 (define (lower-spmd-inline-recursive-message) : String
   "lower: recursive SPMD inline helper call is not supported")
 
-(define (lower-spmd-inline-fresh-local [name : String]) : String
+(define (lower-spmd-inline-fresh-local-id) : i64
   (let
     [next : i64 lower-spmd-inline-next-temp]
     (begin
       (set! lower-spmd-inline-next-temp (+ lower-spmd-inline-next-temp 1))
-      (str_cat.str-cat
-        "__tl_spmd_inline_local$"
-        (string.int->string next)
-        "$"
-        name))))
+      (lower-private-name-id 15 next))))
 
 (define (lower-spmd-inline-subst-lookup
   [subs : LowerSpmdInlineSubst]
@@ -4008,16 +4365,15 @@
       [(AstLetBinding.Binding name maybe-ty init-box)
         (let
           [init : AstExpr (lower-context-expr-get ctx init-box)]
-          [name-text : String (intern-str name)]
+          [name-text : String (tc-env-key-name-text name)]
           [renamed : bool
             (match subst
               [(LowerSpmdInlineSubst.Nil) false]
               [_ true])]
-          [bind-name : String
+          [bind-id : i64
             (if renamed
-              (lower-spmd-inline-fresh-local name-text)
-              name-text)]
-          [bind-id : i64 (intern bind-name)]
+              (lower-spmd-inline-fresh-local-id)
+              name)]
           (match (lower-spmd-inline-expr ctx env type-env init subst shadowed)
             [(ResultLowerAstExpr.Ok rewritten-init)
               (begin
@@ -4736,10 +5092,8 @@
           helper)))))
 
 (define (lower-reach-string-snapshot-source-call? [name-id : i64]) : bool
-  (let
-    [name : String (tc-hygiene-global-call-name (intern-str name-id))]
-    [lookup-id : i64 (intern name)]
-    (cbi.compiler-builtin-lower-clone-id? lookup-id)))
+  (cbi.compiler-builtin-lower-clone-id?
+    (macro-hygiene-global-source-name-id-or name-id name-id)))
 
 (define (lower-reach-add-source
   [all-functions : lower_string_i64_map.Map]
@@ -4752,6 +5106,34 @@
   ;; from a macro expansion is pruned, then fails to resolve during lowering.
   (let
     [logical-name : String (lower-name-cache-resolve-hygiene names source-name)]
+    (lower-reach-add-runtime-prelude-string-helper-resolved
+      all-functions
+      names
+      (lower-reach-add-stdlib-string-public-helper
+        all-functions
+        names
+        (lower-reach-add-runtime-prelude-string-helper
+          all-functions
+          (lower-reach-add-logical all-functions state logical-name)
+          source-name)
+        source-name)
+      logical-name)))
+
+(define (lower-reach-add-source-id
+  [all-functions : lower_string_i64_map.Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [source-id : i64]) : LowerReachState
+  (let
+    [source-name : String (intern-str source-id)]
+    [mapped-source-id : i64
+      (macro-hygiene-global-source-name-id-or source-id source-id)]
+    [source-key-id : i64 (tc-env-name-key-id mapped-source-id)]
+    [logical-name : String
+      (match (lower-name-cache-lookup-id names source-key-id)
+        [(TcMaybeString.Some logical) logical]
+        [(TcMaybeString.No)
+          (lower-name-cache-resolve-hygiene names source-name)])]
     (lower-reach-add-runtime-prelude-string-helper-resolved
       all-functions
       names
@@ -4791,18 +5173,12 @@
           (compiler-symbol-module-key "stdlib.string" base)))
       state)))
 
-(define (lower-reach-used-type-name-add-source! [source : String] [name : i64]) : unit
-  ;; Intern `source` once and read both id-keyed metadata slots, instead of
-  ;; hashing it twice (qualified? + first-dot). Refs #4427.
-  (let
-    [source-id : i64 (intern source)]
-    (if (or
-      (tc-name-qualified-id? source-id)
-      (>= (intern-first-dot source-id) 0))
-      (set!
-        lower-reach-active-body-used-types
-        (lower-used-type-name-add lower-reach-active-body-used-types "" name))
-      unit)))
+(define (lower-reach-used-type-name-add-source! [name : i64]) : unit
+  (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
+    (set!
+      lower-reach-active-body-used-types
+      (lower-used-type-name-add lower-reach-active-body-used-types "" name))
+    unit))
 
 (define (lower-reach-used-types-add-pattern-roots! [pattern : AstPattern]) : unit
   (match pattern
@@ -4813,7 +5189,7 @@
     [(AstPattern.Binding _) unit]
     [(AstPattern.Variant name patterns-box)
       (begin
-        (lower-reach-used-type-name-add-source! (intern-str name) name)
+        (lower-reach-used-type-name-add-source! name)
         (lower-reach-used-types-add-pattern-list-roots! (box-get patterns-box)))]
     [(AstPattern.Literal _) unit]))
 
@@ -4991,7 +5367,7 @@
   [callee : AstExpr]) : LowerReachState
   (match (ast-expr-unspan-with-pools pools callee)
     [(AstExpr.Var name)
-      (lower-reach-add-source all-functions names state (intern-str name))]
+      (lower-reach-add-source-id all-functions names state name)]
     [_ (lower-reach-expr pools all-functions names state callee)]))
 
 (define (lower-reach-expr
@@ -5007,7 +5383,7 @@
         (lower-reach-expr pools all-functions names state inner))]
     [(AstExpr.Literal _) state]
     [(AstExpr.Var name)
-      (lower-reach-add-source all-functions names state (intern-str name))]
+      (lower-reach-add-source-id all-functions names state name)]
     [(AstExpr.Binary _ lhs-box rhs-box)
       (let
         [lhs : AstExpr (ast-node-pool-context-expr-get pools lhs-box)]
@@ -5803,7 +6179,8 @@
   [_entry-path : String]
   [base-names : LowerNameEnv]
   [base-cache : LowerNameCache]
-  [module : String]) : LowerNameCache
+  [module : String]
+  [module-id : i64]) : LowerNameCache
   (if (string.eq module "")
     base-cache
     (let
@@ -5812,13 +6189,15 @@
           decls
           base-names
           base-cache
-          module)]
+          module
+          module-id)]
       [alias-only-names : LowerNameEnv
         (lower-name-env-with-import-aliases-in-module-cache
           decls
           (LowerNameEnv.Nil)
           base-cache
-          module)]
+          module
+          module-id)]
       (lower-name-cache-overlay
         (lower-function-body-local-names-in-module-resolve
           decls
@@ -5826,8 +6205,8 @@
           module-base-names
           base-cache
           module
-          (intern module)
-          (intern ""))))))
+          module-id
+          cbi.compiler-builtin-id-fix-empty)))))
 
 (define (lower-function-decl-count-one [decl : AstDecl]) : i64
   (match decl
@@ -5931,7 +6310,8 @@
                   entry-path
                   base-names
                   base-name-cache
-                  next-module-str)
+                  next-module-str
+                  next-module)
                 index))]
           [(AstDecl.DefFn name _ _ body-box _)
             (let
@@ -6018,7 +6398,7 @@
                       (begin
                         (lower_i64_i64_map.insert-ref!
                           (&mut paths)
-                          (intern body-path)
+                          (lower-decl-path-storage-id body-path)
                           1)
                         paths)))
                   (lower-reach-process
@@ -6304,24 +6684,31 @@
         (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
         source))))
 
+(define (lower-used-type-name-leaf-id [name : i64]) : i64
+  (let
+    [source : String (intern-str name)]
+    [leaf : String (lower-used-type-name-leaf source)]
+    (if (string.eq leaf source)
+      name
+      (match (intern-lookup leaf)
+        [(InternLookupFound leaf-id) leaf-id]
+        [(InternLookupMissing) -1]))))
+
 (define (lower-used-type-name-add
   [used : lower_i64_i64_map.Map]
   [_module : String]
   [name : i64]) : lower_i64_i64_map.Map
   (let
-    [source : String (intern-str name)]
     [with-source : lower_i64_i64_map.Map used]
-    ;; `name` is already the interned id of `source`, so read the id-keyed
-    ;; metadata slots directly instead of re-hashing `source`. Refs #4427.
     (begin
       (lower_i64_i64_map.insert-ref! (&mut with-source) name 1)
       (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
         (let
-          [leaf : String (lower-used-type-name-leaf source)]
+          [leaf : i64 (lower-used-type-name-leaf-id name)]
           (begin
-            (if (string.eq leaf source)
+            (if (< leaf 0)
               unit
-              (lower_i64_i64_map.insert-ref! (&mut with-source) (intern leaf) 1))
+              (lower_i64_i64_map.insert-ref! (&mut with-source) leaf 1))
             with-source))
         with-source))))
 
@@ -6331,16 +6718,11 @@
   [name : i64]) : bool
   (if (lower_i64_i64_map.contains? (& used) name)
     true
-    (let
-      [source : String (intern-str name)]
-      ;; `name` is already the interned id of `source`. Refs #4427.
-      (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
-        (let
-          [leaf : String (lower-used-type-name-leaf source)]
-          (if (string.eq leaf source)
-            false
-            (lower_i64_i64_map.contains? (& used) (intern leaf))))
-        false))))
+    (if (or (tc-name-qualified-id? name) (>= (intern-first-dot name) 0))
+      (let
+        [leaf : i64 (lower-used-type-name-leaf-id name)]
+        (and (>= leaf 0) (lower_i64_i64_map.contains? (& used) leaf)))
+      false)))
 
 (define (lower-used-types-precise-empty) : lower_i64_i64_map.Map
   (let
@@ -6348,7 +6730,7 @@
     (begin
       (lower_i64_i64_map.insert-ref!
         (&mut used)
-        (intern "$lower.precise-type-dce")
+        cbi.compiler-builtin-id-fix-dollar_lower_dot_precise_type_dce
         1)
       used)))
 
@@ -7264,7 +7646,7 @@
               [path-covered : bool
                 (lower_i64_i64_map.contains?
                   (& reachable-paths)
-                  (intern decl-path))]
+                  (lower-decl-path-storage-id decl-path))]
               (lower-used-types-path-seed-in-module
                 pools
                 rest
@@ -7343,7 +7725,7 @@
   (if (and
     (string.eq module "stdlib.arena")
     (string.eq (intern-str name) "Arena"))
-    (lower-used-type-name-add used module (intern "ArenaMark"))
+    (lower-used-type-name-add used module cbi.compiler-builtin-id-fix-ArenaMark)
     used))
 
 (define (lower-used-types-add-type-decl-deps
@@ -7478,43 +7860,43 @@
   (if (= lower-comptime-error-id-generation (intern-generation))
     unit
     (begin
-      (set! lower-comptime-error-id (intern "comptime-error"))
+      (set! lower-comptime-error-id cbi.compiler-builtin-id-fix-comptime_error)
       (set!
         lower-comptime-error-comptime-dot-id
-        (intern "comptime.comptime-error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
       (set!
         lower-comptime-error-comptime-slash-id
-        (intern "comptime/comptime-error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_comptime_error)
       (set!
         lower-comptime-error-comptime-error-dot-id
-        (intern "comptime.error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_error)
       (set!
         lower-comptime-error-comptime-error-slash-id
-        (intern "comptime/error"))
+        cbi.compiler-builtin-id-fix-comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-dot-dot-id
-        (intern "stdlib.comptime.comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-dot-slash-id
-        (intern "stdlib.comptime/comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-slash-dot-id
-        (intern "stdlib/comptime.comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-slash-slash-id
-        (intern "stdlib/comptime/comptime-error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_comptime_error)
       (set!
         lower-comptime-error-stdlib-error-dot-dot-id
-        (intern "stdlib.comptime.error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-error-dot-slash-id
-        (intern "stdlib.comptime/error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-error-slash-dot-id
-        (intern "stdlib/comptime.error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set!
         lower-comptime-error-stdlib-error-slash-slash-id
-        (intern "stdlib/comptime/error"))
+        cbi.compiler-builtin-id-fix-stdlib_dot_comptime_dot_error)
       (set! lower-comptime-error-id-generation (intern-generation)))))
 
 (define (lower-comptime-error-call-id-with-cache? [id : i64]) : bool
@@ -7759,6 +8141,16 @@
   [state : LowerReachState]) : LowerReachState
   (match roots
     [(CloneNameList.Nil) state]
+    [(CloneNameList.ConsId name rest)
+      (lower-reach-add-clone-root-helpers
+        all-functions
+        names
+        (box-get rest)
+        (lower-reach-add-source
+          all-functions
+          names
+          state
+          (clone-helper-name (clone-name-key-string name))))]
     [(CloneNameList.Cons name rest)
       (lower-reach-add-clone-root-helpers
         all-functions
@@ -8288,6 +8680,10 @@
           tail-param-end)
         next-var)]))
 
+(define (lower-state-next-label-number [state : LowerState]) : i64
+  (match state
+    [(LowerState.State _ next-label _ _ _ _ _ _ _ _ _ _ _ _ _) next-label]))
+
 (define (lower-state-fresh-label [state : LowerState] [prefix : String]) : LowerLabel
   (match state
     [(LowerState.State
@@ -8345,26 +8741,30 @@
         address-taken
         tail-param-start
         tail-param-end)
-      (LowerLambdaName.Name
-        (LowerState.State
-          next-var
-          next-label
-          (+ next-lambda 1)
-          current-label
-          current-instrs
-          blocks
-          functions
-          function
-          spans
-          names
-          type-cache
-          mode
-          address-taken
-          tail-param-start
-          tail-param-end)
-        (string.append
-          (string.append (string.append "__tl_lambda_" function) "_")
-          (string.int->string next-lambda)))]))
+      (let
+        [lambda-name : String
+          (string.append
+            (string.append (string.append "__tl_lambda_" function) "_")
+            (string.int->string next-lambda))]
+        [lambda-id : i64 (ci.intern-generated-name lambda-name)]
+        (LowerLambdaName.Name
+          (LowerState.State
+            next-var
+            next-label
+            (+ next-lambda 1)
+            current-label
+            current-instrs
+            blocks
+            functions
+            function
+            spans
+            names
+            type-cache
+            mode
+            address-taken
+            tail-param-start
+            tail-param-end)
+          (intern-str lambda-id)))]))
 
 (define (lower-state-emit [state : LowerState] [instr : CompilerIrInstr]) : LowerState
   (match state
@@ -8897,12 +9297,12 @@
 
 (define (lower-struct-fields [ctx : TcContext] [struct-name : String]) : ResultAstFieldDefList
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (let
         [handle : i64
-          (compiler-symbols-lookup-type-or
+          (compiler-symbols-lookup-type-id-or
             symbols
-            struct-name
+            (lower-existing-name-id struct-name)
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (if (=
@@ -8927,21 +9327,28 @@
             (string.append "lower: unknown struct " struct-name))))]))
 
 (define (lower-struct-repr-c? [ctx : TcContext] [struct-name : String]) : bool
-  (match (tc-struct-decl ctx struct-name)
-    [(ResultTcStructDecl.Ok decl)
-      (match decl
-        [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
-    [(ResultTcStructDecl.Err _) false]))
+  (let
+    [handle : i64
+      (compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        (lower-existing-name-id struct-name)
+        (compiler-symbols-missing-handle))]
+    (match (tc-struct-decl-at-handle ctx handle struct-name)
+      [(ResultTcStructDecl.Ok decl)
+        (match decl
+          [(TcStructDecl repr _ _) (ast-struct-repr-c? repr)])]
+      [(ResultTcStructDecl.Err _) false])))
 
 (define (lower-repr-c-inline-field? [ctx : TcContext] [field-ty : AstType]) : bool
   (match (tc-resolve-type ctx field-ty)
-    [(AstType.Struct nested) (lower-struct-repr-c? ctx (intern-str nested))]
+    [(AstType.Struct nested)
+      (lower-struct-repr-c? ctx (tc-nominal-name-id-display nested))]
     [_ false]))
 
 (define (lower-repr-c-field-size [ctx : TcContext] [field-ty : AstType]) : i64
   (match (tc-resolve-type ctx field-ty)
     [(AstType.Struct nested)
-      (match (tc-repr-c-struct-layout ctx (intern-str nested))
+      (match (tc-repr-c-struct-layout ctx (tc-nominal-name-id-display nested))
         [(ResultTcReprCLayout.Ok layout) (tc-repr-c-layout-size layout)]
         [(ResultTcReprCLayout.Err _) 8])]
     [_ (lower-type-size ctx field-ty)]))
@@ -9203,12 +9610,14 @@
 ;; the same layout and representation as the bare declaration.
 (define (lower-type-register-resident? [ctx : TcContext] [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
-    [(AstType.Struct name) (tc-name-register-resident? ctx (intern-str name))]
+    [(AstType.Struct name)
+      (tc-name-register-resident? ctx (tc-nominal-name-id-display name))]
     [(AstType.StructArgs name _)
-      (tc-name-register-resident? ctx (intern-str name))]
-    [(AstType.Enum name) (tc-name-register-resident? ctx (intern-str name))]
+      (tc-name-register-resident? ctx (tc-nominal-name-id-display name))]
+    [(AstType.Enum name)
+      (tc-name-register-resident? ctx (tc-nominal-name-id-display name))]
     [(AstType.EnumArgs name _)
-      (tc-name-register-resident? ctx (intern-str name))]
+      (tc-name-register-resident? ctx (tc-nominal-name-id-display name))]
     [_ false]))
 
 ;; Number of machine words a register-resident aggregate occupies
@@ -9323,7 +9732,9 @@
   [word-index : i64]) : AstType
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstType.Struct name)
-      (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+      (match (tc-inline-aggregate-layout-for
+        ctx
+        (tc-nominal-name-id-display name))
         [(ResultTcInlineAggregateLayout.Ok layout)
           (match layout
             [(TcInlineAggregateLayout.Struct _ _ fields)
@@ -9338,7 +9749,9 @@
     [(AstType.Enum name)
       (if (= word-index 0)
         (AstType.I64)
-        (match (tc-inline-aggregate-layout-for ctx (intern-str name))
+        (match (tc-inline-aggregate-layout-for
+          ctx
+          (tc-nominal-name-id-display name))
           [(ResultTcInlineAggregateLayout.Ok layout)
             (match layout
               [(TcInlineAggregateLayout.Enum _ _ variants)
@@ -10601,25 +11014,25 @@
     [(AstType.Struct name)
       (lower-supported-reference-struct-args-with-stack?
         ctx
-        (intern-str name)
+        (tc-nominal-name-id-display name)
         (ast-lifetime-list-new)
         LowerStringSet.Nil)]
     [(AstType.StructArgs name lifetimes)
       (lower-supported-reference-struct-args-with-stack?
         ctx
-        (intern-str name)
+        (tc-nominal-name-id-display name)
         (box-get lifetimes)
         LowerStringSet.Nil)]
     [(AstType.Enum name)
       (lower-supported-reference-enum-args-with-stack?
         ctx
-        (intern-str name)
+        (tc-nominal-name-id-display name)
         (ast-lifetime-list-new)
         LowerStringSet.Nil)]
     [(AstType.EnumArgs name lifetimes)
       (lower-supported-reference-enum-args-with-stack?
         ctx
-        (intern-str name)
+        (tc-nominal-name-id-display name)
         (box-get lifetimes)
         LowerStringSet.Nil)]
     [_ false]))
@@ -10855,13 +11268,13 @@
         [(AstType.StructArgs name lifetimes)
           (lower-supported-reference-struct-args-with-stack?
             ctx
-            (intern-str name)
+            (tc-nominal-name-id-display name)
             (box-get lifetimes)
             stack)]
         [(AstType.EnumArgs name lifetimes)
           (lower-supported-reference-enum-args-with-stack?
             ctx
-            (intern-str name)
+            (tc-nominal-name-id-display name)
             (box-get lifetimes)
             stack)]
         [(AstType.Region _ inner)
@@ -10979,32 +11392,38 @@
 (define (lower-borrow-reference-var-address
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [name : String]
+  [name-id : i64]
   [result-ty : AstType]) : ResultLowerExpr
   (let
     [id : i64
-      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name-id
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? id)
       (ResultLowerExpr.Ok
         (LowerExpr.Expr state (CompilerIrValue.Var id) result-ty))
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.Global (lower-resolve-name state name))
+          (CompilerIrValue.Global (lower-resolve-name-id state name-id))
           result-ty)))))
 
 (define (lower-borrow-var-address-by-value
   [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [name : String]
+  [name-id : i64]
   [place-ty : AstType]
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
   (let
     [referent-ty : AstType (tc-borrow-referent-type place-ty)]
     [id : i64
-      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
+      (sym_i64_env.sym-i64-lookup-id-or
+        env
+        name-id
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? id)
       (if (lower-borrow-place-value-reference? ctx referent-ty)
         (ResultLowerExpr.Ok
@@ -11028,8 +11447,10 @@
         (LowerExpr.Expr
           state
           (if (lower-borrow-place-value-reference? ctx referent-ty)
-            (CompilerIrValue.Global (lower-resolve-name state name))
-            (CompilerIrValue.GlobalAddr (lower-resolve-name state name)))
+            (CompilerIrValue.Global
+              (lower-resolve-name state (intern-str name-id)))
+            (CompilerIrValue.GlobalAddr
+              (lower-resolve-name state (intern-str name-id))))
           result-ty)))))
 
 (define (lower-borrow-var-address
@@ -11037,10 +11458,10 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [name : String]
+  [name : i64]
   [origin : AstExpr]
   [result-ty : AstType]) : ResultLowerExpr
-  (match (tc-lookup type-env name)
+  (match (tc-lookup-id type-env name)
     [(ResultTcType.Ok place-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx place-ty))
         [(AstType.Ref _ _)
@@ -11118,7 +11539,7 @@
       ctx
       state
       receiver-value
-      (AstType.Struct (intern struct-name))
+      (AstType.Struct (lower-existing-name-id struct-name))
       result-ty)
       [(LowerExpr.Expr mat-state mat-ptr _)
         (lower-borrow-struct-field-address-from-memory
@@ -11157,7 +11578,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                (intern-str struct-name)
+                (tc-nominal-name-id-display struct-name)
                 field
                 origin
                 result-ty)]
@@ -11166,7 +11587,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                (intern-str struct-name)
+                (tc-nominal-name-id-display struct-name)
                 field
                 origin
                 result-ty)]
@@ -11178,7 +11599,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     origin
                     result-ty)]
@@ -11187,7 +11608,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     origin
                     result-ty)]
@@ -11205,7 +11626,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     origin
                     result-ty)]
@@ -11214,7 +11635,7 @@
                     ctx
                     receiver-state
                     receiver-value
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     origin
                     result-ty)]
@@ -11455,7 +11876,7 @@
   (match (ast-expr-unspan place)
     [(AstExpr.Var name)
       (let
-        [name-text : String (intern-str name)]
+        [name-text : String (tc-env-key-name-text name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(ResultTcExprId.Ok virtual-id)
@@ -11475,7 +11896,7 @@
             state
             env
             type-env
-            name-text
+            name
             origin
             result-ty)))]
     [(AstExpr.StructGet receiver-box field)
@@ -11865,30 +12286,44 @@
 
 (define (lower-enum-type-name-or-empty [ty : AstType]) : String
   (match (tc-type-strip-region ty)
-    [(AstType.Enum enum-name) (intern-str enum-name)]
-    [(AstType.EnumArgs enum-name _) (intern-str enum-name)]
-    [(AstType.VarArgs enum-name _) (intern-str enum-name)]
+    [(AstType.Enum enum-name) (tc-nominal-name-id-display enum-name)]
+    [(AstType.EnumArgs enum-name _) (tc-nominal-name-id-display enum-name)]
+    [(AstType.VarArgs enum-name _) (tc-nominal-name-id-display enum-name)]
     [_ ""]))
 
 (define (lower-struct-type-name-or-empty [ty : AstType]) : String
   (match (tc-type-strip-region ty)
-    [(AstType.Struct struct-name) (intern-str struct-name)]
-    [(AstType.StructArgs struct-name _) (intern-str struct-name)]
-    [(AstType.VarArgs struct-name _) (intern-str struct-name)]
+    [(AstType.Struct struct-name) (tc-nominal-name-id-display struct-name)]
+    [(AstType.StructArgs struct-name _)
+      (tc-nominal-name-id-display struct-name)]
+    [(AstType.VarArgs struct-name _) (tc-nominal-name-id-display struct-name)]
     [_ ""]))
 
-(define (lower-variant-lookup-name-for-scrut
+(define (lower-variant-handle-for-scrut-id-or
   [ctx : TcContext]
   [scrut-ty : AstType]
-  [variant-name : String]) : String
+  [variant-name-id : i64]
+  [fallback : i64]) : i64
   (match (tc-type-strip-region scrut-ty)
-    [(AstType.Enum enum-name)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
-    [(AstType.EnumArgs enum-name _)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
-    [(AstType.VarArgs enum-name _)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
-    [_ variant-name]))
+    [(AstType.Enum enum-name-id)
+      (tc-source-variant-handle-for-enum-id-or
+        ctx
+        enum-name-id
+        variant-name-id
+        fallback)]
+    [(AstType.EnumArgs enum-name-id _)
+      (tc-source-variant-handle-for-enum-id-or
+        ctx
+        enum-name-id
+        variant-name-id
+        fallback)]
+    [(AstType.VarArgs enum-name-id _)
+      (tc-source-variant-handle-for-enum-id-or
+        ctx
+        enum-name-id
+        variant-name-id
+        fallback)]
+    [_ fallback]))
 
 (define (lower-type-debug-kind [ty : AstType]) : String
   (match (tc-type-strip-region ty)
@@ -12116,7 +12551,7 @@
           ctx
           state
           base
-          (AstType.Enum (intern enum-name))
+          (AstType.Enum (lower-existing-name-id enum-name))
           offset
           resolved)
         (lower-load-inline-value-at-offset ctx state base offset resolved mode))
@@ -12173,7 +12608,7 @@
       ctx
       state
       base
-      (AstType.Enum (intern enum-name))
+      (AstType.Enum (lower-existing-name-id enum-name))
       offset
       resolved)
     (lower-load-inline-value-at-offset ctx state base offset resolved mode))
@@ -12294,7 +12729,7 @@
                       ctx
                       state
                       base
-                      (AstType.Enum (intern enum-name))
+                      (AstType.Enum (lower-existing-name-id enum-name))
                       offset
                       resolved)
                     (lower-load-inline-value-at-offset
@@ -12334,7 +12769,7 @@
                         ctx
                         state
                         base
-                        (AstType.Enum (intern enum-name))
+                        (AstType.Enum (lower-existing-name-id enum-name))
                         offset
                         resolved)
                       (lower-load-at-offset state base offset resolved))
@@ -12430,17 +12865,13 @@
                           fail-label
                           scrut-reg-group?)
                         (match ctx
-                          [(TcContext _ symbols registries _ _)
+                          [(TcContext _ symbols registries _ _ _)
                             (let
-                              [nested-lookup-name : String
-                                (lower-variant-lookup-name-for-scrut
+                              [handle : i64
+                                (lower-variant-handle-for-scrut-id-or
                                   ctx
                                   resolved
-                                  nested-name-str)]
-                              [handle : i64
-                                (compiler-registries-lookup-variant-or
-                                  registries
-                                  nested-lookup-name
+                                  nested-name
                                   (compiler-symbols-missing-handle))]
                               (if (not (compiler-symbols-handle-found? handle))
                                 (ResultLowerEnv.Err
@@ -12743,17 +13174,13 @@
                   [nested-args : AstPatternList (box-get nested-args-box)]
                   [nested-name-str : String (intern-str nested-name)]
                   (match ctx
-                    [(TcContext _ symbols registries _ _)
+                    [(TcContext _ symbols registries _ _ _)
                       (let
-                        [nested-lookup-name : String
-                          (lower-variant-lookup-name-for-scrut
+                        [handle : i64
+                          (lower-variant-handle-for-scrut-id-or
                             ctx
                             resolved
-                            nested-name-str)]
-                        [handle : i64
-                          (compiler-registries-lookup-variant-or
-                            registries
-                            nested-lookup-name
+                            nested-name
                             (compiler-symbols-missing-handle))]
                         (if (not (compiler-symbols-handle-found? handle))
                           (ResultLowerEnv.Err
@@ -12946,7 +13373,7 @@
               (not
                 (tc-struct-pattern-irrefutable?
                   ctx
-                  (intern-str struct-name)
+                  (tc-nominal-name-id-display struct-name)
                   ty
                   (intern-str name)
                   args))]
@@ -12954,7 +13381,7 @@
               (not
                 (tc-struct-pattern-irrefutable?
                   ctx
-                  (intern-str struct-name)
+                  (tc-nominal-name-id-display struct-name)
                   ty
                   (intern-str name)
                   args))]
@@ -13098,16 +13525,7 @@
   [env : sym_i64_env.SymI64Env]
   [name : String]
   [ty : AstType]) : ResultLowerExpr
-  (let
-    [id : i64
-      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
-    (if (compiler-symbols-handle-found? id)
-      (ResultLowerExpr.Ok (LowerExpr.Expr state (CompilerIrValue.Var id) ty))
-      (ResultLowerExpr.Ok
-        (LowerExpr.Expr
-          state
-          (CompilerIrValue.Global (lower-resolve-name state name))
-          ty)))))
+  (lower-var-id state env (lower-existing-name-id name) ty))
 
 (define (lower-var-id
   [state : LowerState]
@@ -13125,8 +13543,7 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.Global
-            (lower-resolve-name state (intern-str name-id)))
+          (CompilerIrValue.Global (lower-resolve-name-id state name-id))
           ty)))))
 
 (define (lower-register-address-taken-local-read
@@ -13157,16 +13574,7 @@
   [env : sym_i64_env.SymI64Env]
   [name : String]
   [ty : AstType]) : ResultLowerExpr
-  (let
-    [id : i64
-      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
-    (if (compiler-symbols-handle-found? id)
-      (lower-register-address-taken-local-read ctx state id ty)
-      (ResultLowerExpr.Ok
-        (LowerExpr.Expr
-          state
-          (CompilerIrValue.Global (lower-resolve-name state name))
-          ty)))))
+  (lower-var-id-storage-aware ctx state env (lower-existing-name-id name) ty))
 
 (define (lower-var-id-storage-aware
   [ctx : TcContext]
@@ -13185,8 +13593,7 @@
       (ResultLowerExpr.Ok
         (LowerExpr.Expr
           state
-          (CompilerIrValue.Global
-            (lower-resolve-name state (intern-str name-id)))
+          (CompilerIrValue.Global (lower-resolve-name-id state name-id))
           ty)))))
 
 (define (lower-function-type? [ty : AstType]) : bool
@@ -13294,7 +13701,7 @@
 
 (define (lower-context-imports-atomic? [ctx : TcContext]) : bool
   (match ctx
-    [(TcContext program _ _ _ _)
+    [(TcContext program _ _ _ _ _)
       (match program
         [(AstProgram.Program decls-box)
           (lower-program-imports-atomic? (box-get decls-box))])]))
@@ -13374,9 +13781,14 @@
           (lower-atomic-extern-symbol-for-name
             ctx
             (tc-hygiene-global-call-name raw-text))
-          (if (tc-source-slash-qualified? raw-text)
+          (if (tc-source-slash-qualified-id? raw-text raw-name)
             (lower-atomic-extern-symbol-for-name ctx raw-text)
-            (match (lower-source-name-lookup-key ctx type-env raw-text)
+            (match (tc-source-name-lookup-key-with-field-check
+              ctx
+              type-env
+              raw-text
+              raw-name
+              true)
               [(ResultTcString.Ok lookup-name)
                 (lower-atomic-extern-symbol-for-name ctx lookup-name)]
               [(ResultTcString.Err _) ""]))))]
@@ -13413,7 +13825,10 @@
   [name : String]
   [ty : AstType]) : ResultLowerExpr
   (cond
-    [(sym_i64_env.sym-i64-contains env name) (lower-var state env name ty)]
+    [(let
+        [name-id : i64 (lower-existing-name-id-or name -1)]
+        (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
+      (lower-var state env name ty)]
     [(lower-extern-value-decl? ctx name)
       (match (lower-var state env name ty)
         [(ResultLowerExpr.Ok lowered)
@@ -13469,7 +13884,7 @@
 
 (define (lower-capture-list-contains-name?
   [captures : LowerCaptureList]
-  [name : String]) : bool
+  [name-id : i64]) : bool
   (let
     [items : (Array LowerCapture) (struct-get captures items)]
     [count : i64 (struct-get captures count)]
@@ -13478,8 +13893,8 @@
     (begin
       (while (and (not found) (< index count))
         (match (array-ref items index)
-          [(LowerCapture.Capture capture-name _ _ _)
-            (if (string.eq capture-name name)
+          [(LowerCapture.Capture capture-name-id _ _ _)
+            (if (= capture-name-id name-id)
               (set! found true)
               (set! index (+ index 1)))]))
       found)))
@@ -13503,15 +13918,15 @@
 (define (lower-capture-list-storage-entry?
   [captures : LowerCaptureList]
   [index : i64]
-  [name : String]
+  [name-id : i64]
   [var-id : i64]
   [offset : i64]) : bool
   (if (or (< index 0) (>= index (struct-get captures count)))
     false
     (match (array-ref (struct-get captures items) index)
-      [(LowerCapture.Capture capture-name capture-var-id _ capture-offset)
+      [(LowerCapture.Capture capture-name-id capture-var-id _ capture-offset)
         (and
-          (string.eq capture-name name)
+          (= capture-name-id name-id)
           (= capture-var-id var-id)
           (= capture-offset offset))])))
 
@@ -13629,7 +14044,7 @@
           env
           type-env
           value
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           ty))]
     [(AstType.StructArgs name _)
       (lower-capture-snapshot-struct-value
@@ -13638,7 +14053,7 @@
         env
         type-env
         value
-        (intern-str name)
+        (tc-nominal-name-id-display name)
         ty)]
     [(AstType.Enum name)
       (if (lower-type-register-resident? ctx ty)
@@ -13649,7 +14064,7 @@
           env
           type-env
           value
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           ty))]
     [(AstType.EnumArgs name _)
       (lower-capture-snapshot-enum-value
@@ -13658,7 +14073,7 @@
         env
         type-env
         value
-        (intern-str name)
+        (tc-nominal-name-id-display name)
         ty)]
     [_ (ResultLowerExpr.Ok (LowerExpr.Expr state value ty))]))
 
@@ -14091,8 +14506,8 @@
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext program _ _ _ _)
-      (match (tc-program-enum-variants program enum-name)
+    [(TcContext _ _ _ _ _ _)
+      (match (tc-context-enum-variants ctx enum-name)
         [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
             state
@@ -14144,7 +14559,7 @@
       (let
         [name : String (intern-str name-id)]
         (if (or
-          (lower-capture-list-contains-name? captures name)
+          (lower-capture-list-contains-name? captures name-id)
           (not (tc-expr-uses-free-name? body name bound)))
           (lower-capture-plan-scan
             ctx
@@ -14155,7 +14570,7 @@
             cursor
             captures
             origin)
-          (match (tc-lookup type-env name)
+          (match (tc-lookup-id type-env name-id)
             [(ResultTcType.Err message)
               (ResultLowerCapturePlan.Err
                 (box (lower-diagnostic-at-expr origin message)))]
@@ -14183,7 +14598,7 @@
                       (+ offset slot-size)
                       (lower-capture-list-add-front
                         captures
-                        (LowerCapture.Capture name var-id capture-ty offset))
+                        (LowerCapture.Capture name-id var-id capture-ty offset))
                       origin))
                   (ResultLowerCapturePlan.Err
                     (box
@@ -14337,7 +14752,7 @@
     (let
       [capture : LowerCapture (array-ref items index)]
       (match capture
-        [(LowerCapture.Capture name _ capture-ty offset)
+        [(LowerCapture.Capture name-id _ capture-ty offset)
           (match (if (lower-type-register-group? ctx capture-ty)
             ;; A captured 2-word group loads both words and repacks.
             (match (lower-gep-byte state env-value offset)
@@ -14357,8 +14772,8 @@
                     env-value
                     items
                     (- index 1)
-                    (sym_i64_env.sym-i64-bind env name loaded-var)
-                    (tc-bind type-env name capture-ty))]
+                    (sym_i64_env.sym-i64-bind-id env name-id loaded-var)
+                    (tc-bind-id type-env name-id capture-ty))]
                 [_
                   (ResultLowerEnv.Err
                     (box
@@ -14605,175 +15020,129 @@
     [(AstType.Unit) CompilerIrMaybeValue.No]
     [_ (CompilerIrMaybeValue.Some value)]))
 
-(define (lower-cleanup-marker-name) : String
-  " __tl_active_cleanup")
+(define (lower-private-name-id [kind : i64] [var-id : i64]) : i64
+  ;; Parser ids and their typechecker marker keys occupy the ranges nearest
+  ;; zero. Lower-only bindings use this disjoint structural namespace.
+  (- 0 (+ (* (intern-capacity) 4) (+ (* var-id 16) kind))))
 
-(define lower-cleanup-marker-id-cache : i64
-  -1)
+(define (lower-private-name-kind [name-id : i64]) : i64
+  (% (- (- 0 name-id) (* (intern-capacity) 4)) 16))
+
+(define (lower-private-name-value [name-id : i64]) : i64
+  (/ (- (- 0 name-id) (* (intern-capacity) 4)) 16))
 
 (define (lower-cleanup-marker-id) : i64
-  lower-cleanup-marker-id-cache)
-
-(define (lower-region-reset-marker-name) : String
-  " __tl_active_region_reset")
-
-(define lower-region-reset-marker-id-cache : i64
-  -1)
+  (lower-private-name-id 1 0))
 
 (define (lower-region-reset-marker-id) : i64
-  lower-region-reset-marker-id-cache)
-
-(define (lower-spmd-reduce-acc-name) : String
-  "0spmd-reduce-acc")
-
-(define (lower-spmd-reduce-end-name) : String
-  "0spmd-reduce-end")
-
-(define (lower-spmd-reduce-val-name) : String
-  "0spmd-reduce-val")
-
-(define (lower-spmd-reduce-current-name) : String
-  "0spmd-reduce-current")
-
-(define (lower-spmd-scan-acc-name) : String
-  "0spmd-scan-acc")
-
-(define (lower-spmd-scan-end-name) : String
-  "0spmd-scan-end")
-
-(define (lower-spmd-scan-val-name) : String
-  "0spmd-scan-val")
-
-(define lower-spmd-reduce-acc-id-cache : i64
-  -1)
-(define lower-spmd-reduce-end-id-cache : i64
-  -1)
-(define lower-spmd-reduce-val-id-cache : i64
-  -1)
-(define lower-spmd-reduce-current-id-cache : i64
-  -1)
-(define lower-spmd-scan-acc-id-cache : i64
-  -1)
-(define lower-spmd-scan-end-id-cache : i64
-  -1)
-(define lower-spmd-scan-val-id-cache : i64
-  -1)
+  (lower-private-name-id 2 0))
 
 (define (lower-spmd-reduce-acc-id) : i64
-  lower-spmd-reduce-acc-id-cache)
+  (lower-private-name-id 3 0))
 
 (define (lower-spmd-reduce-end-id) : i64
-  lower-spmd-reduce-end-id-cache)
+  (lower-private-name-id 4 0))
 
 (define (lower-spmd-reduce-val-id) : i64
-  lower-spmd-reduce-val-id-cache)
+  (lower-private-name-id 5 0))
 
 (define (lower-spmd-reduce-current-id) : i64
-  lower-spmd-reduce-current-id-cache)
+  (lower-private-name-id 6 0))
 
 (define (lower-spmd-scan-acc-id) : i64
-  lower-spmd-scan-acc-id-cache)
+  (lower-private-name-id 7 0))
 
 (define (lower-spmd-scan-end-id) : i64
-  lower-spmd-scan-end-id-cache)
+  (lower-private-name-id 8 0))
 
 (define (lower-spmd-scan-val-id) : i64
-  lower-spmd-scan-val-id-cache)
+  (lower-private-name-id 9 0))
 
-(define (lower-name-id [name : String]) : i64
-  (cond
-    [(string.eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
-    [(string.eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
-    [(string.eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
-    [(string.eq name (lower-spmd-reduce-current-name))
-      (lower-spmd-reduce-current-id)]
-    [(string.eq name (lower-spmd-scan-acc-name)) (lower-spmd-scan-acc-id)]
-    [(string.eq name (lower-spmd-scan-end-name)) (lower-spmd-scan-end-id)]
-    [(string.eq name (lower-spmd-scan-val-name)) (lower-spmd-scan-val-id)]
-    [else (intern name)]))
+(define (lower-cleanup-hidden-name-id [var-id : i64]) : i64
+  (lower-private-name-id 10 var-id))
 
-(define (lower-refresh-marker-ids!) : unit
-  (begin
-    (set! lower-cleanup-marker-id-cache (intern (lower-cleanup-marker-name)))
-    (set!
-      lower-region-reset-marker-id-cache
-      (intern (lower-region-reset-marker-name)))
-    (set! lower-spmd-reduce-acc-id-cache (intern (lower-spmd-reduce-acc-name)))
-    (set! lower-spmd-reduce-end-id-cache (intern (lower-spmd-reduce-end-name)))
-    (set! lower-spmd-reduce-val-id-cache (intern (lower-spmd-reduce-val-name)))
-    (set!
-      lower-spmd-reduce-current-id-cache
-      (intern (lower-spmd-reduce-current-name)))
-    (set! lower-spmd-scan-acc-id-cache (intern (lower-spmd-scan-acc-name)))
-    (set! lower-spmd-scan-end-id-cache (intern (lower-spmd-scan-end-name)))
-    (set! lower-spmd-scan-val-id-cache (intern (lower-spmd-scan-val-name)))))
+(define (lower-region-hidden-name-id [var-id : i64]) : i64
+  (lower-private-name-id 11 var-id))
 
-(define (lower-cleanup-hidden-name [var-id : i64]) : String
-  (string.append "__tl_cleanup_resource." (string.int->string var-id)))
+(define (lower-arena-restore-hidden-name-id [var-id : i64]) : i64
+  (lower-private-name-id 12 var-id))
 
-(define (lower-region-hidden-name [var-id : i64]) : String
-  (string.append "__tl_region_mark." (string.int->string var-id)))
+(define (lower-while-exit-label-id [label-number : i64]) : i64
+  (lower-private-name-id 13 label-number))
 
-(define (lower-arena-restore-hidden-name [var-id : i64]) : String
-  (string.append "__tl_arena_restore." (string.int->string var-id)))
+(define (lower-while-header-label-id [label-number : i64]) : i64
+  (lower-private-name-id 14 label-number))
+
+(define (lower-loop-label-name [name-id : i64]) : String
+  (let
+    [kind : i64 (lower-private-name-kind name-id)]
+    [prefix : String
+      (if (= kind 13)
+        "while_exit"
+        (if (= kind 14)
+          "while_header"
+          "invalid_loop_label"))]
+    (string.append
+      (string.append prefix ".")
+      (string.int->string (lower-private-name-value name-id)))))
 
 (define (lower-cleanup-metadata-type
-  [hidden-name : String]
-  [cleanup-name : String]) : AstType
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]) : AstType
   (ast-ty-tuple
     (ast-type-cons
-      (AstType.Var (intern hidden-name))
-      (ast-type-cons (AstType.Var (intern cleanup-name)) (ast-type-list-new)))))
+      (AstType.Var hidden-name-id)
+      (ast-type-cons (AstType.Var cleanup-name-id) (ast-type-list-new)))))
 
-(define (lower-region-reset-metadata-type [hidden-name : String]) : AstType
-  (AstType.Var (intern hidden-name)))
+(define (lower-region-reset-metadata-type [hidden-name-id : i64]) : AstType
+  (AstType.Var hidden-name-id))
 
-(define (lower-arena-restore-metadata-type [hidden-name : String]) : AstType
+(define (lower-arena-restore-metadata-type [hidden-name-id : i64]) : AstType
   (ast-ty-tuple
-    (ast-type-cons (AstType.Var (intern hidden-name)) (ast-type-list-new))))
+    (ast-type-cons (AstType.Var hidden-name-id) (ast-type-list-new))))
 
 (define (lower-type-env-push-cleanup
   [type-env : TcTypeEnv]
-  [hidden-name : String]
-  [cleanup-name : String]) : TcTypeEnv
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]) : TcTypeEnv
   (tc-bind-id
     type-env
     (lower-cleanup-marker-id)
-    (lower-cleanup-metadata-type hidden-name cleanup-name)))
+    (lower-cleanup-metadata-type hidden-name-id cleanup-name-id)))
 
 (define (lower-type-env-push-region-reset
   [type-env : TcTypeEnv]
-  [hidden-name : String]) : TcTypeEnv
+  [hidden-name-id : i64]) : TcTypeEnv
   (tc-bind-id
     type-env
     (lower-region-reset-marker-id)
-    (lower-region-reset-metadata-type hidden-name)))
+    (lower-region-reset-metadata-type hidden-name-id)))
 
 (define (lower-type-env-push-arena-restore
   [type-env : TcTypeEnv]
-  [hidden-name : String]) : TcTypeEnv
+  [hidden-name-id : i64]) : TcTypeEnv
   (tc-bind-id
     type-env
     (lower-region-reset-marker-id)
-    (lower-arena-restore-metadata-type hidden-name)))
+    (lower-arena-restore-metadata-type hidden-name-id)))
 
-(define (lower-cleanup-name-from-expr [cleanup : AstExpr]) : ResultTcString
+(define (lower-cleanup-name-id-from-expr [cleanup : AstExpr]) : ResultTcExprId
   (match (ast-expr-unspan cleanup)
-    [(AstExpr.Var name) (ResultTcString.Ok (intern-str name))]
+    [(AstExpr.Var name) (ResultTcExprId.Ok name)]
     [_
-      (ResultTcString.Err
+      (ResultTcExprId.Err
         "lower: resource cleanup must be a direct function name")]))
 
 (define (lower-emit-cleanup-call
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [hidden-name : String]
-  [cleanup-name : String]) : ResultLowerState
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]) : ResultLowerState
   (let
     [resource-id : i64
-      (sym_i64_env.sym-i64-lookup-or
+      (sym_i64_env.sym-i64-lookup-id-or
         env
-        hidden-name
+        hidden-name-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? resource-id)
       (match (lower-state-alloc-var state)
@@ -14783,7 +15152,10 @@
               allocated
               (CompilerIrInstr.Call
                 var-id
-                (lower-resolve-call-name allocated env cleanup-name)
+                (lower-resolve-call-name
+                  allocated
+                  env
+                  (intern-str cleanup-name-id))
                 (CompilerIrCallArgs.One (CompilerIrValue.Var resource-id))
                 (AstType.Unit))))])
       (ResultLowerState.Err
@@ -14792,12 +15164,12 @@
 (define (lower-emit-region-reset
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [hidden-name : String]) : ResultLowerState
+  [hidden-name-id : i64]) : ResultLowerState
   (let
     [mark-var : i64
-      (sym_i64_env.sym-i64-lookup-or
+      (sym_i64_env.sym-i64-lookup-id-or
         env
-        hidden-name
+        hidden-name-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? mark-var)
       (match (lower-state-alloc-var state)
@@ -14816,12 +15188,12 @@
 (define (lower-emit-arena-restore
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [hidden-name : String]) : ResultLowerState
+  [hidden-name-id : i64]) : ResultLowerState
   (let
     [arena-var : i64
-      (sym_i64_env.sym-i64-lookup-or
+      (sym_i64_env.sym-i64-lookup-id-or
         env
-        hidden-name
+        hidden-name-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? arena-var)
       (match (lower-state-alloc-var state)
@@ -14838,20 +15210,20 @@
         (box (lower-diagnostic "lower: missing arena restore binding"))))))
 
 (define (lower-cleanup-stack-empty) : LowerCleanupStack
-  (LowerCleanupStack (make-array String 0) (make-array String 0) 0))
+  (LowerCleanupStack (make-array i64 0) (make-array i64 0) 0))
 
 (define (lower-cleanup-stack-push
   [cleanups : LowerCleanupStack]
-  [hidden-name : String]
-  [cleanup-name : String]) : LowerCleanupStack
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]) : LowerCleanupStack
   (let
-    [hidden-names : (Array String) (struct-get cleanups hidden-names)]
-    [cleanup-names : (Array String) (struct-get cleanups cleanup-names)]
+    [hidden-name-ids : (Array i64) (struct-get cleanups hidden-name-ids)]
+    [cleanup-name-ids : (Array i64) (struct-get cleanups cleanup-name-ids)]
     [count : i64 (struct-get cleanups count)]
     (begin
-      (array-push! hidden-names hidden-name)
-      (array-push! cleanup-names cleanup-name)
-      (LowerCleanupStack hidden-names cleanup-names (+ count 1)))))
+      (array-push! hidden-name-ids hidden-name-id)
+      (array-push! cleanup-name-ids cleanup-name-id)
+      (LowerCleanupStack hidden-name-ids cleanup-name-ids (+ count 1)))))
 
 (define (lower-cleanup-stack-count [cleanups : LowerCleanupStack]) : i64
   (struct-get cleanups count))
@@ -14859,37 +15231,35 @@
 (define (lower-cleanup-stack-entry?
   [cleanups : LowerCleanupStack]
   [index : i64]
-  [hidden-name : String]
-  [cleanup-name : String]) : bool
+  [hidden-name-id : i64]
+  [cleanup-name-id : i64]) : bool
   (if (or (< index 0) (>= index (struct-get cleanups count)))
     false
     (and
-      (string.eq
-        (array-ref (struct-get cleanups hidden-names) index)
-        hidden-name)
-      (string.eq
-        (array-ref (struct-get cleanups cleanup-names) index)
-        cleanup-name))))
+      (= (array-ref (struct-get cleanups hidden-name-ids) index) hidden-name-id)
+      (=
+        (array-ref (struct-get cleanups cleanup-name-ids) index)
+        cleanup-name-id))))
 
 (define (lower-emit-cleanup-stack-at
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [hidden-names : (Array String)]
-  [cleanup-names : (Array String)]
+  [hidden-name-ids : (Array i64)]
+  [cleanup-name-ids : (Array i64)]
   [index : i64]) : ResultLowerState
   (if (< index 0)
     (ResultLowerState.Ok state)
     (match (lower-emit-cleanup-call
       state
       env
-      (array-ref hidden-names index)
-      (array-ref cleanup-names index))
+      (array-ref hidden-name-ids index)
+      (array-ref cleanup-name-ids index))
       [(ResultLowerState.Ok next-state)
         (lower-emit-cleanup-stack-at
           next-state
           env
-          hidden-names
-          cleanup-names
+          hidden-name-ids
+          cleanup-name-ids
           (- index 1))]
       [(ResultLowerState.Err message) (ResultLowerState.Err message)])))
 
@@ -14900,8 +15270,8 @@
   (lower-emit-cleanup-stack-at
     state
     env
-    (struct-get cleanups hidden-names)
-    (struct-get cleanups cleanup-names)
+    (struct-get cleanups hidden-name-ids)
+    (struct-get cleanups cleanup-name-ids)
     (- (struct-get cleanups count) 1)))
 
 (define (lower-emit-cleanup-marker-tuple
@@ -14923,11 +15293,7 @@
         [(AstType.Var hidden-name)
           (match cleanup-ty
             [(AstType.Var cleanup-name)
-              (lower-emit-cleanup-call
-                state
-                env
-                (intern-str hidden-name)
-                (intern-str cleanup-name))]
+              (lower-emit-cleanup-call state env hidden-name cleanup-name)]
             [_ (ResultLowerState.Ok state)])]
         [_ (ResultLowerState.Ok state)]))
     (ResultLowerState.Ok state)))
@@ -14945,7 +15311,7 @@
           (ast-type-list-get (& types) 0 (ast-type-id-fallback)))]
       (match hidden-ty
         [(AstType.Var hidden-name)
-          (lower-emit-arena-restore state env (intern-str hidden-name))]
+          (lower-emit-arena-restore state env hidden-name)]
         [_ (ResultLowerState.Ok state)]))
     (ResultLowerState.Ok state)))
 
@@ -14996,10 +15362,7 @@
                 (if (= key region-reset-marker-id)
                   (match ty
                     [(AstType.Var hidden-name)
-                      (match (lower-emit-region-reset
-                        cur-state
-                        env
-                        (intern-str hidden-name))
+                      (match (lower-emit-region-reset cur-state env hidden-name)
                         [(ResultLowerState.Ok next-state)
                           (set! cur-state next-state)]
                         [(ResultLowerState.Err message)
@@ -15039,24 +15402,22 @@
     type-env))
 
 (define (lower-loop-target-type
-  [break-label : String]
-  [continue-label : String]) : AstType
+  [break-label-id : i64]
+  [continue-label-id : i64]) : AstType
   (AstType.Tuple
     (box
       (ast-type-cons
-        (AstType.Var (intern break-label))
-        (ast-type-cons
-          (AstType.Var (intern continue-label))
-          (ast-type-list-new))))))
+        (AstType.Var break-label-id)
+        (ast-type-cons (AstType.Var continue-label-id) (ast-type-list-new))))))
 
 (define (lower-enter-loop-target
   [type-env : TcTypeEnv]
-  [break-label : String]
-  [continue-label : String]) : TcTypeEnv
+  [break-label-id : i64]
+  [continue-label-id : i64]) : TcTypeEnv
   (tc-bind-id
     type-env
     (tc-loop-target-id)
-    (lower-loop-target-type break-label continue-label)))
+    (lower-loop-target-type break-label-id continue-label-id)))
 
 (define (lower-loop-target-missing [origin : AstExpr] [form : String]) : ResultLowerLoopTarget
   (ResultLowerLoopTarget.Err
@@ -15081,8 +15442,8 @@
         [(AstType.Var continue-name)
           (ResultLowerLoopTarget.Ok
             (LowerLoopTarget.Target
-              (intern-str break-name)
-              (intern-str continue-name)))]
+              (lower-loop-label-name break-name)
+              (lower-loop-label-name continue-name)))]
         [_ (lower-loop-target-malformed origin)])]
     [_ (lower-loop-target-malformed origin)]))
 
@@ -15166,7 +15527,7 @@
                         (match (lower-emit-region-reset
                           cur-state
                           env
-                          (intern-str hidden-name))
+                          hidden-name)
                           [(ResultLowerState.Ok next-state)
                             (set! cur-state next-state)]
                           [(ResultLowerState.Err message)
@@ -15349,28 +15710,57 @@
           resolved
           (lower-state-mode state))])))
 
+(define (lower-result-info-variant-handle-or
+  [ctx : TcContext]
+  [info : TcResultInfo]
+  [variant-name : String]
+  [fallback : i64]) : i64
+  (let
+    [enum-name-id : i64
+      (lower-existing-name-id-or (tc-result-info-enum-name info) -1)]
+    [variant-base-id : i64
+      (lower-existing-name-id-or
+        (lower-member-name-base (tc-qualified-name-base variant-name))
+        -1)]
+    [qualified-module-id : i64 (tc-qualified-name-module-id enum-name-id)]
+    [module-id : i64
+      (if (>= qualified-module-id 0)
+        qualified-module-id
+        (tc-context-module-id ctx))]
+    (if (or (< enum-name-id 0) (< variant-base-id 0))
+      fallback
+      (compiler-registries-lookup-variant-key-id-or
+        (tc-context-registries ctx)
+        (compiler-symbol-module-key-id-by-id
+          module-id
+          (compiler-enum-qualified-variant-name-id
+            (tc-qualified-name-base-id enum-name-id)
+            variant-base-id))
+        fallback))))
+
 (define (lower-return-result-err
   [ctx : TcContext]
   [state : LowerState]
   [return-info : TcResultInfo]
   [payload : CompilerIrValue]) : ResultLowerState
   (match ctx
-    [(TcContext _ _ registries _ _)
+    [(TcContext _ _ registries _ _ _)
       (let
         [enum-name : String (tc-result-info-enum-name return-info)]
         [err-name : String (tc-result-info-err-name return-info)]
         [err-ty : AstType
           (tc-type-without-regions (tc-result-info-err-type return-info))]
         [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
+          (lower-result-info-variant-handle-or
+            ctx
+            return-info
             err-name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (lower-reserve-heap-storage
             state
             (lower-enum-storage-size ctx enum-name)
-            (AstType.Enum (intern enum-name)))
+            (AstType.Enum (lower-existing-name-id enum-name)))
             [(LowerExpr.Expr base-state base _)
               (let
                 [tag-state : LowerState
@@ -15395,7 +15785,8 @@
                         payload
                         err-ty
                         (lower-type-size ctx err-ty))])]
-                [ret-ty : AstType (AstType.Enum (intern enum-name))]
+                [ret-ty : AstType
+                  (AstType.Enum (lower-existing-name-id enum-name))]
                 ;; When the function's result enum is register-resident
                 ;; the caller reads the return value from registers, so load
                 ;; the constructed enum back out of the buffer (word or
@@ -15494,12 +15885,13 @@
   [return-info : TcResultInfo]
   [origin : AstExpr]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ _ registries _ _)
+    [(TcContext _ _ registries _ _ _)
       (let
         [ok-name : String (tc-result-info-ok-name operand-info)]
         [ok-handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
+          (lower-result-info-variant-handle-or
+            ctx
+            operand-info
             ok-name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? ok-handle)
@@ -15600,14 +15992,14 @@
 
 (define (lower-top-level-value-defined-id? [ctx : TcContext] [name-id : i64]) : bool
   (match ctx
-    [(TcContext _ symbols _ module _)
+    [(TcContext _ symbols _ module module-id _)
       (compiler-symbols-handle-found?
         (if (and
           (> (string.string-length module) 0)
           (not (tc-name-qualified-id? name-id)))
           (compiler-symbols-lookup-value-in-module-id-or
             symbols
-            (intern module)
+            module-id
             name-id
             (compiler-symbols-missing-handle))
           (compiler-symbols-lookup-value-id-or
@@ -15615,8 +16007,34 @@
             name-id
             (compiler-symbols-missing-handle))))]))
 
+(define (lower-top-level-callable-defined-id? [ctx : TcContext] [name-id : i64]) : bool
+  (match ctx
+    [(TcContext _ symbols _ module module-id _)
+      (let
+        [handle : i64
+          (if (and
+            (> (string.string-length module) 0)
+            (not (tc-name-qualified-id? name-id)))
+            (compiler-symbols-lookup-value-in-module-id-or
+              symbols
+              module-id
+              name-id
+              (compiler-symbols-missing-handle))
+            (compiler-symbols-lookup-value-id-or
+              symbols
+              name-id
+              (compiler-symbols-missing-handle)))]
+        (if (compiler-symbols-handle-found? handle)
+          (let
+            [kind : i64 (compiler-symbol-handle-kind handle)]
+            (or
+              (= kind (compiler-symbol-kind-function-define))
+              (= kind (compiler-symbol-kind-extern))
+              (= kind (compiler-symbol-kind-defdispatch))))
+          false))]))
+
 (define (lower-top-level-value-defined? [ctx : TcContext] [name : String]) : bool
-  (lower-top-level-value-defined-id? ctx (intern name)))
+  (lower-top-level-value-defined-id? ctx (lower-existing-name-id name)))
 
 (define (lower-builtin-call-available-id?
   [ctx : TcContext]
@@ -15630,7 +16048,7 @@
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
   [name : String]) : bool
-  (lower-builtin-call-available-id? ctx env (intern name)))
+  (lower-builtin-call-available-id? ctx env (lower-existing-name-id name)))
 
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (let
@@ -15643,13 +16061,13 @@
   (cbi.compiler-builtin-lower-arena-id? name-id))
 
 (define (lower-arena-builtin? [name : String]) : bool
-  (lower-arena-builtin-id? (intern name)))
+  (lower-arena-builtin-id? (lower-existing-name-id name)))
 
 (define (lower-arena-builtin-nullary-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-arena-nullary-id? name-id))
 
 (define (lower-arena-builtin-nullary? [name : String]) : bool
-  (lower-arena-builtin-nullary-id? (intern name)))
+  (lower-arena-builtin-nullary-id? (lower-existing-name-id name)))
 
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
   (cond
@@ -15663,7 +16081,7 @@
     [else "tl_region_reset"]))
 
 (define (lower-arena-builtin-symbol [name : String]) : String
-  (lower-arena-builtin-symbol-id (intern name)))
+  (lower-arena-builtin-symbol-id (lower-existing-name-id name)))
 
 (define (lower-arena-builtin-call
   [ctx : TcContext]
@@ -15674,7 +16092,7 @@
   [args : AstExprList]
   [result-ty : AstType]) : ResultLowerExpr
   (let
-    [name-id : i64 (intern name)]
+    [name-id : i64 (lower-existing-name-id name)]
     (if (lower-arena-builtin-nullary-id? name-id)
       (lower-runtime-call-values
         state
@@ -15770,36 +16188,62 @@
 ;; so it carries the hidden sret param; append the result-slot pointer here to
 ;; match (the same gate as the helper's definition, so a non-aggregate clone$
 ;; target -- e.g. a type variable -- passes only the value).
+(define (lower-clone-type-key-id [ctx : TcContext] [name-id : i64]) : i64
+  (if (compiler-composite-pair-key-id? name-id)
+    name-id
+    (clone-name-key-id-in-module (tc-context-module-id ctx) name-id)))
+
+(define (lower-clone-helper-lookup-id
+  [type-key-id : i64]
+  [helper-name-id : i64]) : i64
+  (if (clone-name-key-qualified? type-key-id)
+    (compiler-symbol-module-key-id-by-id
+      (clone-name-key-module-id type-key-id)
+      helper-name-id)
+    helper-name-id))
+
 (define (lower-clone-named
   [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
-  [name : String]
+  [name-id : i64]
   [value : CompilerIrValue]
   [ty : AstType]) : ResultLowerExpr
-  (match (lower-call-append-sret-arg
-    ctx
-    state
-    (compiler-ir-value-cons value CompilerIrValueList.Nil)
-    ty)
-    [(ResultLowerArgs.Ok sret-state sret-values)
-      (match (lower-state-alloc-var sret-state)
-        [(LowerAlloc.Alloc allocated var-id)
-          (ResultLowerExpr.Ok
-            (LowerExpr.Expr
-              (lower-state-emit
-                allocated
-                (CompilerIrInstr.Call
-                  var-id
-                  (lower-resolve-call-name
+  (let
+    [type-key-id : i64 (lower-clone-type-key-id ctx name-id)]
+    [helper-name-id : i64 (clone-helper-name-id-for-key-or type-key-id -1)]
+    (if (< helper-name-id 0)
+      (ResultLowerExpr.Err
+        (box
+          (lower-diagnostic
+            (string.append
+              "lower: missing generated clone helper for "
+              (tc-nominal-name-id-display name-id)))))
+      (match (lower-call-append-sret-arg
+        ctx
+        state
+        (compiler-ir-value-cons value CompilerIrValueList.Nil)
+        ty)
+        [(ResultLowerArgs.Ok sret-state sret-values)
+          (match (lower-state-alloc-var sret-state)
+            [(LowerAlloc.Alloc allocated var-id)
+              (ResultLowerExpr.Ok
+                (LowerExpr.Expr
+                  (lower-state-emit
                     allocated
-                    env
-                    (clone-helper-name name))
-                  (compiler-ir-call-args-from-list sret-values)
-                  ty))
-              (CompilerIrValue.Var var-id)
-              ty))])]
-    [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))
+                    (CompilerIrInstr.Call
+                      var-id
+                      (lower-resolve-call-name-id
+                        allocated
+                        env
+                        (lower-clone-helper-lookup-id
+                          type-key-id
+                          helper-name-id))
+                      (compiler-ir-call-args-from-list sret-values)
+                      ty))
+                  (CompilerIrValue.Var var-id)
+                  ty))])]
+        [(ResultLowerArgs.Err message) (ResultLowerExpr.Err message)]))))
 
 (define (lower-clone-scalar-type? [ty : AstType]) : bool
   (match ty
@@ -16405,13 +16849,12 @@
       [(AstType.Enum name)
         (if (lower-type-register-resident? ctx clone-ty)
           (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))
-          (lower-clone-named ctx state env (intern-str name) value clone-ty))]
+          (lower-clone-named ctx state env name value clone-ty))]
       [(AstType.Struct name)
         (if (lower-type-register-resident? ctx clone-ty)
           (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))
-          (lower-clone-named ctx state env (intern-str name) value clone-ty))]
-      [(AstType.Var name)
-        (lower-clone-named ctx state env (intern-str name) value clone-ty)]
+          (lower-clone-named ctx state env name value clone-ty))]
+      [(AstType.Var name) (lower-clone-named ctx state env name value clone-ty)]
       [_
         (if (lower-clone-scalar-type? clone-ty)
           (ResultLowerExpr.Ok (LowerExpr.Expr state value clone-ty))
@@ -16435,22 +16878,17 @@
           (lower-clone-dispatch ctx arg-state env type-env arg-value arg-ty)])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-call-explicit-mut-borrow-var-name
+(define (lower-call-explicit-mut-borrow-var-id
   [ctx : TcContext]
-  [arg : AstExpr]) : TcMaybeString
+  [arg : AstExpr]) : TcMaybeNameId
   (match (ast-expr-unspan arg)
     [(AstExpr.Borrow mutable _ place-box)
       (if mutable
         (match (ast-expr-unspan (lower-context-expr-get ctx place-box))
-          [(AstExpr.Var name)
-            (let
-              [name-text : String (intern-str name)]
-              (if (>= (tc-name-first-dot name-text) 0)
-                TcMaybeString.No
-                (TcMaybeString.Some name-text)))]
-          [_ TcMaybeString.No])
-        TcMaybeString.No)]
-    [_ TcMaybeString.No]))
+          [(AstExpr.Var name) (TcMaybeNameId.Some name)]
+          [_ (TcMaybeNameId.No)])
+        (TcMaybeNameId.No))]
+    [_ (TcMaybeNameId.No)]))
 
 (define (lower-call-arg-normal-as
   [ctx : TcContext]
@@ -16476,8 +16914,8 @@
   [arg : AstExpr]
   [effective-arg : AstExpr]
   [arg-ty : AstType]
-  [name : String]) : ResultLowerCallArg
-  (match (tc-lookup type-env name)
+  [name-id : i64]) : ResultLowerCallArg
+  (match (tc-lookup-id type-env name-id)
     [(ResultTcType.Ok place-ty)
       (let
         [referent-ty : AstType (tc-borrow-referent-type place-ty)]
@@ -16496,9 +16934,9 @@
             arg-ty)
           (let
             [local-id : i64
-              (sym_i64_env.sym-i64-lookup-or
+              (sym_i64_env.sym-i64-lookup-id-or
                 env
-                name
+                name-id
                 (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? local-id)
               (match (lower-borrow-copy-to-inline-storage
@@ -16541,8 +16979,8 @@
     [(ResultTcExpr.Ok effective-arg)
       (match (tc-type-strip-region (tc-resolve-type ctx arg-ty))
         [(AstType.MutRef _ _)
-          (match (lower-call-explicit-mut-borrow-var-name ctx effective-arg)
-            [(TcMaybeString.Some name)
+          (match (lower-call-explicit-mut-borrow-var-id ctx effective-arg)
+            [(TcMaybeNameId.Some name-id)
               (lower-call-arg-mut-borrow-var-as
                 ctx
                 state
@@ -16551,8 +16989,8 @@
                 arg
                 effective-arg
                 arg-ty
-                name)]
-            [(TcMaybeString.No)
+                name-id)]
+            [(TcMaybeNameId.No)
               (lower-call-arg-normal-as
                 ctx
                 state
@@ -16727,7 +17165,9 @@
   (cbi.compiler-builtin-lower-bootstrap-runtime-id? name-id))
 
 (define (lower-bootstrap-runtime-builtin? [name : String]) : bool
-  (lower-bootstrap-runtime-builtin-id? (intern name)))
+  (let
+    [name-id : i64 (lower-existing-name-id-or name -1)]
+    (and (>= name-id 0) (lower-bootstrap-runtime-builtin-id? name-id))))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -17060,16 +17500,6 @@
         [(ResultTcLifetimeSubst.Err _) fields])]
     [_ fields]))
 
-(define (lower-variant-owner-module [ctx : TcContext] [handle : i64]) : String
-  (match (tc-nominal-owner-name
-    ctx
-    (compiler-registry-variant-owner-handle handle))
-    [(ResultTcString.Ok owner-name)
-      (if (tc-name-qualified? owner-name)
-        (tc-qualified-name-module owner-name)
-        "")]
-    [(ResultTcString.Err _) ""]))
-
 (define (lower-variant-payload-fields-for-handle
   [ctx : TcContext]
   [handle : i64]
@@ -17077,7 +17507,9 @@
   [fields : AstTypeList]) : AstTypeList
   (let
     [field-ctx : TcContext
-      (tc-context-with-module ctx (lower-variant-owner-module ctx handle))]
+      (tc-context-with-nominal-owner-handle-module
+        ctx
+        (compiler-registry-variant-owner-handle handle))]
     [enum-name : String (lower-enum-type-name-or-empty resolved-scrut-ty)]
     (tc-resolve-type-list
       field-ctx
@@ -17098,14 +17530,12 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
             [field-ctx : TcContext
-              (tc-context-with-module
-                ctx
-                (lower-variant-owner-module ctx handle))]
+              (tc-context-with-nominal-owner-handle-module ctx handle)]
             [resolved-fields : AstTypeList
               (tc-resolve-type-list
                 field-ctx
@@ -17191,7 +17621,7 @@
           variant-name
           handle
           args
-          (intern-str enum-name)
+          (tc-nominal-name-id-display enum-name)
           enum-ty)]
       [(AstType.EnumArgs enum-name _)
         (lower-construct-enum-with-name
@@ -17202,7 +17632,7 @@
           variant-name
           handle
           args
-          (intern-str enum-name)
+          (tc-nominal-name-id-display enum-name)
           enum-ty)]
       [_
         (ResultLowerExpr.Err
@@ -17224,14 +17654,12 @@
   [enum-name : String]
   [enum-ty : AstType]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols _ _ _)
+    [(TcContext _ symbols _ _ _ _)
       (match (compiler-registries-variant-fields-indexed symbols handle)
         [(ResultAstTypeList.Ok fields)
           (let
             [field-ctx : TcContext
-              (tc-context-with-module
-                ctx
-                (lower-variant-owner-module ctx handle))]
+              (tc-context-with-nominal-owner-handle-module ctx handle)]
             [resolved-fields : AstTypeList
               (tc-resolve-type-list
                 field-ctx
@@ -17285,7 +17713,7 @@
           variant-name
           handle
           args
-          (intern-str enum-name)
+          (tc-nominal-name-id-display enum-name)
           enum-ty)]
       [(AstType.EnumArgs enum-name _)
         (lower-construct-enum-with-name-into
@@ -17297,7 +17725,7 @@
           variant-name
           handle
           args
-          (intern-str enum-name)
+          (tc-nominal-name-id-display enum-name)
           enum-ty)]
       [_
         (ResultLowerState.Err
@@ -17336,21 +17764,27 @@
 (define (lower-context-with-nominal-owner-module
   [ctx : TcContext]
   [nominal-name : String]) : TcContext
-  (if (tc-name-qualified? nominal-name)
-    (tc-context-with-module ctx (tc-qualified-name-module nominal-name))
-    (let
-      [handle : i64
-        (compiler-symbols-lookup-type-or
-          (tc-context-symbols ctx)
-          nominal-name
-          (compiler-symbols-missing-handle))]
-      (if (compiler-symbols-handle-found? handle)
-        (match (tc-nominal-owner-name ctx handle)
-          [(ResultTcString.Ok owner-name)
-            (if (tc-name-qualified? owner-name)
-              (tc-context-with-module ctx (tc-qualified-name-module owner-name))
-              (tc-context-with-module ctx ""))]
-          [(ResultTcString.Err _) ctx])
+  (let
+    [nominal-id : i64 (lower-existing-name-id nominal-name)]
+    [handle : i64
+      (compiler-symbols-lookup-type-id-or
+        (tc-context-symbols ctx)
+        nominal-id
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? handle)
+      (let
+        [module-id : i64
+          (compiler-symbols-owner-module-id-at-index-or
+            (tc-context-symbols ctx)
+            (compiler-symbol-handle-index handle)
+            cbi.compiler-builtin-id-fix-empty)]
+        (if (>= module-id 0)
+          (tc-context-with-module-id ctx (intern-str module-id) module-id)
+          (tc-context-with-module-id ctx "" cbi.compiler-builtin-id-fix-empty)))
+      (if (and (>= nominal-id 0) (intern-qualified? nominal-id))
+        (let
+          [module-id : i64 (intern-qualified-module-id nominal-id)]
+          (tc-context-with-module-id ctx (intern-str module-id) module-id))
         ctx))))
 
 (define (lower-construct-struct
@@ -17589,9 +18023,11 @@
                             enum-ty
                             fields))]
                       [handle : i64
-                        (compiler-registries-lookup-variant-or
-                          (tc-context-registries ctx)
-                          lookup-name
+                        (lower-variant-constructor-handle-id-or
+                          ctx
+                          (intern-str variant-name)
+                          variant-name
+                          enum-ty
                           (compiler-symbols-missing-handle))]
                       (if (compiler-symbols-handle-found? handle)
                         (lower-construct-enum-with-name
@@ -17693,9 +18129,11 @@
                             enum-ty
                             fields))]
                       [handle : i64
-                        (compiler-registries-lookup-variant-or
-                          (tc-context-registries ctx)
-                          lookup-name
+                        (lower-variant-constructor-handle-id-or
+                          ctx
+                          (intern-str variant-name)
+                          variant-name
+                          enum-ty
                           (compiler-symbols-missing-handle))]
                       (if (compiler-symbols-handle-found? handle)
                         (lower-construct-enum-with-name-into
@@ -17736,7 +18174,7 @@
           env
           type-env
           dst
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved)]
       [(AstType.StructArgs name _)
         (lower-init-struct-into
@@ -17745,7 +18183,7 @@
           env
           type-env
           dst
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved)]
       [(AstType.Enum name)
         (lower-init-enum-into
@@ -17754,7 +18192,7 @@
           env
           type-env
           dst
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved)]
       [(AstType.EnumArgs name _)
         (lower-init-enum-into
@@ -17763,7 +18201,7 @@
           env
           type-env
           dst
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved)]
       [_
         (ResultLowerState.Err
@@ -17867,13 +18305,37 @@
               expr-ty
               origin))]
         [(AstType.Struct name)
-          (lower-init-struct ctx state env type-env (intern-str name) resolved)]
+          (lower-init-struct
+            ctx
+            state
+            env
+            type-env
+            (tc-nominal-name-id-display name)
+            resolved)]
         [(AstType.StructArgs name _)
-          (lower-init-struct ctx state env type-env (intern-str name) resolved)]
+          (lower-init-struct
+            ctx
+            state
+            env
+            type-env
+            (tc-nominal-name-id-display name)
+            resolved)]
         [(AstType.Enum name)
-          (lower-init-enum ctx state env type-env (intern-str name) resolved)]
+          (lower-init-enum
+            ctx
+            state
+            env
+            type-env
+            (tc-nominal-name-id-display name)
+            resolved)]
         [(AstType.EnumArgs name _)
-          (lower-init-enum ctx state env type-env (intern-str name) resolved)]
+          (lower-init-enum
+            ctx
+            state
+            env
+            type-env
+            (tc-nominal-name-id-display name)
+            resolved)]
         [_
           (ResultLowerExpr.Err
             (box
@@ -17895,17 +18357,19 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
+  [raw-name-id : i64]
   [expr-ty : AstType]) : ResultLowerExpr
   (if (lower-nullary-variant-result-type? expr-ty)
     (let
       [lookup-name : String
         (lower-variant-constructor-lookup-name ctx name expr-ty)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
       [handle : i64
-        (compiler-registries-lookup-variant-or
-          registries
-          lookup-name
+        (lower-variant-constructor-handle-id-or
+          ctx
+          name
+          raw-name-id
+          expr-ty
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? handle)
         (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -17961,7 +18425,9 @@
   [expr-ty : AstType]) : ResultLowerExpr
   (lower-materialize-group-global
     ctx
-    (if (sym_i64_env.sym-i64-contains env name)
+    (if (let
+      [name-id : i64 (lower-existing-name-id-or name -1)]
+      (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
       (lower-var-storage-aware ctx state env name expr-ty)
       (lower-nullary-variant-or-function-value
         ctx
@@ -17969,6 +18435,7 @@
         env
         type-env
         name
+        (lower-existing-name-id-or name -1)
         expr-ty))))
 
 (define (lower-var-or-nullary-variant-id
@@ -17996,6 +18463,7 @@
               env
               type-env
               lookup-name
+              name-id
               expr-ty)]
           [(ResultTcString.Err message)
             (ResultLowerExpr.Err (box (lower-diagnostic message)))])))))
@@ -18010,40 +18478,53 @@
   (match (ast-expr-unspan func)
     [(AstExpr.Var name)
       (let
-        [name-text : String (intern-str name)]
-        (match (lower-lookup-type ctx type-cache env type-env name-text)
-          [(ResultTcType.Ok fn-ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-              [(AstType.Func _ ret)
-                (ResultTcType.Ok
-                  (tc-type-without-regions
-                    (tc-resolve-type ctx (tc-context-type-get ctx ret))))]
-              [(AstType.Enum _)
-                (ResultTcType.Ok (tc-type-without-regions fn-ty))]
-              [_
-                (ResultTcType.Err
-                  "lower: call result type is not fast-pathable")])]
-          [(ResultTcType.Err message)
-            (if (lower-builtin-call-available-id? ctx env name)
-              (cond
-                [(cbi.compiler-builtin-lower-array-length-id? name)
-                  (ResultTcType.Ok (AstType.I64))]
-                [(cbi.compiler-builtin-lower-string-ref-call-id? name)
-                  (ResultTcType.Ok (AstType.Char))]
-                [(cbi.compiler-builtin-lower-clone-id? name)
-                  (if (= (struct-get (& args) len) 1)
-                    (lower-expr-result-type-fast
-                      ctx
-                      env
-                      type-env
-                      type-cache
-                      (lower-context-expr-get
+        [name-text : String (tc-env-key-name-text name)]
+        [hygiene-source-id : i64
+          (if (tc-hygiene-global-name? name-text)
+            (macro-hygiene-global-source-name-id-or name name)
+            -1)]
+        (if (and
+          (cbi.compiler-builtin-lower-clone-id? hygiene-source-id)
+          (= (struct-get (& args) len) 1))
+          (lower-expr-result-type-fast
+            ctx
+            env
+            type-env
+            type-cache
+            (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0)))
+          (match (lower-lookup-type ctx type-cache env type-env name-text)
+            [(ResultTcType.Ok fn-ty)
+              (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                [(AstType.Func _ ret)
+                  (ResultTcType.Ok
+                    (tc-type-without-regions
+                      (tc-resolve-type ctx (tc-context-type-get ctx ret))))]
+                [(AstType.Enum _)
+                  (ResultTcType.Ok (tc-type-without-regions fn-ty))]
+                [_
+                  (ResultTcType.Err
+                    "lower: call result type is not fast-pathable")])]
+            [(ResultTcType.Err message)
+              (if (lower-builtin-call-available-id? ctx env name)
+                (cond
+                  [(cbi.compiler-builtin-lower-array-length-id? name)
+                    (ResultTcType.Ok (AstType.I64))]
+                  [(cbi.compiler-builtin-lower-string-ref-call-id? name)
+                    (ResultTcType.Ok (AstType.Char))]
+                  [(cbi.compiler-builtin-lower-clone-id? name)
+                    (if (= (struct-get (& args) len) 1)
+                      (lower-expr-result-type-fast
                         ctx
-                        (ast-expr-list-get (& args) 0 0)))
-                    (ResultTcType.Err
-                      "lower: call result type is not fast-pathable"))]
-                [else (ResultTcType.Err message)])
-              (ResultTcType.Err message))]))]
+                        env
+                        type-env
+                        type-cache
+                        (lower-context-expr-get
+                          ctx
+                          (ast-expr-list-get (& args) 0 0)))
+                      (ResultTcType.Err
+                        "lower: call result type is not fast-pathable"))]
+                  [else (ResultTcType.Err message)])
+                (ResultTcType.Err message))])))]
     [(AstExpr.Lambda lambda-box)
       (match (box-get lambda-box)
         [(AstLambda.Lambda params maybe-ret body-box)
@@ -18160,7 +18641,33 @@
         type-env
         type-cache
         else-branch)
-        [(ResultTcType.Ok else-ty) (tc-merge-branch-type then-ty else-ty)]
+        [(ResultTcType.Ok else-ty)
+          (match (tc-merge-branch-type then-ty else-ty)
+            [(ResultTcType.Ok merged) (ResultTcType.Ok merged)]
+            [(ResultTcType.Err message)
+              (if (and
+                (tc-integer-literal-expr? then-branch)
+                (tc-integer-type? else-ty))
+                (match (tc-integer-literal-expr-with-expected
+                  ctx
+                  then-branch
+                  else-ty)
+                  [(ResultTcType.Ok contextual-then)
+                    (tc-merge-branch-type contextual-then else-ty)]
+                  [(ResultTcType.Err literal-message)
+                    (ResultTcType.Err literal-message)])
+                (if (and
+                  (tc-integer-literal-expr? else-branch)
+                  (tc-integer-type? then-ty))
+                  (match (tc-integer-literal-expr-with-expected
+                    ctx
+                    else-branch
+                    then-ty)
+                    [(ResultTcType.Ok contextual-else)
+                      (tc-merge-branch-type then-ty contextual-else)]
+                    [(ResultTcType.Err literal-message)
+                      (ResultTcType.Err literal-message)])
+                  (ResultTcType.Err message)))])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(ResultTcType.Err message) (ResultTcType.Err message)]))
 
@@ -18550,7 +19057,7 @@
     [(ResultTcType.Ok receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstType.Struct struct-name)
-          (match (tc-struct-field-type ctx (intern-str struct-name) field)
+          (match (tc-struct-field-type ctx struct-name field)
             [(ResultTcType.Ok field-ty)
               (ResultTcType.Ok
                 (lower-projected-result-type-fast ctx receiver-ty field-ty))]
@@ -18558,7 +19065,7 @@
         [(AstType.StructArgs struct-name lifetimes)
           (match (tc-struct-field-type-with-args
             ctx
-            (intern-str struct-name)
+            struct-name
             (box-get lifetimes)
             field)
             [(ResultTcType.Ok field-ty)
@@ -18965,7 +19472,7 @@
         (ast-ty-dyn-array (AstType.U8)))]
     [(AstExpr.Var name)
       (let
-        [name-text : String (intern-str name)]
+        [name-text : String (tc-env-key-name-text name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(ResultTcExprId.Ok virtual-id)
@@ -19147,7 +19654,7 @@
           (lower-init-expr ctx state env type-env expr-ty origin expr-ty)])]
     [(AstExpr.Var name)
       (let
-        [name-text : String (intern-str name)]
+        [name-text : String (tc-env-key-name-text name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(ResultTcExprId.Ok virtual-id)
@@ -19388,7 +19895,7 @@
       (let
         [name-id : i64 name]
         [value : AstExpr (lower-context-expr-get ctx value-box)]
-        [name-text : String (intern-str name)]
+        [name-text : String (tc-env-key-name-text name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-set-expr-id
             type-env
@@ -20324,52 +20831,72 @@
     [(AstExpr.Call func-box _)
       (let
         [func : AstExpr (lower-context-expr-get ctx func-box)]
-        (match (ast-expr-unspan func)
-          [(AstExpr.Var name)
-            (match (lower-lookup-type
-              ctx
-              (lower-state-type-cache state)
-              env
-              type-env
-              (intern-str name))
-              [(ResultTcType.Ok fn-ty)
-                (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-                  [(AstType.Func _ ret-ty)
-                    (let
-                      [actual-ty : AstType
-                        (tc-type-without-regions
-                          (tc-resolve-type ctx (tc-context-type-get ctx ret-ty)))]
-                      [expected-resolved : AstType
-                        (tc-type-without-regions
-                          (tc-resolve-type ctx expected-ty))]
-                      (if (tc-type-eq actual-ty expected-resolved)
-                        (lower-expr-with-type-and-coerce
-                          ctx
-                          state
-                          env
-                          type-env
-                          expr
-                          origin
-                          actual-ty
-                          expected-ty)
-                        (lower-expr-and-coerce
-                          ctx
-                          state
-                          env
-                          type-env
-                          expr
-                          expected-ty)))]
-                  [_
-                    (lower-expr-and-coerce
-                      ctx
-                      state
-                      env
-                      type-env
-                      expr
-                      expected-ty)])]
-              [(ResultTcType.Err _)
-                (lower-expr-and-coerce ctx state env type-env expr expected-ty)])]
-          [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))]
+        [expected-resolved : AstType
+          (tc-type-without-regions (tc-resolve-type ctx expected-ty))]
+        (if (match (tc-type-strip-region expected-resolved)
+          [(AstType.Enum _) true]
+          [(AstType.EnumArgs _ _) true]
+          [_ false])
+          (lower-expr-with-type-and-coerce
+            ctx
+            state
+            env
+            type-env
+            expr
+            origin
+            expected-resolved
+            expected-ty)
+          (match (ast-expr-unspan func)
+            [(AstExpr.Var name)
+              (match (lower-lookup-type
+                ctx
+                (lower-state-type-cache state)
+                env
+                type-env
+                (intern-str name))
+                [(ResultTcType.Ok fn-ty)
+                  (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+                    [(AstType.Func _ ret-ty)
+                      (let
+                        [actual-ty : AstType
+                          (tc-type-without-regions
+                            (tc-resolve-type
+                              ctx
+                              (tc-context-type-get ctx ret-ty)))]
+                        (if (tc-type-eq actual-ty expected-resolved)
+                          (lower-expr-with-type-and-coerce
+                            ctx
+                            state
+                            env
+                            type-env
+                            expr
+                            origin
+                            actual-ty
+                            expected-ty)
+                          (lower-expr-and-coerce
+                            ctx
+                            state
+                            env
+                            type-env
+                            expr
+                            expected-ty)))]
+                    [_
+                      (lower-expr-and-coerce
+                        ctx
+                        state
+                        env
+                        type-env
+                        expr
+                        expected-ty)])]
+                [(ResultTcType.Err _)
+                  (lower-expr-and-coerce
+                    ctx
+                    state
+                    env
+                    type-env
+                    expr
+                    expected-ty)])]
+            [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)])))]
     [_ (lower-expr-and-coerce ctx state env type-env expr expected-ty)]))
 
 (define (lower-struct-get-named
@@ -20393,7 +20920,7 @@
           (if (tc-name-register-resident? ctx struct-name)
             (if (lower-type-register-group?
               ctx
-              (AstType.Struct (intern struct-name)))
+              (AstType.Struct (lower-existing-name-id struct-name)))
               ;; 2-word register-group receiver: select the field's word with
               ;; CompilerIrInstr.Word, then shift/mask within that word at its relative
               ;; offset.
@@ -20403,7 +20930,7 @@
                 (/ offset 8)
                 (lower-register-word-type
                   ctx
-                  (AstType.Struct (intern struct-name))
+                  (AstType.Struct (lower-existing-name-id struct-name))
                   (/ offset 8)))
                 [(LowerExpr.Expr w-state w-value _)
                   (match (lower-extract-word-field
@@ -20412,7 +20939,7 @@
                     w-value
                     (lower-register-word-type
                       ctx
-                      (AstType.Struct (intern struct-name))
+                      (AstType.Struct (lower-existing-name-id struct-name))
                       (/ offset 8))
                     (- offset (* (/ offset 8) 8))
                     field-ty)
@@ -20425,7 +20952,7 @@
                 receiver-value
                 (lower-register-word-type
                   ctx
-                  (AstType.Struct (intern struct-name))
+                  (AstType.Struct (lower-existing-name-id struct-name))
                   0)
                 offset
                 field-ty)
@@ -20519,7 +21046,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                (intern-str struct-name)
+                (tc-nominal-name-id-display struct-name)
                 field
                 result-ty)]
             [(AstType.StructArgs struct-name _)
@@ -20527,7 +21054,7 @@
                 ctx
                 receiver-state
                 receiver-value
-                (intern-str struct-name)
+                (tc-nominal-name-id-display struct-name)
                 field
                 result-ty)]
             [(AstType.Ref _ referent-ty)
@@ -20539,7 +21066,7 @@
                     receiver-state
                     receiver-value
                     (tc-context-type-get ctx referent-ty)
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     result-ty)]
                 [(AstType.StructArgs struct-name _)
@@ -20548,7 +21075,7 @@
                     receiver-state
                     receiver-value
                     (tc-context-type-get ctx referent-ty)
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     result-ty)]
                 [_
@@ -20566,7 +21093,7 @@
                     receiver-state
                     receiver-value
                     (tc-context-type-get ctx referent-ty)
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     result-ty)]
                 [(AstType.StructArgs struct-name _)
@@ -20575,7 +21102,7 @@
                     receiver-state
                     receiver-value
                     (tc-context-type-get ctx referent-ty)
-                    (intern-str struct-name)
+                    (tc-nominal-name-id-display struct-name)
                     field
                     result-ty)]
                 [_
@@ -21588,7 +22115,10 @@
   [name : String]) : bool
   (cond
     [(not (lower-mode-c-abi? (lower-state-mode state))) false]
-    [(sym_i64_env.sym-i64-contains env name) false]
+    [(let
+        [name-id : i64 (lower-existing-name-id-or name -1)]
+        (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
+      false]
     [(lower-c-abi-runtime-handle-extern? name) false]
     [else
       (let
@@ -21606,7 +22136,10 @@
   [name : String]) : bool
   (cond
     [(not (lower-mode-c-abi? (lower-state-mode state))) false]
-    [(sym_i64_env.sym-i64-contains env name) false]
+    [(let
+        [name-id : i64 (lower-existing-name-id-or name -1)]
+        (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
+      false]
     [(lower-c-abi-runtime-handle-extern? name) false]
     [else (lower-extern-value-decl? ctx name)]))
 
@@ -21654,9 +22187,13 @@
   [ty : AstType]) : bool
   (match (tc-type-strip-region (tc-resolve-type ctx ty))
     [(AstType.Struct name)
-      (lower-c-abi-win64-register-struct-name? ctx (intern-str name))]
+      (lower-c-abi-win64-register-struct-name?
+        ctx
+        (tc-nominal-name-id-display name))]
     [(AstType.StructArgs name _)
-      (lower-c-abi-win64-register-struct-name? ctx (intern-str name))]
+      (lower-c-abi-win64-register-struct-name?
+        ctx
+        (tc-nominal-name-id-display name))]
     [(AstType.F32) true]
     [(AstType.F64) true]
     [_ (lower-c-abi-integer-field-type? ctx ty)]))
@@ -21913,25 +22450,25 @@
       [(AstType.Struct name)
         (lower-c-abi-sysv-classify-struct-name
           ctx
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           offset
           slots)]
       [(AstType.StructArgs name _)
         (lower-c-abi-sysv-classify-struct-name
           ctx
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           offset
           slots)]
       [(AstType.Enum name)
         (lower-c-abi-sysv-classify-struct-name
           ctx
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           offset
           slots)]
       [(AstType.EnumArgs name _)
         (lower-c-abi-sysv-classify-struct-name
           ctx
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           offset
           slots)]
       [(AstType.F64)
@@ -22176,7 +22713,7 @@
         (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved
           allow-sret?
           allow-byref?)]
@@ -22184,7 +22721,7 @@
         (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved
           allow-sret?
           allow-byref?)]
@@ -22192,7 +22729,7 @@
         (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved
           allow-sret?
           allow-byref?)]
@@ -22200,7 +22737,7 @@
         (lower-c-abi-aggregate-class-for-nominal
           ctx
           mode
-          (intern-str name)
+          (tc-nominal-name-id-display name)
           resolved
           allow-sret?
           allow-byref?)]
@@ -24200,7 +24737,7 @@
   (match (tc-type-strip-region result-ty)
     [(AstType.Enum enum-name)
       (let
-        [enum-name-str : String (intern-str enum-name)]
+        [enum-name-str : String (tc-nominal-name-id-display enum-name)]
         (if (or
           (tc-name-qualified? name)
           (string.eq
@@ -24210,7 +24747,7 @@
           (lower-module-lookup-name ctx name)))]
     [(AstType.EnumArgs enum-name _)
       (let
-        [enum-name-str : String (intern-str enum-name)]
+        [enum-name-str : String (tc-nominal-name-id-display enum-name)]
         (if (or
           (tc-name-qualified? name)
           (string.eq
@@ -24220,21 +24757,141 @@
           (lower-module-lookup-name ctx name)))]
     [_ ""]))
 
+(define (lower-variant-constructor-handle-id-or
+  [ctx : TcContext]
+  [source-name : String]
+  [raw-name-id : i64]
+  [result-ty : AstType]
+  [fallback : i64]) : i64
+  (let
+    [source-name-id : i64
+      (macro-hygiene-global-source-name-id-or raw-name-id raw-name-id)]
+    [source-key-id : i64
+      (compiler-symbol-dotted-variant-key-id-in-module-or
+        source-name-id
+        (tc-context-module-id ctx)
+        -1)]
+    [source-handle : i64
+      (if (>= source-key-id 0)
+        (compiler-registries-lookup-variant-key-id-or
+          (tc-context-registries ctx)
+          source-key-id
+          fallback)
+        fallback)]
+    [enum-name-id : i64
+      (match (tc-type-strip-region result-ty)
+        [(AstType.Enum name) name]
+        [(AstType.EnumArgs name _) name]
+        [_ -1])]
+    [variant-name-id : i64
+      (lower-existing-name-id-or
+        (lower-member-name-base (tc-qualified-name-base source-name))
+        -1)]
+    [symbols : CompilerSymbols (tc-context-symbols ctx)]
+    [direct-variant-handle : i64
+      (compiler-registries-lookup-variant-id-or
+        (tc-context-registries ctx)
+        source-name-id
+        fallback)]
+    [direct-variant-owner-index : i64
+      (if (compiler-symbols-handle-found? direct-variant-handle)
+        (compiler-registry-handle-owner-index direct-variant-handle)
+        -1)]
+    [direct-variant-owner-id : i64
+      (compiler-symbols-owner-id-at-index-or
+        symbols
+        direct-variant-owner-index
+        -1)]
+    [direct-variant-module-id : i64
+      (compiler-symbols-owner-module-id-at-index-or
+        symbols
+        direct-variant-owner-index
+        -1)]
+    [direct-variant-owner-matches : bool
+      (and
+        (compiler-symbols-handle-found? direct-variant-handle)
+        (or
+          (= direct-variant-owner-id (compiler-symbol-name-id-key enum-name-id))
+          (tc-current-module-owner-name-matches-id?
+            enum-name-id
+            direct-variant-owner-id))
+        (if (compiler-composite-pair-key-id? enum-name-id)
+          (=
+            direct-variant-module-id
+            (compiler-composite-pair-left-id enum-name-id))
+          (if (tc-name-qualified-id? enum-name-id)
+            (=
+              direct-variant-module-id
+              (tc-qualified-name-module-id enum-name-id))
+            true)))]
+    (if direct-variant-owner-matches
+      direct-variant-handle
+      (if (compiler-symbols-handle-found? source-handle)
+        source-handle
+        (if (and (>= enum-name-id 0) (>= variant-name-id 0))
+          (let
+            [direct-enum-handle : i64
+              (compiler-symbols-lookup-type-id-or symbols enum-name-id fallback)]
+            [enum-base-id : i64
+              (if (>= enum-name-id 0)
+                (lower-existing-name-id-or
+                  (tc-qualified-name-base
+                    (tc-nominal-name-id-display enum-name-id))
+                  -1)
+                -1)]
+            [enum-handle : i64
+              (if (compiler-symbols-handle-found? direct-enum-handle)
+                direct-enum-handle
+                (if (>= enum-base-id 0)
+                  (compiler-symbols-lookup-type-id-or
+                    symbols
+                    (compiler-symbol-module-key-id-by-id
+                      (tc-context-module-id ctx)
+                      enum-base-id)
+                    fallback)
+                  fallback))]
+            (if (compiler-symbols-handle-found? enum-handle)
+              (let
+                [enum-index : i64 (compiler-symbol-handle-index enum-handle)]
+                [module-id : i64
+                  (compiler-symbols-owner-module-id-at-index-or
+                    symbols
+                    enum-index
+                    (compiler-symbol-root-module-id))]
+                [key-id : i64
+                  (compiler-symbol-module-key-id-by-id
+                    module-id
+                    (compiler-enum-qualified-variant-name-id
+                      enum-base-id
+                      variant-name-id))]
+                (compiler-registries-lookup-variant-key-id-or
+                  (tc-context-registries ctx)
+                  key-id
+                  fallback))
+              fallback))
+          fallback)))))
+
 (define (lower-call-non-builtin
   [ctx : TcContext]
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
+  [raw-name-id : i64]
   [args : AstExprList]
   [result-ty : AstType]
   [origin : AstExpr]) : ResultLowerExpr
-  (if (sym_i64_env.sym-i64-contains env name)
+  (if (let
+    [name-id : i64 (lower-existing-name-id-or name -1)]
+    (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
     (lower-direct-call ctx state env type-env name args result-ty origin)
     (let
       [source-name : String (lower-hygiene-source-name name)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
+      [function-value : bool
+        (or
+          (lower-top-level-callable-defined-id? ctx raw-name-id)
+          (lower-symbol-function-value? ctx state name))]
       [variant-name : String
         (lower-variant-constructor-lookup-name ctx source-name result-ty)]
       [struct-name : String
@@ -24243,21 +24900,36 @@
             (if (lower-call-name-matches-nominal?
               ctx
               source-name
-              (intern-str resolved-struct))
-              (intern-str resolved-struct)
+              (tc-nominal-name-id-display resolved-struct))
+              (tc-nominal-name-id-display resolved-struct)
+              (lower-module-lookup-name ctx source-name))]
+          [(AstType.StructArgs resolved-struct _)
+            (if (lower-call-name-matches-nominal?
+              ctx
+              source-name
+              (tc-nominal-name-id-display resolved-struct))
+              (tc-nominal-name-id-display resolved-struct)
               (lower-module-lookup-name ctx source-name))]
           [_ (lower-module-lookup-name ctx source-name)])]
       [variant-handle : i64
-        (compiler-registries-lookup-variant-or
-          registries
-          variant-name
+        (lower-variant-constructor-handle-id-or
+          ctx
+          source-name
+          raw-name-id
+          result-ty
           (compiler-symbols-missing-handle))]
       [struct-handle : i64
-        (compiler-symbols-lookup-type-or
-          symbols
-          struct-name
-          (compiler-symbols-missing-handle))]
-      (if (compiler-symbols-handle-found? variant-handle)
+        (let
+          [struct-name-id : i64 (lower-name-cache-source-id-value struct-name)]
+          (if (>= struct-name-id 0)
+            (compiler-symbols-lookup-type-id-or
+              symbols
+              struct-name-id
+              (compiler-symbols-missing-handle))
+            (compiler-symbols-missing-handle)))]
+      (if (and
+        (not function-value)
+        (compiler-symbols-handle-found? variant-handle))
         (lower-construct-enum-with-handle
           ctx
           state
@@ -24303,15 +24975,21 @@
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [name : String]
+  [raw-name-id : i64]
   [args : AstExprList]
   [result-ty : AstType]
   [_origin : AstExpr]) : LowerMaybeDirectStore
-  (if (sym_i64_env.sym-i64-contains env name)
+  (if (let
+    [name-id : i64 (lower-existing-name-id-or name -1)]
+    (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
     (LowerMaybeDirectStore.No)
     (let
       [source-name : String (lower-hygiene-source-name name)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
+      [function-value : bool
+        (or
+          (lower-top-level-callable-defined-id? ctx raw-name-id)
+          (lower-symbol-function-value? ctx state name))]
       [variant-name : String
         (lower-variant-constructor-lookup-name ctx source-name result-ty)]
       [struct-name : String
@@ -24320,28 +24998,36 @@
             (if (lower-call-name-matches-nominal?
               ctx
               source-name
-              (intern-str resolved-struct))
-              (intern-str resolved-struct)
+              (tc-nominal-name-id-display resolved-struct))
+              (tc-nominal-name-id-display resolved-struct)
               (lower-module-lookup-name ctx source-name))]
           [(AstType.StructArgs resolved-struct _)
             (if (lower-call-name-matches-nominal?
               ctx
               source-name
-              (intern-str resolved-struct))
-              (intern-str resolved-struct)
+              (tc-nominal-name-id-display resolved-struct))
+              (tc-nominal-name-id-display resolved-struct)
               (lower-module-lookup-name ctx source-name))]
           [_ (lower-module-lookup-name ctx source-name)])]
       [variant-handle : i64
-        (compiler-registries-lookup-variant-or
-          registries
-          variant-name
+        (lower-variant-constructor-handle-id-or
+          ctx
+          source-name
+          raw-name-id
+          result-ty
           (compiler-symbols-missing-handle))]
       [struct-handle : i64
-        (compiler-symbols-lookup-type-or
-          symbols
-          struct-name
-          (compiler-symbols-missing-handle))]
-      (if (compiler-symbols-handle-found? variant-handle)
+        (let
+          [struct-name-id : i64 (lower-name-cache-source-id-value struct-name)]
+          (if (>= struct-name-id 0)
+            (compiler-symbols-lookup-type-id-or
+              symbols
+              struct-name-id
+              (compiler-symbols-missing-handle))
+            (compiler-symbols-missing-handle)))]
+      (if (and
+        (not function-value)
+        (compiler-symbols-handle-found? variant-handle))
         (lower-direct-store-result
           (lower-construct-enum-with-handle-into
             ctx
@@ -24377,21 +25063,29 @@
   [type-env : TcTypeEnv]
   [dst : CompilerIrValue]
   [name : String]
+  [raw-name-id : i64]
   [result-ty : AstType]) : LowerMaybeDirectStore
-  (if (sym_i64_env.sym-i64-contains env name)
+  (if (let
+    [name-id : i64 (lower-existing-name-id-or name -1)]
+    (and (>= name-id 0) (sym_i64_env.sym-i64-contains-id env name-id)))
     (LowerMaybeDirectStore.No)
     (let
       [source-name : String (lower-hygiene-source-name name)]
-      [registries : CompilerRegistries (tc-context-registries ctx)]
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
+      [function-value : bool
+        (or
+          (lower-top-level-callable-defined-id? ctx raw-name-id)
+          (lower-symbol-function-value? ctx state name))]
       [variant-name : String
         (lower-variant-constructor-lookup-name ctx source-name result-ty)]
       [handle : i64
-        (compiler-registries-lookup-variant-or
-          registries
-          variant-name
+        (lower-variant-constructor-handle-id-or
+          ctx
+          source-name
+          raw-name-id
+          result-ty
           (compiler-symbols-missing-handle))]
-      (if (compiler-symbols-handle-found? handle)
+      (if (and (not function-value) (compiler-symbols-handle-found? handle))
         (match (compiler-registries-variant-fields-indexed symbols handle)
           [(ResultAstTypeList.Ok fields)
             (if (ast-type-list-empty? (& fields))
@@ -24492,6 +25186,7 @@
                 type-env
                 dst
                 (intern-str name)
+                name
                 args
                 result-ty
                 origin)]
@@ -24506,6 +25201,7 @@
             type-env
             dst
             (intern-str name)
+            name
             result-ty))]
       [_ (LowerMaybeDirectStore.No)])
     (LowerMaybeDirectStore.No)))
@@ -24636,12 +25332,12 @@
             [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])
           (let
             [local-id : i64
-              (sym_i64_env.sym-i64-lookup-or
+              (sym_i64_env.sym-i64-lookup-id-or
                 env
-                (intern-str raw-name)
+                raw-name
                 (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? local-id)
-              (match (tc-lookup type-env (intern-str raw-name))
+              (match (tc-lookup-id type-env raw-name)
                 [(ResultTcType.Ok fn-ty)
                   (if (lower-function-type? fn-ty)
                     (if (tc-binding-c-abi-fnptr-id? type-env raw-name)
@@ -24677,7 +25373,14 @@
                 [hygiene-global : bool (tc-hygiene-global-name? raw-text)]
                 (match (if hygiene-global
                   (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))
-                  (lower-source-name-lookup-key ctx type-env raw-text))
+                  (if (tc-source-slash-qualified-id? raw-text raw-name)
+                    (ResultTcString.Ok raw-text)
+                    (tc-source-name-lookup-key-with-field-check
+                      ctx
+                      type-env
+                      raw-text
+                      raw-name
+                      true)))
                   [(ResultTcString.Ok name)
                     ;; `array-length`/`length` on a dynamic array and private
                     ;; string intrinsics load fat-value fields directly instead of
@@ -24688,18 +25391,32 @@
                         (if hygiene-global
                           (tc-hygiene-global-call-name raw-text)
                           raw-text)]
-                      [lowered-name : String
-                        (if hygiene-global
-                          (lower-hygiene-source-name-in-context
-                            ctx
-                            type-env
-                            raw-text)
-                          name)]
                       [source-id : i64
                         (if hygiene-global
-                          (intern source-name)
+                          (macro-hygiene-global-source-name-id-or
+                            raw-name
+                            raw-name)
                           raw-name)]
-                      [name-id : i64 (intern name)]
+                      [source-key-id : i64 (tc-env-name-key-id source-id)]
+                      [lowered-name : String
+                        (if hygiene-global
+                          (match (lower-name-cache-lookup-id
+                            (lower-state-names state)
+                            source-key-id)
+                            [(TcMaybeString.Some logical-name) logical-name]
+                            [(TcMaybeString.No)
+                              (lower-hygiene-source-name-in-context
+                                ctx
+                                type-env
+                                raw-text)])
+                          name)]
+                      [name-id : i64
+                        (if hygiene-global
+                          source-id
+                          (match (intern-lookup name)
+                            [(InternLookupFound id) id]
+                            [(InternLookupMissing)
+                              (lower-existing-name-id name)]))]
                       [builtin-available : bool
                         (not (lower-top-level-value-defined-id? ctx name-id))]
                       [atomic-symbol : String
@@ -24903,6 +25620,7 @@
                             env
                             type-env
                             lowered-name
+                            raw-name
                             args
                             result-ty
                             origin)]))]
@@ -25021,7 +25739,8 @@
       (lower-array-length-load ctx state env type-env arr)]
     [(ResultTcArrayReceiver.Err _)
       (if (and
-        (cbi.compiler-builtin-typecheck-string-length-id? (intern name))
+        (cbi.compiler-builtin-typecheck-string-length-id?
+          (lower-existing-name-id name))
         (lower-length-handle-type? ctx arr-ty))
         (lower-array-length-load ctx state env type-env arr)
         (lower-direct-call ctx state env type-env name args result-ty origin))]))
@@ -25563,9 +26282,13 @@
           (if (tc-hygiene-global-name? raw-text)
             (tc-hygiene-global-call-name raw-text)
             raw-text)]
+        [name-id : i64
+          (match (intern-lookup name)
+            [(InternLookupFound id) id]
+            [(InternLookupMissing) (lower-existing-name-id name)])]
         (and
           (lower-atomic-pointer-name? name)
-          (not (tc-name-bound? type-env name))))]
+          (not (tc-name-bound-id? type-env name-id))))]
     [_ false]))
 
 (define (lower-atomic-pointer-load-name? [name : String]) : bool
@@ -26272,13 +26995,25 @@
         [(AstType.Tuple elems)
           (lower-init-default-share-safe-type-list? ctx (box-get elems))]
         [(AstType.Struct name)
-          (lower-init-default-share-safe-struct? ctx (intern-str name) resolved)]
+          (lower-init-default-share-safe-struct?
+            ctx
+            (tc-nominal-name-id-display name)
+            resolved)]
         [(AstType.StructArgs name _)
-          (lower-init-default-share-safe-struct? ctx (intern-str name) resolved)]
+          (lower-init-default-share-safe-struct?
+            ctx
+            (tc-nominal-name-id-display name)
+            resolved)]
         [(AstType.Enum name)
-          (lower-init-default-share-safe-enum? ctx (intern-str name) resolved)]
+          (lower-init-default-share-safe-enum?
+            ctx
+            (tc-nominal-name-id-display name)
+            resolved)]
         [(AstType.EnumArgs name _)
-          (lower-init-default-share-safe-enum? ctx (intern-str name) resolved)]
+          (lower-init-default-share-safe-enum?
+            ctx
+            (tc-nominal-name-id-display name)
+            resolved)]
         [_ false]))))
 
 (define (lower-make-array-init-advance
@@ -27555,7 +28290,10 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(AstType.Struct struct-name)
-      (match (lower-struct-field-info ctx (intern-str struct-name) field)
+      (match (lower-struct-field-info
+        ctx
+        (tc-nominal-name-id-display struct-name)
+        field)
         [(ResultLowerFieldInfo.Ok info)
           (match info
             [(LowerFieldInfo.Info offset field-ty)
@@ -27568,7 +28306,10 @@
                       (tc-type-without-regions field-ty)))])])]
         [(ResultLowerFieldInfo.Err message) (ResultLowerExpr.Err message)])]
     [(AstType.StructArgs struct-name _)
-      (match (lower-struct-field-info ctx (intern-str struct-name) field)
+      (match (lower-struct-field-info
+        ctx
+        (tc-nominal-name-id-display struct-name)
+        field)
         [(ResultLowerFieldInfo.Ok info)
           (match info
             [(LowerFieldInfo.Info offset field-ty)
@@ -27690,7 +28431,7 @@
   (match (ast-expr-unspan place)
     [(AstExpr.Var name)
       (let
-        [name-text : String (intern-str name)]
+        [name-text : String (tc-env-key-name-text name)]
         (if (tc-dotted-local-field-name-id? type-env name)
           (match (tc-dotted-local-field-expr-id type-env name-text)
             [(ResultTcExprId.Ok virtual-id)
@@ -27917,13 +28658,14 @@
   (match (tc-move-root-projection-var place)
     [(TcMaybeString.Some root)
       (let
+        [root-id : i64 (lower-existing-name-id root)]
         [local-id : i64
-          (sym_i64_env.sym-i64-lookup-or
+          (sym_i64_env.sym-i64-lookup-id-or
             env
-            root
+            root-id
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? local-id)
-          (match (tc-lookup type-env root)
+          (match (tc-lookup-id type-env root-id)
             [(ResultTcType.Ok root-ty)
               (let
                 [resolved : AstType
@@ -28864,8 +29606,8 @@
                 [(ResultLowerExpr.Ok lowered)
                   (match lowered
                     [(LowerExpr.Expr init-state init-value init-ty)
-                      (match (lower-cleanup-name-from-expr cleanup)
-                        [(ResultTcString.Ok cleanup-name)
+                      (match (lower-cleanup-name-id-from-expr cleanup)
+                        [(ResultTcExprId.Ok cleanup-name-id)
                           (let
                             [binding-ty : AstType
                               (tc-type-without-regions init-ty)]
@@ -28876,8 +29618,8 @@
                             (match (lower-state-alloc-var init-state)
                               [(LowerAlloc.Alloc allocated var-id)
                                 (let
-                                  [hidden-name : String
-                                    (lower-cleanup-hidden-name var-id)]
+                                  [hidden-name-id : i64
+                                    (lower-cleanup-hidden-name-id var-id)]
                                   [bound-state : LowerState
                                     (lower-state-emit
                                       allocated
@@ -28886,18 +29628,18 @@
                                         init-value
                                         binding-ir-ty))]
                                   [bound-env : sym_i64_env.SymI64Env
-                                    (sym_i64_env.sym-i64-bind
+                                    (sym_i64_env.sym-i64-bind-id
                                       (sym_i64_env.sym-i64-bind-id
                                         env
                                         name
                                         var-id)
-                                      hidden-name
+                                      hidden-name-id
                                       var-id)]
                                   [bound-type-env : TcTypeEnv
                                     (lower-type-env-push-cleanup
                                       (tc-bind-id type-env name binding-ty)
-                                      hidden-name
-                                      cleanup-name)]
+                                      hidden-name-id
+                                      cleanup-name-id)]
                                   (lower-resource-bindings-at
                                     ctx
                                     bound-state
@@ -28906,10 +29648,10 @@
                                     bindings
                                     (lower-cleanup-stack-push
                                       cleanups
-                                      hidden-name
-                                      cleanup-name)
+                                      hidden-name-id
+                                      cleanup-name-id)
                                     (+ index 1)))]))]
-                        [(ResultTcString.Err message)
+                        [(ResultTcExprId.Err message)
                           (ResultLowerResourceBindings.Err
                             (box (lower-diagnostic-at-expr cleanup message)))])])]
                 [(ResultLowerExpr.Err message)
@@ -29058,7 +29800,7 @@
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc mark-allocated mark-var)
       (let
-        [hidden-name : String (lower-region-hidden-name mark-var)]
+        [hidden-name-id : i64 (lower-region-hidden-name-id mark-var)]
         [marked-state : LowerState
           (lower-state-emit
             mark-allocated
@@ -29068,9 +29810,9 @@
               (CompilerIrCallArgs.Nil)
               (AstType.U64)))]
         [region-env : SymI64Env
-          (sym_i64_env.sym-i64-bind env hidden-name mark-var)]
+          (sym_i64_env.sym-i64-bind-id env hidden-name-id mark-var)]
         [region-type-env : TcTypeEnv
-          (lower-type-env-push-region-reset type-env hidden-name)]
+          (lower-type-env-push-region-reset type-env hidden-name-id)]
         (match (lower-begin ctx marked-state region-env region-type-env body)
           [(ResultLowerExpr.Ok lowered)
             (match lowered
@@ -29155,14 +29897,17 @@
                     (match set-lowered
                       [(LowerExpr.Expr set-state _ _)
                         (let
-                          [hidden-name : String
-                            (lower-arena-restore-hidden-name saved-var)]
+                          [hidden-name-id : i64
+                            (lower-arena-restore-hidden-name-id saved-var)]
                           [body-env : sym_i64_env.SymI64Env
-                            (sym_i64_env.sym-i64-bind env hidden-name saved-var)]
+                            (sym_i64_env.sym-i64-bind-id
+                              env
+                              hidden-name-id
+                              saved-var)]
                           [body-type-env : TcTypeEnv
                             (lower-type-env-push-arena-restore
                               type-env
-                              hidden-name)]
+                              hidden-name-id)]
                           (match (lower-begin
                             ctx
                             set-state
@@ -29773,8 +30518,10 @@
                             env
                             (lower-enter-loop-target
                               type-env
-                              exit-label
-                              header-label)
+                              (lower-while-exit-label-id
+                                (lower-state-next-label-number body-label-state))
+                              (lower-while-header-label-id
+                                (lower-state-next-label-number state)))
                             body)
                             [(ResultLowerExpr.Ok body-lowered)
                               (match body-lowered
@@ -29803,9 +30550,9 @@
   [pools : AstNodePoolContext]
   [op : AstBinOp]
   [value : i64]) : i64
-  (ast-expr-set-with-pools
+  (ast-expr-set-id-with-pools
     pools
-    (lower-spmd-reduce-acc-name)
+    (lower-spmd-reduce-acc-id)
     (ast-expr-binary-with-pools
       pools
       op
@@ -29825,11 +30572,11 @@
   (ast-expr-let-with-pools
     pools
     (ast-let-binding-cons
-      (ast-let-binding (lower-spmd-reduce-val-name) (AstMaybeType.No) value)
+      (ast-let-binding-id (lower-spmd-reduce-val-id) (AstMaybeType.No) value)
       (ast-let-binding-list-new))
-    (ast-expr-set-with-pools
+    (ast-expr-set-id-with-pools
       pools
-      (lower-spmd-reduce-acc-name)
+      (lower-spmd-reduce-acc-id)
       (ast-expr-if-with-pools
         pools
         (ast-expr-binary-with-pools
@@ -29891,13 +30638,13 @@
       (ast-expr-let-with-pools
         pools
         (ast-let-binding-cons
-          (ast-let-binding
-            (lower-spmd-reduce-acc-name)
+          (ast-let-binding-id
+            (lower-spmd-reduce-acc-id)
             (AstMaybeType.Some acc-ty)
             (ast-node-pool-context-expr-push pools init))
           (ast-let-binding-cons
-            (ast-let-binding
-              (lower-spmd-reduce-end-name)
+            (ast-let-binding-id
+              (lower-spmd-reduce-end-id)
               (AstMaybeType.Some index-ty)
               (ast-node-pool-context-expr-push pools end))
             (ast-let-binding-cons
@@ -29917,7 +30664,7 @@
                   (AstBinOp.Lt)
                   (ast-node-pool-context-expr-push
                     pools
-                    (AstExpr.Var (intern index)))
+                    (AstExpr.Var (lower-existing-name-id index)))
                   (ast-node-pool-context-expr-push
                     pools
                     (AstExpr.Var (lower-spmd-reduce-end-id))))
@@ -29935,7 +30682,7 @@
                             (AstBinOp.Add)
                             (ast-node-pool-context-expr-push
                               pools
-                              (AstExpr.Var (intern index)))
+                              (AstExpr.Var (lower-existing-name-id index)))
                             (ast-node-pool-context-expr-push
                               pools
                               (AstExpr.Literal (ast-lit-int 1)))))
@@ -29965,7 +30712,10 @@
   [end : AstExpr]
   [init : AstExpr]
   [value : AstExpr]) : ResultLowerExpr
-  (match (tc-expr ctx (tc-bind type-env index index-ty) value)
+  (match (tc-expr
+    ctx
+    (tc-bind-id type-env (lower-existing-name-id index) index-ty)
+    value)
     [(ResultTcType.Ok value-ty)
       (let
         [acc-ty : AstType (tc-type-without-regions value-ty)]
@@ -30062,7 +30812,7 @@
   (ast-expr-let-with-pools
     pools
     (ast-let-binding-cons
-      (ast-let-binding (lower-spmd-scan-val-name) (AstMaybeType.No) value)
+      (ast-let-binding-id (lower-spmd-scan-val-id) (AstMaybeType.No) value)
       (ast-let-binding-list-new))
     (ast-expr-if-with-pools
       pools
@@ -30119,13 +30869,13 @@
         (ast-expr-let-with-pools
           pools
           (ast-let-binding-cons
-            (ast-let-binding
-              (lower-spmd-scan-acc-name)
+            (ast-let-binding-id
+              (lower-spmd-scan-acc-id)
               (AstMaybeType.Some prefix-ty)
               (ast-node-pool-context-expr-push pools init))
             (ast-let-binding-cons
-              (ast-let-binding
-                (lower-spmd-scan-end-name)
+              (ast-let-binding-id
+                (lower-spmd-scan-end-id)
                 (AstMaybeType.Some index-ty)
                 (ast-node-pool-context-expr-push pools end))
               (ast-let-binding-cons
@@ -30145,7 +30895,7 @@
                     (AstBinOp.Lt)
                     (ast-node-pool-context-expr-push
                       pools
-                      (AstExpr.Var (intern index)))
+                      (AstExpr.Var (lower-existing-name-id index)))
                     (ast-node-pool-context-expr-push
                       pools
                       (AstExpr.Var (lower-spmd-scan-end-id))))
@@ -30161,12 +30911,12 @@
                       pools
                       (AstExpr.Begin
                         (ast-expr-cons
-                          (ast-expr-set-with-pools
+                          (ast-expr-set-id-with-pools
                             pools
-                            (lower-spmd-scan-acc-name)
+                            (lower-spmd-scan-acc-id)
                             (ast-node-pool-context-expr-push
                               pools
-                              (AstExpr.Var (intern prefix))))
+                              (AstExpr.Var (lower-existing-name-id prefix))))
                           (ast-expr-cons
                             (ast-node-pool-context-expr-push pools body)
                             (ast-expr-cons
@@ -30178,7 +30928,7 @@
                                   (AstBinOp.Add)
                                   (ast-node-pool-context-expr-push
                                     pools
-                                    (AstExpr.Var (intern index)))
+                                    (AstExpr.Var (lower-existing-name-id index)))
                                   (ast-node-pool-context-expr-push
                                     pools
                                     (AstExpr.Literal (ast-lit-int 1)))))
@@ -30468,7 +31218,7 @@
             name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
-          (match (tc-lookup type-env (intern-str name))
+          (match (tc-lookup-id type-env name)
             [(ResultTcType.Ok ty)
               (match (tc-type-strip-region ty)
                 [(AstType.DynArray elem-ty)
@@ -30546,7 +31296,7 @@
             name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
-          (match (tc-lookup type-env (intern-str name))
+          (match (tc-lookup-id type-env name)
             [(ResultTcType.Ok ty)
               (if (tc-type-eq (tc-type-without-regions ty) (AstType.I64))
                 (LowerMaybeIrValue.Some (CompilerIrValue.Var var-id))
@@ -30765,19 +31515,16 @@
     [(AstUnOp.Not) true]
     [_ false]))
 
-(define (lower-masked-vector-empty-lane-locals) : lower_string_i64_map.Map
-  (lower_string_i64_map.with-capacity 16))
+(define (lower-masked-vector-empty-lane-locals) : lower_i64_i64_map.Map
+  (lower_i64_i64_map.with-capacity 16))
 
 (define (lower-masked-vector-lane-locals-bind-if-varying
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [name : i64]
-  [lanes : i64]) : lower_string_i64_map.Map
+  [lanes : i64]) : lower_i64_i64_map.Map
   (if (> lanes 0)
     (begin
-      (lower_string_i64_map.insert-ref!
-        (&mut lane-locals)
-        (intern-str name)
-        lanes)
+      (lower_i64_i64_map.insert-ref! (&mut lane-locals) name lanes)
       lane-locals)
     lane-locals))
 
@@ -30787,7 +31534,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : AstExprList]) : i64
   (lower-masked-vector-expr-list-lanes-with-locals-at
     ctx
@@ -30805,7 +31552,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : i64
   (if (>= expr-index (struct-get exprs len))
@@ -30838,8 +31585,8 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
-  [bindings : AstLetBindingList]) : lower_string_i64_map.Map
+  [lane-locals : lower_i64_i64_map.Map]
+  [bindings : AstLetBindingList]) : lower_i64_i64_map.Map
   (lower-masked-vector-let-bindings-locals-at
     ctx
     mode
@@ -30856,9 +31603,9 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
-  [binding-index : i64]) : lower_string_i64_map.Map
+  [binding-index : i64]) : lower_i64_i64_map.Map
   (if (>= binding-index (ast-let-binding-list-len bindings))
     lane-locals
     (match (ast-let-binding-list-get
@@ -30877,7 +31624,7 @@
               index
               lane-locals
               init)]
-          [next-locals : lower_string_i64_map.Map
+          [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
               lane-locals
               name
@@ -30898,7 +31645,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : AstLetBindingList]) : i64
   (lower-masked-vector-let-bindings-lanes-with-locals-at
     ctx
@@ -30916,7 +31663,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : i64
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -30937,7 +31684,7 @@
               index
               lane-locals
               init)]
-          [next-locals : lower_string_i64_map.Map
+          [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
               lane-locals
               name
@@ -30957,7 +31704,7 @@
 (define (lower-masked-vector-pattern-locals
   [pattern : AstPattern]
   [scrut-lanes : i64]
-  [lane-locals : lower_string_i64_map.Map]) : lower_string_i64_map.Map
+  [lane-locals : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (if (> scrut-lanes 0)
     (match pattern
       [(AstPattern.Var name _)
@@ -30986,7 +31733,7 @@
 (define (lower-masked-vector-pattern-list-locals
   [patterns : AstPatternList]
   [scrut-lanes : i64]
-  [lane-locals : lower_string_i64_map.Map]) : lower_string_i64_map.Map
+  [lane-locals : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (lower-masked-vector-pattern-list-locals-at
     (& patterns)
     scrut-lanes
@@ -30996,8 +31743,8 @@
 (define (lower-masked-vector-pattern-list-locals-at
   [patterns : (& patterns AstPatternList)]
   [scrut-lanes : i64]
-  [lane-locals : lower_string_i64_map.Map]
-  [index : i64]) : lower_string_i64_map.Map
+  [lane-locals : lower_i64_i64_map.Map]
+  [index : i64]) : lower_i64_i64_map.Map
   (if (>= index (struct-get patterns len))
     lane-locals
     (lower-masked-vector-pattern-list-locals-at
@@ -31015,7 +31762,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
   [arms : AstMatchArmList]) : i64
   (lower-masked-vector-match-arms-lanes-with-locals-at
@@ -31035,7 +31782,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : i64
@@ -31045,7 +31792,7 @@
       [(AstMatchArm.Arm pattern body-box)
         (let
           [body : AstExpr (lower-context-expr-get ctx body-box)]
-          [body-locals : lower_string_i64_map.Map
+          [body-locals : lower_i64_i64_map.Map
             (lower-masked-vector-pattern-locals pattern scrut-lanes lane-locals)]
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
@@ -31073,7 +31820,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [expr : AstExpr]) : i64
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -31112,10 +31859,10 @@
     [(AstExpr.Literal _) 0]
     [(AstExpr.Var name)
       (let
-        [name-text : String (intern-str name)]
-        (match (lower_string_i64_map.get (& lane-locals) name-text)
-          [(lower_string_i64_map.LookupFound lanes) lanes]
-          [(lower_string_i64_map.LookupMissing)
+        [name-text : String (tc-env-key-name-text name)]
+        (match (lower_i64_i64_map.get (& lane-locals) name)
+          [(lower_i64_i64_map.LookupFound lanes) lanes]
+          [(lower_i64_i64_map.LookupMissing)
             (if (string.eq name-text index)
               (lower-simd-lanes-for-elem mode (AstType.I64))
               0)]))]
@@ -31160,7 +31907,7 @@
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : lower_string_i64_map.Map
+            [body-locals : lower_i64_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
                 mode
@@ -31397,7 +32144,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -31471,7 +32218,7 @@
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : lower_string_i64_map.Map
+            [body-locals : lower_i64_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
                 mode
@@ -31618,7 +32365,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-if-with-locals-at?
     ctx
@@ -31636,7 +32383,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
   (if (>= expr-index (struct-get exprs len))
@@ -31666,7 +32413,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-if-with-locals-at?
     ctx
@@ -31684,7 +32431,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -31705,7 +32452,7 @@
               index
               lane-locals
               init)]
-          [next-locals : lower_string_i64_map.Map
+          [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
               lane-locals
               name
@@ -31783,7 +32530,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -31875,7 +32622,7 @@
         [(AstLet.Let bindings body-box)
           (let
             [body : AstExpr (lower-context-expr-get ctx body-box)]
-            [body-locals : lower_string_i64_map.Map
+            [body-locals : lower_i64_i64_map.Map
               (lower-masked-vector-let-bindings-locals
                 ctx
                 mode
@@ -32007,7 +32754,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-while-with-locals-at?
     ctx
@@ -32025,7 +32772,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
   (if (>= expr-index (struct-get exprs len))
@@ -32055,7 +32802,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-while-with-locals-at?
     ctx
@@ -32073,7 +32820,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -32094,7 +32841,7 @@
               index
               lane-locals
               init)]
-          [next-locals : lower_string_i64_map.Map
+          [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
               lane-locals
               name
@@ -32140,7 +32887,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [expr : AstExpr]) : bool
   (match expr
     [(AstExpr.Spanned inner-box _)
@@ -32354,7 +33101,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : AstExprList]) : bool
   (lower-masked-vector-expr-list-has-varying-match-with-locals-at?
     ctx
@@ -32372,7 +33119,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [exprs : (& exprs AstExprList)]
   [expr-index : i64]) : bool
   (if (>= expr-index (struct-get exprs len))
@@ -32402,7 +33149,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : AstLetBindingList]) : bool
   (lower-masked-vector-let-bindings-have-varying-match-with-locals-at?
     ctx
@@ -32420,7 +33167,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [bindings : (& bindings AstLetBindingList)]
   [binding-index : i64]) : bool
   (if (>= binding-index (ast-let-binding-list-len bindings))
@@ -32441,7 +33188,7 @@
               index
               lane-locals
               init)]
-          [next-locals : lower_string_i64_map.Map
+          [next-locals : lower_i64_i64_map.Map
             (lower-masked-vector-lane-locals-bind-if-varying
               lane-locals
               name
@@ -32471,7 +33218,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
   [arms : AstMatchArmList]) : bool
   (lower-masked-vector-match-arms-have-varying-match-with-locals-at?
@@ -32491,7 +33238,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [lane-locals : lower_string_i64_map.Map]
+  [lane-locals : lower_i64_i64_map.Map]
   [scrut-lanes : i64]
   [arms : (& arms AstMatchArmList)]
   [arm-index : i64]) : bool
@@ -33564,13 +34311,13 @@
 
 (define (lower-masked-vector-let-binding-names
   [bindings : AstLetBindingList]
-  [lane-locals : LowerStringSet]) : LowerStringSet
+  [lane-locals : LowerIdSet]) : LowerIdSet
   (lower-masked-vector-let-binding-names-at (& bindings) lane-locals 0))
 
 (define (lower-masked-vector-let-binding-names-at
   [bindings : (& bindings AstLetBindingList)]
-  [lane-locals : LowerStringSet]
-  [binding-index : i64]) : LowerStringSet
+  [lane-locals : LowerIdSet]
+  [binding-index : i64]) : LowerIdSet
   (if (>= binding-index (ast-let-binding-list-len bindings))
     lane-locals
     (match (ast-let-binding-list-get
@@ -33580,7 +34327,7 @@
       [(AstLetBinding.Binding name _ _)
         (lower-masked-vector-let-binding-names-at
           bindings
-          (lower-string-set-insert lane-locals (intern-str name))
+          (lower-id-set-insert lane-locals name)
           (+ binding-index 1))])))
 
 (define (lower-vector-body-has-array-read? [ctx : TcContext] [expr : AstExpr]) : bool
@@ -34253,7 +35000,7 @@
                 name
                 (compiler-symbols-missing-handle))]
             (if (compiler-symbols-handle-found? var-id)
-              (match (tc-lookup type-env lookup-name)
+              (match (tc-lookup-id type-env name)
                 [(ResultTcType.Ok ty)
                   (let
                     [scalar-ty : AstType (tc-type-without-regions ty)]
@@ -36428,21 +37175,21 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [lanes : i64]
   [expr : AstExpr]
-  [name : String]) : ResultLowerExpr
-  (if (lower-string-set-contains? lane-locals name)
+  [name : i64]) : ResultLowerExpr
+  (if (lower-id-set-contains? lane-locals name)
     (let
       [var-id : i64
-        (sym_i64_env.sym-i64-lookup-or
+        (sym_i64_env.sym-i64-lookup-id-or
           env
           name
           (compiler-symbols-missing-handle))]
       (if (compiler-symbols-handle-found? var-id)
-        (match (tc-lookup type-env name)
+        (match (tc-lookup-id type-env name)
           [(ResultTcType.Ok ty)
             (ResultLowerExpr.Ok
               (LowerExpr.Expr
@@ -36452,17 +37199,17 @@
           [(ResultTcType.Err message)
             (ResultLowerExpr.Err (box (lower-diagnostic-at-expr expr message)))])
         (lower-avx512-masked-unsupported expr "unknown lane-local binding")))
-    (if (string.eq name index)
+    (if (string.eq (intern-str name) index)
       (ResultLowerExpr.Ok
         (lower-emit-foreach-index-vector state index-var lanes))
       (let
         [var-id : i64
-          (sym_i64_env.sym-i64-lookup-or
+          (sym_i64_env.sym-i64-lookup-id-or
             env
             name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? var-id)
-          (match (tc-lookup type-env name)
+          (match (tc-lookup-id type-env name)
             [(ResultTcType.Ok ty)
               (let
                 [lane-ty : AstType (tc-type-without-regions ty)]
@@ -36549,7 +37296,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -36652,7 +37399,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -36676,7 +37423,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -36716,9 +37463,7 @@
                           init-state
                           (sym_i64_env.sym-i64-bind-id env name init-var)
                           (tc-bind-id type-env name binding-ty)
-                          (lower-string-set-insert
-                            lane-locals
-                            (intern-str name))
+                          (lower-id-set-insert lane-locals name)
                           index
                           index-var
                           active-mask
@@ -36738,7 +37483,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -36762,7 +37507,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -36820,7 +37565,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -36948,7 +37693,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37068,7 +37813,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37327,7 +38072,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37485,7 +38230,7 @@
   [body-state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [arm-mask : CompilerIrValue]
@@ -37556,7 +38301,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37650,7 +38395,7 @@
             state
             (sym_i64_env.sym-i64-bind-id env name scrut-var)
             (tc-bind-id type-env name scrut-ty)
-            (lower-string-set-insert lane-locals (intern-str name))
+            (lower-id-set-insert lane-locals name)
             index
             index-var
             active-mask
@@ -37669,7 +38414,7 @@
             state
             (sym_i64_env.sym-i64-bind-id env name scrut-var)
             (tc-bind-id type-env name scrut-ty)
-            (lower-string-set-insert lane-locals (intern-str name))
+            (lower-id-set-insert lane-locals name)
             index
             index-var
             active-mask
@@ -37690,7 +38435,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37729,7 +38474,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37774,7 +38519,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -37851,7 +38596,7 @@
         index-var
         lanes
         expr
-        (intern-str name))]
+        name)]
     [(AstExpr.Unary op inner-box)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -38045,7 +38790,7 @@
   [state : LowerState]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
-  [lane-locals : LowerStringSet]
+  [lane-locals : LowerIdSet]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -38186,9 +38931,9 @@
   (lower-avx512-masked-expr
     ctx
     state
-    (sym_i64_env.sym-i64-bind env index index-var)
-    (tc-bind type-env index index-ty)
-    LowerStringSet.Nil
+    (sym_i64_env.sym-i64-bind-id env (lower-existing-name-id index) index-var)
+    (tc-bind-id type-env (lower-existing-name-id index) index-ty)
+    LowerIdSet.Nil
     index
     index-var
     active-mask
@@ -38216,8 +38961,12 @@
                 index-alloc
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
             [body-env : sym_i64_env.SymI64Env
-              (sym_i64_env.sym-i64-bind env index index-var)]
-            [body-type-env : TcTypeEnv (tc-bind type-env index index-ty)]
+              (sym_i64_env.sym-i64-bind-id
+                env
+                (lower-existing-name-id index)
+                index-var)]
+            [body-type-env : TcTypeEnv
+              (tc-bind-id type-env (lower-existing-name-id index) index-ty)]
             [arrays : LowerArrayVarSet
               (lower-masked-vector-array-vars
                 ctx
@@ -38502,8 +39251,14 @@
                               body-label
                               exit-label))
                           body-label)
-                        (sym_i64_env.sym-i64-bind env index index-var)
-                        (tc-bind type-env index index-ty)
+                        (sym_i64_env.sym-i64-bind-id
+                          env
+                          (lower-existing-name-id index)
+                          index-var)
+                        (tc-bind-id
+                          type-env
+                          (lower-existing-name-id index)
+                          index-ty)
                         body)
                         [(ResultLowerExpr.Ok body-lowered)
                           (match body-lowered
@@ -38729,8 +39484,11 @@
                 (match (lower-expr
                   ctx
                   s
-                  (sym_i64_env.sym-i64-bind env index index-var)
-                  (tc-bind type-env index index-ty)
+                  (sym_i64_env.sym-i64-bind-id
+                    env
+                    (lower-existing-name-id index)
+                    index-var)
+                  (tc-bind-id type-env (lower-existing-name-id index) index-ty)
                   body)
                   [(ResultLowerExpr.Ok body-lowered)
                     (match body-lowered
@@ -39407,12 +40165,12 @@
       [(AstType.Struct struct-name)
         (tc-struct-pattern-name-matches?
           ctx
-          (intern-str struct-name)
+          (tc-nominal-name-id-display struct-name)
           pattern-name)]
       [(AstType.StructArgs struct-name _)
         (tc-struct-pattern-name-matches?
           ctx
-          (intern-str struct-name)
+          (tc-nominal-name-id-display struct-name)
           pattern-name)]
       [_ false])))
 
@@ -39805,7 +40563,7 @@
         type-env
         scrut-var
         scrut-ty
-        (intern-str variant-name)
+        variant-name
         (ast-pattern-list-new)
         body
         merge-label
@@ -39823,7 +40581,7 @@
           type-env
           scrut-var
           scrut-ty
-          (intern-str variant-name)
+          variant-name
           args
           body
           merge-label
@@ -39874,7 +40632,7 @@
         scrut-var
         scrut-ty
         tag-var
-        (intern-str variant-name)
+        variant-name
         (ast-pattern-list-new)
         body
         rest
@@ -39894,7 +40652,7 @@
           scrut-var
           scrut-ty
           tag-var
-          (intern-str variant-name)
+          variant-name
           args
           body
           rest
@@ -39972,7 +40730,7 @@
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
-  [variant-name : String]
+  [variant-name-id : i64]
   [args : AstPatternList]
   [body : AstExpr]
   [merge-label : String]
@@ -39981,19 +40739,17 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
+        [variant-name : String (intern-str variant-name-id)]
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
-            ctx
-            resolved-scrut-ty
-            variant-name)]
         [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+          (lower-variant-constructor-handle-id-or
+            ctx
+            variant-name
+            variant-name-id
+            resolved-scrut-ty
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -40160,7 +40916,7 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [tag-var : i64]
-  [variant-name : String]
+  [variant-name-id : i64]
   [args : AstPatternList]
   [body : AstExpr]
   [rest : AstMatchArmList]
@@ -40170,19 +40926,17 @@
   [phi-inputs : CompilerIrPhiInputList]
   [scrut-reg-group? : bool]) : ResultLowerExpr
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
+        [variant-name : String (intern-str variant-name-id)]
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
-            ctx
-            resolved-scrut-ty
-            variant-name)]
         [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+          (lower-variant-constructor-handle-id-or
+            ctx
+            variant-name
+            variant-name-id
+            resolved-scrut-ty
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -41185,6 +41939,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name : String]
+  [raw-name-id : i64]
   [args : AstExprList]
   [ret-ty : AstType]
   [sret-var : i64]
@@ -41201,21 +41956,23 @@
           (if (lower-call-name-matches-nominal?
             ctx
             source-name
-            (intern-str resolved-struct))
-            (intern-str resolved-struct)
+            (tc-nominal-name-id-display resolved-struct))
+            (tc-nominal-name-id-display resolved-struct)
             (lower-module-lookup-name ctx source-name))]
         [(AstType.StructArgs resolved-struct _)
           (if (lower-call-name-matches-nominal?
             ctx
             source-name
-            (intern-str resolved-struct))
-            (intern-str resolved-struct)
+            (tc-nominal-name-id-display resolved-struct))
+            (tc-nominal-name-id-display resolved-struct)
             (lower-module-lookup-name ctx source-name))]
         [_ (lower-module-lookup-name ctx source-name)])]
     [variant-handle : i64
-      (compiler-registries-lookup-variant-or
-        registries
-        variant-name
+      (lower-variant-constructor-handle-id-or
+        ctx
+        source-name
+        raw-name-id
+        ret-ty
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? variant-handle)
       (match (lower-construct-enum-with-handle-into
@@ -41288,7 +42045,7 @@
             origin
             ret-ty
             sret-var)
-          (if (sym_i64_env.sym-i64-contains env raw-text)
+          (if (sym_i64_env.sym-i64-contains-id env raw-name)
             (lower-return-expr-generic
               ctx
               state
@@ -41300,7 +42057,14 @@
             (match (if (tc-hygiene-global-name? raw-text)
               (ResultTcString.Ok
                 (lower-hygiene-source-name-in-context ctx type-env raw-text))
-              (lower-source-name-lookup-key ctx type-env raw-text))
+              (if (tc-source-slash-qualified-id? raw-text raw-name)
+                (ResultTcString.Ok raw-text)
+                (tc-source-name-lookup-key-with-field-check
+                  ctx
+                  type-env
+                  raw-text
+                  raw-name
+                  true)))
               [(ResultTcString.Ok name)
                 (lower-return-call-name-to-sret
                   ctx
@@ -41308,6 +42072,7 @@
                   env
                   type-env
                   name
+                  raw-name
                   args
                   ret-ty
                   sret-var
@@ -41970,7 +42735,7 @@
         type-env
         scrut-var
         scrut-ty
-        (intern-str variant-name)
+        variant-name
         (ast-pattern-list-new)
         body
         ret-ty
@@ -41987,7 +42752,7 @@
           type-env
           scrut-var
           scrut-ty
-          (intern-str variant-name)
+          variant-name
           args
           body
           ret-ty
@@ -42035,7 +42800,7 @@
         scrut-var
         scrut-ty
         tag-var
-        (intern-str variant-name)
+        variant-name
         (ast-pattern-list-new)
         body
         rest
@@ -42054,7 +42819,7 @@
           scrut-var
           scrut-ty
           tag-var
-          (intern-str variant-name)
+          variant-name
           args
           body
           rest
@@ -42128,7 +42893,7 @@
   [type-env : TcTypeEnv]
   [scrut-var : i64]
   [scrut-ty : AstType]
-  [variant-name : String]
+  [variant-name-id : i64]
   [args : AstPatternList]
   [body : AstExpr]
   [ret-ty : AstType]
@@ -42136,19 +42901,17 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
+        [variant-name : String (intern-str variant-name-id)]
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
-            ctx
-            resolved-scrut-ty
-            variant-name)]
         [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+          (lower-variant-constructor-handle-id-or
+            ctx
+            variant-name
+            variant-name-id
+            resolved-scrut-ty
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -42270,7 +43033,7 @@
   [scrut-var : i64]
   [scrut-ty : AstType]
   [tag-var : i64]
-  [variant-name : String]
+  [variant-name-id : i64]
   [args : AstPatternList]
   [body : AstExpr]
   [rest : AstMatchArmList]
@@ -42279,19 +43042,17 @@
   [borrow-lifetime : TcMaybeString]
   [scrut-reg-group? : bool]) : ResultLowerState
   (match ctx
-    [(TcContext _ symbols registries _ _)
+    [(TcContext _ symbols registries _ _ _)
       (let
+        [variant-name : String (intern-str variant-name-id)]
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
-            ctx
-            resolved-scrut-ty
-            variant-name)]
         [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+          (lower-variant-constructor-handle-id-or
+            ctx
+            variant-name
+            variant-name-id
+            resolved-scrut-ty
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -43169,8 +43930,22 @@
                       (intern-persistent-storage-disable!))
                     (ResultLowerFunction.Err escaped-message)))))])))))
 
-(define (lower-struct-cleanup-param-name) : String
-  "__tl_cleanup_value")
+(define lower-struct-cleanup-param-id-cache : i64
+  -1)
+(define lower-struct-cleanup-param-id-cache-generation : i64
+  -1)
+
+(define (lower-struct-cleanup-param-id) : i64
+  (if (= lower-struct-cleanup-param-id-cache-generation (ci.intern-generation))
+    lower-struct-cleanup-param-id-cache
+    (let
+      [id : i64 (ci.intern-generated-name "__tl_cleanup_value")]
+      (begin
+        (set! lower-struct-cleanup-param-id-cache id)
+        (set!
+          lower-struct-cleanup-param-id-cache-generation
+          (ci.intern-generation))
+        id))))
 
 (define (lower-struct-cleanup-qualified-name
   [struct-name : String]
@@ -43206,9 +43981,13 @@
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
     (match resolved
       [(AstType.Struct name)
-        (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
+        (lower-struct-cleanup-name-for-struct
+          ctx
+          (tc-nominal-name-id-display name))]
       [(AstType.StructArgs name _)
-        (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
+        (lower-struct-cleanup-name-for-struct
+          ctx
+          (tc-nominal-name-id-display name))]
       [_
         (ResultTcString.Err
           (string.append
@@ -43217,19 +43996,19 @@
 
 (define (lower-struct-cleanup-call-expr
   [cleanup-name : String]
-  [value-name : String]
-  [field-name : String]) : i64
+  [value-name-id : i64]
+  [field-name-id : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (intern cleanup-name)))
+    (ast-node-push (AstExpr.Var (lower-existing-name-id cleanup-name)))
     (ast-expr-cons
-      (ast-expr-struct-get
-        (ast-node-push (AstExpr.Var (intern value-name)))
-        field-name)
+      (ast-expr-struct-get-id
+        (ast-node-push (AstExpr.Var value-name-id))
+        field-name-id)
       (ast-expr-list-new))))
 
 (define (lower-struct-cleanup-field-exprs
   [ctx : TcContext]
-  [value-name : String]
+  [value-name-id : i64]
   [field : AstFieldDef]
   [acc : AstExprList]) : ResultAstExprList
   (match field
@@ -43241,8 +44020,8 @@
             (ast-expr-cons
               (lower-struct-cleanup-call-expr
                 (intern-str cleanup-name)
-                value-name
-                (intern-str field-name))
+                value-name-id
+                field-name)
               acc))]
         [(AstFieldCleanup.Owned)
           (match (lower-struct-cleanup-name-for-type ctx ty)
@@ -43251,21 +44030,21 @@
                 (ast-expr-cons
                   (lower-struct-cleanup-call-expr
                     cleanup-name
-                    value-name
-                    (intern-str field-name))
+                    value-name-id
+                    field-name)
                   acc))]
             [(ResultTcString.Err message) (ResultAstExprList.Err message)])])]))
 
 (define (lower-struct-cleanup-body-fields
   [ctx : TcContext]
-  [value-name : String]
+  [value-name-id : i64]
   [fields : AstFieldDefList]
   [acc : AstExprList]) : ResultAstExprList
-  (lower-struct-cleanup-body-fields-at ctx value-name (& fields) acc 0))
+  (lower-struct-cleanup-body-fields-at ctx value-name-id (& fields) acc 0))
 
 (define (lower-struct-cleanup-body-fields-at
   [ctx : TcContext]
-  [value-name : String]
+  [value-name-id : i64]
   [fields : (& fields AstFieldDefList)]
   [acc : AstExprList]
   [index : i64]) : ResultAstExprList
@@ -43273,13 +44052,13 @@
     (ResultAstExprList.Ok acc)
     (match (lower-struct-cleanup-field-exprs
       ctx
-      value-name
+      value-name-id
       (ast-field-def-list-get fields index (ast-field-def-fallback))
       acc)
       [(ResultAstExprList.Ok next)
         (lower-struct-cleanup-body-fields-at
           ctx
-          value-name
+          value-name-id
           fields
           next
           (+ index 1))]
@@ -43296,17 +44075,17 @@
   [names : LowerNameCache]
   [mode : CompilerLowerMode]) : ResultLowerFunction
   (let
-    [value-name : String (lower-struct-cleanup-param-name)]
+    [value-name-id : i64 (lower-struct-cleanup-param-id)]
     (match (lower-struct-cleanup-body-fields
       ctx
-      value-name
+      value-name-id
       fields
       (ast-expr-list-new))
       [(ResultAstExprList.Ok exprs)
         (let
           [params : AstParamList
             (ast-param-cons
-              (ast-param value-name struct-ty false)
+              (ast-param-id value-name-id struct-ty false)
               (ast-param-list-new))]
           [body : AstExpr
             (if (= (struct-get (& exprs) len) 0)
@@ -44055,17 +44834,19 @@
   [_top-env : TcTypeEnv]
   [local-top-env : TcTypeEnv]
   [type-cache : LowerTypeCache]
-  [name : String]
+  [name-id : i64]
   [variants : AstDispatchVariantList]
   [spans : CompilerSourceSpans]
   [name-cache : LowerNameCache]
   [mode : CompilerLowerMode]
-  [module : String]) : ResultLowerDispatchDecl
+  [module : String]
+  [module-id : i64]) : ResultLowerDispatchDecl
   (let
-    [decl-ctx : TcContext (tc-context-with-module ctx module)]
+    [name : String (intern-str name-id)]
+    [decl-ctx : TcContext (tc-context-with-module-id ctx module module-id)]
     [logical-name : String
-      (lower-current-decl-logical-name-cache name-cache module name)]
-    (match (tc-lookup local-top-env name)
+      (lower-current-decl-logical-name-cache-id name-cache module name name-id)]
+    (match (tc-lookup-id local-top-env name-id)
       [(ResultTcType.Ok dispatch-ty)
         (let
           [fn-ty : AstType
@@ -44214,7 +44995,8 @@
         (lower-type-cache-overlay (TcTypeEnv.Nil))
         dispatch-variants
         mode
-        ""))))
+        ""
+        cbi.compiler-builtin-id-fix-empty))))
 
 ;; Lower every top-level decl of the expanded program. This used to be
 ;; a tail-recursive walk (one call per decl), but the inline-aggregate TCO
@@ -44252,7 +45034,8 @@
   [type-cache : LowerTypeCache]
   [dispatch-variants : lower_string_i64_map.Map]
   [mode : CompilerLowerMode]
-  [module : String]) : ResultLowerDecls
+  [module : String]
+  [module-id : i64]) : ResultLowerDecls
   (let
     [cur-decls : AstDeclList decls]
     [cur-local-top-env : TcTypeEnv local-top-env]
@@ -44264,6 +45047,7 @@
     [cur-name-cache : LowerNameCache name-cache]
     [cur-type-cache : LowerTypeCache type-cache]
     [cur-module : String module]
+    [cur-module-id : i64 module-id]
     [result : ResultLowerDecls
       (ResultLowerDecls.Err
         (box (lower-diagnostic "lower: internal decls walk")))]
@@ -44292,7 +45076,7 @@
                 [(AstDecl.Def name _ expr-box)
                   (let
                     [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
+                      (tc-context-with-module-id ctx cur-module cur-module-id)]
                     [expr : AstExpr (lower-context-expr-get decl-ctx expr-box)]
                     (match (lower-top-decl-type-or-check
                       decl-ctx
@@ -44302,10 +45086,11 @@
                         (let
                           [global-ty : AstType (tc-type-without-regions ty)]
                           [global-name : String
-                            (lower-current-decl-logical-name-cache
+                            (lower-current-decl-logical-name-cache-id
                               cur-name-cache
                               cur-module
-                              (intern-str name))]
+                              (intern-str name)
+                              name)]
                           (match (lower-global-value
                             decl-ctx
                             cur-name-cache
@@ -44373,7 +45158,7 @@
                 [(AstDecl.Extern name _ metadata ty)
                   (let
                     [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
+                      (tc-context-with-module-id ctx cur-module cur-module-id)]
                     [resolved-ty : AstType (tc-resolve-type decl-ctx ty)]
                     (if (and
                       (tc-type-contains-reference? resolved-ty)
@@ -44395,6 +45180,7 @@
                           cur-externs
                           (compiler-ir-extern-cons
                             (CompilerIrExtern.Extern
+                              (compiler-symbol-name-id-key name)
                               (intern-str name)
                               (tc-type-without-regions resolved-ty)
                               (ast-extern-metadata-abi metadata)
@@ -44406,13 +45192,14 @@
                 [(AstDecl.DefFn name params ret body-box export)
                   (let
                     [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
+                      (tc-context-with-module-id ctx cur-module cur-module-id)]
                     [body : AstExpr (lower-context-expr-get decl-ctx body-box)]
                     [logical-name : String
-                      (lower-current-decl-logical-name-cache
+                      (lower-current-decl-logical-name-cache-id
                         cur-name-cache
                         cur-module
-                        (intern-str name))]
+                        (intern-str name)
+                        name)]
                     (if (lower_string_i64_map.contains?
                       dispatch-variants
                       logical-name)
@@ -44442,6 +45229,9 @@
                                   [(AstFnExport.Export symbol)
                                     (compiler-ir-extern-cons
                                       (CompilerIrExtern.Extern
+                                        (compiler-symbol-module-key-id-by-id
+                                          cur-module-id
+                                          name)
                                         logical-name
                                         (ast-ty-func
                                           (tc-type-list-without-regions
@@ -44481,12 +45271,13 @@
                     top-env
                     cur-local-top-env
                     cur-type-cache
-                    (intern-str name)
+                    name
                     variants
                     cur-spans
                     cur-name-cache
                     mode
-                    cur-module)
+                    cur-module
+                    cur-module-id)
                     [(ResultLowerDispatchDecl.Ok lowered)
                       (match (box-get lowered)
                         [(LowerDispatchDecl.Decl
@@ -44519,7 +45310,8 @@
                       top-env
                       names
                       cur-name-cache
-                      next-module-str)
+                      next-module-str
+                      next-module)
                       [(ResultLowerModuleLocalEnv.Ok
                           next-local-top-env
                           local-type-env
@@ -44541,6 +45333,7 @@
                             cur-type-cache
                             (lower-type-cache-overlay local-type-env))
                           (set! cur-module next-module-str)
+                          (set! cur-module-id next-module)
                           (set!
                             cur-decls
                             (if skip-runtime
@@ -44561,10 +45354,11 @@
                       (set!
                         cur-globals
                         (lower-nullary-variant-globals
-                          (lower-current-decl-logical-name-cache
+                          (lower-current-decl-logical-name-cache-id
                             cur-name-cache
                             cur-module
-                            (intern-str name))
+                            (intern-str name)
+                            name)
                           variants
                           0
                           cur-globals)))
@@ -44587,21 +45381,19 @@
                 [(AstDecl.DefStruct name _ cleanup fields)
                   (let
                     [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
+                      (tc-context-with-module-id ctx cur-module cur-module-id)]
                     [logical-name : String
                       (match cleanup
                         [(AstStructCleanup.No) ""]
                         [(AstStructCleanup.Fn cleanup-name)
-                          (lower-current-decl-logical-name-cache
+                          (lower-current-decl-logical-name-cache-id
                             cur-name-cache
                             cur-module
-                            (intern-str cleanup-name))])]
+                            (intern-str cleanup-name)
+                            cleanup-name)])]
                     [struct-ty : AstType
                       (AstType.Struct
-                        (intern
-                          (compiler-symbol-module-key
-                            cur-module
-                            (intern-str name))))]
+                        (compiler-symbol-module-key-id-by-id cur-module-id name))]
                     (match (lower-struct-cleanup-decl
                       decl-ctx
                       cur-local-top-env
@@ -44627,21 +45419,19 @@
                 [(AstDecl.DefStructLifetimes name lifetimes _ cleanup fields)
                   (let
                     [decl-ctx : TcContext
-                      (tc-context-with-module ctx cur-module)]
+                      (tc-context-with-module-id ctx cur-module cur-module-id)]
                     [logical-name : String
                       (match cleanup
                         [(AstStructCleanup.No) ""]
                         [(AstStructCleanup.Fn cleanup-name)
-                          (lower-current-decl-logical-name-cache
+                          (lower-current-decl-logical-name-cache-id
                             cur-name-cache
                             cur-module
-                            (intern-str cleanup-name))])]
+                            (intern-str cleanup-name)
+                            cleanup-name)])]
                     [struct-ty : AstType
                       (ast-ty-struct-args
-                        (intern
-                          (compiler-symbol-module-key
-                            cur-module
-                            (intern-str name)))
+                        (compiler-symbol-module-key-id-by-id cur-module-id name)
                         lifetimes)]
                     (match (lower-struct-cleanup-decl
                       decl-ctx
@@ -44676,7 +45466,6 @@
   [names : LowerNameEnv]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
-    (lower-refresh-marker-ids!)
     ;; Clone-root discovery and checked typechecking can probe aggregate layout
     ;; with helper contexts before final lowering. Emitted code must use one
     ;; internally consistent layout view for all functions in this pass.
@@ -44737,30 +45526,36 @@
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (match (compiler-specialize-program program)
     [(ResultSpecProgram.Ok specialized)
-      (match (typecheck-compiler-specialized-program-with-paths-checked
-        specialized
-        (ast-decl-path-list-new))
-        [(ResultCompilerTypecheckChecked.Ok _ ctx top-env)
-          (let
-            [alias-names : LowerNameEnv
-              (match specialized
-                [(AstProgram.Program decls-box)
-                  (let
-                    [decls : AstDeclList (box-get decls-box)]
-                    (lower-name-env-with-import-aliases
-                      decls
-                      (ast-decl-path-list-new)
-                      "<source>"
-                      LowerNameEnv.Nil
-                      false))])]
-            (lower-compiler-program-checked-with-names-mode
-              ctx
-              top-env
-              specialized
-              alias-names
-              mode))]
-        [(ResultCompilerTypecheckChecked.Err diag)
-          (ResultCompilerLower.Err diag)])]
+      (let
+        [paths : AstDeclPathList (ast-decl-path-list-new)]
+        [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+        [keep-plan : LowerDeclKeepPlan
+          (match specialized
+            [(AstProgram.Program decls-box)
+              (lower-decl-keep-plan-all
+                (ast-decl-list-len (& (box-get decls-box))))])]
+        [alias-names : LowerNameEnv
+          (match specialized
+            [(AstProgram.Program decls-box)
+              (lower-name-env-with-import-aliases
+                (box-get decls-box)
+                paths
+                "<source>"
+                LowerNameEnv.Nil
+                false)])]
+        (begin
+          (tc-clone-root-collection-use! specialized)
+          (lower-typecheck-clone-and-lower
+            "<source>"
+            specialized
+            paths
+            keep-plan
+            alias-names
+            true
+            mode
+            (svec.new)
+            (tc-prefix-default-cache-scope)
+            pools)))]
     [(ResultSpecProgram.Err diag) (ResultCompilerLower.Err diag)]))
 
 (define (lower-compiler-program-unlocated-mode
@@ -45436,7 +46231,7 @@
   (match (ast-expr-unspan-with-pools
     pools
     (ast-node-pool-context-expr-get pools func-box))
-    [(AstExpr.Var name) (= name (intern "import"))]
+    [(AstExpr.Var name) (= name cbi.compiler-builtin-id-fix-import)]
     [_ false]))
 
 (define (lower-source-expr-has-import-call?
@@ -45707,6 +46502,8 @@
     ;; previous compile are freed. Reset the persistent intern table here so a
     ;; later compile never probes a dangling key. The multi-file driver compiles
     ;; through the loader, not this entry, so cli.tl's fixpoint is unaffected.
+    (lower-reset-file-state!)
+    (compiler-typecheck-reset-file-state!)
     (intern-reset!)
     (lower-reset-intern-owned-state!)
     (cbi.compiler-builtin-reset!)
@@ -46145,7 +46942,8 @@
 (define (compiler-lower-nested-expression-diagnostic-span-ok?) : bool
   (let
     [span : AstSourceSpan (ast-source-span 11 3 11 9)]
-    [inner : i64 (ast-node-push (AstExpr.Var (intern "value")))]
+    [value-id : i64 (ci.intern-generated-name "value")]
+    [inner : i64 (ast-node-push (AstExpr.Var value-id))]
     [spanned-inner : i64 (ast-expr-spanned inner span)]
     [wrapped : i64 (ast-expr-cast spanned-inner (AstType.I64))]
     [diag : CompilerDiagnostic
@@ -46167,16 +46965,21 @@
 (define (compiler-lower-compound-expression-diagnostic-span-ok?) : bool
   (let
     [span : AstSourceSpan (ast-source-span 17 5 17 12)]
+    [compound-value-id : i64 (ci.intern-generated-name "compound-value")]
+    [a-id : i64 (ci.intern-generated-name "a")]
+    [b-id : i64 (ci.intern-generated-name "b")]
+    [i-id : i64 (ci.intern-generated-name "i")]
+    [prefix-id : i64 (ci.intern-generated-name "prefix")]
     [plain : i64 (ast-node-push (AstExpr.Literal AstLiteral.Unit))]
-    [inner : i64 (ast-node-push (AstExpr.Var (intern "compound-value")))]
+    [inner : i64 (ast-node-push (AstExpr.Var compound-value-id))]
     [spanned-inner : i64 (ast-expr-spanned inner span)]
     [items : AstExprList
       (ast-expr-cons plain (ast-expr-cons spanned-inner (ast-expr-list-new)))]
     [bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "a" (AstMaybeType.No) plain)
+        (ast-let-binding-id a-id (AstMaybeType.No) plain)
         (ast-let-binding-cons
-          (ast-let-binding "b" (AstMaybeType.No) spanned-inner)
+          (ast-let-binding-id b-id (AstMaybeType.No) spanned-inner)
           (ast-let-binding-list-new)))]
     [arms : AstMatchArmList
       (ast-match-arm-cons
@@ -46186,9 +46989,9 @@
           (ast-match-arm-list-new)))]
     [resources : AstResourceBindingList
       (ast-resource-binding-cons
-        (ast-resource-binding "a" plain plain)
+        (ast-resource-binding-id a-id plain plain)
         (ast-resource-binding-cons
-          (ast-resource-binding "b" spanned-inner plain)
+          (ast-resource-binding-id b-id spanned-inner plain)
           (ast-resource-binding-list-new)))]
     [ok : bool true]
     (begin
@@ -46239,11 +47042,11 @@
               (box
                 (AstSpmdScan.Scan
                   (AstReduceOp.Sum)
-                  (intern "i")
+                  i-id
                   (AstType.I64)
                   plain
                   plain
-                  (intern "prefix")
+                  prefix-id
                   (AstType.I64)
                   plain
                   plain
@@ -50873,6 +51676,35 @@
             (> (lower-test-function-binop-count functions "main") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-qualified-wide-call-source) : String
+  "(module wide_math)
+(define (take [value : i64]) : i64 value)
+(module main)
+(import wide_math)
+(define (main) : i64 (wide_math.take -9223372036854775808))")
+
+(define (compiler-lower-qualified-wide-call-arg-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-qualified-wide-call-source))
+    [(ResultCompilerLower.Ok lowered _)
+      (match lowered
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (>
+              (lower-test-function-int-mov-type-count
+                functions
+                "main"
+                -9223372036854775808
+                (AstType.I64))
+              0)
+            (=
+              (lower-test-function-int-mov-type-count
+                functions
+                "main"
+                -9223372036854775808
+                (AstType.I32))
+              0))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-import-alias-source) : String
   "(module data)
 (define (get) : i64 20)
@@ -51280,9 +52112,17 @@
               (compiler-ir-extern-seq-to-list seq)]
             [_ externs])
             [(CompilerIrExternList.Cons
-                (CompilerIrExtern.Extern name _ abi symbol link-inputs _)
+                (CompilerIrExtern.Extern
+                  name-id
+                  name
+                  _
+                  abi
+                  symbol
+                  link-inputs
+                  _)
                 CompilerIrExternList.Nil)
               (and
+                (= name-id (lower-existing-name-id "ffi-add"))
                 (string.eq name "ffi-add")
                 (string.eq symbol "ffi_add")
                 (ast-extern-abi-c? abi)
@@ -51899,6 +52739,20 @@
         [_ 0])]
     [_ 0]))
 
+(define (lower-test-instr-int-mov-type-count
+  [instr : CompilerIrInstr]
+  [want : i64]
+  [want-ty : AstType]) : i64
+  (match instr
+    [(CompilerIrInstr.Mov _ value ty)
+      (match value
+        [(CompilerIrValue.I64 n)
+          (if (and (= n want) (tc-type-eq ty want-ty))
+            1
+            0)]
+        [_ 0])]
+    [_ 0]))
+
 (define (lower-test-f64-bits [text : String]) : u64
   (match (compiler-float-parse-f64-bits text)
     [(CompilerFloatSomeBits bits) bits]
@@ -51991,6 +52845,29 @@
           (set! index (+ index 1))))
       acc)))
 
+(define (lower-test-instr-seq-int-mov-type-count
+  [instrs : CompilerIrInstrSeq]
+  [want : i64]
+  [want-ty : AstType]) : i64
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [acc : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            acc
+            (+
+              acc
+              (lower-test-instr-int-mov-type-count
+                (array-ref slots index)
+                want
+                want-ty)))
+          (set! index (+ index 1))))
+      acc)))
+
 (define (lower-test-instr-seq-f64-mov-count
   [instrs : CompilerIrInstrSeq]
   [want : u64]) : i64
@@ -52058,6 +52935,24 @@
     [(CompilerIrBlockList.Array seq)
       (lower-test-blocks-i64-mov-count (compiler-ir-block-seq-to-list seq) want)]))
 
+(define (lower-test-blocks-int-mov-type-count
+  [blocks : CompilerIrBlockList]
+  [want : i64]
+  [want-ty : AstType]) : i64
+  (match blocks
+    [(CompilerIrBlockList.Nil) 0]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (+
+            (lower-test-instr-seq-int-mov-type-count instrs want want-ty)
+            (lower-test-blocks-int-mov-type-count (box-get rest) want want-ty))])]
+    [(CompilerIrBlockList.Array seq)
+      (lower-test-blocks-int-mov-type-count
+        (compiler-ir-block-seq-to-list seq)
+        want
+        want-ty)]))
+
 (define (lower-test-blocks-f64-mov-count
   [blocks : CompilerIrBlockList]
   [want : u64]) : i64
@@ -52117,6 +53012,30 @@
         (compiler-ir-function-seq-to-list seq)
         name
         want)]))
+
+(define (lower-test-function-int-mov-type-count
+  [funcs : CompilerIrFunctionList]
+  [name : String]
+  [want : i64]
+  [want-ty : AstType]) : i64
+  (match funcs
+    [(CompilerIrFunctionList.Nil) 0]
+    [(CompilerIrFunctionList.Cons func rest)
+      (match func
+        [(CompilerIrFunction.Function fname _ _ _ blocks)
+          (if (string.eq fname name)
+            (lower-test-blocks-int-mov-type-count blocks want want-ty)
+            (lower-test-function-int-mov-type-count
+              (box-get rest)
+              name
+              want
+              want-ty))])]
+    [(CompilerIrFunctionList.Array seq)
+      (lower-test-function-int-mov-type-count
+        (compiler-ir-function-seq-to-list seq)
+        name
+        want
+        want-ty)]))
 
 (define (lower-test-function-f64-mov-count
   [funcs : CompilerIrFunctionList]
@@ -56080,6 +56999,9 @@
       (if (compiler-lower-module-qualified-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-qualified-wide-call-arg-ok?)
+        unit
+        (set! ok false))
       (if (compiler-lower-import-alias-ok?)
         unit
         (set! ok false))
@@ -56206,14 +57128,15 @@
       (ast-decl-def
         "callback"
         AstMaybeType.No
-        (ast-node-push (AstExpr.Var (intern "callback-target"))))
+        (ast-node-push
+          (AstExpr.Var cbi.compiler-builtin-id-fix-callback_target)))
       (ast-decl-cons
         (ast-decl-def-fn
           "main"
           (ast-param-list-new)
           (AstType.I64)
           (ast-expr-call
-            (ast-node-push (AstExpr.Var (intern "helper")))
+            (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-helper))
             (ast-expr-list-new)))
         (ast-decl-cons
           (ast-decl-def-fn
@@ -56234,6 +57157,49 @@
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
               (ast-decl-list-new))))))))
+
+(define (compiler-lower-dce-test-symbols-ready?) : bool
+  (match (parse-ast-source
+    "(define callback : i64 0)
+(define main : i64 0)
+(define helper : i64 0)
+(define callback-target : i64 0)
+(define dead : i64 0)
+(define macro-only-helper : i64 0)
+(define macro-uses-helper : i64 0)
+(define stdlib.comptime : i64 0)
+(define ctfe-runtime-helper : i64 0)
+(define ExprClauseList : i64 0)
+(define UsedEnum : i64 0)
+(define UsedA : i64 0)
+(define DeadEnum : i64 0)
+(define DeadA : i64 0)
+(define UsedBox : i64 0)
+(define value : i64 0)
+(define DeadBox : i64 0)
+(define io.ResultIoString : i64 0)
+(define OkIoString : i64 0)
+(define io.DeadResult : i64 0)
+(define DeadResultA : i64 0)
+(define stdlib.arena : i64 0)
+(define Arena : i64 0)
+(define handle : i64 0)
+(define ArenaMark : i64 0)
+(define DeadArenaPeer : i64 0)
+(define ThreadBox : i64 0)
+(define owner : i64 0)
+(define ImportedMark : i64 0)
+(define mark : i64 0)
+(define DeadMark : i64 0)
+(define uses-imported-mark-annotation : i64 0)
+(define struct.match.geom : i64 0)
+(define QPoint : i64 0)
+(define x : i64 0)
+(define y : i64 0)
+(define DeadGeom : i64 0)
+(define geom.QPoint : i64 0)")
+    [(ResultAstProgram.Ok _) true]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-ast-dce-no-main-program) : AstProgram
   (ast-program
@@ -56271,7 +57237,8 @@
             (ast-macro-param-list-new)
             (AstType.Expr)
             (ast-expr-call
-              (ast-node-push (AstExpr.Var (intern "macro-only-helper")))
+              (ast-node-push
+                (AstExpr.Var cbi.compiler-builtin-id-fix-macro_only_helper))
               (ast-expr-list-new)))
           (ast-decl-list-new))))))
 
@@ -56432,7 +57399,7 @@
             (ast-field-def-cons
               (ast-field-def
                 "value"
-                (AstType.Enum (intern "UsedEnum"))
+                (AstType.Enum cbi.compiler-builtin-id-fix-UsedEnum)
                 AstFieldCleanup.No)
               (ast-field-def-list-new)))
           (ast-decl-cons
@@ -56447,7 +57414,7 @@
               (ast-decl-def-fn
                 "main"
                 (ast-param-list-new)
-                (AstType.Struct (intern "UsedBox"))
+                (AstType.Struct cbi.compiler-builtin-id-fix-UsedBox)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
               (ast-decl-list-new))))))))
 
@@ -56488,7 +57455,7 @@
           (ast-decl-def-fn
             "main"
             (ast-param-list-new)
-            (AstType.Enum (intern "ResultIoString"))
+            (AstType.Enum cbi.compiler-builtin-id-fix-ResultIoString)
             (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
           (ast-decl-list-new))))))
 
@@ -56537,14 +57504,15 @@
                   (ast-field-def-cons
                     (ast-field-def
                       "owner"
-                      (AstType.Struct (intern "arena.Arena"))
+                      (AstType.Struct
+                        cbi.compiler-builtin-id-fix-arena_dot_Arena)
                       AstFieldCleanup.No)
                     (ast-field-def-list-new)))
                 (ast-decl-cons
                   (ast-decl-def-fn
                     "main"
                     (ast-param-list-new)
-                    (AstType.Struct (intern "ThreadBox"))
+                    (AstType.Struct cbi.compiler-builtin-id-fix-ThreadBox)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                   (ast-decl-list-new))))))))))
 
@@ -56571,7 +57539,8 @@
         (ast-let-binding-cons
           (ast-let-binding
             "mark"
-            (AstMaybeType.Some (AstType.Struct (intern "ImportedMark")))
+            (AstMaybeType.Some
+              (AstType.Struct cbi.compiler-builtin-id-fix-ImportedMark))
             unit-expr)
           (ast-let-binding-list-new))
         unit-expr)]
@@ -56938,16 +57907,13 @@
       (lower-capture-list-add-front
         (lower-capture-list-add-front
           (lower-capture-list-empty)
-          (LowerCapture.Capture "cap-b" 2 (AstType.Bool) 8))
-        (LowerCapture.Capture "cap-a" 1 (AstType.I64) 0))]
+          (LowerCapture.Capture 102 2 (AstType.Bool) 8))
+        (LowerCapture.Capture 101 1 (AstType.I64) 0))]
     [cleanups : LowerCleanupStack
       (lower-cleanup-stack-push
-        (lower-cleanup-stack-push
-          (lower-cleanup-stack-empty)
-          "hidden-a"
-          "cleanup-a")
-        "hidden-b"
-        "cleanup-b")]
+        (lower-cleanup-stack-push (lower-cleanup-stack-empty) 201 301)
+        202
+        302)]
     [origin : AstExpr (AstExpr.Literal (ast-lit-int 0))]
     [tail-writebacks : LowerArgWritebackList
       (lower-arg-writeback-list-add
@@ -56976,12 +57942,12 @@
       (lower-string-set-contains? strings "helper-a")
       (lower-string-set-contains? strings "helper-b")
       (= (lower-capture-list-count captures) 2)
-      (lower-capture-list-contains-name? captures "cap-b")
-      (lower-capture-list-storage-entry? captures 0 "cap-b" 2 8)
-      (lower-capture-list-storage-entry? captures 1 "cap-a" 1 0)
+      (lower-capture-list-contains-name? captures 102)
+      (lower-capture-list-storage-entry? captures 0 102 2 8)
+      (lower-capture-list-storage-entry? captures 1 101 1 0)
       (= (lower-cleanup-stack-count cleanups) 2)
-      (lower-cleanup-stack-entry? cleanups 0 "hidden-a" "cleanup-a")
-      (lower-cleanup-stack-entry? cleanups 1 "hidden-b" "cleanup-b")
+      (lower-cleanup-stack-entry? cleanups 0 201 301)
+      (lower-cleanup-stack-entry? cleanups 1 202 302)
       (= (lower-arg-writeback-list-count writebacks) 2)
       (match (lower-arg-writeback-list-ref writebacks 0)
         [(LowerArgWriteback.Writeback local-id storage ty _)
@@ -57010,9 +57976,9 @@
 (define (compiler-lower-name-cache-intern-id-dotted-ok?) : bool
   (let
     [source : String (compiler-symbol-module-key "alias" "value")]
-    [source-id : i64 (intern source)]
-    [alias-id : i64 (intern "alias")]
-    [value-id : i64 (intern "value")]
+    [source-id : i64 (lower-existing-name-id source)]
+    [alias-id : i64 cbi.compiler-builtin-id-fix-alias]
+    [value-id : i64 cbi.compiler-builtin-id-fix-value]
     [logical : String "logical-value"]
     [split-source : String
       (compiler-symbol-module-key
@@ -57022,8 +57988,10 @@
       (match (intern-lookup split-source)
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
-    [split-alias-id : i64 (intern "name_cache_split_alias_3940")]
-    [split-value-id : i64 (intern "name_cache_split_value_3940")]
+    [split-alias-id : i64
+      cbi.compiler-builtin-id-fix-name_cache_split_alias_3940]
+    [split-value-id : i64
+      cbi.compiler-builtin-id-fix-name_cache_split_value_3940]
     [split-logical : String "split-logical-value"]
     [names : LowerNameEnv
       (lower-name-env-bind
@@ -57060,11 +58028,12 @@
   (let
     [module : String "type_cache_mod_3939"]
     [name : String "TypeCacheThing3939"]
-    [name-id : i64 (intern name)]
+    [module-id : i64 (ci.intern-generated-name module)]
+    [name-id : i64 (ci.intern-generated-name name)]
     [qualified-name : String (compiler-symbol-module-key module name)]
-    [qualified-id : i64 (tc-module-name-id module name-id)]
+    [qualified-id : i64 (compiler-symbol-module-key-id-by-id module-id name-id)]
     [fallback-name : String "TypeCacheFallback3939"]
-    [fallback-id : i64 (intern fallback-name)]
+    [fallback-id : i64 (ci.intern-generated-name fallback-name)]
     [fallback-primary : String
       (compiler-symbol-module-key module fallback-name)]
     [fallback-primary-missing-before : bool
@@ -57077,25 +58046,19 @@
         fallback-id
         (AstType.Bool))]
     [cache : LowerTypeCache (lower-type-cache-from-env env)]
-    [qualified-hygiene : String (tc-hygiene-global-context-name module name)]
-    [fallback-hygiene : String
-      (tc-hygiene-global-context-name module fallback-name)]
     [missing : String "TypeCacheMissing3939"]
     [missing-before : bool
       (match (intern-lookup missing)
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])]
     (and
-      (string.eq (intern-str qualified-id) qualified-name)
+      (string.eq (tc-env-key-display qualified-id) qualified-name)
       fallback-primary-missing-before
       missing-before
-      (match (lower-type-cache-lookup cache qualified-name)
+      (match (lower-type-cache-lookup-id cache qualified-id qualified-name)
         [(ResultTcType.Ok ty) (tc-type-eq ty (AstType.I64))]
         [(ResultTcType.Err _) false])
-      (match (lower-type-cache-lookup-hygiene cache qualified-hygiene)
-        [(ResultTcType.Ok ty) (tc-type-eq ty (AstType.I64))]
-        [(ResultTcType.Err _) false])
-      (match (lower-type-cache-lookup-hygiene cache fallback-hygiene)
+      (match (lower-type-cache-lookup-id cache fallback-id fallback-name)
         [(ResultTcType.Ok ty) (tc-type-eq ty (AstType.Bool))]
         [(ResultTcType.Err _) false])
       (match (lower-type-cache-lookup cache missing)
@@ -57247,6 +58210,9 @@
       (if (compiler-lower-spmd-reduce-tests-ok?)
         unit
         (set! ok false))
+      (if (compiler-lower-dce-test-symbols-ready?)
+        unit
+        (set! ok false))
       (if (compiler-lower-ast-dce-ok?)
         unit
         (set! ok false))
@@ -57286,9 +58252,11 @@
       ok)))
 
 (define (compiler-lower-self-test) : i64
-  (if (and
-    (compiler-lower-front-half-tests-ok?)
-    (compiler-lower-middle-tests-ok?)
-    (compiler-lower-back-half-tests-ok?))
-    42
-    (io.panic "lower: smoke score mismatch")))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (if (and
+      (compiler-lower-front-half-tests-ok?)
+      (compiler-lower-middle-tests-ok?)
+      (compiler-lower-back-half-tests-ok?))
+      42
+      (io.panic "lower: smoke score mismatch"))))

@@ -12083,9 +12083,15 @@
   (let
     [externs : CompilerIrExternList
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_region_mark" (AstType.I64))
+        (compiler-ir-extern-default-id
+          cbi.compiler-builtin-id-tl-region-mark
+          "tl_region_mark"
+          (AstType.I64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_region_reset" (AstType.Unit))
+          (compiler-ir-extern-default-id
+            cbi.compiler-builtin-id-tl-region-reset
+            "tl_region_reset"
+            (AstType.Unit))
           CompilerIrExternList.Nil))]
     (match (compiler-backend-runtime-plan-for
       CompilerIrFunctionList.Nil
@@ -18802,12 +18808,14 @@
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-non-direct-tail-call-extern
+  [name-id : i64]
   [name : String]
   [symbol : String]
   [params : AstTypeList]
   [ret : AstType]
   [abi : AstExternAbi]) : CompilerIrExtern
   (CompilerIrExtern.Extern
+    name-id
     name
     (ast-ty-func params ret)
     abi
@@ -18827,6 +18835,7 @@
     [externs : CompilerIrExternList
       (compiler-ir-extern-cons
         (compiler-backend-non-direct-tail-call-extern
+          (ci.intern name)
           name
           symbol
           params
@@ -19920,9 +19929,12 @@
         CompilerIrBlockList.Nil)
       CompilerIrFunctionList.Nil)))
 
-(define (compiler-backend-program-index-test-externs) : CompilerIrExternList
+(define (compiler-backend-program-index-test-externs
+  [provided-id : i64]
+  [referenced-id : i64]) : CompilerIrExternList
   (compiler-ir-extern-cons
     (CompilerIrExtern.Extern
+      provided-id
       "provided_decl"
       (ast-ty-func (ast-type-list-new) (AstType.I64))
       (AstExternAbi.C)
@@ -19931,6 +19943,7 @@
       true)
     (compiler-ir-extern-cons
       (CompilerIrExtern.Extern
+        referenced-id
         "referenced_decl"
         (ast-ty-func
           (ast-type-cons (AstType.I64) (ast-type-list-new))
@@ -19971,6 +19984,40 @@
           (string.eq wrapper-symbol path-symbol-first)
           (= count-after-wrapper count-after-main-second))))))
 
+(define (compiler-backend-user-symbol-cache-compat-state-ok?) : bool
+  (let
+    [state-a : ci.InternCompatState (ci.intern-compat-state-new)]
+    [state-b : ci.InternCompatState (ci.intern-compat-state-new)]
+    [id-a : i64
+      (begin
+        (ci.intern-compat-state-install! state-a)
+        (ci.intern-reset!)
+        (ci.intern "first-state-name"))]
+    [symbol-a : String
+      (begin
+        (ci.intern-compat-state-capture-from-globals! state-a)
+        (compiler-backend-user-symbol-id id-a))]
+    [id-b : i64
+      (begin
+        (ci.intern-compat-state-install! state-b)
+        (ci.intern-reset!)
+        (ci.intern "second-state-name"))]
+    [symbol-b : String
+      (begin
+        (ci.intern-compat-state-capture-from-globals! state-b)
+        (compiler-backend-user-symbol-id id-b))]
+    (and
+      (= id-a id-b)
+      (=
+        (ci.intern-compat-state-generation state-a)
+        (ci.intern-compat-state-generation state-b))
+      (not
+        (=
+          (ci.intern-compat-state-pool-data-addr state-a)
+          (ci.intern-compat-state-pool-data-addr state-b)))
+      (string.eq symbol-a "_tl_first-state-name")
+      (string.eq symbol-b "_tl_second-state-name"))))
+
 (define (compiler-backend-user-symbol-cache-scratch-source) : String
   "(define (shared [x : i64]) : i64 (+ x 1))
 (define (first [x : i64]) : i64 (shared x))
@@ -20009,6 +20056,7 @@
   (let
     [fn-name : String "pkg/really-long-backend-index-function"]
     [fn-id : i64 (ci.intern fn-name)]
+    [short-fn-id : i64 (ci.intern "short_fn")]
     [provided-name : String "provided_decl"]
     [provided-id : i64 (ci.intern provided-name)]
     [provided-link-id : i64 (ci.intern "provided_link")]
@@ -20020,8 +20068,9 @@
     [index : CompilerBackendProgramIndex
       (compiler-backend-program-index-build
         (compiler-backend-program-index-test-functions)
-        (compiler-backend-program-index-test-externs))]
+        (compiler-backend-program-index-test-externs provided-id referenced-id))]
     (and
+      (compiler-backend-index-function-defines-id? index short-fn-id)
       (backend-and8
         (compiler-backend-index-function-defines-id? index fn-id)
         (compiler-backend-index-function-defines? index fn-name)
@@ -20042,7 +20091,10 @@
         (not
           (compiler-backend-index-extern-provided-id? index provided-link-id))
         (compiler-backend-index-extern-references-id? index referenced-id)
-        (compiler-backend-index-extern-references-id? index referenced-link-id)
+        (not
+          (compiler-backend-index-extern-references-id?
+            index
+            referenced-link-id))
         (string.eq
           (compiler-backend-index-extern-link-symbol-id index referenced-id)
           referenced-link)
@@ -20061,16 +20113,23 @@
         (string.eq
           (compiler-backend-function-symbol-index index provided-name)
           "provided_link")
-        true
-        true))))
+        (compiler-backend-index-extern-references? index referenced-link)
+        (string.eq
+          (compiler-backend-index-extern-link-symbol index referenced-link)
+          referenced-link)))))
 
-(define (compiler-backend-program-index-interns-bound-names-ok?) : bool
+(define (compiler-backend-program-index-explicit-extern-ids-ok?) : bool
   (begin
     (ci.intern-reset!)
     (let
       [fn-name : String "late_backend_index_fn"]
+      [fn-id : i64 (ci.intern fn-name)]
       [extern-name : String "late_backend_index_ext"]
+      [extern-id : i64 (ci.intern-generated-name extern-name)]
+      [same-name-id : i64 (ci.intern-generated-name extern-name)]
       [extern-link : String "late_backend_index_link"]
+      [same-name-link : String "late_backend_index_link_2"]
+      [source-count-before : i64 (ci.intern-pool-len)]
       [index : CompilerBackendProgramIndex
         (compiler-backend-program-index-build
           (compiler-ir-function-cons
@@ -20083,30 +20142,49 @@
             CompilerIrFunctionList.Nil)
           (compiler-ir-extern-cons
             (CompilerIrExtern.Extern
+              extern-id
               extern-name
               (ast-ty-func (ast-type-list-new) (AstType.I64))
               (AstExternAbi.C)
               extern-link
               (ast-extern-link-input-list-new)
               false)
-            CompilerIrExternList.Nil))]
-      [fn-id : i64 (ci.intern fn-name)]
-      [extern-id : i64 (ci.intern extern-name)]
-      [extern-link-id : i64 (ci.intern extern-link)]
-      (backend-and8
-        (compiler-backend-index-function-defines-id? index fn-id)
-        (compiler-backend-index-function-defines? index fn-name)
-        (compiler-backend-signature-unit-to-i64?
-          (compiler-backend-index-extern-signature-id index extern-id))
-        (compiler-backend-index-extern-references-id? index extern-id)
-        (compiler-backend-index-extern-references-id? index extern-link-id)
-        (string.eq
-          (compiler-backend-index-extern-link-symbol-id index extern-id)
-          extern-link)
-        (string.eq
-          (compiler-backend-index-extern-link-symbol-id index extern-link-id)
-          extern-link)
-        (compiler-backend-index-extern-references? index extern-link)))))
+            (compiler-ir-extern-cons
+              (CompilerIrExtern.Extern
+                same-name-id
+                extern-name
+                (ast-ty-func
+                  (ast-type-cons (AstType.I64) (ast-type-list-new))
+                  (AstType.I64))
+                (AstExternAbi.C)
+                same-name-link
+                (ast-extern-link-input-list-new)
+                false)
+              CompilerIrExternList.Nil)))]
+      (and
+        (= source-count-before (ci.intern-pool-len))
+        (backend-and8
+          (compiler-backend-index-function-defines-id? index fn-id)
+          (compiler-backend-index-function-defines? index fn-name)
+          (compiler-backend-signature-unit-to-i64?
+            (compiler-backend-index-extern-signature-id index extern-id))
+          (compiler-backend-signature-i64-to-i64?
+            (compiler-backend-index-extern-signature-id index same-name-id))
+          (compiler-backend-index-extern-references-id? index extern-id)
+          (compiler-backend-index-extern-references-id? index same-name-id)
+          (string.eq
+            (compiler-backend-index-extern-link-symbol-id index extern-id)
+            extern-link)
+          (string.eq
+            (compiler-backend-index-extern-link-symbol-id index same-name-id)
+            same-name-link))
+        (backend-and4
+          (compiler-backend-index-extern-references? index extern-link)
+          (compiler-backend-index-extern-references? index same-name-link)
+          (match (ci.intern-lookup extern-name)
+            [(InternLookupFound _) false]
+            [(InternLookupMissing) true])
+          (not (= extern-id same-name-id)))))))
 
 (define (compiler-backend-profile-runtime-source) : String
   "(extern (tl_profile_alloc_total) : i64)
@@ -21577,9 +21655,10 @@
         (compiler-backend-simd-vector-ok?)
         (compiler-backend-dispatch-variant-mode-ok?)
         (compiler-backend-user-symbol-cache-ok?)
+        (compiler-backend-user-symbol-cache-compat-state-ok?)
         (compiler-backend-user-symbol-cache-scratch-ok?)
         (compiler-backend-runtime-leaf-user-symbol-ok?)
         (compiler-backend-program-index-id-maps-ok?)
-        (compiler-backend-program-index-interns-bound-names-ok?))))
+        (compiler-backend-program-index-explicit-extern-ids-ok?))))
     42
     (panic "backend: smoke output mismatch")))

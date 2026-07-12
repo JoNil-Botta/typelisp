@@ -431,17 +431,26 @@
       (ast.ast-node-pool-context-expr-push
         source-pools
         (ast.AstExpr.MakeArray (ast.AstType.Ptr source-i64-ty) source-body))]
+    [value-name-id : i64 (ci.intern-generated-name "value")]
+    [same-name-id : i64 (ci.intern-generated-name "same")]
+    [array-name-id : i64 (ci.intern-generated-name "array")]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-def
-            "value"
+          (ast.ast-decl-def-id
+            value-name-id
             (ast.AstMaybeType.Some array-ty)
             source-body)
           (ast.ast-decl-cons
-            (ast.ast-decl-test "same" source-body (ast.ast-source-span 5 6 7 8))
+            (ast.ast-decl-test-id
+              same-name-id
+              source-body
+              (ast.ast-source-span 5 6 7 8))
             (ast.ast-decl-cons
-              (ast.ast-decl-def "array" ast.AstMaybeType.No source-make)
+              (ast.ast-decl-def-id
+                array-name-id
+                ast.AstMaybeType.No
+                source-make)
               (ast.ast-decl-list-new)))))]
     [dest-decoy-expr : i64
       (ast.ast-node-pool-context-expr-push
@@ -536,10 +545,12 @@
       (and
         (string.eq path "pkg/path")
         (match module-name
-          [(ast.AstMaybeModuleName.Some name) (string.eq name "pkg.module")]
+          [(ast.AstMaybeModuleName.Some name)
+            (string.eq (ci.intern-str name) "pkg.module")]
           [_ false])
         (match alias
-          [(ast.AstMaybeImportAlias.Some name) (string.eq name "pkg")]
+          [(ast.AstMaybeImportAlias.Some name)
+            (string.eq (ci.intern-str name) "pkg")]
           [_ false]))]
     [_ false]))
 
@@ -626,26 +637,32 @@
         (begin
           (ast.ast-lifetime-list-push (&mut items) "owner")
           items))]
+    [text-name-id : i64 (ci.intern-generated-name "text")]
+    [bin-name-id : i64 (ci.intern-generated-name "bin")]
+    [native-name-id : i64 (ci.intern-generated-name "native")]
+    [dispatch-name-id : i64 (ci.intern-generated-name "dispatch")]
     [program : ast.AstProgram
       (ast.ast-program
         (ast.ast-decl-cons
-          (ast.ast-decl-def
-            "text"
+          (ast.ast-decl-def-id
+            text-name-id
             (ast.AstMaybeType.Some (ast.AstType.Ref "borrowed" source-i64-ty))
             text-expr)
           (ast.ast-decl-cons
-            (ast.ast-decl-def "bin" ast.AstMaybeType.No binary-expr)
+            (ast.ast-decl-def-id bin-name-id ast.AstMaybeType.No binary-expr)
             (ast.ast-decl-cons
               (ast.AstDecl.Import
                 (ast.AstImportSpec.Spec
                   (ast.AstImportKind.Path)
                   "pkg/path"
-                  (ast.AstMaybeModuleName.Some "pkg.module")
-                  (ast.AstMaybeImportAlias.Some "pkg")
+                  (ast.AstMaybeModuleName.Some
+                    (ci.intern-generated-name "pkg.module"))
+                  (ast.AstMaybeImportAlias.Some
+                    (ci.intern-generated-name "pkg"))
                   (ast.ast-source-span 1 1 1 1)))
               (ast.ast-decl-cons
-                (ast.ast-decl-extern
-                  "native"
+                (ast.ast-decl-extern-id
+                  native-name-id
                   (ast.AstExternKind.Function)
                   (ast.AstExternMetadata.Metadata
                     (ast.AstExternAbi.C)
@@ -654,7 +671,7 @@
                     true)
                   (ast.AstType.I64))
                 (ast.ast-decl-cons
-                  (ast.ast-decl-def-dispatch "dispatch" variants)
+                  (ast.ast-decl-def-dispatch-id dispatch-name-id variants)
                   (ast.ast-decl-cons
                     (ast.AstDecl.DefStructLifetimes
                       0
@@ -712,7 +729,11 @@
           [module : String (string.append "m" suffix)]
           [path : String (string.append "p" suffix)]
           (begin
-            (set! decls (ast.ast-decl-cons (ast.ast-decl-module module) decls))
+            (set!
+              decls
+              (ast.ast-decl-cons
+                (ast.ast-decl-module-id (ci.intern-generated-name module))
+                decls))
             (set! paths (ast.ast-decl-path-cons path paths))
             (set! modules (ast.ast-decl-module-cons module modules))
             (set! i (- i 1)))))
@@ -733,12 +754,17 @@
 
 (define (compiler-ast-decl-cons-pure-smoke?) : bool
   (let
+    [tail-id : i64 (ci.intern-generated-name "tail")]
+    [left-id : i64 (ci.intern-generated-name "left")]
+    [right-id : i64 (ci.intern-generated-name "right")]
     [tail : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module "tail") (ast.ast-decl-list-new))]
+      (ast.ast-decl-cons
+        (ast.ast-decl-module-id tail-id)
+        (ast.ast-decl-list-new))]
     [left : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module "left") tail)]
+      (ast.ast-decl-cons (ast.ast-decl-module-id left-id) tail)]
     [right : ast.AstDeclList
-      (ast.ast-decl-cons (ast.ast-decl-module "right") tail)]
+      (ast.ast-decl-cons (ast.ast-decl-module-id right-id) tail)]
     (and
       (compiler-ast-decl-list-module-name? left 0 "left")
       (compiler-ast-decl-list-module-name? left 1 "tail")

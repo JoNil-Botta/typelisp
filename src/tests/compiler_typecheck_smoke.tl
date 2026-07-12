@@ -1084,9 +1084,22 @@
     (macro-alias-cache-ensure!)
     (macro-alias-cache-put! 1 262144 11)
     (macro-alias-cache-put! 2 0 22)
+    (macro-alias-cache-put! 3 1 -1)
+    (macro-alias-cache-put! 3 1 33)
+    (macro-alias-cache-put! 4 2 2)
+    (macro-alias-cache-put! 4 2 44)
+    (macro-alias-cache-put! 5 3 3)
+    (macro-alias-cache-put! 5 3 -3)
+    (macro-alias-cache-put! 6 4 4)
+    (macro-alias-cache-put! 6 4 -3)
+    (macro-alias-cache-put! 6 4 66)
     (and
       (= (macro-alias-cache-get 1 262144) 11)
-      (= (macro-alias-cache-get 2 0) 22))))
+      (= (macro-alias-cache-get 2 0) 22)
+      (= (macro-alias-cache-get 3 1) 33)
+      (= (macro-alias-cache-get 4 2) 44)
+      (= (macro-alias-cache-get 5 3) -3)
+      (= (macro-alias-cache-get 6 4) 66))))
 
 (define (compiler-typecheck-smoke-module-macro-import-evaluated-key-source) : String
   "(defmacro (gen [key : String]) : Module
@@ -2450,6 +2463,31 @@
 (import helper.module)
 (define (full-score) : i64 helper.module.value)")
 
+(define (compiler-typecheck-smoke-module-key-id
+  [module : String]
+  [name : String]) : i64
+  (compiler-symbol-module-key-id-by-id
+    (tc-required-existing-name-id "typecheck smoke: missing module id: " module)
+    (tc-required-existing-name-id "typecheck smoke: missing name id: " name)))
+
+(define (compiler-typecheck-smoke-qualified-cache-id?
+  [id : i64]
+  [module : String]
+  [name : String]) : bool
+  (and
+    (tc-env-key-has-name-id? id)
+    (intern-qualified? id)
+    (=
+      (intern-qualified-module-id id)
+      (tc-required-existing-name-id
+        "typecheck smoke: missing cached module id: "
+        module))
+    (=
+      (intern-qualified-base-id id)
+      (tc-required-existing-name-id
+        "typecheck smoke: missing cached name id: "
+        name))))
+
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
   [entry-ctx : TcContext]
   [env : TcTypeEnv]) : bool
@@ -2458,14 +2496,20 @@
     (match (tc-source-name-lookup-key entry-ctx env "helper.value")
       [(ResultTcString.Ok key)
         (let
-          [module-id : i64 (intern "entry.module")]
-          [name-id : i64 (intern "helper.value")]
-          [lookup-id : i64 (intern "helper.module/value")]
+          [module-id : i64
+            (tc-required-existing-name-id
+              "typecheck smoke: missing entry module id: "
+              "entry.module")]
+          [name-id : i64
+            (tc-required-existing-name-id
+              "typecheck smoke: missing dotted lookup id: "
+              "helper.value")]
           (and
             (string.eq key "helper.module/value")
-            (=
+            (compiler-typecheck-smoke-qualified-cache-id?
               (tc-source-dotted-alias-key-cache-get module-id name-id)
-              lookup-id)
+              "helper.module"
+              "value")
             (match (tc-source-name-lookup-key entry-ctx env "helper.value")
               [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
               [(ResultTcString.Err _) false])))]
@@ -2479,14 +2523,20 @@
     (match (tc-source-name-lookup-key full-ctx env "helper.module.value")
       [(ResultTcString.Ok key)
         (let
-          [module-id : i64 (intern "full.entry")]
-          [name-id : i64 (intern "helper.module.value")]
-          [lookup-id : i64 (intern "helper.module/value")]
+          [module-id : i64
+            (tc-required-existing-name-id
+              "typecheck smoke: missing full entry module id: "
+              "full.entry")]
+          [name-id : i64
+            (tc-required-existing-name-id
+              "typecheck smoke: missing full dotted lookup id: "
+              "helper.module.value")]
           (and
             (string.eq key "helper.module/value")
-            (=
+            (compiler-typecheck-smoke-qualified-cache-id?
               (tc-source-dotted-full-path-key-cache-get module-id name-id)
-              lookup-id)
+              "helper.module"
+              "value")
             (match (tc-source-name-lookup-key
               full-ctx
               env
@@ -2711,12 +2761,14 @@
                   (= (tc-lazy-import-stub-count) 1)
                   (= (tc-lazy-import-summary-backed-stub-count) 1)
                   (not
-                    (tc-name-bound?
+                    (tc-name-bound-id?
                       env
-                      (compiler-symbol-module-key "helper" "value")))
-                  (tc-name-bound?
+                      (compiler-typecheck-smoke-module-key-id "helper" "value")))
+                  (tc-name-bound-id?
                     env
-                    (compiler-symbol-module-key "helper.module" "value"))
+                    (compiler-typecheck-smoke-module-key-id
+                      "helper.module"
+                      "value"))
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
@@ -2748,9 +2800,11 @@
                     [(ResultTcEnv.Ok local-env)
                       (and
                         (not
-                          (tc-name-bound?
+                          (tc-name-bound-id?
                             local-env
-                            (compiler-symbol-module-key "helper" "value")))
+                            (compiler-typecheck-smoke-module-key-id
+                              "helper"
+                              "value")))
                         (match (tc-lookup-dotted-source-visible
                           entry-ctx
                           local-env
@@ -2777,7 +2831,9 @@
               (and
                 (> (tc-lazy-import-summary-backed-stub-count) 0)
                 (not
-                  (tc-name-bound? env (compiler-symbol-module-key "vec" "Vec"))))]
+                  (tc-name-bound-id?
+                    env
+                    (intern (compiler-symbol-module-key "vec" "Vec")))))]
             [(ResultCompilerTypecheckChecked.Err _) false])]
         [(ResultCompilerLoadWithPaths.Err _) false])]
     (begin

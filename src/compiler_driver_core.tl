@@ -558,8 +558,19 @@
       (set! compiler-driver-profile-total-start-live (profile.alloc-live))
       (set! compiler-driver-profile-best-peak 0)
       (ci.intern-profile-reset!)
+      (cfg
+        compile-profile-summary
+        (begin
+          (compiler-opt-profile-summary-reset!)
+          (compiler-backend-profile-summary-reset!))
+        unit)
       (io.print-error
         "compile-profile|phase|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
+      (cfg
+        compile-profile-summary
+        (io.print-error
+          "compile-profile-summary|scope|kind|rank|name|elapsed_ms|calls\n")
+        unit)
       (compiler-driver-profile-start-phase))))
 
 (cfg

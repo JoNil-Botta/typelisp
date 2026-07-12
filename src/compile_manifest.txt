@@ -322,6 +322,7 @@ decision|src/scaffold_cli_core.tl|new/init scaffold command logic (#1642): packa
 decision|src/lsp_frame_core.tl|lsp command logic (#1640): stdio JSON-RPC framing and diagnostics server; main-less, imported by src/main.tl and exercised through the selfhost_main case
 decision|src/lsp_vector_families.tl|generated vector-backed LSP collection shim: document and declaration vector helpers split out of lsp_frame_core.tl; main-less, imported through src/lsp_frame_core.tl and exercised through the selfhost_main case
 decision|src/compiler_clone.tl|type-directed clone$<Type> helper synthesis (#1633): least-fixpoint clone-ability over the type graph plus match-reconstruct/tail-recursive AST generation for (clone x); main-less, imported by src/compiler_lower.tl and exercised through the selfhost_compiler_lower case
+decision|src/compiler_profile_summary.tl|bounded compact compile-profile aggregation (#4849): main-less and cfg-only, imported by compiler_optimize.tl and compiler_backend.tl under compile-profile-summary; exercised by scripts/verify-compile-profile.sh and the selfhost_main import graph
 decision|src/compiler_abi.tl|shared x86_64 ABI fact table (#4364): main-less, imported by compiler_backend.tl and compiler_regalloc.tl; exercised through backend/regalloc smoke tests and their selfhost cases
 
 case|selfhost_build_run_core|src/build_run_core.tl|assembly|skip|direct

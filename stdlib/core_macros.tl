@@ -63,12 +63,6 @@
       (begin
         ,@body))))
 
-;: Bracket-arm conditional expression macro.
-;:
-;: Arguments are bracket clauses, ending with `[else fallback]`, for example
-;: `(cond [test1 value1] [test2 value2] [else fallback])`. Conditions and
-;: results are captured as `ExprClause` operands; the expanded `if` chain
-;: performs the ordinary post-expansion bool/result typechecking.
 (cfg
   test
   (defmacro (core-macros-user-clause-fold [arms : ExprClause ...]) : Expr
@@ -105,6 +99,12 @@
                             [_ (set! out (comptime.expr-if test result out))])])))
                   out))]))))))
 
+;: Bracket-arm conditional expression macro.
+;:
+;: Arguments are bracket clauses, ending with `[else fallback]`, for example
+;: `(cond [test1 value1] [test2 value2] [else fallback])`. Conditions and
+;: results are captured as `ExprClause` operands; the expanded `if` chain
+;: performs the ordinary post-expansion bool/result typechecking.
 (defmacro (cond [arms : ExprClause ...]) : Expr
   (comptime.expr-clause-list-fold-if
     arms

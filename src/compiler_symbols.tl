@@ -3930,33 +3930,39 @@
   [decls : AstDeclList]
   [target : i64]
   [index : i64]) : ResultAstDecl
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
-      (ResultAstDecl.Err "symbols: declaration index not found")]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Import _) (compiler-decl-list-at-index rest target index)]
-          [(AstDecl.IncludeStr _ _)
-            (compiler-decl-list-at-index rest target index)]
-          [(AstDecl.IncludeBin _ _)
-            (compiler-decl-list-at-index rest target index)]
-          [(AstDecl.Module _) (compiler-decl-list-at-index rest target index)]
-          [(AstDecl.Test _ _ _) (compiler-decl-list-at-index rest target index)]
-          [_
-            (if (= target index)
-              (match decl
-                [(AstDecl.ComptimeDecl _ template-box)
-                  (let
-                    [template : AstDecl (box-get template-box)]
-                    (ResultAstDecl.Ok template))]
-                [(AstDecl.Unsafe inner-box)
-                  (let
-                    [inner : AstDecl (box-get inner-box)]
-                    (ResultAstDecl.Ok inner))]
-                [_ (ResultAstDecl.Ok decl)])
-              (compiler-decl-list-at-index rest target (+ index 1)))]))]))
+  (let
+    [slot : i64 0]
+    [logical-index : i64 index]
+    [decl-count : i64 (ast-decl-list-len (& decls))]
+    [decl-offset : i64 (struct-get decls offset)]
+    (begin
+      (while (< slot decl-count)
+        (let
+          [decl : AstDecl
+            (array-ref (struct-get decls slots) (+ decl-offset slot))]
+          (begin
+            (match decl
+              [(AstDecl.Import _) unit]
+              [(AstDecl.IncludeStr _ _) unit]
+              [(AstDecl.IncludeBin _ _) unit]
+              [(AstDecl.Module _) unit]
+              [(AstDecl.Test _ _ _) unit]
+              [_
+                (if (= target logical-index)
+                  (return
+                    (match decl
+                      [(AstDecl.ComptimeDecl _ template-box)
+                        (let
+                          [template : AstDecl (box-get template-box)]
+                          (ResultAstDecl.Ok template))]
+                      [(AstDecl.Unsafe inner-box)
+                        (let
+                          [inner : AstDecl (box-get inner-box)]
+                          (ResultAstDecl.Ok inner))]
+                      [_ (ResultAstDecl.Ok decl)]))
+                  (set! logical-index (+ logical-index 1)))])
+            (set! slot (+ slot 1)))))
+      (ResultAstDecl.Err "symbols: declaration index not found"))))
 
 (define (compiler-program-decl-at-index [program : AstProgram] [target : i64]) : ResultAstDecl
   (match program

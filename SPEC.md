@@ -888,7 +888,11 @@ locations: the macro call or import site, the generated declaration span when
 available, and the generated identity key. Type errors inside generated
 declarations point at the generated declaration and include an expansion
 stack back to the call site. Duplicate diagnostics show both the existing
-generated identity and the conflicting request.
+generated identity and the conflicting request. When specialization rebuilds
+source-authored generated metadata, it uses a concrete generated payload span
+when available, otherwise a metadata-argument span, retains the owning source
+path, and reports generated declaration and identity context as diagnostic
+notes.
 
 Collection modules that expose generated-module surfaces must keep their
 identity keys stable and must not rely on compiler-private generator names or

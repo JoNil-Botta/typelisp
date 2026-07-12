@@ -1770,6 +1770,31 @@
 (bundle (type-key (type i64)))
 (define (main) : i64 0)")
 
+(define (compiler-typecheck-smoke-decls-macro-generated-incompatible-diag-ok?) : bool
+  (match (typecheck-compiler-source
+    (compiler-typecheck-smoke-decls-macro-generated-incompatible-source))
+    [(ResultCompilerTypecheck.Ok _) false]
+    [(ResultCompilerTypecheck.Err diag)
+      (let
+        [value : CompilerDiagnostic (box-get diag)]
+        (and
+          (string.eq
+            (compiler-diagnostic-message value)
+            "generated-decl: duplicate generated key for BundleBox has incompatible payload")
+          (= (compiler-diagnostic-line value) 9)
+          (= (compiler-diagnostic-col value) 1)
+          (match (compiler-diagnostic-notes value)
+            [(CompilerDiagnosticNoteCons identity-note rest)
+              (and
+                (tc-string-prefix? identity-note "generated identity: decls:")
+                (match (box-get rest)
+                  [(CompilerDiagnosticNoteCons item-note _)
+                    (string.eq
+                      item-note
+                      "conflicting generated item: BundleBox")]
+                  [(CompilerDiagnosticNoteNil) false]))]
+            [(CompilerDiagnosticNoteNil) false])))]))
+
 (define (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source) : String
   "(module bundle.family)
 (defmacro (bundle [version : String]) : Decls
@@ -1806,9 +1831,7 @@
   (and
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-decls-macro-generated-reuse-source))
-    (compiler-typecheck-error-ok?
-      (compiler-typecheck-smoke-decls-macro-generated-incompatible-source)
-      "generated-decl: duplicate generated key for BundleBox has incompatible payload")
+    (compiler-typecheck-smoke-decls-macro-generated-incompatible-diag-ok?)
     (compiler-typecheck-ok?
       (compiler-typecheck-smoke-decls-macro-cross-module-reuse-source))
     (compiler-typecheck-ok?

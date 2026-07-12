@@ -85,6 +85,11 @@ Source-facing symbol failures now adapt their string boundary to
 `CompilerDiagnostic`, preserving their source path and expression-derived span
 when one is available. Duplicate struct-field and enum-variant registry failures
 retain a compact member-definition origin and adapt it with the owning source
-path. The remaining semantic-location gaps include other declaration-shape
-failures plus internal/synthetic macro or generated rebuild errors that still
-cross string boundaries before a concrete origin is available.
+path. Generated-declaration specialization/rebuild failures now select a
+concrete generated payload span first and a generated-metadata argument span
+second, stamps the owning declaration path, and preserves generated
+declaration/identity context as notes; only origin-free synthetic declarations
+use the 1:1 phase fallback. The remaining
+semantic-location gaps include other declaration-shape failures plus internal
+macro/load rebuild errors that still cross string boundaries before a concrete
+origin is available.

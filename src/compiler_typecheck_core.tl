@@ -48362,7 +48362,8 @@
 (define (macro-decls-splice-with-memo
   [identity : String]
   [wrapped : AstDeclList]
-  [decl-path : String]) : ResultMacroDeclExpansion
+  [decl-path : String]
+  [call-expr : AstExpr]) : ResultMacroDeclExpansion
   (match (macro-generated-decls-memo-get identity)
     [(MacroMaybeSpliceDecls.No)
       (begin
@@ -48376,10 +48377,17 @@
           (ast-decl-list-new)
           (ast-decl-path-list-new))
         (ResultMacroDeclExpansion.Err
-          (box
-            (gen-incompatible-diag
-              (macro-generated-decls-splice-first-item wrapped)
-              (macro-decls-generated-key identity)))))]))
+          (let
+            [diag : CompilerDiagnostic
+              (gen-incompatible-diag
+                (macro-generated-decls-splice-first-item wrapped)
+                (macro-decls-generated-key identity))]
+            [located : CompilerDiagnostic
+              (tc-expr-diag call-expr (compiler-diagnostic-message diag))]
+            (box
+              (compiler-diagnostic-with-primary-span
+                diag
+                (compiler-diagnostic-primary-span located))))))]))
 
 (define (macro-decl-generated? [decl : AstDecl]) : bool
   (match decl
@@ -55781,7 +55789,8 @@
                                           (macro-decls-splice-with-memo
                                             identity
                                             wrapped
-                                            decl-path))]
+                                            decl-path
+                                            call-expr))]
                                       [(ResultMacroParsedDecls.Err diag)
                                         (ResultMacroDeclExpansion.Err diag)]))]
                                 [(ResultMacroValueEnv.Err diag)

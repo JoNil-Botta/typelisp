@@ -77,6 +77,10 @@
   (None)
   (Some AstDecl))
 
+(defenum SpecMaybeSourceSpan
+  (None)
+  (Some AstSourceSpan))
+
 (defenum ResultSpecProgram
   (Ok AstProgram)
   (Err (Box CompilerDiagnostic)))
@@ -198,6 +202,71 @@
     [(AstExpr.Spanned _ span)
       (compiler-diagnostic-from-ast-span "" span message)]
     [_ (compiler-diagnostic-at-start "" message)]))
+
+(define (spec-expr-maybe-span [expr : AstExpr]) : SpecMaybeSourceSpan
+  (match expr
+    [(AstExpr.Spanned _ span) (SpecMaybeSourceSpan.Some span)]
+    [(AstExpr.Unary _ inner) (spec-expr-maybe-span (ast-node-get inner))]
+    [(AstExpr.Ann inner _) (spec-expr-maybe-span (ast-node-get inner))]
+    [(AstExpr.Cast inner _) (spec-expr-maybe-span (ast-node-get inner))]
+    [(AstExpr.Borrow _ _ inner) (spec-expr-maybe-span (ast-node-get inner))]
+    [_ (SpecMaybeSourceSpan.None)]))
+
+(define (spec-expr-list-maybe-span-at
+  [exprs : (& exprs AstExprList)]
+  [index : i64]) : SpecMaybeSourceSpan
+  (if (>= index (ast-expr-list-len exprs))
+    (SpecMaybeSourceSpan.None)
+    (match (spec-expr-maybe-span
+      (ast-node-get (ast-expr-list-get exprs index 0)))
+      [(SpecMaybeSourceSpan.Some span) (SpecMaybeSourceSpan.Some span)]
+      [(SpecMaybeSourceSpan.None)
+        (spec-expr-list-maybe-span-at exprs (+ index 1))])))
+
+(define (spec-expr-list-maybe-span [exprs : AstExprList]) : SpecMaybeSourceSpan
+  (spec-expr-list-maybe-span-at (& exprs) 0))
+
+(define (spec-decl-maybe-span [decl : AstDecl]) : SpecMaybeSourceSpan
+  (match decl
+    [(AstDecl.Def _ _ body) (spec-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.DefFn _ _ _ body _) (spec-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.DefMacro _ _ _ body) (spec-expr-maybe-span (ast-node-get body))]
+    [(AstDecl.Test _ _ span) (SpecMaybeSourceSpan.Some span)]
+    [(AstDecl.Unsafe inner-box) (spec-decl-maybe-span (box-get inner-box))]
+    [(AstDecl.ComptimeDecl _ template-box)
+      (spec-decl-maybe-span (box-get template-box))]
+    [_ (SpecMaybeSourceSpan.None)]))
+
+(define (spec-generated-origin-diagnostic
+  [template : AstDecl]
+  [args : AstExprList]
+  [message : String]) : CompilerDiagnostic
+  (match (spec-decl-maybe-span template)
+    [(SpecMaybeSourceSpan.Some span)
+      (compiler-diagnostic-from-ast-span "" span message)]
+    [(SpecMaybeSourceSpan.None)
+      (match (spec-expr-list-maybe-span args)
+        [(SpecMaybeSourceSpan.Some span)
+          (compiler-diagnostic-from-ast-span "" span message)]
+        [(SpecMaybeSourceSpan.None) (compiler-diagnostic-at-start "" message)])]))
+
+(define (spec-generated-context-diagnostic
+  [diag : CompilerDiagnostic]
+  [generator : String]
+  [item : String]
+  [key : String]) : CompilerDiagnostic
+  (let
+    [with-declaration : CompilerDiagnostic
+      (compiler-diagnostic-with-note
+        diag
+        (string.append
+          "generated declaration: "
+          (string.append item (string.append " from " generator))))]
+    (if (> (string.string-length key) 0)
+      (compiler-diagnostic-with-note
+        with-declaration
+        (string.append "generated identity: " key))
+      with-declaration)))
 
 (define (spec-param-comptime? [param : AstParam]) : bool
   (match param
@@ -1289,12 +1358,25 @@
       local-prefix
       (string.append (string.substring item-name 0 start) local-prefix))))
 
-(define (gen-item-mismatch-diag [expected : String] [actual : String]) : CompilerDiagnostic
-  (compiler-diagnostic-at-start
-    ""
-    (string.append
-      "generated-decl: metadata item "
-      (string.append expected (string.append " does not match payload " actual)))))
+(define (gen-item-mismatch-diag
+  [template : AstDecl]
+  [args : AstExprList]
+  [generator : String]
+  [expected : String]
+  [actual : String]
+  [key : String]) : CompilerDiagnostic
+  (spec-generated-context-diagnostic
+    (spec-generated-origin-diagnostic
+      template
+      args
+      (string.append
+        "generated-decl: metadata item "
+        (string.append
+          expected
+          (string.append " does not match payload " actual))))
+    generator
+    expected
+    key))
 
 (define (gen-incompatible-diag [item : String] [key : String]) : CompilerDiagnostic
   (compiler-diagnostic-with-note
@@ -1306,6 +1388,23 @@
           (string.append item " has incompatible payload")))
       (string.append "conflicting generated item: " item))
     (string.append "generated identity: " key)))
+
+(define (gen-incompatible-diag-at-generated
+  [template : AstDecl]
+  [args : AstExprList]
+  [generator : String]
+  [item : String]
+  [key : String]) : CompilerDiagnostic
+  (spec-generated-context-diagnostic
+    (spec-generated-origin-diagnostic
+      template
+      args
+      (string.append
+        "generated-decl: duplicate generated key for "
+        (string.append item " has incompatible payload")))
+    generator
+    item
+    key))
 
 (define (gen-register-generated-decl
   [template : AstDecl]
@@ -1329,7 +1428,14 @@
       [(GenMaybeEntry.Some existing)
         (if (gen-decl-eq? existing template)
           (ResultGenDecl.Ok (ast-decl-list-new) registry module)
-          (ResultGenDecl.Err (box (gen-incompatible-diag item key))))])))
+          (ResultGenDecl.Err
+            (box
+              (gen-incompatible-diag-at-generated
+                template
+                args
+                generator
+                item
+                key))))])))
 
 (define (gen-metadata-arg-key
   [meta-key : String]
@@ -1360,13 +1466,25 @@
                 [(SpecMaybeString.None)
                   (ResultGenDecl.Err
                     (box
-                      (compiler-diagnostic-at-start
-                        ""
-                        "generated-decl: generated payload must declare a visible item")))]
+                      (spec-generated-context-diagnostic
+                        (spec-generated-origin-diagnostic
+                          template
+                          args
+                          "generated-decl: generated payload must declare a visible item")
+                        generator
+                        item
+                        meta-key)))]
                 [(SpecMaybeString.Some actual)
                   (if (not (string.eq item actual))
                     (ResultGenDecl.Err
-                      (box (gen-item-mismatch-diag item actual)))
+                      (box
+                        (gen-item-mismatch-diag
+                          template
+                          args
+                          generator
+                          item
+                          actual
+                          meta-key)))
                     (match (gen-metadata-arg-key meta-key args env)
                       [(ResultGenKey.Ok arg-key _)
                         (gen-register-generated-decl
@@ -1377,7 +1495,14 @@
                           args
                           arg-key
                           registry)]
-                      [(ResultGenKey.Err diag) (ResultGenDecl.Err diag)]))]))]))]
+                      [(ResultGenKey.Err diag)
+                        (ResultGenDecl.Err
+                          (box
+                            (spec-generated-context-diagnostic
+                              (box-get diag)
+                              generator
+                              item
+                              meta-key)))]))]))]))]
     [_ (ResultGenDecl.Ok (gen-single-decl-list decl) registry module)]))
 
 (define (gen-rewrite-decls
@@ -1521,7 +1646,13 @@
                     (set! path-cursor (gen-path-list-tail path-cursor)))]
                 [(ResultGenDecl.Err diag)
                   (begin
-                    (set! result (ResultGenDeclsWithPaths.Err diag))
+                    (set!
+                      result
+                      (ResultGenDeclsWithPaths.Err
+                        (box
+                          (compiler-diagnostic-with-path
+                            (box-get diag)
+                            decl-path))))
                     (set! done true))]))]))
       result)))
 
@@ -5876,6 +6007,10 @@
   "(comptime-decl (:generated sample-family Expected \"String\")
   (defstruct Actual (value String)))")
 
+(define (compiler-generated-decl-item-mismatch-value-source) : String
+  "(comptime-decl (:generated sample-family Expected \"String\")
+  (define Actual : i64 42))")
+
 (define (compiler-generated-decl-non-string-key-source) : String
   "(comptime-decl (:generated sample-family Box_String 7)
   (defstruct Box_String (value String)))")
@@ -5975,14 +6110,78 @@
       (match (compiler-specialize-program program)
         [(ResultSpecProgram.Ok _) false]
         [(ResultSpecProgram.Err diag)
-          (match (compiler-diagnostic-notes (box-get diag))
-            [(CompilerDiagnosticNoteCons note _)
+          (let
+            [value : CompilerDiagnostic (box-get diag)]
+            (and
               (string.eq
-                note
-                (string.append
-                  "generated identity: "
-                  (compiler-generated-decl-expected-string-key)))]
-            [(CompilerDiagnosticNoteNil) false])])]
+                (compiler-diagnostic-message value)
+                "generated-decl: duplicate generated key for Box_String has incompatible payload")
+              (= (compiler-diagnostic-line value) 3)
+              (= (compiler-diagnostic-col value) 53)
+              (match (compiler-diagnostic-notes value)
+                [(CompilerDiagnosticNoteCons identity-note rest)
+                  (and
+                    (string.eq
+                      identity-note
+                      (string.append
+                        "generated identity: "
+                        (compiler-generated-decl-expected-string-key)))
+                    (match (box-get rest)
+                      [(CompilerDiagnosticNoteCons declaration-note tail)
+                        (and
+                          (string.eq
+                            declaration-note
+                            "generated declaration: Box_String from sample-family")
+                          (match (box-get tail)
+                            [(CompilerDiagnosticNoteNil) true]
+                            [_ false]))]
+                      [(CompilerDiagnosticNoteNil) false]))]
+                [(CompilerDiagnosticNoteNil) false])))])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-generated-decl-incompatible-path-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-incompatible-source))
+    [(ResultAstProgram.Ok program)
+      (match (compiler-specialize-program-with-paths
+        program
+        (ast-decl-path-cons
+          "generated/first.tl"
+          (ast-decl-path-cons "generated/second.tl" (ast-decl-path-list-new)))
+        "generated/fallback.tl")
+        [(ResultSpecProgramWithPaths.Ok _ _) false]
+        [(ResultSpecProgramWithPaths.Err diag)
+          (let
+            [value : CompilerDiagnostic (box-get diag)]
+            (and
+              (string.eq (compiler-diagnostic-path value) "generated/second.tl")
+              (= (compiler-diagnostic-line value) 3)
+              (= (compiler-diagnostic-col value) 53)))])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-generated-decl-item-mismatch-origin-ok?) : bool
+  (match (parse-ast-source (compiler-generated-decl-item-mismatch-value-source))
+    [(ResultAstProgram.Ok program)
+      (match (compiler-specialize-program program)
+        [(ResultSpecProgram.Ok _) false]
+        [(ResultSpecProgram.Err diag)
+          (let
+            [value : CompilerDiagnostic (box-get diag)]
+            (and
+              (string.eq
+                (compiler-diagnostic-message value)
+                "generated-decl: metadata item Expected does not match payload Actual")
+              (= (compiler-diagnostic-line value) 2)
+              (= (compiler-diagnostic-col value) 24)
+              (match (compiler-diagnostic-notes value)
+                [(CompilerDiagnosticNoteCons declaration-note rest)
+                  (and
+                    (string.eq
+                      declaration-note
+                      "generated declaration: Expected from sample-family")
+                    (match (box-get rest)
+                      [(CompilerDiagnosticNoteNil) true]
+                      [_ false]))]
+                [(CompilerDiagnosticNoteNil) false])))])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-generated-decl-item-mismatch-rejected?) : bool
@@ -6094,7 +6293,9 @@
     (unless (compiler-generated-decl-function-reuse-ok?) (return 0))
     (unless (compiler-generated-decl-incompatible-rejected?) (return 0))
     (unless (compiler-generated-decl-incompatible-note-ok?) (return 0))
+    (unless (compiler-generated-decl-incompatible-path-ok?) (return 0))
     (unless (compiler-generated-decl-item-mismatch-rejected?) (return 0))
+    (unless (compiler-generated-decl-item-mismatch-origin-ok?) (return 0))
     (unless (compiler-generated-decl-non-string-key-rejected?) (return 0))
     (unless
       (compiler-generated-decl-duplicate-visible-left-for-symbols?)

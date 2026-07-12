@@ -6,8 +6,9 @@ set -eu
 # The runner builds each listed TypeLisp program to a native executable, runs it
 # outside the Rust test harness, and checks exit code, stdout, and stderr. Linux
 # uses the explicit compile -> as -> ld flow; Windows Git Bash/MSYS/Cygwin uses
-# host-default typelisp build and PowerShell only to preserve native Windows
-# process exit codes larger than 255.
+# host-default typelisp build plus one native-process queue runner so full
+# Windows exit values and byte streams survive without a PowerShell launch per
+# manifest case.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -134,48 +135,56 @@ mkdir -p "$WORKDIR"
 NORMALIZED_MANIFEST="$WORKDIR/manifest.normalized"
 tr -d '\r' < "$MANIFEST" > "$NORMALIZED_MANIFEST"
 
-PS_RUNNER_WIN=
+WINDOWS_RUNNER_WIN=
+WINDOWS_LEGACY_RUNNER_WIN=
+WINDOWS_WORKDIR_WIN=
+WINDOWS_QUEUE=
+WINDOWS_QUEUE_WIN=
+WINDOWS_RESULTS=
+WINDOWS_RESULTS_WIN=
+WINDOWS_SUMMARY=
+WINDOWS_SUMMARY_WIN=
+WINDOWS_RUNNER_STDOUT=
+WINDOWS_RUNNER_STDERR=
+WINDOWS_QUEUED_CASES=
+WINDOWS_MANIFEST_QUEUED=0
+WINDOWS_QUEUE_REQUESTS=0
+WINDOWS_MANIFEST_COMPILE_MS=0
+WINDOWS_MANIFEST_ASSEMBLE_MS=0
+WINDOWS_MANIFEST_LINK_MS=0
+WINDOWS_MANIFEST_RUN_MS=0
+WINDOWS_MANIFEST_ASSERT_MS=0
+WINDOWS_MANIFEST_COMPILES=0
+WINDOWS_MANIFEST_ASSEMBLES=0
+WINDOWS_MANIFEST_LINKS=0
+WINDOWS_MANIFEST_ASSERTS=0
+WINDOWS_MANIFEST_POWERSHELL_STARTS=0
+WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=0
+WINDOWS_DIRECT_POWERSHELL_STARTS=0
+WINDOWS_DIRECT_CYGPATH_CONVERSIONS=0
+WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=0
+WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=0
+
 if [ "$HOST_OS" = windows ] && [ "$SELF_TEST_EMPTY_COMPILE_DIAGNOSTIC" -eq 0 ]; then
-    PS_RUNNER="$WORKDIR/run-windows-program.ps1"
-    cat > "$PS_RUNNER" <<'EOF'
-$ErrorActionPreference = "Stop"
-$exe = $args[0]
-$stdout = $args[1]
-$stderr = $args[2]
-$codeFile = $args[3]
-$runArgs = @()
-if ($args.Length -gt 4) {
-    $runArgs = $args[4..($args.Length - 1)]
-}
-$psi = New-Object System.Diagnostics.ProcessStartInfo
-$psi.FileName = $exe
-$psi.UseShellExecute = $false
-$psi.RedirectStandardOutput = $true
-$psi.RedirectStandardError = $true
-if ($runArgs.Length -gt 0) {
-    $psi.Arguments = ($runArgs -join " ")
-}
-$process = New-Object System.Diagnostics.Process
-$process.StartInfo = $psi
-$stdoutFile = [System.IO.File]::Create($stdout)
-$stderrFile = [System.IO.File]::Create($stderr)
-try {
-    [void]$process.Start()
-    $stdoutTask = $process.StandardOutput.BaseStream.CopyToAsync($stdoutFile)
-    $stderrTask = $process.StandardError.BaseStream.CopyToAsync($stderrFile)
-    $process.WaitForExit()
-    $stdoutTask.Wait()
-    $stderrTask.Wait()
-    [System.IO.File]::WriteAllText($codeFile, [string]$process.ExitCode)
-}
-finally {
-    $stdoutFile.Dispose()
-    $stderrFile.Dispose()
-    $process.Dispose()
-}
-exit 0
-EOF
-    PS_RUNNER_WIN=$(cygpath -aw "$PS_RUNNER")
+    WINDOWS_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-runner.ps1")
+    WINDOWS_LEGACY_RUNNER_WIN=$(cygpath -aw "$ROOT/scripts/windows-integration-legacy-runner.ps1")
+    WINDOWS_WORKDIR_WIN=$(cygpath -aw "$WORKDIR")
+    WINDOWS_QUEUE="$WORKDIR/windows-integration.requests"
+    WINDOWS_QUEUE_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.requests"
+    WINDOWS_RESULTS="$WORKDIR/windows-integration.results"
+    WINDOWS_RESULTS_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.results"
+    WINDOWS_SUMMARY="$WORKDIR/windows-integration.summary"
+    WINDOWS_SUMMARY_WIN="$WINDOWS_WORKDIR_WIN\\windows-integration.summary"
+    WINDOWS_RUNNER_STDOUT="$WORKDIR/windows-integration-runner.stdout"
+    WINDOWS_RUNNER_STDERR="$WORKDIR/windows-integration-runner.stderr"
+    WINDOWS_QUEUED_CASES="$WORKDIR/windows-integration.queued"
+    : > "$WINDOWS_QUEUE"
+    : > "$WINDOWS_QUEUED_CASES"
+    # The queue runner and its work root are the only manifest-run path
+    # conversions. Linked inputs/outputs are constructed from validated case
+    # names below, avoiding the former four launch conversions per case.
+    WINDOWS_MANIFEST_CYGPATH_CONVERSIONS=2
+    WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=1
 fi
 
 deps_or_empty() {
@@ -316,6 +325,7 @@ compile_windows_c_deps() {
     _case_dir=$2
     _build_stdout=$3
     _build_stderr=$4
+    _case_dir_win=$5
     _objs=
 
     for _dep in $(deps_or_empty "$_deps"); do
@@ -332,7 +342,7 @@ compile_windows_c_deps() {
                     >> "$_build_stdout" 2>> "$_build_stderr"; then
                     return 1
                 fi
-                _objs="${_objs:+$_objs }$(cygpath -aw "$_obj")"
+                _objs="${_objs:+$_objs }$_case_dir_win\\$_base.native.obj"
                 ;;
         esac
     done
@@ -543,20 +553,205 @@ normalized_stream() {
     fi
 }
 
+integration_now_ms() {
+    _now=$(date +%s%3N 2>/dev/null || true)
+    case "$_now" in
+        "" | *N*) printf '%s000\n' "$(date +%s)" ;;
+        *) printf '%s\n' "$_now" ;;
+    esac
+}
+
+windows_queue_encode() {
+    printf '%s' "$1" | base64 | tr -d '\r\n'
+}
+
+windows_queue_decode() {
+    case "$1" in
+        "~") printf '%s' "" ;;
+        *) printf '%s' "$1" | base64 -d ;;
+    esac
+}
+
+windows_queue_encoded_arguments() {
+    _encoded_args=
+    for _argument in "$@"; do
+        _encoded=$(windows_queue_encode "$_argument")
+        if [ -z "$_encoded" ]; then
+            _encoded='~'
+        fi
+        if [ -n "$_encoded_args" ]; then
+            _encoded_args="$_encoded_args,$_encoded"
+        else
+            _encoded_args=$_encoded
+        fi
+    done
+    if [ -n "$_encoded_args" ]; then
+        printf '%s\n' "$_encoded_args"
+    else
+        printf '%s\n' -
+    fi
+}
+
+# Append one native-path request to a UTF-8 queue. The caller supplies a
+# validated label and an already split argument vector; base64 keeps the queue
+# independent of shell quoting, whitespace, and path separators.
+windows_queue_append_request() {
+    _queue=$1
+    _label=$2
+    _exe=$3
+    _stdout=$4
+    _stderr=$5
+    _code=$6
+    shift 6
+    _arguments=$(windows_queue_encoded_arguments "$@")
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$_label" \
+        "$(windows_queue_encode "$_exe")" \
+        "$(windows_queue_encode "$_stdout")" \
+        "$(windows_queue_encode "$_stderr")" \
+        "$(windows_queue_encode "$_code")" \
+        "$_arguments" >> "$_queue"
+}
+
+windows_case_native_path() {
+    printf '%s\\%s\\%s\n' "$WINDOWS_WORKDIR_WIN" "$1" "$2"
+}
+
+windows_result_for_label() {
+    _wanted_label=$1
+    _result_line=$(awk -F '\t' -v label="$_wanted_label" '$1 == label { print; exit }' "$WINDOWS_RESULTS")
+    if [ -z "$_result_line" ]; then
+        return 1
+    fi
+    IFS="$(printf '\t')" read -r _result_label _result_status _result_exit _result_error _result_ms <<EOF
+$_result_line
+EOF
+    if [ "$_result_label" != "$_wanted_label" ]; then
+        return 1
+    fi
+    WINDOWS_RESULT_STATUS=$_result_status
+    WINDOWS_RESULT_EXIT=$_result_exit
+    WINDOWS_RESULT_ERROR=$(windows_queue_decode "$_result_error")
+    WINDOWS_RESULT_MS=$_result_ms
+}
+
+windows_run_request_file() {
+    _request_win=$1
+    _result_win=$2
+    _summary_win=$3
+    _runner_stdout=$4
+    _runner_stderr=$5
+    _started=$(integration_now_ms)
+    set +e
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_RUNNER_WIN" \
+        -RequestPath "$_request_win" \
+        -ResultPath "$_result_win" \
+        -SummaryPath "$_summary_win" \
+        > "$_runner_stdout" 2> "$_runner_stderr"
+    WINDOWS_RUNNER_STATUS=$?
+    set -e
+    _finished=$(integration_now_ms)
+    WINDOWS_LAST_RUN_MS=$((_finished - _started))
+    return "$WINDOWS_RUNNER_STATUS"
+}
+
+windows_queue_manifest_case() {
+    _name=$1
+    _runtime_args=$2
+    _exe_win=$(windows_case_native_path "$_name" "$_name.exe")
+    _stdout_win=$(windows_case_native_path "$_name" "$_name.stdout")
+    _stderr_win=$(windows_case_native_path "$_name" "$_name.stderr")
+    _code_win=$(windows_case_native_path "$_name" "$_name.exit")
+    # shellcheck disable=SC2086
+    windows_queue_append_request "$WINDOWS_QUEUE" "$_name" \
+        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" \
+        $(deps_or_empty "$_runtime_args")
+    printf '%s\n' "$_name" >> "$WINDOWS_QUEUED_CASES"
+    WINDOWS_MANIFEST_QUEUED=$((WINDOWS_MANIFEST_QUEUED + 1))
+    WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
+}
+
+windows_timed_compile() {
+    _started=$(integration_now_ms)
+    run_build "$@"
+    _finished=$(integration_now_ms)
+    WINDOWS_MANIFEST_COMPILE_MS=$((WINDOWS_MANIFEST_COMPILE_MS + _finished - _started))
+    WINDOWS_MANIFEST_COMPILES=$((WINDOWS_MANIFEST_COMPILES + 1))
+}
+
+windows_timed_assemble() {
+    _started=$(integration_now_ms)
+    set +e
+    clang "$@"
+    _status=$?
+    set -e
+    _finished=$(integration_now_ms)
+    WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _finished - _started))
+    WINDOWS_MANIFEST_ASSEMBLES=$((WINDOWS_MANIFEST_ASSEMBLES + 1))
+    return "$_status"
+}
+
+windows_timed_link() {
+    _started=$(integration_now_ms)
+    set +e
+    lld-link "$@"
+    _status=$?
+    set -e
+    _finished=$(integration_now_ms)
+    WINDOWS_MANIFEST_LINK_MS=$((WINDOWS_MANIFEST_LINK_MS + _finished - _started))
+    WINDOWS_MANIFEST_LINKS=$((WINDOWS_MANIFEST_LINKS + 1))
+    return "$_status"
+}
+
+# Generated backend fixtures stay outside the manifest queue because they need
+# their outputs between steps. They still use the same capture implementation,
+# but only incur a one-request runner launch per fixture rather than reviving a
+# separate one-shot PowerShell script.
 run_windows_program() {
-    _exe=$(cygpath -aw "$1")
-    _stdout=$(cygpath -aw "$2")
-    _stderr=$(cygpath -aw "$3")
+    _exe_posix=$1
+    _stdout_posix=$2
+    _stderr_posix=$3
     _code_posix=$4
-    _code=$(cygpath -aw "$4")
     _expected_code=$5
     shift 5
-
-    # Run the program once and capture its exit code. A crash is a real bug, not
-    # a flake — do not retry it.
-    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PS_RUNNER_WIN" \
-        "$_exe" "$_stdout" "$_stderr" "$_code" "$@"
-    got=$(tr -d '\r\n' < "$_code_posix")
+    WINDOWS_DIRECT_POWERSHELL_STARTS=$((WINDOWS_DIRECT_POWERSHELL_STARTS + 1))
+    _direct_id=$WINDOWS_DIRECT_POWERSHELL_STARTS
+    _direct_queue="$WORKDIR/windows-direct-$_direct_id.requests"
+    _direct_results="$WORKDIR/windows-direct-$_direct_id.results"
+    _direct_summary="$WORKDIR/windows-direct-$_direct_id.summary"
+    _direct_stdout="$WORKDIR/windows-direct-$_direct_id.runner.stdout"
+    _direct_stderr="$WORKDIR/windows-direct-$_direct_id.runner.stderr"
+    _direct_queue_win=$(cygpath -aw "$_direct_queue")
+    _direct_results_win=$(cygpath -aw "$_direct_results")
+    _direct_summary_win=$(cygpath -aw "$_direct_summary")
+    _exe_win=$(cygpath -aw "$_exe_posix")
+    _stdout_win=$(cygpath -aw "$_stdout_posix")
+    _stderr_win=$(cygpath -aw "$_stderr_posix")
+    _code_win=$(cygpath -aw "$_code_posix")
+    WINDOWS_DIRECT_CYGPATH_CONVERSIONS=$((WINDOWS_DIRECT_CYGPATH_CONVERSIONS + 7))
+    windows_queue_append_request "$_direct_queue" "windows_direct_$_direct_id" \
+        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" "$@"
+    WINDOWS_RESULTS=$_direct_results
+    if ! windows_run_request_file \
+        "$_direct_queue_win" \
+        "$_direct_results_win" \
+        "$_direct_summary_win" \
+        "$_direct_stdout" \
+        "$_direct_stderr"; then
+        echo "Windows direct runner failed:" >&2
+        show_stream_if_nonempty stdout "$_direct_stdout"
+        show_stream_if_nonempty stderr "$_direct_stderr"
+        return 1
+    fi
+    if ! windows_result_for_label "windows_direct_$_direct_id"; then
+        echo "Windows direct runner did not report its request" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_RESULT_STATUS" != ok ]; then
+        echo "Windows direct runner failed to launch $_exe_posix: $WINDOWS_RESULT_ERROR" >&2
+        return 1
+    fi
+    got=$WINDOWS_RESULT_EXIT
 }
 
 assert_contains() {
@@ -1424,6 +1619,281 @@ EOF
     echo "Windows backend fixture checks passed."
 }
 
+assert_manifest_case() {
+    _name=$1
+    _want=$2
+    _stdout_spec=$3
+    _stderr_spec=$4
+    _asm=$5
+    _stdout=$6
+    _stderr=$7
+    _case_dir=$8
+    _run_shell_stderr=$9
+    _assert_started=$(integration_now_ms)
+    _expected_stdout_cmp="$_case_dir/$_name.expected.stdout.cmp"
+    _expected_stderr_cmp="$_case_dir/$_name.expected.stderr.cmp"
+    _stdout_cmp="$_case_dir/$_name.stdout.cmp"
+    _stderr_cmp="$_case_dir/$_name.stderr.cmp"
+    _expected_stdout="$_case_dir/$_name.expected.stdout"
+    _expected_stderr="$_case_dir/$_name.expected.stderr"
+
+    if [ "$_name" = u64_float_casts ]; then
+        check_u64_float_cast_asm "$_asm"
+    fi
+    case "$_name" in
+        stdlib_string | string_eq) check_stdlib_string_helpers_asm "$_asm" "$_name" ;;
+    esac
+
+    write_expected_stream "$_stdout_spec" "$_expected_stdout"
+    write_expected_stream "$_stderr_spec" "$_expected_stderr"
+    normalized_stream "$_expected_stdout" "$_expected_stdout_cmp"
+    normalized_stream "$_expected_stderr" "$_expected_stderr_cmp"
+    normalized_stream "$_stdout" "$_stdout_cmp"
+    normalized_stream "$_stderr" "$_stderr_cmp"
+
+    _case_failed=0
+    if [ "$got" -ne "$_want" ]; then
+        echo "FAIL: $_name expected exit $_want, got $got" >&2
+        _case_failed=1
+    fi
+    if ! cmp -s "$_expected_stdout_cmp" "$_stdout_cmp"; then
+        echo "FAIL: $_name stdout mismatch" >&2
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$_expected_stdout_cmp" "$_stdout_cmp" >&2 || true
+        fi
+        _case_failed=1
+    fi
+    if ! cmp -s "$_expected_stderr_cmp" "$_stderr_cmp"; then
+        echo "FAIL: $_name stderr mismatch" >&2
+        if command -v diff >/dev/null 2>&1; then
+            diff -u "$_expected_stderr_cmp" "$_stderr_cmp" >&2 || true
+        fi
+        _case_failed=1
+    fi
+    if [ "$_case_failed" -ne 0 ] && [ -s "$_run_shell_stderr" ]; then
+        echo "NOTE: $_name shell run diagnostics:" >&2
+        sed 's/^/  /' "$_run_shell_stderr" >&2
+    fi
+
+    if [ "$_case_failed" -eq 0 ]; then
+        echo "PASS: $_name"
+    else
+        failed=$((failed + 1))
+    fi
+    ran=$((ran + 1))
+    if [ "$HOST_OS" = windows ]; then
+        _assert_finished=$(integration_now_ms)
+        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_finished - _assert_started))
+        WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + 1))
+    fi
+}
+
+windows_enqueue_missing_launch_self_test() {
+    WINDOWS_RUNNER_MISSING_LABEL=windows_runner_missing_executable
+    _dir="$WORKDIR/windows-runner-self-test"
+    mkdir -p "$_dir"
+    windows_queue_append_request "$WINDOWS_QUEUE" "$WINDOWS_RUNNER_MISSING_LABEL" \
+        "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exe" \
+        "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stdout" \
+        "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.stderr" \
+        "$WINDOWS_WORKDIR_WIN\\windows-runner-self-test\\missing.exit"
+    WINDOWS_QUEUE_REQUESTS=$((WINDOWS_QUEUE_REQUESTS + 1))
+}
+
+windows_run_manifest_queue() {
+    windows_enqueue_missing_launch_self_test
+    WINDOWS_MANIFEST_POWERSHELL_STARTS=1
+    if ! windows_run_request_file \
+        "$WINDOWS_QUEUE_WIN" \
+        "$WINDOWS_RESULTS_WIN" \
+        "$WINDOWS_SUMMARY_WIN" \
+        "$WINDOWS_RUNNER_STDOUT" \
+        "$WINDOWS_RUNNER_STDERR"; then
+        echo "FAIL: Windows integration queue runner failed" >&2
+        show_stream_if_nonempty stdout "$WINDOWS_RUNNER_STDOUT"
+        show_stream_if_nonempty stderr "$WINDOWS_RUNNER_STDERR"
+        return 1
+    fi
+    WINDOWS_MANIFEST_RUN_MS=$WINDOWS_LAST_RUN_MS
+    _result_rows=$(wc -l < "$WINDOWS_RESULTS" | tr -d '[:space:]')
+    if [ "$_result_rows" -ne "$WINDOWS_QUEUE_REQUESTS" ]; then
+        echo "FAIL: Windows integration queue returned $_result_rows results for $WINDOWS_QUEUE_REQUESTS requests" >&2
+        return 1
+    fi
+    if ! windows_result_for_label "$WINDOWS_RUNNER_MISSING_LABEL"; then
+        echo "FAIL: Windows integration queue omitted launch-failure self-test" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_RESULT_STATUS" != launch-failed ]; then
+        echo "FAIL: Windows integration queue missing executable status was $WINDOWS_RESULT_STATUS" >&2
+        return 1
+    fi
+    if [ -e "$WORKDIR/windows-runner-self-test/missing.exit" ]; then
+        echo "FAIL: Windows integration queue wrote an exit code for a missing executable" >&2
+        return 1
+    fi
+}
+
+windows_assert_queued_cases() {
+    while IFS='|' read -r _name _source _want _stdout_spec _runtime_args _deps _extra || [ -n "$_name" ]; do
+        case "$_name" in
+            "" | \#*) continue ;;
+        esac
+        if ! grep -F -x "$_name" "$WINDOWS_QUEUED_CASES" >/dev/null 2>&1; then
+            continue
+        fi
+        _expected_stderr_spec=-
+        case "${_extra:-}" in
+            "") ;;
+            expected-stderr:*) _expected_stderr_spec=${_extra#expected-stderr:} ;;
+        esac
+        _case_dir="$WORKDIR/$_name"
+        if ! windows_result_for_label "$_name"; then
+            echo "FAIL: $_name missing queued Windows result" >&2
+            failed=$((failed + 1))
+            ran=$((ran + 1))
+            continue
+        fi
+        if [ "$WINDOWS_RESULT_STATUS" != ok ]; then
+            echo "FAIL: $_name Windows launch failed: $WINDOWS_RESULT_ERROR" >&2
+            failed=$((failed + 1))
+            ran=$((ran + 1))
+            continue
+        fi
+        got=$WINDOWS_RESULT_EXIT
+        assert_manifest_case \
+            "$_name" \
+            "$_want" \
+            "$_stdout_spec" \
+            "$_expected_stderr_spec" \
+            "$_case_dir/$_name.s" \
+            "$_case_dir/$_name.stdout" \
+            "$_case_dir/$_name.stderr" \
+            "$_case_dir" \
+            "$_case_dir/$_name.run-shell.stderr"
+    done < "$NORMALIZED_MANIFEST"
+}
+
+windows_legacy_exit_to_unsigned() {
+    case "$1" in
+        -*) printf '%s\n' "$(( $1 + 4294967296 ))" ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+windows_legacy_run_case() {
+    _case=$1
+    shift
+    _legacy_dir="$WORKDIR/windows-runner-differential/$_case"
+    mkdir -p "$_legacy_dir"
+    _legacy_stdout="$_legacy_dir/$_case.stdout"
+    _legacy_stderr="$_legacy_dir/$_case.stderr"
+    _legacy_code="$_legacy_dir/$_case.exit"
+    _exe_win=$(cygpath -aw "$WORKDIR/$_case/$_case.exe")
+    _stdout_win=$(cygpath -aw "$_legacy_stdout")
+    _stderr_win=$(cygpath -aw "$_legacy_stderr")
+    _code_win=$(cygpath -aw "$_legacy_code")
+    WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS=$((WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS + 4))
+    WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS=$((WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS + 1))
+    set +e
+    powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_LEGACY_RUNNER_WIN" \
+        "$_exe_win" "$_stdout_win" "$_stderr_win" "$_code_win" "$@" \
+        > "$_legacy_dir/runner.stdout" 2> "$_legacy_dir/runner.stderr"
+    _legacy_status=$?
+    set -e
+    if [ "$_legacy_status" -ne 0 ]; then
+        echo "FAIL: Windows legacy differential runner failed for $_case" >&2
+        show_stream_if_nonempty stdout "$_legacy_dir/runner.stdout"
+        show_stream_if_nonempty stderr "$_legacy_dir/runner.stderr"
+        return 1
+    fi
+    if [ ! -f "$_legacy_code" ]; then
+        echo "FAIL: Windows legacy differential runner omitted exit code for $_case" >&2
+        return 1
+    fi
+    _legacy_raw=$(tr -cd '0-9-' < "$_legacy_code")
+    if [ -z "$_legacy_raw" ]; then
+        echo "FAIL: Windows legacy differential runner wrote an invalid exit code for $_case" >&2
+        return 1
+    fi
+    WINDOWS_LEGACY_STDOUT=$_legacy_stdout
+    WINDOWS_LEGACY_STDERR=$_legacy_stderr
+    WINDOWS_LEGACY_EXIT=$(windows_legacy_exit_to_unsigned "$_legacy_raw")
+}
+
+windows_compare_legacy_case() {
+    _case=$1
+    shift
+    if ! grep -F -x "$_case" "$WINDOWS_QUEUED_CASES" >/dev/null 2>&1; then
+        echo "FAIL: Windows runner differential fixture was not linked: $_case" >&2
+        return 1
+    fi
+    if ! windows_result_for_label "$_case"; then
+        echo "FAIL: Windows queue omitted differential fixture: $_case" >&2
+        return 1
+    fi
+    if [ "$WINDOWS_RESULT_STATUS" != ok ]; then
+        echo "FAIL: Windows queue did not launch differential fixture $_case: $WINDOWS_RESULT_ERROR" >&2
+        return 1
+    fi
+    _queued_exit=$WINDOWS_RESULT_EXIT
+    if ! windows_legacy_run_case "$_case" "$@"; then
+        return 1
+    fi
+    if [ "$_queued_exit" != "$WINDOWS_LEGACY_EXIT" ]; then
+        echo "FAIL: Windows queued/legacy exit mismatch for $_case: queued=$_queued_exit legacy=$WINDOWS_LEGACY_EXIT" >&2
+        return 1
+    fi
+    if ! cmp -s "$WORKDIR/$_case/$_case.stdout" "$WINDOWS_LEGACY_STDOUT"; then
+        echo "FAIL: Windows queued/legacy stdout mismatch for $_case" >&2
+        return 1
+    fi
+    if ! cmp -s "$WORKDIR/$_case/$_case.stderr" "$WINDOWS_LEGACY_STDERR"; then
+        echo "FAIL: Windows queued/legacy stderr mismatch for $_case" >&2
+        return 1
+    fi
+}
+
+windows_runner_differential_self_test() {
+    # These are ordinary, already-built manifest binaries: successful no-output
+    # exit, nonzero exit with stdout + argv, and a runtime trap with stderr.
+    # The old one-shot path is intentionally exercised only here as an oracle;
+    # the 292-case corpus itself uses the one persistent queue runner above.
+    windows_compare_legacy_case aggregate_globals || return 1
+    windows_compare_legacy_case argv alpha beta || return 1
+    windows_compare_legacy_case div_zero_trap || return 1
+
+    _mismatch_dir="$WORKDIR/windows-runner-differential/mismatch"
+    mkdir -p "$_mismatch_dir"
+    printf '%s\n' 'deliberately wrong stdout' > "$_mismatch_dir/argv.expected.stdout"
+    printf '%s\n' 'deliberately wrong stderr' > "$_mismatch_dir/div_zero.expected.stderr"
+    if cmp -s "$_mismatch_dir/argv.expected.stdout" "$WORKDIR/argv/argv.stdout"; then
+        echo "FAIL: Windows queue differential stdout mismatch witness unexpectedly matched" >&2
+        return 1
+    fi
+    if cmp -s "$_mismatch_dir/div_zero.expected.stderr" "$WORKDIR/div_zero_trap/div_zero_trap.stderr"; then
+        echo "FAIL: Windows queue differential stderr mismatch witness unexpectedly matched" >&2
+        return 1
+    fi
+    echo "Windows queue runner differential self-test passed."
+}
+
+windows_print_manifest_summary() {
+    _runner_requests=$(awk -F= '$1 == "requests" { print $2 }' "$WINDOWS_SUMMARY")
+    _runner_children=$(awk -F= '$1 == "child_starts" { print $2 }' "$WINDOWS_SUMMARY")
+    _runner_failures=$(awk -F= '$1 == "launch_failures" { print $2 }' "$WINDOWS_SUMMARY")
+    _runner_elapsed=$(awk -F= '$1 == "elapsed_ms" { print $2 }' "$WINDOWS_SUMMARY")
+    _legacy_launch_cygpath=$((WINDOWS_MANIFEST_QUEUED * 4))
+    echo "Windows integration process/timing summary:"
+    echo "  manifest cases queued: $WINDOWS_MANIFEST_QUEUED"
+    echo "  process starts: legacy powershell=$WINDOWS_MANIFEST_QUEUED, queued powershell=$WINDOWS_MANIFEST_POWERSHELL_STARTS, child executables=$_runner_children"
+    echo "  cygpath conversions: legacy launch-path lower bound=$_legacy_launch_cygpath, queued manifest=$WINDOWS_MANIFEST_CYGPATH_CONVERSIONS"
+    echo "  queue: requests=$_runner_requests launch_failures=$_runner_failures elapsed_ms=$_runner_elapsed"
+    echo "  phase_ms: compile=$WINDOWS_MANIFEST_COMPILE_MS assemble=$WINDOWS_MANIFEST_ASSEMBLE_MS link=$WINDOWS_MANIFEST_LINK_MS run=$WINDOWS_MANIFEST_RUN_MS assert=$WINDOWS_MANIFEST_ASSERT_MS"
+    echo "  phase_counts: compile=$WINDOWS_MANIFEST_COMPILES assemble=$WINDOWS_MANIFEST_ASSEMBLES link=$WINDOWS_MANIFEST_LINKS assert=$WINDOWS_MANIFEST_ASSERTS"
+    echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
+}
+
 validate_manifest
 
 failed=0
@@ -1472,7 +1942,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         # The compile-only bootstrapped stage1 has `compile` but not `build`, so
         # emit Windows asm then assemble (clang) + link (lld-link), mirroring the
         # Linux compile->as->ld path below.
-        run_build "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
+        case_dir_win="$WINDOWS_WORKDIR_WIN\\$name"
+        obj_win="$case_dir_win\\$name.o"
+        bin_win="$case_dir_win\\$name.exe"
+        windows_timed_compile "$COMPILER" compile "$work_src" --target windows-x86_64 --cfg windows \
             --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"
         if [ "$build_rc" -ne 0 ]; then
@@ -1491,7 +1964,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ran=$((ran + 1))
             continue
         fi
-        if ! clang --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
+        if ! windows_timed_assemble --target=x86_64-pc-windows-msvc -c "$asm" -o "$obj" \
             >> "$build_stdout" 2>> "$build_stderr"; then
             echo "FAIL: $name assemble failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
@@ -1499,7 +1972,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ran=$((ran + 1))
             continue
         fi
-        if ! native_objs=$(compile_windows_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr"); then
+        if ! native_objs=$(compile_windows_c_deps "$deps" "$case_dir" "$build_stdout" "$build_stderr" "$case_dir_win"); then
             echo "FAIL: $name C dependency compile failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1507,7 +1980,7 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             continue
         fi
         # shellcheck disable=SC2086
-        if ! lld-link -NOLOGO "$(cygpath -aw "$obj")" $native_objs "-OUT:$(cygpath -aw "$bin.exe")" \
+        if ! windows_timed_link -NOLOGO "$obj_win" $native_objs "-OUT:$bin_win" \
             -SUBSYSTEM:CONSOLE -STACK:268435456 -ENTRY:_tl_start -NODEFAULTLIB kernel32.lib \
             >> "$build_stdout" 2>> "$build_stderr"; then
             echo "FAIL: $name link failed" >&2
@@ -1516,17 +1989,9 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ran=$((ran + 1))
             continue
         fi
-        set +e
         # shellcheck disable=SC2086
-        run_windows_program "$bin.exe" "$stdout" "$stderr" "$code_file" "$want" $(deps_or_empty "$runtime_args")
-        run_status=$?
-        set -e
-        if [ "$run_status" -ne 0 ]; then
-            echo "FAIL: $name run wrapper failed" >&2
-            failed=$((failed + 1))
-            ran=$((ran + 1))
-            continue
-        fi
+        windows_queue_manifest_case "$name" "$runtime_args"
+        continue
     else
         run_build "$COMPILER" compile "$work_src" \
             --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
@@ -1591,51 +2056,28 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         set -e
     fi
 
-    if [ "$name" = u64_float_casts ]; then
-        check_u64_float_cast_asm "$asm"
-    fi
-    case "$name" in
-        stdlib_string | string_eq) check_stdlib_string_helpers_asm "$asm" "$name" ;;
-    esac
-
-    write_expected_stream "$stdout_spec" "$expected_stdout"
-    write_expected_stream "$expected_stderr_spec" "$expected_stderr"
-    normalized_stream "$expected_stdout" "$expected_stdout_cmp"
-    normalized_stream "$expected_stderr" "$expected_stderr_cmp"
-    normalized_stream "$stdout" "$stdout_cmp"
-    normalized_stream "$stderr" "$stderr_cmp"
-
-    case_failed=0
-    if [ "$got" -ne "$want" ]; then
-        echo "FAIL: $name expected exit $want, got $got" >&2
-        case_failed=1
-    fi
-    if ! cmp -s "$expected_stdout_cmp" "$stdout_cmp"; then
-        echo "FAIL: $name stdout mismatch" >&2
-        if command -v diff >/dev/null 2>&1; then
-            diff -u "$expected_stdout_cmp" "$stdout_cmp" >&2 || true
-        fi
-        case_failed=1
-    fi
-    if ! cmp -s "$expected_stderr_cmp" "$stderr_cmp"; then
-        echo "FAIL: $name stderr mismatch" >&2
-        if command -v diff >/dev/null 2>&1; then
-            diff -u "$expected_stderr_cmp" "$stderr_cmp" >&2 || true
-        fi
-        case_failed=1
-    fi
-    if [ "$case_failed" -ne 0 ] && [ -s "$run_shell_stderr" ]; then
-        echo "NOTE: $name shell run diagnostics:" >&2
-        sed 's/^/  /' "$run_shell_stderr" >&2
-    fi
-
-    if [ "$case_failed" -eq 0 ]; then
-        echo "PASS: $name"
-    else
-        failed=$((failed + 1))
-    fi
-    ran=$((ran + 1))
+    assert_manifest_case \
+        "$name" \
+        "$want" \
+        "$stdout_spec" \
+        "$expected_stderr_spec" \
+        "$asm" \
+        "$stdout" \
+        "$stderr" \
+        "$case_dir" \
+        "$run_shell_stderr"
 done < "$NORMALIZED_MANIFEST"
+
+if [ "$HOST_OS" = windows ] && [ "$WINDOWS_MANIFEST_QUEUED" -gt 0 ]; then
+    if ! windows_run_manifest_queue; then
+        exit 1
+    fi
+    if ! windows_runner_differential_self_test; then
+        exit 1
+    fi
+    windows_assert_queued_cases
+    windows_print_manifest_summary
+fi
 
 if [ "$failed" -gt 0 ]; then
     echo "$failed integration case(s) failed out of $ran" >&2

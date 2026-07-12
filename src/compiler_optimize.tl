@@ -2271,6 +2271,19 @@
           (set! index (+ index 1))))
       unit)))
 
+(define (opt-collect-block-seq-uses-array-into
+  [items : (Array i64)]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (begin
+        (match (compiler-ir-block-seq-ref blocks index)
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-collect-instr-seq-uses-array items instrs)])
+        (set! index (+ index 1))))))
+
 (define (opt-collect-blocks-uses-array-into
   [items : (Array i64)]
   [blocks : CompilerIrBlockList]) : unit
@@ -2283,9 +2296,7 @@
             (opt-collect-instr-seq-uses-array items instrs)
             (opt-collect-blocks-uses-array-into items (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-collect-blocks-uses-array-into
-        items
-        (compiler-ir-block-seq-to-list seq))]))
+      (opt-collect-block-seq-uses-array-into items seq)]))
 
 (define (opt-collect-blocks-uses-array
   [vars : i64]
@@ -3392,6 +3403,48 @@
     [(AstType.Tuple _) true]
     [_ false]))
 
+(define (opt-aggregate-stack-promote-instr-candidate? [instr : CompilerIrInstr]) : bool
+  (match (opt-aggregate-direct-alloc instr)
+    [(OptMaybeAggregateAlloc.Some _ ty _)
+      (opt-aggregate-stack-promote-type? ty)]
+    [(OptMaybeAggregateAlloc.No) false]))
+
+(define (opt-aggregate-stack-promote-instr-seq-candidate-from?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    false
+    (if (opt-aggregate-stack-promote-instr-candidate?
+      (compiler-ir-instr-seq-ref instrs index))
+      true
+      (opt-aggregate-stack-promote-instr-seq-candidate-from? instrs (+ index 1)))))
+
+(define (opt-aggregate-stack-promote-block-candidate? [block : CompilerIrBlock]) : bool
+  (match block
+    [(CompilerIrBlock.Block _ instrs)
+      (opt-aggregate-stack-promote-instr-seq-candidate-from? instrs 0)]))
+
+(define (opt-aggregate-stack-promote-block-seq-candidate-from?
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : bool
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    false
+    (if (opt-aggregate-stack-promote-block-candidate?
+      (compiler-ir-block-seq-ref blocks index))
+      true
+      (opt-aggregate-stack-promote-block-seq-candidate-from? blocks (+ index 1)))))
+
+(define (opt-aggregate-stack-promote-blocks-have-candidate?
+  [blocks : CompilerIrBlockList]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (if (opt-aggregate-stack-promote-block-candidate? block)
+        true
+        (opt-aggregate-stack-promote-blocks-have-candidate? (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-aggregate-stack-promote-block-seq-candidate-from? seq 0)]))
+
 (define (opt-aggregate-stack-slot-count [size : i64]) : i64
   (/ (+ size 7) 8))
 
@@ -3519,16 +3572,20 @@
 (define (opt-aggregate-stack-promote-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (match (opt-aggregate-promote-build
-        (opt-aggregate-allocation-candidates-function func)
-        frame)
-        [(OptAggregatePromoteBuild.Build slots promoted-frame)
-          (CompilerIrFunction.Function
-            name
-            params
-            ret-ty
-            promoted-frame
-            (opt-aggregate-promote-blocks slots blocks))])]))
+      (if (opt-aggregate-stack-promote-blocks-have-candidate? blocks)
+        (match (opt-aggregate-promote-build
+          (opt-aggregate-allocation-candidates-function func)
+          frame)
+          [(OptAggregatePromoteBuild.Build slots promoted-frame)
+            (if (= (struct-get slots len) 0)
+              func
+              (CompilerIrFunction.Function
+                name
+                params
+                ret-ty
+                promoted-frame
+                (opt-aggregate-promote-blocks slots blocks)))])
+        func)]))
 
 ;; --- aggregate field-load scalar replacement (SROA) --------------------------
 ;; Replaces loads of fields from non-escaping aggregate allocations with the
@@ -6524,6 +6581,237 @@
                 [(option_i64.None) casts])
               (box-get rest)))])]))
 
+(defenum OptBoundsSeqState
+  (Plain OptBoundsFacts OptBoundsCastEnv)
+  (Object
+    OptBoundsFacts
+    OptObjectLengthFact
+    OptObjectLengthFact
+    OptBoundsCastEnv))
+
+(defenum OptBoundsSeqStep
+  (Step OptBoundsSeqState bool))
+
+(define (opt-bounds-casts-after
+  [casts : OptBoundsCastEnv]
+  [instr : CompilerIrInstr]) : OptBoundsCastEnv
+  (match (opt-instr-def-var instr)
+    [(option_i64.Some dst) (opt-bounds-cast-unbind casts dst)]
+    [(option_i64.None) casts]))
+
+(define (opt-bounds-seq-step-plain
+  [facts : OptBoundsFacts]
+  [casts : OptBoundsCastEnv]
+  [instr : CompilerIrInstr]) : OptBoundsSeqStep
+  (match instr
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (let
+        [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
+        (if (opt-bounds-contains facts index-key length)
+          (OptBoundsSeqStep.Step (OptBoundsSeqState.Plain facts casts) false)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain
+              (opt-bounds-add facts index-key length)
+              casts)
+            true)))]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (let
+        [next-facts : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [next-casts : OptBoundsCastEnv (opt-bounds-cast-unbind casts dst)]
+        (if (opt-bounds-object-length-slot? offset ty)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Object
+              next-facts
+              (OptObjectLengthFact.None)
+              (match base
+                [(CompilerIrValue.Var object-var)
+                  (opt-object-length-bind
+                    (OptObjectLengthFact.None)
+                    dst
+                    object-var)]
+                [_ (OptObjectLengthFact.None)])
+              next-casts)
+            true)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain next-facts next-casts)
+            true)))]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (OptBoundsSeqStep.Step
+        (OptBoundsSeqState.Plain
+          (opt-bounds-update-facts facts instr)
+          (opt-bounds-cast-update casts dst src from-ty to-ty))
+        true)]
+    [_
+      (OptBoundsSeqStep.Step
+        (OptBoundsSeqState.Plain
+          (opt-bounds-update-facts facts instr)
+          (opt-bounds-casts-after casts instr))
+        true)]))
+
+(define (opt-bounds-seq-step-object
+  [facts : OptBoundsFacts]
+  [lengths : OptObjectLengthFact]
+  [ptrs : OptObjectLengthFact]
+  [casts : OptBoundsCastEnv]
+  [instr : CompilerIrInstr]) : OptBoundsSeqStep
+  (match instr
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (let
+        [index-key : CompilerIrValue (opt-bounds-cast-canon casts index)]
+        [length-key : CompilerIrValue (opt-bounds-length-value lengths length)]
+        (if (opt-bounds-contains facts index-key length-key)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Object facts lengths ptrs casts)
+            false)
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Object
+              (opt-bounds-add facts index-key length-key)
+              lengths
+              ptrs
+              casts)
+            true)))]
+    [(CompilerIrInstr.Gep dst base offset ty)
+      (let
+        [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [lengths2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var lengths dst)]
+        [ptrs2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var ptrs dst)]
+        [ptrs3 : OptObjectLengthFact
+          (if (opt-bounds-object-length-slot? offset ty)
+            (match base
+              [(CompilerIrValue.Var object-var)
+                (opt-object-length-bind ptrs2 dst object-var)]
+              [_ ptrs2])
+            ptrs2)]
+        (OptBoundsSeqStep.Step
+          (OptBoundsSeqState.Object
+            facts2
+            lengths2
+            ptrs3
+            (opt-bounds-cast-unbind casts dst))
+          true))]
+    [(CompilerIrInstr.Load dst src ty)
+      (let
+        [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [lengths2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var lengths dst)]
+        [ptrs2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var ptrs dst)]
+        [lengths3 : OptObjectLengthFact
+          (if (opt-type-eq ty (AstType.I64))
+            (match src
+              [(CompilerIrValue.Var ptr-var)
+                (match (opt-object-length-lookup ptrs2 ptr-var)
+                  [(option_i64.Some object-var)
+                    (opt-object-length-bind lengths2 dst object-var)]
+                  [(option_i64.None) lengths2])]
+              [_ lengths2])
+            lengths2)]
+        (OptBoundsSeqStep.Step
+          (OptBoundsSeqState.Object
+            facts2
+            lengths3
+            ptrs2
+            (opt-bounds-cast-unbind casts dst))
+          true))]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (let
+        [facts2 : OptBoundsFacts (opt-bounds-invalidate-var facts dst)]
+        [lengths2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var lengths dst)]
+        [ptrs2 : OptObjectLengthFact
+          (opt-object-length-invalidate-var ptrs dst)]
+        [lengths3 : OptObjectLengthFact
+          (if (and
+            (opt-type-eq from-ty (AstType.I64))
+            (opt-type-eq to-ty (AstType.U64)))
+            (match src
+              [(CompilerIrValue.Var length-var)
+                (match (opt-object-length-lookup lengths2 length-var)
+                  [(option_i64.Some object-var)
+                    (opt-object-length-bind lengths2 dst object-var)]
+                  [(option_i64.None) lengths2])]
+              [_ lengths2])
+            lengths2)]
+        (OptBoundsSeqStep.Step
+          (OptBoundsSeqState.Object
+            facts2
+            lengths3
+            ptrs2
+            (opt-bounds-cast-update casts dst src from-ty to-ty))
+          true))]
+    [(CompilerIrInstr.StorePtr ptr _ _)
+      (match ptr
+        [(CompilerIrValue.Var ptr-var)
+          (match (opt-object-length-lookup ptrs ptr-var)
+            [(option_i64.Some _)
+              (OptBoundsSeqStep.Step
+                (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) casts)
+                true)]
+            [(option_i64.None)
+              (OptBoundsSeqStep.Step
+                (OptBoundsSeqState.Object facts lengths ptrs casts)
+                true)])]
+        [_
+          (OptBoundsSeqStep.Step
+            (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) casts)
+            true)])]
+    [_
+      (let
+        [next-facts : OptBoundsFacts (opt-bounds-update-facts facts instr)]
+        [next-casts : OptBoundsCastEnv (opt-bounds-casts-after casts instr)]
+        (match next-facts
+          [(OptBoundsFacts.Nil)
+            (OptBoundsSeqStep.Step
+              (OptBoundsSeqState.Plain next-facts next-casts)
+              true)]
+          [_
+            (match (opt-instr-def-var instr)
+              [(option_i64.Some dst)
+                (OptBoundsSeqStep.Step
+                  (OptBoundsSeqState.Object
+                    next-facts
+                    (opt-object-length-invalidate-var lengths dst)
+                    (opt-object-length-invalidate-var ptrs dst)
+                    next-casts)
+                  true)]
+              [(option_i64.None)
+                (OptBoundsSeqStep.Step
+                  (OptBoundsSeqState.Object next-facts lengths ptrs next-casts)
+                  true)])]))]))
+
+(define (opt-bounds-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [read : i64 0]
+    [write : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [state : OptBoundsSeqState
+      (OptBoundsSeqState.Plain (OptBoundsFacts.Nil) (OptBoundsCastEnv.Nil))]
+    (begin
+      (while (< read count)
+        (let
+          [instr : CompilerIrInstr (compiler-ir-instr-seq-ref instrs read)]
+          [step : OptBoundsSeqStep
+            (match state
+              [(OptBoundsSeqState.Plain facts casts)
+                (opt-bounds-seq-step-plain facts casts instr)]
+              [(OptBoundsSeqState.Object facts lengths ptrs casts)
+                (opt-bounds-seq-step-object facts lengths ptrs casts instr)])]
+          (match step
+            [(OptBoundsSeqStep.Step next-state keep)
+              (begin
+                (if keep
+                  (begin
+                    (if (not (= write read))
+                      (compiler-ir-instr-seq-set! instrs write instr)
+                      unit)
+                    (set! write (+ write 1)))
+                  unit)
+                (set! state next-state)
+                (set! read (+ read 1)))])))
+      (set! (struct-get instrs len) write))))
+
 ;; --- conservative CFG simplification ----------------------------------------
 ;;
 ;; Runs after block-local constant/copy propagation has exposed literal branch
@@ -6901,6 +7189,25 @@
     8
     (* count 2)))
 
+(define (opt-cfg-index-fill-label-seq!
+  [blocks : CompilerIrBlockSeq]
+  [ids : opt_string_i64_map.Map]
+  [labels : (Array String)]
+  [base : i64]) : opt_string_i64_map.Map
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block label _)
+              (begin
+                (array-set! labels (+ base index) label)
+                (opt_string_i64_map.insert-ref! (&mut ids) label (+ base index)))])
+          (set! index (+ index 1))))
+      ids)))
+
 (define (opt-cfg-index-fill-labels!
   [blocks : CompilerIrBlockList]
   [ids : opt_string_i64_map.Map]
@@ -6916,11 +7223,7 @@
             (opt_string_i64_map.insert-ref! (&mut ids) label index)
             (opt-cfg-index-fill-labels! (box-get rest) ids labels (+ index 1)))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-labels!
-        (compiler-ir-block-seq-to-list seq)
-        ids
-        labels
-        index)]))
+      (opt-cfg-index-fill-label-seq! seq ids labels index)]))
 
 (define (opt-i64-list-contains? [items : OptI64List] [value : i64]) : bool
   (match items
@@ -7018,6 +7321,31 @@
           [(opt_string_i64_map.LookupMissing) unit])
         (opt-cfg-index-add-pred-edges! pred-rows ids source-id (box-get rest)))]))
 
+(define (opt-cfg-index-fill-row-seq!
+  [blocks : CompilerIrBlockSeq]
+  [ids : opt_string_i64_map.Map]
+  [succ-rows : (Array OptI64List)]
+  [pred-rows : (Array OptI64List)]
+  [base : i64]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (let
+        [block : CompilerIrBlock (compiler-ir-block-seq-ref blocks index)]
+        [next-label : String
+          (if (< (+ index 1) count)
+            (match (compiler-ir-block-seq-ref blocks (+ index 1))
+              [(CompilerIrBlock.Block label _) label])
+            "")]
+        [succs : OptLabelSet
+          (opt-cfg-block-successors-with-next block next-label)]
+        [row : i64 (+ base index)]
+        (begin
+          (array-set! succ-rows row (opt-cfg-index-label-set-to-ids succs ids))
+          (opt-cfg-index-add-pred-edges! pred-rows ids row succs)
+          (set! index (+ index 1)))))))
+
 (define (opt-cfg-index-fill-rows!
   [blocks : CompilerIrBlockList]
   [ids : opt_string_i64_map.Map]
@@ -7047,12 +7375,7 @@
                 pred-rows
                 (+ index 1))))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-cfg-index-fill-rows!
-        (compiler-ir-block-seq-to-list seq)
-        ids
-        succ-rows
-        pred-rows
-        index)]))
+      (opt-cfg-index-fill-row-seq! seq ids succ-rows pred-rows index)]))
 
 (define (opt-cfg-csr-fill-rows!
   [rows : (Array OptI64List)]
@@ -12230,6 +12553,41 @@
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-fold-branches-blocks (compiler-ir-block-seq-to-list seq))]))
 
+(define (opt-cfg-fold-branches-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (begin
+        (compiler-ir-instr-seq-set!
+          instrs
+          index
+          (opt-cfg-fold-branch (compiler-ir-instr-seq-ref instrs index)))
+        (set! index (+ index 1))))))
+
+(define (opt-cfg-fold-branches-block-seq-rewrite! [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    (while (< index count)
+      (begin
+        (match (compiler-ir-block-seq-ref blocks index)
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-cfg-fold-branches-instr-seq-rewrite! instrs)])
+        (set! index (+ index 1))))))
+
+(define (opt-cfg-fold-branches-blocks-rewrite! [blocks : CompilerIrBlockList]) : unit
+  (match blocks
+    [(CompilerIrBlockList.Nil) unit]
+    [(CompilerIrBlockList.Cons block rest)
+      (begin
+        (match block
+          [(CompilerIrBlock.Block _ instrs)
+            (opt-cfg-fold-branches-instr-seq-rewrite! instrs)])
+        (opt-cfg-fold-branches-blocks-rewrite! (box-get rest)))]
+    [(CompilerIrBlockList.Array seq)
+      (opt-cfg-fold-branches-block-seq-rewrite! seq)]))
+
 (define (opt-cfg-instr-successors [set : OptLabelSet] [instr : CompilerIrInstr]) : OptLabelSet
   (match instr
     [(CompilerIrInstr.Jump label) (opt-label-add set label)]
@@ -17311,6 +17669,70 @@
     [folded : CompilerIrBlockList (opt-cfg-fold-branches-blocks blocks)]
     [index : OptCfgIndex (opt-cfg-index-build folded)]
     (opt-cfg-filter-clean-blocks index folded)))
+
+(define (opt-cfg-clean-instr-seq-rewrite!
+  [index : OptCfgIndex]
+  [used : (Array i64)]
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [pos : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< pos count)
+      (let
+        [cleaned : CompilerIrInstr
+          (opt-cfg-clean-instr index (compiler-ir-instr-seq-ref instrs pos))]
+        (begin
+          (compiler-ir-instr-seq-set! instrs pos cleaned)
+          (opt-collect-instr-uses-array used cleaned)
+          (set! pos (+ pos 1)))))))
+
+(define (opt-cfg-filter-clean-block-seq-rewrite!
+  [index : OptCfgIndex]
+  [used : (Array i64)]
+  [blocks : CompilerIrBlockSeq]) : unit
+  (let
+    [slots : (Array CompilerIrBlock) (struct-get blocks slots)]
+    [reachable : (Array bool) (struct-get index reachable)]
+    [count : i64 (struct-get blocks len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (begin
+          (if (array-ref reachable read)
+            (let
+              [block : CompilerIrBlock (array-ref slots read)]
+              (begin
+                (match block
+                  [(CompilerIrBlock.Block _ instrs)
+                    (opt-cfg-clean-instr-seq-rewrite! index used instrs)])
+                (if (not (= write read))
+                  (array-set! slots write block)
+                  unit)
+                (set! write (+ write 1))))
+            unit)
+          (set! read (+ read 1))))
+      (set! (struct-get blocks len) write))))
+
+;; Level 1 owns its post-fold block/instruction arrays in the per-function
+;; scratch arena. Keep that representation through CFG cleanup: fold branches
+;; and phis in place, compact unreachable blocks in the outer sequence, and let
+;; the final DCE+escape traversal clone only the live result.
+(define (opt-cfg-simplify-blocks-in-place
+  [blocks : CompilerIrBlockList]
+  [used : (Array i64)]) : CompilerIrBlockList
+  (let
+    [folded : CompilerIrBlockList (compiler-ir-block-list-compact blocks)]
+    (begin
+      (opt-cfg-fold-branches-blocks-rewrite! folded)
+      (let
+        [index : OptCfgIndex (opt-cfg-index-build folded)]
+        (begin
+          (match folded
+            [(CompilerIrBlockList.Array seq)
+              (opt-cfg-filter-clean-block-seq-rewrite! index used seq)]
+            [_ unit])
+          folded)))))
 
 (define (opt-cfg-simplify-blocks-with-context-result
   [input : OptBlockCtxResult]) : OptBlockCtxResult
@@ -23662,42 +24084,160 @@
       blocks)
     blocks))
 
-(define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
+(define (opt-fold-strength-cse-instr-seq-rewrite! [instrs : CompilerIrInstrSeq]) : i64
+  (let
+    [index : i64 0]
+    [store-count : i64 0]
+    [fold-state : OptConstEnv (OptConstEnv.Nil)]
+    [strength-state : OptConstEnv (OptConstEnv.Nil)]
+    [cse-state : OptExprTable (OptExprTable.Nil)]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (begin
+      (while (< index count)
+        (match (opt-fold-instr
+          fold-state
+          (compiler-ir-instr-seq-ref instrs index))
+          [(OptInstrResult.Result next-fold folded)
+            (match (opt-strength-instr strength-state folded)
+              [(OptInstrResult.Result next-strength strengthened)
+                (match (opt-cse-instr cse-state strengthened)
+                  [(OptCseResult.Result next-cse rewritten)
+                    (begin
+                      (match rewritten
+                        [(CompilerIrInstr.StorePtr _ _ _)
+                          (if (< store-count 128)
+                            (set! store-count (+ store-count 1))
+                            unit)]
+                        [_ unit])
+                      (compiler-ir-instr-seq-set! instrs index rewritten)
+                      (set! fold-state next-fold)
+                      (set! strength-state next-strength)
+                      (set! cse-state next-cse)
+                      (set! index (+ index 1)))])])]))
+      store-count)))
+
+(define (opt-load-copy-instr-seq-rewrite!
+  [hs : OptLoadHeaderSet]
+  [state : OptLoadCseState]
+  [instrs : CompilerIrInstrSeq]) : unit
+  (let
+    [index : i64 0]
+    [sources : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 1)]
+    [load-state : OptLoadCseState state]
+    [copy-state : OptCopyEnv (OptCopyEnv.Nil)]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    (while (< index count)
+      (match (opt-load-cse-dispatch
+        hs
+        false
+        sources
+        load-state
+        (compiler-ir-instr-seq-ref instrs index))
+        [(OptLoadCseResult.Result next-load loaded)
+          (match (opt-copy-instr copy-state loaded)
+            [(OptCopyResult.Result next-copy rewritten)
+              (begin
+                (compiler-ir-instr-seq-set! instrs index rewritten)
+                (set! load-state next-load)
+                (set! copy-state next-copy)
+                (set! index (+ index 1)))])]))))
+
+(define (optimize-block-hs-with-kinds
+  [hs : OptLoadHeaderSet]
+  [dead-kinds : OptLoadPtrKinds]
+  [load-kinds : OptLoadPtrKinds]
+  [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (let
         [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq instrs)]
+        [store-capacity : i64 0]
         ;; Fold scalar constants, reduce algebraic identities, eliminate repeated
         ;; pure expressions, propagate the resulting copies, then remove duplicate
-        ;; proven bounds checks; function-level DCE drops dead copies.
-        ;; The first five stages are one-in/one-out rewrites and run in place on
-        ;; the cloned block sequence; only bounds-check elimination still
-        ;; materializes a list because it can drop instructions.
+        ;; proven bounds checks; function-level DCE drops dead copies. Independent
+        ;; per-stage states preserve the old scheduling while the forward
+        ;; one-in/one-out stages share two in-place traversals of the cloned block
+        ;; sequence; bounds-check elimination then compacts that sequence in place.
         ;; Fold runs ONCE: it is a single forward pass that binds every folded
         ;; result into its env, so over the block it already reaches a fixpoint --
         ;; a second `opt-fold-instrs` over the result only re-walked and rebuilt
         ;; the list without changing it (byte-identical output, ~0.9% of
         ;; self-compile).
         (begin
-          (opt-fold-instr-seq-rewrite! (OptConstEnv.Nil) work)
-          (opt-strength-instr-seq-rewrite! (OptConstEnv.Nil) work)
-          (opt-cse-instr-seq-rewrite! (OptExprTable.Nil) work)
-          (set! work (opt-dead-store-instr-seq hs work))
-          (opt-load-cse-instr-seq-rewrite!
+          (set! store-capacity (opt-fold-strength-cse-instr-seq-rewrite! work))
+          (set!
+            work
+            (opt-dead-store-instr-seq-known-with-kinds
+              hs
+              store-capacity
+              dead-kinds
+              work))
+          (opt-load-copy-instr-seq-rewrite!
             hs
-            (opt-load-cse-empty-state-for-size
-              (compiler-ir-instr-seq-count work))
+            (opt-load-cse-empty-state-for-size-with-kinds
+              (compiler-ir-instr-seq-count work)
+              load-kinds)
             work)
-          (opt-copy-instr-seq-rewrite! (OptCopyEnv.Nil) work)
-          (compiler-ir-block
-            label
-            (opt-bounds-instrs
-              (OptBoundsFacts.Nil)
-              (OptBoundsCastEnv.Nil)
-              (compiler-ir-instr-seq-to-list work)))))]))
+          (opt-bounds-instr-seq-rewrite! work)
+          (CompilerIrBlock.Block label work)))]))
+
+(define (optimize-block-hs [hs : OptLoadHeaderSet] [block : CompilerIrBlock]) : CompilerIrBlock
+  (optimize-block-hs-with-kinds
+    hs
+    (opt-load-kinds-empty)
+    (opt-load-kinds-empty)
+    block))
 
 (define (optimize-block [block : CompilerIrBlock]) : CompilerIrBlock
   (optimize-block-hs (opt-load-header-set-empty) block))
+
+(define (optimize-block-seq-hs
+  [hs : OptLoadHeaderSet]
+  [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            slots
+            index
+            (optimize-block-hs hs (compiler-ir-block-seq-ref blocks index)))
+          (set! index (+ index 1))))
+      (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
+
+(define (optimize-block-seq-hs-dense
+  [hs : OptLoadHeaderSet]
+  [frame : i64]
+  [blocks : CompilerIrBlockSeq]) : CompilerIrBlockList
+  (let
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [slots : (Array CompilerIrBlock) (array.make-array CompilerIrBlock count)]
+    [work : OptLoadKindsDenseWork (opt-load-kinds-dense-work-with-size frame)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [generation : i64 (+ (* index 2) 1)]
+          (begin
+            (array-set!
+              slots
+              index
+              (optimize-block-hs-with-kinds
+                hs
+                (opt-load-kinds-dense-state
+                  work
+                  generation
+                  opt-load-cse-kinds-cap-floor)
+                (opt-load-kinds-dense-state
+                  work
+                  (+ generation 1)
+                  opt-load-cse-kinds-cap-floor)
+                (compiler-ir-block-seq-ref blocks index)))
+            (set! index (+ index 1)))))
+      (CompilerIrBlockList.Array (CompilerIrBlockSeq slots count)))))
 
 (define (optimize-block-list-hs
   [hs : OptLoadHeaderSet]
@@ -23708,17 +24248,21 @@
       (compiler-ir-block-cons
         (optimize-block-hs hs block)
         (optimize-block-list-hs hs (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (optimize-block-list-hs hs (compiler-ir-block-seq-to-list seq))]))
+    [(CompilerIrBlockList.Array seq) (optimize-block-seq-hs hs seq)]))
 
 ;; GAP4: the header-typed handle set feeds gep classification; build it from
 ;; the whole function so the block-local pass sees params and cross-block defs.
 (define (optimize-block-list-for-function
+  [frame : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (optimize-block-list-hs
-    (opt-load-header-set-from-function params blocks)
-    blocks))
+  (let
+    [hs : OptLoadHeaderSet
+      (opt-load-header-set-from-function-with-size params blocks frame)]
+    (match blocks
+      [(CompilerIrBlockList.Array seq)
+        (optimize-block-seq-hs-dense hs frame seq)]
+      [_ (optimize-block-list-hs hs blocks)])))
 
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs (opt-load-header-set-empty) blocks))
@@ -26606,7 +27150,7 @@
               unit)]
           [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
           [folded : CompilerIrBlockList
-            (optimize-block-list-for-function params blocks)]
+            (optimize-block-list-for-function frame params blocks)]
           [_p-fold : unit
             (cfg
               compile-profile
@@ -27119,15 +27663,18 @@
 ;; Level 2 keeps the self-build path lightweight while preserving the explicit
 ;; optimized-level checks for local scalar cleanup, bounds checks, stack
 ;; promotion, CFG cleanup, DCE, and program-level reachability pruning.
+(defenum OptLevel1PreDceResult
+  (Result CompilerIrFunction (Array i64)))
+
 (define (optimize-function-once-level2-pre-dce-with-summaries
   [func : CompilerIrFunction]
-  [summaries : OptLoopBceSummaries]) : CompilerIrFunction
+  [summaries : OptLoopBceSummaries]) : OptLevel1PreDceResult
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [_t-fold : i64 (cfg compile-profile (profile.now-ms) 0)]
         [folded : CompilerIrBlockList
-          (optimize-block-list-for-function params blocks)]
+          (optimize-block-list-for-function frame params blocks)]
         [_p-fold : unit
           (cfg
             compile-profile
@@ -27150,36 +27697,40 @@
           [(CompilerIrFunction.Function _ _ _ promoted-frame promoted-blocks)
             (let
               [_t-cfg : i64 (cfg compile-profile (profile.now-ms) 0)]
+              [used : (Array i64) (opt-used-array-new promoted-frame)]
               [cfg : CompilerIrBlockList
-                (opt-cfg-simplify-blocks promoted-blocks)]
+                (opt-cfg-simplify-blocks-in-place promoted-blocks used)]
               [_p-cfg : unit
                 (cfg
                   compile-profile
                   (compiler-opt-profile-pass-finish "cfg" name _t-cfg)
                   unit)]
-              (CompilerIrFunction.Function
-                name
-                params
-                ret-ty
-                promoted-frame
-                cfg))]))]))
+              (OptLevel1PreDceResult.Result
+                (CompilerIrFunction.Function
+                  name
+                  params
+                  ret-ty
+                  promoted-frame
+                  cfg)
+                used))]))]))
 
 (define (optimize-function-once-level2-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : CompilerIrFunction
   (match (optimize-function-once-level2-pre-dce-with-summaries func summaries)
-    [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (let
-        [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [used : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
-        [dced : CompilerIrBlockList
-          (opt-dce-block-list-array-in-place used blocks)]
-        [_p-dce : unit
-          (cfg
-            compile-profile
-            (compiler-opt-profile-pass-finish "dce" name _t-dce)
-            unit)]
-        (CompilerIrFunction.Function name params ret-ty frame dced))]))
+    [(OptLevel1PreDceResult.Result pre-dce used)
+      (match pre-dce
+        [(CompilerIrFunction.Function name params ret-ty frame blocks)
+          (let
+            [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
+            [dced : CompilerIrBlockList
+              (opt-dce-block-list-array-in-place used blocks)]
+            [_p-dce : unit
+              (cfg
+                compile-profile
+                (compiler-opt-profile-pass-finish "dce" name _t-dce)
+                unit)]
+            (CompilerIrFunction.Function name params ret-ty frame dced))])]))
 
 (define (optimize-function-once-level2 [func : CompilerIrFunction]) : CompilerIrFunction
   (optimize-function-once-level2-with-summaries
@@ -27325,55 +27876,57 @@
       (let
         [mark : i64 (arena.tl_region_mark)]
         [_t-body : i64 (cfg compile-profile (profile.now-ms) 0)]
-        [pre-dce : CompilerIrFunction
+        [pre-dce-result : OptLevel1PreDceResult
           (optimize-function-once-level2-pre-dce-with-summaries func summaries)]
         [_profile-body : unit
           (cfg
             compile-profile
             (compiler-opt-profile-escape-finish "body" 1 _profile-name _t-body))]
-        (match pre-dce
-          [(CompilerIrFunction.Function name params ret-ty frame blocks)
-            (let
-              [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
-              [used : (Array i64) (opt-collect-blocks-uses-array frame blocks)]
-              [scratch-head : i64 (arena.tl_arena_current)]
-              (begin
-                (unsafe
-                  (arena.tl_arena_set enclosing))
+        (match pre-dce-result
+          [(OptLevel1PreDceResult.Result pre-dce used)
+            (match pre-dce
+              [(CompilerIrFunction.Function name params ret-ty frame blocks)
                 (let
-                  [escaped-blocks : CompilerIrBlockList
-                    (opt-dce-block-list-array-escape used blocks)]
-                  [escaped : CompilerIrFunction
-                    (CompilerIrFunction.Function
-                      (clone name)
-                      (compiler-ir-clone-param-list params)
-                      (compiler-ir-clone-type ret-ty)
-                      frame
-                      escaped-blocks)]
-                  [_profile-dce : unit
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-escape-finish
-                        "dce_escape"
-                        1
-                        _profile-name
-                        _t-dce))]
-                  [new-enclosing : i64 (arena.tl_arena_current)]
-                  [_t-restore : i64 (cfg compile-profile (profile.now-ms) 0)]
-                  [_restore : unit
+                  [_t-dce : i64 (cfg compile-profile (profile.now-ms) 0)]
+                  [scratch-head : i64 (arena.tl_arena_current)]
+                  (begin
                     (unsafe
-                      (arena.tl_arena_set scratch-head)
-                      (arena.tl_region_reset mark)
-                      (arena.tl_arena_set new-enclosing))]
-                  [_profile-restore : unit
-                    (cfg
-                      compile-profile
-                      (compiler-opt-profile-escape-finish
-                        "restore"
-                        1
-                        _profile-name
-                        _t-restore))]
-                  escaped)))])))))
+                      (arena.tl_arena_set enclosing))
+                    (let
+                      [escaped-blocks : CompilerIrBlockList
+                        (opt-dce-block-list-array-escape used blocks)]
+                      [escaped : CompilerIrFunction
+                        (CompilerIrFunction.Function
+                          (clone name)
+                          (compiler-ir-clone-param-list params)
+                          (compiler-ir-clone-type ret-ty)
+                          frame
+                          escaped-blocks)]
+                      [_profile-dce : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-escape-finish
+                            "dce_escape"
+                            1
+                            _profile-name
+                            _t-dce))]
+                      [new-enclosing : i64 (arena.tl_arena_current)]
+                      [_t-restore : i64
+                        (cfg compile-profile (profile.now-ms) 0)]
+                      [_restore : unit
+                        (unsafe
+                          (arena.tl_arena_set scratch-head)
+                          (arena.tl_region_reset mark)
+                          (arena.tl_arena_set new-enclosing))]
+                      [_profile-restore : unit
+                        (cfg
+                          compile-profile
+                          (compiler-opt-profile-escape-finish
+                            "restore"
+                            1
+                            _profile-name
+                            _t-restore))]
+                      escaped)))])])))))
 
 (define (optimize-function-list-level1-escaping-with-summaries
   [funcs : CompilerIrFunctionList]
@@ -27565,7 +28118,8 @@
 
 (defstruct OptFunctionIndex
   (ids opt_string_i64_map.Map)
-  (values (Array CompilerIrFunction)))
+  (values (Array CompilerIrFunction))
+  (leaf-starts (Array i64)))
 
 (defstruct OptCallGraph
   (count i64)
@@ -27628,6 +28182,7 @@
   [functions : CompilerIrFunctionList]
   [ids : opt_string_i64_map.Map]
   [values : (Array CompilerIrFunction)]
+  [leaf-starts : (Array i64)]
   [index : i64]) : opt_string_i64_map.Map
   (match functions
     [(CompilerIrFunctionList.Nil) ids]
@@ -27636,13 +28191,20 @@
         [(CompilerIrFunction.Function name _ _ _ _)
           (begin
             (array-set! values index func)
+            (array-set! leaf-starts index (opt-symbol-leaf-start name))
             (opt_string_i64_map.insert-ref! (&mut ids) name index)
-            (opt-function-index-fill (box-get rest) ids values (+ index 1)))])]
+            (opt-function-index-fill
+              (box-get rest)
+              ids
+              values
+              leaf-starts
+              (+ index 1)))])]
     [(CompilerIrFunctionList.Array seq)
       (opt-function-index-fill
         (compiler-ir-function-seq-to-list seq)
         ids
         values
+        leaf-starts
         index)]))
 
 (define (opt-function-index-build [functions : CompilerIrFunctionList]) : OptFunctionIndex
@@ -27650,13 +28212,15 @@
     [count : i64 (opt-function-list-count functions)]
     [values : (Array CompilerIrFunction)
       (array.make-array CompilerIrFunction count)]
+    [leaf-starts : (Array i64) (array.make-array i64 count)]
     [ids : opt_string_i64_map.Map
       (opt-function-index-fill
         functions
         (opt_string_i64_map.with-capacity (opt-function-index-capacity count))
         values
+        leaf-starts
         0)]
-    (OptFunctionIndex ids values)))
+    (OptFunctionIndex ids values leaf-starts)))
 
 (define (opt-function-index-defines? [index : OptFunctionIndex] [name : String]) : bool
   (opt_string_i64_map.contains? (& (struct-get index ids)) name))
@@ -31909,7 +32473,10 @@
       [(CompilerIrFunction.Function name _ _ _ _)
         (opt-reach-add-function-leaf-from
           index
-          (if (opt-symbol-leaf-matches? name leaf)
+          (if (opt-symbol-leaf-matches-from?
+            name
+            (array-ref (struct-get index leaf-starts) slot)
+            leaf)
             (opt-reach-add-function index state name)
             state)
           leaf
@@ -31941,17 +32508,19 @@
       (not (= (string.string-ref source-name (+ start 2)) '_')))
       ""
       (cond
-        [(opt-symbol-leaf-matches? source-name "tl_int_to_string")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_int_to_string")
           "int-to-string"]
-        [(opt-symbol-leaf-matches? source-name "tl_substring") "substring"]
-        [(opt-symbol-leaf-matches? source-name "tl_str_view") "str-view"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_substring")
+          "substring"]
+        [(opt-symbol-leaf-matches-from? source-name start "tl_str_view")
+          "str-view"]
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat")
           "string-concat"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat3")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat3")
           "string-concat3"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat4")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat4")
           "string-concat4"]
-        [(opt-symbol-leaf-matches? source-name "tl_string_concat5")
+        [(opt-symbol-leaf-matches-from? source-name start "tl_string_concat5")
           "string-concat5"]
         [else ""]))))
 
@@ -32451,9 +33020,9 @@
 ;; Return the byte offset just past the last '/' or ':' separator in `name`
 ;; (0 when there is none). Scanning backward from the end stops at the final
 ;; separator instead of walking the whole string, and reading the raw String
-;; bytes skips the per-char bounds check of `string.string-ref`. This runs once
-;; per call target in the reachability pass, so it is one of the optimizer's
-;; hottest predicates in the self-compile.
+;; bytes skips the per-char bounds check of `string.string-ref`. Function names
+;; are classified once when the reachability index is built; standalone call
+;; targets classify once before all of their fixed helper-name checks.
 (define (opt-symbol-leaf-start [name : String]) : i64
   (let
     [n : i64 (string.string-length name)]
@@ -32481,13 +33050,15 @@
             (set! i (- i 1)))))
       start)))
 
-;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf).
-;; The reachability pass tests every call target's leaf against a handful of
-;; fixed runtime helper names; materializing the leaf substring allocated on
-;; every call site in the program.
-(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
+;; Compare a leaf using a start already classified by the function index or by
+;; the caller. The reachability pass checks the same indexed names for several
+;; runtime helpers, so rescanning each name for its last separator dominated the
+;; actual byte comparison.
+(define (opt-symbol-leaf-matches-from?
+  [name : String]
+  [start : i64]
+  [leaf : String]) : bool
   (let
-    [start : i64 (opt-symbol-leaf-start name)]
     [n : i64 (string.string-length name)]
     [leaf-len : i64 (string.string-length leaf)]
     (if (not (= (- n start) leaf-len))
@@ -32513,6 +33084,11 @@
               (set! i (+ i 1))
               (set! ok false)))
           ok)))))
+
+;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf) for
+;; standalone callers that do not already have a classified start.
+(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
+  (opt-symbol-leaf-matches-from? name (opt-symbol-leaf-start name) leaf))
 
 (define (opt-symbol-leaf [name : String]) : String
   (let
@@ -50604,17 +51180,32 @@
 ;; Function-constant header-typed var set: var -> 1 (array/string handle at
 ;; every typed def) or 2 (poisoned: any non-handle or untyped def).
 (defenum OptLoadHeaderSet
-  (OptLoadHeaderSet opt_i64_i64_map.Map))
+  (Sparse opt_i64_i64_map.Map)
+  (Dense (Array i64)))
 
 (define (opt-load-header-set-empty) : OptLoadHeaderSet
-  (OptLoadHeaderSet (opt_i64_i64_map.with-capacity 17)))
+  (OptLoadHeaderSet.Sparse (opt_i64_i64_map.with-capacity 17)))
+
+(define (opt-load-header-set-fill-zero! [items : (Array i64)] [index : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index 0)
+      (opt-load-header-set-fill-zero! items (+ index 1)))))
+
+(define (opt-load-header-set-with-size [count : i64]) : OptLoadHeaderSet
+  (let
+    [items : (Array i64) (array.make-array i64 count)]
+    (begin
+      (opt-load-header-set-fill-zero! items 0)
+      (OptLoadHeaderSet.Dense items))))
 
 (define (opt-load-header-set-mark
   [set : OptLoadHeaderSet]
   [var : i64]
   [header? : bool]) : OptLoadHeaderSet
   (match set
-    [(OptLoadHeaderSet map)
+    [(OptLoadHeaderSet.Sparse map)
       (if header?
         (if (opt_i64_i64_map.contains? (& map) var)
           set
@@ -50622,33 +51213,70 @@
             [out : opt_i64_i64_map.Map map]
             (begin
               (opt_i64_i64_map.insert-ref! (&mut out) var 1)
-              (OptLoadHeaderSet out))))
+              (OptLoadHeaderSet.Sparse out))))
         (let
           [out : opt_i64_i64_map.Map map]
           (begin
             (opt_i64_i64_map.insert-ref! (&mut out) var 2)
-            (OptLoadHeaderSet out))))]))
+            (OptLoadHeaderSet.Sparse out))))]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        set
+        (begin
+          (if header?
+            (if (= (array-ref items var) 0)
+              (array-set! items var 1)
+              unit)
+            (array-set! items var 2))
+          set))]))
 
 (define (opt-load-header-var? [set : OptLoadHeaderSet] [var : i64]) : bool
   (match set
-    [(OptLoadHeaderSet map)
+    [(OptLoadHeaderSet.Sparse map)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (= value 1)]
-        [(opt_i64_i64_map.LookupMissing) false])]))
+        [(opt_i64_i64_map.LookupMissing) false])]
+    [(OptLoadHeaderSet.Dense items)
+      (if (or (< var 0) (>= var (array-length items)))
+        false
+        (= (array-ref items var) 1))]))
+
+(define (opt-load-header-set-add-param
+  [param : CompilerIrParam]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (match param
+    [(CompilerIrParam.Param _ ty var)
+      (opt-load-header-set-mark set var (opt-licm-array-header-type? ty))]))
+
+(define (opt-load-header-set-add-param-seq
+  [params : CompilerIrParamSeq]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-param-seq-count params)]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< index count)
+        (begin
+          (set!
+            work
+            (opt-load-header-set-add-param
+              (compiler-ir-param-seq-ref params index)
+              work))
+          (set! index (+ index 1))))
+      work)))
 
 (define (opt-load-header-set-add-params
   [params : CompilerIrParamList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
-  (match (compiler-ir-param-list-force-cons params)
+  (match params
     [(CompilerIrParamList.Nil) set]
     [(CompilerIrParamList.Array seq)
-      (opt-load-header-set-add-params (compiler-ir-param-seq-to-list seq) set)]
+      (opt-load-header-set-add-param-seq seq set)]
     [(CompilerIrParamList.Cons param rest)
-      (match param
-        [(CompilerIrParam.Param _ ty var)
-          (opt-load-header-set-add-params
-            (box-get rest)
-            (opt-load-header-set-mark set var (opt-licm-array-header-type? ty)))])]))
+      (opt-load-header-set-add-params
+        (box-get rest)
+        (opt-load-header-set-add-param param set))]))
 
 ;; Defs with a declared result type mark it; every OTHER defining instruction
 ;; poisons its dst (its handle-ness is unknown).
@@ -50690,6 +51318,22 @@
         set
         (compiler-ir-instr-seq-ref instrs index)))))
 
+(define (opt-load-header-set-add-block-seq
+  [blocks : CompilerIrBlockSeq]
+  [set : OptLoadHeaderSet]) : OptLoadHeaderSet
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-block-seq-count blocks)]
+    [work : OptLoadHeaderSet set]
+    (begin
+      (while (< index count)
+        (begin
+          (match (compiler-ir-block-seq-ref blocks index)
+            [(CompilerIrBlock.Block _ instrs)
+              (set! work (opt-load-header-set-add-instr-seq-from instrs 0 work))])
+          (set! index (+ index 1))))
+      work)))
+
 (define (opt-load-header-set-add-blocks
   [blocks : CompilerIrBlockList]
   [set : OptLoadHeaderSet]) : OptLoadHeaderSet
@@ -50702,7 +51346,7 @@
             (box-get rest)
             (opt-load-header-set-add-instr-seq-from instrs 0 set))])]
     [(CompilerIrBlockList.Array seq)
-      (opt-load-header-set-add-blocks (compiler-ir-block-seq-to-list seq) set)]))
+      (opt-load-header-set-add-block-seq seq set)]))
 
 (define (opt-load-header-set-from-function
   [params : CompilerIrParamList]
@@ -50710,6 +51354,16 @@
   (opt-load-header-set-add-blocks
     blocks
     (opt-load-header-set-add-params params (opt-load-header-set-empty))))
+
+(define (opt-load-header-set-from-function-with-size
+  [params : CompilerIrParamList]
+  [blocks : CompilerIrBlockList]
+  [frame : i64]) : OptLoadHeaderSet
+  (opt-load-header-set-add-blocks
+    blocks
+    (opt-load-header-set-add-params
+      params
+      (opt-load-header-set-with-size frame))))
 
 (define opt-load-cse-table-cap-floor : i64
   128)
@@ -50859,37 +51513,118 @@
       (OptLoadLocUnknown))))
 
 ;; Pointer-kind env: var -> encoded kind, plus a base-var refcount so the
-;; common no-references case of a base redefinition skips the sweep. Mutable
-;; hashmaps threaded linearly (the opt-alias-facts pattern): block entries in
-;; the cross-block pass clone before processing.
+;; common no-references case of a base redefinition skips the sweep. Cross-block
+;; GVN uses cloneable sparse maps. The block-local pipeline uses one frame-sized
+;; dense workspace per function; generation stamps reset it between blocks in
+;; O(1), while an active-var vector keeps the rare base-invalidation sweep
+;; proportional to live facts rather than frame size.
+(defstruct OptLoadKindsDenseWork
+  (kinds (Array i64))
+  (kind-stamps (Array i64))
+  (positions (Array i64))
+  (refs (Array i64))
+  (ref-stamps (Array i64))
+  (active (Array i64)))
+
 (defenum OptLoadPtrKinds
-  (OptLoadPtrKinds opt_i64_i64_map.Map opt_i64_i64_map.Map i64))
+  (Sparse opt_i64_i64_map.Map opt_i64_i64_map.Map i64)
+  (Dense OptLoadKindsDenseWork i64 i64 i64))
+
+(define (opt-load-kinds-fill-zero! [items : (Array i64)] [index : i64]) : unit
+  (if (>= index (array-length items))
+    unit
+    (begin
+      (array-set! items index 0)
+      (opt-load-kinds-fill-zero! items (+ index 1)))))
+
+(define (opt-load-kinds-dense-work-with-size [count : i64]) : OptLoadKindsDenseWork
+  (let
+    [kind-stamps : (Array i64) (array.make-array i64 count)]
+    [ref-stamps : (Array i64) (array.make-array i64 count)]
+    (begin
+      (opt-load-kinds-fill-zero! kind-stamps 0)
+      (opt-load-kinds-fill-zero! ref-stamps 0)
+      (OptLoadKindsDenseWork
+        (array.make-array i64 count)
+        kind-stamps
+        (array.make-array i64 count)
+        (array.make-array i64 count)
+        ref-stamps
+        (array.make-array i64 count)))))
+
+(define (opt-load-kinds-dense-state
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [cap : i64]) : OptLoadPtrKinds
+  (OptLoadPtrKinds.Dense work generation 0 cap))
+
+(define (opt-load-kinds-set-cap [kinds : OptLoadPtrKinds] [cap : i64]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Sparse map refs _) (OptLoadPtrKinds.Sparse map refs cap)]
+    [(OptLoadPtrKinds.Dense work generation len _)
+      (OptLoadPtrKinds.Dense work generation len cap)]))
 
 (define (opt-load-kinds-empty-with-cap [cap : i64]) : OptLoadPtrKinds
   (begin
     (cfg compile-profile (compiler-opt-load-cse-profile-note-kinds-cap cap))
-    (OptLoadPtrKinds
+    (OptLoadPtrKinds.Sparse
       (opt_i64_i64_map.with-capacity 17)
       (opt_i64_i64_map.with-capacity 17)
       cap)))
 
 (define (opt-load-kinds-empty) : OptLoadPtrKinds
-  (OptLoadPtrKinds
+  (OptLoadPtrKinds.Sparse
     (opt_i64_i64_map.with-capacity 17)
     (opt_i64_i64_map.with-capacity 17)
     opt-load-cse-kinds-cap-floor))
 
 (define (opt-load-kinds-lookup [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadLocKind
   (match kinds
-    [(OptLoadPtrKinds map _ _)
+    [(OptLoadPtrKinds.Sparse map _ _)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound value) (opt-load-loc-kind-decode value)]
-        [(opt_i64_i64_map.LookupMissing) (OptLoadLocUnknown)])]))
+        [(opt_i64_i64_map.LookupMissing) (OptLoadLocUnknown)])]
+    [(OptLoadPtrKinds.Dense work generation _ _)
+      (if (or
+        (< var 0)
+        (>= var (array-length (struct-get work kinds)))
+        (not (= (array-ref (struct-get work kind-stamps) var) generation)))
+        (OptLoadLocUnknown)
+        (opt-load-loc-kind-decode (array-ref (struct-get work kinds) var)))]))
 
 (define (opt-load-kinds-ref-count [refs : opt_i64_i64_map.Map] [base : i64]) : i64
   (match (opt_i64_i64_map.get (& refs) base)
     [(opt_i64_i64_map.LookupFound value) value]
     [(opt_i64_i64_map.LookupMissing) 0]))
+
+(define (opt-load-kinds-dense-ref-count
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [base : i64]) : i64
+  (if (or
+    (< base 0)
+    (>= base (array-length (struct-get work refs)))
+    (not (= (array-ref (struct-get work ref-stamps) base) generation)))
+    0
+    (array-ref (struct-get work refs) base)))
+
+(define (opt-load-kinds-dense-ref-add!
+  [work : OptLoadKindsDenseWork]
+  [generation : i64]
+  [base : i64]
+  [delta : i64]) : unit
+  (if (or (< base 0) (>= base (array-length (struct-get work refs))))
+    unit
+    (let
+      [stamps : (Array i64) (struct-get work ref-stamps)]
+      [refs : (Array i64) (struct-get work refs)]
+      [old : i64
+        (if (= (array-ref stamps base) generation)
+          (array-ref refs base)
+          0)]
+      (begin
+        (array-set! stamps base generation)
+        (array-set! refs base (+ old delta))))))
 
 (define (opt-load-kinds-ref-add
   [refs : opt_i64_i64_map.Map]
@@ -50905,7 +51640,7 @@
 ;; Remove a var's binding (refcount-adjusting). Absent vars return unchanged.
 (define (opt-load-kinds-remove [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (match kinds
-    [(OptLoadPtrKinds map refs cap)
+    [(OptLoadPtrKinds.Sparse map refs cap)
       (match (opt_i64_i64_map.get (& map) var)
         [(opt_i64_i64_map.LookupFound old-value)
           (let
@@ -50920,8 +51655,31 @@
                 [(OptLoadLocField base _ _ _)
                   (opt-load-kinds-ref-add refs base (- 0 1))]
                 [_ refs])]
-            (OptLoadPtrKinds map2 refs2 cap))]
-        [(opt_i64_i64_map.LookupMissing) kinds])]))
+            (OptLoadPtrKinds.Sparse map2 refs2 cap))]
+        [(opt_i64_i64_map.LookupMissing) kinds])]
+    [(OptLoadPtrKinds.Dense work generation len cap)
+      (if (or
+        (< var 0)
+        (>= var (array-length (struct-get work kinds)))
+        (not (= (array-ref (struct-get work kind-stamps) var) generation)))
+        kinds
+        (let
+          [old-value : i64 (array-ref (struct-get work kinds) var)]
+          [pos : i64 (array-ref (struct-get work positions) var)]
+          [last-pos : i64 (- len 1)]
+          [last-var : i64 (array-ref (struct-get work active) last-pos)]
+          (begin
+            (match (opt-load-loc-kind-decode old-value)
+              [(OptLoadLocField base _ _ _)
+                (opt-load-kinds-dense-ref-add! work generation base (- 0 1))]
+              [_ unit])
+            (if (not (= pos last-pos))
+              (begin
+                (array-set! (struct-get work active) pos last-var)
+                (array-set! (struct-get work positions) last-var pos))
+              unit)
+            (array-set! (struct-get work kind-stamps) var 0)
+            (OptLoadPtrKinds.Dense work generation last-pos cap))))]))
 
 ;; Bind var -> kind. Unknown removes; the env is size-capped (conservative:
 ;; new pointers just stay unclassified once the cap is hit).
@@ -50935,7 +51693,7 @@
       (let
         [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
         (match removed
-          [(OptLoadPtrKinds map refs cap)
+          [(OptLoadPtrKinds.Sparse map refs cap)
             (let
               [current-len : i64 (opt_i64_i64_map.len (& map))]
               (begin
@@ -50962,7 +51720,7 @@
                         compile-profile
                         (compiler-opt-load-cse-profile-note-kinds-size
                           (+ current-len 1)))
-                      (OptLoadPtrKinds
+                      (OptLoadPtrKinds.Sparse
                         (let
                           [out : opt_i64_i64_map.Map map]
                           (begin
@@ -50972,16 +51730,68 @@
                               (opt-load-loc-kind-encode kind))
                             out))
                         refs2
-                        cap))))))]))]))
+                        cap))))))]
+          [(OptLoadPtrKinds.Dense work generation len cap)
+            (if (or
+              (< var 0)
+              (>= var (array-length (struct-get work kinds)))
+              (>= len cap)
+              (>= len (array-length (struct-get work active))))
+              (begin
+                (if (or
+                  (< var 0)
+                  (>= var (array-length (struct-get work kinds))))
+                  unit
+                  (cfg
+                    compile-profile
+                    (compiler-opt-load-cse-profile-note-kinds-cap-hit)))
+                removed)
+              (begin
+                (match kind
+                  [(OptLoadLocField base _ _ _)
+                    (opt-load-kinds-dense-ref-add! work generation base 1)]
+                  [_ unit])
+                (array-set! (struct-get work active) len var)
+                (array-set! (struct-get work positions) var len)
+                (array-set!
+                  (struct-get work kinds)
+                  var
+                  (opt-load-loc-kind-encode kind))
+                (array-set! (struct-get work kind-stamps) var generation)
+                (cfg
+                  compile-profile
+                  (compiler-opt-load-cse-profile-note-kinds-size (+ len 1)))
+                (OptLoadPtrKinds.Dense work generation (+ len 1) cap)))]))]))
 
 ;; Redefinition of `var`: drop its own binding, and (only when some Field kind
 ;; references it as a base -- refcount-gated) sweep out every binding whose
 ;; base is `var`, because base-var identity must mean base-VALUE identity.
+(define (opt-load-kinds-dense-drop-base-from
+  [kinds : OptLoadPtrKinds]
+  [base : i64]
+  [index : i64]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Dense work _ len _)
+      (if (>= index len)
+        kinds
+        (let
+          [bound-var : i64 (array-ref (struct-get work active) index)]
+          (match (opt-load-kinds-lookup kinds bound-var)
+            [(OptLoadLocField found-base _ _ _)
+              (if (= found-base base)
+                (opt-load-kinds-dense-drop-base-from
+                  (opt-load-kinds-remove kinds bound-var)
+                  base
+                  index)
+                (opt-load-kinds-dense-drop-base-from kinds base (+ index 1)))]
+            [_ (opt-load-kinds-dense-drop-base-from kinds base (+ index 1))])))]
+    [_ kinds]))
+
 (define (opt-load-kinds-invalidate-def [kinds : OptLoadPtrKinds] [var : i64]) : OptLoadPtrKinds
   (let
     [removed : OptLoadPtrKinds (opt-load-kinds-remove kinds var)]
     (match removed
-      [(OptLoadPtrKinds map refs cap)
+      [(OptLoadPtrKinds.Sparse map refs cap)
         (if (<= (opt-load-kinds-ref-count refs var) 0)
           removed
           (let
@@ -51014,11 +51824,31 @@
                               [_ unit]))))]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
-              (OptLoadPtrKinds out out-refs cap))))])))
+              (OptLoadPtrKinds.Sparse out out-refs cap))))]
+      [(OptLoadPtrKinds.Dense work generation _ _)
+        (if (<= (opt-load-kinds-dense-ref-count work generation var) 0)
+          removed
+          (opt-load-kinds-dense-drop-base-from removed var 0))])))
+
+(define (opt-load-kinds-dense-clone-from
+  [kinds : OptLoadPtrKinds]
+  [index : i64]
+  [out : OptLoadPtrKinds]) : OptLoadPtrKinds
+  (match kinds
+    [(OptLoadPtrKinds.Dense work _ len _)
+      (if (>= index len)
+        out
+        (let
+          [var : i64 (array-ref (struct-get work active) index)]
+          (opt-load-kinds-dense-clone-from
+            kinds
+            (+ index 1)
+            (opt-load-kinds-bind out var (opt-load-kinds-lookup kinds var)))))]
+    [_ out]))
 
 (define (opt-load-kinds-clone [kinds : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match kinds
-    [(OptLoadPtrKinds map refs cap)
+    [(OptLoadPtrKinds.Sparse map refs cap)
       (let
         [out : opt_i64_i64_map.Map
           (opt_i64_i64_map.with-capacity
@@ -51039,14 +51869,19 @@
                       [_ unit]))]
                 [(opt_i64_i64_map.EntryNone) unit])
               (set! i (opt_i64_i64_map.next-occupied (& map) (+ i 1)))))
-          (OptLoadPtrKinds out out-refs cap)))]))
+          (OptLoadPtrKinds.Sparse out out-refs cap)))]
+    [(OptLoadPtrKinds.Dense _ _ _ cap)
+      (opt-load-kinds-dense-clone-from
+        kinds
+        0
+        (opt-load-kinds-empty-with-cap cap))]))
 
 ;; Control-flow join: keep only bindings identical on both edges.
 (define (opt-load-kinds-intersect [a : OptLoadPtrKinds] [b : OptLoadPtrKinds]) : OptLoadPtrKinds
   (match a
-    [(OptLoadPtrKinds amap _ acap)
+    [(OptLoadPtrKinds.Sparse amap _ acap)
       (match b
-        [(OptLoadPtrKinds bmap _ _)
+        [(OptLoadPtrKinds.Sparse bmap _ _)
           (let
             [out : OptLoadPtrKinds (opt-load-kinds-empty-with-cap acap)]
             [capacity : i64 (opt_i64_i64_map.capacity (& amap))]
@@ -51069,7 +51904,11 @@
                         [(opt_i64_i64_map.LookupMissing) unit])]
                     [(opt_i64_i64_map.EntryNone) unit])
                   (set! i (opt_i64_i64_map.next-occupied (& amap) (+ i 1)))))
-              out))])]))
+              out))]
+        [(OptLoadPtrKinds.Dense _ _ _ _)
+          (opt-load-kinds-intersect a (opt-load-kinds-clone b))])]
+    [(OptLoadPtrKinds.Dense _ _ _ _)
+      (opt-load-kinds-intersect (opt-load-kinds-clone a) b)]))
 
 ;; Kind transfer for one instruction: redefinitions first (own binding + the
 ;; base-reference sweep), then the deriving arms.
@@ -51514,20 +52353,20 @@
 (defenum OptDeadStoreEntry
   (Entry i64 OptLoadStoreClass))
 
-(defenum OptDeadStoreSet
-  (Nil)
-  (Cons OptDeadStoreEntry (Box OptDeadStoreSet)))
+(defstruct OptDeadStoreSet
+  (slots (Array OptDeadStoreEntry))
+  (len i64))
+
+(define (opt-dead-store-set-with-capacity [capacity : i64]) : OptDeadStoreSet
+  (OptDeadStoreSet (array.make-array OptDeadStoreEntry capacity) 0))
+
+(define (opt-dead-store-set-clear [pending : OptDeadStoreSet]) : OptDeadStoreSet
+  (OptDeadStoreSet (struct-get pending slots) 0))
 
 (define (opt-dead-store-trackable? [class : OptLoadStoreClass]) : bool
   (match class
     [(OptLoadStoreField _ _ _ _) true]
     [_ false]))
-
-(define (opt-dead-store-set-len [pending : OptDeadStoreSet]) : i64
-  (match pending
-    [(OptDeadStoreSet.Nil) 0]
-    [(OptDeadStoreSet.Cons _ rest)
-      (+ 1 (opt-dead-store-set-len (box-get rest)))]))
 
 (define (opt-dead-store-classes-exact?
   [a : OptLoadStoreClass]
@@ -51572,21 +52411,29 @@
   [pending : OptDeadStoreSet]
   [dead : (Array i64)]
   [class : OptLoadStoreClass]) : OptDeadStoreSet
-  (match pending
-    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
-    [(OptDeadStoreSet.Cons entry rest)
-      (let
-        [tail : OptDeadStoreSet
-          (opt-dead-store-filter-store (box-get rest) dead class)]
-        (match entry
-          [(OptDeadStoreEntry.Entry old-index old-class)
-            (if (opt-dead-store-classes-exact? old-class class)
-              (begin
-                (array-set! dead old-index 1)
-                tail)
-              (if (opt-dead-store-classes-disjoint? class old-class)
-                (OptDeadStoreSet.Cons entry (box tail))
-                tail))]))]))
+  (let
+    [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+    [count : i64 (struct-get pending len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptDeadStoreEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptDeadStoreEntry.Entry old-index old-class)
+                (if (opt-dead-store-classes-exact? old-class class)
+                  (array-set! dead old-index 1)
+                  (if (opt-dead-store-classes-disjoint? class old-class)
+                    (begin
+                      (if (not (= write read))
+                        (array-set! slots write entry)
+                        unit)
+                      (set! write (+ write 1)))
+                    unit))])
+            (set! read (+ read 1)))))
+      (OptDeadStoreSet slots write))))
 
 (define (opt-dead-store-add-current
   [pending : OptDeadStoreSet]
@@ -51594,24 +52441,39 @@
   [class : OptLoadStoreClass]) : OptDeadStoreSet
   (if (and
     (opt-dead-store-trackable? class)
-    (< (opt-dead-store-set-len pending) 128))
-    (OptDeadStoreSet.Cons (OptDeadStoreEntry.Entry index class) (box pending))
+    (< (struct-get pending len) (array-length (struct-get pending slots))))
+    (let
+      [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+      [len : i64 (struct-get pending len)]
+      (begin
+        (array-set! slots len (OptDeadStoreEntry.Entry index class))
+        (OptDeadStoreSet slots (+ len 1))))
     pending))
 
 (define (opt-dead-store-filter-access
   [pending : OptDeadStoreSet]
   [class : OptLoadStoreClass]) : OptDeadStoreSet
-  (match pending
-    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
-    [(OptDeadStoreSet.Cons entry rest)
-      (let
-        [tail : OptDeadStoreSet
-          (opt-dead-store-filter-access (box-get rest) class)]
-        (match entry
-          [(OptDeadStoreEntry.Entry _ old-class)
-            (if (opt-dead-store-classes-disjoint? class old-class)
-              (OptDeadStoreSet.Cons entry (box tail))
-              tail)]))]))
+  (let
+    [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+    [count : i64 (struct-get pending len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptDeadStoreEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptDeadStoreEntry.Entry _ old-class)
+                (if (opt-dead-store-classes-disjoint? class old-class)
+                  (begin
+                    (if (not (= write read))
+                      (array-set! slots write entry)
+                      unit)
+                    (set! write (+ write 1)))
+                  unit)])
+            (set! read (+ read 1)))))
+      (OptDeadStoreSet slots write))))
 
 (define (opt-dead-store-class-uses-var? [class : OptLoadStoreClass] [var : i64]) : bool
   (match class
@@ -51619,16 +52481,27 @@
     [_ false]))
 
 (define (opt-dead-store-filter-def [pending : OptDeadStoreSet] [var : i64]) : OptDeadStoreSet
-  (match pending
-    [(OptDeadStoreSet.Nil) (OptDeadStoreSet.Nil)]
-    [(OptDeadStoreSet.Cons entry rest)
-      (let
-        [tail : OptDeadStoreSet (opt-dead-store-filter-def (box-get rest) var)]
-        (match entry
-          [(OptDeadStoreEntry.Entry _ class)
-            (if (opt-dead-store-class-uses-var? class var)
-              tail
-              (OptDeadStoreSet.Cons entry (box tail)))]))]))
+  (let
+    [slots : (Array OptDeadStoreEntry) (struct-get pending slots)]
+    [count : i64 (struct-get pending len)]
+    [read : i64 0]
+    [write : i64 0]
+    (begin
+      (while (< read count)
+        (let
+          [entry : OptDeadStoreEntry (array-ref slots read)]
+          (begin
+            (match entry
+              [(OptDeadStoreEntry.Entry _ class)
+                (if (opt-dead-store-class-uses-var? class var)
+                  unit
+                  (begin
+                    (if (not (= write read))
+                      (array-set! slots write entry)
+                      unit)
+                    (set! write (+ write 1))))])
+            (set! read (+ read 1)))))
+      (OptDeadStoreSet slots write))))
 
 (define (opt-dead-store-other-keeps-pending? [instr : CompilerIrInstr]) : bool
   (match instr
@@ -51661,70 +52534,64 @@
           (opt-dead-store-filter-access
             pending
             (opt-load-classify-store kinds src (opt-load-loc-type-size ty)))]
-        [(CompilerIrInstr.CopyBytes _ _ _) (OptDeadStoreSet.Nil)]
+        [(CompilerIrInstr.CopyBytes _ _ _) (opt-dead-store-set-clear pending)]
         [_
           (if (opt-dead-store-other-keeps-pending? instr)
             pending
-            (OptDeadStoreSet.Nil))])]
+            (opt-dead-store-set-clear pending))])]
     (match (opt-instr-def-var instr)
       [(option_i64.Some dst) (opt-dead-store-filter-def after-memory dst)]
       [(option_i64.None) after-memory])))
 
-(define (opt-dead-store-has-dead? [dead : (Array i64)] [count : i64]) : bool
-  (let
-    [index : i64 0]
-    [found : bool false]
-    (begin
-      (while (and (< index count) (not found))
-        (begin
-          (if (= (array-ref dead index) 0)
-            unit
-            (set! found true))
-          (set! index (+ index 1))))
-      found)))
-
-(define (opt-dead-store-build
+(define (opt-dead-store-compact!
   [instrs : CompilerIrInstrSeq]
   [dead : (Array i64)]
-  [count : i64]) : CompilerIrInstrSeq
+  [count : i64]) : unit
   (let
-    [builder : CompilerIrInstrBuilder
-      (compiler-ir-instr-builder-with-capacity count)]
-    [index : i64 0]
+    [read : i64 0]
+    [write : i64 0]
     (begin
-      (while (< index count)
+      (while (< read count)
         (begin
-          (if (= (array-ref dead index) 0)
-            (compiler-ir-instr-builder-push!
-              (&mut builder)
-              (compiler-ir-instr-seq-ref instrs index))
+          (if (= (array-ref dead read) 0)
+            (begin
+              (if (not (= write read))
+                (compiler-ir-instr-seq-set!
+                  instrs
+                  write
+                  (compiler-ir-instr-seq-ref instrs read))
+                unit)
+              (set! write (+ write 1)))
             unit)
-          (set! index (+ index 1))))
-      (compiler-ir-instr-builder-to-seq builder))))
+          (set! read (+ read 1))))
+      (set! (struct-get instrs len) write))))
 
-(define (opt-dead-store-has-two-storeptr? [instrs : CompilerIrInstrSeq]) : bool
+(define (opt-dead-store-storeptr-capacity [instrs : CompilerIrInstrSeq]) : i64
   (let
     [index : i64 0]
     [count : i64 (compiler-ir-instr-seq-count instrs)]
     [stores : i64 0]
     (begin
-      (while (and (< index count) (< stores 2))
+      (while (and (< index count) (< stores 128))
         (begin
           (match (compiler-ir-instr-seq-ref instrs index)
             [(CompilerIrInstr.StorePtr _ _ _) (set! stores (+ stores 1))]
             [_ unit])
           (set! index (+ index 1))))
-      (>= stores 2))))
+      stores)))
 
-(define (opt-dead-store-instr-seq
+(define (opt-dead-store-instr-seq-known-with-kinds
   [hs : OptLoadHeaderSet]
+  [store-capacity : i64]
+  [initial-kinds : OptLoadPtrKinds]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
-  (if (opt-dead-store-has-two-storeptr? instrs)
+  (if (>= store-capacity 2)
     (let
       [count : i64 (compiler-ir-instr-seq-count instrs)]
       [dead : (Array i64) (make-array i64 count)]
-      [pending : OptDeadStoreSet (OptDeadStoreSet.Nil)]
-      [kinds : OptLoadPtrKinds (opt-load-kinds-empty)]
+      [pending : OptDeadStoreSet
+        (opt-dead-store-set-with-capacity store-capacity)]
+      [kinds : OptLoadPtrKinds initial-kinds]
       [index : i64 0]
       (begin
         (while (< index count)
@@ -51736,9 +52603,26 @@
                 (opt-dead-store-step pending kinds dead index instr))
               (set! kinds (opt-load-kinds-step kinds hs instr))
               (set! index (+ index 1)))))
-        (if (opt-dead-store-has-dead? dead count)
-          (opt-dead-store-build instrs dead count)
-          instrs)))
+        (opt-dead-store-compact! instrs dead count)
+        instrs))
+    instrs))
+
+(define (opt-dead-store-instr-seq-known
+  [hs : OptLoadHeaderSet]
+  [store-capacity : i64]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (opt-dead-store-instr-seq-known-with-kinds
+    hs
+    store-capacity
+    (opt-load-kinds-empty)
+    instrs))
+
+(define (opt-dead-store-instr-seq
+  [hs : OptLoadHeaderSet]
+  [instrs : CompilerIrInstrSeq]) : CompilerIrInstrSeq
+  (opt-dead-store-instr-seq-known
+    hs
+    (opt-dead-store-storeptr-capacity instrs)
     instrs))
 
 ;; GVN stability for a key's referenced vars (the cross-block pass only
@@ -52090,6 +52974,23 @@
   (opt-load-cse-empty-state-with-caps
     (opt-load-cse-table-cap-for-size instr-count)
     (opt-load-cse-kinds-cap-for-size instr-count)))
+
+(define (opt-load-cse-empty-state-for-size-with-kinds
+  [instr-count : i64]
+  [kinds : OptLoadPtrKinds]) : OptLoadCseState
+  (let
+    [table-cap : i64 (opt-load-cse-table-cap-for-size instr-count)]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-opt-load-cse-profile-note-table-cap table-cap))
+      (OptLoadCseState.State
+        (opt-alias-empty)
+        (OptLoadTable.Nil)
+        (opt-load-kinds-set-cap
+          kinds
+          (opt-load-cse-kinds-cap-for-size instr-count))
+        table-cap))))
 
 (define (opt-load-cse-empty-state) : OptLoadCseState
   (opt-load-cse-empty-state-with-caps

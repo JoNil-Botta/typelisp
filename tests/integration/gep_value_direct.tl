@@ -4,10 +4,12 @@
 ;; materialization, not a fused load/store) composes its element address in ONE
 ;; leaq off the register-homed base and index -- not through two staging copies.
 ;;
-;; `string.append` (inlined into `cat` at opt2) computes the destination
-;; address `dest_data + a_len` for its second memcpy: a byte-scale (scale-1) GEP
-;; whose result is a VALUE (the memcpy pointer argument), not a load/store, so it
-;; is emitted as a standalone GEP. Before GAP6b the backend staged both operands:
+;; `string.append` computes the destination address `dest_data + a_len` for its
+;; second memcpy: a byte-scale (scale-1) GEP whose result is a VALUE (the memcpy
+;; pointer argument), not a load/store, so it is emitted as a standalone GEP.
+;; The assembly gate checks the emitted append body directly, independent of
+;; whether the inliner chooses to copy it into `cat`. Before GAP6b the backend
+;; staged both operands:
 ;;     movq %rBASE, %rdi
 ;;     movq %rIDX,  %r8
 ;;     addq %r8, %rdi

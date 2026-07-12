@@ -1307,6 +1307,37 @@
             42
             3)]))))
 
+(define (smoke-function-index-leaf-starts-self-test) : i64
+  (let
+    [qualified : String "module/path::tl_substring"]
+    [plain : String "plain"]
+    [index : OptFunctionIndex
+      (opt-function-index-build
+        (compiler-ir-function-cons
+          (opt-test-function-named qualified (CompilerIrInstrList.Nil))
+          (compiler-ir-function-cons
+            (opt-test-function-named plain (CompilerIrInstrList.Nil))
+            (CompilerIrFunctionList.Nil))))]
+    [starts : (Array i64) (struct-get index leaf-starts)]
+    (cond
+      [(not (= (array-length starts) 2)) 1]
+      [(not (= (array-ref starts 0) (opt-symbol-leaf-start qualified))) 2]
+      [(not (= (array-ref starts 1) 0)) 3]
+      [(not
+          (opt-symbol-leaf-matches-from?
+            qualified
+            (array-ref starts 0)
+            "tl_substring"))
+        4]
+      [(opt-symbol-leaf-matches-from?
+          qualified
+          (array-ref starts 0)
+          "substring")
+        5]
+      [(not (opt-symbol-leaf-matches-from? plain (array-ref starts 1) "plain"))
+        6]
+      [else 42])))
+
 (define (main) : i64
   (cond
     [(not (= (compiler-optimize-self-test) 42)) 1]
@@ -1359,6 +1390,7 @@
     [(not (= (compiler-optimize-load-cse-self-test) 44)) 48]
     [(not (= (compiler-optimize-dead-store-self-test) 42)) 49]
     [(not (= (compiler-optimize-scratch-region-self-test) 42)) 50]
+    [(not (= (smoke-function-index-leaf-starts-self-test) 42)) 51]
     [else (compiler-optimize-alias-self-test)]))
 
 (test

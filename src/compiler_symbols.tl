@@ -8,17 +8,26 @@
 (import "compiler_parse_core.tl")
 (import "compiler_diagnostic.tl")
 (import sym_i64_env)
-(import stdlib.hashmap)
 (import stdlib.string)
 (import stdlib.option)
 (import (option i64) as option_i64)
-(import (hashmap i64 i64) as symbol_map)
+
+;; Top-level and registry symbol keys are non-negative intern/composite ids.
+;; Store key+1 so a zero-filled scalar key array is immediately a valid empty
+;; table; -1 is the deletion tombstone. Parallel i64 arrays avoid the general
+;; hashmap's enum-slot initialization pass and keep the lookup hot path to two
+;; scalar loads per occupied probe.
+(defstruct CompilerSymbolMap
+  (keys (Array i64))
+  (values (Array i64))
+  (len i64)
+  (deleted i64))
 
 (defenum CompilerSymbols
   (CompilerSymbols
-    symbol_map.Map
-    symbol_map.Map
-    symbol_map.Map
+    CompilerSymbolMap
+    CompilerSymbolMap
+    CompilerSymbolMap
     (Array AstDecl)
     (Array String)))
 
@@ -45,7 +54,7 @@
   (CompilerQualifiedName i64 i64))
 
 (defenum CompilerRegistries
-  (CompilerRegistries symbol_map.Map symbol_map.Map))
+  (CompilerRegistries CompilerSymbolMap CompilerSymbolMap))
 
 (defenum ResultCompilerRegistries
   (Ok CompilerRegistries)
@@ -207,47 +216,221 @@
     (compiler-symbol-kind-defstruct)
     (compiler-registry-handle-owner-index handle)))
 
-(define (compiler-symbol-map-empty) : symbol_map.Map
-  (symbol_map.with-capacity 256))
+(define (compiler-symbol-map-round-capacity [requested : i64]) : i64
+  (let
+    [capacity : i64 4]
+    (begin
+      (while (< capacity requested)
+        (set! capacity (* capacity 2)))
+      capacity)))
+
+(define (compiler-symbol-map-with-capacity [requested : i64]) : CompilerSymbolMap
+  (let
+    [capacity : i64 (compiler-symbol-map-round-capacity requested)]
+    (CompilerSymbolMap (make-array i64 capacity) (make-array i64 capacity) 0 0)))
+
+(define (compiler-symbol-map-empty) : CompilerSymbolMap
+  (compiler-symbol-map-with-capacity 256))
 
 (define (compiler-symbol-map-missing-handle) : i64
   -1)
 
+(define (compiler-symbol-map-first-slot [key : i64] [capacity : i64]) : i64
+  (bit-and (* key 6364136223846793005) (- capacity 1)))
+
+(define (compiler-symbol-map-lookup-handle-id
+  [map : (& map CompilerSymbolMap)]
+  [key : i64]) : i64
+  (let
+    [keys : (& map (Array i64)) (& (struct-get map keys))]
+    [capacity : i64 (array-length keys)]
+    (if (<= capacity 0)
+      (compiler-symbol-map-missing-handle)
+      (let
+        [encoded : i64 (+ key 1)]
+        [slot : i64 (compiler-symbol-map-first-slot key capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (let
+              [present : i64 (array-ref keys slot)]
+              (cond
+                [(= present 0) (return (compiler-symbol-map-missing-handle))]
+                [(= present encoded)
+                  (return (array-ref (struct-get map values) slot))]
+                [else
+                  (begin
+                    (set! slot (bit-and (+ slot 1) (- capacity 1)))
+                    (set! walked (+ walked 1)))])))
+          (compiler-symbol-map-missing-handle))))))
+
+(define (compiler-symbol-map-store-new!
+  [map : (&mut map CompilerSymbolMap)]
+  [slot : i64]
+  [encoded : i64]
+  [handle : i64]
+  [reused-deleted : bool]) : unit
+  (begin
+    (array-set! (struct-get map keys) slot encoded)
+    (array-set! (struct-get map values) slot handle)
+    (set! (struct-get map len) (+ (struct-get map len) 1))
+    (if reused-deleted
+      (set! (struct-get map deleted) (- (struct-get map deleted) 1))
+      unit)))
+
+(define (compiler-symbol-map-put-no-grow!
+  [map : (&mut map CompilerSymbolMap)]
+  [key : i64]
+  [handle : i64]) : unit
+  (let
+    [capacity : i64 (array-length (struct-get map keys))]
+    [encoded : i64 (+ key 1)]
+    [slot : i64 (compiler-symbol-map-first-slot key capacity)]
+    [first-deleted : i64 -1]
+    [walked : i64 0]
+    (begin
+      (while (< walked capacity)
+        (let
+          [present : i64 (array-ref (struct-get map keys) slot)]
+          (cond
+            [(= present 0)
+              (let
+                [target : i64
+                  (if (>= first-deleted 0)
+                    first-deleted
+                    slot)]
+                (begin
+                  (compiler-symbol-map-store-new!
+                    map
+                    target
+                    encoded
+                    handle
+                    (>= first-deleted 0))
+                  (return unit)))]
+            [(= present -1)
+              (begin
+                (if (< first-deleted 0)
+                  (set! first-deleted slot)
+                  unit)
+                (set! slot (bit-and (+ slot 1) (- capacity 1)))
+                (set! walked (+ walked 1)))]
+            [(= present encoded)
+              (begin
+                (array-set! (struct-get map values) slot handle)
+                (return unit))]
+            [else
+              (begin
+                (set! slot (bit-and (+ slot 1) (- capacity 1)))
+                (set! walked (+ walked 1)))])))
+      (if (>= first-deleted 0)
+        (compiler-symbol-map-store-new! map first-deleted encoded handle true)
+        unit))))
+
+(define (compiler-symbol-map-grow! [map : (&mut map CompilerSymbolMap)]) : unit
+  (let
+    [old-keys : (Array i64) (struct-get map keys)]
+    [old-values : (Array i64) (struct-get map values)]
+    [old-capacity : i64 (array-length old-keys)]
+    [new-capacity : i64
+      (if (> old-capacity 0)
+        (* old-capacity 2)
+        4)]
+    [i : i64 0]
+    (begin
+      (set! (struct-get map keys) (make-array i64 new-capacity))
+      (set! (struct-get map values) (make-array i64 new-capacity))
+      (set! (struct-get map len) 0)
+      (set! (struct-get map deleted) 0)
+      (while (< i old-capacity)
+        (let
+          [encoded : i64 (array-ref old-keys i)]
+          (begin
+            (if (> encoded 0)
+              (compiler-symbol-map-put-no-grow!
+                map
+                (- encoded 1)
+                (array-ref old-values i))
+              unit)
+            (set! i (+ i 1))))))))
+
+(define (compiler-symbol-map-put!
+  [map : (&mut map CompilerSymbolMap)]
+  [key : i64]
+  [handle : i64]) : unit
+  (let
+    [capacity : i64 (array-length (struct-get map keys))]
+    [used : i64 (+ (struct-get map len) (struct-get map deleted))]
+    (begin
+      (if (or (<= capacity 0) (>= (* used 4) (* capacity 3)))
+        (compiler-symbol-map-grow! map)
+        unit)
+      (compiler-symbol-map-put-no-grow! map key handle))))
+
+(define (compiler-symbol-map-remove-id!
+  [map : (&mut map CompilerSymbolMap)]
+  [key : i64]) : bool
+  (let
+    [capacity : i64 (array-length (struct-get map keys))]
+    (if (<= capacity 0)
+      false
+      (let
+        [encoded : i64 (+ key 1)]
+        [slot : i64 (compiler-symbol-map-first-slot key capacity)]
+        [walked : i64 0]
+        (begin
+          (while (< walked capacity)
+            (let
+              [present : i64 (array-ref (struct-get map keys) slot)]
+              (cond
+                [(= present 0) (return false)]
+                [(= present encoded)
+                  (begin
+                    (array-set! (struct-get map keys) slot -1)
+                    (set! (struct-get map len) (- (struct-get map len) 1))
+                    (set!
+                      (struct-get map deleted)
+                      (+ (struct-get map deleted) 1))
+                    (return true))]
+                [else
+                  (begin
+                    (set! slot (bit-and (+ slot 1) (- capacity 1)))
+                    (set! walked (+ walked 1)))])))
+          false)))))
+
 (define (compiler-symbol-map-lookup-id
-  [map : (& map symbol_map.Map)]
+  [map : (& map CompilerSymbolMap)]
   [name-id : i64]) : option_i64.Option
   (let
-    [handle : i64
-      (symbol_map.get-value-or map name-id (compiler-symbol-map-missing-handle))]
+    [handle : i64 (compiler-symbol-map-lookup-handle-id map name-id)]
     (if (>= handle 0)
       (option_i64.Some handle)
       option_i64.None)))
 
 (define (compiler-symbol-map-lookup
-  [map : (& map symbol_map.Map)]
+  [map : (& map CompilerSymbolMap)]
   [name : String]) : option_i64.Option
   (compiler-symbol-map-lookup-id map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-contains-id?
-  [map : (& map symbol_map.Map)]
+  [map : (& map CompilerSymbolMap)]
   [name-id : i64]) : bool
   (match (compiler-symbol-map-lookup-id map name-id)
     [(option_i64.Some _) true]
     [(option_i64.None) false]))
 
 (define (compiler-symbol-map-contains?
-  [map : (& map symbol_map.Map)]
+  [map : (& map CompilerSymbolMap)]
   [name : String]) : bool
   (compiler-symbol-map-contains-id? map (compiler-symbol-name-key-id name)))
 
 (define (compiler-symbol-map-bind-id!
-  [map : (&mut map symbol_map.Map)]
+  [map : (&mut map CompilerSymbolMap)]
   [name-id : i64]
   [handle : i64]) : unit
-  (symbol_map.insert-ref! map name-id handle))
+  (compiler-symbol-map-put! map name-id handle))
 
 (define (compiler-symbol-map-bind!
-  [map : (&mut map symbol_map.Map)]
+  [map : (&mut map CompilerSymbolMap)]
   [name : String]
   [handle : i64]) : unit
   (compiler-symbol-map-bind-id! map (compiler-symbol-name-key-id name) handle))
@@ -554,10 +737,9 @@
       (match (compiler-symbol-map-lookup (& macros) name)
         [(option_i64.Some existing)
           (if (= existing handle)
-            (if (symbol_map.remove-ok?
-              (symbol_map.remove-ref!
-                (&mut macros)
-                (compiler-symbol-name-key-id name)))
+            (if (compiler-symbol-map-remove-id!
+              (&mut macros)
+              (compiler-symbol-name-key-id name))
               (CompilerSymbols values types macros decls owner-names)
               symbols)
             symbols)]
@@ -4619,6 +4801,32 @@
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-symbol-map-structure-ok?) : bool
+  (let
+    [map : CompilerSymbolMap (compiler-symbol-map-with-capacity 4)]
+    (begin
+      ;; These keys share low hash bits, exercising probing, growth, deletion,
+      ;; tombstone reuse, and update without relying on compiler declarations.
+      (compiler-symbol-map-put! (&mut map) 0 10)
+      (compiler-symbol-map-put! (&mut map) 4 20)
+      (compiler-symbol-map-put! (&mut map) 8 30)
+      (compiler-symbol-map-put! (&mut map) 12 40)
+      (compiler-symbol-map-put! (&mut map) 4 21)
+      (unless (compiler-symbol-map-remove-id! (&mut map) 8) (return false))
+      (compiler-symbol-map-put! (&mut map) 16 50)
+      (and
+        (= (array-length (struct-get map keys)) 8)
+        (= (struct-get map len) 4)
+        (= (struct-get map deleted) 0)
+        (= (compiler-symbol-map-lookup-handle-id (& map) 0) 10)
+        (= (compiler-symbol-map-lookup-handle-id (& map) 4) 21)
+        (=
+          (compiler-symbol-map-lookup-handle-id (& map) 8)
+          (compiler-symbol-map-missing-handle))
+        (= (compiler-symbol-map-lookup-handle-id (& map) 12) 40)
+        (= (compiler-symbol-map-lookup-handle-id (& map) 16) 50)
+        (not (compiler-symbol-map-remove-id! (&mut map) 24))))))
+
 (define (compiler-symbols-self-test) : i64
   (match (parse-ast-source (compiler-symbols-smoke-source))
     [(ResultAstProgram.Ok program)
@@ -4687,6 +4895,9 @@
                     unit
                     (set! ok false))
                   (if (compiler-symbols-duplicate-macro-value-ok?)
+                    unit
+                    (set! ok false))
+                  (if (compiler-symbol-map-structure-ok?)
                     unit
                     (set! ok false))
                   (if ok

@@ -6088,8 +6088,196 @@
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
     ok))
 
+(define (compiler-backend-peephole-single-dest-mnemonic? [name : String]) : bool
+  (compiler-backend-peephole-mnemonic-single-dest?
+    (unsafe
+      (string-data name))
+    0
+    (string.string-length name)))
+
+(define (compiler-backend-test-peephole-reg-index [name : String]) : i64
+  (compiler-backend-peephole-token-reg-index-range
+    (unsafe
+      (string-data name))
+    0
+    (string.string-length name)))
+
+(define (compiler-backend-test-peephole-memory-base [operand : String]) : i64
+  (compiler-backend-peephole-memory-base-range
+    (unsafe
+      (string-data operand))
+    0
+    (string.string-length operand)))
+
+(define (compiler-backend-peephole-operand-classifiers-ok?) : bool
+  (and
+    (= (compiler-backend-test-peephole-reg-index "%rax") 0)
+    (= (compiler-backend-test-peephole-reg-index "%rcx") 1)
+    (= (compiler-backend-test-peephole-reg-index "%rdx") 2)
+    (= (compiler-backend-test-peephole-reg-index "%rbx") 3)
+    (= (compiler-backend-test-peephole-reg-index "%rsi") 4)
+    (= (compiler-backend-test-peephole-reg-index "%rdi") 5)
+    (= (compiler-backend-test-peephole-reg-index "%r8") 6)
+    (= (compiler-backend-test-peephole-reg-index "%r9") 7)
+    (= (compiler-backend-test-peephole-reg-index "%r10") 8)
+    (= (compiler-backend-test-peephole-reg-index "%r11") 9)
+    (= (compiler-backend-test-peephole-reg-index "%r12") 10)
+    (= (compiler-backend-test-peephole-reg-index "%r13") 11)
+    (= (compiler-backend-test-peephole-reg-index "%r14") 12)
+    (= (compiler-backend-test-peephole-reg-index "%r15") 13)
+    (= (compiler-backend-test-peephole-reg-index "%eax") 0)
+    (= (compiler-backend-test-peephole-reg-index "%ax") 0)
+    (= (compiler-backend-test-peephole-reg-index "%al") 0)
+    (= (compiler-backend-test-peephole-reg-index "%ecx") 1)
+    (= (compiler-backend-test-peephole-reg-index "%cx") 1)
+    (= (compiler-backend-test-peephole-reg-index "%cl") 1)
+    (= (compiler-backend-test-peephole-reg-index "%edx") 2)
+    (= (compiler-backend-test-peephole-reg-index "%dx") 2)
+    (= (compiler-backend-test-peephole-reg-index "%dl") 2)
+    (= (compiler-backend-test-peephole-reg-index "%ebx") 3)
+    (= (compiler-backend-test-peephole-reg-index "%bx") 3)
+    (= (compiler-backend-test-peephole-reg-index "%bl") 3)
+    (= (compiler-backend-test-peephole-reg-index "%esi") 4)
+    (= (compiler-backend-test-peephole-reg-index "%si") 4)
+    (= (compiler-backend-test-peephole-reg-index "%sil") 4)
+    (= (compiler-backend-test-peephole-reg-index "%edi") 5)
+    (= (compiler-backend-test-peephole-reg-index "%di") 5)
+    (= (compiler-backend-test-peephole-reg-index "%dil") 5)
+    (= (compiler-backend-test-peephole-reg-index "%r8d") 6)
+    (= (compiler-backend-test-peephole-reg-index "%r8w") 6)
+    (= (compiler-backend-test-peephole-reg-index "%r8b") 6)
+    (= (compiler-backend-test-peephole-reg-index "%r15d") 13)
+    (= (compiler-backend-test-peephole-reg-index "%r15w") 13)
+    (= (compiler-backend-test-peephole-reg-index "%r15b") 13)
+    (= (compiler-backend-test-peephole-reg-index "%rbp") -1)
+    (= (compiler-backend-test-peephole-reg-index "%rsp") -1)
+    (= (compiler-backend-test-peephole-reg-index "%rip") -1)
+    (= (compiler-backend-test-peephole-reg-index "%ah") -1)
+    (= (compiler-backend-test-peephole-reg-index "%xmm0") -1)
+    (= (compiler-backend-test-peephole-reg-index "%r16") -1)
+    (=
+      (compiler-backend-test-peephole-memory-base "-8(%rbp)")
+      compiler-backend-peephole-memory-base-rbp)
+    (=
+      (compiler-backend-test-peephole-memory-base "(%rsp)")
+      compiler-backend-peephole-memory-base-rsp)
+    (=
+      (compiler-backend-test-peephole-memory-base "symbol(%rip)")
+      compiler-backend-peephole-memory-base-rip)
+    (=
+      (compiler-backend-test-peephole-memory-base "24(%r10)")
+      compiler-backend-peephole-memory-base-r10)
+    (=
+      (compiler-backend-test-peephole-memory-base "24(%r11)")
+      compiler-backend-peephole-memory-base-none)
+    (=
+      (compiler-backend-test-peephole-memory-base "%rax")
+      compiler-backend-peephole-memory-base-none)))
+
+(define (compiler-backend-test-control-mnemonic-kind [name : String]) : i64
+  (compiler-backend-control-mnemonic-kind
+    (unsafe
+      (string-data name))
+    0
+    (string.string-length name)))
+
+(define (compiler-backend-control-mnemonic-classifier-ok?) : bool
+  (and
+    (=
+      (compiler-backend-test-control-mnemonic-kind "movq")
+      compiler-backend-control-mnemonic-movq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "leaq")
+      compiler-backend-control-mnemonic-leaq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "push")
+      compiler-backend-control-mnemonic-push)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "pushq")
+      compiler-backend-control-mnemonic-push)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "pop")
+      compiler-backend-control-mnemonic-pop)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "popq")
+      compiler-backend-control-mnemonic-pop)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "leave")
+      compiler-backend-control-mnemonic-leave)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "ret")
+      compiler-backend-control-mnemonic-ret)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "jmp")
+      compiler-backend-control-mnemonic-jmp)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "subq")
+      compiler-backend-control-mnemonic-subq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "addq")
+      compiler-backend-control-mnemonic-addq)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "syscall")
+      compiler-backend-control-mnemonic-syscall)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "movl")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "retq")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "pushqq")
+      compiler-backend-control-mnemonic-none)
+    (=
+      (compiler-backend-test-control-mnemonic-kind "syscalx")
+      compiler-backend-control-mnemonic-none)))
+
+(define (compiler-backend-peephole-single-dest-classifier-ok?) : bool
+  (and
+    (compiler-backend-peephole-single-dest-mnemonic? "movabsq")
+    (compiler-backend-peephole-single-dest-mnemonic? "setae")
+    (compiler-backend-peephole-single-dest-mnemonic? "movl")
+    (compiler-backend-peephole-single-dest-mnemonic? "movw")
+    (compiler-backend-peephole-single-dest-mnemonic? "movb")
+    (compiler-backend-peephole-single-dest-mnemonic? "addq")
+    (compiler-backend-peephole-single-dest-mnemonic? "subl")
+    (compiler-backend-peephole-single-dest-mnemonic? "andw")
+    (compiler-backend-peephole-single-dest-mnemonic? "orb")
+    (compiler-backend-peephole-single-dest-mnemonic? "xorq")
+    (compiler-backend-peephole-single-dest-mnemonic? "leal")
+    (compiler-backend-peephole-single-dest-mnemonic? "shlw")
+    (compiler-backend-peephole-single-dest-mnemonic? "shrb")
+    (compiler-backend-peephole-single-dest-mnemonic? "sarq")
+    (compiler-backend-peephole-single-dest-mnemonic? "sall")
+    (compiler-backend-peephole-single-dest-mnemonic? "negb")
+    (compiler-backend-peephole-single-dest-mnemonic? "notw")
+    (compiler-backend-peephole-single-dest-mnemonic? "incl")
+    (compiler-backend-peephole-single-dest-mnemonic? "decq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzbq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movzwq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movsbq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movswq")
+    (compiler-backend-peephole-single-dest-mnemonic? "movslq")
+    (not (compiler-backend-peephole-single-dest-mnemonic? "movq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "movzbl"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "movsd"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "imulq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "mulq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "divq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "idivq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "callq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "xchgq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "testq"))
+    (not (compiler-backend-peephole-single-dest-mnemonic? "cmpq"))))
+
 (define (compiler-backend-peephole-ok?) : bool
   (and
+    (compiler-backend-control-mnemonic-classifier-ok?)
+    (compiler-backend-peephole-operand-classifiers-ok?)
+    (compiler-backend-peephole-single-dest-classifier-ok?)
     (compiler-backend-peephole-register-moves-ok?)
     (compiler-backend-direct-immediate-mov-ok?)
     (compiler-backend-mov-scratch-staging-ok?)

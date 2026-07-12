@@ -18,7 +18,6 @@
 ;#     [needle : String "ph"]
 ;#     (string.contains (& haystack) (& needle))))
 ;# ```
-(import stdlib.array)
 (import stdlib.comptime)
 
 ;: Runtime bounds-check trap shared with array/string indexing.
@@ -232,13 +231,10 @@
 ;: Copy a checked borrowed byte range into a fresh active-arena String.
 (define (substring-copy-checked [text : (& text str)] [start : i64] [len : i64]) : String
   (let
-    [buf : (Array u8) (array.make-array u8 len)]
     [src : (Ptr u8)
       (unsafe
         (string-data text))]
-    [dst : (MutPtr u8)
-      (unsafe
-        (array-data buf))]
+    [dst : (MutPtr u8) (string-runtime-alloc len)]
     (begin
       (str-copy-bytes-into
         (unsafe
@@ -255,16 +251,13 @@
     [left-len : i64 (__tl_string_length left)]
     [right-len : i64 (__tl_string_length right)]
     [total-len : i64 (+ left-len right-len)]
-    [buf : (Array u8) (array.make-array u8 total-len)]
     [left-src : (Ptr u8)
       (unsafe
         (string-data left))]
     [right-src : (Ptr u8)
       (unsafe
         (string-data right))]
-    [dst : (MutPtr u8)
-      (unsafe
-        (array-data buf))]
+    [dst : (MutPtr u8) (string-runtime-alloc total-len)]
     (begin
       (str-copy-bytes-into left-src dst 0 left-len)
       (str-copy-bytes-into right-src dst left-len right-len)
@@ -293,10 +286,7 @@
             (set! total-len (+ total-len (__tl_string_length part)))
             (set! len-index (+ len-index 1)))))
       (let
-        [buf : (Array u8) (array.make-array u8 total-len)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data buf))]
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
         [copy-index : i64 0]
         [off : i64 0]
         (begin
@@ -335,10 +325,7 @@
     (if (= total-len 0)
       ""
       (let
-        [buf : (Array u8) (array.make-array u8 total-len)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data buf))]
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
         (begin
           (str-copy-owned-bytes-into a dst 0 a-len)
           (str-copy-owned-bytes-into b dst a-len b-len)
@@ -357,10 +344,7 @@
     (if (= total-len 0)
       ""
       (let
-        [buf : (Array u8) (array.make-array u8 total-len)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data buf))]
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
         (begin
           (str-copy-owned-bytes-into a dst 0 a-len)
           (str-copy-owned-bytes-into b dst a-len b-len)
@@ -386,10 +370,7 @@
     (if (= total-len 0)
       ""
       (let
-        [buf : (Array u8) (array.make-array u8 total-len)]
-        [dst : (MutPtr u8)
-          (unsafe
-            (array-data buf))]
+        [dst : (MutPtr u8) (string-runtime-alloc total-len)]
         (begin
           (str-copy-owned-bytes-into a dst 0 a-len)
           (str-copy-owned-bytes-into b dst a-len b-len)
@@ -834,6 +815,7 @@
 
 ;; Inline test coverage.
 (cfg test (import stdlib.test))
+(cfg test (import stdlib.array))
 
 (cfg
   test

@@ -672,11 +672,13 @@ contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end
 
-decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
+decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655/#4869): main-less helper module with inline tests, executable smoke coverage, package metadata emission, inspect-command parsing, and the focused code-bearing native macro proof image; general package/stdlib code emission remains staged
+
+decision|src/compiler_comptime_image_core.tl|focused native-comptime lowering proof (#4869): compiler-owned single-macro program/probe model plus host-ABI x86_64 lowering for Linux and Windows; produces the code payload and explicit macro/table/name offsets consumed by tlci_core while general macro-source lowering and automatic fuel insertion remain staged
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 
-decision|src/tlci_loader.tl|tlci comptime image loader core (#2657): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup ranges, applies load-base fixups, calls tlci_image_entry through the backend raw C-ABI bridge, validates image registration, and is exercised through the tlci_loader_smoke integration case; native macro dispatch remains staged
+decision|src/tlci_loader.tl|tlci comptime image loader core (#2657/#4869): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup/macro-table ranges, applies load-base fixups, calls tlci_image_entry, and invokes registered macro entries through backend raw C-ABI bridges; the cross-platform tlci_loader_smoke covers registration, lookup, success/result commit, session forwarding, and nonzero callback-status propagation
 
 case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:

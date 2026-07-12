@@ -4718,6 +4718,16 @@ the host discards that session state; only diagnostics already recorded through
 callbacks survive. Successful expansion commits exactly the result handle
 written by the macro entry.
 
+Native-comptime helpers that can invoke a host callback use the same
+status/out-slot convention internally: image context, host context, and the
+expansion/session context are carried through the helper call graph; the helper
+returns `0` only after committing its result out-slot and returns any nonzero
+callback status to its caller unchanged. A macro entry must immediately unwind
+that nonzero status without committing its public result slot. This is the
+insertion boundary for deterministic fuel checks: a call or loop-backedge probe
+invokes `fuel-check` with the current contexts and uses the same status unwind,
+without image-global per-invocation state.
+
 Compatibility is append-only. Future ABI versions may require larger byte-size
 values and assign callback, operation, macro-entry, or registration fields
 after the v1 ranges above, but they must not reinterpret the v1 offsets or

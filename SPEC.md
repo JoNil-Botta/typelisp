@@ -6284,6 +6284,15 @@ runtime-free no-entry PIC assembly plus a `<output>.fixups` file, and
 `--batch <file>` reads `input|output` pairs and compiles them in one compiler
 process.
 
+A compiler built with `--cfg compile-profile` additionally writes
+`compile-batch-profile` rows to stderr at stable per-entry boundaries: entry
+start, emission complete, owned-pool replacement/release, intern/session
+cleanup, lower-arena cleanup, and scratch destruction/steady state. Rows use a
+zero-based ordinal rather than a host path and report interval elapsed time,
+allocation total, live, and peak-live deltas. Normal compiler builds emit no
+such rows and produce byte-identical assembly. The measurement harnesses keep
+the ordinal-to-input mapping separately.
+
 `build --profile dev|release` selects the package build profile (default
 `release`), `--release` aliases `--profile release`, and
 `--manifest-path <file>` uses an explicit package manifest (default: the

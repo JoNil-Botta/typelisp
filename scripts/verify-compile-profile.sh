@@ -76,10 +76,38 @@ OPT_STDERR="$WORKDIR/profile-opt.stderr"
 SELFHOST_ASM="$WORKDIR/profile-selfhost.s"
 SELFHOST_STDOUT="$WORKDIR/profile-selfhost.stdout"
 SELFHOST_STDERR="$WORKDIR/profile-selfhost.stderr"
+BATCH_LIST="$WORKDIR/profile-batch.txt"
+BATCH_STDOUT="$WORKDIR/profile-batch.stdout"
+BATCH_STDERR="$WORKDIR/profile-batch.stderr"
+BATCH_ARITH="$WORKDIR/profile-batch-arithmetic.s"
+BATCH_FUNCTIONS="$WORKDIR/profile-batch-functions.s"
+BATCH_SINGLE_ARITH="$WORKDIR/profile-single-arithmetic.s"
+BATCH_SINGLE_FUNCTIONS="$WORKDIR/profile-single-functions.s"
+BATCH_SINGLE_STDOUT="$WORKDIR/profile-single.stdout"
+BATCH_SINGLE_STDERR="$WORKDIR/profile-single.stderr"
+NORMAL_BATCH_LIST="$WORKDIR/normal-batch.txt"
+NORMAL_BATCH_STDOUT="$WORKDIR/normal-batch.stdout"
+NORMAL_BATCH_STDERR="$WORKDIR/normal-batch.stderr"
+NORMAL_BATCH_ARITH="$WORKDIR/normal-batch-arithmetic.s"
+NORMAL_BATCH_FUNCTIONS="$WORKDIR/normal-batch-functions.s"
+WINDOWS_MEMORY_DIR="$WORKDIR/windows-memory"
+FAILED_BATCH_LIST="$WORKDIR/failed-batch.txt"
+FAILED_BATCH_STDOUT="$WORKDIR/failed-batch.stdout"
+FAILED_BATCH_STDERR="$WORKDIR/failed-batch.stderr"
+FAILED_BATCH_FIRST="$WORKDIR/failed-batch-first.s"
+FAILED_BATCH_SECOND="$WORKDIR/missing/failed-batch-second.s"
 
 fail() {
     echo "FAIL: $*" >&2
     exit 1
+}
+
+batch_path() {
+    if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
 }
 
 show_failure_logs() {
@@ -329,6 +357,120 @@ if ! "$COMPILER" compile tests/integration/arithmetic.tl \
 fi
 assert_not_contains_in "$NORMAL_CHECK_STDERR" "compile-profile" \
     "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+
+echo "[compile-profile] verify per-entry batch memory boundaries"
+printf '%s|%s\n%s|%s\n' \
+    "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$BATCH_ARITH")" \
+    "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$BATCH_FUNCTIONS")" > "$BATCH_LIST"
+if ! "$PROFILE_BIN" compile --batch "$BATCH_LIST" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$BATCH_STDOUT" 2> "$BATCH_STDERR"; then
+    show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
+    fail "profile batch fixture failed"
+fi
+assert_line_count_in "$BATCH_STDERR" \
+    "compile-batch-profile|entry_ordinal|marker|" 1 \
+    "$BATCH_STDOUT" "$BATCH_STDERR"
+for ordinal in 0 1; do
+    for marker in entry-start emit-complete owned-pool-release \
+        intern-session-cleanup lower-cleanup scratch-destroy-steady; do
+        assert_line_count_in "$BATCH_STDERR" \
+            "compile-batch-profile|$ordinal|$marker|" 1 \
+            "$BATCH_STDOUT" "$BATCH_STDERR"
+    done
+done
+if ! awk -F'|' '
+    $1 == "compile-batch-profile" && $2 != "entry_ordinal" {
+        if (NF != 7 || $2 !~ /^[0-9]+$/ || $4 !~ /^-?[0-9]+$/ ||
+            $5 !~ /^-?[0-9]+$/ || $6 !~ /^-?[0-9]+$/ ||
+            $7 !~ /^-?[0-9]+$/) bad = 1
+        rows++
+    }
+    END { exit rows == 12 && !bad ? 0 : 1 }
+' "$BATCH_STDERR"; then
+    show_failure_logs "$BATCH_STDOUT" "$BATCH_STDERR"
+    fail "batch profile rows do not match the stable seven-field schema"
+fi
+if ! "$PROFILE_BIN" compile tests/integration/arithmetic.tl \
+    -o "$BATCH_SINGLE_ARITH" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib \
+    > "$BATCH_SINGLE_STDOUT" 2> "$BATCH_SINGLE_STDERR" ||
+   ! "$PROFILE_BIN" compile tests/integration/functions.tl \
+    -o "$BATCH_SINGLE_FUNCTIONS" --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) --stdlib-root stdlib \
+    >> "$BATCH_SINGLE_STDOUT" 2>> "$BATCH_SINGLE_STDERR"; then
+    show_failure_logs "$BATCH_SINGLE_STDOUT" "$BATCH_SINGLE_STDERR"
+    fail "profile single-entry parity fixture failed"
+fi
+cmp "$BATCH_ARITH" "$BATCH_SINGLE_ARITH" >/dev/null ||
+    fail "profile batch arithmetic assembly differs from one-entry output"
+cmp "$BATCH_FUNCTIONS" "$BATCH_SINGLE_FUNCTIONS" >/dev/null ||
+    fail "profile batch functions assembly differs from one-entry output"
+
+echo "[compile-profile] verify failed-entry marker and diagnostic attribution"
+printf '%s|%s\n%s|%s\n' \
+    "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$FAILED_BATCH_FIRST")" \
+    "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$FAILED_BATCH_SECOND")" > "$FAILED_BATCH_LIST"
+if "$PROFILE_BIN" compile --batch "$FAILED_BATCH_LIST" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$FAILED_BATCH_STDOUT" 2> "$FAILED_BATCH_STDERR"; then
+    show_failure_logs "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
+    fail "profile batch with invalid second entry unexpectedly passed"
+fi
+assert_contains_in "$FAILED_BATCH_STDERR" "compile: batch source failed:" \
+    "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
+assert_contains_in "$FAILED_BATCH_STDERR" "functions.tl" \
+    "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
+assert_line_count_in "$FAILED_BATCH_STDERR" \
+    "compile-batch-profile|1|emit-complete|" 1 \
+    "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
+if ! grep '^compile-batch-profile|1|emit-complete|' "$FAILED_BATCH_STDERR" >/dev/null; then
+    show_failure_logs "$FAILED_BATCH_STDOUT" "$FAILED_BATCH_STDERR"
+    fail "failed-entry emit marker was not independently parseable"
+fi
+cmp "$FAILED_BATCH_FIRST" "$BATCH_ARITH" >/dev/null ||
+    fail "successful output before failed batch entry changed"
+
+printf '%s|%s\n%s|%s\n' \
+    "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" "$(batch_path "$NORMAL_BATCH_ARITH")" \
+    "$(batch_path "$ROOT/tests/integration/functions.tl")" "$(batch_path "$NORMAL_BATCH_FUNCTIONS")" > "$NORMAL_BATCH_LIST"
+if ! "$COMPILER" compile --batch "$NORMAL_BATCH_LIST" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    > "$NORMAL_BATCH_STDOUT" 2> "$NORMAL_BATCH_STDERR"; then
+    show_failure_logs "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR"
+    fail "normal batch fixture failed"
+fi
+assert_not_contains_in "$NORMAL_BATCH_STDERR" "compile-batch-profile" \
+    "$NORMAL_BATCH_STDOUT" "$NORMAL_BATCH_STDERR"
+cmp "$BATCH_ARITH" "$NORMAL_BATCH_ARITH" >/dev/null ||
+    fail "profile-enabled batch changed normal arithmetic assembly"
+cmp "$BATCH_FUNCTIONS" "$NORMAL_BATCH_FUNCTIONS" >/dev/null ||
+    fail "profile-enabled batch changed normal functions assembly"
+
+if [ "$NL_HOST_OS" = windows ]; then
+    command -v pwsh >/dev/null 2>&1 || fail "pwsh is required for Windows batch memory telemetry"
+    if ! pwsh -NoProfile -File scripts/measure-compile-batch-memory.ps1 \
+        -Compiler "$PROFILE_BIN" \
+        -Batch "$BATCH_LIST" \
+        -OutputDir "$WINDOWS_MEMORY_DIR" \
+        -Target "$NL_BOOTSTRAP_TARGET" \
+        -StdlibRoot stdlib \
+        > "$WORKDIR/windows-memory.stdout" \
+        2> "$WORKDIR/windows-memory.stderr"; then
+        show_failure_logs "$WORKDIR/windows-memory.stdout" "$WORKDIR/windows-memory.stderr"
+        fail "Windows batch memory sampler failed"
+    fi
+    windows_memory_rows=$(awk 'NR > 1 { rows++ } END { print rows + 0 }' \
+        "$WINDOWS_MEMORY_DIR/memory.tsv")
+    [ "$windows_memory_rows" -eq 12 ] ||
+        fail "Windows batch memory sampler expected 12 rows, got $windows_memory_rows"
+fi
 
 expected_heavy_sources='compiler_typecheck_smoke|src/tests/compiler_typecheck_smoke.tl
 compiler_lower_smoke|src/tests/compiler_lower_smoke.tl

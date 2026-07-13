@@ -142,10 +142,11 @@ Coverage map:
   for these shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
-  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The specified
-  v1 private out-of-line SPMD call ABI is feature-pending under #2852; the
-  current corpus keeps function-value/indirect varying calls rejected by the
-  safety fixtures.
+  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. Focused scalar
+  and AVX-512 source-to-private-call IR coverage lives in
+  `src/tests/compiler_spmd_call_lower_*_smoke.tl`; backend emission remains
+  staged under #3767. Function-value/indirect varying calls remain rejected by
+  the safety fixtures.
 - `spmd-reduce` and `spmd-scan` scalar coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`.

@@ -763,9 +763,9 @@ fi
 # that identity exactly once, so the two later importers are memo hits. A global
 # counter cannot isolate a single identity, but with three identical imports at
 # least two of them must resolve through the memo, and at least one module must
-# have been materialized. The vector catalog now takes the full-demand path:
-# ordinary typechecking validates every declaration, so the separate shadow
-# catalog validation is deliberately skipped.
+# have been materialized. The vector catalog currently exceeds the large-catalog
+# cutoff and is materialized in full, so ordinary typechecking validates all of
+# it and the separate partial-catalog shadow-validation counter remains zero.
 assert_profile_counter_eq_in \
     "$CROSS_SINGLE_STDERR" \
     "typecheck.macro.generated_module_memo_hits" \

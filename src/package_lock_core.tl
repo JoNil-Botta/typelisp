@@ -17,11 +17,11 @@
   (pin-value String)
   (commit String))
 
-(vector.family PackageLockEntry PackageLockEntryList package-lock-entry-vec)
+(import (vector.vector PackageLockEntry core) as package_lock_entry_vec)
 
 (defstruct PackageLockFile
   (version String)
-  (entries PackageLockEntryList))
+  (entries package_lock_entry_vec.Vec))
 
 (defstruct PackageLockPin
   (kind PackageCachePinKind)
@@ -48,7 +48,7 @@
   (Err String))
 
 (defenum ResultPackageLockEntryList
-  (Ok PackageLockEntryList)
+  (Ok package_lock_entry_vec.Vec)
   (Err String))
 
 (defenum ResultPackageLockFile
@@ -114,14 +114,14 @@
   (PackageLockEntry "" "" (PackageCachePinKind.Rev) "" ""))
 
 (define (package-lock-entry-list-lookup-from
-  [entries : (& entries PackageLockEntryList)]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : String]
   [index : i64]) : PackageLockMaybeEntry
-  (if (>= index (package-lock-entry-vec-len entries))
+  (if (>= index (package_lock_entry_vec.len entries))
     (PackageLockMaybeEntry.No)
     (let
       [entry : PackageLockEntry
-        (package-lock-entry-vec-get
+        (package_lock_entry_vec.get
           entries
           index
           (package-lock-entry-list-fallback))]
@@ -130,19 +130,19 @@
         (package-lock-entry-list-lookup-from entries alias (+ index 1))))))
 
 (define (package-lock-entry-list-lookup
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [alias : String]) : PackageLockMaybeEntry
   (package-lock-entry-list-lookup-from (& entries) alias 0))
 
 (define (package-lock-entry-list-insert-position
-  [entries : (& entries PackageLockEntryList)]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [alias : String]
   [index : i64]) : i64
-  (if (>= index (package-lock-entry-vec-len entries))
+  (if (>= index (package_lock_entry_vec.len entries))
     index
     (let
       [head : PackageLockEntry
-        (package-lock-entry-vec-get
+        (package_lock_entry_vec.get
           entries
           index
           (package-lock-entry-list-fallback))]
@@ -153,28 +153,31 @@
           (package-lock-entry-list-insert-position entries alias (+ index 1)))))))
 
 (define (package-lock-entry-list-insert-at!
-  [entries : (&mut entries PackageLockEntryList)]
+  [entries : (&mut entries package_lock_entry_vec.Vec)]
   [entry : PackageLockEntry]
   [index : i64]) : unit
   (begin
-    (package-lock-entry-vec-push entries (package-lock-entry-list-fallback))
+    (package_lock_entry_vec.push entries (package-lock-entry-list-fallback))
     (let
-      [write : i64 (- (struct-get entries len) 1)]
+      [write : i64 (- (package_lock_entry_vec.len entries) 1)]
       (begin
         (while (> write index)
-          (begin
-            (array-set!
-              (struct-get entries slots)
-              write
-              (array-ref (struct-get entries slots) (- write 1)))
-            (set! write (- write 1))))
-        (package-lock-entry-vec-set! entries index entry)))))
+          (let
+            [previous : PackageLockEntry
+              (package_lock_entry_vec.get
+                entries
+                (- write 1)
+                (package-lock-entry-list-fallback))]
+            (begin
+              (package_lock_entry_vec.set entries write previous)
+              (set! write (- write 1)))))
+        (package_lock_entry_vec.set entries index entry)))))
 
 (define (package-lock-entry-list-insert
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [entry : PackageLockEntry]) : ResultPackageLockEntryList
   (let
-    [next : PackageLockEntryList entries]
+    [next : package_lock_entry_vec.Vec entries]
     [index : i64
       (package-lock-entry-list-insert-position
         (& next)
@@ -442,7 +445,7 @@
 
 (define (package-lock-dependencies-entries
   [entries : reader.Sexpr]
-  [acc : PackageLockEntryList]) : ResultPackageLockEntryList
+  [acc : package_lock_entry_vec.Vec]) : ResultPackageLockEntryList
   (match entries
     [(reader.Sexpr.Nil) (ResultPackageLockEntryList.Ok acc)]
     [(reader.Sexpr.Cons entry rest)
@@ -463,7 +466,7 @@
   [fields : reader.Sexpr]
   [version : String]
   [has-version : bool]
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [has-deps : bool]) : ResultPackageLockFile
   (match fields
     [(reader.Sexpr.Nil)
@@ -503,7 +506,7 @@
                       "package-lock: duplicate field `dependencies`")
                     (match (package-lock-dependencies-entries
                       (box-get ftail)
-                      (package-lock-entry-vec-new))
+                      (package_lock_entry_vec.new))
                       [(ResultPackageLockEntryList.Err message)
                         (ResultPackageLockFile.Err message)]
                       [(ResultPackageLockEntryList.Ok parsed)
@@ -531,7 +534,7 @@
               (box-get rest)
               ""
               false
-              (package-lock-entry-vec-new)
+              (package_lock_entry_vec.new)
               false)
             (ResultPackageLockFile.Err
               (string.concat3 "expected `typelisp-lock` form, got `" name "`")))]
@@ -631,19 +634,19 @@
               (struct-get entry commit))))))))
 
 (define (package-lock-emit-entries-from
-  [entries : (& entries PackageLockEntryList)]
+  [entries : (& entries package_lock_entry_vec.Vec)]
   [index : i64]) : String
-  (if (>= index (package-lock-entry-vec-len entries))
+  (if (>= index (package_lock_entry_vec.len entries))
     ""
     (string.append
       (package-lock-emit-entry
-        (package-lock-entry-vec-get
+        (package_lock_entry_vec.get
           entries
           index
           (package-lock-entry-list-fallback)))
       (package-lock-emit-entries-from entries (+ index 1)))))
 
-(define (package-lock-emit-entries [entries : PackageLockEntryList]) : String
+(define (package-lock-emit-entries [entries : package_lock_entry_vec.Vec]) : String
   (package-lock-emit-entries-from (& entries) 0))
 
 (define (package-lock-emit [lock : PackageLockFile]) : String
@@ -693,7 +696,7 @@
     (string.eq (struct-get entry commit) commit)))
 
 (define (package-lock-list-has-entry?
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [url : String]
   [kind : PackageCachePinKind]
@@ -709,10 +712,10 @@
     [(ResultPackageLockFile.Err _) false]
     [(ResultPackageLockFile.Ok lock)
       (let
-        [entries : PackageLockEntryList (struct-get lock entries)]
+        [entries : package_lock_entry_vec.Vec (struct-get lock entries)]
         (and
           (string.eq (struct-get lock version) package-lock-version)
-          (= (package-lock-entry-vec-len (& entries)) 2)
+          (= (package_lock_entry_vec.len (& entries)) 2)
           (package-lock-list-has-entry?
             entries
             "alpha"
@@ -742,9 +745,9 @@
         [(ResultPackageLockFile.Err _) false]
         [(ResultPackageLockFile.Ok again)
           (let
-            [entries : PackageLockEntryList (struct-get again entries)]
+            [entries : package_lock_entry_vec.Vec (struct-get again entries)]
             (and
-              (= (package-lock-entry-vec-len (& entries)) 2)
+              (= (package_lock_entry_vec.len (& entries)) 2)
               (package-lock-list-has-entry?
                 entries
                 "alpha"
@@ -763,12 +766,12 @@
 (cfg
   test
   (define (package-lock-entry-alias-at?
-    [entries : (& entries PackageLockEntryList)]
+    [entries : (& entries package_lock_entry_vec.Vec)]
     [index : i64]
     [alias : String]) : bool
     (string.eq
       (struct-get
-        (package-lock-entry-vec-get
+        (package_lock_entry_vec.get
           entries
           index
           (package-lock-entry-list-fallback))
@@ -778,10 +781,10 @@
 (cfg
   test
   (define (package-lock-growth-entries-ok?
-    [entries : (& entries PackageLockEntryList)]) : bool
+    [entries : (& entries package_lock_entry_vec.Vec)]) : bool
     (and
-      (= (package-lock-entry-vec-len entries) 6)
-      (= (package-lock-entry-vec-capacity entries) 8)
+      (= (package_lock_entry_vec.len entries) 6)
+      (= (package_lock_entry_vec.capacity entries) 8)
       (package-lock-entry-alias-at? entries 0 "alpha")
       (package-lock-entry-alias-at? entries 1 "bravo")
       (package-lock-entry-alias-at? entries 2 "charlie")

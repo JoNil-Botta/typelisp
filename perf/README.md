@@ -110,3 +110,38 @@ The heavy nightly workflow measures `spmd_map`, `spmd_mask`, `spmd_zip`,
 cachegrind run. Heavy improvements and regressions are visible in the scheduled
 workflow; accept intentional changes by committing an explicit
 `perf/insn-exec-heavy-baseline.tsv` refresh.
+
+## SPMD scalar/AVX2 mode matrix
+
+`scripts/measure-spmd-mode-instruction-counts.sh` is the opt-in deterministic
+mode comparison for the five SPMD benchmarks. It builds TypeLisp explicitly at
+`--opt-level 2 --backend-mode scalar|avx2`; scalar rows are paired with
+`clang -O2 -fno-vectorize -fno-slp-vectorize`, and AVX2 rows with
+`clang -O2 -mavx2 -mno-avx512f`. Every measured pair must return the same exit
+status. The checked support contract is `perf/spmd-mode-support.tsv`; an
+unsupported TypeLisp row must fail with its exact recorded lowering diagnostic
+and is emitted as `unsupported`, never as a missing or zero count.
+
+Run the full local matrix from Linux or WSL and compare it with the committed
+`perf/spmd-mode-insn-baseline.tsv`:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp \
+  scripts/measure-spmd-mode-instruction-counts.sh \
+  --runs 1 --check-baseline
+```
+
+Use `--cases spmd_map --modes scalar,avx2` for a focused run and
+`--update-baseline` only for an intentional full-matrix refresh. Output under
+`target/spmd-mode-instruction-counts/` includes compiler/tool/flag metadata,
+raw runs, stable summaries, per-benchmark TypeLisp/clang ratios, and per-mode
+geomeans. Fast mutation coverage for mode selection, C flags, unsupported
+rows, missing/unstable counts, ratios, and geomeans is available cross-platform:
+
+```sh
+scripts/measure-spmd-mode-instruction-counts.sh --self-test
+```
+
+AVX-512 is never run under cachegrind because Valgrind 3.22 raises SIGILL and
+records only startup instructions. Its separate measurement methodology is
+tracked in [#4933](https://github.com/JoNil-Botta/typelisp/issues/4933).

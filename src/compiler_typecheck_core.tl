@@ -19259,7 +19259,12 @@
         [_ (tc-expr ctx env expr)])]
     (begin
       (match result
-        [(ResultTcType.Ok ty) (tc-body-type-fact-record! expr-id ty)]
+        [(ResultTcType.Ok ty)
+          (begin
+            (tc-body-type-fact-record! expr-id ty)
+            (if tc-inlay-hint-enabled
+              (tc-inlay-hint-maybe-record-expr expr ty)
+              unit))]
         [(ResultTcType.Err _) unit])
       result)))
 
@@ -24488,6 +24493,20 @@
             (tc-type-render init-ty))]
         [_ unit])]
     [(AstMaybeType.Some _) unit]))
+
+;; Record the inferred type of any spanned expression for tl/getType and
+;; inlay hint lookup. Unlike tc-inlay-hint-maybe-record (which filters to
+;; un-annotated let bindings), this records for any spanned expression so
+;; that tl/getType can resolve types at call sites and other expression
+;; positions. Caller must guard on tc-inlay-hint-enabled.
+(define (tc-inlay-hint-maybe-record-expr [expr : AstExpr] [ty : AstType]) : unit
+  (match expr
+    [(AstExpr.Spanned _ span)
+      (tc-inlay-hint-record!
+        (ast-source-span-start-line span)
+        (ast-source-span-start-col span)
+        (tc-type-render ty))]
+    [_ unit]))
 
 (define (tc-let-binding-init-type
   [ctx : TcContext]

@@ -164,8 +164,7 @@
 
 (define (tlci-loader-smoke-package-ok?) : bool
   (let
-    [metadata : tlci.TlciMetadata
-      (tlci.tlci-make-metadata "v1" "pkg" "0.1.0")]
+    [metadata : tlci.TlciMetadata (tlci.tlci-make-metadata "v1" "pkg" "0.1.0")]
     [names : (Array String) (make-array "pkg/alpha" "pkg/beta")]
     (match (tlci.tlci-emit-code-bearing-package-image
       metadata
@@ -229,9 +228,7 @@
 
 (define (main) : i64
   (if (= (tlci_loader.tlci-loader-self-test) 42)
-    (if (and
-      (tlci-loader-smoke-native-ok?)
-      (tlci-loader-smoke-package-ok?))
+    (if (and (tlci-loader-smoke-native-ok?) (tlci-loader-smoke-package-ok?))
       42
       5)
     1))

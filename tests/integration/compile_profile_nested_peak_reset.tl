@@ -12,17 +12,19 @@
 (cfg
   compile-profile
   (define (main) : i64
-    (begin
-      (profile.compile-wide-peak-start!)
-      (let
-        [marker : i64 (transient-allocation)]
-        (begin
-          ;; Preserve the transient high-water mark before clearing the
-          ;; runtime's nested peak counter.
-          (profile.alloc-reset-peak)
-          (if (and (= marker 37) (> (profile.compile-wide-peak-finish!) 0))
-            0
-            1))))))
+    (let
+      [before-live : i64 (profile.alloc-live)]
+      [_profile-start : unit (profile.compile-wide-peak-start!)]
+      [marker : i64 (with-arena transient (transient-allocation))]
+      [after-live : i64 (profile.alloc-live)]
+      [_nested-reset : unit (profile.alloc-reset-peak)]
+      [compile-wide-peak : i64 (profile.compile-wide-peak-finish!)]
+      ;; The scoped arena restores live bytes before the nested reset, so the
+      ;; final runtime peak is back at the baseline. Only the compile-wide
+      ;; accumulator can preserve the transient allocation's high-water mark.
+      (if (and (= marker 37) (= after-live before-live) (> compile-wide-peak 0))
+        0
+        1))))
 
 (cfg
   (not compile-profile)

@@ -677,11 +677,11 @@ contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end
 
-decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655/#4869): main-less helper module with inline tests, executable smoke coverage, package metadata emission, inspect-command parsing, and the focused code-bearing native macro proof image; general package/stdlib code emission remains staged
+decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655/#4869/#2754): main-less helper module with inline tests, executable smoke coverage, package metadata emission, inspect-command parsing, deterministic multi-entry package image assembly, and the focused code-bearing native macro proof image; general macro-source body lowering remains staged
 
 decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name
 
-decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905/#2656): explicit image/host/session contexts, automatic operation-1 fuel probes at semantic calls and loop backedges, callback status unwind, success-only result commit, dynamic macro data layout, and Linux/Windows x86_64 emission; fixed templates remain oracle-only while general package/stdlib macro-source lowering remains staged
+decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905/#2656/#2754): explicit image/host/session contexts, automatic operation-1 fuel probes at semantic calls and loop backedges, callback status unwind, success-only result commit, dynamic single/multi-macro data layout, and Linux/Windows x86_64 emission; fixed templates remain oracle-only while general package/stdlib macro-source body lowering remains staged
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 

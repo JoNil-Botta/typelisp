@@ -459,7 +459,8 @@ EOF
     assert_empty "$WORKDIR/inspect-package-tlci.stderr"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "tlci image"
     assert_contains "$WORKDIR/inspect-package-tlci.stdout" "package-name: stage1_pkg"
-    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
+    assert_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset="
+    assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "code: offset=0 bytes=0"
     assert_not_contains "$WORKDIR/inspect-package-tlci.stdout" "  (none)"
     cp "$PKG_TLCI" "$WORKDIR/stage1_pkg.first.tlci"
     run_capture build-package-repeat "$COMPILER" build --manifest-path "$PKG/typelisp.pkg" --opt-level 0

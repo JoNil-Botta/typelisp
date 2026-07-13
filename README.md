@@ -447,9 +447,12 @@ to the manifest directory and writes outputs under `target/<profile>/`
 `--opt-level 2`, dev to `0`). `kind "bin"` builds a native executable;
 `kind "staticlib"` builds a static archive. When both are omitted, `bin` is
 inferred from `src/main.tl` and `staticlib` from `src/lib.tl`. Package
-builds also emit a metadata-only comptime image `<name>.tlci` beside the
-native artifact; `typelisp inspect <file.tlci>` renders its header,
-sections, and package metadata.
+builds also emit a host comptime image `<name>.tlci` beside the native
+artifact. Macro-free packages use a metadata-only image; macro-defining
+packages include deterministic native entry shells and one registration-table
+record per package-owned macro. `typelisp inspect <file.tlci>` renders the
+image header, sections, and package metadata. Macro-body lowering and consumer
+dispatch remain staged separately from these package emission artifacts.
 `typelisp run [--manifest-path <typelisp.pkg>]` uses the same package
 resolution and build profile rules, then executes `bin` package artifacts;
 runtime arguments are passed after `--`.

@@ -1,10 +1,10 @@
 ;; compiler_comptime_image_core.tl - Focused native-comptime lowering proof.
 ;;
-;; This is deliberately narrower than general macro-source lowering: it gives
-;; the first code-bearing tlci image a real compiler-owned program model and an
-;; explicit host-call and loop-backedge instructions. Fuel instrumentation is
-;; inserted over that IR before host-native emission; general stdlib/package
-;; macro lowering builds on the same boundary/status convention.
+;; This is deliberately narrower than general macro-source body lowering: it
+;; gives code-bearing tlci images a compiler-owned program model, explicit
+;; host-call and loop-backedge instructions, and deterministic single/multiple
+;; macro layouts. Fuel instrumentation is inserted over that IR before
+;; host-native emission; general macro lowering builds on the same convention.
 (import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.io)
@@ -28,8 +28,21 @@
   (macro-table-offset i64)
   (macro-name-offset i64))
 
+(defstruct CompilerComptimePackageMacroLayout
+  (macro-entry-offset i64)
+  (macro-name-offset i64))
+
+(defstruct CompilerComptimePackageImagePayload
+  (code (Array u8))
+  (macro-table-offset i64)
+  (macros (Array CompilerComptimePackageMacroLayout)))
+
 (defenum ResultCompilerComptimeImagePayload
   (Ok CompilerComptimeImagePayload)
+  (Err String))
+
+(defenum ResultCompilerComptimePackageImagePayload
+  (Ok CompilerComptimePackageImagePayload)
   (Err String))
 
 ;; Host-comptime lowering is intentionally separate from ordinary source/runtime
@@ -273,7 +286,8 @@
 ;; patched after code/data layout is complete.
 (define (compiler-comptime-emit-registration!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
-  [mode : CompilerComptimeLowerMode]) : CompilerComptimeRelativePatch
+  [mode : CompilerComptimeLowerMode]
+  [macro-count : i64]) : CompilerComptimeRelativePatch
   (begin
     ;; rax = "TLCIIMAG"; registration.magic = rax.
     (compiler-comptime-emit-bytes! out (make-array 0x48 0xb8))
@@ -319,7 +333,7 @@
             (compiler-comptime-emit-bytes! out (make-array 0x48 0xc7 0x46 0x38))]
           [(CompilerComptimeLowerMode.WindowsX64)
             (compiler-comptime-emit-bytes! out (make-array 0x48 0xc7 0x42 0x38))])
-        (compiler-comptime-emit-u32! out 1)
+        (compiler-comptime-emit-u32! out macro-count)
         (compiler-comptime-emit-bytes! out (make-array 0x31 0xc0 0xc3))
         (compiler-comptime-align-code! out 16)
         (CompilerComptimeRelativePatch displacement (+ displacement 4))))))
@@ -555,7 +569,7 @@
         (byte_buf_core.byte-buf-builder-with-capacity
           (+ 256 (string.string-length (struct-get ir macro-name))))]
       [registration-patch : CompilerComptimeRelativePatch
-        (compiler-comptime-emit-registration! (&mut out) (struct-get ir mode))]
+        (compiler-comptime-emit-registration! (&mut out) (struct-get ir mode) 1)]
       [macro-entry-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
       [helper-patch : CompilerComptimeRelativePatch
         (compiler-comptime-emit-macro-entry!
@@ -597,6 +611,148 @@
             macro-entry-offset
             macro-table-offset
             macro-name-offset))))))
+
+(define (compiler-comptime-package-programs-valid?
+  [programs : (Array CompilerComptimeMacroProgram)]
+  [windows-target : bool]) : bool
+  (let
+    [index : i64 0]
+    [valid : bool
+      (and
+        (> (array-length programs) 0)
+        (compiler-comptime-nonnegative-i32-value? (array-length programs)))]
+    (begin
+      (while (and valid (< index (array-length programs)))
+        (begin
+          (set!
+            valid
+            (compiler-comptime-host-ir-valid?
+              (compiler-comptime-program-to-host-ir
+                (array-ref programs index)
+                windows-target)))
+          (set! index (+ index 1))))
+      valid)))
+
+;; Package images share one registration entry and contiguous macro table.
+;; Each exported macro keeps its own wrapper/helper pair so later source
+;; lowering can replace the helper IR independently without changing the tlci
+;; registration or fixup contract established here.
+(define (compiler-comptime-lower-package
+  [programs : (Array CompilerComptimeMacroProgram)]
+  [windows-target : bool]) : ResultCompilerComptimePackageImagePayload
+  (if (not (compiler-comptime-package-programs-valid? programs windows-target))
+    (ResultCompilerComptimePackageImagePayload.Err
+      "native comptime package has no macros or invalid host IR")
+    (let
+      [count : i64 (array-length programs)]
+      [mode : CompilerComptimeLowerMode
+        (if windows-target
+          (CompilerComptimeLowerMode.WindowsX64)
+          (CompilerComptimeLowerMode.LinuxX64))]
+      [out : byte_buf_core.ByteBufBuilder
+        (byte_buf_core.byte-buf-builder-with-capacity (* count 384))]
+      [registration-patch : CompilerComptimeRelativePatch
+        (compiler-comptime-emit-registration! (&mut out) mode count)]
+      [registration-displacement : i64
+        (struct-get registration-patch displacement)]
+      [registration-rip-after : i64 (struct-get registration-patch rip-after)]
+      [layouts : (Array CompilerComptimePackageMacroLayout)
+        (make-array CompilerComptimePackageMacroLayout count)]
+      [helper-displacements : (Array i64) (make-array i64 count)]
+      [helper-rip-afters : (Array i64) (make-array i64 count)]
+      [helper-offsets : (Array i64) (make-array i64 count)]
+      [index : i64 0]
+      (begin
+        (while (< index count)
+          (let
+            [ir : CompilerComptimeMacroIr
+              (compiler-comptime-program-to-host-ir
+                (array-ref programs index)
+                windows-target)]
+            [entry-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
+            [helper-patch : CompilerComptimeRelativePatch
+              (compiler-comptime-emit-macro-entry!
+                (&mut out)
+                mode
+                (struct-get ir session-cookie))]
+            [helper-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
+            (begin
+              (compiler-comptime-emit-instrumented-helper!
+                (&mut out)
+                mode
+                (struct-get ir helper))
+              (array-set!
+                layouts
+                index
+                (CompilerComptimePackageMacroLayout entry-offset 0))
+              (array-set!
+                helper-displacements
+                index
+                (struct-get helper-patch displacement))
+              (array-set!
+                helper-rip-afters
+                index
+                (struct-get helper-patch rip-after))
+              (array-set! helper-offsets index helper-offset)
+              (set! index (+ index 1)))))
+        (compiler-comptime-align-code! (&mut out) 8)
+        (let
+          [macro-table-offset : i64
+            (byte_buf_core.byte-buf-builder-len (& out))]
+          (begin
+            (set! index 0)
+            (while (< index count)
+              (begin
+                (compiler-comptime-emit-u64! (&mut out) 0)
+                (compiler-comptime-emit-u64!
+                  (&mut out)
+                  (string.string-length
+                    (struct-get (array-ref programs index) macro-name)))
+                (compiler-comptime-emit-u64! (&mut out) 0)
+                (compiler-comptime-emit-u64! (&mut out) 0)
+                (set! index (+ index 1))))
+            (set! index 0)
+            (while (< index count)
+              (let
+                [program : CompilerComptimeMacroProgram
+                  (array-ref programs index)]
+                [layout : CompilerComptimePackageMacroLayout
+                  (array-ref layouts index)]
+                [name-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
+                (begin
+                  (compiler-comptime-emit-name!
+                    (&mut out)
+                    (struct-get program macro-name))
+                  (array-set!
+                    layouts
+                    index
+                    (CompilerComptimePackageMacroLayout
+                      (struct-get layout macro-entry-offset)
+                      name-offset))
+                  (set! index (+ index 1)))))
+            (let
+              [code : (Array u8)
+                (byte_buf_core.byte-buf-builder-finish-array (& out))]
+              (begin
+                (compiler-comptime-set-u32!
+                  code
+                  registration-displacement
+                  (- macro-table-offset registration-rip-after))
+                (set! index 0)
+                (while (< index count)
+                  (begin
+                    (compiler-comptime-set-u32!
+                      code
+                      (array-ref helper-displacements index)
+                      (-
+                        (array-ref helper-offsets index)
+                        (array-ref helper-rip-afters index)))
+                    (set! index (+ index 1))))
+                (ResultCompilerComptimePackageImagePayload.Ok
+                  (CompilerComptimePackageImagePayload
+                    code
+                    macro-table-offset
+                    layouts))))))))))
 
 (define (compiler-comptime-windows-template-oracle) : (Array u8)
   (compiler-comptime-byte-array-from-hex
@@ -905,6 +1061,39 @@
         [(CompilerComptimeStatusProbe operation) (= operation 1)])
       (= (struct-get helper success-result-handle) 4242))))
 
+(define (compiler-comptime-package-scale-ok? [windows-target : bool]) : bool
+  (let
+    [count : i64 64]
+    [programs : (Array CompilerComptimeMacroProgram)
+      (make-array CompilerComptimeMacroProgram count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            programs
+            index
+            (CompilerComptimeMacroProgram
+              "package/scale-macro"
+              (make-array (CompilerComptimeOperation.HostCall 4))
+              0
+              0))
+          (set! index (+ index 1))))
+      (match (compiler-comptime-lower-package programs windows-target)
+        [(ResultCompilerComptimePackageImagePayload.Err _) false]
+        [(ResultCompilerComptimePackageImagePayload.Ok payload)
+          (let
+            [code : (Array u8) (struct-get payload code)]
+            [layouts : (Array CompilerComptimePackageMacroLayout)
+              (struct-get payload macros)]
+            [last : CompilerComptimePackageMacroLayout
+              (array-ref layouts (- count 1))]
+            (and
+              (= (array-length layouts) count)
+              (> (struct-get payload macro-table-offset) 0)
+              (< (struct-get last macro-entry-offset) (array-length code))
+              (< (struct-get last macro-name-offset) (array-length code))))]))))
+
 (test
   compiler-comptime-host-ir-lowering
   (cond
@@ -932,4 +1121,8 @@
       (io.panic "native comptime Windows dynamic-scalar self-test failed")]
     [(not (compiler-comptime-invalid-ir-rejected?))
       (io.panic "native comptime invalid-IR rejection self-test failed")]
+    [(not (compiler-comptime-package-scale-ok? false))
+      (io.panic "native comptime Linux package-scale self-test failed")]
+    [(not (compiler-comptime-package-scale-ok? true))
+      (io.panic "native comptime Windows package-scale self-test failed")]
     [else unit]))

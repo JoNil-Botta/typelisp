@@ -111,6 +111,72 @@
             [(tlci_loader.ResultTlciLoaderUnit.Err _) false])]
         (and missing success fuel fuel-diagnostic wrong-session released))]))
 
+(define (tlci-loader-smoke-package-loaded? [bytes : (Array u8)]) : bool
+  (match (tlci_loader.tlci-loader-load-from-bytes-with-host
+    bytes
+    (tlci-loader-smoke-host-table))
+    [(tlci_loader.ResultTlciLoadedImage.Err _) false]
+    [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+      (let
+        [installed : bool
+          (match (tlci_loader.tlci-loader-probe-install-self-callback!
+            (& loaded)
+            "pkg/alpha")
+            [(tlci_loader.ResultTlciLoaderUnit.Err _) false]
+            [(tlci_loader.ResultTlciLoaderUnit.Ok) true])]
+        [alpha : bool
+          (tlci-loader-smoke-dispatch-result?
+            (tlci_loader.tlci-loader-dispatch-macro
+              (& loaded)
+              "pkg/alpha"
+              0
+              (make-array i64 0)
+              -1)
+            tlci.tlci-host-callback-status-ok
+            0)]
+        [beta : bool
+          (tlci-loader-smoke-dispatch-result?
+            (tlci_loader.tlci-loader-dispatch-macro
+              (& loaded)
+              "pkg/beta"
+              0
+              (make-array i64 0)
+              -1)
+            tlci.tlci-host-callback-status-ok
+            0)]
+        [released : bool
+          (match (tlci_loader.tlci-loader-release loaded)
+            [(tlci_loader.ResultTlciLoaderUnit.Ok) true]
+            [(tlci_loader.ResultTlciLoaderUnit.Err _) false])]
+        (and installed alpha beta released))]))
+
+(define (tlci-loader-smoke-package-repeat?
+  [metadata : tlci.TlciMetadata]
+  [names : (Array String)]
+  [first : (Array u8)]) : bool
+  (match (tlci.tlci-emit-code-bearing-package-image
+    metadata
+    "package-smoke-v1"
+    names
+    (cfg windows true false))
+    [(tlci.ResultTlciBytes.Err _) false]
+    [(tlci.ResultTlciBytes.Ok second) (tlci.tlci-bytes-eq? first second)]))
+
+(define (tlci-loader-smoke-package-ok?) : bool
+  (let
+    [metadata : tlci.TlciMetadata (tlci.tlci-make-metadata "v1" "pkg" "0.1.0")]
+    [names : (Array String) (make-array "pkg/alpha" "pkg/beta")]
+    (match (tlci.tlci-emit-code-bearing-package-image
+      metadata
+      "package-smoke-v1"
+      names
+      (cfg windows true false))
+      [(tlci.ResultTlciBytes.Err _) false]
+      [(tlci.ResultTlciBytes.Ok first)
+        (and
+          (tlci-loader-smoke-package-repeat? metadata names first)
+          (tlci-loader-smoke-package-loaded? first))])))
+
 (define (tlci-loader-smoke-malformed-rejected?
   [bytes : (Array u8)]
   [macro-table-offset : i64]) : bool
@@ -162,7 +228,7 @@
 
 (define (main) : i64
   (if (= (tlci_loader.tlci-loader-self-test) 42)
-    (if (tlci-loader-smoke-native-ok?)
+    (if (and (tlci-loader-smoke-native-ok?) (tlci-loader-smoke-package-ok?))
       42
       5)
     1))

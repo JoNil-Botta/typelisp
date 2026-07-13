@@ -155,19 +155,30 @@
   (begin
     (compiler-load-session-state-program-cache-disable!
       (struct-get state load-session))
+    (ci.intern-compat-state-persistent-storage-disable!
+      (array-ref (struct-get state intern-state) 0))
     state))
 
 (define (compiler-driver-state-apply-session-floors!
   [state : CompilerDriverState]) : unit
-  (compiler-load-session-state-use! (struct-get state load-session)))
+  (compiler-load-session-state-use-with-intern-state!
+    (struct-get state load-session)
+    (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-apply-session-flags!
   [state : CompilerDriverState]) : unit
-  (compiler-load-session-state-use! (struct-get state load-session)))
+  (compiler-load-session-state-use-with-intern-state!
+    (struct-get state load-session)
+    (array-ref (struct-get state intern-state) 0)))
 
+;; Legacy/test adapter for compiler phases that still use the active pool
+;; globals. State-owned reset/adopt operations must not call this helper.
 (define (compiler-driver-state-install-pools! [state : CompilerDriverState]) : unit
   (ast-node-pool-context-install! (compiler-driver-state-pool-context state)))
 
+;; Legacy/test adapter for the remaining load/typecheck/lower call graph.
+;; State-owned table and persistent-arena maintenance uses the explicit
+;; `InternCompatState` APIs and must happen before this boundary.
 (define (compiler-driver-state-install-interns! [state : CompilerDriverState]) : unit
   (ci.intern-compat-state-install!
     (array-ref (struct-get state intern-state) 0)))
@@ -202,8 +213,7 @@
     (array-set!
       (struct-get state type-pool)
       0
-      (array-ref (struct-get pools type-pool) 0))
-    (compiler-driver-state-install-pools! state)))
+      (array-ref (struct-get pools type-pool) 0))))
 
 (define (compiler-driver-state-can-release-checked-lower-source-pools?
   [state : CompilerDriverState]) : bool
@@ -235,6 +245,11 @@
       (ast-node-pool-context-clone-types-only pools)]
     (begin
       (compiler-driver-state-adopt-pools! state retained)
+      ;; Adoption is state-local, but optimizer/backend type reads still cross
+      ;; the documented compatibility boundary through `ty-node-get`. Install
+      ;; the retained pool explicitly before the checked source arena is
+      ;; retired; otherwise those readers keep the soon-to-dangle source pool.
+      (compiler-driver-state-install-pools! state)
       ;; Standalone entry points can leave the retiring checked pool active;
       ;; move those to retained storage. Batch entry points instead have a
       ;; distinct caller-owned scratch arena that must remain active through
@@ -290,7 +305,6 @@
           (struct-get state type-pool)
           0
           (array-ref (struct-get pools type-pool) 0))
-        (compiler-driver-state-install-pools! state)
         (unsafe
           (arena.tl_arena_destroy old-newest))))))
 
@@ -300,7 +314,8 @@
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
     unit
-    (intern-persistent-arena-reset!)))
+    (ci.intern-compat-state-persistent-arena-reset!
+      (array-ref (struct-get state intern-state) 0))))
 
 (define (compiler-driver-state-install-builtins! [state : CompilerDriverState]) : unit
   (cbi.state-install! (array-ref (struct-get state builtin-ids) 0)))
@@ -310,12 +325,14 @@
   (compiler-lower-arena-state-install!
     (array-ref (struct-get state lower-arenas) 0)))
 
+;; Legacy/test capture paired with `compiler-driver-state-install-pools!`.
 (define (compiler-driver-state-capture-active-pools!
   [state : CompilerDriverState]) : unit
   (begin
     (array-set! (struct-get state expr-pool) 0 (ast-node-pool-state-capture))
     (array-set! (struct-get state type-pool) 0 (ty-node-pool-state-capture))))
 
+;; Legacy/test capture paired with `compiler-driver-state-install-interns!`.
 (define (compiler-driver-state-capture-active-interns!
   [state : CompilerDriverState]) : unit
   (ci.intern-compat-state-capture-from-globals!
@@ -332,6 +349,11 @@
 (define (compiler-driver-state-intern-pool-data-addr
   [state : CompilerDriverState]) : i64
   (ci.intern-compat-state-pool-data-addr
+    (array-ref (struct-get state intern-state) 0)))
+
+(define (compiler-driver-state-intern-persistent-arena
+  [state : CompilerDriverState]) : i64
+  (ci.intern-compat-state-persistent-arena
     (array-ref (struct-get state intern-state) 0)))
 
 (define (compiler-driver-state-capture-active-builtins!
@@ -458,19 +480,20 @@
   (begin
     (compiler-driver-state-apply-session-flags! state)
     (compiler-driver-state-reset-owned-pool-arena-if-uncached! state)
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
     (let
       [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
       (begin
         (compiler-load-session-reset-pools-with-pools! pools)
+        (compiler-load-session-reset-interns-with-state!
+          (array-ref (struct-get state intern-state) 0))
         (compiler-driver-state-install-pools! state)
         (compiler-driver-state-install-interns! state)
-        (compiler-load-session-reset-interns!)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-driver-state-reset-builtins! state)
         (ctfe-builtin-reset!)
         (compiler-typecheck-reset-file-state!)
-        (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
         (lower-reset-file-state!)
         ;; Drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
@@ -489,19 +512,20 @@
       ;; retired pool chain is released, so its peak exposes their overlap.
       (compiler-driver-state-reset-owned-pool-arena-if-uncached! state)
       (compiler-driver-batch-profile-mark! ordinal "owned-pool-release")
+      (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
       (let
         [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
         (begin
           (compiler-load-session-reset-pools-with-pools! pools)
+          (compiler-load-session-reset-interns-with-state!
+            (array-ref (struct-get state intern-state) 0))
           (compiler-driver-state-install-pools! state)
           (compiler-driver-state-install-interns! state)
-          (compiler-load-session-reset-interns!)
           (compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-install-transients! state)
           (compiler-driver-state-reset-builtins! state)
           (ctfe-builtin-reset!)
           (compiler-typecheck-reset-file-state!)
-          (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
           (compiler-driver-batch-profile-mark! ordinal "intern-session-cleanup")
           (lower-reset-file-state!)
           (lower-arenas-release!)

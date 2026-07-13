@@ -5,6 +5,7 @@
 (import "compiler_diagnostic.tl")
 (import lex as lexer)
 (import read as reader)
+(import compiler_intern as ci)
 (import sym_i64_env)
 (import stdlib.env)
 (import stdlib.fs)
@@ -664,6 +665,13 @@
     (set! compiler-load-active-session-state state)
     (intern-persistent-storage-disable!)))
 
+(define (compiler-load-session-state-use-with-intern-state!
+  [state : CompilerLoadSessionState]
+  [intern-state : ci.InternCompatState]) : unit
+  (begin
+    (set! compiler-load-active-session-state state)
+    (ci.intern-compat-state-persistent-storage-disable! intern-state)))
+
 (define (compiler-load-session-cache-enable!) : unit
   (begin
     (array-set!
@@ -696,8 +704,7 @@
     (array-set! (struct-get state program-admission-ready) 0 false)
     (array-set! (struct-get state program-cache-hit-count) 0 0)
     (array-set! (struct-get state program-cache-miss-count) 0 0)
-    (array-set! (struct-get state program-cache-store-count) 0 0)
-    (intern-persistent-storage-disable!)))
+    (array-set! (struct-get state program-cache-store-count) 0 0)))
 
 (define (compiler-load-session-program-cache-disable!) : unit
   (begin
@@ -783,6 +790,19 @@
         (intern-reset-to! (compiler-load-session-intern-floor-value))
         (intern-persistent-arena-reset-to-floor!))
       (intern-reset!))))
+
+(define (compiler-load-session-reset-interns-with-state!
+  [state : ci.InternCompatState]) : unit
+  (begin
+    (compiler-load-surface-summaries-reset!)
+    (set! compiler-load-surface-summary-load-depth 0)
+    (if (compiler-load-session-cache-enabled?)
+      (begin
+        (ci.intern-compat-state-reset-to!
+          state
+          (compiler-load-session-intern-floor-value))
+        (ci.intern-compat-state-persistent-arena-reset-to-floor! state))
+      (ci.intern-compat-state-reset! state))))
 
 (define (compiler-load-runtime-prelude-cache-fill! [index : i64]) : unit
   (if (>= index compiler-load-runtime-prelude-cache-capacity)

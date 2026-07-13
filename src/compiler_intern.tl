@@ -276,6 +276,167 @@
         (ptr-cast (array-data (struct-get state pool-slots)) : (Ptr u8))))
     : i64))
 
+(define (intern-compat-state-persistent-arena [state : InternCompatState]) : i64
+  (array-ref (struct-get state persistent-arena) 0))
+
+(define (intern-compat-state-persistent-arena-floor-mark
+  [state : InternCompatState]) : i64
+  (array-ref (struct-get state persistent-arena-floor-mark) 0))
+
+(define (intern-compat-state-persistent-storage-enabled?
+  [state : InternCompatState]) : bool
+  (array-ref (struct-get state persistent-storage-enabled) 0))
+
+(define (intern-compat-state-persistent-storage-enable!
+  [state : InternCompatState]) : unit
+  (array-set! (struct-get state persistent-storage-enabled) 0 true))
+
+(define (intern-compat-state-persistent-storage-disable!
+  [state : InternCompatState]) : unit
+  (array-set! (struct-get state persistent-storage-enabled) 0 false))
+
+;; State-owned arena operations deliberately do not install `state` into the
+;; compatibility globals. Production driver resets use these before installing
+;; the state for the legacy compiler call graph, so resetting one compile job
+;; cannot destroy another job's currently active intern arena.
+(define (intern-compat-state-persistent-arena-floor-refresh!
+  [state : InternCompatState]) : unit
+  (let
+    [prev-arena : i64 (tl_arena_current)]
+    (begin
+      (unsafe
+        (tl_arena_set (intern-compat-state-persistent-arena state)))
+      (array-set!
+        (struct-get state persistent-arena-floor-mark)
+        0
+        (tl_region_mark))
+      (unsafe
+        (tl_arena_set prev-arena)))))
+
+(define (intern-compat-state-persistent-arena-floor-ensure!
+  [state : InternCompatState]) : unit
+  (if (= (intern-compat-state-persistent-arena-floor-mark state) 0)
+    (intern-compat-state-persistent-arena-floor-refresh! state)
+    unit))
+
+(define (intern-compat-state-persistent-arena-reset-to-floor!
+  [state : InternCompatState]) : unit
+  (let
+    [prev-arena : i64 (tl_arena_current)]
+    (begin
+      (intern-compat-state-persistent-arena-floor-ensure! state)
+      (unsafe
+        (tl_arena_set (intern-compat-state-persistent-arena state))
+        (tl_region_reset
+          (intern-compat-state-persistent-arena-floor-mark state))
+        (tl_arena_set prev-arena)))))
+
+(define (intern-compat-state-persistent-arena-reset!
+  [state : InternCompatState]) : unit
+  (let
+    [old-arena : i64 (intern-compat-state-persistent-arena state)]
+    [new-arena : i64 (tl_arena_make)]
+    [prev-arena : i64 (tl_arena_current)]
+    (begin
+      (array-set! (struct-get state persistent-arena) 0 new-arena)
+      (array-set! (struct-get state persistent-arena-floor-mark) 0 0)
+      (if (= prev-arena old-arena)
+        (unsafe
+          (tl_arena_set new-arena))
+        unit)
+      (unsafe
+        (tl_arena_destroy old-arena))
+      (intern-compat-state-persistent-arena-floor-refresh! state))))
+
+(define (intern-compat-state-fill-empty!
+  [state : InternCompatState]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (array-set! (struct-get state map-slots) index (InternEmpty))
+      (intern-compat-state-fill-empty! state (+ index 1) count))))
+
+(define (intern-compat-state-map-insert-existing-from!
+  [state : InternCompatState]
+  [name : String]
+  [id : i64]
+  [hash : i64]
+  [cursor : i64]
+  [steps : i64]
+  [capacity : i64]) : unit
+  (if (>= steps capacity)
+    unit
+    (match (array-ref (struct-get state map-slots) cursor)
+      [(InternEmpty)
+        (array-set!
+          (struct-get state map-slots)
+          cursor
+          (InternUsed name id hash))]
+      [_
+        (intern-compat-state-map-insert-existing-from!
+          state
+          name
+          id
+          hash
+          (intern-bucket (+ cursor 1) capacity)
+          (+ steps 1)
+          capacity)])))
+
+(define (intern-compat-state-map-insert-existing!
+  [state : InternCompatState]
+  [id : i64]) : unit
+  (let
+    [name : String (array-ref (struct-get state pool-slots) id)]
+    [hash : i64 (intern-hash name)]
+    [capacity : i64 (array-length (struct-get state map-slots))]
+    (intern-compat-state-map-insert-existing-from!
+      state
+      name
+      id
+      hash
+      (intern-bucket hash capacity)
+      0
+      capacity)))
+
+(define (intern-compat-state-map-rebuild-prefix!
+  [state : InternCompatState]
+  [index : i64]
+  [count : i64]) : unit
+  (if (>= index count)
+    unit
+    (begin
+      (intern-compat-state-map-insert-existing! state index)
+      (intern-compat-state-map-rebuild-prefix! state (+ index 1) count))))
+
+(define (intern-compat-state-reset! [state : InternCompatState]) : unit
+  (begin
+    (array-set! (struct-get state pool-count) 0 0)
+    (intern-compat-state-fill-empty!
+      state
+      0
+      (array-length (struct-get state map-slots)))
+    (array-set!
+      (struct-get state reset-generation)
+      0
+      (+ (intern-compat-state-generation state) 1))
+    (array-set! (struct-get state map-ready) 0 true)))
+
+(define (intern-compat-state-reset-to! [state : InternCompatState] [mark : i64]) : unit
+  (begin
+    (array-set! (struct-get state pool-count) 0 mark)
+    (intern-compat-state-fill-empty!
+      state
+      0
+      (array-length (struct-get state map-slots)))
+    (intern-compat-state-map-rebuild-prefix! state 0 mark)
+    (array-set!
+      (struct-get state reset-generation)
+      0
+      (+ (intern-compat-state-generation state) 1))
+    (array-set! (struct-get state map-ready) 0 true)))
+
 (define (intern-compat-state-install! [state : InternCompatState]) : unit
   (begin
     (set! intern-pool-slots (struct-get state pool-slots))
@@ -331,6 +492,11 @@
 
 (define (intern-persistent-storage-on?) : bool
   intern-persistent-storage-enabled)
+
+;; Compatibility-only observation for state-isolation tests. Production
+;; state-owned operations use `intern-compat-state-persistent-arena` instead.
+(define (intern-persistent-arena-handle) : i64
+  intern-persistent-arena)
 
 (define (intern-persistent-arena-reset!) : unit
   (let

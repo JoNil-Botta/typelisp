@@ -1179,6 +1179,131 @@
                     (set! ok false))
                   ok)))))))))
 
+(define (compiler-driver-state-smoke-intern-arena-reset-isolated?) : bool
+  (let
+    ;; A nonzero ownership marker is sufficient for this focused helper: the
+    ;; test calls only the intern-arena reset and never releases pool storage.
+    [state-a : CompilerDriverState
+      (compiler-driver-state-new-from-pools-and-arena
+        (ast-expr-node-pool-state-create 1)
+        (ast-type-node-pool-state-create 1)
+        -1)]
+    [state-b : CompilerDriverState
+      (compiler-driver-state-new-from-pools-and-arena
+        (ast-expr-node-pool-state-create 1)
+        (ast-type-node-pool-state-create 1)
+        -1)]
+    [a-before : i64 (compiler-driver-state-intern-persistent-arena state-a)]
+    [b-before : i64 (compiler-driver-state-intern-persistent-arena state-b)]
+    (begin
+      (compiler-driver-state-install-interns! state-b)
+      (let
+        [active-before : i64 (intern-persistent-arena-handle)]
+        (begin
+          (compiler-driver-state-reset-owned-intern-arena-if-uncached! state-a)
+          (let
+            [a-after : i64
+              (compiler-driver-state-intern-persistent-arena state-a)]
+            [b-after : i64
+              (compiler-driver-state-intern-persistent-arena state-b)]
+            [active-after : i64 (intern-persistent-arena-handle)]
+            (and
+              (not (= a-before a-after))
+              (= b-before b-after)
+              (= active-before b-before)
+              (= active-after b-before))))))))
+
+(define (compiler-driver-state-smoke-intern-table-reset-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-install-interns! state-a)
+      (intern-reset!)
+      (intern "state-a-table")
+      (compiler-driver-state-capture-active-interns! state-a)
+      (compiler-driver-state-install-interns! state-b)
+      (intern-reset!)
+      (let
+        [b-id : i64 (intern "state-b-table")]
+        (begin
+          (compiler-driver-state-capture-active-interns! state-b)
+          (compiler-driver-state-apply-session-flags! state-b)
+          (let
+            [a-generation : i64
+              (compiler-driver-state-intern-generation state-a)]
+            [b-generation : i64
+              (compiler-driver-state-intern-generation state-b)]
+            (begin
+              (compiler-load-session-reset-interns-with-state!
+                (array-ref (struct-get state-a intern-state) 0))
+              (and
+                (= (compiler-driver-state-intern-pool-len state-a) 0)
+                (=
+                  (compiler-driver-state-intern-generation state-a)
+                  (+ a-generation 1))
+                (= (compiler-driver-state-intern-pool-len state-b) 1)
+                (=
+                  (compiler-driver-state-intern-generation state-b)
+                  b-generation)
+                (= (intern-pool-len) 1)
+                (match (intern-lookup "state-b-table")
+                  [(InternLookupFound found) (= found b-id)]
+                  [(InternLookupMissing) false])))))))))
+
+(define (compiler-driver-state-smoke-intern-storage-flags-isolated?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-install-interns! state-b)
+      (intern-persistent-storage-enable!)
+      (compiler-driver-state-capture-active-interns! state-b)
+      (compiler-driver-state-apply-session-flags! state-a)
+      (compiler-driver-state-session-program-cache-disable state-a)
+      (let
+        [ok : bool
+          (and
+            (intern-persistent-storage-on?)
+            (not
+              (intern-compat-state-persistent-storage-enabled?
+                (array-ref (struct-get state-a intern-state) 0)))
+            (intern-compat-state-persistent-storage-enabled?
+              (array-ref (struct-get state-b intern-state) 0)))]
+        (begin
+          (intern-persistent-storage-disable!)
+          ok)))))
+
+(define (compiler-driver-state-smoke-adopt-pools-does-not-install?) : bool
+  (let
+    [state : CompilerDriverState (compiler-driver-state-new)]
+    [state-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (compiler-driver-state-smoke-expr-push
+          (ast-expr-node-pool-state-create 1)
+          111)
+        (ast-type-node-pool-state-create 1))]
+    [active-pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (compiler-driver-state-smoke-expr-push
+          (ast-expr-node-pool-state-create 1)
+          222)
+        (ast-type-node-pool-state-create 1))]
+    (begin
+      (ast-node-pool-context-install! active-pools)
+      (compiler-driver-state-adopt-pools! state state-pools)
+      (and
+        (compiler-driver-state-smoke-expr-int?
+          (array-ref
+            (struct-get (compiler-driver-state-pool-context state) expr-pool)
+            0)
+          0
+          111)
+        (compiler-driver-state-smoke-expr-int?
+          (ast-node-pool-state-capture)
+          0
+          222)))))
+
 ;; Parser dispatch ids are process-global cached data, while driver states own
 ;; distinct intern tables whose generation counters can have the same value.
 ;; Pre-interning one syntax name gives the two tables different ids without
@@ -2507,6 +2632,18 @@
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
     (unless (compiler-driver-state-smoke-interns-isolated?) (return 29))
+    (unless
+      (compiler-driver-state-smoke-intern-arena-reset-isolated?)
+      (return 32))
+    (unless
+      (compiler-driver-state-smoke-intern-table-reset-isolated?)
+      (return 33))
+    (unless
+      (compiler-driver-state-smoke-intern-storage-flags-isolated?)
+      (return 35))
+    (unless
+      (compiler-driver-state-smoke-adopt-pools-does-not-install?)
+      (return 34))
     (unless
       (compiler-driver-state-smoke-parser-dispatch-cache-isolated?)
       (return 31))

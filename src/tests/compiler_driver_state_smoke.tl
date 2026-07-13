@@ -1,5 +1,6 @@
 (import stdlib.string)
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.vector)
 (import (vector String) as svec)
 (import "../compiler_driver_core.tl")
@@ -2114,7 +2115,7 @@
                       true
                       false)]
                   (and
-                    (> (ast-node-pool-context-expr-len pools-a) 0)
+                    (= (ast-node-pool-context-expr-len pools-a) 0)
                     (> (ast-node-pool-context-type-len pools-a) 0)
                     (= active-type-len-before 2)
                     (= (ty-node-pool-len) active-type-len-before)
@@ -2136,8 +2137,8 @@
       (compiler-driver-state-reset-file-state! state)
       (compiler-driver-state-install-pools! decoy-state)
       (let
-        [ok : bool
-          (match (compiler-driver-load-and-lower-escaping-with-state
+        [lowered : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-escaping-with-state
             state
             input-path
             (CompilerBackendTarget.Linux)
@@ -2146,9 +2147,21 @@
             (compiler-driver-state-target-cfgs
               state
               (CompilerBackendTarget.Linux)
-              (compiler-cfg-empty)))
-            [(ResultCompilerDriverLowered.Ok _ _ _) true]
-            [(ResultCompilerDriverLowered.Err _) false])]
+              (compiler-cfg-empty)))]
+        [emitted : ResultCompilerDriver
+          (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+            input-path
+            lowered
+            (CompilerBackendTarget.Linux)
+            true
+            (CompilerBackendMode.Scalar)
+            1
+            true
+            false)]
+        [ok : bool
+          (match emitted
+            [(ResultCompilerDriver.Ok _) true]
+            [(ResultCompilerDriver.Err _) false])]
         (begin
           (compiler-driver-state-capture-session-floors! state)
           ok)))))
@@ -2192,13 +2205,27 @@
                 (not (= source-arena dest-arena))
                 (= dest-arena (ast-node-pool-context-base-arena state-pools))
                 (= dest-arena (ast-node-pool-context-base-arena result-pools))
-                (> (ast-node-pool-context-expr-len result-pools) 0)
+                (= (ast-node-pool-context-expr-len result-pools) 0)
                 (> (ast-node-pool-context-type-len result-pools) 0))]
             [(ResultCompilerDriverLowered.Err _) false])]
+        [emitted : ResultCompilerDriver
+          (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
+            "tests/integration/calc.tl"
+            lowered
+            (CompilerBackendTarget.Linux)
+            true
+            (CompilerBackendMode.Scalar)
+            1
+            true
+            false)]
         (begin
           (compiler-driver-state-capture-session-floors! state)
           (compiler-load-session-cache-disable-for-test!)
-          ok)))))
+          (and
+            ok
+            (match emitted
+              [(ResultCompilerDriver.Ok _) true]
+              [(ResultCompilerDriver.Err _) false])))))))
 
 (define (compiler-driver-state-smoke-batch-prelude-cache-floors?) : bool
   (let
@@ -2258,6 +2285,52 @@
             "tests/integration/lexer.tl"
             roots))
         (set! ok false))
+      (compiler-load-session-cache-disable-for-test!)
+      ok)))
+
+(define (compiler-driver-state-smoke-emit-restores-scratch-arena?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [_set-scratch : unit
+      (unsafe
+        (arena.set! scratch))]
+    [_reset-entry : unit (compiler-driver-state-reset-file-state! state)]
+    [emitted : ResultCompilerDriverBuffer
+      (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+        state
+        "tests/integration/calc.tl"
+        (CompilerBackendTarget.Linux)
+        true
+        roots
+        1
+        (CompilerBackendMode.Scalar)
+        (compiler-cfg-empty))]
+    [ok : bool
+      (match emitted
+        [(ResultCompilerDriverBuffer.Ok _) true]
+        [(ResultCompilerDriverBuffer.Err _) false])]
+    ;; Capture the driver's post-emit arena exactly as compile --batch does.
+    ;; Resetting state retires the retained type pool before the caller destroys
+    ;; this scratch chain; a stale retained-pool handle would double-destroy.
+    [scratch-end : arena.Arena (arena.current)]
+    (begin
+      (unsafe
+        (arena.set! home))
+      (compiler-driver-state-reset-file-state! state)
+      (unsafe
+        (begin
+          (arena.set! home)
+          (arena.destroy scratch-end)))
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
@@ -2494,6 +2567,9 @@
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
     (unless (compiler-driver-state-smoke-scratch-batch-owned-pool?) (return 25))
+    (unless
+      (compiler-driver-state-smoke-emit-restores-scratch-arena?)
+      (return 32))
     (unless
       (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?)
       (return 26))

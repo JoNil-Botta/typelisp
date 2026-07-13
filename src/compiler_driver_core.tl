@@ -37,6 +37,8 @@
 
 (define compiler-driver-pending-retired-source-arena : i64
   0)
+(define compiler-driver-pending-post-emit-arena : i64
+  0)
 
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
@@ -229,17 +231,28 @@
   [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
   (let
     [old-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [entry-arena : i64 (arena.tl_arena_current)]
     [retained : AstNodePoolContext
       (ast-node-pool-context-clone-types-only pools)]
+    [retained-arena : i64 (ast-node-pool-context-base-arena retained)]
     (begin
       (compiler-driver-state-adopt-pools! state retained)
       ;; The entry arena normally points into the retired checked pool chain.
       ;; Move it so optimizer output is allocated into retained storage rather
       ;; than memory released by the outer emit wrapper.
       (unsafe
-        (arena.tl_arena_set (ast-node-pool-context-base-arena retained)))
+        (arena.tl_arena_set retained-arena))
       (ast-node-pool-reader-use! retained)
       (set! compiler-driver-pending-retired-source-arena old-arena)
+      ;; Batch callers own a separate per-entry scratch arena and expect the
+      ;; driver to leave its newest segment active after emission. If lowering
+      ;; itself entered through the pool arena, that arena is being retired and
+      ;; the retained pool is the only valid post-emit destination.
+      (set!
+        compiler-driver-pending-post-emit-arena
+        (if (= entry-arena old-arena)
+          retained-arena
+          entry-arena))
       (compiler-driver-lowered-from-pools program spans retained))))
 
 (define (compiler-driver-state-clear-pool-backed-caches!) : unit
@@ -1223,6 +1236,16 @@
             (arena.tl_arena_destroy retire-arena)
             (arena.tl_arena_set retained-arena)))))))
 
+(define (compiler-driver-restore-post-emit-arena!) : unit
+  (if (= compiler-driver-pending-post-emit-arena 0)
+    unit
+    (let
+      [post-emit-arena : i64 compiler-driver-pending-post-emit-arena]
+      (unsafe
+        (begin
+          (set! compiler-driver-pending-post-emit-arena 0)
+          (arena.tl_arena_set post-emit-arena))))))
+
 (define (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
@@ -1292,6 +1315,7 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-post-emit-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 
@@ -1362,6 +1386,7 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-post-emit-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (ResultCompilerDriverBuffer.Err diag)]))
@@ -1410,6 +1435,7 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-post-emit-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (ResultCompilerDriverObject.Err diag)]))
@@ -1458,6 +1484,7 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-post-emit-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriverPic.Err diag)]))
 
@@ -2838,6 +2865,7 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-post-emit-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
 

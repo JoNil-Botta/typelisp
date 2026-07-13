@@ -31481,6 +31481,30 @@
 (define (lower-masked-vector-empty-lane-locals) : lower_string_i64_map.Map
   (lower_string_i64_map.with-capacity 16))
 
+(define (lower-masked-vector-lane-locals-from-set-at
+  [items : LowerStringSet]
+  [lanes : i64]
+  [out : lower_string_i64_map.Map]) : lower_string_i64_map.Map
+  (match items
+    [(LowerStringSet.Nil) out]
+    [(LowerStringSet.Cons name rest)
+      (let
+        [next-out : lower_string_i64_map.Map out]
+        (begin
+          (lower_string_i64_map.insert-ref! (&mut next-out) name lanes)
+          (lower-masked-vector-lane-locals-from-set-at
+            (box-get rest)
+            lanes
+            next-out)))]))
+
+(define (lower-masked-vector-lane-locals-from-set
+  [items : LowerStringSet]
+  [lanes : i64]) : lower_string_i64_map.Map
+  (lower-masked-vector-lane-locals-from-set-at
+    items
+    lanes
+    (lower-masked-vector-empty-lane-locals)))
+
 (define (lower-masked-vector-lane-locals-bind-if-varying
   [lane-locals : lower_string_i64_map.Map]
   [name : i64]
@@ -38876,6 +38900,7 @@
     env
     type-env
     lane-locals
+    (lower-masked-vector-lane-locals-from-set lane-locals lanes)
     index
     index-var
     active-mask
@@ -38890,6 +38915,7 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [lane-locals : LowerStringSet]
+  [analysis-locals : lower_string_i64_map.Map]
   [index : String]
   [index-var : i64]
   [active-mask : CompilerIrValue]
@@ -38922,7 +38948,7 @@
                 env
                 type-env
                 index
-                (lower-masked-vector-empty-lane-locals)
+                analysis-locals
                 arg)]
             [varying : bool (> arg-lanes 0)]
             (if (< arg-lanes 0)
@@ -38954,6 +38980,7 @@
                         env
                         type-env
                         lane-locals
+                        analysis-locals
                         index
                         index-var
                         active-mask
@@ -39268,6 +39295,28 @@
                 lanes
                 result-ty))))])))
 
+(define (lower-avx512-uniform-spmd-call
+  [ctx : TcContext]
+  [state : LowerState]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]
+  [result-ty : AstType]
+  [lanes : i64]
+  [expr : AstExpr]) : ResultLowerExpr
+  (match (lower-call ctx state env type-env func args result-ty expr)
+    [(ResultLowerExpr.Ok lowered)
+      (match lowered
+        [(LowerExpr.Expr call-state call-value call-ty)
+          (if (or
+            (tc-type-eq call-ty (AstType.Unit))
+            (lower-type-bool? call-ty))
+            (ResultLowerExpr.Ok lowered)
+            (ResultLowerExpr.Ok
+              (lower-emit-splat call-state call-value lanes call-ty)))])]
+    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
+
 (define (lower-avx512-spmd-call
   [ctx : TcContext]
   [state : LowerState]
@@ -39292,88 +39341,95 @@
             (lower-state-type-cache state)
             expr)
             [(ResultTcType.Ok result-ty)
-              (match (lower-avx512-spmd-call-args
-                ctx
-                state
-                env
-                type-env
-                lane-locals
-                index
-                index-var
-                active-mask
-                lanes
-                params
-                args)
-                [(ResultLowerSpmdCallArgs.Ok args-state call-args any-varying)
-                  (if (not any-varying)
-                    (match (lower-call
-                      ctx
-                      args-state
-                      env
-                      type-env
-                      func
-                      args
-                      result-ty
-                      expr)
-                      [(ResultLowerExpr.Ok lowered)
-                        (match lowered
-                          [(LowerExpr.Expr call-state call-value call-ty)
-                            (if (or
-                              (tc-type-eq call-ty (AstType.Unit))
-                              (lower-type-bool? call-ty))
-                              (ResultLowerExpr.Ok lowered)
-                              (ResultLowerExpr.Ok
-                                (lower-emit-splat
-                                  call-state
-                                  call-value
-                                  lanes
-                                  call-ty)))])]
-                      [(ResultLowerExpr.Err message)
-                        (ResultLowerExpr.Err message)])
-                    (match (lower-state-fresh-lambda-name args-state)
-                      [(LowerLambdaName.Name named-state hidden-name)
-                        (match (lower-spmd-specialized-helper-function
-                          ctx
-                          type-env
-                          (lower-state-type-cache named-state)
-                          hidden-name
-                          params
-                          ret
-                          body
-                          (CompilerIrSpmdBackend.Avx512)
-                          call-args
-                          lanes
-                          (lower-state-spans named-state)
-                          (lower-state-names named-state)
-                          (lower-state-mode named-state))
-                          [(ResultLowerFunction.Ok functions helper-spans)
-                            (lower-avx512-emit-spmd-call
-                              (lower-state-add-functions
-                                named-state
-                                functions
-                                helper-spans)
+              (let
+                [arg-lanes : i64
+                  (lower-spmd-call-args-lanes
+                    ctx
+                    (lower-state-mode state)
+                    env
+                    type-env
+                    index
+                    (lower-masked-vector-lane-locals-from-set lane-locals lanes)
+                    args)]
+                (if (= arg-lanes 0)
+                  (lower-avx512-uniform-spmd-call
+                    ctx
+                    state
+                    env
+                    type-env
+                    func
+                    args
+                    result-ty
+                    lanes
+                    expr)
+                  (match (lower-avx512-spmd-call-args
+                    ctx
+                    state
+                    env
+                    type-env
+                    lane-locals
+                    index
+                    index-var
+                    active-mask
+                    lanes
+                    params
+                    args)
+                    [(ResultLowerSpmdCallArgs.Ok
+                        args-state
+                        call-args
+                        any-varying)
+                      (if (not any-varying)
+                        (ResultLowerExpr.Err
+                          (box
+                            (lower-diagnostic-at-expr
+                              expr
+                              "lower: inconsistent SPMD helper argument classification")))
+                        (match (lower-state-fresh-lambda-name args-state)
+                          [(LowerLambdaName.Name named-state hidden-name)
+                            (match (lower-spmd-specialized-helper-function
+                              ctx
+                              type-env
+                              (lower-state-type-cache named-state)
                               hidden-name
+                              params
+                              ret
+                              body
                               (CompilerIrSpmdBackend.Avx512)
-                              active-mask
-                              lanes
                               call-args
-                              result-ty
-                              (>
-                                (lower-spmd-direct-call-result-lanes
-                                  ctx
-                                  (lower-state-mode named-state)
-                                  env
-                                  type-env
-                                  index
-                                  (lower-masked-vector-empty-lane-locals)
-                                  func
-                                  args)
-                                0)
-                              expr)]
-                          [(ResultLowerFunction.Err message)
-                            (ResultLowerExpr.Err message)])]))]
-                [(ResultLowerSpmdCallArgs.Err message)
-                  (ResultLowerExpr.Err message)])]
+                              lanes
+                              (lower-state-spans named-state)
+                              (lower-state-names named-state)
+                              (lower-state-mode named-state))
+                              [(ResultLowerFunction.Ok functions helper-spans)
+                                (lower-avx512-emit-spmd-call
+                                  (lower-state-add-functions
+                                    named-state
+                                    functions
+                                    helper-spans)
+                                  hidden-name
+                                  (CompilerIrSpmdBackend.Avx512)
+                                  active-mask
+                                  lanes
+                                  call-args
+                                  result-ty
+                                  (>
+                                    (lower-spmd-direct-call-result-lanes
+                                      ctx
+                                      (lower-state-mode named-state)
+                                      env
+                                      type-env
+                                      index
+                                      (lower-masked-vector-lane-locals-from-set
+                                        lane-locals
+                                        lanes)
+                                      func
+                                      args)
+                                    0)
+                                  expr)]
+                              [(ResultLowerFunction.Err message)
+                                (ResultLowerExpr.Err message)])]))]
+                    [(ResultLowerSpmdCallArgs.Err message)
+                      (ResultLowerExpr.Err message)])))]
             [(ResultTcType.Err message)
               (ResultLowerExpr.Err
                 (box (lower-diagnostic-at-expr expr message)))])]
@@ -56862,6 +56918,24 @@
 (define (fill-unit [n : i64]) : unit
   (foreach ([i : i64 0 n]) (touch-heavy i)))")
 
+(define (compiler-lower-spmd-varying-local-call-source) : String
+  "(define (heavy [x : i64]) : i64
+  (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
+(define (fill [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (let
+      ([x : i64 (+ i 1)])
+      (array-set! out i (heavy x)))))")
+
+(define (compiler-lower-spmd-uniform-arg-call-source) : String
+  "(define (heavy [x : i64]) : i64
+  (+ (+ (+ (+ (+ (+ (+ x 1) 2) 3) 4) 5) 6) 7))
+(define (fill [out : (Array i64)] [n : i64] [offset : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (heavy (+ offset 1)))))")
+
 (define (compiler-lower-spmd-scalar-call-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
     (compiler-lower-spmd-scalar-call-shape-source)
@@ -56876,6 +56950,30 @@
             (match lower-spmd-scalar-call-context
               [(LowerSpmdScalarCallContext.No) true]
               [(LowerSpmdScalarCallContext.Some _) false]))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-spmd-varying-local-call-shape-ok?) : bool
+  (>
+    (compiler-lower-spmd-source-call-count
+      (compiler-lower-spmd-varying-local-call-source)
+      (CompilerLowerMode.Avx512))
+    0))
+
+(define (compiler-lower-spmd-uniform-arg-call-shape-ok?) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-spmd-uniform-arg-call-source)
+    (CompilerLowerMode.Avx512))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-spmd-call-count functions "fill") 0)
+            (=
+              (lower-test-function-binop-op-count
+                functions
+                "fill"
+                (CompilerIrBinOp.Add))
+              5))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-spmd-out-of-line-call-shape-ok?) : bool
@@ -56905,6 +57003,8 @@
         (compiler-lower-spmd-out-of-line-unit-source)
         (CompilerLowerMode.Avx512))
       2)
+    (compiler-lower-spmd-varying-local-call-shape-ok?)
+    (compiler-lower-spmd-uniform-arg-call-shape-ok?)
     (compiler-lower-mode-error-ok?
       (compiler-lower-spmd-out-of-line-value-source)
       (CompilerLowerMode.Avx2)

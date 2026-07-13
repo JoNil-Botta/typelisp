@@ -55969,6 +55969,8 @@
   (ast-decl-list-new))
 (define macro-generated-catalog-demand-index-ready : bool
   false)
+(define macro-generated-catalog-demand-index-enabled : bool
+  false)
 
 (define (macro-generated-catalog-demand-index-bucket [path-id : i64]) : i64
   (bit-and
@@ -56002,6 +56004,7 @@
             macro-generated-catalog-demand-index-empty)
           (set! index (+ index 1))))
       (set! macro-generated-catalog-demand-index-ready false)
+      (set! macro-generated-catalog-demand-index-enabled false)
       (set! macro-generated-catalog-demand-scope-active false)
       (set!
         macro-generated-catalog-demand-scope
@@ -58018,7 +58021,10 @@
     [previous-scope : AstDeclList macro-generated-catalog-demand-scope]
     [import-placeholder? : bool (macro-decl-import-placeholder? decl)]
     [indexed-scope? : bool
-      (and import-placeholder? (> (string.string-length decl-path) 0))]
+      (and
+        import-placeholder?
+        macro-generated-catalog-demand-index-enabled
+        (> (string.string-length decl-path) 0))]
     (begin
       (set! macro-generated-catalog-demand-scope-active indexed-scope?)
       (set!
@@ -60098,7 +60104,11 @@
             (if (or has-defmacro has-visible-macro-call program-needs-expansion)
               (begin
                 (macro-expand-scratch-begin!)
-                (macro-generated-catalog-demand-index-build! decls paths)
+                (if (> (svec.len (& stdlib-roots)) 0)
+                  (begin
+                    (macro-generated-catalog-demand-index-build! decls paths)
+                    (set! macro-generated-catalog-demand-index-enabled true))
+                  (macro-generated-catalog-demand-index-invalidate!))
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (macro-live-symbols-build-or-reuse! program paths)
                   [(ResultCompilerSymbols.Ok symbols)

@@ -223,6 +223,37 @@
       (array-ref (struct-get pools type-pool) 0)]
     (= (struct-get expr-pool base-arena) (struct-get type-pool base-arena))))
 
+(define (compiler-ast-context-clone-types-only-smoke?) : bool
+  (let
+    [source : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 1 1)]
+    [expr-id : i64
+      (ast.ast-node-pool-context-expr-push
+        source
+        (ast.AstExpr.Literal (ast.ast-lit-int 17)))]
+    [i64-id : i64
+      (ast.ast-node-pool-context-type-push source (ast.AstType.I64))]
+    [ptr-id : i64
+      (ast.ast-node-pool-context-type-push source (ast.AstType.Ptr i64-id))]
+    [ptr-dupe-id : i64
+      (ast.ast-node-pool-context-type-push source (ast.AstType.Ptr i64-id))]
+    [cloned : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-clone-types-only source)]
+    [cloned-ptr-id : i64
+      (ast.ast-node-pool-context-type-push cloned (ast.AstType.Ptr i64-id))]
+    (and
+      (= expr-id 0)
+      (= i64-id 0)
+      (= ptr-id 1)
+      (= ptr-dupe-id ptr-id)
+      (= cloned-ptr-id ptr-id)
+      (= (ast.ast-node-pool-context-expr-len cloned) 0)
+      (= (ast.ast-node-pool-context-type-len cloned) 2)
+      (compiler-ast-context-type-i64? cloned i64-id)
+      (match (ast.ast-node-pool-context-type-get cloned ptr-id)
+        [(ast.AstType.Ptr inner) (= inner i64-id)]
+        [_ false]))))
+
 (define (compiler-ast-active-context-sync-smoke?) : bool
   (let
     [active-before : ast.AstNodePoolContext
@@ -771,4 +802,5 @@
     (unless (compiler-ast-decl-cons-pure-smoke?) (return 7))
     (unless (compiler-ast-program-compaction-string-payloads-smoke?) (return 8))
     (unless (compiler-ast-compat-context-set-smoke?) (return 9))
+    (unless (compiler-ast-context-clone-types-only-smoke?) (return 10))
     42))

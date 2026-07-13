@@ -45013,6 +45013,22 @@
     (set! lower-scratch-arena (compiler-lower-arena-state-scratch-arena state))
     (set! lower-ir-arena (compiler-lower-arena-state-ir-arena state))))
 
+(define (lower-function-list-escape-to-ir-arena
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set (lower-ir-arena-get)))
+      (let
+        [escaped : CompilerIrFunctionList
+          (compiler-ir-clone-function-list functions)]
+        (begin
+          (set! lower-ir-arena (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          escaped)))))
+
 (define (lower-function-escaping
   [ctx : TcContext]
   [top-env : TcTypeEnv]
@@ -45063,42 +45079,37 @@
           [(ResultLowerFunction.Ok fns _function-spans)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]
+              [escaped-fns : CompilerIrFunctionList
+                (lower-function-list-escape-to-ir-arena fns)]
+              ;; The IR function clones go to the dedicated lowered-IR
+              ;; arena (released by the driver after optimization); the
+              ;; spans side-table is rebuilt in the enclosing arena since
+              ;; it outlives the lowered IR. The stored handle must follow
+              ;; the arena's grown head, or every later allocation re-walks
+              ;; the overflow path from the full first segment.
               (begin
-                ;; The IR function clones go to the dedicated lowered-IR
-                ;; arena (released by the driver after optimization); the
-                ;; spans side-table is rebuilt in the enclosing arena since
-                ;; it outlives the lowered IR. The stored handle must follow
-                ;; the arena's grown head, or every later allocation re-walks
-                ;; the overflow path from the full first segment.
                 (unsafe
-                  (arena.tl_arena_set (lower-ir-arena-get)))
+                  (arena.tl_arena_set enclosing))
+                (set!
+                  lower-spmd-inline-helper-stack
+                  (lower-spmd-inline-empty-helper-stack))
                 (let
-                  [escaped-fns : CompilerIrFunctionList
-                    (compiler-ir-clone-function-list fns)]
+                  [escaped-spans : CompilerSourceSpans
+                    (lower-record-function-span spans logical-name body)]
+                  [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
-                    (set! lower-ir-arena (arena.tl_arena_current))
                     (unsafe
-                      (arena.tl_arena_set enclosing))
-                    (set!
-                      lower-spmd-inline-helper-stack
-                      (lower-spmd-inline-empty-helper-stack))
-                    (let
-                      [escaped-spans : CompilerSourceSpans
-                        (lower-record-function-span spans logical-name body)]
-                      [new-enclosing : i64 (arena.tl_arena_current)]
-                      (begin
-                        (unsafe
-                          (arena.tl_arena_set scratch-head)
-                          (arena.tl_region_reset mark)
-                          (arena.tl_arena_set new-enclosing))
-                        (lower-scratch-arena-release-after-overflow!
-                          scratch
-                          scratch-head)
-                        (tc-nominal-owner-cache-reset!)
-                        (if prev-persist
-                          unit
-                          (intern-persistent-storage-disable!))
-                        (ResultLowerFunction.Ok escaped-fns escaped-spans)))))))]
+                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_region_reset mark)
+                      (arena.tl_arena_set new-enclosing))
+                    (lower-scratch-arena-release-after-overflow!
+                      scratch
+                      scratch-head)
+                    (tc-nominal-owner-cache-reset!)
+                    (if prev-persist
+                      unit
+                      (intern-persistent-storage-disable!))
+                    (ResultLowerFunction.Ok escaped-fns escaped-spans)))))]
           [(ResultLowerFunction.Err message)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]
@@ -46048,18 +46059,24 @@
                 variant-spans)
                 [(ResultLowerFunction.Ok thunk-functions thunk-spans)
                   (let
+                    ;; The synthesized thunk is built directly in the enclosing
+                    ;; source arena, so give it the same lifetime as variants
+                    ;; lowered through lower-function-escaping.
+                    [escaped-thunk-functions : CompilerIrFunctionList
+                      (lower-function-list-escape-to-ir-arena thunk-functions)]
                     [functions : CompilerIrFunctionBuilder
                       (compiler-ir-function-builder-with-capacity
                         (+
                           (compiler-ir-function-list-count variant-functions)
-                          (compiler-ir-function-list-count thunk-functions)))]
+                          (compiler-ir-function-list-count
+                            escaped-thunk-functions)))]
                     (begin
                       (compiler-ir-function-builder-append-list!
                         (&mut functions)
                         variant-functions)
                       (compiler-ir-function-builder-append-list!
                         (&mut functions)
-                        thunk-functions)
+                        escaped-thunk-functions)
                       (ResultLowerDispatchDecl.Ok
                         (box
                           (LowerDispatchDecl.Decl

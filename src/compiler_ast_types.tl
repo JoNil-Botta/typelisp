@@ -1984,6 +1984,68 @@
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-type-node-pool-state-get (array-ref (struct-get pools type-pool) 0) id))
 
+;; Lowered IR retains AstType ids but no AstExpr ids. Clone the small canonical
+;; type pool in id order so a compile driver can retire the checked-expression
+;; arena before optimize/backend without rewriting any IR types. Raw pushes
+;; deep-persist owned payloads while retaining intentional duplicate ids; copy
+;; the source dedup index verbatim because every indexed id stays unchanged.
+(define (ast-node-pool-context-clone-types-only [source : AstNodePoolContext]) : AstNodePoolContext
+  (let
+    [source-state : AstTypeNodePoolState
+      (array-ref (struct-get source type-pool) 0)]
+    [count : i64 (ast-type-node-pool-state-len source-state)]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [new-arena : i64 (arena.tl_arena_make)]
+    [_set-new-arena : unit
+      (unsafe
+        (arena.tl_arena_set new-arena))]
+    [dest : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        1
+        (+ (* count 2) 1024)
+        new-arena)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (match (ast-type-node-pool-state-push-raw
+          (array-ref (struct-get dest type-pool) 0)
+          (ast-type-node-pool-state-get source-state i))
+          [(AstTypeNodePoolPushOk next _)
+            (begin
+              (array-set! (struct-get dest type-pool) 0 next)
+              (ast-node-pool-context-sync-base-arena!
+                dest
+                (struct-get next base-arena))
+              ;; Raw pushes append exactly once and therefore retain the
+              ;; source's insertion-ordered id.
+              (set! i (+ i 1)))]))
+      (let
+        [source-dedup : (Array i64) (struct-get source-state dedup-slots)]
+        [dedup-cap : i64 (array-length source-dedup)]
+        [dedup-copy : (Array i64) (array.make-array i64 dedup-cap)]
+        [dedup-i : i64 0]
+        (begin
+          (while (< dedup-i dedup-cap)
+            (begin
+              (array-set! dedup-copy dedup-i (array-ref source-dedup dedup-i))
+              (set! dedup-i (+ dedup-i 1))))
+          (let
+            [cloned : AstTypeNodePoolState
+              (array-ref (struct-get dest type-pool) 0)]
+            (array-set!
+              (struct-get dest type-pool)
+              0
+              (AstTypeNodePoolState
+                (struct-get cloned slots)
+                (struct-get cloned count)
+                (struct-get cloned base-arena)
+                (struct-get source-state exhausted)
+                dedup-copy
+                (struct-get source-state dedup-count))))))
+      (unsafe
+        (arena.tl_arena_set previous-arena))
+      dest)))
+
 (define (ast-node-pool-reader-type-get [id : i64]) : AstType
   (if ast-node-pool-reader-explicit?
     (ast-node-pool-context-type-get ast-node-pool-reader-context id)

@@ -33,6 +33,11 @@
 ;# final use; mutation, growth, moving, or mutable borrowing of the vector then
 ;# becomes available again.
 ;#
+;# Consuming traversal uses `into-iterator` / `into-next`. Constructing the
+;# iterator moves the vector exactly once, and each `IntoNext.Item` owns its
+;# element. An internal live-slot bitmap lets `into-next` extract through
+;# `array-take!` without copying or cloning; repeated exhaustion is stable.
+;#
 ;# Compiler code should use generated vectors for append-heavy private sequences
 ;# that are not part of the user-facing AST shape, such as IR instructions,
 ;# tool discovery buffers, or temporary ordered worklists. Recursive enum lists
@@ -203,6 +208,10 @@
             [iter-mut-next-name : Expr (expr-var "IterMutNext")]
             [iter-mut-done-name : Expr (expr-var "IterMutNext.Done")]
             [iter-mut-item-name : Expr (expr-var "IterMutNext.Item")]
+            [into-iter-name : Expr (expr-var "IntoIter")]
+            [into-next-name : Expr (expr-var "IntoNext")]
+            [into-done-name : Expr (expr-var "IntoNext.Done")]
+            [into-item-name : Expr (expr-var "IntoNext.Item")]
             [kind : String (type-kind T)]
             ;; Borrowed String storage has the public immutable `str` view
             ;; type. Other shared items retain their concrete element type,
@@ -323,6 +332,17 @@
                 (:lifetimes source)
                 (Done)
                 (Item (,iter-mut-borrow-name source ,iter-mut-item-type)))
+              ;; Consuming iteration owns the moved backing storage. The bitmap
+              ;; records which live-prefix slots still own values, so each Item
+              ;; can move exactly once through `array-take!`.
+              (defstruct ,into-iter-name
+                (slots (Array ,T))
+                (live (Array bool))
+                (len i64)
+                (index i64))
+              (defenum ,into-next-name
+                (Done)
+                (Item ,T))
               (define (slots-mut [v : (&mut v ,vec-name)]) : (&mut v (Array ,T))
                 (&mut (struct-get v slots)))
               (define (len-mut [v : (&mut v ,vec-name)]) : i64
@@ -359,6 +379,38 @@
                       (,iter-mut-item-name
                         (,iter-mut-borrow-name
                           (array-ref (struct-get iter slots) index)))))))
+              (define (into-live-slots [len : i64]) : (Array bool)
+                (let
+                  [live : (Array bool) (make-array bool len)]
+                  [index : i64 0]
+                  (begin
+                    (while (< index len)
+                      (begin
+                        (array-set! live index true)
+                        (set! index (+ index 1))))
+                    live)))
+              (define (into-iterator [v : ,vec-name (:consume)]) : ,into-iter-name
+                (let
+                  [len : i64 (struct-get v len)]
+                  [live : (Array bool) (into-live-slots len)]
+                  [slots : (Array ,T) (struct-get v slots)]
+                  (,into-iter-name slots live len 0)))
+              (define (into-next [iter : (&mut state ,into-iter-name)]) : ,into-next-name
+                (let
+                  [index : i64 (struct-get iter index)]
+                  (if (>= index (struct-get iter len))
+                    (,into-done-name)
+                    (let
+                      [taken : (Tuple bool ,T)
+                        (array-take!
+                          (struct-get iter slots)
+                          (struct-get iter live)
+                          index)]
+                      (begin
+                        (set! (struct-get iter index) (+ index 1))
+                        (if (tuple-ref taken 0)
+                          (,into-item-name (tuple-ref taken 1))
+                          (,into-done-name)))))))
               (define (last [v : (& v ,vec-name)] [fallback : ,T]) : ,T
                 (get v (- (len v) 1) fallback))
               (define (pop [v : (&mut v ,vec-name)]) : ,pop-name

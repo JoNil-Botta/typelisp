@@ -345,8 +345,10 @@ use.
   import-time instantiations such as `(import (vector i64))` or
   `(import (vector String) as svec)`. Each instantiation provides a generated
   module namespace with `Vec`, `Pop`, `new`, `with-capacity`, immutable-ref
-  reads, shared `Iter` / `IterNext` traversal, mutable-ref `push` / `set` /
-  `pop` updates, mutable `IterMut` / `IterMutNext` lending traversal, and
+  reads, shared `Iter` / `IterNext` traversal, consuming `IntoIter` /
+  `IntoNext` traversal with owned items and exactly-once checked slot moves,
+  mutable-ref `push` / `set` / `pop` updates, mutable `IterMut` / `IterMutNext`
+  lending traversal, and
   `len-mut` / `slots-mut` accessors for generated in-place algorithms and SPMD loops,
   conversion helpers, and fold/map/contains helpers. Borrow `slots` /
   `slots-mut` outside `foreach` when SPMD code needs backing storage without

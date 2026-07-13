@@ -11,6 +11,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-timing.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -483,7 +485,8 @@ run_compile_batch() {
         batch_err="$batch_chunk.err"
         echo "[selfhost-compile] $batch_label"
         set +e
-        run_with_heartbeat_capture \
+        ci_timing_run "chunk-$batch_chunk_index" compile \
+            run_with_heartbeat_capture \
             "$batch_label" \
             "$batch_out" \
             "$batch_err" \

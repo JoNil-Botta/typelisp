@@ -7,6 +7,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-timing.sh"
+
 # Each `typelisp` invocation runs exactly once: a crash is a real compiler bug,
 # not a flake — do not retry it (see the no-retry policy in scripts/ci-verify.sh).
 
@@ -108,7 +110,8 @@ echo "[inline-tests] check ($discovered_file_count file(s), one batch process)"
 # #2609: `test --check --batch` scopes each entry in its own compiler arena and
 # resets per-file compiler state between entries, matching compile --batch. Keep
 # the verifier batched so CI exercises that bounded-memory path.
-if "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" \
+if ci_timing_run all batch-check \
+    "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" \
     --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
     > "$batch_check_stdout" 2> "$batch_check_stderr"; then
     batch_check_status=0
@@ -157,7 +160,8 @@ while IFS= read -r source; do
     fi
 
     echo "[inline-tests] run $source ($case_tests test(s))"
-    if "$COMPILER" test "$source" --target "$HOST_TARGET" \
+    if ci_timing_run "$source" run \
+        "$COMPILER" test "$source" --target "$HOST_TARGET" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
         > "$run_stdout" 2> "$run_stderr"; then
         run_status=0
@@ -170,7 +174,8 @@ while IFS= read -r source; do
         exit 1
     fi
 
-    if ! grep -q '^TypeLisp tests passed: ' "$run_stderr"; then
+    if ! ci_timing_run "$source" assert \
+        grep -q '^TypeLisp tests passed: ' "$run_stderr"; then
         echo "inline test execution for $source did not report a success summary" >&2
         show_streams "$run_stdout" "$run_stderr"
         exit 1

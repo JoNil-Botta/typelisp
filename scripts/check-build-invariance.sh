@@ -12,6 +12,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-timing.sh"
+
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/check-build-invariance.sh
@@ -101,7 +103,8 @@ compile_stage() {
     stderr=$6
 
     echo "[build-invariance] opt$opt_level $stage_label: compile src/main.tl"
-    if ! run_with_heartbeat_capture \
+    if ! ci_timing_run "compiler-opt$opt_level" compile \
+        run_with_heartbeat_capture \
         "build-invariance opt$opt_level $stage_label" \
         "$stdout" \
         "$stderr" \
@@ -132,7 +135,8 @@ build_opt1_compiler() {
     opt1_bin="$outdir/opt1$NL_BIN_EXT"
 
     compile_stage 1 "stage4-to-opt1" "$COMPILER" "$opt1_asm" "$outdir/opt1.stdout" "$outdir/opt1.stderr"
-    assemble_and_link "build-invariance opt1 compiler" "$opt1_asm" "$opt1_obj" "$opt1_bin"
+    ci_timing_run compiler-opt1 assemble-link \
+        assemble_and_link "build-invariance opt1 compiler" "$opt1_asm" "$opt1_obj" "$opt1_bin"
 
     if [ ! -x "$opt1_bin" ]; then
         chmod +x "$opt1_bin" 2>/dev/null || true
@@ -192,7 +196,8 @@ compile_case() {
     stderr="$out.stderr"
     compile_source=$(compile_source_for_case "$name" "$source" "$WORKDIR/inputs/$compiler_label/$name")
     echo "[build-invariance] $compiler_label compile $name opt$opt_level"
-    if ! run_with_heartbeat_capture \
+    if ! ci_timing_run "$compiler_label:$name" compile \
+        run_with_heartbeat_capture \
         "build-invariance $compiler_label $name opt$opt_level" \
         "$stdout" \
         "$stderr" \
@@ -225,7 +230,7 @@ compare_case() {
         echo "[build-invariance] selfhost opt2 '(,%rbp,1)' count: opt1-built=$left_rbp opt2-built=$right_rbp"
     fi
 
-    if ! cmp -s "$left" "$right"; then
+    if ! ci_timing_run "$name" compare cmp -s "$left" "$right"; then
         echo "[build-invariance] BUILD-INVARIANCE MISMATCH: $name" >&2
         print_asm_fingerprint "opt1-built compiler output" "$left"
         print_asm_fingerprint "opt2-built compiler output" "$right"

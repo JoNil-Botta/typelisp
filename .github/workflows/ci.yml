@@ -98,4 +98,14 @@ jobs:
 
       - name: CI verification
         shell: bash
+        env:
+          TYPELISP_CI_TIMING: '1'
         run: scripts/ci-verify.sh
+
+      - name: Upload CI timing artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci-timing-${{ runner.os }}
+          path: target/ci-timing/*.tsv
+          if-no-files-found: error

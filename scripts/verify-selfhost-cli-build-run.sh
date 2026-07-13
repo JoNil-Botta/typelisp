@@ -12,6 +12,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-timing.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -171,7 +173,8 @@ run_cli_capture() {
     label=$1
     shift
     set +e
-    "$@" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+    ci_timing_run "$label" cli-helper \
+        "$@" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
     status=$?
     set -e
 }
@@ -183,7 +186,7 @@ run_cli_capture_in_dir() {
     set +e
     (
         cd "$dir"
-        "$@"
+        ci_timing_run "$label" cli-helper "$@"
     ) > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
     status=$?
     set -e

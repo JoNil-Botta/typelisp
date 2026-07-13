@@ -592,6 +592,16 @@ published stage0 compiler, verifies the fresh CLI build/run smoke, runs the
 Windows bootstrap stage2/stage3 fixpoint when staged runtime symbols are present,
 and explicitly skips the Linux-only src/docs checks.
 
+CI sets `TYPELISP_CI_TIMING=1` for that serial verification flow. Each host
+uploads one compact `ci-timing-<host>` TSV artifact with columns `gate`,
+`case_or_chunk`, `phase`, `elapsed_ms`, `exit`, and `host`; the job log prints
+only aggregate phase totals and the ten slowest rows. Detailed rows cover gate
+totals plus integration stage/compile/assemble/link/run/assert phases,
+build-invariance compiles, lint and selfhost-manifest chunks, inline-test batch
+and per-file work, and CLI helper cases. Timestamps come from a monotonic clock,
+and labels never include command lines, absolute credentials, or source text.
+Local runs remain uninstrumented unless the same environment variable is set.
+
 For a selfhost compiler change, a typical local check (after
 `scripts/fetch-stage0.sh`, with `tl=target/stage0/typelisp[.exe]`) is:
 

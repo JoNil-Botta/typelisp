@@ -15,6 +15,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-timing.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -111,8 +113,42 @@ echo "Linting TypeLisp sources for $count file(s) in batches of $LINT_BATCH_SIZE
 
 # Keep lint processes bounded. The lint command checks each explicit source
 # independently, so chunking preserves coverage while releasing compiler heap
-# state between batches on memory-constrained CI hosts.
-if ! xargs -n "$LINT_BATCH_SIZE" "$COMPILER" lint --check < "$FILES" > "$STDOUT" 2> "$STDERR"; then
+# state between batches on memory-constrained CI hosts. Materialize the same
+# ordered xargs-style chunks so opt-in timing can attribute individual outliers.
+LINT_CHUNK_DIR="$WORKDIR/chunks"
+rm -rf "$LINT_CHUNK_DIR"
+mkdir -p "$LINT_CHUNK_DIR"
+awk -v outdir="$LINT_CHUNK_DIR" -v size="$LINT_BATCH_SIZE" '
+    {
+        chunk = int((NR - 1) / size) + 1
+        path = sprintf("%s/lint.%04d.txt", outdir, chunk)
+        print $0 >> path
+        if (NR % size == 0) close(path)
+    }
+' "$FILES"
+
+: > "$STDOUT"
+: > "$STDERR"
+lint_status=0
+lint_chunk_index=0
+for lint_chunk in "$LINT_CHUNK_DIR"/lint.*.txt; do
+    [ -f "$lint_chunk" ] || continue
+    lint_chunk_index=$((lint_chunk_index + 1))
+    set --
+    while IFS= read -r lint_source; do
+        [ -n "$lint_source" ] || continue
+        set -- "$@" "$lint_source"
+    done < "$lint_chunk"
+    if ci_timing_run "chunk-$lint_chunk_index" lint \
+        "$COMPILER" lint --check "$@" >> "$STDOUT" 2>> "$STDERR"; then
+        :
+    else
+        chunk_status=$?
+        [ "$lint_status" -ne 0 ] || lint_status=$chunk_status
+    fi
+done
+
+if [ "$lint_status" -ne 0 ]; then
     if [ ! -s "$STDERR" ] && grep -q '^lint: [1-9][0-9]* finding(s)$' "$STDOUT"; then
         awk '
             /^--- / { next }

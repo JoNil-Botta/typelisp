@@ -12,6 +12,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-ci-timing.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -44,6 +45,11 @@ case "$(uname -s)" in
         ;;
 esac
 
+if [ "${TYPELISP_CI_TIMING:-0}" = 1 ]; then
+    ci_timing_init "$ROOT/target/ci-timing/$HOST_OS.tsv" "$HOST_OS"
+    trap 'ci_timing_summary "$TYPELISP_CI_TIMING_FILE" 10' EXIT
+fi
+
 if [ -z "${TYPELISP_BIN:-}" ]; then
     scripts/fetch-stage0.sh
     SEED_TYPELISP_BIN="$ROOT/target/stage0/typelisp"
@@ -75,7 +81,15 @@ ensure_executable "seed" "$SEED_TYPELISP_BIN"
 run_gate() {
     label=$1
     shift
-    start=$(date +%s)
+    previous_timing_gate=${TYPELISP_CI_TIMING_GATE:-}
+    TYPELISP_CI_TIMING_GATE=$label
+    export TYPELISP_CI_TIMING_GATE
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        start=$CI_TIMING_NOW_MS
+    else
+        start=$(date +%s)
+    fi
     case $- in
         *e*) had_errexit=1 ;;
         *) had_errexit=0 ;;
@@ -88,8 +102,18 @@ run_gate() {
     if [ "$had_errexit" -eq 1 ]; then
         set -e
     fi
-    end=$(date +%s)
-    elapsed=$((end - start))
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        end=$CI_TIMING_NOW_MS
+        elapsed_ms=$((end - start))
+        elapsed=$((elapsed_ms / 1000))
+        ci_timing_record_elapsed all gate "$elapsed_ms" "$status"
+    else
+        end=$(date +%s)
+        elapsed=$((end - start))
+    fi
+    TYPELISP_CI_TIMING_GATE=$previous_timing_gate
+    export TYPELISP_CI_TIMING_GATE
     if [ "$status" -eq 0 ]; then
         echo "[ci-verify] PASS $label (${elapsed}s)"
     else
@@ -134,6 +158,7 @@ required_gate_unavailable() {
 
 # Generated payload freshness must fail before the expensive bootstrap. The
 # exact-source verifier uses only stage0-supported language/runtime surfaces.
+run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
 run_with_compiler \
     "$SEED_TYPELISP_BIN" \
     "embedded stdlib generated payload" \

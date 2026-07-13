@@ -14,6 +14,7 @@ ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
 . "$ROOT/scripts/lib-linux-entry.sh"
+. "$ROOT/scripts/lib-ci-timing.sh"
 
 usage() {
     cat >&2 <<'EOF'
@@ -475,14 +476,6 @@ normalized_stream() {
     fi
 }
 
-integration_now_ms() {
-    _now=$(date +%s%3N 2>/dev/null || true)
-    case "$_now" in
-        "" | *N*) printf '%s000\n' "$(date +%s)" ;;
-        *) printf '%s\n' "$_now" ;;
-    esac
-}
-
 windows_queue_encode() {
     printf '%s' "$1" | base64 | tr -d '\r\n'
 }
@@ -563,7 +556,8 @@ windows_run_request_file() {
     _summary_win=$3
     _runner_stdout=$4
     _runner_stderr=$5
-    _started=$(integration_now_ms)
+    ci_timing_set_now_ms
+    _started=$CI_TIMING_NOW_MS
     set +e
     powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$WINDOWS_RUNNER_WIN" \
         -RequestPath "$_request_win" \
@@ -572,7 +566,8 @@ windows_run_request_file() {
         > "$_runner_stdout" 2> "$_runner_stderr"
     WINDOWS_RUNNER_STATUS=$?
     set -e
-    _finished=$(integration_now_ms)
+    ci_timing_set_now_ms
+    _finished=$CI_TIMING_NOW_MS
     WINDOWS_LAST_RUN_MS=$((_finished - _started))
     return "$WINDOWS_RUNNER_STATUS"
 }
@@ -594,34 +589,46 @@ windows_queue_manifest_case() {
 }
 
 windows_timed_compile() {
-    _started=$(integration_now_ms)
+    ci_timing_set_now_ms
+    _started=$CI_TIMING_NOW_MS
     run_build "$@"
-    _finished=$(integration_now_ms)
-    WINDOWS_MANIFEST_COMPILE_MS=$((WINDOWS_MANIFEST_COMPILE_MS + _finished - _started))
+    ci_timing_set_now_ms
+    _finished=$CI_TIMING_NOW_MS
+    _elapsed=$((_finished - _started))
+    WINDOWS_MANIFEST_COMPILE_MS=$((WINDOWS_MANIFEST_COMPILE_MS + _elapsed))
     WINDOWS_MANIFEST_COMPILES=$((WINDOWS_MANIFEST_COMPILES + 1))
+    ci_timing_record_elapsed "$name" compile "$_elapsed" "$build_rc"
 }
 
 windows_timed_assemble() {
-    _started=$(integration_now_ms)
+    ci_timing_set_now_ms
+    _started=$CI_TIMING_NOW_MS
     set +e
     clang "$@"
     _status=$?
     set -e
-    _finished=$(integration_now_ms)
-    WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _finished - _started))
+    ci_timing_set_now_ms
+    _finished=$CI_TIMING_NOW_MS
+    _elapsed=$((_finished - _started))
+    WINDOWS_MANIFEST_ASSEMBLE_MS=$((WINDOWS_MANIFEST_ASSEMBLE_MS + _elapsed))
     WINDOWS_MANIFEST_ASSEMBLES=$((WINDOWS_MANIFEST_ASSEMBLES + 1))
+    ci_timing_record_elapsed "$name" assemble "$_elapsed" "$_status"
     return "$_status"
 }
 
 windows_timed_link() {
-    _started=$(integration_now_ms)
+    ci_timing_set_now_ms
+    _started=$CI_TIMING_NOW_MS
     set +e
     lld-link "$@"
     _status=$?
     set -e
-    _finished=$(integration_now_ms)
-    WINDOWS_MANIFEST_LINK_MS=$((WINDOWS_MANIFEST_LINK_MS + _finished - _started))
+    ci_timing_set_now_ms
+    _finished=$CI_TIMING_NOW_MS
+    _elapsed=$((_finished - _started))
+    WINDOWS_MANIFEST_LINK_MS=$((WINDOWS_MANIFEST_LINK_MS + _elapsed))
     WINDOWS_MANIFEST_LINKS=$((WINDOWS_MANIFEST_LINKS + 1))
+    ci_timing_record_elapsed "$name" link "$_elapsed" "$_status"
     return "$_status"
 }
 
@@ -1551,7 +1558,11 @@ assert_manifest_case() {
     _stderr=$7
     _case_dir=$8
     _run_shell_stderr=$9
-    _assert_started=$(integration_now_ms)
+    _assert_started=0
+    if [ "$HOST_OS" = windows ] || ci_timing_enabled; then
+        ci_timing_set_now_ms
+        _assert_started=$CI_TIMING_NOW_MS
+    fi
     _expected_stdout_cmp="$_case_dir/$_name.expected.stdout.cmp"
     _expected_stderr_cmp="$_case_dir/$_name.expected.stderr.cmp"
     _stdout_cmp="$_case_dir/$_name.stdout.cmp"
@@ -1599,13 +1610,20 @@ assert_manifest_case() {
 
     if [ "$_case_failed" -eq 0 ]; then
         echo "PASS: $_name"
+        _assert_status=0
     else
         failed=$((failed + 1))
+        _assert_status=1
     fi
     ran=$((ran + 1))
+    if [ "$HOST_OS" = windows ] || ci_timing_enabled; then
+        ci_timing_set_now_ms
+        _assert_finished=$CI_TIMING_NOW_MS
+        _assert_elapsed=$((_assert_finished - _assert_started))
+        ci_timing_record_elapsed "$_name" assert "$_assert_elapsed" "$_assert_status"
+    fi
     if [ "$HOST_OS" = windows ]; then
-        _assert_finished=$(integration_now_ms)
-        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_finished - _assert_started))
+        WINDOWS_MANIFEST_ASSERT_MS=$((WINDOWS_MANIFEST_ASSERT_MS + _assert_elapsed))
         WINDOWS_MANIFEST_ASSERTS=$((WINDOWS_MANIFEST_ASSERTS + 1))
     fi
 }
@@ -1683,6 +1701,7 @@ windows_assert_queued_cases() {
             continue
         fi
         got=$WINDOWS_RESULT_EXIT
+        ci_timing_record_elapsed "$_name" run "$WINDOWS_RESULT_MS" "$got"
         assert_manifest_case \
             "$_name" \
             "$_want" \
@@ -1816,7 +1835,7 @@ windows_print_manifest_summary() {
     echo "  differential oracle: legacy powershell=$WINDOWS_DIFFERENTIAL_POWERSHELL_STARTS cygpath=$WINDOWS_DIFFERENTIAL_CYGPATH_CONVERSIONS"
 }
 
-validate_manifest
+ci_timing_run manifest validate validate_manifest
 if [ "$VALIDATE_MANIFEST_ONLY" -eq 1 ]; then
     echo "integration manifest validation passed for $HOST_OS"
     exit 0
@@ -1840,12 +1859,21 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
     source_dir=$(dirname -- "$source_path")
     case_dir="$WORKDIR/$name"
     mkdir -p "$case_dir"
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        stage_started=$CI_TIMING_NOW_MS
+    fi
     work_src="$case_dir/$name.tl"
     cp "$source_path" "$work_src"
 
     for dep in $(deps_or_empty "$deps"); do
         copy_dep "$dep" "$source_dir" "$case_dir"
     done
+    if ci_timing_enabled; then
+        ci_timing_set_now_ms
+        stage_finished=$CI_TIMING_NOW_MS
+        ci_timing_record_elapsed "$name" stage "$((stage_finished - stage_started))" 0
+    fi
 
     asm="$case_dir/$name.s"
     obj="$case_dir/$name.o"
@@ -1919,9 +1947,12 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         windows_queue_manifest_case "$name" "$runtime_args"
         continue
     else
-        run_build "$COMPILER" compile "$work_src" \
+        set +e
+        ci_timing_run "$name" compile "$COMPILER" compile "$work_src" \
             --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" -o "$asm" \
             > "$build_stdout" 2> "$build_stderr"
+        build_rc=$?
+        set -e
         if [ "$build_rc" -ne 0 ]; then
             echo "FAIL: $name compile failed" >&2
             show_compile_failure_diagnostics \
@@ -1938,7 +1969,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             ran=$((ran + 1))
             continue
         fi
-        if ! as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
+        if ! ci_timing_run "$name" assemble \
+            as "$asm" -o "$obj" >> "$build_stdout" 2>> "$build_stderr"; then
             echo "FAIL: $name assemble failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
             failed=$((failed + 1))
@@ -1961,7 +1993,8 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
             link_extra="-static"
         fi
         # shellcheck disable=SC2086
-        if ! ld "$obj" $native_objs -o "$bin" $link_extra -e "$(linux_entry_symbol_for_asm "$asm")" \
+        if ! ci_timing_run "$name" link \
+            ld "$obj" $native_objs -o "$bin" $link_extra -e "$(linux_entry_symbol_for_asm "$asm")" \
             >> "$build_stdout" 2>> "$build_stderr"; then
             echo "FAIL: $name link failed" >&2
             show_build_streams "$build_stdout" "$build_stderr"
@@ -1971,6 +2004,10 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         fi
 
         set +e
+        if ci_timing_enabled; then
+            ci_timing_set_now_ms
+            run_started=$CI_TIMING_NOW_MS
+        fi
         (
             # Keep parent-shell crash notices (for example dash's
             # "Segmentation fault (core dumped)") out of the program stderr
@@ -1980,6 +2017,11 @@ while IFS='|' read -r name source want stdout_spec runtime_args deps extra || [ 
         ) 2> "$run_shell_stderr"
         got=$?
         set -e
+        if ci_timing_enabled; then
+            ci_timing_set_now_ms
+            run_finished=$CI_TIMING_NOW_MS
+            ci_timing_record_elapsed "$name" run "$((run_finished - run_started))" "$got"
+        fi
     fi
 
     assert_manifest_case \

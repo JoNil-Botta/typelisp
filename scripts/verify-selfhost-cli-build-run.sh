@@ -12,6 +12,8 @@ set -eu
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-ci-timing.sh"
+
 HOST_OS=linux
 case "$(uname -s)" in
     Linux*) HOST_OS=linux ;;
@@ -93,56 +95,56 @@ fail() {
 }
 
 assert_status() {
-    label=$1
-    got=$2
-    expected=$3
-    if [ "$got" -ne "$expected" ]; then
+    _assert_label=$1
+    _assert_got=$2
+    _assert_expected=$3
+    if [ "$_assert_got" -ne "$_assert_expected" ]; then
         echo "stdout:" >&2
-        sed 's/^/  /' "$WORKDIR/$label.out" >&2 || true
+        sed 's/^/  /' "$WORKDIR/$_assert_label.out" >&2 || true
         echo "stderr:" >&2
-        sed 's/^/  /' "$WORKDIR/$label.err" >&2 || true
-        fail "$label expected exit $expected, got $got"
+        sed 's/^/  /' "$WORKDIR/$_assert_label.err" >&2 || true
+        fail "$_assert_label expected exit $_assert_expected, got $_assert_got"
     fi
 }
 
 assert_empty() {
-    label=$1
-    file=$2
-    [ ! -s "$file" ] || fail "$label wrote unexpected output: $(cat "$file")"
+    _assert_label=$1
+    _assert_file=$2
+    [ ! -s "$_assert_file" ] || fail "$_assert_label wrote unexpected output: $(cat "$_assert_file")"
 }
 
 assert_contains() {
-    label=$1
-    file=$2
-    text=$3
-    if ! grep -F -- "$text" "$file" >/dev/null; then
+    _assert_label=$1
+    _assert_file=$2
+    _assert_text=$3
+    if ! grep -F -- "$_assert_text" "$_assert_file" >/dev/null; then
         echo "file contents:" >&2
-        sed 's/^/  /' "$file" >&2 || true
-        fail "$label missing expected text: $text"
+        sed 's/^/  /' "$_assert_file" >&2 || true
+        fail "$_assert_label missing expected text: $_assert_text"
     fi
 }
 
 assert_not_contains() {
-    label=$1
-    file=$2
-    text=$3
-    if grep -F -- "$text" "$file" >/dev/null; then
+    _assert_label=$1
+    _assert_file=$2
+    _assert_text=$3
+    if grep -F -- "$_assert_text" "$_assert_file" >/dev/null; then
         echo "file contents:" >&2
-        sed 's/^/  /' "$file" >&2 || true
-        fail "$label contained unexpected text: $text"
+        sed 's/^/  /' "$_assert_file" >&2 || true
+        fail "$_assert_label contained unexpected text: $_assert_text"
     fi
 }
 
 assert_occurrences() {
-    label=$1
-    file=$2
-    text=$3
-    expected=$4
-    count=$(grep -F -- "$text" "$file" | wc -l | tr -d ' ')
-    if [ "$count" -ne "$expected" ]; then
+    _assert_label=$1
+    _assert_file=$2
+    _assert_text=$3
+    _assert_expected=$4
+    _assert_count=$(grep -F -- "$_assert_text" "$_assert_file" | wc -l | tr -d ' ')
+    if [ "$_assert_count" -ne "$_assert_expected" ]; then
         echo "file contents:" >&2
-        sed 's/^/  /' "$file" >&2 || true
-        fail "$label expected $expected occurrence(s) of '$text', got $count"
+        sed 's/^/  /' "$_assert_file" >&2 || true
+        fail "$_assert_label expected $_assert_expected occurrence(s) of '$_assert_text', got $_assert_count"
     fi
 }
 
@@ -155,36 +157,37 @@ generated_path() {
 }
 
 assert_file_exists() {
-    label=$1
-    file=$2
-    [ -f "$file" ] || fail "$label expected file $file"
+    _assert_label=$1
+    _assert_file=$2
+    [ -f "$_assert_file" ] || fail "$_assert_label expected file $_assert_file"
 }
 
 assert_file_nonempty() {
-    label=$1
-    file=$2
-    assert_file_exists "$label" "$file"
-    [ -s "$file" ] || fail "$label expected nonempty file $file"
+    _assert_label=$1
+    _assert_file=$2
+    assert_file_exists "$_assert_label" "$_assert_file"
+    [ -s "$_assert_file" ] || fail "$_assert_label expected nonempty file $_assert_file"
 }
 
 run_cli_capture() {
-    label=$1
+    _run_cli_label=$1
     shift
     set +e
-    "$@" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+    ci_timing_run "$_run_cli_label" cli-helper \
+        "$@" > "$WORKDIR/$_run_cli_label.out" 2> "$WORKDIR/$_run_cli_label.err"
     status=$?
     set -e
 }
 
 run_cli_capture_in_dir() {
-    label=$1
-    dir=$2
+    _run_cli_label=$1
+    _run_cli_dir=$2
     shift 2
     set +e
     (
-        cd "$dir"
-        "$@"
-    ) > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+        cd "$_run_cli_dir"
+        ci_timing_run "$_run_cli_label" cli-helper "$@"
+    ) > "$WORKDIR/$_run_cli_label.out" 2> "$WORKDIR/$_run_cli_label.err"
     status=$?
     set -e
 }
@@ -585,7 +588,8 @@ assert_active_cli_surface_command() {
 .exit
 EOF
             set +e
-            "$COMPILER" repl < "$WORKDIR/$label.in" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+            ci_timing_run "$label" cli-helper \
+                "$COMPILER" repl < "$WORKDIR/$label.in" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
             status=$?
             set -e
             assert_status "$label" "$status" 0
@@ -598,7 +602,8 @@ EOF
             lsp_frame_append "$lsp_in" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
             lsp_frame_append "$lsp_in" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
             set +e
-            "$COMPILER" lsp < "$lsp_in" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
+            ci_timing_run "$label" cli-helper \
+                "$COMPILER" lsp < "$lsp_in" > "$WORKDIR/$label.out" 2> "$WORKDIR/$label.err"
             status=$?
             set -e
             assert_status "$label" "$status" 0
@@ -658,6 +663,28 @@ run_cli_command_surface_matrix() {
             *) fail "invalid cli command surface status: $kind" ;;
         esac
     done < "$CLI_SURFACE_MANIFEST"
+}
+
+assert_cli_surface_timing_rows() {
+    if ! ci_timing_enabled; then
+        return 0
+    fi
+    if ! awk -F '\t' -v gate="${TYPELISP_CI_TIMING_GATE:-ungated}" '
+        NR == 1 { next }
+        $1 == gate && $3 == "cli-helper" {
+            rows[$2] += 1
+            if (length($2) > 64) long_label = 1
+        }
+        END {
+            if (long_label) exit 1
+            if (rows["cli-surface-active-repl"] != 1) exit 1
+            if (rows["cli-surface-active-lsp"] != 1) exit 1
+            for (label in rows) if (rows[label] != 1) exit 1
+        }
+    ' "$TYPELISP_CI_TIMING_FILE"; then
+        echo "CLI surface timing rows are missing, duplicated, or unstable" >&2
+        exit 1
+    fi
 }
 
 COMPILE_SRC="$WORKDIR/compile-main.tl"
@@ -1726,6 +1753,7 @@ assert_empty work-queue-chooser "$WORKDIR/work-queue-chooser.err"
 assert_contains work-queue-chooser "$WORKDIR/work-queue-chooser.out" "research/triage issue #7: Fallback issue"
 
 run_cli_command_surface_matrix
+assert_cli_surface_timing_rows
 
 echo "[selfhost-cli-build-run] public LSP corpus via run-corpus.sh"
 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp

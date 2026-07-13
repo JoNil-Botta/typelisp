@@ -179,6 +179,7 @@ read_file_missing_trap|tests/integration/read_file_missing_trap.tl|134|-|-|-|exp
 write_file_invalid_trap|tests/integration/write_file_invalid_trap.tl|134|-|-|-|expected-stderr:tl: write-file failed: io: not found: tests/integration/missing-parent-zzz/output.txt\n
 selfhost_argv_oob|tests/integration/selfhost_argv_oob.tl|134|-|-|-|expected-stderr:tl: argv index out of bounds\n
 tl_alloc_huge_trap|tests/integration/tl_alloc_huge_trap.tl|134|-|-|-|expected-stderr:tl: allocation failed\n
+windows_allocation_abort|tests/integration/windows_allocation_abort.tl|134|-|-|-|expected-stderr:tl: allocation failed: arena=atomic operation=growth-commit requested=18446744073709551615 reserved=18446744073709551614 committed=9223372036854775808 windows-error=4294967295\n
 stdin_bytes_negative_trap|tests/integration/stdin_bytes_negative_trap.tl|134|-|-|-|expected-stderr:tl: stdin failed\n
 region_mark_zero|tests/integration/region_mark_zero.tl|42|-|-|-
 region_reset_zero|tests/integration/region_reset_zero.tl|44|-|-|stdlib/string.tl

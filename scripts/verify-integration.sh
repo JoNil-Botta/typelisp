@@ -385,6 +385,7 @@ EOF
 #   c_abi_win64_enum_*       Win64 enum aggregate C ABI fixtures
 #   c_abi_win64_small_*      Win64 small aggregate register ABI
 #   c_abi_win64_nested_*     Win64 nested aggregate C ABI fixtures
+#   windows_allocation_abort  Win32 VirtualAlloc provenance reporter transcript
 linux_integration_non_applicable_cases() {
     cat <<'EOF'
 c_abi_win64_sret_return
@@ -392,6 +393,7 @@ c_abi_win64_aggregate_args
 c_abi_win64_enum_aggregate
 c_abi_win64_small_aggregate_float_mixed
 c_abi_win64_nested_aggregate
+windows_allocation_abort
 EOF
 }
 
@@ -1324,9 +1326,12 @@ run_windows_backend_fixtures() {
         "movq %rcx, .L_tl_argc(%rip)" \
         "movq %rdx, .L_tl_argv(%rip)" \
         ".extern VirtualAlloc" \
+        ".extern GetLastError" \
         ".extern ExitProcess" \
         ".extern WriteFile" \
         "call VirtualAlloc" \
+        "call GetLastError" \
+        "call tl_windows_allocation_abort" \
         "rep movsb"
     do
         assert_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
@@ -1402,6 +1407,7 @@ run_windows_backend_fixtures() {
         "__p__environ:" \
         "    call _lseeki64" \
         "    call _read" \
+        "    ud2" \
         ".L_tl_substring_copy_loop:" \
         ".L_tl_string_concat_copy_a:" \
         ".L_tl_string_concat_copy_b:" \
@@ -1411,11 +1417,16 @@ run_windows_backend_fixtures() {
         assert_not_contains "$_runtime_asm" "$_snippet" windows-backend-runtime
     done
     # The direct backend fixture does not lower TypeLisp runtime-prelude bodies.
-    # Append freestanding link-only targets for tl_alloc's OOM path and the
-    # moved string construction helpers; the happy path must not execute them.
+    # Append freestanding link-only targets for tl_alloc's OOM/provenance paths
+    # and the moved string construction helpers; the happy path must not execute
+    # them.
     cat >> "$_runtime_asm" <<'EOF'
     .globl tl_oom_abort
 tl_oom_abort:
+    movl $134, %ecx
+    call ExitProcess
+    .globl tl_windows_allocation_abort
+tl_windows_allocation_abort:
     movl $134, %ecx
     call ExitProcess
     .globl tl_substring

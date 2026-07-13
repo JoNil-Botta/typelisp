@@ -2869,6 +2869,9 @@
   [name : i64]) : sym_i64_env.SymI64Env
   (if compiler-load-lazy-qualified-observer-exhaustive
     (if (or
+      (and
+        (string.eq compiler-load-lazy-qualified-observer-root "")
+        (string.eq compiler-load-lazy-qualified-observer-secondary-root ""))
       (= name compiler-load-lazy-qualified-observer-root-id)
       (= name compiler-load-lazy-qualified-observer-secondary-root-id))
       (sym_i64_env.sym-i64-bind-id locals name 1)
@@ -2996,22 +2999,41 @@
   [locals : sym_i64_env.SymI64Env]) : unit
   (if compiler-load-lazy-qualified-observer-active
     (begin
-      (if (compiler-load-lazy-name-qualified-by?
-        text
-        compiler-load-lazy-qualified-observer-secondary-root)
-        (begin
-          (set! compiler-load-lazy-qualified-observer-secondary-qualified true)
-          (set!
+      (if (and
+        (string.eq compiler-load-lazy-qualified-observer-root "")
+        (string.eq compiler-load-lazy-qualified-observer-secondary-root ""))
+        (if (sym_i64_env.sym-i64-contains-id locals name)
+          unit
+          (if (sym_i64_env.sym-i64-contains-id
             compiler-load-lazy-qualified-observer-secondary-members
-            (compiler-load-lazy-qualified-observer-members-with-note
+            name)
+            unit
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-members
+              (sym_i64_env.sym-i64-bind-id
+                compiler-load-lazy-qualified-observer-secondary-members
+                name
+                1))))
+        (if (compiler-load-lazy-name-qualified-by?
+          text
+          compiler-load-lazy-qualified-observer-secondary-root)
+          (begin
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-qualified
+              true)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-members
+              (compiler-load-lazy-qualified-observer-members-with-note
+                text
+                compiler-load-lazy-qualified-observer-secondary-root
+                compiler-load-lazy-qualified-observer-secondary-members)))
+          (if (and
+            (not (sym_i64_env.sym-i64-contains-id locals name))
+            (string.eq
               text
-              compiler-load-lazy-qualified-observer-secondary-root
-              compiler-load-lazy-qualified-observer-secondary-members)))
-        (if (and
-          (not (sym_i64_env.sym-i64-contains-id locals name))
-          (string.eq text compiler-load-lazy-qualified-observer-secondary-root))
-          (set! compiler-load-lazy-qualified-observer-secondary-direct true)
-          unit))
+              compiler-load-lazy-qualified-observer-secondary-root))
+            (set! compiler-load-lazy-qualified-observer-secondary-direct true)
+            unit)))
       unit)
     unit))
 
@@ -4480,6 +4502,27 @@
     [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
+
+;; Collect every unshadowed structural name in one exhaustive declaration walk.
+;; Generated-catalog closure uses this once per selected declaration instead of
+;; rerunning the full AST walker once for every possible dependency name.
+(define (compiler-load-lazy-decl-reference-demand [decl : AstDecl]) : CompilerLoadLazyAliasDemand
+  (begin
+    (compiler-load-lazy-qualified-observer-begin-pair! "" "")
+    (let
+      [demand : CompilerLoadLazyAliasDemand
+        (compiler-load-lazy-decl-demand
+          decl
+          ""
+          (compiler-load-lazy-empty-surface-summary)
+          (sym_i64_env.sym-i64-empty))]
+      [observed : CompilerLoadLazyQualifiedObserverResult
+        (compiler-load-lazy-qualified-observer-end-pair!)]
+      (CompilerLoadLazyAliasDemand
+        false
+        false
+        (struct-get demand unknown)
+        (struct-get observed secondary-members)))))
 
 (define (compiler-load-lazy-decl-list-demand
   [decls : AstDeclList]

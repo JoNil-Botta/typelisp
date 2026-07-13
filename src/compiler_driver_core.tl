@@ -37,6 +37,8 @@
 
 (define compiler-driver-pending-retired-source-arena : i64
   0)
+(define compiler-driver-pending-intern-state : (Array ci.InternCompatState)
+  (array.make-array ci.InternCompatState 0))
 
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
@@ -233,12 +235,18 @@
       (ast-node-pool-context-clone-types-only pools)]
     (begin
       (compiler-driver-state-adopt-pools! state retained)
-      ;; The entry arena normally points into the retired checked pool chain.
-      ;; Move it so optimizer output is allocated into retained storage rather
-      ;; than memory released by the outer emit wrapper.
-      (unsafe
-        (arena.tl_arena_set (ast-node-pool-context-base-arena retained)))
+      ;; Standalone entry points can leave the retiring checked pool active;
+      ;; move those to retained storage. Batch entry points instead have a
+      ;; distinct caller-owned scratch arena that must remain active through
+      ;; emission and be returned to batch cleanup.
+      (if (= (arena.tl_arena_current) old-arena)
+        (unsafe
+          (arena.tl_arena_set (ast-node-pool-context-base-arena retained)))
+        unit)
       (ast-node-pool-reader-use! retained)
+      (set!
+        compiler-driver-pending-intern-state
+        (struct-get state intern-state))
       (set! compiler-driver-pending-retired-source-arena old-arena)
       (compiler-driver-lowered-from-pools program spans retained))))
 
@@ -1196,6 +1204,13 @@
           ;; arenas. The dedup map stores each interned String value directly.
           (ci.intern-persist-range! 0 intern-count)
           (ci.intern-reset-to! intern-count)
+          ;; Batch state owns the arrays updated above but snapshots scalar
+          ;; count/generation/map flags separately. Refresh those scalars while
+          ;; the original persistence policy is still active.
+          (if (> (array-length compiler-driver-pending-intern-state) 0)
+            (ci.intern-compat-state-capture-from-globals!
+              (array-ref compiler-driver-pending-intern-state 0))
+            unit)
           ;; Names first discovered after this boundary must also survive an
           ;; early checked-arena release.
           (ci.intern-persistent-storage-enable!)
@@ -1205,6 +1220,11 @@
   (if persistent-before
     unit
     (ci.intern-persistent-storage-disable!)))
+
+(define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
+  (and
+    (>= opt-level 1)
+    (not (= compiler-driver-pending-retired-source-arena 0))))
 
 (define (compiler-driver-retire-lowered-source-arena!) : unit
   (if (= compiler-driver-pending-retired-source-arena 0)
@@ -1238,9 +1258,9 @@
         [_profile-program-start : unit
           (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
         [emit-program : CompilerIrProgram
-          (if (= opt-level 0)
-            program
-            (compiler-ir-clone-program-shell program))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler-ir-clone-program-shell program)
+            program)]
         [_profile-program-finish : unit
           (cfg
             compile-profile
@@ -1249,9 +1269,9 @@
         [_profile-spans-start : unit
           (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
         [emit-spans : CompilerSourceSpans
-          (if (= opt-level 0)
-            spans
-            (clone spans))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
         [_profile-spans-finish : unit
           (cfg
             compile-profile
@@ -1309,9 +1329,9 @@
         [_profile-program-start : unit
           (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
         [emit-program : CompilerIrProgram
-          (if (= opt-level 0)
-            program
-            (compiler-ir-clone-program-shell program))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler-ir-clone-program-shell program)
+            program)]
         [_profile-program-finish : unit
           (cfg
             compile-profile
@@ -1320,9 +1340,9 @@
         [_profile-spans-start : unit
           (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
         [emit-spans : CompilerSourceSpans
-          (if (= opt-level 0)
-            spans
-            (clone spans))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
         [_profile-spans-finish : unit
           (cfg
             compile-profile
@@ -1379,13 +1399,13 @@
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
         [emit-program : CompilerIrProgram
-          (if (= opt-level 0)
-            program
-            (compiler-ir-clone-program-shell program))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler-ir-clone-program-shell program)
+            program)]
         [emit-spans : CompilerSourceSpans
-          (if (= opt-level 0)
-            spans
-            (clone spans))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
         [intern-persistent-before : bool
           (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriverObject
@@ -1427,13 +1447,13 @@
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
         [emit-program : CompilerIrProgram
-          (if (= opt-level 0)
-            program
-            (compiler-ir-clone-program-shell program))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler-ir-clone-program-shell program)
+            program)]
         [emit-spans : CompilerSourceSpans
-          (if (= opt-level 0)
-            spans
-            (clone spans))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
         [intern-persistent-before : bool
           (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriverPic
@@ -1947,13 +1967,14 @@
         (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
         (ResultCompilerDriverLowered.Err diag))]))
 
-(define (compiler-driver-load-and-lower-escaping-with-state
+(define (compiler-driver-load-and-lower-escaping-with-state-and-retirement
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [mode : CompilerBackendMode]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
+  [cfgs : sym_i64_env.SymI64Env]
+  [retire-after-lower? : bool]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
@@ -2053,7 +2074,7 @@
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path)))
-                    (if dest-committed?
+                    (if (and dest-committed? retire-after-lower?)
                       (compiler-driver-state-retain-lowered-types!
                         state
                         program
@@ -2074,13 +2095,30 @@
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (ResultCompilerDriverLowered.Err diag))])))
 
-(define (compiler-driver-load-and-lower-pic-image-with-state
+(define (compiler-driver-load-and-lower-escaping-with-state
   [state : CompilerDriverState]
   [input-path : String]
   [target : CompilerBackendTarget]
   [stdlib-roots : svec.Vec]
   [mode : CompilerBackendMode]
   [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
+  (compiler-driver-load-and-lower-escaping-with-state-and-retirement
+    state
+    input-path
+    target
+    stdlib-roots
+    mode
+    cfgs
+    false))
+
+(define (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : svec.Vec]
+  [mode : CompilerBackendMode]
+  [cfgs : sym_i64_env.SymI64Env]
+  [retire-after-lower? : bool]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
@@ -2180,7 +2218,7 @@
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path)))
-                    (if dest-committed?
+                    (if (and dest-committed? retire-after-lower?)
                       (compiler-driver-state-retain-lowered-types!
                         state
                         program
@@ -2200,6 +2238,22 @@
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
           (ResultCompilerDriverLowered.Err diag))])))
+
+(define (compiler-driver-load-and-lower-pic-image-with-state
+  [state : CompilerDriverState]
+  [input-path : String]
+  [target : CompilerBackendTarget]
+  [stdlib-roots : svec.Vec]
+  [mode : CompilerBackendMode]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerDriverLowered
+  (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
+    state
+    input-path
+    target
+    stdlib-roots
+    mode
+    cfgs
+    false))
 
 (define (compiler-driver-emit-file-with-target
   [input-path : String]
@@ -2407,13 +2461,14 @@
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
       input-path
-      (compiler-driver-load-and-lower-escaping-with-state
+      (compiler-driver-load-and-lower-escaping-with-state-and-retirement
         state
         input-path
         target
         stdlib-roots
         mode
-        (compiler-driver-state-target-cfgs state target cfgs))
+        (compiler-driver-state-target-cfgs state target cfgs)
+        true)
       target
       has-target
       mode
@@ -2433,13 +2488,14 @@
     (cfg compile-profile (compiler-driver-profile-start-total))
     (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
       input-path
-      (compiler-driver-load-and-lower-pic-image-with-state
+      (compiler-driver-load-and-lower-pic-image-with-state-and-retirement
         state
         input-path
         target
         stdlib-roots
         mode
-        (compiler-driver-state-target-cfgs state target cfgs))
+        (compiler-driver-state-target-cfgs state target cfgs)
+        true)
       target
       has-target
       mode
@@ -2813,13 +2869,13 @@
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
         [emit-program : CompilerIrProgram
-          (if (= opt-level 0)
-            program
-            (compiler-ir-clone-program-shell program))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (compiler-ir-clone-program-shell program)
+            program)]
         [emit-spans : CompilerSourceSpans
-          (if (= opt-level 0)
-            spans
-            (clone spans))]
+          (if (compiler-driver-retirement-clone-shells? opt-level)
+            (clone spans)
+            spans)]
         [intern-persistent-before : bool
           (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriver

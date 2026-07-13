@@ -653,13 +653,14 @@
         (byte_buf_core.byte-buf-builder-with-capacity (* count 384))]
       [registration-patch : CompilerComptimeRelativePatch
         (compiler-comptime-emit-registration! (&mut out) mode count)]
+      [registration-displacement : i64
+        (struct-get registration-patch displacement)]
+      [registration-rip-after : i64 (struct-get registration-patch rip-after)]
       [layouts : (Array CompilerComptimePackageMacroLayout)
         (make-array CompilerComptimePackageMacroLayout count)]
-      [helper-patches : (Array CompilerComptimeRelativePatch)
-        (make-array CompilerComptimeRelativePatch count)]
+      [helper-displacements : (Array i64) (make-array i64 count)]
+      [helper-rip-afters : (Array i64) (make-array i64 count)]
       [helper-offsets : (Array i64) (make-array i64 count)]
-      [irs : (Array CompilerComptimeMacroIr)
-        (make-array CompilerComptimeMacroIr count)]
       [index : i64 0]
       (begin
         (while (< index count)
@@ -680,12 +681,18 @@
                 (&mut out)
                 mode
                 (struct-get ir helper))
-              (array-set! irs index ir)
               (array-set!
                 layouts
                 index
                 (CompilerComptimePackageMacroLayout entry-offset 0))
-              (array-set! helper-patches index helper-patch)
+              (array-set!
+                helper-displacements
+                index
+                (struct-get helper-patch displacement))
+              (array-set!
+                helper-rip-afters
+                index
+                (struct-get helper-patch rip-after))
               (array-set! helper-offsets index helper-offset)
               (set! index (+ index 1)))))
         (compiler-comptime-align-code! (&mut out) 8)
@@ -700,21 +707,22 @@
                 (compiler-comptime-emit-u64!
                   (&mut out)
                   (string.string-length
-                    (struct-get (array-ref irs index) macro-name)))
+                    (struct-get (array-ref programs index) macro-name)))
                 (compiler-comptime-emit-u64! (&mut out) 0)
                 (compiler-comptime-emit-u64! (&mut out) 0)
                 (set! index (+ index 1))))
             (set! index 0)
             (while (< index count)
               (let
-                [ir : CompilerComptimeMacroIr (array-ref irs index)]
+                [program : CompilerComptimeMacroProgram
+                  (array-ref programs index)]
                 [layout : CompilerComptimePackageMacroLayout
                   (array-ref layouts index)]
                 [name-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
                 (begin
                   (compiler-comptime-emit-name!
                     (&mut out)
-                    (struct-get ir macro-name))
+                    (struct-get program macro-name))
                   (array-set!
                     layouts
                     index
@@ -728,23 +736,18 @@
               (begin
                 (compiler-comptime-set-u32!
                   code
-                  (struct-get registration-patch displacement)
-                  (-
-                    macro-table-offset
-                    (struct-get registration-patch rip-after)))
+                  registration-displacement
+                  (- macro-table-offset registration-rip-after))
                 (set! index 0)
                 (while (< index count)
-                  (let
-                    [patch : CompilerComptimeRelativePatch
-                      (array-ref helper-patches index)]
-                    (begin
-                      (compiler-comptime-set-u32!
-                        code
-                        (struct-get patch displacement)
-                        (-
-                          (array-ref helper-offsets index)
-                          (struct-get patch rip-after)))
-                      (set! index (+ index 1)))))
+                  (begin
+                    (compiler-comptime-set-u32!
+                      code
+                      (array-ref helper-displacements index)
+                      (-
+                        (array-ref helper-offsets index)
+                        (array-ref helper-rip-afters index)))
+                    (set! index (+ index 1))))
                 (ResultCompilerComptimePackageImagePayload.Ok
                   (CompilerComptimePackageImagePayload
                     code
@@ -1058,6 +1061,39 @@
         [(CompilerComptimeStatusProbe operation) (= operation 1)])
       (= (struct-get helper success-result-handle) 4242))))
 
+(define (compiler-comptime-package-scale-ok? [windows-target : bool]) : bool
+  (let
+    [count : i64 64]
+    [programs : (Array CompilerComptimeMacroProgram)
+      (make-array CompilerComptimeMacroProgram count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            programs
+            index
+            (CompilerComptimeMacroProgram
+              "package/scale-macro"
+              (make-array (CompilerComptimeOperation.HostCall 4))
+              0
+              0))
+          (set! index (+ index 1))))
+      (match (compiler-comptime-lower-package programs windows-target)
+        [(ResultCompilerComptimePackageImagePayload.Err _) false]
+        [(ResultCompilerComptimePackageImagePayload.Ok payload)
+          (let
+            [code : (Array u8) (struct-get payload code)]
+            [layouts : (Array CompilerComptimePackageMacroLayout)
+              (struct-get payload macros)]
+            [last : CompilerComptimePackageMacroLayout
+              (array-ref layouts (- count 1))]
+            (and
+              (= (array-length layouts) count)
+              (> (struct-get payload macro-table-offset) 0)
+              (< (struct-get last macro-entry-offset) (array-length code))
+              (< (struct-get last macro-name-offset) (array-length code))))]))))
+
 (test
   compiler-comptime-host-ir-lowering
   (cond
@@ -1085,4 +1121,8 @@
       (io.panic "native comptime Windows dynamic-scalar self-test failed")]
     [(not (compiler-comptime-invalid-ir-rejected?))
       (io.panic "native comptime invalid-IR rejection self-test failed")]
+    [(not (compiler-comptime-package-scale-ok? false))
+      (io.panic "native comptime Linux package-scale self-test failed")]
+    [(not (compiler-comptime-package-scale-ok? true))
+      (io.panic "native comptime Windows package-scale self-test failed")]
     [else unit]))

@@ -454,7 +454,8 @@ assert_active_cli_surface_command() {
             assert_contains "$label" "$WORKDIR/$label.out" "tlci image"
             assert_contains "$label" "$WORKDIR/$label.out" "package-name: surface_inspect"
             assert_contains "$label" "$WORKDIR/$label.out" "metadata-version: v1"
-            assert_contains "$label" "$WORKDIR/$label.out" "code: offset=0 bytes=0"
+            assert_contains "$label" "$WORKDIR/$label.out" "code: offset="
+            assert_not_contains "$label" "$WORKDIR/$label.out" "code: offset=0 bytes=0"
             bad_tlci="$CLI_SURFACE_DIR/bad.tlci"
             bad_tlci_display=$(compiler_batch_path "$bad_tlci")
             printf 'bad' > "$bad_tlci"

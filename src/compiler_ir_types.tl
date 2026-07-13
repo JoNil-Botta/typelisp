@@ -508,47 +508,10 @@
       (compiler-ir-value-list-fill-array rest slots 1)
       (CompilerIrValueList.Array (CompilerIrValueSeq slots count)))))
 
-(define (compiler-ir-value-list-fill-array-reversed
-  [values : CompilerIrValueList]
-  [out : (Array CompilerIrValue)]
-  [index : i64]) : unit
-  (match values
-    [(CompilerIrValueList.Nil) unit]
-    [(CompilerIrValueList.Cons value rest)
-      (begin
-        (array-set! out index value)
-        (compiler-ir-value-list-fill-array-reversed
-          (box-get rest)
-          out
-          (- index 1)))]
-    [(CompilerIrValueList.Array seq)
-      (let
-        [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [write : i64 index]
-        [source : (Array CompilerIrValue) (struct-get seq slots)]
-        (while (< read count)
-          (begin
-            (array-set! out write (array-ref source read))
-            (set! write (- write 1))
-            (set! read (+ read 1)))))]))
-
-(define (compiler-ir-value-seq-from-reversed-list
-  [values : CompilerIrValueList]) : CompilerIrValueSeq
-  (let
-    [count : i64 (compiler-ir-value-list-count values)]
-    [slots : (Array CompilerIrValue) (array.make-array CompilerIrValue count)]
-    (begin
-      (compiler-ir-value-list-fill-array-reversed values slots (- count 1))
-      (CompilerIrValueSeq slots count))))
-
 (define (compiler-ir-value-list-compact [values : CompilerIrValueList]) : CompilerIrValueList
   (match values
     [(CompilerIrValueList.Array _) values]
     [_ (CompilerIrValueList.Array (compiler-ir-value-seq-from-list values))]))
-
-(define (compiler-ir-value-list-compact-reversed [values : CompilerIrValueList]) : CompilerIrValueList
-  (CompilerIrValueList.Array (compiler-ir-value-seq-from-reversed-list values)))
 
 (define (compiler-ir-value-seq-to-list-rev
   [slots : (Array CompilerIrValue)]
@@ -651,13 +614,6 @@
     (- (struct-get seq len) 1)
     CompilerIrCAbiReturnSlotList.Nil))
 
-(define (compiler-ir-c-abi-return-slot-list-force-cons
-  [slots : CompilerIrCAbiReturnSlotList]) : CompilerIrCAbiReturnSlotList
-  (match slots
-    [(CompilerIrCAbiReturnSlotList.Array seq)
-      (compiler-ir-c-abi-return-slot-seq-to-list seq)]
-    [_ slots]))
-
 (define (compiler-ir-phi-input-cons-linked
   [value : CompilerIrValue]
   [label : String]
@@ -704,31 +660,6 @@
             (array-set! slots (+ index read) (array-ref source read))
             (set! read (+ read 1)))))]))
 
-(define (compiler-ir-phi-input-list-fill-array-reversed
-  [inputs : CompilerIrPhiInputList]
-  [slots : (Array CompilerIrPhiInput)]
-  [index : i64]) : unit
-  (match inputs
-    [(CompilerIrPhiInputList.Nil) unit]
-    [(CompilerIrPhiInputList.Cons value label rest)
-      (begin
-        (array-set! slots index (CompilerIrPhiInput value label))
-        (compiler-ir-phi-input-list-fill-array-reversed
-          (box-get rest)
-          slots
-          (- index 1)))]
-    [(CompilerIrPhiInputList.Array seq)
-      (let
-        [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [write : i64 index]
-        [source : (Array CompilerIrPhiInput) (struct-get seq slots)]
-        (while (< read count)
-          (begin
-            (array-set! slots write (array-ref source read))
-            (set! write (- write 1))
-            (set! read (+ read 1)))))]))
-
 (define (compiler-ir-phi-input-seq-from-list [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
   (let
     [count : i64 (compiler-ir-phi-input-list-count inputs)]
@@ -736,16 +667,6 @@
       (array.make-array CompilerIrPhiInput count)]
     (begin
       (compiler-ir-phi-input-list-fill-array inputs slots 0)
-      (CompilerIrPhiInputSeq slots count))))
-
-(define (compiler-ir-phi-input-seq-from-reversed-list
-  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputSeq
-  (let
-    [count : i64 (compiler-ir-phi-input-list-count inputs)]
-    [slots : (Array CompilerIrPhiInput)
-      (array.make-array CompilerIrPhiInput count)]
-    (begin
-      (compiler-ir-phi-input-list-fill-array-reversed inputs slots (- count 1))
       (CompilerIrPhiInputSeq slots count))))
 
 (define (compiler-ir-phi-input-seq-to-list-rev
@@ -787,11 +708,6 @@
     [_
       (CompilerIrPhiInputList.Array
         (compiler-ir-phi-input-seq-from-list inputs))]))
-
-(define (compiler-ir-phi-input-list-compact-reversed
-  [inputs : CompilerIrPhiInputList]) : CompilerIrPhiInputList
-  (CompilerIrPhiInputList.Array
-    (compiler-ir-phi-input-seq-from-reversed-list inputs)))
 
 (define (compiler-ir-switch-case-cons-linked
   [tag : i64]
@@ -1244,11 +1160,6 @@
 (define (compiler-ir-block-list-compact-reversed [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (CompilerIrBlockList.Array (compiler-ir-block-seq-from-reversed-list blocks)))
 
-(define (compiler-ir-function-block-list [func : CompilerIrFunction]) : CompilerIrBlockList
-  (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-ir-block-list-force-cons blocks)]))
-
 (define (compiler-ir-function-compact-blocks [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret vars blocks)
@@ -1302,46 +1213,12 @@
             (array-set! slots (+ index read) (array-ref source read))
             (set! read (+ read 1)))))]))
 
-(define (compiler-ir-param-list-fill-array-reversed
-  [params : CompilerIrParamList]
-  [slots : (Array CompilerIrParam)]
-  [index : i64]) : unit
-  (match params
-    [(CompilerIrParamList.Nil) unit]
-    [(CompilerIrParamList.Cons param rest)
-      (begin
-        (array-set! slots index param)
-        (compiler-ir-param-list-fill-array-reversed
-          (box-get rest)
-          slots
-          (- index 1)))]
-    [(CompilerIrParamList.Array seq)
-      (let
-        [read : i64 0]
-        [count : i64 (struct-get seq len)]
-        [write : i64 index]
-        [source : (Array CompilerIrParam) (struct-get seq slots)]
-        (while (< read count)
-          (begin
-            (array-set! slots write (array-ref source read))
-            (set! write (- write 1))
-            (set! read (+ read 1)))))]))
-
 (define (compiler-ir-param-seq-from-list [params : CompilerIrParamList]) : CompilerIrParamSeq
   (let
     [count : i64 (compiler-ir-param-list-count params)]
     [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
     (begin
       (compiler-ir-param-list-fill-array params slots 0)
-      (CompilerIrParamSeq slots count))))
-
-(define (compiler-ir-param-seq-from-reversed-list
-  [params : CompilerIrParamList]) : CompilerIrParamSeq
-  (let
-    [count : i64 (compiler-ir-param-list-count params)]
-    [slots : (Array CompilerIrParam) (array.make-array CompilerIrParam count)]
-    (begin
-      (compiler-ir-param-list-fill-array-reversed params slots (- count 1))
       (CompilerIrParamSeq slots count))))
 
 (define (compiler-ir-param-seq-to-list-rev
@@ -1381,9 +1258,6 @@
   (match params
     [(CompilerIrParamList.Array _) params]
     [_ (CompilerIrParamList.Array (compiler-ir-param-seq-from-list params))]))
-
-(define (compiler-ir-param-list-compact-reversed [params : CompilerIrParamList]) : CompilerIrParamList
-  (CompilerIrParamList.Array (compiler-ir-param-seq-from-reversed-list params)))
 
 (define (compiler-ir-function-cons
   [func : CompilerIrFunction]
@@ -2776,14 +2650,6 @@
   (compiler-ir-extern-list-reverse-onto
     (compiler-ir-clone-extern-list-acc externs CompilerIrExternList.Nil)
     CompilerIrExternList.Nil))
-
-(define (compiler-ir-clone-program [program : CompilerIrProgram]) : CompilerIrProgram
-  (match program
-    [(CompilerIrProgram.Program globals functions externs)
-      (CompilerIrProgram.Program
-        (compiler-ir-clone-global-list globals)
-        (compiler-ir-clone-function-list functions)
-        (compiler-ir-clone-extern-list externs))]))
 
 ;; Relocate only the program shell whose lists are allocated by the enclosing
 ;; lowerer arena. Function payloads already live in lower-ir-arena and remain
@@ -4235,14 +4101,6 @@
     [(CompilerIrInstr.Phi _ inputs _) (compiler-ir-phi-input-list-count inputs)]
     [_ 0]))
 
-(define (compiler-ir-instr-list-call-arg-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (compiler-ir-instr-call-arg-count instr)
-        (compiler-ir-instr-list-call-arg-count (box-get rest)))]))
-
 (define (compiler-ir-instr-seq-call-arg-count-from
   [slots : (Array CompilerIrInstr)]
   [index : i64]
@@ -4262,14 +4120,6 @@
     0
     (struct-get instrs len)
     0))
-
-(define (compiler-ir-instr-list-phi-input-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (compiler-ir-instr-phi-input-count instr)
-        (compiler-ir-instr-list-phi-input-count (box-get rest)))]))
 
 (define (compiler-ir-instr-seq-phi-input-count-from
   [slots : (Array CompilerIrInstr)]
@@ -4824,31 +4674,6 @@
             (compiler-ir-value-describe head)
             ", "
             (compiler-ir-value-list-describe (box-get tail)))])]))
-
-(define (compiler-ir-call-args-array-describe
-  [values : (Array CompilerIrValue)]
-  [index : i64]) : String
-  (if (>= index (array-length values))
-    ""
-    (str_cat.str-cat
-      (compiler-ir-value-describe (array-ref values index))
-      (if (= (+ index 1) (array-length values))
-        ""
-        (str_cat.str-cat
-          ", "
-          (compiler-ir-call-args-array-describe values (+ index 1)))))))
-
-(define (compiler-ir-call-args-describe [args : CompilerIrCallArgs]) : String
-  (match args
-    [(CompilerIrCallArgs.Nil) ""]
-    [(CompilerIrCallArgs.One a) (compiler-ir-value-describe a)]
-    [(CompilerIrCallArgs.Two a b)
-      (str_cat.str-cat
-        (compiler-ir-value-describe a)
-        ", "
-        (compiler-ir-value-describe b))]
-    [(CompilerIrCallArgs.Array values)
-      (compiler-ir-call-args-array-describe values 0)]))
 
 (define (compiler-ir-spmd-call-arg-describe [arg : CompilerIrSpmdCallArg]) : String
   (match arg

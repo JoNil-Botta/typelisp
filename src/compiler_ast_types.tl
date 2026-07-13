@@ -1923,17 +1923,20 @@
 (define (ast-node-pool-context-expr-push
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
-  (match (ast-expr-node-pool-state-push
-    (array-ref (struct-get pools expr-pool) 0)
-    node)
-    [(AstExprNodePoolPushOk next id)
-      (begin
-        (array-set! (struct-get pools expr-pool) 0 next)
-        (ast-node-pool-context-sync-base-arena!
-          pools
-          (struct-get next base-arena))
-        (ast-node-pool-compat-context-sync-installed!)
-        id)]))
+  (let
+    [current : AstExprNodePoolState (array-ref (struct-get pools expr-pool) 0)]
+    (match (ast-expr-node-pool-state-push current node)
+      [(AstExprNodePoolPushOk next id)
+        (begin
+          (array-set! (struct-get pools expr-pool) 0 next)
+          (if (not
+            (= (struct-get current base-arena) (struct-get next base-arena)))
+            (ast-node-pool-context-sync-base-arena!
+              pools
+              (struct-get next base-arena))
+            unit)
+          (ast-node-pool-compat-context-sync-installed!)
+          id)])))
 
 (define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
   (ast-expr-node-pool-state-get (array-ref (struct-get pools expr-pool) 0) id))
@@ -1955,17 +1958,20 @@
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]
   [node : AstType]) : i64
-  (match (ast-type-node-pool-state-push
-    (array-ref (struct-get pools type-pool) 0)
-    node)
-    [(AstTypeNodePoolPushOk next id)
-      (begin
-        (array-set! (struct-get pools type-pool) 0 next)
-        (ast-node-pool-context-sync-base-arena!
-          pools
-          (struct-get next base-arena))
-        (ast-node-pool-compat-context-sync-installed!)
-        id)]))
+  (let
+    [current : AstTypeNodePoolState (array-ref (struct-get pools type-pool) 0)]
+    (match (ast-type-node-pool-state-push current node)
+      [(AstTypeNodePoolPushOk next id)
+        (begin
+          (array-set! (struct-get pools type-pool) 0 next)
+          (if (not
+            (= (struct-get current base-arena) (struct-get next base-arena)))
+            (ast-node-pool-context-sync-base-arena!
+              pools
+              (struct-get next base-arena))
+            unit)
+          (ast-node-pool-compat-context-sync-installed!)
+          id)])))
 
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-type-node-pool-state-get (array-ref (struct-get pools type-pool) 0) id))
@@ -1990,16 +1996,16 @@
   [id : i64]
   [node : AstType]) : unit
   (let
+    [current : AstTypeNodePoolState (array-ref (struct-get pools type-pool) 0)]
     [next : AstTypeNodePoolState
-      (ast-type-node-pool-state-set!
-        (array-ref (struct-get pools type-pool) 0)
-        id
-        node)]
+      (ast-type-node-pool-state-set! current id node)]
     (begin
       (array-set! (struct-get pools type-pool) 0 next)
-      (ast-node-pool-context-sync-base-arena!
-        pools
-        (struct-get next base-arena))
+      (if (not (= (struct-get current base-arena) (struct-get next base-arena)))
+        (ast-node-pool-context-sync-base-arena!
+          pools
+          (struct-get next base-arena))
+        unit)
       (ast-node-pool-compat-context-sync-installed!))))
 
 (defstruct AstExprList

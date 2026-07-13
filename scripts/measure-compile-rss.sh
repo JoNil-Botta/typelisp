@@ -426,12 +426,14 @@ run_manifest_chunk() {
         "$WORKDIR/manifest/chunk-$CHUNK_ID_PADDED" \
         "$COMPILER" compile --batch "$chunk_file" \
             --target "$TARGET" \
+            --cfg selfhost-compile-manifest \
             --stdlib-root "$ROOT/stdlib"
 }
 
 verify_batch_single_parity() {
     list=$1
     label=$2
+    cfg_name=${3:-}
     parity_dir="$WORKDIR/$label/single-parity"
     rm -rf "$parity_dir"
     mkdir -p "$parity_dir"
@@ -439,13 +441,24 @@ verify_batch_single_parity() {
     while IFS='|' read -r input output; do
         [ -n "$input" ] || continue
         single="$parity_dir/$(printf '%04d' "$ordinal").s"
-        "$COMPILER" compile "$input" -o "$single" \
-            --target "$TARGET" \
-            --stdlib-root "$ROOT/stdlib" \
-            --stdlib-root "$ROOT/src" \
-            > "$parity_dir/$(printf '%04d' "$ordinal").stdout" \
-            2> "$parity_dir/$(printf '%04d' "$ordinal").stderr" ||
-            fail "$label one-entry compile failed at ordinal $ordinal"
+        if [ -n "$cfg_name" ]; then
+            "$COMPILER" compile "$input" -o "$single" \
+                --target "$TARGET" \
+                --cfg "$cfg_name" \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src" \
+                > "$parity_dir/$(printf '%04d' "$ordinal").stdout" \
+                2> "$parity_dir/$(printf '%04d' "$ordinal").stderr" ||
+                fail "$label one-entry compile failed at ordinal $ordinal"
+        else
+            "$COMPILER" compile "$input" -o "$single" \
+                --target "$TARGET" \
+                --stdlib-root "$ROOT/stdlib" \
+                --stdlib-root "$ROOT/src" \
+                > "$parity_dir/$(printf '%04d' "$ordinal").stdout" \
+                2> "$parity_dir/$(printf '%04d' "$ordinal").stderr" ||
+                fail "$label one-entry compile failed at ordinal $ordinal"
+        fi
         cmp "$output" "$single" >/dev/null ||
             fail "$label batch assembly differs from one-entry output at ordinal $ordinal"
         ordinal=$((ordinal + 1))
@@ -468,8 +481,12 @@ run_manifest_full() {
         "$WORKDIR/manifest/full" \
         "$COMPILER" compile --batch "$batch_input" \
             --target "$TARGET" \
+            --cfg selfhost-compile-manifest \
             --stdlib-root "$ROOT/stdlib"
-    verify_batch_single_parity "$batch_input" "manifest/full"
+    verify_batch_single_parity \
+        "$batch_input" \
+        "manifest/full" \
+        selfhost-compile-manifest
 }
 
 run_heavy_batch() {

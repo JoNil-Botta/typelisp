@@ -196,6 +196,9 @@ uses the sole input reference lifetime. Use explicit names such as
 `(& selected Item)` only when an API intentionally relates multiple reference
 inputs; fields, globals, locals, and nominal lifetime arguments remain
 explicit. Borrow expressions stay `(& place)` and `(&mut place)`.
+At a typed call, an existing `&mut T` argument may be passed to an `&T`
+parameter as a tracked shared reborrow; the reverse conversion is never
+implicit.
 
 ### Abstraction: comptime, not generics
 

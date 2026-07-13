@@ -20311,6 +20311,19 @@
         [_ false])]
     [_ false]))
 
+(define (tc-call-actual-immutable-reference? [ctx : TcContext] [ty : AstType]) : bool
+  (match (tc-type-strip-region ty)
+    [(AstType.Ref _ _) true]
+    [(AstType.Var _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstType.Ref _ _) true]
+        [_ false])]
+    [(AstType.VarArgs _ _)
+      (match (tc-type-strip-region (tc-resolve-type ctx ty))
+        [(AstType.Ref _ _) true]
+        [_ false])]
+    [_ false]))
+
 (define (tc-call-string-temporary-ref-compatible?
   [ctx : TcContext]
   [want : AstType]
@@ -20357,7 +20370,10 @@
   [ctx : TcContext]
   [name : String]
   [got : AstType]) : ResultTcType
-  (if (tc-call-actual-reference? ctx got)
+  ;; An existing shared reference already has the effective call shape. An
+  ;; existing mutable reference must still pass through tc-borrow-place-var so
+  ;; the call gets a tracked shared reborrow with the referent's lifetime.
+  (if (tc-call-actual-immutable-reference? ctx got)
     (ResultTcType.Ok got)
     (match (tc-borrow-place-var name got)
       [(ResultTcBorrowPlace.Ok place)
@@ -20437,7 +20453,7 @@
           (if (tc-dotted-local-field-name-id? env name)
             (match (tc-call-arg-expr-type ctx env arg)
               [(ResultTcType.Ok got)
-                (if (tc-call-actual-reference? ctx got)
+                (if (tc-call-actual-immutable-reference? ctx got)
                   (ResultTcType.Ok got)
                   (tc-call-auto-borrow-type ctx env arg))]
               [(ResultTcType.Err message) (ResultTcType.Err message)])
@@ -20448,7 +20464,7 @@
       [_
         (match (tc-call-arg-expr-type ctx env arg)
           [(ResultTcType.Ok got)
-            (if (tc-call-actual-reference? ctx got)
+            (if (tc-call-actual-immutable-reference? ctx got)
               (ResultTcType.Ok got)
               (match (tc-call-auto-borrow-type ctx env arg)
                 [(ResultTcType.Ok borrowed) (ResultTcType.Ok borrowed)]
@@ -20464,7 +20480,7 @@
   [name : String]
   [got : AstType]
   [arg : AstExpr]) : ResultTcExpr
-  (if (tc-call-actual-reference? ctx got)
+  (if (tc-call-actual-immutable-reference? ctx got)
     (ResultTcExpr.Ok arg)
     (match (tc-borrow-place-var name got)
       [(ResultTcBorrowPlace.Ok _)
@@ -20486,7 +20502,7 @@
             (if (tc-dotted-local-field-name-id? env name)
               (match (tc-call-arg-expr-type ctx env arg)
                 [(ResultTcType.Ok got)
-                  (if (tc-call-actual-reference? ctx got)
+                  (if (tc-call-actual-immutable-reference? ctx got)
                     (ResultTcExpr.Ok arg)
                     (match (tc-call-auto-borrow-type ctx env arg)
                       [(ResultTcType.Ok _)
@@ -20500,7 +20516,7 @@
         [_
           (match (tc-call-arg-expr-type ctx env arg)
             [(ResultTcType.Ok got)
-              (if (tc-call-actual-reference? ctx got)
+              (if (tc-call-actual-immutable-reference? ctx got)
                 (ResultTcExpr.Ok arg)
                 (match (tc-call-auto-borrow-type ctx env arg)
                   [(ResultTcType.Ok _)

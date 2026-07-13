@@ -35,6 +35,9 @@
   (Ok CompilerIrProgram CompilerSourceSpans AstNodePoolContext)
   (Err (Box CompilerDiagnostic)))
 
+(define compiler-driver-pending-retired-source-arena : i64
+  0)
+
 (defstruct CompilerDriverState
   (expr-pool (Array AstExprNodePoolState))
   (type-pool (Array AstTypeNodePoolState))
@@ -218,6 +221,26 @@
   [pools : AstNodePoolContext]) : unit
   (unsafe
     (arena.tl_arena_destroy (ast-node-pool-context-base-arena pools))))
+
+(define (compiler-driver-state-retain-lowered-types!
+  [state : CompilerDriverState]
+  [program : CompilerIrProgram]
+  [spans : CompilerSourceSpans]
+  [pools : AstNodePoolContext]) : ResultCompilerDriverLowered
+  (let
+    [old-arena : i64 (ast-node-pool-context-base-arena pools)]
+    [retained : AstNodePoolContext
+      (ast-node-pool-context-clone-types-only pools)]
+    (begin
+      (compiler-driver-state-adopt-pools! state retained)
+      ;; The entry arena normally points into the retired checked pool chain.
+      ;; Move it so optimizer output is allocated into retained storage rather
+      ;; than memory released by the outer emit wrapper.
+      (unsafe
+        (arena.tl_arena_set (ast-node-pool-context-base-arena retained)))
+      (ast-node-pool-reader-use! retained)
+      (set! compiler-driver-pending-retired-source-arena old-arena)
+      (compiler-driver-lowered-from-pools program spans retained))))
 
 (define (compiler-driver-state-clear-pool-backed-caches!) : unit
   (begin
@@ -1161,6 +1184,45 @@
                             (box-get diag)
                             input-path))))]))))]))))
 
+(define (compiler-driver-prepare-lowered-source-retirement!) : bool
+  (let
+    [persistent-before : bool (ci.intern-persistent-storage-on?)]
+    (if (= compiler-driver-pending-retired-source-arena 0)
+      persistent-before
+      (let
+        [intern-count : i64 (ci.intern-pool-len)]
+        (begin
+          ;; Do this before optimizer/backend reset any producer-owned scratch
+          ;; arenas. The dedup map stores each interned String value directly.
+          (ci.intern-persist-range! 0 intern-count)
+          (ci.intern-reset-to! intern-count)
+          ;; Names first discovered after this boundary must also survive an
+          ;; early checked-arena release.
+          (ci.intern-persistent-storage-enable!)
+          persistent-before)))))
+
+(define (compiler-driver-restore-intern-persistence! [persistent-before : bool]) : unit
+  (if persistent-before
+    unit
+    (ci.intern-persistent-storage-disable!)))
+
+(define (compiler-driver-retire-lowered-source-arena!) : unit
+  (if (= compiler-driver-pending-retired-source-arena 0)
+    unit
+    (let
+      [retained-arena : i64 (arena.tl_arena_current)]
+      [retire-arena : i64 compiler-driver-pending-retired-source-arena]
+      (begin
+        ;; Clear globals at the outer emit boundary, after the load/lower call
+        ;; has returned and no active frame can still hold their arena values.
+        (compiler-driver-state-clear-pool-backed-caches!)
+        (lower-reset-file-state!)
+        (unsafe
+          (begin
+            (set! compiler-driver-pending-retired-source-arena 0)
+            (arena.tl_arena_destroy retire-arena)
+            (arena.tl_arena_set retained-arena)))))))
+
 (define (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
   [input-path : String]
   [lowered : ResultCompilerDriverLowered]
@@ -1173,13 +1235,51 @@
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
+        [_profile-program-start : unit
+          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+        [emit-program : CompilerIrProgram
+          (if (= opt-level 0)
+            program
+            (compiler-ir-clone-program-shell program))]
+        [_profile-program-finish : unit
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "retain.program")
+            unit)]
+        [_profile-spans-start : unit
+          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+        [emit-spans : CompilerSourceSpans
+          (if (= opt-level 0)
+            spans
+            (clone spans))]
+        [_profile-spans-finish : unit
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "retain.spans")
+            unit)]
+        [_profile-interns-start : unit
+          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+        [intern-persistent-before : bool
+          (compiler-driver-prepare-lowered-source-retirement!)]
+        [_profile-interns-finish : unit
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "retain.interns")
+            unit)]
         [out : ResultCompilerDriver
           (begin
             (ast-node-pool-reader-use! pools)
+            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase "retain.release"))
             (compiler-driver-emit-lowered-with-level-mode-entry-and-crt
               input-path
-              program
-              spans
+              emit-program
+              emit-spans
               target
               has-target
               mode
@@ -1187,6 +1287,10 @@
               emit-entry
               crt-entry))]
         (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
@@ -1202,19 +1306,61 @@
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
+        [_profile-program-start : unit
+          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+        [emit-program : CompilerIrProgram
+          (if (= opt-level 0)
+            program
+            (compiler-ir-clone-program-shell program))]
+        [_profile-program-finish : unit
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "retain.program")
+            unit)]
+        [_profile-spans-start : unit
+          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+        [emit-spans : CompilerSourceSpans
+          (if (= opt-level 0)
+            spans
+            (clone spans))]
+        [_profile-spans-finish : unit
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "retain.spans")
+            unit)]
+        [_profile-interns-start : unit
+          (cfg compile-profile (compiler-driver-profile-start-phase) unit)]
+        [intern-persistent-before : bool
+          (compiler-driver-prepare-lowered-source-retirement!)]
+        [_profile-interns-finish : unit
+          (cfg
+            compile-profile
+            (compiler-driver-profile-finish-phase "retain.interns")
+            unit)]
         [out : ResultCompilerDriverBuffer
           (begin
             (ast-node-pool-reader-use! pools)
+            (cfg compile-profile (compiler-driver-profile-start-phase))
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
+            (cfg
+              compile-profile
+              (compiler-driver-profile-finish-phase "retain.release"))
             (compiler-driver-emit-lowered-buffer-with-level-mode-and-entry
               input-path
-              program
-              spans
+              emit-program
+              emit-spans
               target
               has-target
               mode
               opt-level
               emit-entry))]
         (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
@@ -1232,13 +1378,26 @@
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
+        [emit-program : CompilerIrProgram
+          (if (= opt-level 0)
+            program
+            (compiler-ir-clone-program-shell program))]
+        [emit-spans : CompilerSourceSpans
+          (if (= opt-level 0)
+            spans
+            (clone spans))]
+        [intern-persistent-before : bool
+          (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriverObject
           (begin
             (ast-node-pool-reader-use! pools)
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
             (compiler-driver-emit-lowered-object-image-with-level-mode-entry-and-crt
               input-path
-              program
-              spans
+              emit-program
+              emit-spans
               target
               has-target
               mode
@@ -1246,6 +1405,10 @@
               emit-entry
               crt-entry))]
         (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
@@ -1263,13 +1426,26 @@
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
+        [emit-program : CompilerIrProgram
+          (if (= opt-level 0)
+            program
+            (compiler-ir-clone-program-shell program))]
+        [emit-spans : CompilerSourceSpans
+          (if (= opt-level 0)
+            spans
+            (clone spans))]
+        [intern-persistent-before : bool
+          (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriverPic
           (begin
             (ast-node-pool-reader-use! pools)
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
             (compiler-driver-emit-lowered-pic-with-level-mode-entry-and-crt
               input-path
-              program
-              spans
+              emit-program
+              emit-spans
               target
               has-target
               mode
@@ -1277,6 +1453,10 @@
               emit-entry
               crt-entry))]
         (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriverPic.Err diag)]))
@@ -1873,10 +2053,16 @@
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path)))
-                    (compiler-driver-lowered-from-pools
-                      program
-                      spans
-                      result-pools)))]
+                    (if dest-committed?
+                      (compiler-driver-state-retain-lowered-types!
+                        state
+                        program
+                        spans
+                        result-pools)
+                      (compiler-driver-lowered-from-pools
+                        program
+                        spans
+                        result-pools))))]
               [(ResultCompilerLower.Err diag)
                 (begin
                   (cfg
@@ -1994,10 +2180,16 @@
                       (box
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path)))
-                    (compiler-driver-lowered-from-pools
-                      program
-                      spans
-                      result-pools)))]
+                    (if dest-committed?
+                      (compiler-driver-state-retain-lowered-types!
+                        state
+                        program
+                        spans
+                        result-pools)
+                      (compiler-driver-lowered-from-pools
+                        program
+                        spans
+                        result-pools))))]
               [(ResultCompilerLower.Err diag)
                 (begin
                   (cfg
@@ -2620,14 +2812,31 @@
   (match lowered
     [(ResultCompilerDriverLowered.Ok program spans pools)
       (let
+        [emit-program : CompilerIrProgram
+          (if (= opt-level 0)
+            program
+            (compiler-ir-clone-program-shell program))]
+        [emit-spans : CompilerSourceSpans
+          (if (= opt-level 0)
+            spans
+            (clone spans))]
+        [intern-persistent-before : bool
+          (compiler-driver-prepare-lowered-source-retirement!)]
         [out : ResultCompilerDriver
           (begin
             (ast-node-pool-reader-use! pools)
+            (if (>= opt-level 1)
+              (compiler-driver-retire-lowered-source-arena!)
+              unit)
             (compiler-driver-emit-ir-summary-lowered-with-level
-              program
-              spans
+              emit-program
+              emit-spans
               opt-level))]
         (begin
+          (if (= opt-level 0)
+            (compiler-driver-retire-lowered-source-arena!)
+            unit)
+          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
           out))]
     [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))

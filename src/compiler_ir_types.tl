@@ -2785,6 +2785,45 @@
         (compiler-ir-clone-function-list functions)
         (compiler-ir-clone-extern-list externs))]))
 
+;; Relocate only the program shell whose lists are allocated by the enclosing
+;; lowerer arena. Function payloads already live in lower-ir-arena and remain
+;; valid until the optimizer's normal post-clone release.
+(define (compiler-ir-clone-function-seq-shell [seq : CompilerIrFunctionSeq]) : CompilerIrFunctionSeq
+  (let
+    [count : i64 (struct-get seq len)]
+    [source : (Array CompilerIrFunction) (struct-get seq slots)]
+    [dest : (Array CompilerIrFunction)
+      (array.make-array CompilerIrFunction count)]
+    [i : i64 0]
+    (begin
+      (while (< i count)
+        (begin
+          (array-set! dest i (array-ref source i))
+          (set! i (+ i 1))))
+      (CompilerIrFunctionSeq dest count))))
+
+(define (compiler-ir-clone-function-list-shell
+  [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
+  (match functions
+    [(CompilerIrFunctionList.Array seq)
+      (CompilerIrFunctionList.Array (compiler-ir-clone-function-seq-shell seq))]
+    [(CompilerIrFunctionList.Nil) CompilerIrFunctionList.Nil]
+    [_
+      (compiler-ir-function-list-compact
+        (compiler-ir-function-list-reverse-onto
+          (compiler-ir-function-list-reverse-onto
+            functions
+            CompilerIrFunctionList.Nil)
+          CompilerIrFunctionList.Nil))]))
+
+(define (compiler-ir-clone-program-shell [program : CompilerIrProgram]) : CompilerIrProgram
+  (match program
+    [(CompilerIrProgram.Program globals functions externs)
+      (CompilerIrProgram.Program
+        (compiler-ir-clone-global-list globals)
+        (compiler-ir-clone-function-list-shell functions)
+        (compiler-ir-clone-extern-list externs))]))
+
 (define (compiler-ir-type-list-render-at
   [types : (& types AstTypeList)]
   [index : i64]) : String

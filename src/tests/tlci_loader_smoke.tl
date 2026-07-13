@@ -1,6 +1,8 @@
 ;; tlci_loader_smoke.tl - Executable smoke for tlci loader helpers.
 (import tlci_loader)
 (import tlci_core as tlci)
+(import compiler_comptime_image_core as comptime_image)
+(import stdlib.string)
 
 (define tlci-loader-smoke-macro-name : String
   "native-probe")
@@ -40,6 +42,13 @@
             tlci-loader-smoke-macro-name)
             [(tlci_loader.ResultTlciLoaderUnit.Err _) false]
             [(tlci_loader.ResultTlciLoaderUnit.Ok) true])]
+        [missing : bool
+          (match (tlci_loader.tlci-loader-find-macro-entry
+            (& loaded)
+            "missing-native-probe")
+            [(tlci_loader.ResultTlciMacroEntry.Err message)
+              (string.eq message "tlci loader: macro entry not found")]
+            [(tlci_loader.ResultTlciMacroEntry.Ok _) false])]
         [success : bool
           (and
             installed
@@ -86,19 +95,56 @@
           (match (tlci_loader.tlci-loader-release loaded)
             [(tlci_loader.ResultTlciLoaderUnit.Ok) true]
             [(tlci_loader.ResultTlciLoaderUnit.Err _) false])]
-        (and success fuel wrong-session released))]))
+        (and missing success fuel wrong-session released))]))
+
+(define (tlci-loader-smoke-malformed-rejected?
+  [bytes : (Array u8)]
+  [macro-table-offset : i64]) : bool
+  (let
+    [malformed : (Array u8) (tlci.tlci-copy-bytes bytes)]
+    [code-offset : i64 (tlci.tlci-read-u64 malformed 88)]
+    [reserved-offset : i64
+      (+
+        (+ code-offset macro-table-offset)
+        tlci.tlci-macro-entry-reserved0-offset)]
+    (begin
+      (tlci.tlci-set-u64! malformed reserved-offset 1)
+      (tlci.tlci-set-u64!
+        malformed
+        tlci.tlci-hash-field-offset
+        (tlci.tlci-content-hash malformed))
+      (match (tlci_loader.tlci-loader-load-from-bytes-with-host
+        malformed
+        (tlci-loader-smoke-host-table))
+        [(tlci_loader.ResultTlciLoadedImage.Err message)
+          (string.eq
+            message
+            "tlci loader: macro entry reserved field must be zero")]
+        [(tlci_loader.ResultTlciLoadedImage.Ok loaded)
+          (begin
+            (tlci_loader.tlci-loader-release loaded)
+            false)]))))
 
 (define (tlci-loader-smoke-native-ok?) : bool
-  (match (tlci.tlci-emit-native-comptime-probe-image (cfg windows true false))
-    [(tlci.ResultTlciBytes.Err _) false]
-    [(tlci.ResultTlciBytes.Ok first)
+  (match (comptime_image.compiler-comptime-lower-probe
+    (comptime_image.compiler-comptime-probe-program)
+    (cfg windows true false))
+    [(comptime_image.ResultCompilerComptimeImagePayload.Err _) false]
+    [(comptime_image.ResultCompilerComptimeImagePayload.Ok payload)
       (match (tlci.tlci-emit-native-comptime-probe-image
         (cfg windows true false))
         [(tlci.ResultTlciBytes.Err _) false]
-        [(tlci.ResultTlciBytes.Ok second)
-          (and
-            (tlci.tlci-bytes-eq? first second)
-            (tlci-loader-smoke-native-loaded? first))])]))
+        [(tlci.ResultTlciBytes.Ok first)
+          (match (tlci.tlci-emit-native-comptime-probe-image
+            (cfg windows true false))
+            [(tlci.ResultTlciBytes.Err _) false]
+            [(tlci.ResultTlciBytes.Ok second)
+              (and
+                (tlci.tlci-bytes-eq? first second)
+                (tlci-loader-smoke-malformed-rejected?
+                  first
+                  (struct-get payload macro-table-offset))
+                (tlci-loader-smoke-native-loaded? first))])])]))
 
 (define (main) : i64
   (if (= (tlci_loader.tlci-loader-self-test) 42)

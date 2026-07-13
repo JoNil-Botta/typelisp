@@ -163,6 +163,10 @@ run_gate \
     "SPMD AVX-512 instruction harness self-tests" \
     scripts/measure-spmd-avx512-instructions.sh \
     --self-test
+run_gate \
+    "SPMD mode instruction-count harness self-tests" \
+    scripts/measure-spmd-mode-instruction-counts.sh \
+    --self-test
 run_with_compiler \
     "$SEED_TYPELISP_BIN" \
     "embedded stdlib generated payload" \

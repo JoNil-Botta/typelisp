@@ -3048,6 +3048,158 @@
     (struct-get manifest name)
     (struct-get manifest version)))
 
+(define (build-package-tlci-push-macro-name!
+  [out : (&mut out cli_svec.Vec)]
+  [name : String]) : unit
+  (let
+    [index : i64 0]
+    [present : bool false]
+    (begin
+      (while (and (not present) (< index (cli_svec.len out)))
+        (if (string.eq (cli_svec.get out index "") name)
+          (set! present true)
+          (set! index (+ index 1))))
+      (if present
+        unit
+        (cli_svec.push out name)))))
+
+(define (build-package-tlci-collect-decl-macro!
+  [decl : AstDecl]
+  [owned-path : String]
+  [module : String]
+  [package-name : String]
+  [owned-sources : build_string_i64_map.Map]
+  [out : (&mut out cli_svec.Vec)]) : unit
+  (match decl
+    [(AstDecl.DefMacro name _ _ _)
+      (if (= (string.string-length owned-path) 0)
+        unit
+        (build-package-tlci-push-macro-name!
+          out
+          (compiler-symbol-module-key
+            (if (= (string.string-length module) 0)
+              package-name
+              module)
+            (intern-str name))))]
+    [(AstDecl.Unsafe inner-box)
+      (build-package-tlci-collect-decl-macro!
+        (box-get inner-box)
+        owned-path
+        module
+        package-name
+        owned-sources
+        out)]
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (build-package-tlci-collect-decl-macro!
+        (box-get inner-box)
+        owned-path
+        module
+        package-name
+        owned-sources
+        out)]
+    [(AstDecl.ModuleBody nested-module body-box)
+      (build-package-tlci-collect-macros-into!
+        (box-get body-box)
+        (ast-decl-path-list-new)
+        owned-path
+        (intern-str nested-module)
+        package-name
+        owned-sources
+        out)]
+    [_ unit]))
+
+(define (build-package-tlci-source-map [sources : cli_svec.Vec]) : build_string_i64_map.Map
+  (let
+    [out : build_string_i64_map.Map
+      (build_string_i64_map.with-capacity
+        (+ (* (cli_svec.len (& sources)) 2) 4))]
+    [index : i64 0]
+    (begin
+      (while (< index (cli_svec.len (& sources)))
+        (begin
+          (build_string_i64_map.insert-ref!
+            (&mut out)
+            (compiler-load-normalize-path (cli_svec.get (& sources) index ""))
+            1)
+          (set! index (+ index 1))))
+      out)))
+
+(define (build-package-tlci-source-owned?
+  [owned-sources : build_string_i64_map.Map]
+  [path : String]) : bool
+  (match (build_string_i64_map.get
+    (& owned-sources)
+    (compiler-load-normalize-path path))
+    [(build_string_i64_map.LookupFound _) true]
+    [(build_string_i64_map.LookupMissing) false]))
+
+(define (build-package-tlci-collect-macros-into!
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]
+  [fallback-path : String]
+  [initial-module : String]
+  [package-name : String]
+  [owned-sources : build_string_i64_map.Map]
+  [out : (&mut out cli_svec.Vec)]) : unit
+  (let
+    [decl-cursor : AstDeclList decls]
+    [path-cursor : AstDeclPathList paths]
+    [module : String initial-module]
+    [done : bool false]
+    (while (not done)
+      (match (ast-decl-list-step decl-cursor)
+        [(AstDeclListStep.Nil) (set! done true)]
+        [(AstDeclListStep.Cons decl rest)
+          (let
+            [decl-path : String
+              (match (ast-decl-path-list-step path-cursor)
+                [(AstDeclPathListStep.Nil) fallback-path]
+                [(AstDeclPathListStep.Cons path _) path])]
+            [owned-path : String
+              (if (build-package-tlci-source-owned? owned-sources decl-path)
+                decl-path
+                "")]
+            (begin
+              (match decl
+                [(AstDecl.Module name) (set! module (intern-str name))]
+                [_
+                  (build-package-tlci-collect-decl-macro!
+                    decl
+                    owned-path
+                    module
+                    package-name
+                    owned-sources
+                    out)])
+              (set! decl-cursor rest)
+              (match (ast-decl-path-list-step path-cursor)
+                [(AstDeclPathListStep.Nil) unit]
+                [(AstDeclPathListStep.Cons _ path-rest)
+                  (set! path-cursor path-rest)])))]))))
+
+(define (build-package-tlci-macro-names
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : (Array String)
+  (let
+    [out : cli_svec.Vec (cli_svec.new)]
+    (begin
+      (match (package-source-discover-for "build" manifest-path true)
+        [(ResultPackageSourceSet.Err _) unit]
+        [(ResultPackageSourceSet.Ok source-set)
+          (let
+            [owned-sources : build_string_i64_map.Map
+              (build-package-tlci-source-map (struct-get source-set sources))]
+            (build-package-tlci-collect-macros-into!
+              decls
+              paths
+              ""
+              ""
+              (struct-get manifest name)
+              owned-sources
+              (&mut out)))])
+      (cli_svec.to-array (& out)))))
+
 (define (build-package-tlci-image [metadata : TlciMetadata]) : TlciImage
   (TlciImage
     tlci-host-arch-x86-64
@@ -3064,15 +3216,30 @@
   (Ok String)
   (Err String))
 
-(define (build-package-tlci-text [manifest : CompilerPkgManifest]) : ResultBuildPackageTlciText
-  (match (tlci-emit-image
-    (build-package-tlci-image (build-package-tlci-metadata manifest)))
-    [(ResultTlciBytes.Err message)
-      (ResultBuildPackageTlciText.Err
-        (str_cat.str-cat "build: failed to emit package tlci: " message))]
-    [(ResultTlciBytes.Ok bytes)
-      (ResultBuildPackageTlciText.Ok
-        (tlci-bytes->string bytes 0 (array-length bytes)))]))
+(define (build-package-tlci-text
+  [manifest-path : String]
+  [manifest : CompilerPkgManifest]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultBuildPackageTlciText
+  (let
+    [metadata : TlciMetadata (build-package-tlci-metadata manifest)]
+    [macro-names : (Array String)
+      (build-package-tlci-macro-names manifest-path manifest decls paths)]
+    [emitted : ResultTlciBytes
+      (if (= (array-length macro-names) 0)
+        (tlci-emit-image (build-package-tlci-image metadata))
+        (tlci-emit-code-bearing-package-image
+          metadata
+          build-package-tlci-compiler-build-hash
+          macro-names
+          (cfg windows true false)))]
+    (match emitted
+      [(ResultTlciBytes.Err message)
+        (ResultBuildPackageTlciText.Err
+          (str_cat.str-cat "build: failed to emit package tlci: " message))]
+      [(ResultTlciBytes.Ok bytes)
+        (ResultBuildPackageTlciText.Ok
+          (tlci-bytes->string bytes 0 (array-length bytes)))])))
 
 (define (build-package-write-tlci [path : String] [text : String]) : SourceToolCommandStatus
   (source-tool-write-file path text "build: failed to write package tlci"))
@@ -3426,7 +3593,11 @@
                         (source-tool-linux-crt-entry?
                           target
                           effective-link-inputs))]
-                    (match (build-package-tlci-text manifest)
+                    (match (build-package-tlci-text
+                      manifest-path
+                      manifest
+                      decls
+                      paths)
                       [(ResultBuildPackageTlciText.Err message)
                         (begin
                           (io.print-error message)

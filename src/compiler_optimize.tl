@@ -1024,17 +1024,6 @@
         [(CompilerFloatNoF64) (CompilerIrMaybeValue.No)])]
     [(CompilerFloatNoF64) (CompilerIrMaybeValue.No)]))
 
-(define (opt-fold-float-cast
-  [src : OptKnownConst]
-  [from-ty : AstType]
-  [to-ty : AstType]) : CompilerIrMaybeValue
-  (match src
-    [(OptKnownConst.SomeConst value _)
-      (match (opt-value-to-f64 value from-ty)
-        [(CompilerFloatSomeF64 n) (opt-f64-to-ir-value n to-ty)]
-        [(CompilerFloatNoF64) (CompilerIrMaybeValue.No)])]
-    [(OptKnownConst.NoConst) (CompilerIrMaybeValue.No)]))
-
 (define (opt-finite-cast-input [src : OptKnownConst] [from-ty : AstType]) : CompilerFiniteCastInput
   (match src
     [(OptKnownConst.SomeConst value _)
@@ -1389,21 +1378,6 @@
             new-instr
             (opt-fold-instrs new-env (box-get rest)))])]))
 
-(define (opt-fold-instr-seq-rewrite!
-  [env : OptConstEnv]
-  [instrs : CompilerIrInstrSeq]) : unit
-  (let
-    [index : i64 0]
-    [state : OptConstEnv env]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-fold-instr state (compiler-ir-instr-seq-ref instrs index))
-        [(OptInstrResult.Result new-state new-instr)
-          (begin
-            (compiler-ir-instr-seq-set! instrs index new-instr)
-            (set! state new-state)
-            (set! index (+ index 1)))]))))
-
 (define (opt-strength-instr [env : OptConstEnv] [instr : CompilerIrInstr]) : OptInstrResult
   (match instr
     [(CompilerIrInstr.Mov dst value ty)
@@ -1509,21 +1483,6 @@
           (compiler-ir-instr-cons
             new-instr
             (opt-strength-instrs new-env (box-get rest)))])]))
-
-(define (opt-strength-instr-seq-rewrite!
-  [env : OptConstEnv]
-  [instrs : CompilerIrInstrSeq]) : unit
-  (let
-    [index : i64 0]
-    [state : OptConstEnv env]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-strength-instr state (compiler-ir-instr-seq-ref instrs index))
-        [(OptInstrResult.Result new-state new-instr)
-          (begin
-            (compiler-ir-instr-seq-set! instrs index new-instr)
-            (set! state new-state)
-            (set! index (+ index 1)))]))))
 
 ;; --- dead-code elimination ---------------------------------------------------
 ;;
@@ -1780,20 +1739,6 @@
     (struct-get instrs slots)
     0
     (struct-get instrs len)))
-
-(define (opt-collect-blocks-uses
-  [set : opt_i64_i64_map.Map]
-  [blocks : CompilerIrBlockList]) : opt_i64_i64_map.Map
-  (match blocks
-    [(CompilerIrBlockList.Nil) set]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (opt-collect-blocks-uses
-            (opt-collect-instr-seq-uses set instrs)
-            (box-get rest))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-collect-blocks-uses set (compiler-ir-block-seq-to-list seq))]))
 
 ;; Division, modulo, and shift can trap at runtime (zero divisor, signed
 ;; MIN / -1, shift count out of range), so a BinOp using one of those operators
@@ -2794,22 +2739,6 @@
     [(option_i64.Some _) true]
     [(option_i64.None) false]))
 
-(define (opt-aggregate-value-list-has-pointer?
-  [base : i64]
-  [ptrs : OptAggregatePointerList]
-  [values : CompilerIrValueList]) : bool
-  (match values
-    [(CompilerIrValueList.Nil) false]
-    [(CompilerIrValueList.Array seq)
-      (opt-aggregate-value-list-has-pointer?
-        base
-        ptrs
-        (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons value rest)
-      (or
-        (opt-aggregate-value-has-pointer? base ptrs value)
-        (opt-aggregate-value-list-has-pointer? base ptrs (box-get rest)))]))
-
 (define (opt-aggregate-call-args-array-has-pointer?
   [base : i64]
   [ptrs : OptAggregatePointerList]
@@ -3559,16 +3488,6 @@
     [(OptMaybeAggregateAlloc.No)
       (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]))
 
-(define (opt-aggregate-promote-instrs
-  [slots : OptAggregatePromoteSlotList]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (opt-aggregate-instr-list-append
-        (opt-aggregate-promote-rewrite-instr slots instr)
-        (opt-aggregate-promote-instrs slots (box-get rest)))]))
-
 (define (opt-aggregate-promote-instr-seq-from
   [slots : OptAggregatePromoteSlotList]
   [instrs : CompilerIrInstrSeq]
@@ -3894,19 +3813,6 @@
           (compiler-ir-instr-effect instr))
           (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)
           (OptAggregateSroaResult.Result def-facts instr)))]))
-
-(define (opt-aggregate-sroa-instrs
-  [candidates : OptAggregateAllocCandidateList]
-  [facts : OptAggregateFieldFacts]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-aggregate-sroa-instr candidates facts instr)
-        [(OptAggregateSroaResult.Result next-facts next-instr)
-          (compiler-ir-instr-cons
-            next-instr
-            (opt-aggregate-sroa-instrs candidates next-facts (box-get rest)))])]))
 
 (define (opt-aggregate-sroa-instr-seq-from
   [candidates : OptAggregateAllocCandidateList]
@@ -5586,21 +5492,6 @@
             new-instr
             (opt-cse-instrs new-table (box-get rest)))])]))
 
-(define (opt-cse-instr-seq-rewrite!
-  [table : OptExprTable]
-  [instrs : CompilerIrInstrSeq]) : unit
-  (let
-    [index : i64 0]
-    [state : OptExprTable table]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-cse-instr state (compiler-ir-instr-seq-ref instrs index))
-        [(OptCseResult.Result new-state new-instr)
-          (begin
-            (compiler-ir-instr-seq-set! instrs index new-instr)
-            (set! state new-state)
-            (set! index (+ index 1)))]))))
-
 ;; --- block-local copy propagation -------------------------------------------
 ;;
 ;; The lowerer and the CSE pass both materialize values through `CompilerIrInstr.Mov`
@@ -6118,36 +6009,6 @@
           (compiler-ir-instr-cons
             new-instr
             (opt-copy-instrs new-env (box-get rest)))])]))
-
-(define (opt-copy-instr-seq-from
-  [env : OptCopyEnv]
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : CompilerIrInstrList
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    (CompilerIrInstrList.Nil)
-    (match (opt-copy-instr env (compiler-ir-instr-seq-ref instrs index))
-      [(OptCopyResult.Result new-env new-instr)
-        (compiler-ir-instr-cons
-          new-instr
-          (opt-copy-instr-seq-from new-env instrs (+ index 1)))])))
-
-(define (opt-copy-instr-seq [env : OptCopyEnv] [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-copy-instr-seq-from env instrs 0))
-
-(define (opt-copy-instr-seq-rewrite!
-  [env : OptCopyEnv]
-  [instrs : CompilerIrInstrSeq]) : unit
-  (let
-    [index : i64 0]
-    [state : OptCopyEnv env]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-copy-instr state (compiler-ir-instr-seq-ref instrs index))
-        [(OptCopyResult.Result new-state new-instr)
-          (begin
-            (compiler-ir-instr-seq-set! instrs index new-instr)
-            (set! state new-state)
-            (set! index (+ index 1)))]))))
 
 ;; --- block-local redundant bounds-check elimination -------------------------
 ;;
@@ -6949,34 +6810,6 @@
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-entry-label (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-cfg-block-labels [blocks : CompilerIrBlockList]) : OptLabelSet
-  (match blocks
-    [(CompilerIrBlockList.Nil) (OptLabelSet.Nil)]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block label _)
-          (opt-label-add (opt-cfg-block-labels (box-get rest)) label)])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-cfg-block-labels (compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-cfg-block-labels-unique-from?
-  [blocks : CompilerIrBlockList]
-  [seen : OptLabelSet]) : bool
-  (match blocks
-    [(CompilerIrBlockList.Nil) true]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block label _)
-          (if (opt-label-contains seen label)
-            false
-            (opt-cfg-block-labels-unique-from?
-              (box-get rest)
-              (opt-label-add seen label)))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-cfg-block-labels-unique-from?
-        (compiler-ir-block-seq-to-list seq)
-        seen)]))
-
 ;; A hash-set seen-check; the incremental label-list scan made this
 ;; O(blocks^2) string comparisons on large functions.
 (define (opt-cfg-block-labels-unique-map?
@@ -7048,24 +6881,6 @@
   (opt-cfg-successor-targets-known-map?
     blocks
     (opt-cfg-block-label-map blocks (opt_string_i64_map.with-capacity 64))))
-
-(define (opt-cfg-successor-targets-known-in-blocks?
-  [blocks : CompilerIrBlockList]
-  [labels : OptLabelSet]) : bool
-  (match blocks
-    [(CompilerIrBlockList.Nil) true]
-    [(CompilerIrBlockList.Cons block rest)
-      (and
-        (opt-label-subset?
-          (opt-cfg-block-successors-with-next
-            block
-            (opt-cfg-entry-label (box-get rest)))
-          labels)
-        (opt-cfg-successor-targets-known-in-blocks? (box-get rest) labels))]
-    [(CompilerIrBlockList.Array seq)
-      (opt-cfg-successor-targets-known-in-blocks?
-        (compiler-ir-block-seq-to-list seq)
-        labels)]))
 
 (define (opt-cfg-predecessors-scan
   [blocks : CompilerIrBlockList]
@@ -7686,9 +7501,6 @@
 (define (opt-cfg-index-rpo-label [index : OptCfgIndex] [slot : i64]) : String
   (opt-cfg-index-label index (opt-cfg-index-rpo-id index slot)))
 
-(define (opt-pred-map-build [blocks : CompilerIrBlockList]) : OptPredMap
-  (OptPredMap (opt-cfg-index-build blocks)))
-
 (define (opt-pred-map-lookup [map : OptPredMap] [label : String]) : OptLabelSet
   (opt-cfg-index-predecessors (struct-get map index) label))
 
@@ -7771,16 +7583,6 @@
 (define (opt-bits-words [bits : i64]) : i64
   (/ (+ bits 62) 63))
 
-(define (opt-bits-full-word-mask) : i64
-  9223372036854775807)
-
-(define (opt-bits-tail-mask [bits : i64]) : i64
-  (let
-    [rem : i64 (% bits 63)]
-    (if (= rem 0)
-      (opt-bits-full-word-mask)
-      (- (shl 1 rem) 1))))
-
 (define (opt-bits-set! [row : (Array i64)] [base : i64] [bit : i64]) : unit
   (let
     [w : i64 (+ base (/ bit 63))]
@@ -7796,23 +7598,6 @@
       (while (< w words)
         (begin
           (array-set! row (+ base w) 0)
-          (set! w (+ w 1))))
-      unit)))
-
-(define (opt-bits-fill-universe! [row : (Array i64)] [base : i64] [bits : i64]) : unit
-  (let
-    [words : i64 (opt-bits-words bits)]
-    [last : i64 (- words 1)]
-    [w : i64 0]
-    (begin
-      (while (< w words)
-        (begin
-          (array-set!
-            row
-            (+ base w)
-            (if (= w last)
-              (opt-bits-tail-mask bits)
-              (opt-bits-full-word-mask)))
           (set! w (+ w 1))))
       unit)))
 
@@ -8426,14 +8211,6 @@
         [(option_i64.None) false])]
     [(option_i64.None) false]))
 
-(define (opt-dom-strict-dominates?
-  [table : OptDomInfo]
-  [dominator : String]
-  [label : String]) : bool
-  (and
-    (not (string.eq dominator label))
-    (opt-dom-dominates? table dominator label)))
-
 (define (opt-cfg-frontier-has-reachable-pred-id?
   [index : OptCfgIndex]
   [doms : OptDomInfo]
@@ -8646,20 +8423,6 @@
               (opt-verify-param-def-set (box-get rest) next)]
             [(OptVarSetResult.Err) (OptVarSetResult.Err)])])]))
 
-(define (opt-verify-instr-def-set
-  [instrs : CompilerIrInstrList]
-  [set : opt_i64_i64_map.Map]) : OptVarSetResult
-  (match instrs
-    [(CompilerIrInstrList.Nil) (OptVarSetResult.Ok set)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some var)
-          (match (opt-var-set-add-unique set var)
-            [(OptVarSetResult.Ok next)
-              (opt-verify-instr-def-set (box-get rest) next)]
-            [(OptVarSetResult.Err) (OptVarSetResult.Err)])]
-        [(option_i64.None) (opt-verify-instr-def-set (box-get rest) set)])]))
-
 (define (opt-verify-instr-def-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -8717,26 +8480,6 @@
             (box-get rest)
             entry-label
             (OptVarDefList.Cons (OptVarDef.Def var entry-label 0) (box defs)))])]))
-
-(define (opt-var-defs-from-instrs
-  [instrs : CompilerIrInstrList]
-  [block-label : String]
-  [pos : i64]
-  [defs : OptVarDefList]) : OptVarDefList
-  (match instrs
-    [(CompilerIrInstrList.Nil) defs]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some var)
-          (opt-var-defs-from-instrs
-            (box-get rest)
-            block-label
-            (+ pos 1)
-            (OptVarDefList.Cons
-              (OptVarDef.Def var block-label (opt-instr-def-position instr pos))
-              (box defs)))]
-        [(option_i64.None)
-          (opt-var-defs-from-instrs (box-get rest) block-label (+ pos 1) defs)])]))
 
 (define (opt-var-defs-from-instr-seq-from
   [instrs : CompilerIrInstrSeq]
@@ -9217,26 +8960,6 @@
     [(CompilerIrInstr.Switch index _ _ _)
       (opt-verify-value-use defs doms index block-label pos)]))
 
-(define (opt-verify-instr-list-uses
-  [defs : (Array OptMaybeVarDef)]
-  [doms : OptDomInfo]
-  [block-label : String]
-  [instrs : CompilerIrInstrList]
-  [pos : i64]) : ResultCompilerOptimizeVerify
-  (match instrs
-    [(CompilerIrInstrList.Nil) (ResultCompilerOptimizeVerify.Ok)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-verify-instr-uses defs doms block-label pos instr)
-        [(ResultCompilerOptimizeVerify.Ok)
-          (opt-verify-instr-list-uses
-            defs
-            doms
-            block-label
-            (box-get rest)
-            (+ pos 1))]
-        [(ResultCompilerOptimizeVerify.Err message)
-          (ResultCompilerOptimizeVerify.Err message)])]))
-
 (define (opt-verify-instr-seq-uses-from
   [defs : (Array OptMaybeVarDef)]
   [doms : OptDomInfo]
@@ -9293,30 +9016,6 @@
   (and
     (opt-phi-input-labels-unique-from? inputs (OptLabelSet.Nil))
     (opt-label-set-eq? (opt-phi-input-labels inputs) preds)))
-
-(define (opt-verify-phi-predecessors-instrs
-  [pred-map : OptPredMap]
-  [block-label : String]
-  [instrs : CompilerIrInstrList]) : ResultCompilerOptimizeVerify
-  (match instrs
-    [(CompilerIrInstrList.Nil) (ResultCompilerOptimizeVerify.Ok)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(CompilerIrInstr.Phi _ inputs _)
-          (if (opt-phi-input-labels-match?
-            inputs
-            (opt-pred-map-lookup pred-map block-label))
-            (opt-verify-phi-predecessors-instrs
-              pred-map
-              block-label
-              (box-get rest))
-            (ResultCompilerOptimizeVerify.Err
-              "optimizer verify: phi predecessor mismatch"))]
-        [_
-          (opt-verify-phi-predecessors-instrs
-            pred-map
-            block-label
-            (box-get rest))])]))
 
 (define (opt-verify-phi-predecessors-instr-seq-from
   [pred-map : OptPredMap]
@@ -9425,23 +9124,6 @@
             "optimizer verify: duplicate var definition")]
         [else
           (opt-verify-function-with-context func (opt-cfg-context-build blocks))])]))
-
-(define (opt-verify-function-list [functions : CompilerIrFunctionList]) : ResultCompilerOptimizeVerify
-  (match functions
-    [(CompilerIrFunctionList.Nil) (ResultCompilerOptimizeVerify.Ok)]
-    [(CompilerIrFunctionList.Cons func rest)
-      (match (opt-verify-function func)
-        [(ResultCompilerOptimizeVerify.Ok)
-          (opt-verify-function-list (box-get rest))]
-        [(ResultCompilerOptimizeVerify.Err message)
-          (ResultCompilerOptimizeVerify.Err message)])]
-    [(CompilerIrFunctionList.Array seq)
-      (opt-verify-function-list (compiler-ir-function-seq-to-list seq))]))
-
-(define (opt-verify-program [program : CompilerIrProgram]) : ResultCompilerOptimizeVerify
-  (match program
-    [(CompilerIrProgram.Program _ functions _)
-      (opt-verify-function-list functions)]))
 
 ;; --- standalone scalar SSA construction / mem2reg --------------------------
 ;;
@@ -11498,32 +11180,6 @@
     [(option_i64.Some id) id]
     [(option_i64.None) (- 0 1)]))
 
-(define (opt-global-copy-facts-from-instrs
-  [block-id : i64]
-  [pos : i64]
-  [instrs : CompilerIrInstrList]
-  [tail : OptGlobalCopyFacts]) : OptGlobalCopyFacts
-  (match instrs
-    [(CompilerIrInstrList.Nil) tail]
-    [(CompilerIrInstrList.Cons instr rest)
-      (let
-        [rest-facts : OptGlobalCopyFacts
-          (opt-global-copy-facts-from-instrs
-            block-id
-            (+ pos 1)
-            (box-get rest)
-            tail)]
-        (match instr
-          [(CompilerIrInstr.Mov dst src _)
-            (if (and
-              (opt-copy-safe-source? src)
-              (not (opt-value-is-var? src dst)))
-              (OptGlobalCopyFacts.Cons
-                (OptGlobalCopyFact.Fact dst src block-id pos)
-                (box rest-facts))
-              rest-facts)]
-          [_ rest-facts]))]))
-
 (define (opt-global-copy-facts-from-instr-seq-from
   [block-id : i64]
   [slots : (Array CompilerIrInstr)]
@@ -11732,31 +11388,6 @@
     (match resolved
       [(CompilerIrValue.Var _) resolved]
       [_ value])))
-
-(define (opt-global-copy-subst-value-list
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [use-block-id : i64]
-  [use-pos : i64]
-  [values : CompilerIrValueList]) : CompilerIrValueList
-  (match values
-    [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
-    [(CompilerIrValueList.Array seq)
-      (opt-global-copy-subst-value-list
-        facts
-        doms
-        use-block-id
-        use-pos
-        (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons value rest)
-      (compiler-ir-value-cons
-        (opt-global-copy-resolve facts doms use-block-id use-pos value)
-        (opt-global-copy-subst-value-list
-          facts
-          doms
-          use-block-id
-          use-pos
-          (box-get rest)))]))
 
 (define (opt-global-copy-subst-call-args-array
   [facts : OptGlobalCopyFactTable]
@@ -12146,19 +11777,6 @@
         cases
         default-label)]))
 
-(define (opt-global-copy-instrs
-  [facts : OptGlobalCopyFactTable]
-  [doms : OptDomInfo]
-  [block-id : i64]
-  [pos : i64]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (opt-global-copy-subst-instr facts doms block-id pos instr)
-        (opt-global-copy-instrs facts doms block-id (+ pos 1) (box-get rest)))]))
-
 (define (opt-global-copy-instr-seq
   [facts : OptGlobalCopyFactTable]
   [doms : OptDomInfo]
@@ -12201,31 +11819,6 @@
             (opt-global-copy-blocks facts doms (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-global-copy-blocks facts doms (compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-global-expr-facts-from-instrs
-  [block-id : i64]
-  [pos : i64]
-  [instrs : CompilerIrInstrList]
-  [tail : OptGlobalExprFacts]) : OptGlobalExprFacts
-  (match instrs
-    [(CompilerIrInstrList.Nil) tail]
-    [(CompilerIrInstrList.Cons instr rest)
-      (let
-        [rest-facts : OptGlobalExprFacts
-          (opt-global-expr-facts-from-instrs
-            block-id
-            (+ pos 1)
-            (box-get rest)
-            tail)]
-        (match (opt-global-key-for-instr instr)
-          [(OptMaybeGlobalExprKey.Some key)
-            (match (opt-instr-def-var instr)
-              [(option_i64.Some dst)
-                (OptGlobalExprFacts.Cons
-                  (OptGlobalExprFact.Fact key dst block-id pos)
-                  (box rest-facts))]
-              [(option_i64.None) rest-facts])]
-          [(OptMaybeGlobalExprKey.No) rest-facts]))]))
 
 (define (opt-global-expr-facts-from-instr-seq-from
   [block-id : i64]
@@ -12427,19 +12020,6 @@
         [(option_i64.None) instr])]
     [(OptMaybeGlobalExprKey.No) instr]))
 
-(define (opt-global-cse-instrs
-  [facts : OptGlobalExprFactTable]
-  [doms : OptDomInfo]
-  [block-id : i64]
-  [pos : i64]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (opt-global-cse-instr facts doms block-id pos instr)
-        (opt-global-cse-instrs facts doms block-id (+ pos 1) (box-get rest)))]))
-
 (define (opt-global-cse-instr-seq
   [facts : OptGlobalExprFactTable]
   [doms : OptDomInfo]
@@ -12504,11 +12084,6 @@
     [cse-copy-facts : OptGlobalCopyFactTable
       (opt-global-copy-table-from-facts cse-copy-fact-list)]
     (opt-global-copy-blocks cse-copy-facts doms cse)))
-
-(define (opt-global-value-number-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-global-value-number-blocks-with-context
-    (opt-cfg-context-build blocks)
-    blocks))
 
 (define (opt-global-value-number-function-with-context
   [context : OptCfgContext]
@@ -12682,11 +12257,6 @@
           (set! index (+ index 1))))
       out)))
 
-(define (opt-cfg-block-successors [block : CompilerIrBlock]) : OptLabelSet
-  (match block
-    [(CompilerIrBlock.Block _ instrs)
-      (opt-cfg-instr-seq-successors (OptLabelSet.Nil) instrs)]))
-
 (define (opt-cfg-terminator-instr? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Jump _) true]
@@ -12735,11 +12305,6 @@
             (opt-cfg-blocks-successors-scan (box-get rest) label))])]
     [(CompilerIrBlockList.Array seq)
       (opt-cfg-blocks-successors-scan (compiler-ir-block-seq-to-list seq) label)]))
-
-(define (opt-cfg-blocks-successors
-  [blocks : CompilerIrBlockList]
-  [label : String]) : OptLabelSet
-  (opt-cfg-index-successors (opt-cfg-index-build blocks) label))
 
 (define (opt-cfg-reachable-blocks [blocks : CompilerIrBlockList]) : OptLabelSet
   (opt-cfg-index-reachable-labels (opt-cfg-index-build blocks)))
@@ -14936,17 +14501,6 @@
 (define (opt-licm-body-map-capacity [body-blocks : CompilerIrBlockList]) : i64
   (+ 1 (compiler-ir-block-list-instruction-count body-blocks)))
 
-(define (opt-licm-collect-defs-instrs
-  [instrs : CompilerIrInstrList]
-  [set : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (match instrs
-    [(CompilerIrInstrList.Nil) set]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some var)
-          (opt-licm-collect-defs-instrs (box-get rest) (opt-used-add set var))]
-        [(option_i64.None) (opt-licm-collect-defs-instrs (box-get rest) set)])]))
-
 (define (opt-licm-collect-defs-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -15375,15 +14929,6 @@
           invalid
           (opt-licm-store-summary-from-effect (compiler-ir-instr-effect instr)))])))
 
-(define (opt-licm-store-summary-instr [instr : CompilerIrInstr]) : OptLicmStoreSummary
-  (struct-get
-    (opt-licm-store-state-instr
-      (OptSsaVarTypes.Nil)
-      (opt-licm-store-state-empty)
-      (opt_string_i64_map.with-capacity 1)
-      instr)
-    summary))
-
 (define (opt-licm-store-state-instr-seq-from
   [types : OptSsaVarTypes]
   [instrs : CompilerIrInstrSeq]
@@ -15489,59 +15034,6 @@
   (match (opt-instr-def-var instr)
     [(option_i64.Some var) (opt-used-add hoisted var)]
     [(option_i64.None) hoisted]))
-
-(define (opt-licm-filter-instrs
-  [loop-defs : opt_i64_i64_map.Map]
-  [instrs : CompilerIrInstrList]
-  [sources : opt_i64_i64_map.Map]
-  [types : OptSsaVarTypes]
-  [store-summary : OptLicmStoreSummary]
-  [ptrs : OptLicmPtrEnv]
-  [hoisted : opt_i64_i64_map.Map]) : OptLicmInstrsResult
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (OptLicmInstrsResult.Result
-        (CompilerIrInstrList.Nil)
-        (CompilerIrInstrList.Nil)
-        hoisted
-        false)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (if (opt-licm-candidate?
-        loop-defs
-        hoisted
-        sources
-        types
-        store-summary
-        ptrs
-        instr)
-        (match (opt-licm-filter-instrs
-          loop-defs
-          (box-get rest)
-          sources
-          types
-          store-summary
-          ptrs
-          (opt-licm-add-hoisted-def hoisted instr))
-          [(OptLicmInstrsResult.Result kept moved next-hoisted _)
-            (OptLicmInstrsResult.Result
-              kept
-              (compiler-ir-instr-cons instr moved)
-              next-hoisted
-              true)])
-        (match (opt-licm-filter-instrs
-          loop-defs
-          (box-get rest)
-          sources
-          types
-          store-summary
-          ptrs
-          hoisted)
-          [(OptLicmInstrsResult.Result kept moved next-hoisted changed)
-            (OptLicmInstrsResult.Result
-              (compiler-ir-instr-cons instr kept)
-              moved
-              next-hoisted
-              changed)]))]))
 
 (define (opt-licm-filter-instr-seq-from
   [loop-defs : opt_i64_i64_map.Map]
@@ -16224,25 +15716,6 @@
     (opt-cfg-natural-loops-with-context blocks context)
     blocks))
 
-(define (opt-licm-blocks-with-context
-  [context : OptCfgContext]
-  [sources : opt_i64_i64_map.Map]
-  [types : OptSsaVarTypes]
-  [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-licm-blocks-with-context-and-direct-call-clean
-    context
-    sources
-    types
-    (opt_string_i64_map.with-capacity 1)
-    blocks))
-
-(define (opt-licm-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (opt-licm-blocks-with-context
-    (opt-cfg-context-build blocks)
-    (opt-gvn-sources-blocks blocks (opt_i64_i64_map.with-capacity 64))
-    (OptSsaVarTypes.Nil)
-    blocks))
-
 (define (opt-licm-function-with-context-result-and-direct-call-clean
   [context : OptCfgContext]
   [direct-call-clean : opt_string_i64_map.Map]
@@ -16468,26 +15941,6 @@
         (option_i64.None))]
     [_ (option_i64.None)]))
 
-(define (opt-induction-find-update-instrs
-  [instrs : CompilerIrInstrList]
-  [phi-var : i64]
-  [next-var : i64]
-  [ty : AstType]) : option_i64.Option
-  (match instrs
-    [(CompilerIrInstrList.Nil) (option_i64.None)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-instr-def-var instr)
-        [(option_i64.Some dst)
-          (if (= dst next-var)
-            (opt-induction-update-step-instr instr phi-var next-var ty)
-            (opt-induction-find-update-instrs
-              (box-get rest)
-              phi-var
-              next-var
-              ty))]
-        [(option_i64.None)
-          (opt-induction-find-update-instrs (box-get rest) phi-var next-var ty)])]))
-
 (define (opt-induction-find-update-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -16578,23 +16031,6 @@
         (OptMaybeInductionFact.No))]
     [_ (OptMaybeInductionFact.No)]))
 
-(define (opt-induction-find-fact-instrs
-  [body-blocks : CompilerIrBlockList]
-  [loop : OptNaturalLoop]
-  [preheader : String]
-  [instrs : CompilerIrInstrList]) : OptMaybeInductionFact
-  (match instrs
-    [(CompilerIrInstrList.Nil) (OptMaybeInductionFact.No)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (opt-induction-fact-from-phi body-blocks loop preheader instr)
-        [(OptMaybeInductionFact.Some fact) (OptMaybeInductionFact.Some fact)]
-        [(OptMaybeInductionFact.No)
-          (opt-induction-find-fact-instrs
-            body-blocks
-            loop
-            preheader
-            (box-get rest))])]))
-
 (define (opt-induction-find-fact-instr-seq-from
   [body-blocks : CompilerIrBlockList]
   [loop : OptNaturalLoop]
@@ -16655,14 +16091,6 @@
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))
 
-(define (opt-induction-blocker-instrs? [instrs : CompilerIrInstrList]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr rest)
-      (or
-        (opt-induction-blocker-instr? instr)
-        (opt-induction-blocker-instrs? (box-get rest)))]))
-
 (define (opt-induction-blocker-instr-seq-from?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
@@ -16696,30 +16124,6 @@
     (not (= scale 1))
     (opt-induction-small-const? step)
     (opt-induction-small-const? scale)))
-
-(define (opt-induction-mul-scale
-  [lhs : CompilerIrValue]
-  [rhs : CompilerIrValue]
-  [phi-var : i64]
-  [step : i64]) : option_i64.Option
-  (match lhs
-    [(CompilerIrValue.Var var)
-      (if (= var phi-var)
-        (match rhs
-          [(CompilerIrValue.I64 scale)
-            (if (opt-induction-scale-ok? step scale)
-              (option_i64.Some scale)
-              (option_i64.None))]
-          [_ (option_i64.None)])
-        (option_i64.None))]
-    [(CompilerIrValue.I64 scale)
-      (match rhs
-        [(CompilerIrValue.Var var)
-          (if (and (= var phi-var) (opt-induction-scale-ok? step scale))
-            (option_i64.Some scale)
-            (option_i64.None))]
-        [_ (option_i64.None)])]
-    [_ (option_i64.None)]))
 
 (define (opt-induction-offset-ok? [offset : i64]) : bool
   (opt-induction-small-const? offset))
@@ -17123,24 +16527,6 @@
           (opt-induction-derived-type derived))]
       [(option_i64.None) instr])
     instr))
-
-(define (opt-induction-rewrite-instrs
-  [fact : OptInductionFact]
-  [offsets : opt_i64_i64_map.Map]
-  [derived : OptInductionDerived]
-  [derived-phi : i64]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (opt-induction-rewrite-instr fact offsets derived derived-phi instr)
-        (opt-induction-rewrite-instrs
-          fact
-          offsets
-          derived
-          derived-phi
-          (box-get rest)))]))
 
 (define (opt-induction-rewrite-instr-seq-from
   [fact : OptInductionFact]
@@ -18289,16 +17675,6 @@
         cases)]
     [_ state]))
 
-(define (opt-sccp-process-instrs
-  [state : OptSccpState]
-  [instrs : CompilerIrInstrList]) : OptSccpState
-  (match instrs
-    [(CompilerIrInstrList.Nil) state]
-    [(CompilerIrInstrList.Cons instr rest)
-      (opt-sccp-process-instrs
-        (opt-sccp-process-instr state instr)
-        (box-get rest))]))
-
 (define (opt-sccp-process-instr-seq-from
   [state : OptSccpState]
   [instrs : CompilerIrInstrSeq]
@@ -18475,18 +17851,6 @@
     [(CompilerIrMaybeValue.No) (CompilerIrMaybeValue.No)]
     [(CompilerIrMaybeValue.Some inner)
       (CompilerIrMaybeValue.Some (opt-sccp-rewrite-value env inner))]))
-
-(define (opt-sccp-rewrite-value-list
-  [env : OptSccpEnv]
-  [values : CompilerIrValueList]) : CompilerIrValueList
-  (match values
-    [(CompilerIrValueList.Nil) (CompilerIrValueList.Nil)]
-    [(CompilerIrValueList.Array seq)
-      (opt-sccp-rewrite-value-list env (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons value rest)
-      (compiler-ir-value-cons
-        (opt-sccp-rewrite-value env value)
-        (opt-sccp-rewrite-value-list env (box-get rest)))]))
 
 (define (opt-sccp-rewrite-call-args-array
   [env : OptSccpEnv]
@@ -18860,16 +18224,6 @@
         base
         cases
         default-label)]))
-
-(define (opt-sccp-rewrite-instrs
-  [env : OptSccpEnv]
-  [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (opt-sccp-rewrite-instr env instr)
-        (opt-sccp-rewrite-instrs env (box-get rest)))]))
 
 (define (opt-sccp-rewrite-instr-seq-from
   [env : OptSccpEnv]
@@ -19601,20 +18955,6 @@
       (match param
         [(CompilerIrParam.Param _ _ id)
           (opt-gvn-sources-params (box-get rest) (opt-gvn-defs-add acc id))])]))
-
-(define (opt-gvn-sources-instrs
-  [instrs : CompilerIrInstrList]
-  [acc : opt_i64_i64_map.Map]) : opt_i64_i64_map.Map
-  (match instrs
-    [(CompilerIrInstrList.Nil) acc]
-    [(CompilerIrInstrList.Cons instr rest)
-      (let
-        [dst : i64 (opt-gvn-instr-dst instr)]
-        (opt-gvn-sources-instrs
-          (box-get rest)
-          (if (= dst (- 0 1))
-            acc
-            (opt-gvn-defs-add acc dst))))]))
 
 (define (opt-gvn-sources-instr-seq-from
   [slots : (Array CompilerIrInstr)]
@@ -21225,13 +20565,6 @@
   [summaries : OptLoopBceSummaries]
   [name : String]) : bool
   (opt_string_i64_map.contains? (& (struct-get summaries argc-return)) name))
-
-(define (opt-loop-bce-summary-direct-call-clean?
-  [summaries : OptLoopBceSummaries]
-  [name : String]) : bool
-  (opt_string_i64_map.contains?
-    (& (struct-get summaries direct-call-clean))
-    name))
 
 (define (opt-loop-bce-commutative-op? [op : CompilerIrBinOp]) : bool
   (match op
@@ -23675,18 +23008,6 @@
             (opt-loop-bce-state-bind-guard range-state child-label index length)]
           [(OptLoopBceGuardEnv.Nil) range-state])])))
 
-(define (opt-loop-bce-function
-  [summaries : OptLoopBceSummaries]
-  [func : CompilerIrFunction]) : CompilerIrFunction
-  (match func
-    [(CompilerIrFunction.Function name params ret frame blocks)
-      (CompilerIrFunction.Function
-        name
-        params
-        ret
-        frame
-        (opt-loop-bce-blocks summaries params blocks))]))
-
 ;; --- affine chain folding (codegen phase 6) ----------------------------------
 ;;
 ;; Collapse chained affine 64-bit integer arithmetic. With wrapping semantics
@@ -24307,25 +23628,6 @@
 (define (optimize-block-list [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (optimize-block-list-hs (opt-load-header-set-empty) blocks))
 
-(define (optimize-block-fast [block : CompilerIrBlock]) : CompilerIrBlock
-  (match block
-    [(CompilerIrBlock.Block label instrs)
-      (let
-        [work : CompilerIrInstrSeq (compiler-ir-clone-instr-seq instrs)]
-        (begin
-          (opt-copy-instr-seq-rewrite! (OptCopyEnv.Nil) work)
-          (CompilerIrBlock.Block label work)))]))
-
-(define (optimize-block-list-fast [blocks : CompilerIrBlockList]) : CompilerIrBlockList
-  (match blocks
-    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
-    [(CompilerIrBlockList.Cons block rest)
-      (compiler-ir-block-cons
-        (optimize-block-fast block)
-        (optimize-block-list-fast (box-get rest)))]
-    [(CompilerIrBlockList.Array seq)
-      (optimize-block-list-fast (compiler-ir-block-seq-to-list seq))]))
-
 ;; Block-count ceiling for the dominator-based heavy passes (GVN, LICM,
 ;; induction, global GVN). Dominance now uses the integer CFG index and idom
 ;; Euler ranges, so >1024-block functions can keep the heavy passes. Keep this
@@ -24464,45 +23766,6 @@
       (and (string.eq name fname) (= (compiler-ir-call-args-count args) n))]
     [_ false]))
 
-(define (opt-tailrec-rewrite-instrs
-  [instrs : CompilerIrInstrList]
-  [fname : String]
-  [params : CompilerIrParamList]
-  [n : i64]
-  [base : i64]
-  [entry-label : String]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) CompilerIrInstrList.Nil]
-    [(CompilerIrInstrList.Cons instr rest)
-      (if (opt-tailrec-self-call? instr fname n)
-        (match instr
-          [(CompilerIrInstr.TailCall _ args _)
-            ;; `instr` is a terminator, so anything after it in `rest` is dead;
-            ;; drop it and emit stage moves, parameter writebacks, then the
-            ;; back-edge jump.
-            (opt-tailrec-stage-movs
-              params
-              (opt-tailrec-args-to-list args)
-              base
-              0
-              (opt-tailrec-assign-movs
-                params
-                base
-                0
-                (compiler-ir-instr-cons
-                  (CompilerIrInstr.Jump entry-label)
-                  CompilerIrInstrList.Nil)))]
-          [_ CompilerIrInstrList.Nil])
-        (compiler-ir-instr-cons
-          instr
-          (opt-tailrec-rewrite-instrs
-            (box-get rest)
-            fname
-            params
-            n
-            base
-            entry-label)))]))
-
 (define (opt-tailrec-rewrite-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
@@ -24588,17 +23851,6 @@
         n
         base
         entry-label)]))
-
-(define (opt-tailrec-instrs-have-convertible?
-  [instrs : CompilerIrInstrList]
-  [fname : String]
-  [n : i64]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr rest)
-      (if (opt-tailrec-self-call? instr fname n)
-        true
-        (opt-tailrec-instrs-have-convertible? (box-get rest) fname n))]))
 
 (define (opt-tailrec-instr-seq-has-convertible-from?
   [instrs : CompilerIrInstrSeq]
@@ -27772,25 +27024,6 @@
                 unit)]
             (CompilerIrFunction.Function name params ret-ty frame dced))])]))
 
-(define (optimize-function-once-level2 [func : CompilerIrFunction]) : CompilerIrFunction
-  (optimize-function-once-level2-with-summaries
-    func
-    (opt-loop-bce-empty-summaries)))
-
-(define (optimize-function-once-fast [func : CompilerIrFunction]) : CompilerIrFunction
-  (match func
-    [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (let
-        [folded : CompilerIrBlockList (optimize-block-list-fast blocks)]
-        [cfg : CompilerIrBlockList (opt-cfg-simplify-blocks folded)]
-        [used : (Array i64) (opt-collect-blocks-uses-array frame cfg)]
-        (CompilerIrFunction.Function
-          name
-          params
-          ret-ty
-          frame
-          (opt-dce-block-list-array used cfg)))]))
-
 (define (optimize-function-pass-with-summaries
   [func : CompilerIrFunction]
   [summaries : OptLoopBceSummaries]) : OptFunctionPassResult
@@ -27798,9 +27031,6 @@
     [next : CompilerIrFunction
       (optimize-function-once-with-summaries func summaries)]
     (OptFunctionPassResult.Result next (not (opt-function-eq func next)))))
-
-(define (optimize-function-pass [func : CompilerIrFunction]) : OptFunctionPassResult
-  (optimize-function-pass-with-summaries func (opt-loop-bce-empty-summaries)))
 
 (define (optimize-function-fixed-with-summaries
   [func : CompilerIrFunction]
@@ -27850,9 +27080,6 @@
     level
     (opt-loop-bce-empty-summaries)))
 
-(define (optimize-function-list [funcs : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (optimize-function-list-with-level funcs (compiler-optimize-default-level)))
-
 ;; Per-function arena escape. The optimizer fixpoint allocates up to
 ;; ~80 throwaway IR copies per function (10 iterations x ~8 passes), none freed
 ;; by the bump allocator. To cap peak memory we run each function's optimization
@@ -27863,14 +27090,6 @@
 ;; and escape materialization into one enclosing-arena pass instead of compacting
 ;; in scratch and then cloning the whole function. The scratch path remains for
 ;; opt2/fixpoint.
-(define (optimize-function-list-with-level
-  [funcs : CompilerIrFunctionList]
-  [level : i64]) : CompilerIrFunctionList
-  (optimize-function-list-with-level-and-summaries
-    funcs
-    level
-    (opt-loop-bce-empty-summaries)))
-
 (define (optimize-function-list-with-level-and-summaries
   [funcs : CompilerIrFunctionList]
   [level : i64]
@@ -28008,16 +27227,6 @@
           scratch
           summaries))]))
 
-(define (optimize-function-list-escaping
-  [funcs : CompilerIrFunctionList]
-  [level : i64]
-  [scratch : i64]) : CompilerIrFunctionList
-  (optimize-function-list-escaping-with-summaries
-    funcs
-    level
-    scratch
-    (opt-loop-bce-empty-summaries)))
-
 (define (optimize-function-list-escaping-with-summaries
   [funcs : CompilerIrFunctionList]
   [level : i64]
@@ -28065,16 +27274,6 @@
 ;; Optimize one function inside `scratch`, compact its blocks there, then escape
 ;; the result by deep-cloning it into the enclosing arena and rewinding `scratch`
 ;; for reuse.
-(define (optimize-function-escaping
-  [func : CompilerIrFunction]
-  [level : i64]
-  [scratch : i64]) : CompilerIrFunction
-  (optimize-function-escaping-with-summaries
-    func
-    level
-    scratch
-    (opt-loop-bce-empty-summaries)))
-
 (define (optimize-function-escaping-with-summaries
   [func : CompilerIrFunction]
   [level : i64]
@@ -28143,10 +27342,6 @@
                   _profile-name
                   _t-restore))]
             escaped))))))
-
-(defenum OptStringSet
-  (Nil)
-  (Cons String (Box OptStringSet)))
 
 (defenum OptMaybeFunction
   (No)
@@ -29095,14 +28290,6 @@
       (CompilerIrInstr.TailCall name args ty)]
     [_ instr]))
 
-(define (opt-devirt-known-function-instrs [instrs : CompilerIrInstrList]) : CompilerIrInstrList
-  (match instrs
-    [(CompilerIrInstrList.Nil) (CompilerIrInstrList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (compiler-ir-instr-cons
-        (opt-devirt-known-function-instr instr)
-        (opt-devirt-known-function-instrs (box-get rest)))]))
-
 (define (opt-devirt-known-function-instr-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerIrInstrList
@@ -29254,9 +28441,6 @@
             (opt-inline-params-sequential? (box-get rest) (+ i 1))
             false)])]))
 
-(define (opt-inline-is-return? [instr : CompilerIrInstr]) : bool
-  (compiler-ir-instr-return? instr))
-
 (define (opt-inline-body-instr-op-ok? [instr : CompilerIrInstr]) : bool
   (match instr
     [(CompilerIrInstr.Mov _ _ _) true]
@@ -29300,17 +28484,6 @@
   [index : i64]
   [np : i64]) : bool
   (opt-inline-body-instr-ok? (compiler-ir-instr-seq-ref instrs index) np))
-
-(define (opt-inline-seq-ok? [instrs : CompilerIrInstrList] [np : i64]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match (box-get rest)
-        [(CompilerIrInstrList.Nil) (opt-inline-is-return? instr)]
-        [_
-          (if (opt-inline-body-instr-ok? instr np)
-            (opt-inline-seq-ok? (box-get rest) np)
-            false)])]))
 
 (define (opt-inline-instr-seq-ok-from?
   [instrs : CompilerIrInstrSeq]
@@ -32267,16 +31440,6 @@
                   (compiler-ir-function-cons func CompilerIrFunctionList.Nil)
                   out-spans)))]))]))
 
-(define (opt-function-index-to-list-from
-  [index : OptFunctionIndex]
-  [slot : i64]
-  [count : i64]) : CompilerIrFunctionList
-  (if (>= slot count)
-    CompilerIrFunctionList.Nil
-    (compiler-ir-function-cons
-      (array-ref (struct-get index values) slot)
-      (opt-function-index-to-list-from index (+ slot 1) count))))
-
 (define (opt-function-index-to-list [index : OptFunctionIndex]) : CompilerIrFunctionList
   (CompilerIrFunctionList.Array
     (CompilerIrFunctionSeq
@@ -32428,16 +31591,6 @@
       (OptInlineSpanProgram.Program
         (opt-function-index-to-list index)
         next-spans))))
-
-(define (opt-string-set-contains? [items : OptStringSet] [name : String]) : bool
-  (match items
-    [(OptStringSet.Nil) false]
-    [(OptStringSet.Cons item rest)
-      (let
-        [rest : OptStringSet (box-get rest)]
-        (if (string.eq item name)
-          true
-          (opt-string-set-contains? rest name)))]))
 
 (define (opt-function-list-defines?
   [functions : CompilerIrFunctionList]
@@ -32621,20 +31774,6 @@
       (opt-reach-add-function index (opt-reach-add-global state name) name)]
     [(CompilerIrValue.Function name) (opt-reach-add-function index state name)]
     [_ state]))
-
-(define (opt-reach-value-list
-  [index : OptFunctionIndex]
-  [state : OptReachState]
-  [values : CompilerIrValueList]) : OptReachState
-  (match values
-    [(CompilerIrValueList.Nil) state]
-    [(CompilerIrValueList.Array seq)
-      (opt-reach-value-list index state (compiler-ir-value-seq-to-list seq))]
-    [(CompilerIrValueList.Cons value rest)
-      (opt-reach-value-list
-        index
-        (opt-reach-value index state value)
-        (box-get rest))]))
 
 (define (opt-reach-call-args-array
   [index : OptFunctionIndex]
@@ -32847,18 +31986,6 @@
     [(CompilerIrInstr.TailCallIndirect func args _)
       (opt-reach-call-args index (opt-reach-value index state func) args)]
     [(CompilerIrInstr.Switch idx _ _ _) (opt-reach-value index state idx)]))
-
-(define (opt-reach-instrs
-  [index : OptFunctionIndex]
-  [state : OptReachState]
-  [instrs : CompilerIrInstrList]) : OptReachState
-  (match instrs
-    [(CompilerIrInstrList.Nil) state]
-    [(CompilerIrInstrList.Cons instr rest)
-      (opt-reach-instrs
-        index
-        (opt-reach-instr index state instr)
-        (box-get rest))]))
 
 (define (opt-reach-instr-seq-from
   [index : OptFunctionIndex]
@@ -33149,14 +32276,6 @@
 
 ;; Allocation-free equivalent of (string.eq (opt-symbol-leaf name) leaf) for
 ;; standalone callers that do not already have a classified start.
-(define (opt-symbol-leaf-matches? [name : String] [leaf : String]) : bool
-  (opt-symbol-leaf-matches-from? name (opt-symbol-leaf-start name) leaf))
-
-(define (opt-symbol-leaf [name : String]) : String
-  (let
-    [start : i64 (opt-symbol-leaf-start name)]
-    (string.substring name start (- (string.string-length name) start))))
-
 (define (opt-prune-unreachable-program
   [globals : CompilerIrGlobalList]
   [functions : CompilerIrFunctionList]
@@ -33191,13 +32310,6 @@
             (opt-filter-reachable-globals globals reachable-globals-out)
             (opt-filter-reachable-functions index functions reachable-out))]))
     (OptPrunedProgram.Program globals functions)))
-
-(define (opt-prune-unreachable-functions
-  [globals : CompilerIrGlobalList]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]) : CompilerIrFunctionList
-  (match (opt-prune-unreachable-program globals functions externs)
-    [(OptPrunedProgram.Program _ pruned-functions) pruned-functions]))
 
 (defenum OptLoopBceArgcScan
   (Scan OptLoopBceExprEnv bool bool))
@@ -33539,18 +32651,6 @@
       (opt-loop-bce-length-clean-pass
         (compiler-ir-function-seq-to-list seq)
         clean)]))
-
-(define (opt-loop-bce-length-clean-fixed
-  [functions : CompilerIrFunctionList]
-  [clean : opt_string_i64_map.Map]
-  [remaining : i64]) : opt_string_i64_map.Map
-  (if (<= remaining 0)
-    clean
-    (match (opt-loop-bce-length-clean-pass functions clean)
-      [(OptLoopBceCleanPass.Pass next added)
-        (if added
-          (opt-loop-bce-length-clean-fixed functions next (- remaining 1))
-          next)])))
 
 (define (opt-loop-bce-direct-call-clean-effect? [effect : CompilerIrEffect]) : bool
   (match effect
@@ -34165,9 +33265,6 @@
       direct-call-clean
       argc-return
       (opt_string_i64_map.with-capacity 1))))
-
-(define (opt-loop-bce-build-summaries [functions : CompilerIrFunctionList]) : OptLoopBceSummaries
-  (opt-loop-bce-build-summaries-with-direct-call-clean functions true))
 
 (define (opt-loop-bce-summaries-set-const-divisors
   [summaries : OptLoopBceSummaries]
@@ -42826,16 +41923,6 @@
     [(CompilerIrBlockList.Array seq)
       (opt-block-list-label-at? (compiler-ir-block-seq-to-list seq) index label)]))
 
-(define (opt-count-branches-instrs [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.Branch _ _ _) 1]
-          [_ 0])
-        (opt-count-branches-instrs (box-get rest)))]))
-
 (define (opt-count-branches-instr-seq-from
   [slots : (Array CompilerIrInstr)]
   [index : i64]
@@ -42871,21 +41958,6 @@
             (opt-count-branches-blocks (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-count-branches-blocks (compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-count-jump-to-instrs
-  [instrs : CompilerIrInstrList]
-  [target : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.Jump label)
-            (if (string.eq label target)
-              1
-              0)]
-          [_ 0])
-        (opt-count-jump-to-instrs (box-get rest) target))]))
 
 (define (opt-count-jump-to-instr-seq-from
   [slots : (Array CompilerIrInstr)]
@@ -42932,16 +42004,6 @@
             (opt-count-jump-to-blocks (box-get rest) target))])]
     [(CompilerIrBlockList.Array seq)
       (opt-count-jump-to-blocks (compiler-ir-block-seq-to-list seq) target)]))
-
-(define (opt-count-tail-call-instrs [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.TailCall _ _ _) 1]
-          [_ 0])
-        (opt-count-tail-call-instrs (box-get rest)))]))
 
 (define (opt-count-tail-call-instr-seq-from
   [slots : (Array CompilerIrInstr)]
@@ -43040,16 +42102,6 @@
       [(not (= (opt-count-tail-call-blocks once-blocks) 0)) 5]
       [(not (= (opt-count-jump-to-blocks once-blocks "entry") 1)) 6]
       [else 42])))
-
-(define (opt-count-phi-instrs [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.Phi _ _ _) 1]
-          [_ 0])
-        (opt-count-phi-instrs (box-get rest)))]))
 
 (define (opt-count-phi-instr-seq-from
   [slots : (Array CompilerIrInstr)]
@@ -43168,19 +42220,6 @@
     [(CompilerIrBlockList.Array seq)
       (opt-count-arith-label-blocks (compiler-ir-block-seq-to-list seq) label)]))
 
-(define (opt-count-mul-instrs [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.BinOp _ op _ _ _)
-            (match op
-              [(CompilerIrBinOp.Mul) 1]
-              [_ 0])]
-          [_ 0])
-        (opt-count-mul-instrs (box-get rest)))]))
-
 (define (opt-count-mul-instr-seq-from
   [slots : (Array CompilerIrInstr)]
   [index : i64]
@@ -43253,16 +42292,6 @@
             (opt-count-cast-blocks (box-get rest)))])]
     [(CompilerIrBlockList.Array seq)
       (opt-count-cast-blocks (compiler-ir-block-seq-to-list seq))]))
-
-(define (opt-count-gep-instrs [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.Gep _ _ _ _) 1]
-          [_ 0])
-        (opt-count-gep-instrs (box-get rest)))]))
 
 (define (opt-count-gep-instr-seq-from
   [slots : (Array CompilerIrInstr)]
@@ -47953,15 +46982,6 @@
 ;; Emulates the x4 unroller's output: an LCG chain `((x*5+3)*5+3)*5+3` must
 ;; collapse so the last pair reads `x*125` and `+93`, and a counter chain
 ;; `((x+1)+1)-? ` must rebase every link onto x. Negative: a two-use mul stays.
-(define (opt-affine-test-instr [instrs : CompilerIrInstrList] [index : i64]) : CompilerIrInstr
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (CompilerIrInstr.Return (CompilerIrMaybeValue.No))]
-    [(CompilerIrInstrList.Cons instr rest)
-      (if (<= index 0)
-        instr
-        (opt-affine-test-instr (box-get rest) (- index 1)))]))
-
 (define (opt-affine-test-binop-shape?
   [block : CompilerIrBlock]
   [index : i64]
@@ -48313,22 +47333,6 @@
                   (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
                 (CompilerIrInstrList.Nil))))
           (CompilerIrBlockList.Nil))))))
-
-(define (opt-affine-test-blocks-have-mul-by?
-  [blocks : CompilerIrBlockList]
-  [want : i64]) : bool
-  (match blocks
-    [(CompilerIrBlockList.Nil) false]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (if (opt-affine-test-seq-has-mul-by? instrs 0 want)
-            true
-            (opt-affine-test-blocks-have-mul-by? (box-get rest) want))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-affine-test-blocks-have-mul-by?
-        (compiler-ir-block-seq-to-list seq)
-        want)]))
 
 (define (opt-affine-pipeline-check
   [optimized : CompilerIrFunction]
@@ -49413,10 +48417,6 @@
           (OptMaybeAliasKind.Some (opt-alias-kind-decode value))]
         [(opt_i64_i64_map.LookupMissing) (OptMaybeAliasKind.No)])]))
 
-(define (opt-alias-bound? [facts : OptAliasFacts] [var : i64]) : bool
-  (match facts
-    [(OptAliasFacts.Facts map) (opt_i64_i64_map.contains? (& map) var)]))
-
 (define (opt-alias-remove-var [facts : OptAliasFacts] [var : i64]) : OptAliasFacts
   (match facts
     [(OptAliasFacts.Facts map)
@@ -49787,32 +48787,6 @@
       (or
         (opt-scratch-value-derived? roots facts value)
         (opt-scratch-value-list-derived? roots facts (box-get rest)))]))
-
-(define (opt-scratch-call-args-array-derived?
-  [roots : OptScratchRootList]
-  [facts : OptAliasFacts]
-  [values : (Array CompilerIrValue)]
-  [index : i64]) : bool
-  (if (>= index (array-length values))
-    false
-    (or
-      (opt-scratch-value-derived? roots facts (array-ref values index))
-      (opt-scratch-call-args-array-derived? roots facts values (+ index 1)))))
-
-(define (opt-scratch-call-args-derived?
-  [roots : OptScratchRootList]
-  [facts : OptAliasFacts]
-  [args : CompilerIrCallArgs]) : bool
-  (match args
-    [(CompilerIrCallArgs.Nil) false]
-    [(CompilerIrCallArgs.One value)
-      (opt-scratch-value-derived? roots facts value)]
-    [(CompilerIrCallArgs.Two a b)
-      (or
-        (opt-scratch-value-derived? roots facts a)
-        (opt-scratch-value-derived? roots facts b))]
-    [(CompilerIrCallArgs.Array values)
-      (opt-scratch-call-args-array-derived? roots facts values 0)]))
 
 (define (opt-scratch-blocker-none? [blocker : OptScratchBlockerReason]) : bool
   (match blocker
@@ -50863,14 +49837,6 @@
           (compiler-ir-instr-cons
             (opt-scratch-test-return-zero)
             CompilerIrInstrList.Nil))))))
-
-(define (opt-scratch-returned-instrs) : CompilerIrInstrList
-  (compiler-ir-instr-cons
-    (opt-scratch-test-alloc)
-    (compiler-ir-instr-cons
-      (CompilerIrInstr.Return
-        (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
-      CompilerIrInstrList.Nil)))
 
 (define (opt-scratch-loop-candidate-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
@@ -52208,11 +51174,6 @@
 
 ;; Removal of an absent key returns the table unchanged instead of re-boxing
 ;; the whole spine (see opt-alias-remove-var).
-(define (opt-load-table-remove-key [table : OptLoadTable] [key : OptLoadKey]) : OptLoadTable
-  (match (opt-load-table-lookup table key)
-    [(CompilerIrMaybeValue.Some _) (opt-load-table-remove-key-scan table key)]
-    [(CompilerIrMaybeValue.No) table]))
-
 (define (opt-load-table-len [table : OptLoadTable]) : i64
   (match table
     [(OptLoadTable.Nil) 0]
@@ -53017,38 +51978,6 @@
   [instrs : CompilerIrInstrList]) : CompilerIrInstrList
   (opt-load-cse-instrs-from hs (opt_i64_i64_map.with-capacity 1) state instrs))
 
-(define (opt-load-cse-instr-seq-rewrite-from!
-  [hs : OptLoadHeaderSet]
-  [sources : opt_i64_i64_map.Map]
-  [state : OptLoadCseState]
-  [instrs : CompilerIrInstrSeq]) : unit
-  (let
-    [index : i64 0]
-    [current : OptLoadCseState state]
-    [count : i64 (compiler-ir-instr-seq-count instrs)]
-    (while (< index count)
-      (match (opt-load-cse-dispatch
-        hs
-        false
-        sources
-        current
-        (compiler-ir-instr-seq-ref instrs index))
-        [(OptLoadCseResult.Result next new-instr)
-          (begin
-            (compiler-ir-instr-seq-set! instrs index new-instr)
-            (set! current next)
-            (set! index (+ index 1)))]))))
-
-(define (opt-load-cse-instr-seq-rewrite!
-  [hs : OptLoadHeaderSet]
-  [state : OptLoadCseState]
-  [instrs : CompilerIrInstrSeq]) : unit
-  (opt-load-cse-instr-seq-rewrite-from!
-    hs
-    (opt_i64_i64_map.with-capacity 1)
-    state
-    instrs))
-
 ;; --- cross-block redundant-load GVN -----------------------------------------
 (defenum OptMaybeLoadCseState
   (No)
@@ -53089,11 +52018,6 @@
           kinds
           (opt-load-cse-kinds-cap-for-size instr-count))
         table-cap))))
-
-(define (opt-load-cse-empty-state) : OptLoadCseState
-  (opt-load-cse-empty-state-with-caps
-    opt-load-cse-table-cap-floor
-    opt-load-cse-kinds-cap-floor))
 
 ;; The load table is a persistent list, but the alias facts and pointer kinds
 ;; are mutable tables; entering a block through a single predecessor must

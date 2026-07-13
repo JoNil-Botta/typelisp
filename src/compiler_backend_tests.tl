@@ -20616,7 +20616,12 @@
           (CompilerIrValue.Var 1)
           (CompilerIrCallArgs.Nil)
           (AstType.I64))
-        CompilerIrInstrList.Nil))
+        (compiler-ir-instr-cons
+          ;; Give the pre-existing %r12 home a real, non-overlapping interval.
+          ;; Interval-less assignments conservatively interfere with every
+          ;; scratch request and would make this forcing fixture test fallback.
+          (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (AstType.I64))
+          CompilerIrInstrList.Nil)))
     CompilerIrBlockList.Nil))
 
 (define (compiler-backend-scratch-vreg-call-target-test-assignments) : CompilerRegAssignmentList
@@ -20683,7 +20688,11 @@
               (compiler-ir-c-abi-return-slot-cons
                 (CompilerIrCAbiReturnSlot.Slot (AstType.I64) 0)
                 CompilerIrCAbiReturnSlotList.Nil))))
-        CompilerIrInstrList.Nil))
+        (compiler-ir-instr-cons
+          ;; Keep the candidate callee-saved home real but outside the call's
+          ;; scratch interval; a missing interval is conservatively occupied.
+          (CompilerIrInstr.Mov 1 (CompilerIrValue.I64 9) (AstType.I64))
+          CompilerIrInstrList.Nil)))
     CompilerIrBlockList.Nil))
 
 (define (compiler-backend-scratch-vreg-c-abi-return-test-assignments) : CompilerRegAssignmentList

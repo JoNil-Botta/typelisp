@@ -1,7 +1,8 @@
 ;; tlci_core.tl - TypeLisp comptime image v1 parse/emit helpers.
 ;;
-;; Package emission remains metadata-only, but this module now also assembles
-;; the focused native macro dispatch proof used by the loader smoke.
+;; Package emission selects metadata-only or deterministic multi-entry native
+;; images, and this module also assembles the focused dispatch proof used by
+;; the loader smoke.
 (import stdlib.byte_buf_core)
 (import stdlib.io)
 (import stdlib.string)
@@ -543,6 +544,111 @@
         (struct-get payload macro-entry-offset)
         (struct-get payload macro-table-offset)
         (struct-get payload macro-name-offset))]))
+
+(define (tlci-package-comptime-programs [macro-names : (Array String)]) : (Array
+    comptime_image.CompilerComptimeMacroProgram)
+  (let
+    [count : i64 (array-length macro-names)]
+    [programs : (Array comptime_image.CompilerComptimeMacroProgram)
+      (make-array comptime_image.CompilerComptimeMacroProgram count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            programs
+            index
+            (comptime_image.CompilerComptimeMacroProgram
+              (array-ref macro-names index)
+              (make-array (comptime_image.CompilerComptimeOperation.HostCall 4))
+              0
+              0))
+          (set! index (+ index 1))))
+      programs)))
+
+(define (tlci-code-bearing-package-fixups [macro-count : i64]) : (Array u8)
+  (make-array u8 (* (* macro-count 2) tlci-section-fixup-record-size)))
+
+(define (tlci-code-bearing-package-container
+  [metadata : TlciMetadata]
+  [compiler-build-hash : String]
+  [code : (Array u8)]
+  [macro-count : i64]) : TlciImage
+  (tlci-make-image
+    tlci-host-arch-x86-64
+    tlci-callback-abi-version
+    compiler-build-hash
+    metadata
+    (tlci-empty-bytes)
+    code
+    (tlci-code-bearing-package-fixups macro-count)
+    (tlci-code-bearing-probe-entry)
+    (tlci-code-bearing-probe-symbols)))
+
+(define (tlci-code-bearing-package-patch!
+  [bytes : (Array u8)]
+  [payload : comptime_image.CompilerComptimePackageImagePayload]) : unit
+  (let
+    [code-offset : i64 (tlci-read-u64 bytes 88)]
+    [fixups-offset : i64 (tlci-read-u64 bytes 104)]
+    [layouts : (Array comptime_image.CompilerComptimePackageMacroLayout)
+      (struct-get payload macros)]
+    [index : i64 0]
+    (begin
+      (while (< index (array-length layouts))
+        (let
+          [layout : comptime_image.CompilerComptimePackageMacroLayout
+            (array-ref layouts index)]
+          [record-slot : i64
+            (+
+              code-offset
+              (+
+                (struct-get payload macro-table-offset)
+                (* index tlci-macro-entry-record-size)))]
+          [name-slot : i64 (+ record-slot tlci-macro-entry-name-ptr-offset)]
+          [entry-slot : i64 (+ record-slot tlci-macro-entry-function-offset)]
+          [fixup-slot : i64
+            (+ fixups-offset (* (* index 2) tlci-section-fixup-record-size))]
+          (begin
+            (tlci-set-u64!
+              bytes
+              name-slot
+              (+ code-offset (struct-get layout macro-name-offset)))
+            (tlci-set-u64!
+              bytes
+              entry-slot
+              (+ code-offset (struct-get layout macro-entry-offset)))
+            (tlci-set-u64! bytes fixup-slot name-slot)
+            (tlci-set-u64!
+              bytes
+              (+ fixup-slot tlci-section-fixup-record-size)
+              entry-slot)
+            (set! index (+ index 1)))))
+      (tlci-set-u64! bytes tlci-hash-field-offset (tlci-content-hash bytes))
+      unit)))
+
+(define (tlci-emit-code-bearing-package-image
+  [metadata : TlciMetadata]
+  [compiler-build-hash : String]
+  [macro-names : (Array String)]
+  [windows-target : bool]) : ResultTlciBytes
+  (match (comptime_image.compiler-comptime-lower-package
+    (tlci-package-comptime-programs macro-names)
+    windows-target)
+    [(comptime_image.ResultCompilerComptimePackageImagePayload.Err message)
+      (ResultTlciBytes.Err message)]
+    [(comptime_image.ResultCompilerComptimePackageImagePayload.Ok payload)
+      (match (tlci-emit-image
+        (tlci-code-bearing-package-container
+          metadata
+          compiler-build-hash
+          (struct-get payload code)
+          (array-length macro-names)))
+        [(ResultTlciBytes.Err message) (ResultTlciBytes.Err message)]
+        [(ResultTlciBytes.Ok bytes)
+          (begin
+            (tlci-code-bearing-package-patch! bytes payload)
+            (ResultTlciBytes.Ok bytes))])]))
 
 (define (tlci-byte-at [bytes : (Array u8)] [offset : i64]) : i64
   (cast (array-ref bytes offset) : i64))
@@ -1719,6 +1825,49 @@
     (tlci-test-malformed-fixups-image)
     "tlci: malformed fixup table length"))
 
+(define (tlci-test-code-bearing-package-parsed? [bytes : (Array u8)]) : bool
+  (match (tlci-parse-image bytes)
+    [(ResultTlciImage.Err _) false]
+    [(ResultTlciImage.Ok image)
+      (and
+        (> (array-length (struct-get image code)) 0)
+        (=
+          (array-length (struct-get image fixups))
+          (* 4 tlci-section-fixup-record-size))
+        (=
+          (array-length (struct-get image entries))
+          tlci-section-entry-record-size)
+        (=
+          (array-length (struct-get image symbols))
+          tlci-section-symbol-record-size))]))
+
+(define (tlci-test-code-bearing-package-repeat?
+  [metadata : TlciMetadata]
+  [names : (Array String)]
+  [first : (Array u8)]) : bool
+  (match (tlci-emit-code-bearing-package-image
+    metadata
+    "package-test-v1"
+    names
+    false)
+    [(ResultTlciBytes.Err _) false]
+    [(ResultTlciBytes.Ok second) (tlci-bytes-eq? first second)]))
+
+(define (tlci-test-code-bearing-package-ok?) : bool
+  (let
+    [metadata : TlciMetadata (tlci-make-metadata "v1" "pkg" "0.1.0")]
+    [names : (Array String) (make-array "pkg/alpha" "pkg/beta")]
+    (match (tlci-emit-code-bearing-package-image
+      metadata
+      "package-test-v1"
+      names
+      false)
+      [(ResultTlciBytes.Err _) false]
+      [(ResultTlciBytes.Ok first)
+        (and
+          (tlci-test-code-bearing-package-parsed? first)
+          (tlci-test-code-bearing-package-repeat? metadata names first))])))
+
 (define (tlci-core-self-test-status) : i64
   (cond
     [(not (tlci-test-metadata-emit-parse?)) 1]
@@ -1728,6 +1877,7 @@
     [(not (tlci-test-metadata-rejections-ok?)) 5]
     [(not (tlci-test-emit-rejections-ok?)) 6]
     [(not (tlci-test-host-abi-ok?)) 7]
+    [(not (tlci-test-code-bearing-package-ok?)) 8]
     [else 0]))
 
 (define (tlci-core-self-test-ok?) : bool

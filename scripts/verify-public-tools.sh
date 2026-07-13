@@ -2625,12 +2625,15 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: public_tool_pkg"
     assert_contains "$out" "metadata-version: v1"
-    assert_contains "$out" "code: offset=0 bytes=0"
+    assert_contains "$out" "code: offset="
+    assert_not_contains "$out" "code: offset=0 bytes=0"
     run_cmd package-inspect-dependency-tlci "$COMPILER" inspect "$MATH_TLCI"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "tlci image"
     assert_contains "$out" "package-name: math"
+    assert_contains "$out" "code: offset="
+    assert_not_contains "$out" "code: offset=0 bytes=0"
     BAD_TLCI="$WORKDIR/bad.tlci"
     BAD_TLCI_DISPLAY=$(native_arg_path "$BAD_TLCI")
     printf 'bad' > "$BAD_TLCI"

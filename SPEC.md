@@ -2726,13 +2726,16 @@ Example:
   `bin` packages produce `<package-name>` on Linux and `<package-name>.exe` on
   Windows. `staticlib` packages produce `lib<package-name>.a` on Linux and
   `<package-name>.lib` on Windows. Assembly and object side artifacts use the
-  same profile directory. Package builds also produce a metadata-only comptime
-  image named `<package-name>.tlci` in the same profile directory; dependency
-  DAG builds produce each dependency's tlci next to its static archive without
-  changing runtime link behavior. The tlci path is target-independent in v1:
-  metadata-only images carry host compile-time metadata rather than target
-  runtime object code, so cross-target builds keep target runtime artifacts
-  separate while sharing the host comptime image path.
+  same profile directory. Package builds also produce a host comptime image
+  named `<package-name>.tlci` in the same profile directory; dependency DAG
+  builds produce each dependency's tlci next to its static archive without
+  changing runtime link behavior. Macro-free packages emit metadata-only
+  images. Packages with package-owned macro declarations emit deterministic
+  code-bearing images with native entry shells and one registration-table
+  record per macro. Macro-body lowering and consumer dispatch are later
+  integration layers. The tlci path is target-independent in v1: cross-target
+  builds keep target runtime artifacts separate while sharing the host
+  comptime image path.
 - The optional top-level `(link ...)` section declares native link inputs for
   `bin` package builds, so a package that links system or vendored libraries
   does not need `(:link-lib ...)`/`(:link-search ...)`/`(:link-arg ...)`
@@ -6386,9 +6389,10 @@ For source-file builds, the default executable path is the source path with
 the `.tl` extension removed on Linux and with `.exe` on Windows. Source-file
 `build` does not run the executable. The package build form writes the
 artifact selected by `typelisp.pkg`'s `kind` field and a metadata-only
-`<package-name>.tlci` image in the same profile directory. `inspect`
-validates and renders `.tlci` files without executing or loading contained
-code.
+`<package-name>.tlci` image for macro-free packages, or a code-bearing host
+image with registered macro entry shells for macro-defining packages in the
+same profile directory. `inspect` validates and renders `.tlci` files without
+executing or loading contained code.
 
 Linux native build/run uses `as` and `ld`. Windows native build/run uses
 `clang --target=x86_64-pc-windows-msvc` and `lld-link`, links against the

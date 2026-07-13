@@ -417,8 +417,9 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   variants; ordinary calls resolve once per process via the CPUID/XGETBV
   checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires AVX-512BW).
 
-Public vector/mask value types, vectorized scans and shuffles, and an
-out-of-line ABI for non-inlined varying helper calls are deferred; see
+Public vector/mask value types and vectorized scans/shuffles are deferred.
+Non-inlined varying helper calls now typecheck and lower to specialized private
+scalar/AVX-512 call IR with active masks; native emission remains staged. See
 SPEC.md sections 5.15 and 8.
 
 ## Packages
@@ -629,8 +630,8 @@ generation, a docs site, and an LSP diagnostics server.
 Not yet (see [SPEC.md §8](SPEC.md) for the authoritative matrix): general
 GC/`free` (deferred by design in favor of arenas), vectorized varying
 `while`/`match` control flow, vectorized SPMD scans/shuffles and public
-vector/mask values,
-out-of-line varying helper calls, reference captures in escaping closures
+vector/mask values, native emission for out-of-line varying helper calls,
+reference captures in escaping closures
 (rejected by design), package registry and workspaces, and richer IDE
 features. Codegen quality versus `clang -O2` is an active work stream
 tracked by the committed benchmark baselines.

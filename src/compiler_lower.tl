@@ -45526,7 +45526,7 @@
           with-avx2)]
       [(TcMaybeString.No) with-avx2])))
 
-(define (lower-dispatch-thunk-function-in-current-arena
+(define (lower-dispatch-thunk-function
   [ctx : TcContext]
   [logical-name : String]
   [fn-ty : AstType]
@@ -45625,41 +45625,6 @@
         (box
           (lower-diagnostic
             "lower: defdispatch did not typecheck as a function")))]))
-
-;; Unlike source functions and dispatch variants, the synthesized dispatch
-;; thunk does not pass through lower-function-escaping. Relocate its payload
-;; into the same lowered-IR arena so the checked AST arena can be retired before
-;; optimization without invalidating the thunk's params/blocks/instructions.
-(define (lower-dispatch-thunk-function
-  [ctx : TcContext]
-  [logical-name : String]
-  [fn-ty : AstType]
-  [variants : AstDispatchVariantList]
-  [module : String]
-  [names : LowerNameCache]
-  [spans : CompilerSourceSpans]) : ResultLowerFunction
-  (match (lower-dispatch-thunk-function-in-current-arena
-    ctx
-    logical-name
-    fn-ty
-    variants
-    module
-    names
-    spans)
-    [(ResultLowerFunction.Ok functions function-spans)
-      (let
-        [enclosing : i64 (arena.tl_arena_current)]
-        (unsafe
-          (begin
-            (arena.tl_arena_set (lower-ir-arena-get))
-            (let
-              [escaped : CompilerIrFunctionList
-                (compiler-ir-clone-function-list functions)]
-              (begin
-                (set! lower-ir-arena (arena.tl_arena_current))
-                (arena.tl_arena_set enclosing)
-                (ResultLowerFunction.Ok escaped function-spans))))))]
-    [(ResultLowerFunction.Err message) (ResultLowerFunction.Err message)]))
 
 (define (lower-dispatch-lower-variant-decl
   [ctx : TcContext]

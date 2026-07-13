@@ -2,18 +2,23 @@
 ;;
 ;; This is deliberately narrower than general macro-source lowering: it gives
 ;; the first code-bearing tlci image a real compiler-owned program model and an
-;; explicit callback-probe instruction. Automatic call/backedge probe insertion
-;; and general stdlib/package macro lowering build on this status convention.
+;; explicit host-call and loop-backedge instructions. Fuel instrumentation is
+;; inserted over that IR before host-native emission; general stdlib/package
+;; macro lowering builds on the same boundary/status convention.
+(import stdlib.array)
 (import stdlib.byte_buf_core)
 (import stdlib.io)
 (import stdlib.string)
 
-(defenum CompilerComptimeProbe
-  (ExplicitCallback i64))
+(defenum CompilerComptimeOperation
+  ;; A status-returning call through the host callback table.
+  (HostCall i64)
+  ;; A control-flow edge from a loop latch to its header.
+  (LoopBackedge))
 
 (defstruct CompilerComptimeMacroProgram
   (macro-name String)
-  (probe CompilerComptimeProbe)
+  (operations (Array CompilerComptimeOperation))
   (session-cookie i64)
   (success-result-handle i64))
 
@@ -34,8 +39,8 @@
   (WindowsX64))
 
 ;; Every status-capable native helper receives these three opaque contexts in
-;; this order. Keeping the positions explicit gives later automatic fuel probes
-;; one insertion primitive without adding state to the image.
+;; this order. Keeping the positions explicit gives automatic fuel probes one
+;; insertion primitive without adding state to the image.
 (defstruct CompilerComptimeContextParams
   (image i64)
   (host i64)
@@ -46,7 +51,7 @@
 
 (defstruct CompilerComptimeHelperIr
   (contexts CompilerComptimeContextParams)
-  (probe CompilerComptimeStatusProbe)
+  (probes (Array CompilerComptimeStatusProbe))
   (success-result-handle i64))
 
 (defstruct CompilerComptimeMacroIr
@@ -63,10 +68,56 @@
 (define (compiler-comptime-context-params) : CompilerComptimeContextParams
   (CompilerComptimeContextParams 0 1 2))
 
-;; Explicit call/backedge insertion boundary for #2656. Automatic placement is
-;; deliberately out of scope; callers choose the catalog operation here.
 (define (compiler-comptime-status-probe [operation : i64]) : CompilerComptimeStatusProbe
   (CompilerComptimeStatusProbe operation))
+
+(define (compiler-comptime-instrumented-probe-count
+  [operations : (Array CompilerComptimeOperation)]) : i64
+  (let
+    [index : i64 0]
+    [count : i64 0]
+    (begin
+      (while (< index (array-length operations))
+        (begin
+          (set!
+            count
+            (+
+              count
+              (match (array-ref operations index)
+                [(CompilerComptimeOperation.HostCall _) 2]
+                [(CompilerComptimeOperation.LoopBackedge) 1])))
+          (set! index (+ index 1))))
+      count)))
+
+;; Fuel is host-owned, so every semantic call and loop backedge becomes an
+;; operation-1 status probe. Calls retain their original callback immediately
+;; after the fuel check. A nonzero status unwinds before the following probe.
+(define (compiler-comptime-instrument-operations
+  [operations : (Array CompilerComptimeOperation)]) : (Array
+    CompilerComptimeStatusProbe)
+  (let
+    [probes : (Array CompilerComptimeStatusProbe)
+      (array.make-array
+        CompilerComptimeStatusProbe
+        (compiler-comptime-instrumented-probe-count operations))]
+    [operation-index : i64 0]
+    [probe-index : i64 0]
+    (begin
+      (while (< operation-index (array-length operations))
+        (begin
+          (array-set! probes probe-index (compiler-comptime-status-probe 1))
+          (set! probe-index (+ probe-index 1))
+          (match (array-ref operations operation-index)
+            [(CompilerComptimeOperation.HostCall operation)
+              (begin
+                (array-set!
+                  probes
+                  probe-index
+                  (compiler-comptime-status-probe operation))
+                (set! probe-index (+ probe-index 1)))]
+            [(CompilerComptimeOperation.LoopBackedge) unit])
+          (set! operation-index (+ operation-index 1))))
+      probes)))
 
 (define (compiler-comptime-program-to-host-ir
   [program : CompilerComptimeMacroProgram]
@@ -74,9 +125,8 @@
   (let
     [contexts : CompilerComptimeContextParams
       (compiler-comptime-context-params)]
-    [operation : i64
-      (match (struct-get program probe)
-        [(CompilerComptimeProbe.ExplicitCallback value) value])]
+    [probes : (Array CompilerComptimeStatusProbe)
+      (compiler-comptime-instrument-operations (struct-get program operations))]
     (CompilerComptimeMacroIr
       (if windows-target
         (CompilerComptimeLowerMode.WindowsX64)
@@ -86,13 +136,15 @@
       contexts
       (CompilerComptimeHelperIr
         contexts
-        (compiler-comptime-status-probe operation)
+        probes
         (struct-get program success-result-handle)))))
 
 (define (compiler-comptime-probe-program) : CompilerComptimeMacroProgram
   (CompilerComptimeMacroProgram
     "native-probe"
-    (CompilerComptimeProbe.ExplicitCallback 1)
+    (make-array
+      (CompilerComptimeOperation.HostCall 4)
+      (CompilerComptimeOperation.LoopBackedge))
     0x5151
     4242))
 
@@ -321,92 +373,134 @@
         (compiler-comptime-align-code! out 16)
         (CompilerComptimeRelativePatch displacement (+ displacement 4))))))
 
-;; Lower one status/out-slot helper. It loads invoke from callback-table offset
-;; 48, passes host/session contexts and an explicit operation, and returns every
-;; nonzero status unchanged. Only status zero commits the helper result slot.
-(define (compiler-comptime-emit-helper!
+;; All probe exits share the same 13-byte register/stack unwind sequence.
+(define (compiler-comptime-emit-helper-unwind!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [mode : CompilerComptimeLowerMode]) : unit
+  (begin
+    (match mode
+      [(CompilerComptimeLowerMode.LinuxX64)
+        (compiler-comptime-emit-bytes! out (make-array 0x48 0x83 0xc4 0x08))]
+      [(CompilerComptimeLowerMode.WindowsX64)
+        (compiler-comptime-emit-bytes! out (make-array 0x48 0x83 0xc4 0x38))])
+    (compiler-comptime-emit-bytes!
+      out
+      (make-array 0x41 0x5f 0x41 0x5e 0x41 0x5d 0x41 0x5c 0xc3))))
+
+;; The zero-status short branch skips the inline unwind; nonzero status remains
+;; in rax and returns immediately. Callback arguments carry host/session only,
+;; so image and result state stay in callee-saved registers across every probe.
+(define (compiler-comptime-emit-instrumented-probe!
+  [out : (&mut out byte_buf_core.ByteBufBuilder)]
+  [mode : CompilerComptimeLowerMode]
+  [operation : i64]) : unit
+  (begin
+    (match mode
+      [(CompilerComptimeLowerMode.LinuxX64)
+        (begin
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array 0x49 0x8b 0x45 0x30 0x4c 0x89 0xf7 0x4c 0x89 0xfe 0xba))
+          (compiler-comptime-emit-u32! out operation)
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array 0x31 0xc9 0x45 0x31 0xc0 0x45 0x31 0xc9 0xff 0xd0)))]
+      [(CompilerComptimeLowerMode.WindowsX64)
+        (begin
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array
+              0x49
+              0x8b
+              0x45
+              0x30
+              0x4c
+              0x89
+              0xf1
+              0x4c
+              0x89
+              0xfa
+              0x41
+              0xb8))
+          (compiler-comptime-emit-u32! out operation)
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array 0x45 0x31 0xc9 0x48 0xc7 0x44 0x24 0x20))
+          (compiler-comptime-emit-u32! out 0)
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array 0x48 0xc7 0x44 0x24 0x28))
+          (compiler-comptime-emit-u32! out 0)
+          (compiler-comptime-emit-bytes! out (make-array 0xff 0xd0)))])
+    (compiler-comptime-emit-bytes! out (make-array 0x48 0x85 0xc0 0x74 0x0d))
+    (compiler-comptime-emit-helper-unwind! out mode)))
+
+;; Emit the instrumented stream and commit the result only after every probe
+;; succeeds. The Windows frame reserves shadow space and both stack arguments;
+;; the SysV frame supplies the required 16-byte pre-call alignment.
+(define (compiler-comptime-emit-instrumented-helper!
   [out : (&mut out byte_buf_core.ByteBufBuilder)]
   [mode : CompilerComptimeLowerMode]
   [helper : CompilerComptimeHelperIr]) : unit
   (let
-    [operation : i64
-      (match (struct-get helper probe)
-        [(CompilerComptimeStatusProbe value) value])]
     [result : i64 (struct-get helper success-result-handle)]
+    [probes : (Array CompilerComptimeStatusProbe) (struct-get helper probes)]
+    [index : i64 0]
     (begin
-      (compiler-comptime-emit-bytes! out (make-array 0x41 0x54))
+      (compiler-comptime-emit-bytes!
+        out
+        (make-array 0x41 0x54 0x41 0x55 0x41 0x56 0x41 0x57))
       (match mode
         [(CompilerComptimeLowerMode.LinuxX64)
-          (begin
-            (compiler-comptime-emit-bytes!
-              out
-              (make-array
-                0x49
-                0x89
-                0xcc
-                0x48
-                0x8b
-                0x47
-                0x30
-                0x48
-                0x89
-                0xf7
-                0x48
-                0x89
-                0xd6
-                0xba))
-            (compiler-comptime-emit-u32! out operation)
-            (compiler-comptime-emit-bytes!
-              out
-              (make-array 0x31 0xc9 0x45 0x31 0xc0 0x45 0x31 0xc9 0xff 0xd0)))]
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array
+              0x49
+              0x89
+              0xcc
+              0x49
+              0x89
+              0xfd
+              0x49
+              0x89
+              0xf6
+              0x49
+              0x89
+              0xd7
+              0x48
+              0x83
+              0xec
+              0x08))]
         [(CompilerComptimeLowerMode.WindowsX64)
-          (begin
-            (compiler-comptime-emit-bytes!
-              out
-              (make-array
-                0x4d
-                0x89
-                0xcc
-                0x48
-                0x8b
-                0x41
-                0x30
-                0x48
-                0x89
-                0xd1
-                0x4c
-                0x89
-                0xc2
-                0x41
-                0xb8))
-            (compiler-comptime-emit-u32! out operation)
-            (compiler-comptime-emit-bytes!
-              out
-              (make-array
-                0x45
-                0x31
-                0xc9
-                0x48
-                0x83
-                0xec
-                0x30
-                0x48
-                0xc7
-                0x44
-                0x24
-                0x20))
-            (compiler-comptime-emit-u32! out 0)
-            (compiler-comptime-emit-bytes!
-              out
-              (make-array 0x48 0xc7 0x44 0x24 0x28))
-            (compiler-comptime-emit-u32! out 0)
-            (compiler-comptime-emit-bytes!
-              out
-              (make-array 0xff 0xd0 0x48 0x83 0xc4 0x30)))])
-      (compiler-comptime-emit-bytes! out (make-array 0x48 0x85 0xc0 0x75 0x08))
+          (compiler-comptime-emit-bytes!
+            out
+            (make-array
+              0x4d
+              0x89
+              0xcc
+              0x49
+              0x89
+              0xcd
+              0x49
+              0x89
+              0xd6
+              0x4d
+              0x89
+              0xc7
+              0x48
+              0x83
+              0xec
+              0x38))])
+      (while (< index (array-length probes))
+        (begin
+          (match (array-ref probes index)
+            [(CompilerComptimeStatusProbe operation)
+              (compiler-comptime-emit-instrumented-probe! out mode operation)])
+          (set! index (+ index 1))))
       (compiler-comptime-emit-bytes! out (make-array 0x49 0xc7 0x04 0x24))
       (compiler-comptime-emit-u32! out result)
-      (compiler-comptime-emit-bytes! out (make-array 0x41 0x5c 0xc3))
+      (compiler-comptime-emit-bytes! out (make-array 0x31 0xc0))
+      (compiler-comptime-emit-helper-unwind! out mode)
       unit)))
 
 (define (compiler-comptime-u32-value? [value : i64]) : bool
@@ -415,20 +509,34 @@
 (define (compiler-comptime-nonnegative-i32-value? [value : i64]) : bool
   (and (>= value 0) (<= value 0x7fffffff)))
 
+(define (compiler-comptime-probes-valid?
+  [probes : (Array CompilerComptimeStatusProbe)]) : bool
+  (let
+    [index : i64 0]
+    [valid : bool true]
+    (begin
+      (while (and valid (< index (array-length probes)))
+        (begin
+          (match (array-ref probes index)
+            [(CompilerComptimeStatusProbe operation)
+              (set!
+                valid
+                (and (> operation 0) (compiler-comptime-u32-value? operation)))])
+          (set! index (+ index 1))))
+      valid)))
+
 (define (compiler-comptime-host-ir-valid? [ir : CompilerComptimeMacroIr]) : bool
   (let
     [helper : CompilerComptimeHelperIr (struct-get ir helper)]
-    [operation : i64
-      (match (struct-get helper probe)
-        [(CompilerComptimeStatusProbe value) value])]
+    [probes : (Array CompilerComptimeStatusProbe) (struct-get helper probes)]
     [contexts : CompilerComptimeContextParams (struct-get ir contexts)]
     [helper-contexts : CompilerComptimeContextParams
       (struct-get helper contexts)]
     (and
       (> (string.string-length (struct-get ir macro-name)) 0)
       (compiler-comptime-nonnegative-i32-value? (struct-get ir session-cookie))
-      (> operation 0)
-      (compiler-comptime-u32-value? operation)
+      (> (array-length probes) 0)
+      (compiler-comptime-probes-valid? probes)
       (compiler-comptime-nonnegative-i32-value?
         (struct-get helper success-result-handle))
       (= (struct-get contexts image) 0)
@@ -456,7 +564,7 @@
           (struct-get ir session-cookie))]
       [helper-offset : i64 (byte_buf_core.byte-buf-builder-len (& out))]
       [_helper : unit
-        (compiler-comptime-emit-helper!
+        (compiler-comptime-emit-instrumented-helper!
           (&mut out)
           (struct-get ir mode)
           (struct-get ir helper))]
@@ -492,11 +600,11 @@
 
 (define (compiler-comptime-windows-template-oracle) : (Array u8)
   (compiler-comptime-byte-array-from-hex
-    "48b8544c4349494d414748890248c742080100000048c742104000000048894a1848c742200000000048c7422800000000488d05900000004889423048c742380100000031c0c3660f1f8400000000004883f90476134c8b4c24304883ec28e81c0000004883c428c34881fa5151000075044889c8c3b804000000c30f1f400041544d89cc488b41304889d14c89c241b8010000004531c94883ec3048c74424200000000048c744242800000000ffd04883c4304885c0750849c7042492100000415cc30f1f400000000000000000000c00000000000000000000000000000000000000000000006e61746976652d70726f6265"))
+    "48b8544c4349494d414748890248c742080100000048c742104000000048894a1848c742200000000048c7422800000000488d05280100004889423048c742380100000031c0c3660f1f8400000000004883f90476134c8b4c24304883ec28e81c0000004883c428c34881fa5151000075044889c8c3b804000000c30f1f400041544155415641574d89cc4989cd4989d64d89c74883ec38498b45304c89f14c89fa41b8010000004531c948c74424200000000048c744242800000000ffd04885c0740d4883c438415f415e415d415cc3498b45304c89f14c89fa41b8040000004531c948c74424200000000048c744242800000000ffd04885c0740d4883c438415f415e415d415cc3498b45304c89f14c89fa41b8010000004531c948c74424200000000048c744242800000000ffd04885c0740d4883c438415f415e415d415cc349c704249210000031c04883c438415f415e415d415cc3660f1f44000000000000000000000c00000000000000000000000000000000000000000000006e61746976652d70726f6265"))
 
 (define (compiler-comptime-linux-template-oracle) : (Array u8)
   (compiler-comptime-byte-array-from-hex
-    "48b8544c4349494d414748890648c746080100000048c746104000000048897e1848c746200000000048c7462800000000488d05780000004889463048c746380100000031c0c3660f1f8400000000004883ff0476114c89c94883ec08e81e0000004883c408c34881fe5151000075044889f8c3b804000000c3660f1f44000041544989cc488b47304889f74889d6ba0100000031c94531c04531c9ffd04885c0750849c7042492100000415cc3669000000000000000000c000000000000000000000000000000000000000000000006e61746976652d70726f6265"))
+    "48b8544c4349494d414748890648c746080100000048c746104000000048897e1848c746200000000048c7462800000000488d05f80000004889463048c746380100000031c0c3660f1f8400000000004883ff0476114c89c94883ec08e81e0000004883c408c34881fe5151000075044889f8c3b804000000c3660f1f44000041544155415641574989cc4989fd4989f64989d74883ec08498b45304c89f74c89feba0100000031c94531c04531c9ffd04885c0740d4883c408415f415e415d415cc3498b45304c89f74c89feba0400000031c94531c04531c9ffd04885c0740d4883c408415f415e415d415cc3498b45304c89f74c89feba0100000031c94531c04531c9ffd04885c0740d4883c408415f415e415d415cc349c704249210000031c04883c408415f415e415d415cc300000000000000000c00000000000000000000000000000000000000000000006e61746976652d70726f6265"))
 
 (define (compiler-comptime-oracle-put-name!
   [bytes : (Array u8)]
@@ -524,8 +632,8 @@
         (compiler-comptime-linux-template-oracle))]
     [name-offset : i64
       (if windows-target
-        0xe8
-        0xd0)]
+        0x180
+        0x150)]
     (begin
       (compiler-comptime-set-u32!
         code
@@ -536,14 +644,14 @@
       (compiler-comptime-set-u32!
         code
         (if windows-target
-          0x91
-          0x90)
-        1)
+          0xdd
+          0xce)
+        4)
       (compiler-comptime-set-u32!
         code
         (if windows-target
-          0xbd
-          0xa7)
+          0x147
+          0x11d)
         4242)
       (compiler-comptime-oracle-put-name! code name-offset "native-probe")
       code)))
@@ -593,8 +701,8 @@
         [(not (= (struct-get payload macro-entry-offset) 0x50)) -101]
         [windows-target
           (cond
-            [(not (= (struct-get payload macro-table-offset) 0xc8)) -102]
-            [(not (= (struct-get payload macro-name-offset) 0xe8)) -103]
+            [(not (= (struct-get payload macro-table-offset) 0x160)) -102]
+            [(not (= (struct-get payload macro-name-offset) 0x180)) -103]
             [else
               (compiler-comptime-bytes-mismatch-from
                 (struct-get payload code)
@@ -602,8 +710,8 @@
                 0)])]
         [else
           (cond
-            [(not (= (struct-get payload macro-table-offset) 0xb0)) -102]
-            [(not (= (struct-get payload macro-name-offset) 0xd0)) -103]
+            [(not (= (struct-get payload macro-table-offset) 0x130)) -102]
+            [(not (= (struct-get payload macro-name-offset) 0x150)) -103]
             [else
               (compiler-comptime-bytes-mismatch-from
                 (struct-get payload code)
@@ -620,14 +728,14 @@
         (= (struct-get payload macro-entry-offset) 0x50)
         (if windows-target
           (and
-            (= (struct-get payload macro-table-offset) 0xc8)
-            (= (struct-get payload macro-name-offset) 0xe8)
+            (= (struct-get payload macro-table-offset) 0x160)
+            (= (struct-get payload macro-name-offset) 0x180)
             (compiler-comptime-bytes-eq?
               (struct-get payload code)
               (compiler-comptime-default-template-oracle true)))
           (and
-            (= (struct-get payload macro-table-offset) 0xb0)
-            (= (struct-get payload macro-name-offset) 0xd0)
+            (= (struct-get payload macro-table-offset) 0x130)
+            (= (struct-get payload macro-name-offset) 0x150)
             (compiler-comptime-bytes-eq?
               (struct-get payload code)
               (compiler-comptime-default-template-oracle false)))))]))
@@ -651,7 +759,7 @@
     [program : CompilerComptimeMacroProgram
       (CompilerComptimeMacroProgram
         name
-        (CompilerComptimeProbe.ExplicitCallback 1)
+        (make-array (CompilerComptimeOperation.HostCall 4))
         0x5151
         4242)]
     (match (compiler-comptime-lower-probe program windows-target)
@@ -683,7 +791,7 @@
     [program : CompilerComptimeMacroProgram
       (CompilerComptimeMacroProgram
         "dynamic-probe"
-        (CompilerComptimeProbe.ExplicitCallback 4)
+        (make-array (CompilerComptimeOperation.HostCall 128))
         0x12345678
         0x07654321)]
     (match (compiler-comptime-lower-probe program windows-target)
@@ -703,31 +811,69 @@
               (compiler-comptime-read-u32
                 code
                 (if windows-target
-                  0x91
-                  0x90))
-              4)
+                  0xdd
+                  0xce))
+              128)
             (=
               (compiler-comptime-read-u32
                 code
                 (if windows-target
-                  0xbd
-                  0xa7))
+                  0x10e
+                  0xf2))
               0x07654321)))])))
 
+(define (compiler-comptime-invalid-program-rejected?
+  [program : CompilerComptimeMacroProgram]) : bool
+  (match (compiler-comptime-lower-probe program false)
+    [(ResultCompilerComptimeImagePayload.Err message)
+      (string.eq
+        message
+        "native comptime host IR has invalid contexts, operation, scalar, or name")]
+    [(ResultCompilerComptimeImagePayload.Ok _) false]))
+
 (define (compiler-comptime-invalid-ir-rejected?) : bool
-  (let
-    [program : CompilerComptimeMacroProgram
+  (and
+    (compiler-comptime-invalid-program-rejected?
       (CompilerComptimeMacroProgram
         ""
-        (CompilerComptimeProbe.ExplicitCallback 0)
+        (make-array (CompilerComptimeOperation.HostCall 4))
         0
-        0)]
-    (match (compiler-comptime-lower-probe program false)
-      [(ResultCompilerComptimeImagePayload.Err message)
-        (string.eq
-          message
-          "native comptime host IR has invalid contexts, operation, scalar, or name")]
-      [(ResultCompilerComptimeImagePayload.Ok _) false])))
+        0))
+    (compiler-comptime-invalid-program-rejected?
+      (CompilerComptimeMacroProgram
+        "bad-operation"
+        (make-array (CompilerComptimeOperation.HostCall 0))
+        0
+        0))
+    (compiler-comptime-invalid-program-rejected?
+      (CompilerComptimeMacroProgram
+        "empty-program"
+        (make-array CompilerComptimeOperation 0)
+        0
+        0))))
+
+(define (compiler-comptime-probe-operation?
+  [probes : (Array CompilerComptimeStatusProbe)]
+  [index : i64]
+  [expected : i64]) : bool
+  (match (array-ref probes index)
+    [(CompilerComptimeStatusProbe operation) (= operation expected)]))
+
+(define (compiler-comptime-fuel-placement-ok?) : bool
+  (let
+    [probes : (Array CompilerComptimeStatusProbe)
+      (compiler-comptime-instrument-operations
+        (make-array
+          (CompilerComptimeOperation.HostCall 100)
+          (CompilerComptimeOperation.LoopBackedge)
+          (CompilerComptimeOperation.HostCall 101)))]
+    (and
+      (= (array-length probes) 5)
+      (compiler-comptime-probe-operation? probes 0 1)
+      (compiler-comptime-probe-operation? probes 1 100)
+      (compiler-comptime-probe-operation? probes 2 1)
+      (compiler-comptime-probe-operation? probes 3 1)
+      (compiler-comptime-probe-operation? probes 4 101))))
 
 (define (compiler-comptime-host-ir-contract-ok?) : bool
   (let
@@ -739,9 +885,7 @@
     [helper : CompilerComptimeHelperIr (struct-get ir helper)]
     [helper-contexts : CompilerComptimeContextParams
       (struct-get helper contexts)]
-    [operation : i64
-      (match (struct-get helper probe)
-        [(CompilerComptimeStatusProbe value) value])]
+    [probes : (Array CompilerComptimeStatusProbe) (struct-get helper probes)]
     (and
       (match (struct-get ir mode)
         [(CompilerComptimeLowerMode.LinuxX64) true]
@@ -752,12 +896,20 @@
       (= (struct-get helper-contexts image) 0)
       (= (struct-get helper-contexts host) 1)
       (= (struct-get helper-contexts session) 2)
-      (= operation 1)
+      (= (array-length probes) 3)
+      (match (array-ref probes 0)
+        [(CompilerComptimeStatusProbe operation) (= operation 1)])
+      (match (array-ref probes 1)
+        [(CompilerComptimeStatusProbe operation) (= operation 4)])
+      (match (array-ref probes 2)
+        [(CompilerComptimeStatusProbe operation) (= operation 1)])
       (= (struct-get helper success-result-handle) 4242))))
 
 (test
   compiler-comptime-host-ir-lowering
   (cond
+    [(not (compiler-comptime-fuel-placement-ok?))
+      (io.panic "native comptime call/backedge fuel placement self-test failed")]
     [(not (compiler-comptime-host-ir-contract-ok?))
       (io.panic "native comptime host IR contract self-test failed")]
     [(not (compiler-comptime-default-oracle-parity? false))

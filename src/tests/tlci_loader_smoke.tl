@@ -2,6 +2,7 @@
 (import tlci_loader)
 (import tlci_core as tlci)
 (import compiler_comptime_image_core as comptime_image)
+(import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import stdlib.string)
 
 (define tlci-loader-smoke-macro-name : String
@@ -81,6 +82,19 @@
             ;; mutates caller-owned scratch/operand state. Compiler AST and
             ;; typechecker state are outside this focused API by construction.
             (= (array-ref scratch 0) 31337))]
+        [fuel-diagnostic : bool
+          (let
+            [message : String
+              (tlci_loader.tlci-loader-macro-status-diagnostic
+                tlci-loader-smoke-macro-name
+                tlci.tlci-host-callback-status-fuel-exhausted)]
+            [interpreted-prefix : String
+              (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message)]
+            (and
+              (string.is-string-prefix-at (& message) (& interpreted-prefix) 0)
+              (string.eq
+                message
+                "compile-time evaluation limit exceeded in macro native-probe")))]
         [wrong-session : bool
           (tlci-loader-smoke-dispatch-result?
             (tlci_loader.tlci-loader-dispatch-macro
@@ -95,7 +109,7 @@
           (match (tlci_loader.tlci-loader-release loaded)
             [(tlci_loader.ResultTlciLoaderUnit.Ok) true]
             [(tlci_loader.ResultTlciLoaderUnit.Err _) false])]
-        (and missing success fuel wrong-session released))]))
+        (and missing success fuel fuel-diagnostic wrong-session released))]))
 
 (define (tlci-loader-smoke-malformed-rejected?
   [bytes : (Array u8)]

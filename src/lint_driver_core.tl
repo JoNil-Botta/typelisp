@@ -1046,7 +1046,8 @@
     [(AstType.Var name) (selfhost-lint-dead-ref-add-id refs name)]
     [(AstType.VarArgs name _) (selfhost-lint-dead-ref-add-id refs name)]
     [(AstType.Ptr inner) (selfhost-lint-dead-type-id-refs inner refs)]
-    [(AstType.MutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]))
+    [(AstType.MutPtr inner) (selfhost-lint-dead-type-id-refs inner refs)]
+    [(AstType.Consume inner) (selfhost-lint-dead-type-id-refs inner refs)]))
 
 (define (selfhost-lint-dead-param-list-refs
   [params : AstParamList]
@@ -1060,7 +1061,7 @@
   (if (>= index (ast-param-list-len params))
     refs
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (selfhost-lint-dead-param-list-refs-at
           params
           (selfhost-lint-dead-type-refs ty refs)

@@ -2731,7 +2731,14 @@
         "varargs_"
         (string.append
           (intern-str name)
-          (string.append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]))
+          (string.append "_" (ctfe-lifetime-list-key (box-get lifetimes)))))]
+    [(AstType.Consume inner)
+      (string.append
+        "consume_"
+        (ctfe-type-key-with-reflections-and-pools
+          pools
+          infos
+          (ast-node-pool-context-type-get pools inner)))]))
 
 (define (ctfe-type-key-with-reflections
   [infos : CtfeReflectInfoList]
@@ -2783,7 +2790,8 @@
     [(AstType.Struct _) "struct"]
     [(AstType.StructArgs _ _) "struct"]
     [(AstType.Var _) "type-var"]
-    [(AstType.VarArgs _ _) "type-var"]))
+    [(AstType.VarArgs _ _) "type-var"]
+    [(AstType.Consume _) "consume-param"]))
 
 (define (ctfe-type-kind-with-reflections
   [infos : CtfeReflectInfoList]
@@ -3294,7 +3302,12 @@
         [(CtfeMaybeLayoutInfo.Some info)
           (match info
             [(CtfeLayoutInfo.Info _ _ size _ _) size])]
-        [(CtfeMaybeLayoutInfo.None) -1])]))
+        [(CtfeMaybeLayoutInfo.None) -1])]
+    [(AstType.Consume inner)
+      (ctfe-type-size-with-pools
+        pools
+        layouts
+        (ast-node-pool-context-type-get pools inner))]))
 
 (define (ctfe-type-size [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
   (ctfe-type-size-with-pools (ast-node-pool-context-capture-active) layouts ty))
@@ -3366,7 +3379,12 @@
         [(CtfeMaybeLayoutInfo.Some info)
           (match info
             [(CtfeLayoutInfo.Info _ _ _ align _) align])]
-        [(CtfeMaybeLayoutInfo.None) -1])]))
+        [(CtfeMaybeLayoutInfo.None) -1])]
+    [(AstType.Consume inner)
+      (ctfe-type-align-with-pools
+        pools
+        layouts
+        (ast-node-pool-context-type-get pools inner))]))
 
 (define (ctfe-type-align [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
   (ctfe-type-align-with-pools (ast-node-pool-context-capture-active) layouts ty))
@@ -8087,6 +8105,13 @@
       (ctfe-type-syntax-call
         (intern-str name)
         (ctfe-lifetime-list-to-expr-list (box-get lifetimes) env)
+        env)]
+    [(AstType.Consume inner)
+      (ctfe-type-syntax-call
+        ":consume"
+        (ast-expr-cons
+          (ctfe-type-to-expr (ctfe-ty-get env inner) env)
+          (ast-expr-list-new))
         env)]))
 
 (define (ctfe-type-expr-error [origin : AstExpr]) : ResultCtfeQuoteType
@@ -8657,10 +8682,10 @@
     unit
     (begin
       (match (ast-param-list-get params index (ast-param-fallback))
-        [(AstParam.Param name ty comptime?)
+        [(AstParam.Param name ty comptime? consume?)
           (ast-param-list-push
             out
-            (AstParam.Param (ctfe-quote-name-id env name) ty comptime?))])
+            (AstParam.Param (ctfe-quote-name-id env name) ty comptime? consume?))])
       (ctfe-quote-param-list-into params (+ index 1) env out))))
 
 (define (ctfe-quote-pattern-list [patterns : AstPatternList] [env : CtfeEnv]) : AstPatternList
@@ -10061,11 +10086,12 @@
 
 (define (ctfe-param-eq-in-env [env : CtfeEnv] [a : AstParam] [b : AstParam]) : bool
   (match a
-    [(AstParam.Param a-name a-ty a-comptime)
+    [(AstParam.Param a-name a-ty a-comptime a-consume)
       (match b
-        [(AstParam.Param b-name b-ty b-comptime)
+        [(AstParam.Param b-name b-ty b-comptime b-consume)
           (and
             (= a-name b-name)
+            (= a-consume b-consume)
             (ctfe-type-eq-in-env env a-ty b-ty)
             (= a-comptime b-comptime))])]))
 
@@ -11978,6 +12004,14 @@
           (and
             (= a-name b-name)
             (ctfe-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner)
+          (ctfe-type-eq-in-env
+            env
+            (ctfe-ty-get env a-inner)
+            (ctfe-ty-get env b-inner))]
         [_ false])]))
 
 (define (ctfe-type-list-eq [a : AstTypeList] [b : AstTypeList]) : bool

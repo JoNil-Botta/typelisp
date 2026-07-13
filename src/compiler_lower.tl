@@ -3936,7 +3936,7 @@
         [arg-id : i64 (ast-expr-list-get args index 0)]
         [arg : AstExpr (lower-context-expr-get ctx arg-id)]
         (match (ast-param-list-get params index (ast-param-fallback))
-          [(AstParam.Param param-name _ _)
+          [(AstParam.Param param-name _ _ _)
             (lower-spmd-inline-build-subst-at
               ctx
               params
@@ -6613,7 +6613,7 @@
   (if (>= index (ast-param-list-len params))
     used
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (lower-used-types-add-param-list-at
           pools
           (lower-used-types-add-type pools used module ty)
@@ -8900,7 +8900,9 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
-    [(AstType.VarArgs _ _) 8]))
+    [(AstType.VarArgs _ _) 8]
+    [(AstType.Consume inner)
+      (lower-type-size ctx (tc-context-type-get ctx inner))]))
 
 (define (lower-type-align [ctx : TcContext] [ty : AstType]) : i64
   (match (tc-resolve-type ctx ty)
@@ -8943,7 +8945,9 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
-    [(AstType.VarArgs _ _) 8]))
+    [(AstType.VarArgs _ _) 8]
+    [(AstType.Consume inner)
+      (lower-type-align ctx (tc-context-type-get ctx inner))]))
 
 (define (lower-type-list-extent
   [ctx : TcContext]
@@ -16975,7 +16979,8 @@
           (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
-        [expected : AstType (tc-context-type-get ctx expected-id)]
+        [expected : AstType
+          (ast-type-strip-consuming-param (tc-context-type-get ctx expected-id))]
         [arg-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx expected))]
         (match (lower-call-arg-as ctx state env type-env arg expected arg-ty)
@@ -17077,7 +17082,8 @@
           (lower-context-expr-get ctx (ast-expr-list-get args index 0))]
         [expected-id : i64
           (ast-type-list-get types index (ast-type-id-fallback))]
-        [expected : AstType (tc-context-type-get ctx expected-id)]
+        [expected : AstType
+          (ast-type-strip-consuming-param (tc-context-type-get ctx expected-id))]
         [arg-ty : AstType
           (tc-type-without-regions (tc-resolve-type ctx expected))]
         (match (tc-call-effective-arg-expr ctx type-env arg expected)
@@ -42959,7 +42965,7 @@
   (if (>= index (ast-param-list-len params))
     env
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _)
+      [(AstParam.Param name _ _ _)
         (lower-bind-params-at
           params
           (+ index 1)
@@ -42977,7 +42983,7 @@
   (if (>= index (ast-param-list-len params))
     CompilerIrParamList.Nil
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty _)
+      [(AstParam.Param name ty _ _)
         (compiler-ir-param-cons
           (CompilerIrParam.Param
             (intern-str name)
@@ -43069,7 +43075,7 @@
   (if (>= index (ast-param-list-len params))
     false
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (or
           (lower-type-contains-inline-aggregate? ctx ty)
           (lower-param-list-contains-inline-aggregate-at?
@@ -43089,7 +43095,7 @@
   (if (>= index (ast-param-list-len params))
     false
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (or
           (not (lower-supported-function-param-type? ctx ty))
           (lower-param-list-contains-unsupported-reference-at?
@@ -43743,9 +43749,10 @@
     (ast-type-list-new)
     (ast-type-cons
       (tc-type-without-regions
-        (tc-context-type-get
-          ctx
-          (ast-type-list-get types index (ast-type-id-fallback))))
+        (ast-type-strip-consuming-param
+          (tc-context-type-get
+            ctx
+            (ast-type-list-get types index (ast-type-id-fallback)))))
       (lower-dispatch-type-list-without-regions-at ctx types (+ index 1)))))
 
 (define (lower-dispatch-param-type-count [types : AstTypeList]) : i64

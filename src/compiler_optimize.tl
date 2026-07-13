@@ -4332,6 +4332,13 @@
           (and
             (= a-name b-name)
             (opt-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner)
+          (opt-type-eq
+            (ast-node-pool-reader-type-get a-inner)
+            (ast-node-pool-reader-type-get b-inner))]
         [_ false])]))
 
 (define (opt-value-hash [value : CompilerIrValue]) : i64
@@ -4488,7 +4495,9 @@
         34
         (hash.combine
           (hash.i64 name)
-          (opt-lifetime-list-hash (box-get lifetimes))))]))
+          (opt-lifetime-list-hash (box-get lifetimes))))]
+    [(AstType.Consume inner)
+      (hash.combine 36 (opt-type-hash (ast-node-pool-reader-type-get inner)))]))
 
 (define (opt-maybe-value-eq
   [a : CompilerIrMaybeValue]
@@ -49683,7 +49692,9 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 0]
-    [(AstType.VarArgs _ _) 0]))
+    [(AstType.VarArgs _ _) 0]
+    [(AstType.Consume inner)
+      (opt-scratch-alloc-type-size (ast-node-pool-reader-type-get inner))]))
 
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
@@ -51493,7 +51504,8 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
-    [(AstType.VarArgs _ _) 8]))
+    [(AstType.VarArgs _ _) 8]
+    [(AstType.Consume inner) (opt-load-loc-type-size (ty-node-get inner))]))
 
 ;; What memory a pointer-valued var addresses:
 ;;   Element          -- points at/into some array/string DATA BUFFER (the

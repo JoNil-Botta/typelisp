@@ -2924,7 +2924,9 @@
       (str_cat.str-cat
         "(MutPtr "
         (compiler-ir-type-render (ast-node-pool-reader-type-get elem))
-        ")")]))
+        ")")]
+    [(AstType.Consume inner)
+      (compiler-ir-type-render (ast-node-pool-reader-type-get inner))]))
 
 (define (compiler-ir-u64-payload-render [value : u64]) : String
   (string.int->string (cast value : i64)))
@@ -4727,7 +4729,9 @@
       (str_cat.str-cat
         "(MutPtr "
         (compiler-ir-type-name (ast-node-pool-reader-type-get elem))
-        ")")]))
+        ")")]
+    [(AstType.Consume inner)
+      (compiler-ir-type-name (ast-node-pool-reader-type-get inner))]))
 
 (define (compiler-ir-vector-type-name [elem : AstType] [lanes : i64]) : String
   (str_cat.str-cat

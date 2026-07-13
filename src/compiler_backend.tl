@@ -7969,7 +7969,9 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
-    [(AstType.VarArgs _ _) 8]))
+    [(AstType.VarArgs _ _) 8]
+    [(AstType.Consume inner)
+      (compiler-backend-type-size (ast-node-pool-reader-type-get inner))]))
 
 (define (compiler-backend-f64-type? [ty : AstType]) : bool
   (match ty

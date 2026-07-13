@@ -295,7 +295,11 @@
           (intern-str name)
           (string.append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
-            ")")))]))
+            ")")))]
+    [(AstType.Consume inner)
+      (string.append
+        "(:consume "
+        (string.append (repl-type-render (ty-node-get inner)) ")"))]))
 
 (define (repl-print-error-line [message : String]) : unit
   (repl-stderr-write-line message))

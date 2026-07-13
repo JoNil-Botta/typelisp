@@ -2989,7 +2989,7 @@
   (if (>= index (ast-param-list-len params))
     (compiler-load-lazy-alias-demand-none)
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-lazy-type-demand ty alias summary locals)
           (compiler-load-lazy-param-list-demand-at?
@@ -3013,7 +3013,7 @@
   (if (>= index (ast-param-list-len params))
     locals
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _)
+      [(AstParam.Param name _ _ _)
         (compiler-load-lazy-param-list-locals-at
           params
           (sym_i64_env.sym-i64-bind-id locals name 1)
@@ -6367,7 +6367,7 @@
     unit
     (begin
       (match (ast-param-list-get params index (ast-param-fallback))
-        [(AstParam.Param _ ty _)
+        [(AstParam.Param _ ty _ _)
           (ast-type-list-push out (ast-node-pool-reader-type-push ty))])
       (compiler-load-param-type-list-into params (+ index 1) out))))
 

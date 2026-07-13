@@ -6426,7 +6426,9 @@
       (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]
     [(AstType.Var name) (intern-str name)]
     [(AstType.VarArgs name lifetimes)
-      (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]))
+      (tc-render-nominal-lifetime-type (intern-str name) (box-get lifetimes))]
+    [(AstType.Consume inner)
+      (str_cat.str-cat "(:consume " (tc-type-render (ty-node-get inner)) ")")]))
 
 (define (tc-type-mismatch-message
   [actual : AstType]
@@ -9855,7 +9857,7 @@
   (if (>= offset (ast-param-list-len params))
     (ResultTcElidedParams.Ok (TcElidedParams out index))
     (match (ast-param-list-get params offset (ast-param-fallback))
-      [(AstParam.Param name ty is-comptime)
+      [(AstParam.Param name ty is-comptime consume?)
         (match (tc-elide-input-type ty index)
           [(ResultTcElidedType.Ok item)
             (let
@@ -9863,7 +9865,11 @@
               (begin
                 (ast-param-list-push
                   (&mut next-out)
-                  (ast-param-id name (struct-get item ty) is-comptime))
+                  (ast-param-id-with-consume
+                    name
+                    (struct-get item ty)
+                    is-comptime
+                    consume?))
                 (tc-elide-input-params-at
                   params
                   (+ offset 1)
@@ -9880,8 +9886,12 @@
   (if (>= index (ast-param-list-len params))
     (ast-type-list-new)
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
-        (ast-type-cons ty (tc-elided-param-type-list-at params (+ index 1)))])))
+      [(AstParam.Param _ ty _ consume?)
+        (ast-type-cons
+          (if consume?
+            (ast-ty-consume ty)
+            ty)
+          (tc-elided-param-type-list-at params (+ index 1)))])))
 
 (define (tc-elide-function-signature [params : AstParamList] [ret : AstType]) : ResultTcElidedSignature
   (match (tc-elide-input-params-at (& params) 0 0 (ast-param-list-new))
@@ -9953,6 +9963,8 @@
       (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
     [(AstType.VarArgs _ lifetimes)
       (tc-lifetime-list-to-string-list-into (box-get lifetimes) out)]
+    [(AstType.Consume inner)
+      (tc-type-collect-reference-lifetimes-into (ty-node-get inner) out)]
     [_ out]))
 
 (define (tc-type-collect-reference-lifetimes [ty : AstType]) : TcStringList
@@ -9972,7 +9984,7 @@
   (if (>= index (ast-param-list-len params))
     false
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (or
           (tc-type-contains-reference? ty)
           (tc-param-list-contains-reference-at? params (+ index 1)))])))
@@ -9991,7 +10003,7 @@
   (if (>= index (ast-param-list-len params))
     out
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty _)
+      [(AstParam.Param name ty _ _)
         (tc-param-list-reference-return-lifetimes-at
           ctx
           params
@@ -10308,6 +10320,7 @@
     [(AstType.Ref _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
     [(AstType.MutRef _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
     [(AstType.Region _ inner) (tc-type-needs-resolution? (ty-node-get inner))]
+    [(AstType.Consume inner) (tc-type-needs-resolution? (ty-node-get inner))]
     [(AstType.VarArgs _ _) true]
     [(AstType.Var _) true]
     [_ false]))
@@ -10993,7 +11006,7 @@
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.I64))
         (= (ast-param-list-len (& params)) 1)
         (match (ast-param-list-get (& params) 0 (ast-param-fallback))
-          [(AstParam.Param _ text _)
+          [(AstParam.Param _ text _ _)
             (tc-str-ref-type? (tc-resolve-type ctx text))]
           [_ false]))]
     [_ false]))
@@ -11009,9 +11022,9 @@
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.Char))
         (= (ast-param-list-len (& params)) 2)
         (match (ast-param-list-get (& params) 0 (ast-param-fallback))
-          [(AstParam.Param _ text _)
+          [(AstParam.Param _ text _ _)
             (match (ast-param-list-get (& params) 1 (ast-param-fallback))
-              [(AstParam.Param _ index _)
+              [(AstParam.Param _ index _ _)
                 (and
                   (tc-str-ref-type? (tc-resolve-type ctx text))
                   (tc-type-eq (tc-resolve-type ctx index) (AstType.I64)))]
@@ -11030,9 +11043,9 @@
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.Bool))
         (= (ast-param-list-len (& params)) 2)
         (match (ast-param-list-get (& params) 0 (ast-param-fallback))
-          [(AstParam.Param _ left _)
+          [(AstParam.Param _ left _ _)
             (match (ast-param-list-get (& params) 1 (ast-param-fallback))
-              [(AstParam.Param _ right _)
+              [(AstParam.Param _ right _ _)
                 (and
                   (tc-str-ref-type? (tc-resolve-type ctx left))
                   (tc-str-ref-type? (tc-resolve-type ctx right)))]
@@ -11051,9 +11064,9 @@
         (tc-type-eq (tc-resolve-type ctx ret) (AstType.String))
         (= (ast-param-list-len (& params)) 2)
         (match (ast-param-list-get (& params) 0 (ast-param-fallback))
-          [(AstParam.Param _ left _)
+          [(AstParam.Param _ left _ _)
             (match (ast-param-list-get (& params) 1 (ast-param-fallback))
-              [(AstParam.Param _ right _)
+              [(AstParam.Param _ right _ _)
                 (and
                   (tc-str-ref-type? (tc-resolve-type ctx left))
                   (tc-str-ref-type? (tc-resolve-type ctx right)))]
@@ -12714,6 +12727,8 @@
         (ast-ty-mut-ref region (tc-resolve-type ctx (ty-node-get inner)))]
       [(AstType.Region region inner)
         (ast-ty-region region (tc-resolve-type ctx (ty-node-get inner)))]
+      [(AstType.Consume inner)
+        (ast-ty-consume (tc-resolve-type ctx (ty-node-get inner)))]
       [(AstType.VarArgs name lifetimes)
         (tc-resolve-type-name-with-args
           ctx
@@ -12969,7 +12984,7 @@
   (if (>= index (ast-param-list-len params))
     ResultTcUnit.Ok
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (match (tc-source-type-policy-ok ctx ty)
           [(ResultTcUnit.Ok)
             (tc-source-param-list-policy-ok-at ctx params (+ index 1))]
@@ -14514,6 +14529,11 @@
           (and
             (= a-name b-name)
             (tc-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner)
+          (tc-type-eq (ty-node-get a-inner) (ty-node-get b-inner))]
         [_ false])]))
 
 (define (tc-type-eq [a : AstType] [b : AstType]) : bool
@@ -14822,7 +14842,8 @@
     [(AstType.Struct _) (TcMoveKind.MoveOnly)]
     [(AstType.StructArgs _ _) (TcMoveKind.MoveOnly)]
     [(AstType.Var _) (TcMoveKind.MoveOnly)]
-    [(AstType.VarArgs _ _) (TcMoveKind.MoveOnly)]))
+    [(AstType.VarArgs _ _) (TcMoveKind.MoveOnly)]
+    [(AstType.Consume inner) (tc-type-move-kind (ty-node-get inner))]))
 
 (define (tc-move-kind-copyable? [kind : TcMoveKind]) : bool
   (match kind
@@ -16756,10 +16777,15 @@
     unit
     (begin
       (match (ast-param-list-get params index (ast-param-fallback))
-        [(AstParam.Param _ ty _)
-          (ast-type-list-push
-            out
-            (ast-node-pool-reader-type-push (tc-resolve-type ctx ty)))])
+        [(AstParam.Param _ ty _ consume?)
+          (let
+            [resolved : AstType (tc-resolve-type ctx ty)]
+            (ast-type-list-push
+              out
+              (ast-node-pool-reader-type-push
+                (if consume?
+                  (ast-ty-consume resolved)
+                  resolved))))])
       (tc-param-type-list-into ctx params (+ index 1) out))))
 
 (define (tc-param-type-list [ctx : TcContext] [params : AstParamList]) : AstTypeList
@@ -16874,7 +16900,7 @@
   (if (>= index (ast-param-list-len params))
     env
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty _)
+      [(AstParam.Param name ty _ _)
         (tc-bind-params-at
           ctx
           (tc-bind-id env name (tc-resolve-type ctx ty))
@@ -20046,6 +20072,8 @@
         (tc-lifetime-subst-list subst (box-get lifetimes)))]
     [(AstType.VarArgs name lifetimes)
       (ast-ty-var-args name (tc-lifetime-subst-list subst (box-get lifetimes)))]
+    [(AstType.Consume inner)
+      (ast-ty-consume (tc-lifetime-subst-type subst (ty-node-get inner)))]
     [_ ty]))
 
 (define (tc-infer-lifetime-name
@@ -20517,7 +20545,9 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
+          (ast-type-strip-consuming-param
+            (ty-node-get
+              (ast-type-list-get params index (ast-type-id-fallback))))]
         (if (tc-lifetime-subst-formal-inert? ctx want)
           (tc-infer-call-lifetime-subst-at
             ctx
@@ -22409,7 +22439,9 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
+          (ast-type-strip-consuming-param
+            (ty-node-get
+              (ast-type-list-get params index (ast-type-id-fallback))))]
         (match (tc-call-effective-arg-expr ctx env arg want)
           [(ResultTcExpr.Ok effective-arg)
             (let
@@ -22531,7 +22563,9 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         [want : AstType
-          (ty-node-get (ast-type-list-get params index (ast-type-id-fallback)))]
+          (ast-type-strip-consuming-param
+            (ty-node-get
+              (ast-type-list-get params index (ast-type-id-fallback))))]
         (match (tc-expr-with-expected-or-actual ctx env arg want)
           [(ResultTcType.Ok got)
             (match (tc-expect-at-expr
@@ -25113,7 +25147,7 @@
             (match arg-info
               [(TcSpmdExprInfo _ arg-class next-caller-spmd-env)
                 (match (ast-param-list-get params index (ast-param-fallback))
-                  [(AstParam.Param param-name param-ty _)
+                  [(AstParam.Param param-name param-ty _ _)
                     (let
                       [bound-ty : AstType (tc-resolve-type helper-ctx param-ty)]
                       (if (and
@@ -27976,7 +28010,7 @@
   (if (>= index (ast-param-list-len params))
     bound
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _)
+      [(AstParam.Param name _ _ _)
         (tc-param-list-add-bound-names-at
           params
           (+ index 1)
@@ -30828,7 +30862,12 @@
               (tc-inline-aggregate-layout-size layout)
               (tc-inline-aggregate-layout-align layout)))]
         [(ResultTcInlineAggregateLayout.Err message)
-          (ResultTcLayoutInfo.Err message)])]))
+          (ResultTcLayoutInfo.Err message)])]
+    [(AstType.Consume inner)
+      (tc-inline-aggregate-type-layout-with-stack
+        ctx
+        (tc-context-type-get ctx inner)
+        stack)]))
 
 (define (tc-inline-aggregate-type-layout [ctx : TcContext] [ty : AstType]) : ResultTcLayoutInfo
   (tc-inline-aggregate-type-layout-with-stack ctx ty TcStringList.Nil))
@@ -38980,6 +39019,12 @@
           (tc-cleanup-owning-struct-type? ctx resolved))]
       [_ false])))
 
+(define (tc-call-param-consuming-now? [ctx : TcContext] [ty : AstType]) : bool
+  (if (ast-type-consuming-param? ty)
+    (tc-type-move-only?
+      (tc-resolve-type ctx (ast-type-strip-consuming-param ty)))
+    (tc-type-consuming-by-value-now? ctx ty)))
+
 ;; Matching a cleanup-owning enum consumes the whole scrutinee value. Ordinary
 ;; enums stay compatibility-non-consuming for existing AST/IR-style sharing.
 (define (tc-type-consuming-match-scrutinee-now?
@@ -39373,7 +39418,7 @@
   (if (>= index (ast-param-list-len params))
     acc
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _)
+      [(AstParam.Param name _ _ _)
         (tc-move-params-locals-at
           params
           (+ index 1)
@@ -39570,7 +39615,7 @@
     loop-carried
     moved
     expr
-    (tc-type-consuming-by-value-now? ctx target-ty)))
+    (tc-call-param-consuming-now? ctx target-ty)))
 
 (define (tc-move-after-move-only-value
   [ctx : TcContext]
@@ -40278,7 +40323,7 @@
       (let
         [head : i64 (ast-expr-list-get exprs index 0)]
         [head-expr : AstExpr (ast-node-get head)]
-        [ty : AstType
+        [raw-ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
         (match (tc-move-check-expr-id ctx env locals loop-carried moved head)
           [(TcMoveResult.Ok moved1)
@@ -40289,7 +40334,7 @@
               loop-carried
               moved1
               head-expr
-              ty)
+              raw-ty)
               [(TcMoveResult.Ok moved2)
                 (tc-move-check-exprs-with-types-no-auto-at
                   ctx
@@ -40339,8 +40384,9 @@
       (let
         [head : i64 (ast-expr-list-get exprs index 0)]
         [head-expr : AstExpr (ast-node-get head)]
-        [ty : AstType
+        [raw-ty : AstType
           (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        [ty : AstType (ast-type-strip-consuming-param raw-ty)]
         (match (cfg
           compile-profile
           (compiler-tc-reinfer-profile-effective-arg-expr
@@ -40366,7 +40412,7 @@
                   loop-carried
                   moved1
                   effective-head
-                  ty)
+                  raw-ty)
                   [(TcMoveResult.Ok moved2)
                     (tc-move-check-exprs-with-types-auto-at
                       ctx
@@ -42745,7 +42791,7 @@
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcBorrowCheckResult
-  (if (tc-type-consuming-by-value-now? ctx target-ty)
+  (if (tc-call-param-consuming-now? ctx target-ty)
     (tc-borrow-check-after-consuming-place locals borrowed expr)
     (TcBorrowCheckResult.Ok borrowed)))
 
@@ -42765,7 +42811,7 @@
   [borrowed : TcMovedSet]
   [expr : AstExpr]
   [target-ty : AstType]) : TcBorrowCheckResult
-  (if (tc-type-consuming-by-value-now? ctx target-ty)
+  (if (tc-call-param-consuming-now? ctx target-ty)
     (TcBorrowCheckResult.Ok borrowed)
     (tc-borrow-check-place-read-conflict locals borrowed expr expr)))
 
@@ -43493,15 +43539,27 @@
   [borrowed : TcMovedSet]
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
-  (match (tc-borrow-check-expr ctx env locals borrowed arg)
-    [(TcBorrowCheckResult.Ok borrowed1)
-      (match (tc-borrow-check-after-consuming-value ctx locals borrowed1 arg ty)
-        [(TcBorrowCheckResult.Ok borrowed2)
-          (if (= (tc-moved-len borrowed2) 0)
-            (TcBorrowCheckResult.Ok borrowed2)
-            (tc-borrow-check-after-reading-value ctx locals borrowed2 arg ty))]
-        [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
-    [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)]))
+  (let
+    [want : AstType (ast-type-strip-consuming-param ty)]
+    (match (tc-borrow-check-expr ctx env locals borrowed arg)
+      [(TcBorrowCheckResult.Ok borrowed1)
+        (match (tc-borrow-check-after-consuming-value
+          ctx
+          locals
+          borrowed1
+          arg
+          ty)
+          [(TcBorrowCheckResult.Ok borrowed2)
+            (if (= (tc-moved-len borrowed2) 0)
+              (TcBorrowCheckResult.Ok borrowed2)
+              (tc-borrow-check-after-reading-value
+                ctx
+                locals
+                borrowed2
+                arg
+                want))]
+          [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])]
+      [(TcBorrowCheckResult.Err message) (TcBorrowCheckResult.Err message)])))
 
 (define (tc-borrow-check-arg-with-type
   [ctx : TcContext]
@@ -43510,25 +43568,27 @@
   [borrowed : TcMovedSet]
   [arg : AstExpr]
   [ty : AstType]) : TcBorrowCheckResult
-  (match (cfg
-    compile-profile
-    (compiler-tc-reinfer-profile-effective-arg-expr
-      "borrow.call_arg"
-      ctx
-      env
-      arg
-      ty)
-    (tc-call-effective-arg-expr ctx env arg ty))
-    [(ResultTcExpr.Ok effective)
-      (tc-borrow-check-effective-arg-with-type
+  (let
+    [want : AstType (ast-type-strip-consuming-param ty)]
+    (match (cfg
+      compile-profile
+      (compiler-tc-reinfer-profile-effective-arg-expr
+        "borrow.call_arg"
         ctx
         env
-        locals
-        borrowed
-        effective
-        ty)]
-    [(ResultTcExpr.Err message)
-      (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))]))
+        arg
+        want)
+      (tc-call-effective-arg-expr ctx env arg want))
+      [(ResultTcExpr.Ok effective)
+        (tc-borrow-check-effective-arg-with-type
+          ctx
+          env
+          locals
+          borrowed
+          effective
+          ty)]
+      [(ResultTcExpr.Err message)
+        (TcBorrowCheckResult.Err (tc-locate-error-at-expr arg message))])))
 
 (define (tc-borrow-check-exprs-with-types
   [ctx : TcContext]
@@ -43710,8 +43770,9 @@
       (return (TcBorrowCheckResult.Err "typecheck: arity mismatch")))
     (let
       [head-expr : AstExpr (ast-node-get (ast-expr-list-get exprs index 0))]
-      [ty : AstType
+      [raw-ty : AstType
         (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+      [ty : AstType (ast-type-strip-consuming-param raw-ty)]
       (match (cfg
         compile-profile
         (compiler-tc-reinfer-profile-effective-arg-expr
@@ -43753,7 +43814,7 @@
                   locals
                   borrowed
                   effective-head
-                  ty)
+                  raw-ty)
                   [(TcBorrowCheckResult.Ok borrowed1)
                     (tc-borrow-check-call-args-two-phase-with-types-at
                       ctx
@@ -43774,7 +43835,7 @@
                 locals
                 borrowed
                 effective-head
-                ty)
+                raw-ty)
                 [(TcBorrowCheckResult.Ok borrowed1)
                   (tc-borrow-check-call-args-two-phase-with-types-at
                     ctx
@@ -48987,7 +49048,9 @@
         [(ResultMacroSexpr.Ok sinner)
           (ResultMacroSexpr.Ok
             (macro-form2 "in" (SpannedSexpr.Sym region span) sinner span))]
-        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]))
+        [(ResultMacroSexpr.Err diag) (ResultMacroSexpr.Err diag)])]
+    [(AstType.Consume inner)
+      (macro-type-unary-sexpr ":consume" inner span origin)]))
 
 (define (macro-child-form1
   [name : String]
@@ -50395,7 +50458,7 @@
   (if (>= index (ast-param-list-len params))
     (MacroHygieneParams.Params (ast-param-list-new) env)
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty comptime?)
+      [(AstParam.Param name ty comptime? consume?)
         (match (macro-hygiene-bind-name env macro-name depth (intern-str name))
           [(MacroHygieneName.Name renamed next-env)
             (match (macro-hygiene-param-list-at
@@ -50406,7 +50469,9 @@
               depth)
               [(MacroHygieneParams.Params nrest final-env)
                 (MacroHygieneParams.Params
-                  (ast-param-cons (ast-param renamed ty comptime?) nrest)
+                  (ast-param-cons
+                    (ast-param-with-consume renamed ty comptime? consume?)
+                    nrest)
                   final-env)])])])))
 
 (define (macro-hygiene-pattern-list

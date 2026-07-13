@@ -414,6 +414,22 @@
   [rest : CompilerRegStringList]) : CompilerRegStringList
   (CompilerRegStringList.Cons head (box rest)))
 
+(define (compiler-reg-string-prefix? [text : String] [prefix : String]) : bool
+  (let
+    [text-len : i64 (string.string-length text)]
+    [prefix-len : i64 (string.string-length prefix)]
+    (if (> prefix-len text-len)
+      false
+      (string.eq (string.substring text 0 prefix-len) prefix))))
+
+(define (compiler-reg-spmd-varying-param? [name : String]) : bool
+  (compiler-reg-string-prefix? name "__tl_spmd_varying_arg_"))
+
+(define (compiler-reg-spmd-mask-param? [name : String]) : bool
+  (or
+    (string.eq name "__tl_spmd_active_mask")
+    (compiler-reg-string-prefix? name "__tl_spmd_mask_arg_")))
+
 (define (compiler-reg-assignment-cons
   [head : CompilerRegAssignment]
   [rest : CompilerRegAssignmentList]) : CompilerRegAssignmentList
@@ -4075,6 +4091,31 @@
         [(CompilerLiveUseDef.Def vector-set mask-set)
           (let
             [call-points : CompilerLiveI64Set (compiler-reg-call-points func)]
+            ;; Only hidden helper parameters must escape the structural
+            ;; non-scalar block so their incoming private registers get homes.
+            ;; SpmdCall operands/results can use their ordinary vector spill
+            ;; homes; admitting them to fixed-register allocation here would
+            ;; also reclassify synthetic/scalar IR fixtures as SIMD values.
+            [private-param-vars : CompilerLiveI64Set
+              (match (compiler-reg-spmd-private-param-defs
+                params
+                (compiler-live-set-empty)
+                (compiler-live-set-empty))
+                [(CompilerLiveUseDef.Def private-vectors private-masks)
+                  (compiler-live-set-union private-vectors private-masks)])]
+            [base-ineligible : CompilerLiveI64Set
+              (compiler-live-set-minus
+                (compiler-reg-ineligible-memory
+                  blocks
+                  (compiler-reg-ineligible-params
+                    params
+                    (compiler-reg-call-arg-vars-blocks
+                      blocks
+                      (compiler-reg-ineligible-non-scalars
+                        types
+                        (compiler-live-set-empty)
+                        false))))
+                private-param-vars)]
             (compiler-reg-mark-spanning-in-set
               intervals
               mask-set
@@ -4087,16 +4128,7 @@
                   intervals
                   type-info
                   call-points
-                  (compiler-reg-ineligible-memory
-                    blocks
-                    (compiler-reg-ineligible-params
-                      params
-                      (compiler-reg-call-arg-vars-blocks
-                        blocks
-                        (compiler-reg-ineligible-non-scalars
-                          types
-                          (compiler-live-set-empty)
-                          false))))))))])]))
+                  base-ineligible))))])]))
 
 (define (compiler-reg-interval-before?
   [left : CompilerRegInterval]
@@ -4185,6 +4217,19 @@
           (match elem-ty
             [(AstType.Bool) set]
             [_ (compiler-live-set-insert set dst)])])]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ backend _ _ _ result)
+          (match backend
+            [(CompilerIrSpmdBackend.Avx512)
+              (match result
+                [(CompilerIrSpmdCallResult.Unit) set]
+                [(CompilerIrSpmdCallResult.Value dst class _)
+                  (match class
+                    [(CompilerIrSpmdValueClass.Varying)
+                      (compiler-live-set-insert set dst)]
+                    [_ set])])]
+            [_ set])])]
     [_ set]))
 
 (define (compiler-reg-mask-defs-instr
@@ -4204,7 +4249,43 @@
             [(AstType.Bool) (compiler-live-set-insert set dst)]
             [_ set])])]
     [(CompilerIrInstr.TailMask dst _ _ _) (compiler-live-set-insert set dst)]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ backend _ _ _ result)
+          (match backend
+            [(CompilerIrSpmdBackend.Avx512)
+              (match result
+                [(CompilerIrSpmdCallResult.Unit) set]
+                [(CompilerIrSpmdCallResult.Value dst class _)
+                  (match class
+                    [(CompilerIrSpmdValueClass.Mask)
+                      (compiler-live-set-insert set dst)]
+                    [_ set])])]
+            [_ set])])]
     [_ set]))
+
+(define (compiler-reg-spmd-private-param-defs
+  [params : CompilerIrParamList]
+  [vector-set : CompilerLiveI64Set]
+  [mask-set : CompilerLiveI64Set]) : CompilerLiveUseDef
+  (match (compiler-ir-param-list-force-cons params)
+    [(CompilerIrParamList.Nil) (CompilerLiveUseDef.Def vector-set mask-set)]
+    [(CompilerIrParamList.Array seq)
+      (compiler-reg-spmd-private-param-defs
+        (compiler-ir-param-seq-to-list seq)
+        vector-set
+        mask-set)]
+    [(CompilerIrParamList.Cons param rest)
+      (match param
+        [(CompilerIrParam.Param name _ var)
+          (compiler-reg-spmd-private-param-defs
+            (box-get rest)
+            (if (compiler-reg-spmd-varying-param? name)
+              (compiler-live-set-insert vector-set var)
+              vector-set)
+            (if (compiler-reg-spmd-mask-param? name)
+              (compiler-live-set-insert mask-set var)
+              mask-set))])]))
 
 (define (compiler-reg-vector-mask-defs-instr-seq
   [instrs : CompilerIrInstrSeq]
@@ -4270,11 +4351,13 @@
 
 (define (compiler-reg-function-vector-mask-defs [func : CompilerIrFunction]) : CompilerLiveUseDef
   (match func
-    [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (compiler-reg-vector-mask-defs-blocks
-        blocks
+    [(CompilerIrFunction.Function _ params _ _ blocks)
+      (match (compiler-reg-spmd-private-param-defs
+        params
         (compiler-live-set-empty)
-        (compiler-live-set-empty))]))
+        (compiler-live-set-empty))
+        [(CompilerLiveUseDef.Def vector-set mask-set)
+          (compiler-reg-vector-mask-defs-blocks blocks vector-set mask-set)])]))
 
 (define (compiler-reg-special-candidates
   [intervals : CompilerRegIntervalList]
@@ -17136,6 +17219,23 @@
           (match elem-ty
             [(AstType.Bool) unit]
             [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])])]
+    [(CompilerIrInstr.SpmdCall payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrSpmdCallPayload.Payload _ backend lanes _ _ result)
+          (match backend
+            [(CompilerIrSpmdBackend.Avx512)
+              (match result
+                [(CompilerIrSpmdCallResult.Unit) unit]
+                [(CompilerIrSpmdCallResult.Value dst class elem-ty)
+                  (match class
+                    [(CompilerIrSpmdValueClass.Varying)
+                      (compiler-reg-vector-stack-words-set!
+                        words
+                        dst
+                        lanes
+                        elem-ty)]
+                    [_ unit])])]
+            [_ unit])])]
     [_ unit]))
 
 (define (compiler-reg-vector-stack-words-seq!

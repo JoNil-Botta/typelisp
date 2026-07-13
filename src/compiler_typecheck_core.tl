@@ -26001,6 +26001,20 @@
     [(ResultTcEnv.Ok helper-env) helper-env]
     [(ResultTcEnv.Err _) fallback]))
 
+(define (tc-spmd-inline-helper-arg-role [spmd-env : TcSpmdEnv] [arg : AstExpr]) : TcSpmdRole
+  (match arg
+    [(AstExpr.Spanned inner-box _)
+      (tc-spmd-inline-helper-arg-role spmd-env (ast-node-get inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (tc-spmd-inline-helper-arg-role spmd-env (ast-node-get inner-box))]
+    [(AstExpr.Cast inner-box _)
+      (tc-spmd-inline-helper-arg-role spmd-env (ast-node-get inner-box))]
+    [(AstExpr.Var name)
+      (match (tc-spmd-env-lookup spmd-env (intern-str name))
+        [(TcSpmdLookup.Found _ _ _ role) role]
+        [(TcSpmdLookup.Missing) TcSpmdRole.Value])]
+    [_ TcSpmdRole.Value]))
+
 (define (tc-spmd-inline-helper-bind-args
   [ctx : TcContext]
   [caller-env : TcTypeEnv]
@@ -26070,12 +26084,13 @@
                           next-caller-spmd-env
                           helper-ctx
                           (tc-bind-id helper-env param-name bound-ty)
-                          (tc-spmd-env-bind
+                          (tc-spmd-env-bind-role
                             helper-spmd-env
                             (intern-str param-name)
                             bound-ty
                             arg-class
-                            TcSpmdScope.Local)
+                            TcSpmdScope.Local
+                            (tc-spmd-inline-helper-arg-role caller-spmd-env arg))
                           params
                           args
                           (+ index 1)

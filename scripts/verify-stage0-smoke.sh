@@ -84,6 +84,51 @@ echo "[stage0-smoke] check examples/hello.tl with source stdlib"
 echo "[stage0-smoke] check examples/hello.tl with embedded stdlib"
 "$TL" check examples/hello.tl
 
+echo "[stage0-smoke] run exact include-str/include-bin with embedded stdlib"
+TL_ABS=$(CDPATH= cd -- "$(dirname -- "$TL")" && pwd)/$(basename -- "$TL")
+NO_ROOT_DIR="$ROOT/target/stage0-smoke-no-root"
+rm -rf "$NO_ROOT_DIR"
+mkdir -p "$NO_ROOT_DIR"
+cp tests/integration/embedded_stdlib_exact_include.tl "$NO_ROOT_DIR/exact_include.tl"
+cp tests/integration/embedded_stdlib_diagnostic_parity.tl \
+    "$NO_ROOT_DIR/diagnostic_parity.tl"
+(
+    cd "$NO_ROOT_DIR"
+    set +e
+    "$TL_ABS" run exact_include.tl
+    status=$?
+    set -e
+    if [ "$status" -ne 42 ]; then
+        echo "embedded stdlib exact include smoke exited $status, expected 42" >&2
+        exit 1
+    fi
+)
+
+echo "[stage0-smoke] compare source-root and embedded stdlib diagnostics"
+(
+    cd "$NO_ROOT_DIR"
+    set +e
+    "$TL_ABS" check diagnostic_parity.tl --stdlib-root "$ROOT/stdlib" \
+        > source-root.stdout 2> source-root.stderr
+    source_status=$?
+    "$TL_ABS" check diagnostic_parity.tl \
+        > embedded.stdout 2> embedded.stderr
+    embedded_status=$?
+    set -e
+    if [ "$source_status" -eq 0 ] || [ "$embedded_status" -eq 0 ]; then
+        echo "embedded stdlib diagnostic parity fixture unexpectedly passed" >&2
+        exit 1
+    fi
+    if [ "$source_status" -ne "$embedded_status" ] \
+        || ! cmp -s source-root.stdout embedded.stdout \
+        || ! cmp -s source-root.stderr embedded.stderr; then
+        echo "source-root and embedded stdlib diagnostics differ" >&2
+        diff -u source-root.stdout embedded.stdout >&2 || true
+        diff -u source-root.stderr embedded.stderr >&2 || true
+        exit 1
+    fi
+)
+
 echo "[stage0-smoke] check src/main.tl with compiler roots"
 "$TL" check src/main.tl --stdlib-root stdlib --stdlib-root src
 

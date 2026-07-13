@@ -44851,39 +44851,37 @@
           [(ResultLowerFunction.Ok fns _function-spans)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]
+              [escaped-fns : CompilerIrFunctionList
+                (lower-function-list-escape-to-ir-arena fns)]
+              ;; The IR function clones go to the dedicated lowered-IR
+              ;; arena (released by the driver after optimization); the
+              ;; spans side-table is rebuilt in the enclosing arena since
+              ;; it outlives the lowered IR. The stored handle must follow
+              ;; the arena's grown head, or every later allocation re-walks
+              ;; the overflow path from the full first segment.
               (begin
-                ;; The IR function clones go to the dedicated lowered-IR
-                ;; arena (released by the driver after optimization); the
-                ;; spans side-table is rebuilt in the enclosing arena since
-                ;; it outlives the lowered IR. The stored handle must follow
-                ;; the arena's grown head, or every later allocation re-walks
-                ;; the overflow path from the full first segment.
+                (unsafe
+                  (arena.tl_arena_set enclosing))
+                (set!
+                  lower-spmd-inline-helper-stack
+                  (lower-spmd-inline-empty-helper-stack))
                 (let
-                  [escaped-fns : CompilerIrFunctionList
-                    (lower-function-list-escape-to-ir-arena fns)]
+                  [escaped-spans : CompilerSourceSpans
+                    (lower-record-function-span spans logical-name body)]
+                  [new-enclosing : i64 (arena.tl_arena_current)]
                   (begin
                     (unsafe
-                      (arena.tl_arena_set enclosing))
-                    (set!
-                      lower-spmd-inline-helper-stack
-                      (lower-spmd-inline-empty-helper-stack))
-                    (let
-                      [escaped-spans : CompilerSourceSpans
-                        (lower-record-function-span spans logical-name body)]
-                      [new-enclosing : i64 (arena.tl_arena_current)]
-                      (begin
-                        (unsafe
-                          (arena.tl_arena_set scratch-head)
-                          (arena.tl_region_reset mark)
-                          (arena.tl_arena_set new-enclosing))
-                        (lower-scratch-arena-release-after-overflow!
-                          scratch
-                          scratch-head)
-                        (tc-nominal-owner-cache-reset!)
-                        (if prev-persist
-                          unit
-                          (intern-persistent-storage-disable!))
-                        (ResultLowerFunction.Ok escaped-fns escaped-spans)))))))]
+                      (arena.tl_arena_set scratch-head)
+                      (arena.tl_region_reset mark)
+                      (arena.tl_arena_set new-enclosing))
+                    (lower-scratch-arena-release-after-overflow!
+                      scratch
+                      scratch-head)
+                    (tc-nominal-owner-cache-reset!)
+                    (if prev-persist
+                      unit
+                      (intern-persistent-storage-disable!))
+                    (ResultLowerFunction.Ok escaped-fns escaped-spans)))))]
           [(ResultLowerFunction.Err message)
             (let
               [scratch-head : i64 (arena.tl_arena_current)]

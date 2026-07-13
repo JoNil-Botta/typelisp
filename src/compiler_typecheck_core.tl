@@ -55951,6 +55951,172 @@
           (macro-generated-catalog-variant-name? variants member)]
         [_ false]))))
 
+;; The expansion walker installs the declarations after the current import.
+;; Demand still follows the logical module across source files, but avoids
+;; rescanning the already-walked flattened-program prefix.
+(define macro-generated-catalog-demand-scope-active : bool
+  false)
+(define macro-generated-catalog-demand-scope : AstDeclList
+  (ast-decl-list-new))
+(define macro-generated-catalog-demand-index-capacity : i64
+  2048)
+(define macro-generated-catalog-demand-index-keys : (Array i64)
+  (array.make-array i64 2048))
+(define macro-generated-catalog-demand-index-decls : (Array AstDeclList)
+  (array.make-array AstDeclList 2048))
+(define macro-generated-catalog-demand-index-ready : bool
+  false)
+
+(define (macro-generated-catalog-demand-index-bucket [path-id : i64]) : i64
+  (bit-and
+    (* path-id 2654435761)
+    (- macro-generated-catalog-demand-index-capacity 1)))
+
+(define (macro-generated-catalog-demand-index-reset!) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index macro-generated-catalog-demand-index-capacity)
+        (begin
+          (array-set! macro-generated-catalog-demand-index-keys index 0)
+          (array-set!
+            macro-generated-catalog-demand-index-decls
+            index
+            (ast-decl-list-new))
+          (set! index (+ index 1))))
+      (set! macro-generated-catalog-demand-index-ready true))))
+
+(define (macro-generated-catalog-demand-index-slot
+  [path-id : i64]
+  [insert? : bool]) : i64
+  (let
+    [cursor : i64 (macro-generated-catalog-demand-index-bucket path-id)]
+    [key : i64 (+ path-id 1)]
+    [steps : i64 0]
+    [out : i64 -1]
+    [done : bool false]
+    (begin
+      (while (and
+        (not done)
+        (< steps macro-generated-catalog-demand-index-capacity))
+        (let
+          [slot : i64
+            (array-ref macro-generated-catalog-demand-index-keys cursor)]
+          (if (= slot key)
+            (begin
+              (set! out cursor)
+              (set! done true))
+            (if (= slot 0)
+              (begin
+                (if insert?
+                  (begin
+                    (array-set!
+                      macro-generated-catalog-demand-index-keys
+                      cursor
+                      key)
+                    (set! out cursor))
+                  unit)
+                (set! done true))
+              (begin
+                (set!
+                  cursor
+                  (bit-and
+                    (+ cursor 1)
+                    (- macro-generated-catalog-demand-index-capacity 1)))
+                (set! steps (+ steps 1)))))))
+      out)))
+
+(define (macro-generated-catalog-demand-index-add!
+  [path : String]
+  [decl : AstDecl]) : unit
+  (let
+    [slot : i64 (macro-generated-catalog-demand-index-slot (intern path) true)]
+    (if (< slot 0)
+      unit
+      (let
+        [items : AstDeclList
+          (array-ref macro-generated-catalog-demand-index-decls slot)]
+        (begin
+          (ast-decl-list-push (&mut items) decl)
+          (array-set! macro-generated-catalog-demand-index-decls slot items))))))
+
+(define (macro-generated-catalog-demand-index-build!
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : unit
+  (let
+    [count : i64
+      (if (< (ast-decl-list-len (& decls)) (ast-decl-path-list-len (& paths)))
+        (ast-decl-list-len (& decls))
+        (ast-decl-path-list-len (& paths)))]
+    [index : i64 0]
+    (begin
+      (macro-generated-catalog-demand-index-reset!)
+      (while (< index count)
+        (begin
+          (macro-generated-catalog-demand-index-add!
+            (ast-decl-path-list-get (& paths) index "")
+            (ast-decl-list-get (& decls) index (ast-decl-fallback)))
+          (set! index (+ index 1)))))))
+
+(define (macro-generated-catalog-demand-same-import-kind?
+  [left : AstImportKind]
+  [right : AstImportKind]) : bool
+  (match left
+    [(AstImportKind.Macro left-call _)
+      (match right
+        [(AstImportKind.Macro right-call _) (= left-call right-call)]
+        [_ false])]
+    [(AstImportKind.MacroDecls left-call _)
+      (match right
+        [(AstImportKind.MacroDecls right-call _) (= left-call right-call)]
+        [_ false])]
+    [_ false]))
+
+(define (macro-generated-catalog-demand-same-import?
+  [left : AstDecl]
+  [right : AstDecl]) : bool
+  (match left
+    [(AstDecl.ComptimeDecl _ inner-box)
+      (macro-generated-catalog-demand-same-import? (box-get inner-box) right)]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-catalog-demand-same-import? (box-get inner-box) right)]
+    [(AstDecl.Import (AstImportSpec.Spec left-kind _ _ _ _))
+      (match right
+        [(AstDecl.ComptimeDecl _ inner-box)
+          (macro-generated-catalog-demand-same-import? left (box-get inner-box))]
+        [(AstDecl.Unsafe inner-box)
+          (macro-generated-catalog-demand-same-import? left (box-get inner-box))]
+        [(AstDecl.Import (AstImportSpec.Spec right-kind _ _ _ _))
+          (macro-generated-catalog-demand-same-import-kind?
+            left-kind
+            right-kind)]
+        [_ false])]
+    [_ false]))
+
+(define (macro-generated-catalog-demand-index-tail-at
+  [items : AstDeclList]
+  [decl : AstDecl]) : MacroMaybeDeclList
+  (match (ast-decl-list-step items)
+    [(AstDeclListStep.Nil) (MacroMaybeDeclList.No)]
+    [(AstDeclListStep.Cons head rest)
+      (if (macro-generated-catalog-demand-same-import? head decl)
+        (MacroMaybeDeclList.Some rest)
+        (macro-generated-catalog-demand-index-tail-at rest decl))]))
+
+(define (macro-generated-catalog-demand-index-tail
+  [path : String]
+  [decl : AstDecl]) : MacroMaybeDeclList
+  (if macro-generated-catalog-demand-index-ready
+    (let
+      [slot : i64
+        (macro-generated-catalog-demand-index-slot (intern path) false)]
+      (if (< slot 0)
+        (MacroMaybeDeclList.No)
+        (macro-generated-catalog-demand-index-tail-at
+          (array-ref macro-generated-catalog-demand-index-decls slot)
+          decl)))
+    (MacroMaybeDeclList.No)))
+
 (define (macro-generated-catalog-demand-observation
   [decls : AstDeclList]
   [alias-name : String]
@@ -56374,7 +56540,12 @@
         (arena.tl_arena_set scratch))
       (let
         [importer-decls : AstDeclList
-          (macro-collect-module-body-decls orig-decls importer-module "")]
+          (if macro-generated-catalog-demand-scope-active
+            (macro-collect-module-body-decls
+              macro-generated-catalog-demand-scope
+              importer-module
+              importer-module)
+            (macro-collect-module-body-decls orig-decls importer-module ""))]
         [raw : MacroGeneratedModuleCatalogDemand
           (macro-generated-catalog-demand
             importer-decls
@@ -57756,6 +57927,41 @@
                 [(ResultMacroDecl.Err diag) (ResultMacroDeclExpansion.Err diag)])]
             [(ResultTcEnv.Err message)
               (ResultMacroDeclExpansion.Err (box (tc-decl-diag decl message)))])))]))
+
+(define (macro-expand-decl-with-path-demand-scope
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [orig-decls : AstDeclList]
+  [module : String]
+  [decl : AstDecl]
+  [decl-path : String]
+  [rest : AstDeclList]) : ResultMacroDeclExpansion
+  (let
+    [previous-active : bool macro-generated-catalog-demand-scope-active]
+    [previous-scope : AstDeclList macro-generated-catalog-demand-scope]
+    [import-placeholder? : bool (macro-decl-import-placeholder? decl)]
+    (begin
+      (set! macro-generated-catalog-demand-scope-active import-placeholder?)
+      (set!
+        macro-generated-catalog-demand-scope
+        (if import-placeholder?
+          (match (macro-generated-catalog-demand-index-tail decl-path decl)
+            [(MacroMaybeDeclList.Some source-rest) source-rest]
+            [(MacroMaybeDeclList.No) rest])
+          rest))
+      (let
+        [out : ResultMacroDeclExpansion
+          (macro-expand-decl-with-path
+            ctx
+            top-env
+            orig-decls
+            module
+            decl
+            decl-path)]
+        (begin
+          (set! macro-generated-catalog-demand-scope-active previous-active)
+          (set! macro-generated-catalog-demand-scope previous-scope)
+          out)))))
 
 (define (macro-module-generated-key? [key : String]) : bool
   (and
@@ -59191,13 +59397,14 @@
                 [_
                   (cond
                     [(macro-decl-import-placeholder? decl)
-                      (match (macro-expand-decl-with-path
+                      (match (macro-expand-decl-with-path-demand-scope
                         cur-ctx
                         cur-top-env
                         cur-orig-decls
                         cur-module
                         decl
-                        decl-path)
+                        decl-path
+                        rest)
                         [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
                           ;; A deduplicated splice (see
                           ;; macro-decls-splice-with-memo) expands to nothing:
@@ -59592,13 +59799,14 @@
                         (cfg
                           compile-profile
                           (compiler-tc-macro-profile-note-walk-decl-expanded))
-                        (match (macro-expand-decl-with-path
+                        (match (macro-expand-decl-with-path-demand-scope
                           cur-ctx
                           cur-top-env
                           cur-orig-decls
                           cur-module
                           decl
-                          decl-path)
+                          decl-path
+                          rest)
                           [(ResultMacroDeclExpansion.Ok expanded expanded-paths)
                             (begin
                               (set!
@@ -59811,6 +60019,7 @@
             (if (or has-defmacro has-visible-macro-call program-needs-expansion)
               (begin
                 (macro-expand-scratch-begin!)
+                (macro-generated-catalog-demand-index-build! decls paths)
                 (cfg compile-profile (compiler-tc-profile-start))
                 (match (macro-live-symbols-build-or-reuse! program paths)
                   [(ResultCompilerSymbols.Ok symbols)

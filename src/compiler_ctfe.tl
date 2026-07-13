@@ -406,9 +406,6 @@
     (ctfe-captured-expr-type-name)
     (ast-node-pool-context-type-push pools ty)))
 
-(define (ctfe-captured-expr-type [ty : AstType]) : AstType
-  (ctfe-captured-expr-type-with-pools (ast-node-pool-context-capture-active) ty))
-
 (define (ctfe-captured-expr-type? [ty : AstType]) : bool
   (match ty
     [(AstType.Region name _) (string.eq name (ctfe-captured-expr-type-name))]
@@ -423,11 +420,6 @@
         (ast-node-pool-context-type-get pools inner)
         ty)]
     [_ ty]))
-
-(define (ctfe-captured-expr-type-inner [ty : AstType]) : AstType
-  (ctfe-captured-expr-type-inner-with-pools
-    (ast-node-pool-context-capture-active)
-    ty))
 
 (define (ctfe-stdlib-comptime-type-key [name : String]) : String
   (string.append "stdlib.comptime/" name))
@@ -587,14 +579,6 @@
   [pools : AstNodePoolContext]) : CtfeEnv
   (CtfeEnv.Nil pools (CtfeMaybeSyntaxPools.None) layouts reflections))
 
-(define (ctfe-env-with-metadata
-  [layouts : CtfeLayoutInfoList]
-  [reflections : CtfeReflectInfoList]) : CtfeEnv
-  (ctfe-env-with-metadata-and-pools
-    layouts
-    reflections
-    (ast-node-pool-context-capture-active)))
-
 (define (ctfe-env-extend
   [env : CtfeEnv]
   [name : String]
@@ -674,9 +658,6 @@
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
   (CtfeReflectFieldList (array.make-array CtfeReflectField capacity) 0))
 
-(define (ctfe-reflect-field-list-empty) : CtfeReflectFieldList
-  (ctfe-reflect-field-list-with-capacity 0))
-
 (define (ctfe-reflect-field-list-ref
   [items : CtfeReflectFieldList]
   [index : i64]) : CtfeReflectField
@@ -694,9 +675,6 @@
 
 (define (ctfe-reflect-variant-list-with-capacity [capacity : i64]) : CtfeReflectVariantList
   (CtfeReflectVariantList (array.make-array CtfeReflectVariant capacity) 0))
-
-(define (ctfe-reflect-variant-list-empty) : CtfeReflectVariantList
-  (ctfe-reflect-variant-list-with-capacity 0))
 
 (define (ctfe-reflect-variant-list-ref
   [items : CtfeReflectVariantList]
@@ -877,9 +855,6 @@
 
 (define (ctfe-ty-get [env : CtfeEnv] [id : i64]) : AstType
   (ast-node-pool-context-type-get (ctfe-env-pools env) id))
-
-(define (ctfe-ty-push [env : CtfeEnv] [node : AstType]) : i64
-  (ast-node-pool-context-type-push (ctfe-env-pools env) node))
 
 ;; Lookup result for an environment probe.
 (defenum CtfeMaybeValue
@@ -1450,14 +1425,6 @@
 
 (defenum ResultCtfeQuoteResourceBindingsBuild
   (Ok i64)
-  (Err (Box CompilerDiagnostic)))
-
-(defenum ResultCtfeQuotePattern
-  (Ok AstPattern)
-  (Err (Box CompilerDiagnostic)))
-
-(defenum ResultCtfeQuotePatternList
-  (Ok AstPatternList)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultCtfeQuoteArms
@@ -2440,14 +2407,6 @@
         out
         (+ index 1)))))
 
-(define (ctfe-reflect-resolve-type-list
-  [infos : CtfeReflectInfoList]
-  [types : AstTypeList]) : AstTypeList
-  (ctfe-reflect-resolve-type-list-with-pools
-    (ast-node-pool-context-capture-active)
-    infos
-    types))
-
 (define (ctfe-reflect-resolve-type-with-pools
   [pools : AstNodePoolContext]
   [infos : CtfeReflectInfoList]
@@ -2541,12 +2500,6 @@
         [(CtfeMaybeReflectInfo.None) ty])]
     [_ ty]))
 
-(define (ctfe-reflect-resolve-type [infos : CtfeReflectInfoList] [ty : AstType]) : AstType
-  (ctfe-reflect-resolve-type-with-pools
-    (ast-node-pool-context-capture-active)
-    infos
-    ty))
-
 (define (ctfe-int-key [n : i64]) : String
   (if (< n 0)
     (string.append "m" (string.int->string (- 0 n)))
@@ -2575,12 +2528,6 @@
       (string.append
         "_"
         (ctfe-type-list-key-with-pools-at pools infos types (+ index 1))))))
-
-(define (ctfe-type-list-key [infos : CtfeReflectInfoList] [types : AstTypeList]) : String
-  (ctfe-type-list-key-with-pools
-    (ast-node-pool-context-capture-active)
-    infos
-    types))
 
 (define (ctfe-lifetime-list-key-at
   [lifetimes : (& lifetimes AstLifetimeList)]
@@ -2802,14 +2749,6 @@
     [(AstType.VarArgs _ _) "type-var"]
     [(AstType.Consume _) "consume-param"]))
 
-(define (ctfe-type-kind-with-reflections
-  [infos : CtfeReflectInfoList]
-  [ty : AstType]) : String
-  (ctfe-type-kind-with-reflections-and-pools
-    (ast-node-pool-context-capture-active)
-    infos
-    ty))
-
 (define (ctfe-eval-type-arg
   [arg : AstExpr]
   [expr : AstExpr]
@@ -2947,16 +2886,6 @@
           (ast-node-pool-context-type-get
             pools
             (ast-type-list-get (& types) index (ast-type-id-fallback))))))))
-
-(define (ctfe-type-list-ref
-  [types : AstTypeList]
-  [infos : CtfeReflectInfoList]
-  [index : i64]) : ResultCtfeTypeLookup
-  (ctfe-type-list-ref-with-pools
-    types
-    (ast-node-pool-context-capture-active)
-    infos
-    index))
 
 (define (ctfe-type-info-builtin-kind? [kind : String]) : bool
   (cond
@@ -3317,9 +3246,6 @@
         layouts
         (ast-node-pool-context-type-get pools inner))]))
 
-(define (ctfe-type-size [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
-  (ctfe-type-size-with-pools (ast-node-pool-context-capture-active) layouts ty))
-
 (define (ctfe-type-align-with-pools
   [pools : AstNodePoolContext]
   [layouts : CtfeLayoutInfoList]
@@ -3394,9 +3320,6 @@
         layouts
         (ast-node-pool-context-type-get pools inner))]))
 
-(define (ctfe-type-align [layouts : CtfeLayoutInfoList] [ty : AstType]) : i64
-  (ctfe-type-align-with-pools (ast-node-pool-context-capture-active) layouts ty))
-
 (define (ctfe-layout-query-value-with-pools
   [pools : AstNodePoolContext]
   [name : String]
@@ -3405,16 +3328,6 @@
   (if (string.eq name "size-of")
     (ctfe-type-size-with-pools pools layouts ty)
     (ctfe-type-align-with-pools pools layouts ty)))
-
-(define (ctfe-layout-query-value
-  [name : String]
-  [layouts : CtfeLayoutInfoList]
-  [ty : AstType]) : i64
-  (ctfe-layout-query-value-with-pools
-    (ast-node-pool-context-capture-active)
-    name
-    layouts
-    ty))
 
 ;; Evaluate `(size-of (type T))` / `(align-of (type T))` to an `i64` in comptime.
 (define (ctfe-eval-size-align-query
@@ -3484,14 +3397,6 @@
         layouts
         (ast-node-pool-context-type-get pools inner))]
     [_ (CtfeMaybeLayoutInfo.None)]))
-
-(define (ctfe-layout-info-for-type
-  [layouts : CtfeLayoutInfoList]
-  [ty : AstType]) : CtfeMaybeLayoutInfo
-  (ctfe-layout-info-for-type-with-pools
-    (ast-node-pool-context-capture-active)
-    layouts
-    ty))
 
 ;; Evaluate `(offset-of (type Struct) field)` to the field byte offset.
 ;; The field name is intentionally syntactic: a bare variable names the field
@@ -5406,12 +5311,6 @@
         (ctfe-diagnostic-at-expr
           expr
           (string.append name " expects a sequence and an index"))))))
-
-(define (ctfe-comptime-sequence-length-name? [name : String]) : bool
-  (ctfe-builtin-sequence-length-id? (intern name)))
-
-(define (ctfe-comptime-sequence-nth-name? [name : String]) : bool
-  (ctfe-builtin-sequence-nth-id? (intern name)))
 
 (define (ctfe-expr-if-condition-type-ok? [env : CtfeEnv] [ty : AstType]) : bool
   (or (ctfe-type-eq-in-env env ty (AstType.Bool)) (ctfe-untyped-expr-type? ty)))
@@ -11283,24 +11182,6 @@
 (define (ctfe-expr-list-eq [a : AstExprList] [b : AstExprList]) : bool
   (ctfe-expr-list-eq-in-env (ctfe-env-empty) a b))
 
-(define (ctfe-expr-clause-eq [a : AstExprClause] [b : AstExprClause]) : bool
-  (ctfe-expr-clause-eq-in-env (ctfe-env-empty) a b))
-
-(define (ctfe-expr-clause-list-eq
-  [a : AstExprClauseList]
-  [b : AstExprClauseList]) : bool
-  (ctfe-expr-clause-list-eq-in-env (ctfe-env-empty) a b))
-
-(define (ctfe-expr-binding-clause-eq
-  [a : AstExprBindingClause]
-  [b : AstExprBindingClause]) : bool
-  (ctfe-expr-binding-clause-eq-in-env (ctfe-env-empty) a b))
-
-(define (ctfe-expr-binding-clause-list-eq
-  [a : AstExprBindingClauseList]
-  [b : AstExprBindingClauseList]) : bool
-  (ctfe-expr-binding-clause-list-eq-in-env (ctfe-env-empty) a b))
-
 (define (ctfe-binop-eq [a : AstBinOp] [b : AstBinOp]) : bool
   (match a
     [(AstBinOp.Add)
@@ -11392,9 +11273,6 @@
         [_ false])]))
 
 ;; CONSTRUCTORS ----------------------------------------------------------------
-(define (ctfe-expr-literal [lit : AstLiteral]) : i64
-  (ast-node-push (AstExpr.Literal lit)))
-
 (define (ctfe-expr-bool [b : bool]) : i64
   (ast-node-push (AstExpr.Literal (AstLiteral.Bool b))))
 
@@ -11404,22 +11282,10 @@
 (define (ctfe-expr-struct-get [target : i64] [field : String]) : i64
   (ast-expr-struct-get target field))
 
-(define (ctfe-expr-tuple-ref [target : i64] [index : i64]) : i64
-  (ast-expr-tuple-ref target index))
-
 (define (ctfe-expr-if [cond : i64] [then-branch : i64] [else-branch : i64]) : i64
   (ast-expr-if cond then-branch else-branch))
 
-(define (ctfe-expr-call [func : i64] [args : AstExprList]) : i64
-  (ast-expr-call func args))
-
-(define (ctfe-expr-begin [exprs : AstExprList]) : i64
-  (ast-node-push (AstExpr.Begin exprs)))
-
 ;; LIST UTILITIES --------------------------------------------------------------
-(define (ctfe-expr-list-empty) : AstExprList
-  (ast-expr-list-new))
-
 (define (ctfe-expr-list-singleton [e : i64]) : AstExprList
   (ast-expr-cons e (ast-expr-list-new)))
 
@@ -11441,22 +11307,6 @@
 (define (ctfe-expr-clause-list-length [lst : AstExprClauseList]) : i64
   (struct-get (& lst) len))
 
-(define (ctfe-expr-clause-list-empty? [lst : AstExprClauseList]) : bool
-  (ast-expr-clause-list-empty? (& lst)))
-
-;; Vector `get` fallbacks are eager. Avoid node-creating fallbacks on valid
-;; accesses: a no-pool `ast-node-push` can overwrite a captured CTFE pool slot
-;; that shares the active pool storage but has an independent node count.
-(define (ctfe-expr-clause-list-head [lst : AstExprClauseList]) : AstExprClause
-  (if (ast-expr-clause-list-empty? (& lst))
-    (ast-expr-clause
-      (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))
-      (ast-node-push (AstExpr.Literal (AstLiteral.Unit))))
-    (ast-expr-clause-list-get (& lst) 0 (ast-expr-clause-fallback))))
-
-(define (ctfe-expr-clause-list-tail [lst : AstExprClauseList]) : AstExprClauseList
-  (ast-expr-clause-list-tail lst))
-
 (define (ctfe-expr-clause-list-nth [lst : AstExprClauseList] [index : i64]) : AstExprClause
   (if (or (< index 0) (>= index (struct-get (& lst) len)))
     (ast-expr-clause
@@ -11472,9 +11322,6 @@
     (ast-expr-cons
       (ctfe-expr-clause-first clause)
       (ast-expr-cons (ctfe-expr-clause-second clause) (ast-expr-list-new)))))
-
-(define (ctfe-expr-clause-as-bracket-expr [clause : AstExprClause]) : i64
-  (ctfe-expr-clause-as-bracket-expr-in-env (ctfe-env-empty) clause))
 
 (define (ctfe-expr-clause-list->expr-list-in-env
   [env : CtfeEnv]
@@ -11500,9 +11347,6 @@
           (ast-expr-clause-list-get lst index (ast-expr-clause-fallback))))
       (ctfe-expr-clause-list->expr-list-into env lst (+ index 1) out))))
 
-(define (ctfe-expr-clause-list->expr-list [lst : AstExprClauseList]) : AstExprList
-  (ctfe-expr-clause-list->expr-list-in-env (ctfe-env-empty) lst))
-
 (define (ctfe-expr-binding-clause-name [clause : AstExprBindingClause]) : String
   (intern-str (struct-get clause name)))
 
@@ -11518,9 +11362,6 @@
 (define (ctfe-expr-binding-clause-list-length [lst : AstExprBindingClauseList]) : i64
   (struct-get (& lst) len))
 
-(define (ctfe-expr-binding-clause-list-empty? [lst : AstExprBindingClauseList]) : bool
-  (ast-expr-binding-clause-list-empty? (& lst)))
-
 (define (ctfe-expr-binding-clause-empty-default) : AstExprBindingClause
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
@@ -11530,17 +11371,6 @@
       unit-expr
       unit-expr
       (ast-source-span 0 0 0 0))))
-
-(define (ctfe-expr-binding-clause-list-head [lst : AstExprBindingClauseList]) : AstExprBindingClause
-  (if (ast-expr-binding-clause-list-empty? (& lst))
-    (ctfe-expr-binding-clause-empty-default)
-    (ast-expr-binding-clause-list-get
-      (& lst)
-      0
-      (ast-expr-binding-clause-fallback))))
-
-(define (ctfe-expr-binding-clause-list-tail [lst : AstExprBindingClauseList]) : AstExprBindingClauseList
-  (ast-expr-binding-clause-list-tail lst))
 
 (define (ctfe-expr-binding-clause-list-nth
   [lst : AstExprBindingClauseList]
@@ -11578,10 +11408,6 @@
       bracket
       (struct-get clause span))))
 
-(define (ctfe-expr-binding-clause-as-bracket-expr
-  [clause : AstExprBindingClause]) : i64
-  (ctfe-expr-binding-clause-as-bracket-expr-in-env (ctfe-env-empty) clause))
-
 (define (ctfe-expr-binding-clause-list->expr-list-in-env
   [env : CtfeEnv]
   [lst : AstExprBindingClauseList]) : AstExprList
@@ -11609,58 +11435,13 @@
             (ast-expr-binding-clause-fallback))))
       (ctfe-expr-binding-clause-list->expr-list-into env lst (+ index 1) out))))
 
-(define (ctfe-expr-binding-clause-list->expr-list
-  [lst : AstExprBindingClauseList]) : AstExprList
-  (ctfe-expr-binding-clause-list->expr-list-in-env (ctfe-env-empty) lst))
-
 ;; INSPECTORS (predicates) -----------------------------------------------------
-(define (ctfe-expr-literal?-in-env [env : CtfeEnv] [e : i64]) : bool
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Literal _) true]
-    [_ false]))
-
-(define (ctfe-expr-bool?-in-env [env : CtfeEnv] [e : i64]) : bool
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Literal lit)
-      (match lit
-        [(AstLiteral.Bool _) true]
-        [_ false])]
-    [_ false]))
-
-(define (ctfe-expr-bool-value-in-env [env : CtfeEnv] [e : i64]) : bool
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Literal lit)
-      (match lit
-        [(AstLiteral.Bool b) b]
-        [_ false])]
-    [_ false]))
-
-(define (ctfe-expr-var?-in-env [env : CtfeEnv] [e : i64]) : bool
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Var _) true]
-    [_ false]))
-
 (define (ctfe-expr-if?-in-env [env : CtfeEnv] [e : i64]) : bool
   (match (ctfe-ast-get env e)
     [(AstExpr.If _ _ _) true]
     [_ false]))
 
-(define (ctfe-expr-call?-in-env [env : CtfeEnv] [e : i64]) : bool
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Call _ _) true]
-    [_ false]))
-
 ;; INSPECTORS (extractors) -----------------------------------------------------
-(define (ctfe-expr-literal-value-in-env [env : CtfeEnv] [e : i64]) : AstLiteral
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Literal lit) lit]
-    [_ (AstLiteral.Unit)]))
-
-(define (ctfe-expr-var-name-in-env [env : CtfeEnv] [e : i64]) : String
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Var name) (intern-str name)]
-    [_ ""]))
-
 (define (ctfe-expr-if-cond-in-env [env : CtfeEnv] [e : i64]) : i64
   (match (ctfe-ast-get env e)
     [(AstExpr.If c _ _) c]
@@ -11676,39 +11457,8 @@
     [(AstExpr.If _ _ el) el]
     [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
 
-(define (ctfe-expr-call-func-in-env [env : CtfeEnv] [e : i64]) : i64
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Call f _) f]
-    [_ (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Unit)))]))
-
-(define (ctfe-expr-call-args-in-env [env : CtfeEnv] [e : i64]) : AstExprList
-  (match (ctfe-ast-get env e)
-    [(AstExpr.Call _ args) args]
-    [_ (ast-expr-list-new)]))
-
-(define (ctfe-expr-literal? [e : i64]) : bool
-  (ctfe-expr-literal?-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-bool? [e : i64]) : bool
-  (ctfe-expr-bool?-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-bool-value [e : i64]) : bool
-  (ctfe-expr-bool-value-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-var? [e : i64]) : bool
-  (ctfe-expr-var?-in-env (ctfe-env-empty) e))
-
 (define (ctfe-expr-if? [e : i64]) : bool
   (ctfe-expr-if?-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-call? [e : i64]) : bool
-  (ctfe-expr-call?-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-literal-value [e : i64]) : AstLiteral
-  (ctfe-expr-literal-value-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-var-name [e : i64]) : String
-  (ctfe-expr-var-name-in-env (ctfe-env-empty) e))
 
 (define (ctfe-expr-if-cond [e : i64]) : i64
   (ctfe-expr-if-cond-in-env (ctfe-env-empty) e))
@@ -11718,12 +11468,6 @@
 
 (define (ctfe-expr-if-else [e : i64]) : i64
   (ctfe-expr-if-else-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-call-func [e : i64]) : i64
-  (ctfe-expr-call-func-in-env (ctfe-env-empty) e))
-
-(define (ctfe-expr-call-args [e : i64]) : AstExprList
-  (ctfe-expr-call-args-in-env (ctfe-env-empty) e))
 
 (define (ctfe-expr-list-head [lst : AstExprList]) : i64
   (if (ast-expr-list-empty? (& lst))

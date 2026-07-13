@@ -159,6 +159,10 @@ required_gate_unavailable() {
 # Generated payload freshness must fail before the expensive bootstrap. The
 # exact-source verifier uses only stage0-supported language/runtime surfaces.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
+run_gate \
+    "SPMD mode instruction-count harness self-tests" \
+    scripts/measure-spmd-mode-instruction-counts.sh \
+    --self-test
 run_with_compiler \
     "$SEED_TYPELISP_BIN" \
     "embedded stdlib generated payload" \

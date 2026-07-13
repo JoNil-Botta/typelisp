@@ -1,0 +1,11 @@
+benchmark	mode	status	expected_diagnostic
+spmd_map	scalar	supported	-
+spmd_map	avx2	supported	-
+spmd_zip	scalar	supported	-
+spmd_zip	avx2	supported	-
+spmd_reduce	scalar	supported	-
+spmd_reduce	avx2	supported	-
+spmd_short_tail	scalar	supported	-
+spmd_short_tail	avx2	supported	-
+spmd_mask	scalar	supported	-
+spmd_mask	avx2	unsupported	lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands

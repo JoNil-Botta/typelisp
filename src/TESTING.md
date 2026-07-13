@@ -265,6 +265,21 @@ default output root is repo-relative so the measured self-compile `-o` argument
 is stable across machines; use a repo-relative `--output` when collecting counts
 intended for baseline comparison.
 
+For SPMD mode-specific performance, use the separate opt-in
+`scripts/measure-spmd-mode-instruction-counts.sh`. It records scalar and AVX2
+TypeLisp/clang pairs under unambiguous benchmark+mode+implementation keys,
+checks exit parity and the unsupported-mode diagnostic table, and emits ratios
+and geomeans without adding the heavy matrix to the normal SPMD correctness
+gate:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp \
+  scripts/measure-spmd-mode-instruction-counts.sh --runs 1 --check-baseline
+scripts/measure-spmd-mode-instruction-counts.sh --self-test
+```
+
+Do not add AVX-512 cachegrind rows; use the methodology tracked by #4933.
+
 `scripts/measure-typecheck-prefix-cache.sh` reports the opt-in typecheck prefix
 snapshot cache counters for the batch workloads the cache is meant to help:
 repeated stdlib imports, one selfhost compile-manifest chunk, and doctests.

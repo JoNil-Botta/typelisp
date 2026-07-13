@@ -653,15 +653,22 @@
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
+      [end-peak : i64 (profile.alloc-peak)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
-          (- (profile.alloc-peak) compiler-driver-profile-phase-start-live))]
+          (- end-peak compiler-driver-profile-phase-start-live))]
+      ;; Phase profiling resets the runtime peak counter at every boundary. Keep
+      ;; the phase-local delta in each row, but compare its absolute high-water
+      ;; mark with the compile-wide baseline for the total row.
+      [total-peak-delta : i64
+        (compiler-driver-profile-nonnegative
+          (- end-peak compiler-driver-profile-total-start-live))]
       (begin
         (set!
           compiler-driver-profile-best-peak
           (compiler-driver-profile-max
             compiler-driver-profile-best-peak
-            peak-delta))
+            total-peak-delta))
         (set!
           compiler-driver-batch-profile-best-peak
           (compiler-driver-profile-max

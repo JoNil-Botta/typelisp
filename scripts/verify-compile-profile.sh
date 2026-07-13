@@ -238,6 +238,22 @@ assert_profile_live_counter_at_least_in() {
     fi
 }
 
+assert_profile_total_peak_covers_live_in() {
+    _file=$1
+    _stdout=$2
+    _stderr=$3
+    if ! awk -F'|' '
+        $1 == "compile-profile" && $2 == "total" {
+            found = 1
+            if (($6 + 0) < ($5 + 0)) bad = 1
+        }
+        END { exit found && !bad ? 0 : 1 }
+    ' "$_file"; then
+        show_failure_logs "$_stdout" "$_stderr"
+        fail "compile-wide peak must cover the final live allocation delta"
+    fi
+}
+
 assert_layout_row() {
     assert_contains_in \
         "$LAYOUT_STDERR" \
@@ -502,6 +518,10 @@ if [ "$NL_HOST_OS" = windows ]; then
         show_failure_logs "$SELFHOST_STDOUT" "$SELFHOST_STDERR"
         fail "profile-enabled selfhost compile failed"
     fi
+    assert_profile_total_peak_covers_live_in \
+        "$SELFHOST_STDERR" \
+        "$SELFHOST_STDOUT" \
+        "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \

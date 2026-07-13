@@ -430,6 +430,99 @@
             (sym_i64_env.sym-i64-contains seen "generic.cfg.dep"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
+(define (structural-member-demand-source [source : String] [alias : String]) : CompilerLoadStructuralMemberDemand
+  (match (compiler-load-parse-source-diagnostic-escaping
+    "src/structural_member_demand.tl"
+    source
+    (compiler-cfg-empty))
+    [(ResultAstProgramDiagnostic.Ok (AstProgram.Program decls))
+      (compiler-load-structural-member-demand (box-get decls) alias)]
+    [(ResultAstProgramDiagnostic.Err _) (CompilerLoadStructuralFullDemand)]))
+
+(define (structural-member-demand-no-use-ok?) : bool
+  (match (structural-member-demand-source
+    "(module demand.none)
+(define (main) : i64 42)"
+    "api")
+    [(CompilerLoadStructuralNoDemand) true]
+    [_ false]))
+
+(define (structural-member-demand-one-ok?) : bool
+  (let
+    [demand : CompilerLoadStructuralMemberDemand
+      (structural-member-demand-source
+        "(module demand.one)
+(define (main) : i64 (api.answer))"
+        "api")]
+    (and
+      (= (compiler-load-structural-member-demand-count demand) 1)
+      (compiler-load-structural-member-demand-contains? demand "answer"))))
+
+(define (structural-member-demand-union-ok?) : bool
+  (let
+    [demand : CompilerLoadStructuralMemberDemand
+      (structural-member-demand-source
+        "(module demand.union)
+(define (main) : i64
+  (begin
+    (api.first)
+    (api/second)
+    (api.first)))"
+        "api")]
+    (and
+      (= (compiler-load-structural-member-demand-count demand) 2)
+      (compiler-load-structural-member-demand-contains? demand "first")
+      (compiler-load-structural-member-demand-contains? demand "second"))))
+
+(define (structural-member-demand-shadowing-ok?) : bool
+  (and
+    (match (structural-member-demand-source
+      "(module demand.local)
+(define (main) : i64 (let [api : i64 42] api))"
+      "api")
+      [(CompilerLoadStructuralNoDemand) true]
+      [_ false])
+    (match (structural-member-demand-source
+      "(module demand.param)
+(define (use [api : i64]) : i64 api)"
+      "api")
+      [(CompilerLoadStructuralNoDemand) true]
+      [_ false])
+    (match (structural-member-demand-source
+      "(module demand.pattern)
+(define (main) : i64 (match 42 [api api]))"
+      "api")
+      [(CompilerLoadStructuralNoDemand) true]
+      [_ false])))
+
+(define (structural-member-demand-nested-scope-ok?) : bool
+  (let
+    [demand : CompilerLoadStructuralMemberDemand
+      (structural-member-demand-source
+        "(module demand.nested)
+(module local.scope
+  (define (shadow [api : i64]) : i64 api))
+(define (main) : i64
+  (begin
+    ((lambda ([api : i64]) : i64 api) 1)
+    (api.after)))"
+        "api")]
+    (and
+      (= (compiler-load-structural-member-demand-count demand) 1)
+      (compiler-load-structural-member-demand-contains? demand "after"))))
+
+(define (structural-member-demand-unknown-ok?) : bool
+  (match (compiler-load-parse-source-diagnostic-escaping
+    "src/structural_member_demand_unknown.tl"
+    "(module demand.unknown)
+(defstruct Aggregate (value i64))"
+    (compiler-cfg-empty))
+    [(ResultAstProgramDiagnostic.Ok (AstProgram.Program decls))
+      (match (compiler-load-structural-member-demand (box-get decls) "api")
+        [(CompilerLoadStructuralFullDemand) true]
+        [_ false])]
+    [(ResultAstProgramDiagnostic.Err _) false]))
+
 (define (main) : i64
   (begin
     (unless
@@ -482,4 +575,22 @@
     (unless
       (lazy-cfg-selected-surface-demand-ok?)
       (return (io.panic "lazy cfg-selected surface demand smoke mismatch")))
+    (unless
+      (structural-member-demand-no-use-ok?)
+      (return (io.panic "structural member no-use demand mismatch")))
+    (unless
+      (structural-member-demand-one-ok?)
+      (return (io.panic "structural member one demand mismatch")))
+    (unless
+      (structural-member-demand-union-ok?)
+      (return (io.panic "structural member union demand mismatch")))
+    (unless
+      (structural-member-demand-shadowing-ok?)
+      (return (io.panic "structural member shadowing demand mismatch")))
+    (unless
+      (structural-member-demand-nested-scope-ok?)
+      (return (io.panic "structural member nested-scope demand mismatch")))
+    (unless
+      (structural-member-demand-unknown-ok?)
+      (return (io.panic "structural member unknown demand mismatch")))
     42))

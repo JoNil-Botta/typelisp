@@ -121,12 +121,19 @@ ci_timing_run() {
     ci_timing_set_now_ms
     _ci_timing_finished=$CI_TIMING_NOW_MS
     _ci_timing_elapsed=$((_ci_timing_finished - _ci_timing_started))
-    ci_timing_record_elapsed \
+    if ci_timing_record_elapsed \
         "$_ci_timing_case" \
         "$_ci_timing_phase" \
         "$_ci_timing_elapsed" \
-        "$_ci_timing_status"
-    return "$_ci_timing_status"
+        "$_ci_timing_status"; then
+        _ci_timing_record_status=0
+    else
+        _ci_timing_record_status=$?
+    fi
+    if [ "$_ci_timing_status" -ne 0 ]; then
+        return "$_ci_timing_status"
+    fi
+    return "$_ci_timing_record_status"
 }
 
 ci_timing_summary() {

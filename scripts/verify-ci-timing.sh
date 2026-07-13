@@ -32,6 +32,36 @@ if [ "$status" -ne 7 ]; then
     exit 1
 fi
 
+invalid_case=$(printf 'invalid\tcase')
+set +e
+ci_timing_run "$invalid_case" helper :
+status=$?
+set -e
+if [ "$status" -ne 2 ]; then
+    echo "CI timing wrapper hid metadata failure: expected 2, got $status" >&2
+    exit 1
+fi
+
+set +e
+ci_timing_run "$invalid_case" helper sh -c 'exit 7'
+status=$?
+set -e
+if [ "$status" -ne 7 ]; then
+    echo "CI timing metadata failure replaced command exit 7 with $status" >&2
+    exit 1
+fi
+
+TYPELISP_CI_TIMING=0
+set +e
+ci_timing_run disabled-case helper sh -c 'exit 9'
+status=$?
+set -e
+TYPELISP_CI_TIMING=1
+if [ "$status" -ne 9 ]; then
+    echo "disabled CI timing wrapper changed exit 9 to $status" >&2
+    exit 1
+fi
+
 awk -F '\t' '
     NR == 1 {
         if ($0 != "gate\tcase_or_chunk\tphase\telapsed_ms\texit\thost") exit 1
@@ -42,7 +72,7 @@ awk -F '\t' '
     $4 !~ /^[0-9]+$/ || $5 !~ /^[0-9]+$/ { exit 1 }
     $2 == "pass-case" && $5 == 0 { pass = 1 }
     $2 == "fail-case" && $5 == 7 { fail = 1 }
-    END { if (!pass || !fail) exit 1 }
+    END { if (!pass || !fail || NR != 3) exit 1 }
 ' "$WORKDIR/timing.tsv" || {
     echo "CI timing artifact schema/exit preservation self-test failed" >&2
     cat "$WORKDIR/timing.tsv" >&2

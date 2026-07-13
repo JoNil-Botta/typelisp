@@ -2924,6 +2924,18 @@
 (import (invalid-catalog) as unused-api)
 (define (main) : i64 0)")
 
+;; This spelling used to select the compiler-owned Result materializer, which
+;; skipped transformer evaluation and accepted the malformed unused helper.
+(define (compiler-typecheck-smoke-result-catalog-invalid-source) : String
+  "(module stdlib.result)
+(defmacro (result [T : type] [E : type]) : Module
+  `(begin
+    (module stdlib.result.generated.invalid)
+    (defenum Result (Ok ,T) (Err ,E))
+    (define broken : i64 true)))
+(import (result i64 String) as unused-result)
+(define (main) : i64 0)")
+
 (define (compiler-typecheck-smoke-generated-catalog-body-has-name?
   [body : AstDeclList]
   [name : String]) : bool
@@ -3151,6 +3163,11 @@
         (compiler-typecheck-smoke-generic-catalog-invalid-source)
         "typecheck: value definition type mismatch: expected i64, found bool")
       "generic catalog invalid helper accepted or changed diagnostic")
+    (compiler-typecheck-smoke-require
+      (compiler-typecheck-error-ok?
+        (compiler-typecheck-smoke-result-catalog-invalid-source)
+        "typecheck: value definition type mismatch: expected i64, found bool")
+      "Result-spelled catalog invalid helper accepted or changed diagnostic")
     true))
 
 (define (compiler-typecheck-smoke-lazy-import-str-cat-source) : String

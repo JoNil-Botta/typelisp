@@ -1,11 +1,11 @@
 #!/usr/bin/env sh
 set -eu
 
-# verify-result-import-harness.sh - source-integrity and ordinary-Module checks
+# verify-result-import-harness.sh - source-integrity and equivalent-Module checks
 # for scripts/measure-result-import-cost.sh. The measurement harness injects
 # generated result imports into scratch selfhost trees; this verifier ensures
-# that it changes nothing else and that an equivalent non-special-cased Module
-# macro typechecks the measured source in every prepared case.
+# that it changes nothing else and that an equivalent user-defined Module macro
+# typechecks the measured source in every prepared case.
 
 usage() {
     echo "usage: $0 [typelisp-compiler]" >&2
@@ -98,10 +98,10 @@ mkdir -p "$ORDINARY_STDLIB" "$ORDINARY_ROOT" "$CHECK_CWD" "$LOG_DIR"
 # after removing only the documented injected imports.
 scripts/measure-result-import-cost.sh --prepare-only --output "$PREPARED"
 
-# The compiler's result shortcut only recognizes the exact
-# stdlib.result/result pair. Make an equivalent macro with a different module
-# and name, then rewrite the scratch trees to use it. This forces the ordinary
-# CTFE + Module-macro path without changing the compiler under test.
+# Make an equivalent macro with a different module and name, then rewrite the
+# scratch trees to use it. Both macros use the generic transformer/catalog path;
+# this keeps a differential guard against behavior depending on public Result
+# spellings.
 if ! awk '
     $0 == "(defmacro (result [T : type] [E : type]) : Module" {
         print "(defmacro (generic-result [T : type] [E : type]) : Module"
@@ -150,7 +150,7 @@ rewrite_for_ordinary_module() {
     for measured_source in format_tokens.tl lex.tl compiler_ctfe.tl; do
         measured_file="$destination_dir/$measured_source"
         if grep -E '^\(import stdlib\.result\)$|^\(import \(result ' "$measured_file" >/dev/null 2>&1; then
-            fail "$measured_source still contains a shortcut-eligible result import"
+            fail "$measured_source still contains a stdlib.result import"
         fi
         if ! grep -E '^\(import generic_result\)$' "$measured_file" >/dev/null 2>&1; then
             fail "$measured_source did not import generic_result"
@@ -172,7 +172,7 @@ check_prepared_source() {
     stderr="$LOG_DIR/$name-$log_name.stderr"
     [ -f "$source_dir/$measured_source" ] || fail "prepared $name tree has no $measured_source"
 
-    echo "[result-import-harness] ordinary Module check $name $measured_source"
+    echo "[result-import-harness] equivalent Module check $name $measured_source"
     check_status=0
     if [ "$measured_source" = compiler_ctfe.tl ]; then
         ir_file="$LOG_DIR/$name-$log_name.ir"
@@ -201,7 +201,7 @@ check_prepared_source() {
     fi
     if [ "$check_status" -ne 0 ]; then
         show_logs "$stdout" "$stderr"
-        fail "ordinary Module typecheck failed for prepared $name $measured_source"
+        fail "equivalent Module typecheck failed for prepared $name $measured_source"
     fi
 }
 
@@ -219,4 +219,4 @@ for variant in format_tokens lex compiler_ctfe; do
     check_prepared_source "$variant" "$variant.tl"
 done
 
-echo "[result-import-harness] prepared source integrity and ordinary Module checks passed"
+echo "[result-import-harness] prepared source integrity and equivalent Module checks passed"

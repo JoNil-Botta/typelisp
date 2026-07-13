@@ -1,0 +1,11 @@
+{
+  "exit": 0,
+  "stderr_exact": "",
+  "message_checks": [
+    {"jsonpath_id": 1, "raw_contains": "\"documentSymbolProvider\":true"},
+    {"jsonpath_id": 2, "raw_contains": "{\"name\":\"fun\",\"kind\":12,\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":22}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":9},\"end\":{\"line\":0,\"character\":12}}}", "raw_contains": "{\"name\":\"value\",\"kind\":13,\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":22}},\"selectionRange\":{\"start\":{\"line\":1,\"character\":8},\"end\":{\"line\":1,\"character\":13}}}", "raw_contains": "{\"name\":\"Pair\",\"kind\":23", "raw_contains": "{\"name\":\"Choice\",\"kind\":10", "raw_contains": "{\"name\":\"make\",\"kind\":12", "raw_contains": "{\"name\":\"choose\",\"kind\":12", "raw_contains": "{\"name\":\"puts\",\"kind\":12", "raw_contains": "{\"name\":\"errno\",\"kind\":13", "raw_not_contains": "\"name\":\"hidden\"", "raw_not_contains": "\"name\":\"Hidden\""},
+    {"jsonpath_id": 3, "raw_contains": "\"result\":[{\"name\":\"changed\",\"kind\":13,\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":24}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":8},\"end\":{\"line\":0,\"character\":15}}}]", "raw_not_contains": "\"name\":\"fun\""},
+    {"jsonpath_id": 4, "json_contains": "\"result\":[]"},
+    {"jsonpath_id": 5, "json_contains": "\"result\":null", "jsonpath_result": null}
+  ]
+}

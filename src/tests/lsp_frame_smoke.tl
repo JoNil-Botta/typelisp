@@ -308,6 +308,40 @@
       (= (struct-get next name-line) 6)
       (= (struct-get next name-col) 10))))
 
+(define (lsp-document-symbol-smoke-ok?) : bool
+  (let
+    [source : String
+      "(define (fun) : i64 1)\n(define value : i64 2)\n(defstruct Pair (x i64))\n(defenum Choice (Yes))\n(defmacro make [] unit)\n(defdispatch choose [] fun)\n(extern (puts [s : ptr]) : i64)\n(extern errno : i64)\n;; (define hidden : i64 0)\n(define text : String \"(defstruct Hidden)\")"]
+    [rendered : String (json.stringify (lsp-document-symbols-for-text source))]
+    [capabilities : String (json.stringify (lsp-initialize-result))]
+    [fun : String
+      "{\"name\":\"fun\",\"kind\":12,\"range\":{\"start\":{\"line\":0,\"character\":0},\"end\":{\"line\":0,\"character\":22}},\"selectionRange\":{\"start\":{\"line\":0,\"character\":9},\"end\":{\"line\":0,\"character\":12}}}"]
+    [value : String
+      "{\"name\":\"value\",\"kind\":13,\"range\":{\"start\":{\"line\":1,\"character\":0},\"end\":{\"line\":1,\"character\":22}},\"selectionRange\":{\"start\":{\"line\":1,\"character\":8},\"end\":{\"line\":1,\"character\":13}}}"]
+    [pair : String "{\"name\":\"Pair\",\"kind\":23"]
+    [choice : String "{\"name\":\"Choice\",\"kind\":10"]
+    [macro : String "{\"name\":\"make\",\"kind\":12"]
+    [dispatch : String "{\"name\":\"choose\",\"kind\":12"]
+    [function-extern : String "{\"name\":\"puts\",\"kind\":12"]
+    [data-extern : String "{\"name\":\"errno\",\"kind\":13"]
+    [text-value : String "{\"name\":\"text\",\"kind\":13"]
+    [hidden : String "\"name\":\"hidden\""]
+    [hidden-in-string : String "\"name\":\"Hidden\""]
+    [capability : String "\"documentSymbolProvider\":true"]
+    (and
+      (string.contains (& capabilities) (& capability))
+      (string.contains (& rendered) (& fun))
+      (string.contains (& rendered) (& value))
+      (string.contains (& rendered) (& pair))
+      (string.contains (& rendered) (& choice))
+      (string.contains (& rendered) (& macro))
+      (string.contains (& rendered) (& dispatch))
+      (string.contains (& rendered) (& function-extern))
+      (string.contains (& rendered) (& data-extern))
+      (string.contains (& rendered) (& text-value))
+      (not (string.contains (& rendered) (& hidden)))
+      (not (string.contains (& rendered) (& hidden-in-string))))))
+
 (define (main) : i64
   (let
     [base-result : i64 (lsp-diagnostic-metadata-smoke)]
@@ -325,4 +359,5 @@
         (unless (lsp-document-disk-resync-ok?) (return 15))
         (unless (lsp-edit-save-doc-smoke-ok?) (return 16))
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
+        (unless (lsp-document-symbol-smoke-ok?) (return 17))
         42))))

@@ -427,6 +427,10 @@ case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|
 contains|compiler_embedded_stdlib_lookup:
 end
 
+case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payload.tl|assembly|skip|direct
+contains|compiler_embedded_stdlib_payload_lookup:
+end
+
 case|selfhost_compiler_float|src/compiler_float.tl|assembly|skip|direct
 contains|_tl_compiler_float_parse_f64:
 contains|_tl_compiler_float_format_f64:

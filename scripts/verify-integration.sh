@@ -398,8 +398,11 @@ EOF
 # seed-backed integration manifests.
 # Immutable-reference native smoke fixtures are covered by
 # verify-native-link-linux.sh until the published stage0 includes #1720.
+# embedded_stdlib_diagnostic_parity is an expected-failure input compared in
+# both source-root and no-root modes by verify-stage0-smoke.sh.
 selfhost_native_manifest_cases() {
     cat <<'EOF'
+embedded_stdlib_diagnostic_parity
 ref_fixed_array_return
 ref_param_identity
 ref_return

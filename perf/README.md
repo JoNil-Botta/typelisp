@@ -49,6 +49,52 @@ default per-PR subset is `self_compile` plus paired rows for `arith_loop`,
 `spmd_reduce`, `opt_quicksort`, `opt_crc32`, and `opt_bytecode_vm`, each with one
 cachegrind run.
 
+## Host-keyed AVX-512 retired instructions
+
+Cachegrind 3.22 cannot execute this AVX-512 corpus: it SIGILLs and records only
+startup work. Use the opt-in Linux/WSL hardware harness instead:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp \
+  scripts/measure-spmd-avx512-instructions.sh --focused --cpu 4
+TYPELISP_BIN=target/stage0/typelisp \
+  scripts/measure-spmd-avx512-instructions.sh \
+  --runs 11 --check-baseline --cpu 4
+```
+
+The harness requires runnable AVX-512F+BW+DQ and OS ZMM/opmask state. It builds
+TypeLisp with explicit `--backend-mode avx512 --opt-level 2` and the static C
+comparison with `clang -O2 -march=x86-64 -mavx512f -mavx512bw -mavx512dq
+-mno-avx512vl -static`; it never uses `-march=native`. Before measuring, each
+pair must match exit status, stdout, and stderr.
+
+`tools/spmd-avx512-perf/counter.tl` calls `perf_event_open` directly, pins the
+child to one logical CPU, starts the inherited user-space-only event on
+`execve`, waits, and rejects unavailable, zero, multiplexed, or signal/SIGILL
+results. There is no dependency on a distro-matched `perf`, Intel SDE, QEMU,
+llvm-mca, or a C helper.
+
+One warmup precedes 11 recorded runs. `metadata.tsv` records the complete
+host/tool/flags/PMU contract; `runs.tsv`, `summary.tsv`, and `comparison.tsv`
+record the raw counts, median/statistics/CV, TypeLisp-to-clang ratios, and
+geomean. Rebuilt assembly must hash identically, and static vector/AVX-512
+operand counts remain diagnostic columns—zero is visible and valid rather than
+substituted for dynamic performance.
+
+The committed `perf/spmd-avx512-retired-baseline.tsv` is keyed by a SHA-256 of
+the counter source, OS/kernel, CPU identity and logical CPU, ISA tokens,
+clang/as/ld versions, flags, and counter configuration. The 1000 ppm tolerance
+is enforced only for an exact fingerprint; other hosts are report-only.
+`spmd_mask/avx512` remains
+an exact checked `unsupported` row in `perf/spmd-avx512-support.tsv`.
+Only a full 11-run measurement may update the baseline. The heavy hardware
+measurement is never part of required correctness CI; only fast mutation
+self-tests run there:
+
+```sh
+scripts/measure-spmd-avx512-instructions.sh --self-test
+```
+
 ## Compile-profile optimizer escape capture
 
 Use the compile-profile verifier to build a profile-enabled CLI, then capture an

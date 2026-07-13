@@ -1,0 +1,6 @@
+benchmark	mode	status	expected_diagnostic
+spmd_map	avx512	measured	-
+spmd_zip	avx512	measured	-
+spmd_reduce	avx512	measured	-
+spmd_short_tail	avx512	measured	-
+spmd_mask	avx512	unsupported	lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands

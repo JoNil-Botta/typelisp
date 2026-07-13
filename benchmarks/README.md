@@ -94,6 +94,13 @@ bash scripts/bench.sh --correctness
 The required CI gate is `scripts/ci-verify.sh` running
 `scripts/bench.sh --correctness` (#2439).
 
+SPMD scalar/AVX2 deterministic performance uses the separate cachegrind mode
+matrix. AVX-512 cachegrind numbers are invalid because Valgrind 3.22 SIGILLs;
+on a capable Linux/WSL host, use
+`scripts/measure-spmd-avx512-instructions.sh --focused` for all five checked
+rows or `--runs 11 --check-baseline` for the host-keyed retired-instruction
+report. This remains opt-in and does not replace the correctness gate.
+
 The optimizer corpus has a stricter stdout-comparison runner because those
 programs report their result on stdout and take per-case arguments from
 `optimization.tsv`:

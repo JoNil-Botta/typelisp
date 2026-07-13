@@ -1756,7 +1756,4 @@ assert_contains work-queue-chooser "$WORKDIR/work-queue-chooser.out" "research/t
 run_cli_command_surface_matrix
 assert_cli_surface_timing_rows
 
-echo "[selfhost-cli-build-run] public LSP corpus via run-corpus.sh"
-TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
-
 echo "selfhost cli build/run smoke passed"

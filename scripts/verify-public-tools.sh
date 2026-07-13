@@ -2900,6 +2900,8 @@ else
     fail "package build coverage requires host-action drivers"
 fi
 
+# Canonical top-level owner for the public LSP corpus. The selfhost CLI gate
+# keeps its independent initialize/shutdown command-surface assertion.
 echo "[public-tools] LSP corpus via run-corpus.sh"
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp

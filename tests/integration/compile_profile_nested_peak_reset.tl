@@ -27,4 +27,7 @@
 (cfg
   (not compile-profile)
   (define (main) : i64
-    42))
+    (begin
+      ;; Keep the profile import live under the lint configuration too.
+      (profile.alloc-live)
+      42)))

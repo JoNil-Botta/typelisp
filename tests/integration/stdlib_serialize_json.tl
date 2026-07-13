@@ -372,6 +372,18 @@
         [(status_json.Ok parsed) (enum_fixture.wide? parsed)]
         [(status_json.Err _) false]))))
 
+(define (serialize-json-status-struct-payload-roundtrip-ok?) : bool
+  (let
+    [json : json.Json (status_json.to-json (enum_fixture.detailed))]
+    [encoded : String (stdlib.json.stringify json)]
+    (and
+      (string.eq
+        encoded
+        "{\"tag\":\"Detailed\",\"payload\":[{\"code\":77,\"place\":{\"zip\":90210,\"city\":\"Malmo\"}}]}")
+      (match (status_json.from-json json)
+        [(status_json.Ok parsed) (enum_fixture.detailed? parsed)]
+        [(status_json.Err _) false]))))
+
 (define (serialize-json-status-invalid-tag-ok?) : bool
   (match (status_json.from-json
     (serialize-json-enum-json "Unknown" (serialize-json-empty-array)))
@@ -436,4 +448,5 @@
     (unless (serialize-json-status-missing-payload-ok?) (return 15))
     (unless (serialize-json-status-payload-length-ok?) (return 16))
     (unless (serialize-json-status-wide-roundtrip-ok?) (return 17))
+    (unless (serialize-json-status-struct-payload-roundtrip-ok?) (return 18))
     42))

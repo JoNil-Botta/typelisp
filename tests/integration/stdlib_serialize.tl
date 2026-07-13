@@ -483,6 +483,11 @@
         [(status_ser.Ok parsed) (enum_fixture.wide? parsed)]
         [(status_ser.Err _) false]))))
 
+(define (serialize-status-struct-payload-roundtrip-ok?) : bool
+  (match (status_ser.decode (status_ser.encode (enum_fixture.detailed)))
+    [(status_ser.Ok parsed) (enum_fixture.detailed? parsed)]
+    [(status_ser.Err _) false]))
+
 (define (serialize-status-invalid-tag-ok?) : bool
   (match (status_ser.decode
     (serialize-toy-enum-object "Unknown" (serialize-toy-empty-sequence)))
@@ -614,4 +619,5 @@
     (unless (serialize-result-root-roundtrip-ok?) (return 19))
     (unless (= (option_type_info.score) 1) (return 20))
     (unless (= (result_type_info.score) 1) (return 21))
+    (unless (serialize-status-struct-payload-roundtrip-ok?) (return 22))
     42))

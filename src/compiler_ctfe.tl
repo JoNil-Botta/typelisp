@@ -2390,8 +2390,13 @@
 
 (define (ctfe-reflect-info-canonical-type [info : CtfeReflectInfo]) : AstType
   (match info
-    [(CtfeReflectInfo.Struct key _ _ _) (AstType.Struct (intern key))]
-    [(CtfeReflectInfo.Enum key _ _ _) (AstType.Enum (intern key))]))
+    ;; Imported nominals also have a short-name reflection alias.  The alias is
+    ;; a lookup convenience, not the type's identity: always reconstruct the
+    ;; canonical module/name key carried by the reflection record.
+    [(CtfeReflectInfo.Struct _ module name _)
+      (AstType.Struct (intern (ctfe-symbol-module-key module name)))]
+    [(CtfeReflectInfo.Enum _ module name _)
+      (AstType.Enum (intern (ctfe-symbol-module-key module name)))]))
 
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : AstNodePoolContext]

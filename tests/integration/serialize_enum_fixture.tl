@@ -1,8 +1,19 @@
+(import stdlib.string)
+
+(defstruct StatusPlace
+  (zip i64)
+  (city String))
+
+(defstruct StatusPayload
+  (code i64)
+  (place StatusPlace))
+
 (defenum Status
   (Idle)
   (Scored i64)
   (Moved i64 (Array i64 2))
-  (Wide i64 i64 i64 i64 i64 i64 i64 i64 i64))
+  (Wide i64 i64 i64 i64 i64 i64 i64 i64 i64)
+  (Detailed StatusPayload))
 
 (define (idle) : Status
   (Status.Idle))
@@ -15,6 +26,9 @@
 
 (define (wide) : Status
   (Status.Wide 1 2 3 4 5 6 7 8 9))
+
+(define (detailed) : Status
+  (Status.Detailed (StatusPayload 77 (StatusPlace 90210 "Malmo"))))
 
 (define (idle? [status : Status]) : bool
   (match status
@@ -45,4 +59,15 @@
         (= g 7)
         (= h 8)
         (= i 9))]
+    [_ false]))
+
+(define (detailed? [status : Status]) : bool
+  (match status
+    [(Detailed payload)
+      (let
+        [place : StatusPlace (struct-get payload place)]
+        (and
+          (= (struct-get payload code) 77)
+          (= (struct-get place zip) 90210)
+          (string.eq (struct-get place city) "Malmo")))]
     [_ false]))

@@ -18232,7 +18232,15 @@
         (ast-ty-enum-args (intern enum-name) lifetimes))]
     (if (ast-type-list-empty? (& fields))
       ret
-      (ast-ty-func (tc-resolve-type-list ctx fields) ret))))
+      ;; Variant field spellings belong to the enum declaration's module.
+      ;; Generated modules can construct an imported enum, so resolving in the
+      ;; caller would give nominal payloads a different canonical identity than
+      ;; the same fields used by match-pattern binding.
+      (ast-ty-func
+        (tc-resolve-type-list
+          (tc-context-with-owner-name-module ctx enum-name)
+          fields)
+        ret))))
 
 (define (tc-bind-enum-variants
   [ctx : TcContext]

@@ -235,7 +235,6 @@
                   enum-type
                   variant-index
                   payload-index)]
-              [payload-kind : String (type-kind payload-type)]
               [payload-alias : comptime.Expr
                 (match nested-alias
                   [(comptime.ExprVar nested-alias-text)
@@ -258,23 +257,20 @@
                 (comptime.expr-var (comptime.module-name format))]
               [prev-index : comptime.Expr
                 (comptime.expr-int (- payload-index 1))]
-              (if (string.eq payload-kind "struct")
-                (comptime.comptime-error
-                  "serialize: enum struct payloads are not supported yet")
-                `(stdlib.serialize.encode-enum-payload-elements
-                  ,format-expr
-                  ,enum-type
-                  ,nested-alias
-                  ,variant-index-expr
-                  ,prev-index
-                  (,element-hook
-                    ,payload-index-expr
-                    (stdlib.serialize.encode-value
-                      ,format-expr
-                      ,payload-type
-                      ,payload-alias
-                      ,payload-value)
-                    ,items)))))]
+              `(stdlib.serialize.encode-enum-payload-elements
+                ,format-expr
+                ,enum-type
+                ,nested-alias
+                ,variant-index-expr
+                ,prev-index
+                (,element-hook
+                  ,payload-index-expr
+                  (stdlib.serialize.encode-value
+                    ,format-expr
+                    ,payload-type
+                    ,payload-alias
+                    ,payload-value)
+                  ,items))))]
         [_
           (comptime.comptime-error
             "serialize: enum payload index must be an integer literal")])]
@@ -1256,14 +1252,23 @@
         [root-module-suffix : String
           (if (string.eq root-kind "enum")
             (let
-              [enum-module : String (type-nominal-module T)]
-              [enum-name : String (type-nominal-name T)]
-              (if (string.eq enum-module "")
-                enum-name
+              [nominal-module : String (type-nominal-module T)]
+              [nominal-name : String (type-nominal-name T)]
+              (if (string.eq nominal-module "")
+                nominal-name
                 (comptime.string-append
-                  enum-module
-                  (comptime.string-append "." enum-name))))
-            root-key)]
+                  nominal-module
+                  (comptime.string-append "." nominal-name))))
+            (if (string.eq root-kind "struct")
+              (let
+                [nominal-module : String (type-nominal-module T)]
+                [nominal-name : String (type-nominal-name T)]
+                (if (string.eq nominal-module "")
+                  root-key
+                  (comptime.string-append
+                    nominal-module
+                    (comptime.string-append "." nominal-name))))
+              root-key))]
         [module-name-text : String
           (comptime.string-append
             (comptime.string-append

@@ -4434,19 +4434,17 @@
 
 (define (tc-type-env-scoped-sidecar-materialize
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
-  (let
-    [slots : i64
-      (-
-        (tc-type-env-scoped-stack-len (struct-get sidecar stack))
-        (struct-get sidecar materialize-start))]
-    (begin
-      (cfg
-        compile-profile
-        (compiler-tc-env-profile-note-scoped-materialization slots))
-      (tc-type-env-scoped-stack-materialize-at
-        (struct-get sidecar stack)
-        (struct-get sidecar materialize-start)
-        (struct-get sidecar persistent)))))
+  (begin
+    (cfg
+      compile-profile
+      (compiler-tc-env-profile-note-scoped-materialization
+        (-
+          (tc-type-env-scoped-stack-len (struct-get sidecar stack))
+          (struct-get sidecar materialize-start))))
+    (tc-type-env-scoped-stack-materialize-at
+      (struct-get sidecar stack)
+      (struct-get sidecar materialize-start)
+      (struct-get sidecar persistent))))
 
 (define (tc-type-env-scoped-carrier-from-env [env : TcTypeEnv]) : TcTypeEnvScopedCarrier
   (TcTypeEnvScopedCarrier env (tc-type-env-scoped-sidecar-from-env env) false))

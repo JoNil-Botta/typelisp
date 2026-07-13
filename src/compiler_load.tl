@@ -2768,9 +2768,8 @@
 ;; first member below an alias root for every qualified use it sees. This keeps
 ;; the ordinary three-bit result intact while avoiding one whole-program walk
 ;; per candidate member of a generated Module catalog. The observer is strictly
-;; dynamic and single-threaded. A structural walker can visit a generated macro
-;; import which starts its own demand query, so a small frame stack preserves an
-;; outer observation across such nested scans.
+;; dynamic and single-threaded. The sole begin site brackets one structural
+;; walk, so observer state cannot nest and does not need an arena-owned frame.
 (defenum CompilerLoadLazyQualifiedObserverStack
   (Empty)
   (Frame
@@ -2859,19 +2858,6 @@
   [root : String]
   [secondary-root : String]) : unit
   (begin
-    (set!
-      compiler-load-lazy-qualified-observer-stack
-      (CompilerLoadLazyQualifiedObserverStack.Frame
-        compiler-load-lazy-qualified-observer-active
-        compiler-load-lazy-qualified-observer-root
-        compiler-load-lazy-qualified-observer-root-id
-        compiler-load-lazy-qualified-observer-members
-        compiler-load-lazy-qualified-observer-secondary-root
-        compiler-load-lazy-qualified-observer-secondary-root-id
-        compiler-load-lazy-qualified-observer-secondary-members
-        compiler-load-lazy-qualified-observer-secondary-qualified
-        compiler-load-lazy-qualified-observer-secondary-direct
-        (box compiler-load-lazy-qualified-observer-stack)))
     (set! compiler-load-lazy-qualified-observer-active true)
     (set! compiler-load-lazy-qualified-observer-root-id (intern root))
     (set! compiler-load-lazy-qualified-observer-root root)
@@ -2969,6 +2955,9 @@
         compiler-load-lazy-qualified-observer-secondary-qualified
         compiler-load-lazy-qualified-observer-secondary-direct)]
     (begin
+      (set!
+        compiler-load-lazy-qualified-observer-stack
+        (compiler-load-lazy-qualified-observer-stack-empty))
       (match compiler-load-lazy-qualified-observer-stack
         [(CompilerLoadLazyQualifiedObserverStack.Empty)
           (begin

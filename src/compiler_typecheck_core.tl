@@ -56316,112 +56316,143 @@
   [orig-decls : AstDeclList]
   [target-module : String]
   [catalog : AstDeclList]) : MacroMaybeCatalogDiagnostic
-  (with-scratch
+  (begin
+    ;; Rebuilding symbols, registries, and the top environment for every
+    ;; generated catalog is deliberately strict, but those structures are
+    ;; validation-only. They are rebuilt against the complete generated
+    ;; catalog so hidden declarations receive the same checks as visible ones.
+    ;; Detach the parent hygiene cache before any validation step can fail.
+    ;; Calling the ordinary reset here would destroy its arena; in a batch,
+    ;; an inactive prior entry can also leave a reclaimed handle that must
+    ;; not be destroyed again.
+    (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+    (set! tc-hygiene-module-env-cache-arena 0)
     (let
-      ;; Rebuilding symbols, registries, and the top environment for every
-      ;; generated catalog is deliberately strict, but those structures are
-      ;; validation-only. They are rebuilt against the complete generated
-      ;; catalog so hidden declarations receive the same checks as visible ones.
-      [saved-hygiene-ready : bool tc-hygiene-active-top-env-ready]
-      [saved-hygiene-env : TcTypeEnv tc-hygiene-active-top-env]
-      (begin
-        (let
-          [summary : AstDeclList
-            (macro-generated-catalog-summary target-module catalog)]
-          [validation-program
-            : AstProgram
-            ;; Validate the canonical generated module in isolation. References
-            ;; that require caller-local modules take the conservative Full path
-            ;; below; rebuilding the complete importer here once per catalog is
-            ;; both unnecessary and prohibitive on the Windows bootstrap arena.
-            (ast-program summary)]
-          [_before-validation : unit (tc-nominal-owner-cache-reset!)]
-          [out : MacroMaybeCatalogDiagnostic
-            (match (build-compiler-symbols validation-program)
-              [(ResultCompilerSymbols.Ok symbols)
-                (match (build-compiler-registries-with-symbols
-                  validation-program
-                  symbols)
-                  [(ResultCompilerRegistries.Ok registries)
-                    (let
-                      [validation-ctx : TcContext
-                        (TcContext
-                          validation-program
-                          symbols
-                          registries
-                          ""
-                          (tc-context-pools ctx))]
-                      (match (tc-build-top-env
-                        validation-ctx
-                        validation-program)
-                        [(ResultTcEnv.Ok validation-env)
-                          (begin
-                            (tc-hygiene-reset-active-top-env! validation-env)
-                            (tc-context-capture-active-pools! validation-ctx)
-                            (match (tc-module-local-env
+      [summary : AstDeclList
+        (macro-generated-catalog-summary target-module catalog)]
+      [validation-program
+        : AstProgram
+        ;; Validate the canonical generated module in isolation. References
+        ;; that require caller-local modules take the conservative Full path
+        ;; below; rebuilding the complete importer here once per catalog is
+        ;; both unnecessary and prohibitive on the Windows bootstrap arena.
+        (ast-program summary)]
+      [_before-validation : unit (tc-nominal-owner-cache-reset!)]
+      [out : MacroMaybeCatalogDiagnostic
+        (match (build-compiler-symbols validation-program)
+          [(ResultCompilerSymbols.Ok symbols)
+            (match (build-compiler-registries-with-symbols
+              validation-program
+              symbols)
+              [(ResultCompilerRegistries.Ok registries)
+                (let
+                  [validation-ctx : TcContext
+                    (TcContext
+                      validation-program
+                      symbols
+                      registries
+                      ""
+                      (tc-context-pools ctx))]
+                  (match (tc-build-top-env validation-ctx validation-program)
+                    [(ResultTcEnv.Ok validation-env)
+                      (begin
+                        (tc-hygiene-reset-active-top-env! validation-env)
+                        (tc-context-capture-active-pools! validation-ctx)
+                        (match (tc-module-local-env
+                          validation-ctx
+                          validation-env
+                          target-module)
+                          [(ResultTcEnv.Ok catalog-env)
+                            (macro-generated-catalog-validate-decls
                               validation-ctx
-                              validation-env
-                              target-module)
-                              [(ResultTcEnv.Ok catalog-env)
-                                (macro-generated-catalog-validate-decls
-                                  validation-ctx
-                                  catalog-env
-                                  target-module
-                                  catalog)]
-                              [(ResultTcEnv.Err message)
-                                (MacroMaybeCatalogDiagnostic.Some
-                                  (box (tc-diag-at-start message)))]))]
-                        [(ResultTcEnv.Err message)
-                          (MacroMaybeCatalogDiagnostic.Some
-                            (box (tc-diag-at-start message)))]))]
-                  [(ResultCompilerRegistries.Err message)
-                    (MacroMaybeCatalogDiagnostic.Some
-                      (box (tc-diag-at-start message)))])]
-              [(ResultCompilerSymbols.Err message)
+                              catalog-env
+                              target-module
+                              catalog)]
+                          [(ResultTcEnv.Err message)
+                            (MacroMaybeCatalogDiagnostic.Some
+                              (box (tc-diag-at-start message)))]))]
+                    [(ResultTcEnv.Err message)
+                      (MacroMaybeCatalogDiagnostic.Some
+                        (box (tc-diag-at-start message)))]))]
+              [(ResultCompilerRegistries.Err message)
                 (MacroMaybeCatalogDiagnostic.Some
                   (box (tc-diag-at-start message)))])]
-          (begin
-            (begin
-              (tc-hygiene-reset-active-top-env! saved-hygiene-env)
-              (if saved-hygiene-ready
-                unit
-                (set! tc-hygiene-active-top-env-ready false))
-              (tc-nominal-owner-cache-reset!)
-              ;; Validation indexes the scratch-owned summary. Never leave that
-              ;; global index pointing into the reclaimed validation arena.
-              (tc-module-decl-index-reset!)
-              out)))))))
+          [(ResultCompilerSymbols.Err message)
+            (MacroMaybeCatalogDiagnostic.Some (box (tc-diag-at-start message)))])]
+      (begin
+        (begin
+          (if (= tc-hygiene-module-env-cache-arena 0)
+            unit
+            (unsafe
+              (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena)))
+          ;; The caller restores its active environment after switching
+          ;; back to the owning arena. Copying it here would allocate the
+          ;; recursive value in validation scratch and leave it dangling.
+          (set! tc-hygiene-active-top-env-ready false)
+          (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+          (set! tc-hygiene-module-env-cache-arena 0)
+          (tc-nominal-owner-cache-reset!)
+          ;; Validation indexes the scratch-owned summary. Never leave that
+          ;; global index pointing into the reclaimed validation arena.
+          (tc-module-decl-index-reset!)
+          out)))))
 
 (define (macro-generated-catalog-validation-message
   [ctx : TcContext]
+  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [target-module : String]
   [catalog : AstDeclList]) : MacroMaybeCatalogDiagnostic
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
-    [_persistent-interns : unit (intern-persistent-storage-enable!)]
-    [out : MacroMaybeCatalogDiagnostic
-      (macro-generated-catalog-validation-message-scratch
-        ctx
-        orig-decls
-        target-module
-        catalog)]
+    [saved-hygiene-ready : bool tc-hygiene-active-top-env-ready]
+    [enclosing : i64 (arena.tl_arena_current)]
+    [scratch : i64 (arena.tl_arena_make)]
     (begin
-      (if prev-persist
-        unit
-        (intern-persistent-storage-disable!))
-      ;; The validation walk uses the ordinary checker and therefore touches
-      ;; program-derived caches. Their entries were allocated in the reclaimed
-      ;; scratch arena; clear them before returning to the parent expansion.
-      (tc-clone-able-cache-reset!)
-      (tc-macro-helper-env-cache-reset!)
-      (tc-agg-caches-reset!)
-      (tc-nominal-owner-cache-reset!)
-      (macro-alias-derived-cache-reset!)
-      (tc-lazy-import-stubs-reset!)
-      (compiler-symbols-clear-last-error!)
-      (tc-clone-able-cache-populate! ctx)
-      out)))
+      (intern-persistent-storage-enable!)
+      (unsafe
+        (arena.tl_arena_set scratch))
+      (let
+        [raw : MacroMaybeCatalogDiagnostic
+          (macro-generated-catalog-validation-message-scratch
+            ctx
+            orig-decls
+            target-module
+            catalog)]
+        (begin
+          (unsafe
+            (arena.tl_arena_set enclosing))
+          (let
+            [escaped : MacroMaybeCatalogDiagnostic
+              (match raw
+                [(MacroMaybeCatalogDiagnostic.No)
+                  (MacroMaybeCatalogDiagnostic.No)]
+                [(MacroMaybeCatalogDiagnostic.Some diag)
+                  (MacroMaybeCatalogDiagnostic.Some
+                    (box (clone (box-get diag))))])]
+            (begin
+              ;; The validation walk uses the ordinary checker. Clear every
+              ;; program-derived cache while its source arena is still alive,
+              ;; restore hygiene in the owning arena, then reclaim validation.
+              (tc-clone-able-cache-reset!)
+              (tc-macro-helper-env-cache-reset!)
+              (tc-agg-caches-reset!)
+              (tc-nominal-owner-cache-reset!)
+              (macro-alias-derived-cache-reset!)
+              (tc-lazy-import-stubs-reset!)
+              (compiler-symbols-clear-last-error!)
+              (if saved-hygiene-ready
+                (tc-hygiene-reset-active-top-env! top-env)
+                (begin
+                  (set! tc-hygiene-active-top-env (tc-empty-type-env))
+                  (set! tc-hygiene-active-top-env-ready false)))
+              (tc-clone-able-cache-populate! ctx)
+              (unsafe
+                (arena.tl_arena_destroy scratch))
+              (if prev-persist
+                unit
+                (intern-persistent-storage-disable!))
+              escaped)))))))
 
 ;; The validation context intentionally does not install caller-local module
 ;; aliases into a generated target. A catalog containing such a type reference
@@ -56786,6 +56817,7 @@
             (not (macro-generated-module-memo-validated? identity))))
           (match (macro-generated-catalog-validation-message
             ctx
+            top-env
             orig-decls
             target-module
             catalog)

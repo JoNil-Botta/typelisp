@@ -55793,17 +55793,16 @@
           alias-name
           (compiler-load-lazy-empty-surface-summary)
           (sym_i64_env.sym-i64-empty))]
-      (let
-        [observed : CompilerLoadLazyQualifiedObserverResult
-          (compiler-load-lazy-qualified-observer-end-pair!)]
-        (MacroGeneratedCatalogDemandObservation
-          demand
-          (struct-get observed primary-members)
-          (CompilerLoadLazyAliasDemand
-            (struct-get observed secondary-qualified)
-            (struct-get observed secondary-direct)
-            (struct-get demand unknown))
-          (struct-get observed secondary-members))))))
+      [observed : CompilerLoadLazyQualifiedObserverResult
+        (compiler-load-lazy-qualified-observer-end-pair!)]
+      (MacroGeneratedCatalogDemandObservation
+        demand
+        (struct-get observed primary-members)
+        (CompilerLoadLazyAliasDemand
+          (struct-get observed secondary-qualified)
+          (struct-get observed secondary-direct)
+          (struct-get demand unknown))
+        (struct-get observed secondary-members)))))
 
 ;; 0 = no observation, 1 = statically named observation, 2 = conservative
 ;; full fallback. A direct module-alias use is handled by the caller as Full;
@@ -56212,13 +56211,15 @@
   (let
     [prev-persist : bool (intern-persistent-storage-on?)]
     [enclosing : i64 (arena.tl_arena_current)]
-    [scratch : i64 (tc-fn-scratch-arena-get)]
+    ;; Demand walks can run before a lint/compile entry reaches the ordinary
+    ;; function-checker lifecycle. Own this arena directly so a later per-file
+    ;; reset cannot leave the shared function scratch handle dangling.
+    [scratch : i64 (arena.tl_arena_make)]
     (begin
       (intern-persistent-storage-enable!)
       (unsafe
         (arena.tl_arena_set scratch))
       (let
-        [mark : i64 (arena.tl_region_mark)]
         [importer-decls : AstDeclList
           (macro-collect-module-body-decls orig-decls importer-module "")]
         [raw : MacroGeneratedModuleCatalogDemand
@@ -56227,7 +56228,6 @@
             target-module
             alias
             catalog)]
-        [scratch-head : i64 (arena.tl_arena_current)]
         (begin
           (unsafe
             (arena.tl_arena_set enclosing))
@@ -56241,14 +56241,10 @@
                 [(MacroGeneratedModuleCatalogDemand.Partial selected)
                   (MacroGeneratedModuleCatalogDemand.Partial
                     (macro-decl-list-append selected (ast-decl-list-new)))])]
-            [new-enclosing : i64 (arena.tl_arena_current)]
             (begin
               (compiler-load-lazy-qualified-observer-reset!)
               (unsafe
-                (arena.tl_arena_set scratch-head)
-                (arena.tl_region_reset mark)
-                (arena.tl_arena_set new-enclosing))
-              (tc-fn-scratch-arena-release-after-overflow! scratch scratch-head)
+                (arena.tl_arena_destroy scratch))
               (if prev-persist
                 unit
                 (intern-persistent-storage-disable!))
@@ -56313,7 +56309,6 @@
 
 (define (macro-generated-catalog-validation-message-scratch
   [ctx : TcContext]
-  [orig-decls : AstDeclList]
   [target-module : String]
   [catalog : AstDeclList]) : MacroMaybeCatalogDiagnostic
   (begin
@@ -56380,27 +56375,25 @@
           [(ResultCompilerSymbols.Err message)
             (MacroMaybeCatalogDiagnostic.Some (box (tc-diag-at-start message)))])]
       (begin
-        (begin
-          (if (= tc-hygiene-module-env-cache-arena 0)
-            unit
-            (unsafe
-              (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena)))
-          ;; The caller restores its active environment after switching
-          ;; back to the owning arena. Copying it here would allocate the
-          ;; recursive value in validation scratch and leave it dangling.
-          (set! tc-hygiene-active-top-env-ready false)
-          (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
-          (set! tc-hygiene-module-env-cache-arena 0)
-          (tc-nominal-owner-cache-reset!)
-          ;; Validation indexes the scratch-owned summary. Never leave that
-          ;; global index pointing into the reclaimed validation arena.
-          (tc-module-decl-index-reset!)
-          out)))))
+        (if (= tc-hygiene-module-env-cache-arena 0)
+          unit
+          (unsafe
+            (arena.tl_arena_destroy tc-hygiene-module-env-cache-arena)))
+        ;; The caller restores its active environment after switching
+        ;; back to the owning arena. Copying it here would allocate the
+        ;; recursive value in validation scratch and leave it dangling.
+        (set! tc-hygiene-active-top-env-ready false)
+        (set! tc-hygiene-module-env-cache (tc-empty-module-local-env-cache))
+        (set! tc-hygiene-module-env-cache-arena 0)
+        (tc-nominal-owner-cache-reset!)
+        ;; Validation indexes the scratch-owned summary. Never leave that
+        ;; global index pointing into the reclaimed validation arena.
+        (tc-module-decl-index-reset!)
+        out))))
 
 (define (macro-generated-catalog-validation-message
   [ctx : TcContext]
   [top-env : TcTypeEnv]
-  [orig-decls : AstDeclList]
   [target-module : String]
   [catalog : AstDeclList]) : MacroMaybeCatalogDiagnostic
   (let
@@ -56416,7 +56409,6 @@
         [raw : MacroMaybeCatalogDiagnostic
           (macro-generated-catalog-validation-message-scratch
             ctx
-            orig-decls
             target-module
             catalog)]
         (begin
@@ -56504,8 +56496,6 @@
       result)))
 
 (define (macro-expand-module-materialized
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [module : String]
   [target-module : String]
@@ -56818,7 +56808,6 @@
           (match (macro-generated-catalog-validation-message
             ctx
             top-env
-            orig-decls
             target-module
             catalog)
             [(MacroMaybeCatalogDiagnostic.No)
@@ -56827,8 +56816,6 @@
                   (macro-generated-module-memo-mark-validated! identity)
                   unit)
                 (macro-expand-module-catalog-after-validation
-                  ctx
-                  top-env
                   orig-decls
                   module
                   target-module
@@ -56845,8 +56832,6 @@
               (if (macro-generated-catalog-validation-needs-full?
                 (box-get diag))
                 (macro-expand-module-catalog-after-validation
-                  ctx
-                  top-env
                   orig-decls
                   module
                   target-module
@@ -56861,8 +56846,6 @@
                   call-expr)
                 (ResultMacroDeclExpansion.Err diag))])
           (macro-expand-module-catalog-after-validation
-            ctx
-            top-env
             orig-decls
             module
             target-module
@@ -56877,8 +56860,6 @@
             call-expr))))))
 
 (define (macro-expand-module-catalog-after-validation
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
   [orig-decls : AstDeclList]
   [module : String]
   [target-module : String]
@@ -56896,8 +56877,6 @@
       (ResultMacroDeclExpansion.Ok (ast-decl-list-new) (ast-decl-path-list-new))]
     [(MacroGeneratedModuleCatalogDemand.Partial selection)
       (macro-expand-module-materialized
-        ctx
-        top-env
         orig-decls
         module
         target-module
@@ -56912,8 +56891,6 @@
         call-expr)]
     [MacroGeneratedModuleCatalogDemand.Full
       (macro-expand-module-materialized
-        ctx
-        top-env
         orig-decls
         module
         target-module

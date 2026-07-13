@@ -2768,8 +2768,9 @@
 ;; first member below an alias root for every qualified use it sees. This keeps
 ;; the ordinary three-bit result intact while avoiding one whole-program walk
 ;; per candidate member of a generated Module catalog. The observer is strictly
-;; dynamic and single-threaded. The sole begin site brackets one structural
-;; walk, so observer state cannot nest and does not need an arena-owned frame.
+;; dynamic and single-threaded. Nested demand queries save only an active outer
+;; observer; a top-level query clears the stack without copying inactive state
+;; that may belong to a reclaimed batch-entry arena.
 (defenum CompilerLoadLazyQualifiedObserverStack
   (Empty)
   (Frame
@@ -2795,6 +2796,8 @@
 
 (define compiler-load-lazy-qualified-observer-active : bool
   false)
+(define compiler-load-lazy-qualified-observer-exhaustive : bool
+  false)
 (define compiler-load-lazy-qualified-observer-root : String
   "")
 (define compiler-load-lazy-qualified-observer-root-id : i64
@@ -2819,7 +2822,7 @@
 (define (compiler-load-lazy-demand-bind-local
   [locals : sym_i64_env.SymI64Env]
   [name : i64]) : sym_i64_env.SymI64Env
-  (if compiler-load-lazy-qualified-observer-active
+  (if compiler-load-lazy-qualified-observer-exhaustive
     (if (or
       (= name compiler-load-lazy-qualified-observer-root-id)
       (= name compiler-load-lazy-qualified-observer-secondary-root-id))
@@ -2838,6 +2841,7 @@
 (define (compiler-load-lazy-qualified-observer-reset!) : unit
   (begin
     (set! compiler-load-lazy-qualified-observer-active false)
+    (set! compiler-load-lazy-qualified-observer-exhaustive false)
     (set! compiler-load-lazy-qualified-observer-root "")
     (set! compiler-load-lazy-qualified-observer-root-id 0)
     (set!
@@ -2858,6 +2862,26 @@
   [root : String]
   [secondary-root : String]) : unit
   (begin
+    ;; A top-level query may follow a completed batch entry whose inactive
+    ;; observer frame belonged to the reclaimed entry arena. Clear it before
+    ;; preserving the ordinary push/pop semantics used by the demand walker.
+    (if compiler-load-lazy-qualified-observer-active
+      unit
+      (compiler-load-lazy-qualified-observer-reset!))
+    (set!
+      compiler-load-lazy-qualified-observer-stack
+      (CompilerLoadLazyQualifiedObserverStack.Frame
+        compiler-load-lazy-qualified-observer-active
+        compiler-load-lazy-qualified-observer-root
+        compiler-load-lazy-qualified-observer-root-id
+        compiler-load-lazy-qualified-observer-members
+        compiler-load-lazy-qualified-observer-secondary-root
+        compiler-load-lazy-qualified-observer-secondary-root-id
+        compiler-load-lazy-qualified-observer-secondary-members
+        compiler-load-lazy-qualified-observer-secondary-qualified
+        compiler-load-lazy-qualified-observer-secondary-direct
+        (box compiler-load-lazy-qualified-observer-stack)))
+    (set! compiler-load-lazy-qualified-observer-exhaustive true)
     (set! compiler-load-lazy-qualified-observer-active true)
     (set! compiler-load-lazy-qualified-observer-root-id (intern root))
     (set! compiler-load-lazy-qualified-observer-root root)
@@ -2955,13 +2979,11 @@
         compiler-load-lazy-qualified-observer-secondary-qualified
         compiler-load-lazy-qualified-observer-secondary-direct)]
     (begin
-      (set!
-        compiler-load-lazy-qualified-observer-stack
-        (compiler-load-lazy-qualified-observer-stack-empty))
       (match compiler-load-lazy-qualified-observer-stack
         [(CompilerLoadLazyQualifiedObserverStack.Empty)
           (begin
             (set! compiler-load-lazy-qualified-observer-active false)
+            (set! compiler-load-lazy-qualified-observer-exhaustive false)
             (set! compiler-load-lazy-qualified-observer-root "")
             (set! compiler-load-lazy-qualified-observer-root-id 0)
             (set!
@@ -4046,15 +4068,45 @@
     [(AstExpr.Init maybe-ty)
       (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)]
     [(AstExpr.Comptime inner)
-      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.Quote inner)
-      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.Quasiquote inner)
-      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.Unquote inner)
-      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.UnquoteSplicing inner)
-      (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.Try inner)
       (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
     [(AstExpr.Return inner)
@@ -4299,25 +4351,41 @@
             summary
             (compiler-load-lazy-param-list-locals params locals))))]
     [(AstDecl.DefMacro _ params ret body)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-lazy-macro-param-list-demand params alias summary locals)
+      (if compiler-load-lazy-qualified-observer-exhaustive
         (compiler-load-lazy-alias-demand-merge
-          (compiler-load-lazy-type-demand ret alias summary locals)
-          (compiler-load-lazy-expr-demand
-            (ast-node-get body)
+          (compiler-load-lazy-macro-param-list-demand
+            params
             alias
             summary
-            (compiler-load-lazy-macro-param-list-locals params locals))))]
+            locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ret alias summary locals)
+            (compiler-load-lazy-expr-demand
+              (ast-node-get body)
+              alias
+              summary
+              (compiler-load-lazy-macro-param-list-locals params locals))))
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.Extern _ _ _ ty)
-      (compiler-load-lazy-type-demand ty alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-type-demand ty alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefEnum _ _ variants)
-      (compiler-load-lazy-variant-list-demand variants alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-variant-list-demand variants alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefEnumLifetimes _ _ _ variants)
-      (compiler-load-lazy-variant-list-demand variants alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-variant-list-demand variants alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefStruct _ _ _ fields)
-      (compiler-load-lazy-field-list-demand fields alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-field-list-demand fields alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefStructLifetimes _ _ _ _ fields)
-      (compiler-load-lazy-field-list-demand fields alias summary locals)]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-field-list-demand fields alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.Import
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-demand
@@ -4334,9 +4402,11 @@
     [(AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-demand (box-get inner) alias summary locals)]
     [(AstDecl.ComptimeDecl meta inner)
-      (compiler-load-lazy-alias-demand-merge
-        (compiler-load-lazy-generated-meta-demand meta alias summary locals)
-        (compiler-load-lazy-decl-demand (box-get inner) alias summary locals))]
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-generated-meta-demand meta alias summary locals)
+          (compiler-load-lazy-decl-demand (box-get inner) alias summary locals))
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]

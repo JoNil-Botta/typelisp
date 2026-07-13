@@ -266,7 +266,9 @@
   (Var i64)
   (VarArgs i64 (Box AstLifetimeList))
   (Ptr i64)
-  (MutPtr i64))
+  (MutPtr i64)
+  ;; Static callable-parameter effect. Legal only inside Func argument lists.
+  (Consume i64))
 
 (defstruct AstTypeList
   (slots (Array i64))
@@ -285,7 +287,7 @@
   (Named String))
 
 (defenum AstParam
-  (Param i64 AstType bool))
+  (Param i64 AstType bool bool))
 
 (defstruct AstParamList
   (slots (Array AstParam))
@@ -972,6 +974,7 @@
       (AstType.VarArgs
         name
         (box (ty-node-persist-lifetimes (box-get lifetimes))))]
+    [(AstType.Consume inner) (AstType.Consume inner)]
     [_ node]))
 
 ;; State-owned type node pools mirror the global type-node backing store while
@@ -1375,7 +1378,8 @@
     [(AstType.VarArgs name lifetimes)
       (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 32 name))]
     [(AstType.Ptr inner) (hash.combine 33 inner)]
-    [(AstType.MutPtr inner) (hash.combine 34 inner)]))
+    [(AstType.MutPtr inner) (hash.combine 34 inner)]
+    [(AstType.Consume inner) (hash.combine 36 inner)]))
 
 (define (ty-lifetime-list-eq-at?
   [a : (& a AstLifetimeList)]
@@ -1577,6 +1581,10 @@
     [(AstType.MutPtr a-inner)
       (match b
         [(AstType.MutPtr b-inner) (= a-inner b-inner)]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner) (= a-inner b-inner)]
         [_ false])]))
 
 (define (ty-node-shallow-eq? [a-id : i64] [b : AstType]) : bool
@@ -1923,17 +1931,20 @@
 (define (ast-node-pool-context-expr-push
   [pools : AstNodePoolContext]
   [node : AstExpr]) : i64
-  (match (ast-expr-node-pool-state-push
-    (array-ref (struct-get pools expr-pool) 0)
-    node)
-    [(AstExprNodePoolPushOk next id)
-      (begin
-        (array-set! (struct-get pools expr-pool) 0 next)
-        (ast-node-pool-context-sync-base-arena!
-          pools
-          (struct-get next base-arena))
-        (ast-node-pool-compat-context-sync-installed!)
-        id)]))
+  (let
+    [current : AstExprNodePoolState (array-ref (struct-get pools expr-pool) 0)]
+    (match (ast-expr-node-pool-state-push current node)
+      [(AstExprNodePoolPushOk next id)
+        (begin
+          (array-set! (struct-get pools expr-pool) 0 next)
+          (if (not
+            (= (struct-get current base-arena) (struct-get next base-arena)))
+            (ast-node-pool-context-sync-base-arena!
+              pools
+              (struct-get next base-arena))
+            unit)
+          (ast-node-pool-compat-context-sync-installed!)
+          id)])))
 
 (define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
   (ast-expr-node-pool-state-get (array-ref (struct-get pools expr-pool) 0) id))
@@ -1955,17 +1966,20 @@
 (define (ast-node-pool-context-type-push
   [pools : AstNodePoolContext]
   [node : AstType]) : i64
-  (match (ast-type-node-pool-state-push
-    (array-ref (struct-get pools type-pool) 0)
-    node)
-    [(AstTypeNodePoolPushOk next id)
-      (begin
-        (array-set! (struct-get pools type-pool) 0 next)
-        (ast-node-pool-context-sync-base-arena!
-          pools
-          (struct-get next base-arena))
-        (ast-node-pool-compat-context-sync-installed!)
-        id)]))
+  (let
+    [current : AstTypeNodePoolState (array-ref (struct-get pools type-pool) 0)]
+    (match (ast-type-node-pool-state-push current node)
+      [(AstTypeNodePoolPushOk next id)
+        (begin
+          (array-set! (struct-get pools type-pool) 0 next)
+          (if (not
+            (= (struct-get current base-arena) (struct-get next base-arena)))
+            (ast-node-pool-context-sync-base-arena!
+              pools
+              (struct-get next base-arena))
+            unit)
+          (ast-node-pool-compat-context-sync-installed!)
+          id)])))
 
 (define (ast-node-pool-context-type-get [pools : AstNodePoolContext] [id : i64]) : AstType
   (ast-type-node-pool-state-get (array-ref (struct-get pools type-pool) 0) id))
@@ -1990,16 +2004,16 @@
   [id : i64]
   [node : AstType]) : unit
   (let
+    [current : AstTypeNodePoolState (array-ref (struct-get pools type-pool) 0)]
     [next : AstTypeNodePoolState
-      (ast-type-node-pool-state-set!
-        (array-ref (struct-get pools type-pool) 0)
-        id
-        node)]
+      (ast-type-node-pool-state-set! current id node)]
     (begin
       (array-set! (struct-get pools type-pool) 0 next)
-      (ast-node-pool-context-sync-base-arena!
-        pools
-        (struct-get next base-arena))
+      (if (not (= (struct-get current base-arena) (struct-get next base-arena)))
+        (ast-node-pool-context-sync-base-arena!
+          pools
+          (struct-get next base-arena))
+        unit)
       (ast-node-pool-compat-context-sync-installed!))))
 
 (defstruct AstExprList
@@ -2233,6 +2247,19 @@
 (define (ast-ty-func [args : AstTypeList] [ret : AstType]) : AstType
   (AstType.Func (box args) (ast-node-pool-reader-type-push ret)))
 
+(define (ast-ty-consume [inner : AstType]) : AstType
+  (AstType.Consume (ast-node-pool-reader-type-push inner)))
+
+(define (ast-type-consuming-param? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Consume _) true]
+    [_ false]))
+
+(define (ast-type-strip-consuming-param [ty : AstType]) : AstType
+  (match ty
+    [(AstType.Consume inner) (ast-node-pool-reader-type-get inner)]
+    [_ ty]))
+
 (define (ast-ty-tuple [elems : AstTypeList]) : AstType
   (AstType.Tuple (box elems)))
 
@@ -2280,6 +2307,11 @@
   [args : AstTypeList]
   [ret : AstType]) : AstType
   (AstType.Func (box args) (ast-node-pool-context-type-push pools ret)))
+
+(define (ast-ty-consume-with-pools
+  [pools : AstNodePoolContext]
+  [inner : AstType]) : AstType
+  (AstType.Consume (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-array-with-pools
   [pools : AstNodePoolContext]
@@ -2406,13 +2438,27 @@
       out)))
 
 (define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam.Param (ci.intern name) ty is-comptime))
+  (AstParam.Param (ci.intern name) ty is-comptime false))
+
+(define (ast-param-with-consume
+  [name : String]
+  [ty : AstType]
+  [is-comptime : bool]
+  [consume : bool]) : AstParam
+  (AstParam.Param (ci.intern name) ty is-comptime consume))
 
 (define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam.Param name ty is-comptime))
+  (AstParam.Param name ty is-comptime false))
+
+(define (ast-param-id-with-consume
+  [name : i64]
+  [ty : AstType]
+  [is-comptime : bool]
+  [consume : bool]) : AstParam
+  (AstParam.Param name ty is-comptime consume))
 
 (define (ast-param-fallback) : AstParam
-  (AstParam.Param 0 (AstType.Unit) false))
+  (AstParam.Param 0 (AstType.Unit) false false))
 
 (define (ast-param-list-with-capacity [capacity : i64]) : AstParamList
   (let
@@ -5422,7 +5468,9 @@
         (box (ast-compaction-remap-lifetime-list (box-get lifetimes))))]
     [(AstType.Ptr elem) (AstType.Ptr (ast-compaction-remap-type-id remap elem))]
     [(AstType.MutPtr elem)
-      (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]))
+      (AstType.MutPtr (ast-compaction-remap-type-id remap elem))]
+    [(AstType.Consume inner)
+      (AstType.Consume (ast-compaction-remap-type-id remap inner))]))
 
 (define (ast-compaction-remap-type-id
   [remap : AstProgramCompactionRemap]
@@ -5456,8 +5504,12 @@
   [remap : AstProgramCompactionRemap]
   [param : AstParam]) : AstParam
   (match param
-    [(AstParam.Param name ty is-comptime)
-      (AstParam.Param name (ast-compaction-remap-type remap ty) is-comptime)]))
+    [(AstParam.Param name ty is-comptime consume)
+      (AstParam.Param
+        name
+        (ast-compaction-remap-type remap ty)
+        is-comptime
+        consume)]))
 
 (define (ast-compaction-remap-param-list
   [remap : AstProgramCompactionRemap]
@@ -6497,7 +6549,8 @@
     [(AstType.Box _) 31]
     [(AstType.EnumArgs _ _) 32]
     [(AstType.StructArgs _ _) 33]
-    [(AstType.VarArgs _ _) 34]))
+    [(AstType.VarArgs _ _) 34]
+    [(AstType.Consume _) 36]))
 
 (define (ast-expr-tag [expr : AstExpr]) : i64
   (match expr
@@ -6876,6 +6929,13 @@
           (ast-type-eq?
             (ast-node-pool-reader-type-get a-elem)
             (ast-node-pool-reader-type-get b-elem))]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner)
+          (ast-type-eq?
+            (ast-node-pool-reader-type-get a-inner)
+            (ast-node-pool-reader-type-get b-inner))]
         [_ false])]))
 
 (define (ast-extern-abi-eq? [a : AstExternAbi] [b : AstExternAbi]) : bool

@@ -132,6 +132,13 @@ required_gate_unavailable() {
 # fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
 # race, not a compiler crash.)
 
+# Generated payload freshness must fail before the expensive bootstrap. The
+# exact-source verifier uses only stage0-supported language/runtime surfaces.
+run_with_compiler \
+    "$SEED_TYPELISP_BIN" \
+    "embedded stdlib generated payload" \
+    scripts/verify-embedded-stdlib-payload.sh
+
 stage2_safety_corpus_supported() {
     compiler=$1
     probe_dir="$ROOT/target/ci-verify-safety-probe"

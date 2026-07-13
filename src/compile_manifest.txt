@@ -427,6 +427,10 @@ case|selfhost_compiler_embedded_stdlib|src/compiler_embedded_stdlib.tl|assembly|
 contains|compiler_embedded_stdlib_lookup:
 end
 
+case|selfhost_compiler_embedded_stdlib_payload|src/compiler_embedded_stdlib_payload.tl|assembly|skip|direct
+contains|compiler_embedded_stdlib_payload_lookup:
+end
+
 case|selfhost_compiler_float|src/compiler_float.tl|assembly|skip|direct
 contains|_tl_compiler_float_parse_f64:
 contains|_tl_compiler_float_format_f64:
@@ -672,11 +676,13 @@ contains|_tl_read_list_result:
 contains|reader: unexpected end of input
 end
 
-decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655): main-less helper module with inline tests, executable smoke coverage, package metadata emission, and inspect-command parsing; tlci code loading remains a later slice
+decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655/#4869): main-less helper module with inline tests, executable smoke coverage, package metadata emission, inspect-command parsing, and the focused code-bearing native macro proof image; general package/stdlib code emission remains staged
+
+decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905): explicit image/host/session contexts, callback status unwind, success-only result commit, dynamic macro data layout, and Linux/Windows x86_64 emission; fixed #4902 templates remain oracle-only while general macro-source lowering and automatic fuel insertion remain staged
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 
-decision|src/tlci_loader.tl|tlci comptime image loader core (#2657): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup ranges, applies load-base fixups, calls tlci_image_entry through the backend raw C-ABI bridge, validates image registration, and is exercised through the tlci_loader_smoke integration case; native macro dispatch remains staged
+decision|src/tlci_loader.tl|tlci comptime image loader core (#2657/#4869): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup/macro-table ranges, applies load-base fixups, calls tlci_image_entry, and invokes registered macro entries through backend raw C-ABI bridges; the cross-platform tlci_loader_smoke covers registration, lookup, success/result commit, session forwarding, and nonzero callback-status propagation
 
 case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:

@@ -1,10 +1,11 @@
 ;; tlci_loader.tl - Dormant tlci comptime image loader core.
 ;;
-;; Native macro dispatch lands in later slices. This module owns the loader
-;; boundary that is already specified: parse/validate a tlci image, map it into
+;; General package/stdlib macro dispatch lands in later slices. This module
+;; owns the loader boundary: parse/validate a tlci image, map it into
 ;; page-backed host memory, apply load-base fixups while pages are writable,
 ;; finalize code pages as RX through tlci_pages, and run the image registration
-;; entry point through the backend runtime's raw C-ABI bridge.
+;; entry point through the backend runtime's raw C-ABI bridge, validate its
+;; macro table, and invoke registered entries through the six-argument ABI.
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import tlci_core as tlci)
@@ -15,6 +16,16 @@
     [entry-addr : i64]
     [host-table-addr : i64]
     [registration-addr : i64]) : i64 (:symbol "tl_tlci_call_image_entry")))
+
+(unsafe
+  (extern (tlci-loader-call-macro-entry-raw
+    [entry-addr : i64]
+    [image-context : i64]
+    [host-context : i64]
+    [session-context : i64]
+    [operands-addr : i64]
+    [operand-count : i64]
+    [result-addr : i64]) : i64 (:symbol "tl_tlci_call_macro_entry")))
 
 (defstruct TlciLoadedImage
   ;; Keep the page region flattened at this cross-module boundary. The
@@ -52,6 +63,23 @@
 
 (defenum ResultTlciLoaderI64
   (Ok i64)
+  (Err String))
+
+(defstruct TlciMacroEntry
+  (name-addr i64)
+  (name-len i64)
+  (function-addr i64))
+
+(defenum ResultTlciMacroEntry
+  (Ok TlciMacroEntry)
+  (Err String))
+
+(defstruct TlciMacroDispatch
+  (status i64)
+  (result-handle i64))
+
+(defenum ResultTlciMacroDispatch
+  (Ok TlciMacroDispatch)
   (Err String))
 
 (define tlci-loader-entry-name-offset : i64
@@ -256,6 +284,12 @@
   (cast
     (unsafe
       (ptr->int (ptr-cast (array-data items) : (Ptr u8))))
+    : i64))
+
+(define (tlci-loader-u8-array-addr [items : (Array u8)]) : i64
+  (cast
+    (unsafe
+      (ptr->int (array-data items)))
     : i64))
 
 (define (tlci-loader-host-table-storage [table : tlci.TlciHostCallbackTable]) : (Array
@@ -467,14 +501,22 @@
                   (ResultTlciLoadedImage.Err
                     (tlci-loader-registration-error message)))]
               [(tlci.ResultTlciHostAbi.Ok)
-                (ResultTlciLoadedImage.Ok
-                  (tlci-loader-loaded-image-with-registration
-                    loaded
-                    host-storage
-                    registration-storage
-                    host-table-addr
-                    registration-addr
-                    registration))]))))]))
+                (let
+                  [registered : TlciLoadedImage
+                    (tlci-loader-loaded-image-with-registration
+                      loaded
+                      host-storage
+                      registration-storage
+                      host-table-addr
+                      registration-addr
+                      registration)]
+                  (match (tlci-loader-validate-macro-entries (& registered))
+                    [(ResultTlciLoaderUnit.Err message)
+                      (begin
+                        (tlci-loader-release registered)
+                        (ResultTlciLoadedImage.Err message))]
+                    [(ResultTlciLoaderUnit.Ok)
+                      (ResultTlciLoadedImage.Ok registered)]))]))))]))
 
 (define (tlci-loader-load-mapped-region
   [bytes : (Array u8)]
@@ -571,6 +613,278 @@
     [(tlci.ResultTlciHostAbi.Ok)
       (tlci-loader-load-from-bytes-with-registration bytes host-table)]))
 
+(define (tlci-loader-address-range-contained?
+  [addr : i64]
+  [len : i64]
+  [base : i64]
+  [size : i64]) : bool
+  (and (>= addr base) (>= len 0) (>= size len) (<= addr (+ base (- size len)))))
+
+(define (tlci-loader-image-range-contained?
+  [loaded : (& loaded TlciLoadedImage)]
+  [addr : i64]
+  [len : i64]) : bool
+  (tlci-loader-address-range-contained?
+    addr
+    len
+    (struct-get loaded image-region-addr)
+    (struct-get loaded image-region-size)))
+
+(define (tlci-loader-code-address?
+  [loaded : (& loaded TlciLoadedImage)]
+  [addr : i64]) : bool
+  (tlci-loader-address-range-contained?
+    addr
+    1
+    (struct-get loaded code-addr)
+    (struct-get loaded code-len)))
+
+(define (tlci-loader-mapped-name-eq-at?
+  [addr : i64]
+  [expected : String]
+  [index : i64]
+  [len : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (=
+        (cast
+          (unsafe
+            (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 addr) index)))
+          : i64)
+        (cast (tlci.tlci-string-ref expected index) : i64))
+      (tlci-loader-mapped-name-eq-at? addr expected (+ index 1) len))))
+
+(define (tlci-loader-mapped-name-eq?
+  [loaded : (& loaded TlciLoadedImage)]
+  [addr : i64]
+  [len : i64]
+  [expected : String]) : bool
+  (and
+    (= len (tlci.tlci-string-length expected))
+    (tlci-loader-image-range-contained? loaded addr len)
+    (tlci-loader-mapped-name-eq-at? addr expected 0 len)))
+
+(define (tlci-loader-read-macro-entry
+  [loaded : (& loaded TlciLoadedImage)]
+  [index : i64]) : ResultTlciMacroEntry
+  (let
+    [count : i64 (struct-get loaded macro-entry-count)]
+    [table : i64 (struct-get loaded macro-entry-table)]
+    [record-size : i64 tlci.tlci-macro-entry-record-size]
+    (cond
+      [(or (< index 0) (>= index count))
+        (ResultTlciMacroEntry.Err "tlci loader: macro entry index out of range")]
+      [(or
+          (< count 0)
+          (> count (/ (struct-get loaded image-region-size) record-size)))
+        (ResultTlciMacroEntry.Err "tlci loader: macro entry count is invalid")]
+      [(not (= (% table 8) 0))
+        (ResultTlciMacroEntry.Err
+          "tlci loader: macro entry table must be 8-byte aligned")]
+      [(not
+          (tlci-loader-image-range-contained?
+            loaded
+            table
+            (* count record-size)))
+        (ResultTlciMacroEntry.Err
+          "tlci loader: macro entry table outside mapped image")]
+      [else
+        (let
+          [record : i64 (+ table (* index record-size))]
+          [name-addr : i64
+            (tlci-loader-read-mapped-i64
+              (+ record tlci.tlci-macro-entry-name-ptr-offset))]
+          [name-len : i64
+            (tlci-loader-read-mapped-i64
+              (+ record tlci.tlci-macro-entry-name-len-offset))]
+          [function-addr : i64
+            (tlci-loader-read-mapped-i64
+              (+ record tlci.tlci-macro-entry-function-offset))]
+          [reserved0 : i64
+            (tlci-loader-read-mapped-i64
+              (+ record tlci.tlci-macro-entry-reserved0-offset))]
+          (cond
+            [(not (= reserved0 0))
+              (ResultTlciMacroEntry.Err
+                "tlci loader: macro entry reserved field must be zero")]
+            [(or
+                (<= name-len 0)
+                (not
+                  (tlci-loader-image-range-contained? loaded name-addr name-len)))
+              (ResultTlciMacroEntry.Err
+                "tlci loader: macro entry name outside mapped image")]
+            [(not (tlci-loader-code-address? loaded function-addr))
+              (ResultTlciMacroEntry.Err
+                "tlci loader: macro entry function outside code section")]
+            [else
+              (ResultTlciMacroEntry.Ok
+                (TlciMacroEntry name-addr name-len function-addr))]))])))
+
+(define (tlci-loader-mapped-name-ranges-eq-at?
+  [left : i64]
+  [right : i64]
+  [index : i64]
+  [len : i64]) : bool
+  (if (>= index len)
+    true
+    (and
+      (=
+        (unsafe
+          (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 left) index)))
+        (unsafe
+          (ptr-read (ptr-offset (pages.tlci-pages-addr->ptr-u8 right) index))))
+      (tlci-loader-mapped-name-ranges-eq-at? left right (+ index 1) len))))
+
+(define (tlci-loader-macro-entry-names-eq?
+  [left : TlciMacroEntry]
+  [right : TlciMacroEntry]) : bool
+  (and
+    (= (struct-get left name-len) (struct-get right name-len))
+    (tlci-loader-mapped-name-ranges-eq-at?
+      (struct-get left name-addr)
+      (struct-get right name-addr)
+      0
+      (struct-get left name-len))))
+
+(define (tlci-loader-macro-entry-duplicate-before?
+  [loaded : (& loaded TlciLoadedImage)]
+  [entry : TlciMacroEntry]
+  [index : i64]) : ResultTlciLoaderUnit
+  (if (<= index 0)
+    (ResultTlciLoaderUnit.Ok)
+    (match (tlci-loader-read-macro-entry loaded (- index 1))
+      [(ResultTlciMacroEntry.Err message) (ResultTlciLoaderUnit.Err message)]
+      [(ResultTlciMacroEntry.Ok previous)
+        (if (tlci-loader-macro-entry-names-eq? entry previous)
+          (ResultTlciLoaderUnit.Err "tlci loader: duplicate macro entry name")
+          (tlci-loader-macro-entry-duplicate-before? loaded entry (- index 1)))])))
+
+(define (tlci-loader-validate-macro-entry-at
+  [loaded : (& loaded TlciLoadedImage)]
+  [index : i64]) : ResultTlciLoaderUnit
+  (if (>= index (struct-get loaded macro-entry-count))
+    (ResultTlciLoaderUnit.Ok)
+    (match (tlci-loader-read-macro-entry loaded index)
+      [(ResultTlciMacroEntry.Err message) (ResultTlciLoaderUnit.Err message)]
+      [(ResultTlciMacroEntry.Ok entry)
+        (match (tlci-loader-macro-entry-duplicate-before? loaded entry index)
+          [(ResultTlciLoaderUnit.Err message)
+            (ResultTlciLoaderUnit.Err message)]
+          [(ResultTlciLoaderUnit.Ok)
+            (tlci-loader-validate-macro-entry-at loaded (+ index 1))])])))
+
+(define (tlci-loader-validate-macro-entries
+  [loaded : (& loaded TlciLoadedImage)]) : ResultTlciLoaderUnit
+  (let
+    [count : i64 (struct-get loaded macro-entry-count)]
+    [table : i64 (struct-get loaded macro-entry-table)]
+    (cond
+      [(< count 0)
+        (ResultTlciLoaderUnit.Err "tlci loader: macro entry count is invalid")]
+      [(= count 0) (ResultTlciLoaderUnit.Ok)]
+      [(not (= (% table 8) 0))
+        (ResultTlciLoaderUnit.Err
+          "tlci loader: macro entry table must be 8-byte aligned")]
+      [else (tlci-loader-validate-macro-entry-at loaded 0)])))
+
+(define (tlci-loader-find-macro-entry-at
+  [loaded : (& loaded TlciLoadedImage)]
+  [name : String]
+  [index : i64]
+  [found : bool]
+  [found-entry : TlciMacroEntry]) : ResultTlciMacroEntry
+  (if (>= index (struct-get loaded macro-entry-count))
+    (if found
+      (ResultTlciMacroEntry.Ok found-entry)
+      (ResultTlciMacroEntry.Err "tlci loader: macro entry not found"))
+    (match (tlci-loader-read-macro-entry loaded index)
+      [(ResultTlciMacroEntry.Err message) (ResultTlciMacroEntry.Err message)]
+      [(ResultTlciMacroEntry.Ok entry)
+        (if (tlci-loader-mapped-name-eq?
+          loaded
+          (struct-get entry name-addr)
+          (struct-get entry name-len)
+          name)
+          (if found
+            (ResultTlciMacroEntry.Err "tlci loader: duplicate macro entry name")
+            (tlci-loader-find-macro-entry-at loaded name (+ index 1) true entry))
+          (tlci-loader-find-macro-entry-at
+            loaded
+            name
+            (+ index 1)
+            found
+            found-entry))])))
+
+(define (tlci-loader-find-macro-entry
+  [loaded : (& loaded TlciLoadedImage)]
+  [name : String]) : ResultTlciMacroEntry
+  (if (= (struct-get loaded macro-entry-count) 0)
+    (ResultTlciMacroEntry.Err "tlci loader: image registered no macros")
+    (tlci-loader-find-macro-entry-at loaded name 0 false (TlciMacroEntry 0 0 0))))
+
+(define (tlci-loader-dispatch-macro
+  [loaded : (& loaded TlciLoadedImage)]
+  [name : String]
+  [session-context : i64]
+  [operands : (Array i64)]
+  [initial-result : i64]) : ResultTlciMacroDispatch
+  (match (tlci-loader-find-macro-entry loaded name)
+    [(ResultTlciMacroEntry.Err message) (ResultTlciMacroDispatch.Err message)]
+    [(ResultTlciMacroEntry.Ok entry)
+      (let
+        [result-storage : (Array i64) (make-array initial-result)]
+        [operand-count : i64 (array-length operands)]
+        [operands-addr : i64
+          (if (= operand-count 0)
+            0
+            (tlci-loader-i64-array-addr operands))]
+        [result-addr : i64 (tlci-loader-i64-array-addr result-storage)]
+        [host-context : i64
+          (tlci-loader-read-mapped-i64
+            (+
+              (struct-get loaded host-table-addr)
+              tlci.tlci-host-callback-table-host-context-offset))]
+        [status : i64
+          (unsafe
+            (tlci-loader-call-macro-entry-raw
+              (struct-get entry function-addr)
+              (struct-get loaded image-context)
+              host-context
+              session-context
+              operands-addr
+              operand-count
+              result-addr))]
+        (ResultTlciMacroDispatch.Ok
+          (TlciMacroDispatch status (array-ref result-storage 0))))]))
+
+;; Proof-only host harness: use the registered probe entry as the callback
+;; dispatcher and select its return status through host context. Real compiler
+;; callback registration remains owned by the later stdlib/package dispatch
+;; slices; the image-side convention exercised here is identical.
+(define (tlci-loader-probe-install-self-callback!
+  [loaded : (& loaded TlciLoadedImage)]
+  [name : String]) : ResultTlciLoaderUnit
+  (match (tlci-loader-find-macro-entry loaded name)
+    [(ResultTlciMacroEntry.Err message) (ResultTlciLoaderUnit.Err message)]
+    [(ResultTlciMacroEntry.Ok entry)
+      (begin
+        (tlci-loader-write-mapped-i64!
+          (+
+            (struct-get loaded host-table-addr)
+            tlci.tlci-host-callback-table-invoke-offset)
+          (struct-get entry function-addr))
+        (ResultTlciLoaderUnit.Ok))]))
+
+(define (tlci-loader-probe-set-host-status!
+  [loaded : (& loaded TlciLoadedImage)]
+  [status : i64]) : unit
+  (tlci-loader-write-mapped-i64!
+    (+
+      (struct-get loaded host-table-addr)
+      tlci.tlci-host-callback-table-host-context-offset)
+    status))
+
 (define (tlci-loader-test-put-string!
   [bytes : (Array u8)]
   [offset : i64]
@@ -587,6 +901,112 @@
             (cast (tlci.tlci-string-ref text i) : u8))
           (set! i (+ i 1))))
       unit)))
+
+(define (tlci-loader-test-macro-loaded
+  [storage : (Array u8)]
+  [table : i64]
+  [count : i64]) : TlciLoadedImage
+  (let
+    [base : i64 (tlci-loader-u8-array-addr storage)]
+    (TlciLoadedImage
+      base
+      (array-length storage)
+      true
+      true
+      true
+      (+ base 96)
+      (make-array i64 0)
+      (make-array i64 0)
+      0
+      0
+      0
+      table
+      count
+      base
+      (array-length storage)
+      base
+      (array-length storage)
+      0
+      0
+      0)))
+
+(define (tlci-loader-test-write-macro-entry!
+  [storage : (Array u8)]
+  [offset : i64]
+  [name-offset : i64]
+  [name-len : i64]
+  [function-offset : i64]
+  [reserved0 : i64]) : unit
+  (let
+    [base : i64 (tlci-loader-u8-array-addr storage)]
+    [record : i64 (+ base offset)]
+    (begin
+      (tlci-loader-write-mapped-i64!
+        (+ record tlci.tlci-macro-entry-name-ptr-offset)
+        (+ base name-offset))
+      (tlci-loader-write-mapped-i64!
+        (+ record tlci.tlci-macro-entry-name-len-offset)
+        name-len)
+      (tlci-loader-write-mapped-i64!
+        (+ record tlci.tlci-macro-entry-function-offset)
+        (+ base function-offset))
+      (tlci-loader-write-mapped-i64!
+        (+ record tlci.tlci-macro-entry-reserved0-offset)
+        reserved0))))
+
+(define (tlci-loader-test-validation-error?
+  [result : ResultTlciLoaderUnit]
+  [expected : String]) : bool
+  (match result
+    [(ResultTlciLoaderUnit.Ok) false]
+    [(ResultTlciLoaderUnit.Err message) (string.eq message expected)]))
+
+(define (tlci-loader-test-macro-entry-validation-ok?) : bool
+  (let
+    [storage : (Array u8) (make-array u8 128)]
+    [base : i64 (tlci-loader-u8-array-addr storage)]
+    (begin
+      (tlci-loader-test-put-string! storage 64 "dup")
+      (tlci-loader-test-put-string! storage 72 "dup")
+      (tlci-loader-test-write-macro-entry! storage 0 64 3 96 0)
+      (tlci-loader-test-write-macro-entry! storage 32 72 3 96 0)
+      (let
+        [duplicate-loaded : TlciLoadedImage
+          (tlci-loader-test-macro-loaded storage base 2)]
+        [duplicate : bool
+          (tlci-loader-test-validation-error?
+            (tlci-loader-validate-macro-entries (& duplicate-loaded))
+            "tlci loader: duplicate macro entry name")]
+        [_distinct-name : unit (tlci-loader-test-put-string! storage 72 "two")]
+        [valid-loaded : TlciLoadedImage
+          (tlci-loader-test-macro-loaded storage base 2)]
+        [valid : bool
+          (match (tlci-loader-validate-macro-entries (& valid-loaded))
+            [(ResultTlciLoaderUnit.Ok) true]
+            [(ResultTlciLoaderUnit.Err _) false])]
+        [_reserved : unit
+          (tlci-loader-write-mapped-i64!
+            (+ base tlci.tlci-macro-entry-reserved0-offset)
+            1)]
+        [reserved-loaded : TlciLoadedImage
+          (tlci-loader-test-macro-loaded storage base 1)]
+        [reserved : bool
+          (tlci-loader-test-validation-error?
+            (tlci-loader-validate-macro-entries (& reserved-loaded))
+            "tlci loader: macro entry reserved field must be zero")]
+        [unaligned-loaded : TlciLoadedImage
+          (tlci-loader-test-macro-loaded storage (+ base 1) 1)]
+        [unaligned : bool
+          (tlci-loader-test-validation-error?
+            (tlci-loader-validate-macro-entries (& unaligned-loaded))
+            "tlci loader: macro entry table must be 8-byte aligned")]
+        [outside-loaded : TlciLoadedImage
+          (tlci-loader-test-macro-loaded storage (+ base 112) 1)]
+        [outside : bool
+          (tlci-loader-test-validation-error?
+            (tlci-loader-validate-macro-entries (& outside-loaded))
+            "tlci loader: macro entry table outside mapped image")]
+        (and duplicate valid reserved unaligned outside)))))
 
 (define (tlci-loader-test-u64-record [value : i64]) : (Array u8)
   (let
@@ -871,6 +1291,7 @@
       [(not (= load-status 0)) load-status]
       [(not (tlci-loader-test-rejections-ok?)) 2]
       [(not (tlci-loader-test-registration-rejections-ok?)) 3]
+      [(not (tlci-loader-test-macro-entry-validation-ok?)) 4]
       [else 0])))
 
 (define (tlci-loader-self-test-ok?) : bool

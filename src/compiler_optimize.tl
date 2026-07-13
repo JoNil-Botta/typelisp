@@ -4332,6 +4332,13 @@
           (and
             (= a-name b-name)
             (opt-lifetime-list-eq (box-get a-lifetimes) (box-get b-lifetimes)))]
+        [_ false])]
+    [(AstType.Consume a-inner)
+      (match b
+        [(AstType.Consume b-inner)
+          (opt-type-eq
+            (ast-node-pool-reader-type-get a-inner)
+            (ast-node-pool-reader-type-get b-inner))]
         [_ false])]))
 
 (define (opt-value-hash [value : CompilerIrValue]) : i64
@@ -4488,7 +4495,9 @@
         34
         (hash.combine
           (hash.i64 name)
-          (opt-lifetime-list-hash (box-get lifetimes))))]))
+          (opt-lifetime-list-hash (box-get lifetimes))))]
+    [(AstType.Consume inner)
+      (hash.combine 36 (opt-type-hash (ast-node-pool-reader-type-get inner)))]))
 
 (define (opt-maybe-value-eq
   [a : CompilerIrMaybeValue]
@@ -49683,7 +49692,9 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 0]
-    [(AstType.VarArgs _ _) 0]))
+    [(AstType.VarArgs _ _) 0]
+    [(AstType.Consume inner)
+      (opt-scratch-alloc-type-size (ast-node-pool-reader-type-get inner))]))
 
 (define (opt-scratch-root-list-contains?
   [roots : OptScratchRootList]
@@ -51127,12 +51138,22 @@
       (opt-scratch-scope-report-instrs
         (opt-scratch-test-one-block (CompilerIrInstr.AddrOf 2 1)))]
     [store-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs
-        (opt-scratch-test-one-block
-          (CompilerIrInstr.StorePtr
-            (CompilerIrValue.Var 99)
-            (CompilerIrValue.Var 1)
-            (AstType.U64))))]
+      (let
+        [roots : OptScratchRootList
+          (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+        [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
+          (OptScratchScopeReport.Report
+            1
+            32
+            (opt-scratch-blocker-reason
+              roots
+              (OptAliasFacts.Facts facts-map)
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 99)
+                (CompilerIrValue.Var 1)
+                (AstType.U64))))))]
     [arena-blocked : OptScratchScopeReport
       (opt-scratch-scope-report-instrs
         (opt-scratch-test-one-block
@@ -51142,7 +51163,20 @@
             (CompilerIrCallArgs.Nil)
             (AstType.I64))))]
     [return-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
+      (let
+        [roots : OptScratchRootList
+          (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+        [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
+          (OptScratchScopeReport.Report
+            1
+            32
+            (opt-scratch-blocker-reason
+              roots
+              (OptAliasFacts.Facts facts-map)
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))))))]
     [reset-positive : CompilerIrFunction
       (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
     [reset-call-blocked : CompilerIrFunction
@@ -51493,7 +51527,8 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
-    [(AstType.VarArgs _ _) 8]))
+    [(AstType.VarArgs _ _) 8]
+    [(AstType.Consume inner) (opt-load-loc-type-size (ty-node-get inner))]))
 
 ;; What memory a pointer-valued var addresses:
 ;;   Element          -- points at/into some array/string DATA BUFFER (the

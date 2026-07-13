@@ -195,9 +195,8 @@ measurement tool, not a CI size gate.
 
 Use [`../scripts/analyze-stage0-size.sh`](../scripts/analyze-stage0-size.sh)
 for linked stage0 binary size comparisons. It reports total file bytes, section
-raw sizes from `llvm-readobj`, `readelf`, or `objdump`, and embedded stdlib
-payload bytes bucketed into top-level module sources and `stdlib/tests`
-payloads:
+raw sizes from `llvm-readobj`, `readelf`, or `objdump`, plus encoded compressed,
+compressed-token, and expanded exact-source embedded stdlib payload bytes:
 
 ```sh
 scripts/fetch-stage0.sh
@@ -210,6 +209,12 @@ On Windows, run the shell commands from Git Bash after fetching the Windows
 seed (`target/stage0/typelisp.exe`) and use a `.exe` output path. The stage0
 publication smoke also prints this report when a section reader is available,
 but it remains a measurement report rather than a size budget gate.
+
+The embedded payload is generated from
+`tools/embedded-stdlib-payload/modules.txt`. Run
+`scripts/generate-embedded-stdlib-payload.sh` after changing an embedded module
+and `scripts/verify-embedded-stdlib-payload.sh` to check deterministic output
+and byte-for-byte decoding before bootstrap work.
 
 Use [`../scripts/analyze-move-traffic.sh`](../scripts/analyze-move-traffic.sh)
 for adjacent `movq` traffic counts in selfhost assembly. It reports exact

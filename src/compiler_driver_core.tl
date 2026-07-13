@@ -86,22 +86,21 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
-;; A selfhost CLI expands from roughly 1.4M parsed nodes to just over 4M
-;; macro-expanded nodes. Starting the load pool at 2M forces a grow; bump
+;; A selfhost CLI expands from roughly 1.4M parsed nodes to about 4.3M
+;; macro-expanded nodes. Starting the load pool below that forces a grow; bump
 ;; arenas retain the superseded backing array until macro expansion is detached.
-;; Leave one 64K-node page above the observed source so embedded stdlib and
-;; lowerer growth do not turn that transient double allocation into a Windows
-;; selfhost headroom failure.
+;; Keep the reserve at 67 64K-node pages, one full page above the rounded-up
+;; observed source, so embedded stdlib and lowerer growth do not turn that
+;; transient double allocation into a Windows selfhost headroom failure.
 (define compiler-driver-compile-load-expr-pool-initial-capacity : i64
-  4259840)
+  4390912)
 
-;; Reachability compaction retains about 1.4M nodes for the selfhost CLI, well
-;; below the expanding load pool's capacity. Keep its pool at 2M: it overlaps
-;; the load pool briefly while compaction copies the reachable program, so
-;; giving both pools a 4M backing array would erase the headroom reclaimed
-;; above.
+;; Reachability compaction retains about 1.412M nodes for the selfhost CLI,
+;; including clone augmentation. A 1.625M initial pool leaves more than 290K
+;; slots of headroom and keeps the backing array above the allocator's 64 MiB
+;; dedicated-segment threshold; larger programs still grow the pool normally.
 (define compiler-driver-checked-lower-expr-pool-initial-capacity : i64
-  2097152)
+  1703936)
 
 ;; Type nodes are hash-consed. The selfhost CLI retains roughly 5K unique type
 ;; nodes even after macro expansion, so the former 262K-node reserve and its
@@ -450,6 +449,37 @@
 
 (cfg
   compile-profile
+  (define (compiler-driver-state-reset-file-state-profiled!
+    [state : CompilerDriverState]
+    [ordinal : i64]) : unit
+    (begin
+      (compiler-driver-state-apply-session-flags! state)
+      ;; This phase includes allocation of the replacement pools before the
+      ;; retired pool chain is released, so its peak exposes their overlap.
+      (compiler-driver-state-reset-owned-pool-arena-if-uncached! state)
+      (compiler-driver-batch-profile-mark! ordinal "owned-pool-release")
+      (let
+        [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+        (begin
+          (compiler-load-session-reset-pools-with-pools! pools)
+          (compiler-driver-state-install-pools! state)
+          (compiler-driver-state-install-interns! state)
+          (compiler-load-session-reset-interns!)
+          (compiler-typecheck-reset-intern-owned-state!)
+          (compiler-driver-state-install-transients! state)
+          (compiler-driver-state-reset-builtins! state)
+          (ctfe-builtin-reset!)
+          (compiler-typecheck-reset-file-state!)
+          (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+          (compiler-driver-batch-profile-mark! ordinal "intern-session-cleanup")
+          (lower-reset-file-state!)
+          (lower-arenas-release!)
+          (compiler-driver-batch-profile-mark! ordinal "lower-cleanup")
+          (compiler-driver-state-capture-active-interns! state)
+          (compiler-driver-state-capture-active-transients! state))))))
+
+(cfg
+  compile-profile
   (define compiler-driver-profile-total-start-ms : i64
     0))
 (cfg
@@ -475,6 +505,22 @@
 (cfg
   compile-profile
   (define compiler-driver-profile-best-peak : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-batch-profile-start-ms : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-batch-profile-start-total : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-batch-profile-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-driver-batch-profile-best-peak : i64
     0))
 
 (cfg
@@ -518,6 +564,81 @@
 
 (cfg
   compile-profile
+  (define (compiler-driver-batch-profile-line
+    [ordinal : i64]
+    [marker : String]
+    [elapsed-ms : i64]
+    [alloc-delta : i64]
+    [live-delta : i64]
+    [peak-delta : i64]) : String
+    (string.append
+      "\ncompile-batch-profile|"
+      (string.append
+        (string.int->string ordinal)
+        (string.append
+          "|"
+          (string.append
+            marker
+            (string.append
+              (compiler-driver-profile-field elapsed-ms)
+              (string.append
+                (compiler-driver-profile-field alloc-delta)
+                (string.append
+                  (compiler-driver-profile-field live-delta)
+                  (string.append
+                    (compiler-driver-profile-field peak-delta)
+                    "\n"))))))))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-batch-profile-reset-baseline!) : unit
+    (begin
+      (set! compiler-driver-batch-profile-start-ms (profile.now-ms))
+      (set! compiler-driver-batch-profile-start-total (profile.alloc-total))
+      (set! compiler-driver-batch-profile-start-live (profile.alloc-live))
+      (profile.alloc-reset-peak))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-batch-profile-start-entry! [ordinal : i64]) : unit
+    (begin
+      (if (= ordinal 0)
+        (io.print-error
+          "compile-batch-profile|entry_ordinal|marker|elapsed_ms|alloc_delta_bytes|live_delta_bytes|peak_live_delta_bytes\n")
+        unit)
+      (set! compiler-driver-batch-profile-best-peak 0)
+      (compiler-driver-batch-profile-reset-baseline!)
+      (io.print-error
+        (compiler-driver-batch-profile-line ordinal "entry-start" 0 0 0 0)))))
+
+(cfg
+  compile-profile
+  (define (compiler-driver-batch-profile-mark!
+    [ordinal : i64]
+    [marker : String]) : unit
+    (let
+      [end-ms : i64 (profile.now-ms)]
+      [end-total : i64 (profile.alloc-total)]
+      [end-live : i64 (profile.alloc-live)]
+      [peak-delta : i64
+        (compiler-driver-profile-max
+          compiler-driver-batch-profile-best-peak
+          (compiler-driver-profile-nonnegative
+            (- (profile.alloc-peak) compiler-driver-batch-profile-start-live)))]
+      (begin
+        (io.print-error
+          (compiler-driver-batch-profile-line
+            ordinal
+            marker
+            (- end-ms compiler-driver-batch-profile-start-ms)
+            (- end-total compiler-driver-batch-profile-start-total)
+            (- end-live compiler-driver-batch-profile-start-live)
+            peak-delta))
+        (set! compiler-driver-batch-profile-best-peak 0)
+        (compiler-driver-batch-profile-reset-baseline!)))))
+
+(cfg
+  compile-profile
   (define (compiler-driver-profile-start-phase) : unit
     (begin
       (set! compiler-driver-profile-phase-start-ms (profile.now-ms))
@@ -540,6 +661,11 @@
           compiler-driver-profile-best-peak
           (compiler-driver-profile-max
             compiler-driver-profile-best-peak
+            peak-delta))
+        (set!
+          compiler-driver-batch-profile-best-peak
+          (compiler-driver-profile-max
+            compiler-driver-batch-profile-best-peak
             peak-delta))
         (io.print-error
           (compiler-driver-profile-line

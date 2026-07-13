@@ -1275,6 +1275,12 @@
             "tl_tlci_call_image_entry"
             (cobj.CompilerObjectSymbolBinding.Local)
             (cobj.CompilerObjectSymbolKind.Runtime))
+          (not
+            (cobj.compiler-object-symbol-list-contains?
+              symbols
+              "tl_tlci_call_macro_entry"
+              (cobj.CompilerObjectSymbolBinding.Local)
+              (cobj.CompilerObjectSymbolKind.Runtime)))
           (backend-and8
             (cobj.compiler-object-section-contains-label?
               sections
@@ -1343,6 +1349,11 @@
             sections
             (compiler-backend-object-tlci-entry-bytes
               (CompilerBackendTarget.Linux)))
+          (not
+            (cobj.compiler-object-section-contains-bytes?
+              sections
+              (compiler-backend-object-tlci-macro-entry-bytes
+                (CompilerBackendTarget.Linux))))
           (cobj.compiler-object-relocation-list-contains?
             relocs
             (cobj.CompilerObjectRelocationKind.Abs64)
@@ -1353,6 +1364,31 @@
             "_tl_answer")
           (> (cobj.compiler-object-relocation-list-count relocs) 5)))]
     [(ResultCompilerBackendObject.Err _) false]))
+
+(define (compiler-backend-object-tlci-macro-entry-gate-ok?) : bool
+  (let
+    [expected : String
+      (compiler-backend-object-tlci-macro-entry-bytes
+        (CompilerBackendTarget.Linux))]
+    [enabled : cobj.CompilerObjectX64InstrList
+      (cobj.compiler-object-instr-builder-finish
+        (struct-get
+          (compiler-backend-object-add-tlci-entry-runtime-text
+            (compiler-backend-object-parts-empty)
+            (CompilerBackendTarget.Linux)
+            true)
+          text))]
+    [disabled : cobj.CompilerObjectX64InstrList
+      (cobj.compiler-object-instr-builder-finish
+        (struct-get
+          (compiler-backend-object-add-tlci-entry-runtime-text
+            (compiler-backend-object-parts-empty)
+            (CompilerBackendTarget.Linux)
+            false)
+          text))]
+    (and
+      (cobj.compiler-object-instr-list-contains-bytes? enabled expected)
+      (not (cobj.compiler-object-instr-list-contains-bytes? disabled expected)))))
 
 (define (compiler-backend-pic-source) : String
   "(define greeting : String \"hi\")
@@ -11404,7 +11440,7 @@
         false
         false
         false
-        (CompilerBackendRuntimeTailPlan false false))
+        (CompilerBackendRuntimeTailPlan false false false))
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil
       (compiler-backend-program-index-build
@@ -11680,7 +11716,7 @@
     true
     true
     true
-    (CompilerBackendRuntimeTailPlan true true)))
+    (CompilerBackendRuntimeTailPlan true true true)))
 
 (define (compiler-backend-runtime-helper-inventory-symbol-ok?
   [plan : CompilerBackendRuntimePlan]
@@ -11775,6 +11811,7 @@
     (compiler-backend-runtime-helper-owner-core-ok? "tl_memcpy")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_memchr")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_tlci_call_image_entry")
+    (compiler-backend-runtime-helper-owner-core-ok? "tl_tlci_call_macro_entry")
     (compiler-backend-runtime-helper-owner-core-ok? "__chkstk")
     (compiler-backend-runtime-helper-owner-core-ok? "tl_setup_argv")
     (compiler-backend-runtime-helper-owner-core-ok? "_tl_start")))
@@ -12179,11 +12216,12 @@
       (compiler-backend-runtime-global-symbol-ok? asm "tl_region_reset")
       (compiler-backend-runtime-global-symbol-ok?
         asm
-        "tl_tlci_call_image_entry"))))
+        "tl_tlci_call_image_entry"))
+    (compiler-backend-runtime-global-symbol-ok? asm "tl_tlci_call_macro_entry")))
 
 (define (compiler-backend-runtime-linux-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 17)
+    (= (compiler-backend-string-count asm "    .globl ") 18)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_init")
     (not (compiler-backend-runtime-global-symbol-ok? asm "__chkstk"))
@@ -12192,7 +12230,7 @@
 
 (define (compiler-backend-runtime-windows-global-symbols-ok? [asm : String]) : bool
   (and
-    (= (compiler-backend-string-count asm "    .globl ") 20)
+    (= (compiler-backend-string-count asm "    .globl ") 21)
     (compiler-backend-runtime-common-global-symbols-ok? asm)
     (compiler-backend-runtime-global-symbol-ok? asm "tl_thread_entry_ptr")
     (compiler-backend-runtime-global-symbol-ok? asm "__chkstk")
@@ -21356,6 +21394,7 @@
       (compiler-backend-source-ok? (compiler-backend-smoke-source))
       (and
         (compiler-backend-object-image-shape-ok?)
+        (compiler-backend-object-tlci-macro-entry-gate-ok?)
         (compiler-backend-coff-renders-real-text-ok?)
         (compiler-backend-windows-object-entry-unwind-ok?)
         (compiler-backend-windows-object-unit-main-zero-ok?)

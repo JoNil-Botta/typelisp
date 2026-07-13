@@ -270,15 +270,15 @@
 
 (define (spec-param-comptime? [param : AstParam]) : bool
   (match param
-    [(AstParam.Param _ _ is-comptime) is-comptime]))
+    [(AstParam.Param _ _ is-comptime _) is-comptime]))
 
 (define (spec-param-name [param : AstParam]) : String
   (match param
-    [(AstParam.Param name _ _) (intern-str name)]))
+    [(AstParam.Param name _ _ _) (intern-str name)]))
 
 (define (spec-param-type [param : AstParam]) : AstType
   (match param
-    [(AstParam.Param _ ty _) ty]))
+    [(AstParam.Param _ ty _ _) ty]))
 
 (define (spec-state-ctfe-env [state : SpecState]) : CtfeEnv
   (match state
@@ -679,7 +679,9 @@
         "varargs_"
         (string.append
           (intern-str name)
-          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]))
+          (string.append "_" (spec-lifetime-list-key (box-get lifetimes)))))]
+    [(AstType.Consume inner)
+      (string.append "consume_" (spec-type-key (ty-node-get inner)))]))
 
 (define (spec-value-key [value : CompilerCtfeValue]) : String
   (match value
@@ -835,11 +837,12 @@
 
 (define (gen-param-eq? [a : AstParam] [b : AstParam]) : bool
   (match a
-    [(AstParam.Param a-name a-ty a-comptime)
+    [(AstParam.Param a-name a-ty a-comptime a-consume)
       (match b
-        [(AstParam.Param b-name b-ty b-comptime)
+        [(AstParam.Param b-name b-ty b-comptime b-consume)
           (and
             (= a-name b-name)
+            (= a-consume b-consume)
             (ctfe-type-eq a-ty b-ty)
             (= a-comptime b-comptime))])]))
 
@@ -2134,10 +2137,10 @@
     unit
     (begin
       (match (ast-param-list-get params index (ast-param-fallback))
-        [(AstParam.Param name ty _)
+        [(AstParam.Param name ty _ consume?)
           (ast-param-list-push
             out
-            (AstParam.Param name (spec-substitute-type ty subs) false))])
+            (AstParam.Param name (spec-substitute-type ty subs) false consume?))])
       (spec-substitute-param-types-into params subs (+ index 1) out))))
 
 (define (spec-ctfe-value-to-expr [value : CompilerCtfeValue] [origin : AstExpr]) : ResultSpecSubExpr
@@ -2500,7 +2503,7 @@
       (let
         [arg : AstExpr (ast-node-get (ast-expr-list-get args index 0))]
         (match (ast-param-list-get params index (ast-param-fallback))
-          [(AstParam.Param param-name param-ty is-comptime)
+          [(AstParam.Param param-name param-ty is-comptime _)
             (if is-comptime
               (match (spec-ctfe-eval state arg (ctfe-fuel-limit))
                 [(ResultCtfe.Ok value _)
@@ -2608,7 +2611,7 @@
         (ResultSpecBuild.Err
           (box (compiler-diagnostic-at-start "" "specialize: value mismatch")))])
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty is-comptime)
+      [(AstParam.Param name ty is-comptime consume?)
         (if is-comptime
           (match values
             [(SpecValueList.Cons value rest-values)
@@ -2645,7 +2648,7 @@
           (match (spec-build-specialization-at params (+ index 1) values)
             [(ResultSpecBuild.Ok runtime value-subs type-subs)
               (ResultSpecBuild.Ok
-                (ast-param-cons (AstParam.Param name ty false) runtime)
+                (ast-param-cons (AstParam.Param name ty false consume?) runtime)
                 value-subs
                 type-subs)]
             [(ResultSpecBuild.Err diag) (ResultSpecBuild.Err diag)]))])))

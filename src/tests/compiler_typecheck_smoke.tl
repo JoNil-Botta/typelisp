@@ -282,6 +282,43 @@
 (define (main [n : i64]) : i64
   (take-mut n))")
 
+(define (compiler-typecheck-mut-to-immut-reborrow-source) : String
+  "(defstruct ReborrowItem (value i64))
+(defstruct ReborrowView (:lifetimes source) (item (& source ReborrowItem)))
+(define (read [item : (& seen ReborrowItem)]) : i64 item.value)
+(define (view [item : (& source ReborrowItem)]) : (& source ReborrowItem) item)
+(define (use [item : (&mut item ReborrowItem)]) : i64
+  (let
+    [direct : i64 (read item)]
+    [f : (-> (& item ReborrowItem) i64)
+      (lambda ([x : (& item ReborrowItem)]) : i64 x.value)]
+    [via-fn : i64 (f item)]
+    [via-lambda : i64
+      ((lambda ([x : (& item ReborrowItem)]) : i64 x.value) item)]
+    [returned : (& item ReborrowItem) (view item)]
+    [returned-value : i64 returned.value]
+    [stored : (ReborrowView item) (ReborrowView item)]
+    [stored-value : i64 stored.item.value]
+    (+ direct (+ via-fn (+ via-lambda (+ returned-value stored-value))))))
+(define (main [item : ReborrowItem]) : i64 (use (&mut item)))")
+
+(define (compiler-typecheck-mut-to-immut-reborrow-live-source) : String
+  "(defstruct ReborrowItem (value i64))
+(define (view [item : (& source ReborrowItem)]) : (& source ReborrowItem) item)
+(define (main [item : (&mut item ReborrowItem)]) : i64
+  (let [shared : (& item ReborrowItem) (view item)]
+    (begin
+      (set! item.value 42)
+      shared.value)))")
+
+(define (compiler-typecheck-mut-to-immut-reborrow-mismatch-source) : String
+  "(define (read [value : (& shared i64)]) : i64 1)
+(define (main [value : (&mut value bool)]) : i64 (read value))")
+
+(define (compiler-typecheck-immut-to-mut-no-strengthen-source) : String
+  "(define (write [value : (&mut value i64)]) : unit unit)
+(define (main [value : (& value i64)]) : unit (write value))")
+
 (define (compiler-typecheck-auto-borrow-string-aggregate-place-source) : String
   "(defstruct Named (name String))
 (define (len [text : (& text str)]) : i64 1)
@@ -338,6 +375,16 @@
       "typecheck: constructor lifetime mismatch")
     (compiler-typecheck-error-ok?
       (compiler-typecheck-auto-borrow-mutable-param-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-ok? (compiler-typecheck-mut-to-immut-reborrow-source))
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-mut-to-immut-reborrow-live-source)
+      "typecheck: cannot assign to borrowed place `item.value`")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-mut-to-immut-reborrow-mismatch-source)
+      "typecheck: argument type mismatch")
+    (compiler-typecheck-error-ok?
+      (compiler-typecheck-immut-to-mut-no-strengthen-source)
       "typecheck: argument type mismatch")
     (compiler-typecheck-ok?
       (compiler-typecheck-auto-borrow-string-aggregate-place-source))

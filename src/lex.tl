@@ -31,6 +31,8 @@
 ;; constants.
 ;; Imported by module name so token declarations stay behind the `token.`
 ;; qualifier instead of flattening through `lex.tl`.
+(module lex)
+
 (import compiler_intern as ci)
 (import stdlib.io)
 (import token)

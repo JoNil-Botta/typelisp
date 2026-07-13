@@ -343,6 +343,25 @@ type.
   function values, `String` handles, array handles, and tuples of scalars
   (see §5.14).
 
+Function parameters may opt into consuming ownership semantics. A named
+function or lambda parameter spells the effect after its type:
+
+```lisp test=ignore name=consume-parameter-syntax reason="illustrative declaration"
+(define (into-length [source : String (:consume)]) : i64
+  (string-length source))
+```
+
+The corresponding callable parameter type is `(:consume T)`, for example
+`(-> (:consume String) i64)`. The marker is part of static callable identity:
+a `(-> String i64)` value is not interchangeable with a
+`(-> (:consume String) i64)` value. It does not change argument layout,
+calling convention, or generated ABI.
+
+`:consume` is valid only on runtime, non-reference function parameters. It is
+rejected on `comptime` parameters, extern parameters, `(& lifetime T)`, and
+`(&mut lifetime T)`. It may appear in direct, qualified, generated, lambda,
+and function-value signatures; all preserve the same static effect.
+
 ### 3.4 Raw pointer types
 
 Raw pointers are the explicit unsafe surface for FFI and low-level memory
@@ -1397,8 +1416,12 @@ type is compatible with `T`. The inferred lifetime participates in ordinary
 call lifetime substitution: repeated formal lifetime names must infer the same
 caller lifetime, and fixed lifetime names must match exactly. The synthesized
 borrow ends at its last use under the non-lexical lifetime rule below;
-explicit borrow expressions use the same rule. Macros are checked after
-expansion. Extern C ABI calls do
+explicit borrow expressions use the same rule. An argument that is already an
+`(&mut actual-lifetime T)` place weakens to `(& actual-lifetime T)` through the
+same tracked shared-reborrow rewrite; this does not consume the mutable
+reference, and a returned or stored shared result keeps the reborrow live until
+its last use. There is no inverse `&T` to `&mut T` strengthening. Macros are
+checked after expansion. Extern C ABI calls do
 not participate because safe reference types are not legal C ABI parameter
 values. Arbitrary rvalues and temporaries are rejected because they have no
 stable lexical owner:
@@ -2987,9 +3010,13 @@ move-only values and as copies for copyable values:
   move-only; `a` is unusable afterward.
 - A variable or place used as a by-value expression result, including a
   block's final expression.
-- Function-call arguments whose parameter type is not a reference type.
-  Arguments are evaluated left-to-right; earlier moves are visible while
-  checking later arguments and the remaining expression.
+- Function-call arguments whose parameter is marked `(:consume)`. A marked
+  move-only argument is consumed through the same whole-place and tracked-path
+  move rules as other moves; a marked copyable argument remains a copy and
+  creates no moved state. Arguments are evaluated left-to-right, so earlier
+  moves are visible while checking later arguments and the remaining
+  expression. Unmarked parameters retain their established compatibility
+  behavior, including any type-specific intrinsic consuming rules.
 - Function returns. Returning a move-only local or parameter moves it to the
   caller. Returning from a `with` owner scope is still rejected when it would
   bypass required cleanup.
@@ -3045,8 +3072,10 @@ without moving it. In v1 these are limited to:
   or borrow the boxed storage and do not move the box handle.
 
 Ordinary user-defined function parameters are by-value unless their type is a
-reference type. Passing a `String`, array, tuple, struct, enum, or capturing
-closure to such a parameter consumes the argument.
+reference type, but an unmarked parameter does not opt a broad move-only value
+into call-site consumption. Use `(:consume)` when the callee takes ownership.
+This opt-in preserves compatibility for existing unmarked APIs. Types with an
+independent intrinsic consuming rule keep that rule.
 
 **Whole-place and path moves.** The v1 checker accepts whole-place moves for
 locals, parameters, and whole constructor temporaries. It also tracks
@@ -3106,7 +3135,7 @@ non-consuming.
 ```lisp test=ignore name=move-reject-consumed-function-arg reason="negative move-only call argument example"
 (import stdlib.string)
 
-(define (take-string [s : String]) : i64
+(define (take-string [s : String (:consume)]) : i64
   (string.string-length s))
 
 (define (bad-call-reuse [s : String]) : i64
@@ -3115,8 +3144,8 @@ non-consuming.
     (string.string-length s)))
 ```
 
-The call to `take-string` consumes `s` because ordinary parameters are
-by-value; the later read is rejected.
+The call to `take-string` consumes `s` because its parameter opts into
+consumption; the later read is rejected.
 
 ```lisp test=check name=move-copyable-struct-field-projection
 (defstruct Counter
@@ -4718,6 +4747,16 @@ the host discards that session state; only diagnostics already recorded through
 callbacks survive. Successful expansion commits exactly the result handle
 written by the macro entry.
 
+Native-comptime helpers that can invoke a host callback use the same
+status/out-slot convention internally: image context, host context, and the
+expansion/session context are carried through the helper call graph; the helper
+returns `0` only after committing its result out-slot and returns any nonzero
+callback status to its caller unchanged. A macro entry must immediately unwind
+that nonzero status without committing its public result slot. This is the
+insertion boundary for deterministic fuel checks: a call or loop-backedge probe
+invokes `fuel-check` with the current contexts and uses the same status unwind,
+without image-global per-invocation state.
+
 Compatibility is append-only. Future ABI versions may require larger byte-size
 values and assign callback, operation, macro-entry, or registration fields
 after the v1 ranges above, but they must not reinterpret the v1 offsets or
@@ -5942,9 +5981,9 @@ and not a general manual memory management feature.
   use as a move under section 4.7.2 rather than as a user-visible copy
   operation.
 - Non-consuming inspection builtins read an aggregate handle without moving
-  it. Ordinary by-value function parameters consume aggregate arguments;
-  non-consuming access across a call boundary requires a reference-typed
-  parameter (section 3.11).
+  it. A function parameter marked `(:consume)` transfers a move-only argument;
+  unmarked parameters preserve compatibility behavior, while reference-typed
+  parameters provide checked borrowed access (sections 3.3 and 3.11).
 - `String` values are immutable at the source level. String literals may
   share `.rodata`; `substring`, `string-slice`, `str-cat`, low-level concat
   primitives, `read-file`, `arg`, and `int->string` return fresh
@@ -6002,6 +6041,9 @@ in documentation passes.
   two-phase mutable call borrows; conservative non-lexical last-use
   shortening (straight-line sequences, path-sensitive joins, conservative
   loop facts).
+- Opt-in `(:consume)` runtime function parameters, including static function
+  type identity, direct/qualified/generated/lambda/function-value calls,
+  copyable no-op semantics, and unchanged native ABI.
 - Arenas: scoped `(with-arena ...)` with static escape checking,
   `with-escape`, `with-scratch`, `in-arena`, typed first-class `Arena`
   handles, and checker-proven phase-token rewind/destroy. `(with ...)`
@@ -6283,6 +6325,15 @@ emits the lowered and optimized IR instead of assembly, `--pic` emits
 runtime-free no-entry PIC assembly plus a `<output>.fixups` file, and
 `--batch <file>` reads `input|output` pairs and compiles them in one compiler
 process.
+
+A compiler built with `--cfg compile-profile` additionally writes
+`compile-batch-profile` rows to stderr at stable per-entry boundaries: entry
+start, emission complete, owned-pool replacement/release, intern/session
+cleanup, lower-arena cleanup, and scratch destruction/steady state. Rows use a
+zero-based ordinal rather than a host path and report interval elapsed time,
+allocation total, live, and peak-live deltas. Normal compiler builds emit no
+such rows and produce byte-identical assembly. The measurement harnesses keep
+the ordinal-to-input mapping separately.
 
 `build --profile dev|release` selects the package build profile (default
 `release`), `--release` aliases `--profile release`, and

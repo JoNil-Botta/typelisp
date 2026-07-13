@@ -415,7 +415,8 @@
 
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
-  (hash-string bool))
+  (hash-string bool)
+  (tlci-macro-entry bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
@@ -516,6 +517,50 @@
 (define (compiler-backend-runtime-tail-hash-string?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail hash-string))
+
+(define (compiler-backend-runtime-tail-tlci-macro-entry?
+  [tail : CompilerBackendRuntimeTailPlan]) : bool
+  (struct-get tail tlci-macro-entry))
+
+(define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
+  (match plan
+    [(CompilerBackendRuntimePlan.Plan
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        _
+        tail)
+      tail]))
 
 ;; Backend code-generation target. Linux/System V and Windows x64 are
 ;; both modeled here; target-specific runtime helpers are emitted below.
@@ -7833,7 +7878,8 @@
     ;; checks.
     (string.eq name "tl_memcpy")
     (string.eq name "tl_memchr")
-    (string.eq name "tl_tlci_call_image_entry")))
+    (string.eq name "tl_tlci_call_image_entry")
+    (string.eq name "tl_tlci_call_macro_entry")))
 
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
@@ -7923,7 +7969,9 @@
     [(AstType.Str) 8]
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
-    [(AstType.VarArgs _ _) 8]))
+    [(AstType.VarArgs _ _) 8]
+    [(AstType.Consume inner)
+      (compiler-backend-type-size (ast-node-pool-reader-type-get inner))]))
 
 (define (compiler-backend-f64-type? [ty : AstType]) : bool
   (match ty
@@ -43708,6 +43756,8 @@
     [(string.eq name "tl_memchr") (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "tl_tlci_call_image_entry")
       (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_tlci_call_macro_entry")
+      (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "__chkstk") (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "tl_setup_argv") (CompilerBackendRuntimeHelperOwner.Core)]
     [(string.eq name "_tl_start") (CompilerBackendRuntimeHelperOwner.Core)]
@@ -43814,13 +43864,16 @@
 (define (compiler-backend-plan-provides?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
-  (begin
-    (cbi.compiler-builtin-refresh!)
-    (let
-      [name-id : i64 (compiler-backend-runtime-name-id name)]
-      (if (>= name-id 0)
-        (compiler-backend-plan-provides-id? plan name-id)
-        false))))
+  (if (string.eq name "tl_tlci_call_macro_entry")
+    (compiler-backend-runtime-tail-tlci-macro-entry?
+      (compiler-backend-runtime-plan-tail plan))
+    (begin
+      (cbi.compiler-builtin-refresh!)
+      (let
+        [name-id : i64 (compiler-backend-runtime-name-id name)]
+        (if (>= name-id 0)
+          (compiler-backend-plan-provides-id? plan name-id)
+          false)))))
 
 (define (compiler-backend-plan-provides-id?
   [plan : CompilerBackendRuntimePlan]
@@ -44337,6 +44390,12 @@
         (and
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
+    [needs-tlci-macro-entry : bool
+      (or
+        (compiler-backend-runtime-index-calls? index "tl_tlci_call_macro_entry")
+        (compiler-backend-runtime-index-calls?
+          index
+          "tlci-loader-call-macro-entry-raw"))]
     (ResultBackendRuntimePlanWithIndex.Ok
       (CompilerBackendRuntimePlanWithIndex
         (CompilerBackendRuntimePlan.Plan
@@ -44374,7 +44433,10 @@
           needs-env-path-separator
           needs-div-abort
           needs-shift-abort
-          (CompilerBackendRuntimeTailPlan needs-profile false))
+          (CompilerBackendRuntimeTailPlan
+            needs-profile
+            false
+            needs-tlci-macro-entry))
         index))))
 
 (define (compiler-backend-runtime-plan-for
@@ -46720,6 +46782,42 @@ tl_tlci_call_image_entry:
 
 "))
 
+(define (compiler-backend-runtime-tlci-macro-entry-functions
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    "    .globl tl_tlci_call_macro_entry
+tl_tlci_call_macro_entry:
+    movq %rcx, %rax
+    movq %rdx, %rcx
+    movq %r8, %rdx
+    movq %r9, %r8
+    movq 40(%rsp), %r9
+    movq 48(%rsp), %r10
+    movq 56(%rsp), %r11
+    subq $56, %rsp
+    movq %r10, 32(%rsp)
+    movq %r11, 40(%rsp)
+    call *%rax
+    addq $56, %rsp
+    ret
+
+"
+    "    .globl tl_tlci_call_macro_entry
+tl_tlci_call_macro_entry:
+    movq %rdi, %rax
+    movq %rsi, %rdi
+    movq %rdx, %rsi
+    movq %rcx, %rdx
+    movq %r8, %rcx
+    movq %r9, %r8
+    movq 8(%rsp), %r9
+    subq $8, %rsp
+    call *%rax
+    addq $8, %rsp
+    ret
+
+"))
+
 (define (compiler-backend-runtime-atomic-functions
   [_target : CompilerBackendTarget]) : String
   "")
@@ -46852,6 +46950,10 @@ tl_tlci_call_image_entry:
         [memchr-asm : String (compiler-backend-runtime-memchr-functions target)]
         [tlci-entry-asm : String
           (compiler-backend-runtime-tlci-entry-functions target)]
+        [tlci-macro-entry-asm : String
+          (if (compiler-backend-runtime-tail-tlci-macro-entry? tail-plan)
+            (compiler-backend-runtime-tlci-macro-entry-functions target)
+            "")]
         [atomic-asm : String (compiler-backend-runtime-atomic-functions target)]
         [runtime-front-asm : String
           (string.append
@@ -46861,17 +46963,19 @@ tl_tlci_call_image_entry:
               (string.append
                 tlci-entry-asm
                 (string.append
-                  atomic-asm
+                  tlci-macro-entry-asm
                   (string.append
-                    arena-asm
+                    atomic-asm
                     (string.append
-                      profile-asm
-                      (str_cat.str-cat
-                        alloc-asm
-                        region-mark-asm
-                        region-reset-asm
-                        oob-asm
-                        div-abort-asm)))))))]
+                      arena-asm
+                      (string.append
+                        profile-asm
+                        (str_cat.str-cat
+                          alloc-asm
+                          region-mark-asm
+                          region-reset-asm
+                          oob-asm
+                          div-abort-asm))))))))]
         [runtime-string-asm : String
           (string.append
             (str_cat.str-cat
@@ -49880,6 +49984,9 @@ tl_tlci_call_image_entry:
       (set!
         symbols
         (compiler-backend-string-cons "tl_tlci_call_image_entry" symbols))
+      (set!
+        symbols
+        (compiler-backend-string-cons "tl_tlci_call_macro_entry" symbols))
       (set! symbols (compiler-backend-string-cons "tl_memchr" symbols))
       (set! symbols (compiler-backend-string-cons "tl_memcpy" symbols))
       (set! symbols (compiler-backend-string-cons "tl_shift_abort" symbols))
@@ -49983,6 +50090,14 @@ tl_tlci_call_image_entry:
       "4889c84889d14c89c24883ec28ffd04883c428c3")
     (compiler-backend-object-bytes-from-hex
       "4889f84889f74889d64883ec08ffd04883c408c3")))
+
+(define (compiler-backend-object-tlci-macro-entry-bytes
+  [target : CompilerBackendTarget]) : String
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-object-bytes-from-hex
+      "4889c84889d14c89c24d89c84c8b4c24284c8b5424304c8b5c24384883ec384c895424204c895c2428ffd04883c438c3")
+    (compiler-backend-object-bytes-from-hex
+      "4889f84889f74889d64889ca4c89c14d89c84c8b4c24084883ec08ffd04883c408c3")))
 
 (define (compiler-backend-object-windows-entry-gs-clear-bytes) : String
   (compiler-backend-object-bytes-from-hex "6548c704252800000000000000"))
@@ -50133,12 +50248,22 @@ tl_tlci_call_image_entry:
 
 (define (compiler-backend-object-add-tlci-entry-runtime-text
   [parts : CompilerBackendObjectParts]
-  [target : CompilerBackendTarget]) : CompilerBackendObjectParts
-  (compiler-backend-object-add-text-bytes
-    (compiler-backend-object-add-text
-      parts
-      (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
-    (compiler-backend-object-tlci-entry-bytes target)))
+  [target : CompilerBackendTarget]
+  [macro-entry : bool]) : CompilerBackendObjectParts
+  (let
+    [with-image-entry : CompilerBackendObjectParts
+      (compiler-backend-object-add-text-bytes
+        (compiler-backend-object-add-text
+          parts
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_image_entry"))
+        (compiler-backend-object-tlci-entry-bytes target))]
+    (if macro-entry
+      (compiler-backend-object-add-text-bytes
+        (compiler-backend-object-add-text
+          with-image-entry
+          (cobj.CompilerObjectX64Instr.Label "tl_tlci_call_macro_entry"))
+        (compiler-backend-object-tlci-macro-entry-bytes target))
+      with-image-entry)))
 
 (define (compiler-backend-object-linux-exit-bytes) : String
   (compiler-backend-object-bytes-from-hex "4889c748c7c03c0000000f05"))
@@ -50627,7 +50752,9 @@ tl_tlci_call_image_entry:
               closure-names)
             plan
             (compiler-backend-object-runtime-symbols-list))
-          target)
+          target
+          (compiler-backend-runtime-tail-tlci-macro-entry?
+            (compiler-backend-runtime-plan-tail plan)))
         target
         emit-entry
         crt-entry)]
@@ -53140,8 +53267,16 @@ tl_tlci_call_image_entry:
                 [else true])]
             [call? : bool
               (compiler-backend-peephole-mnemonic-call? data ms mlen)]
-            [single-dest? : bool
-              (compiler-backend-peephole-mnemonic-single-dest? data ms mlen)]
+            [single-dest?
+              : bool
+              ;; The clobber transfer handles moves, labels, non-clobbering
+              ;; directives/branches, and calls before consulting this field.
+              (and
+                (not is-movq)
+                (not is-label)
+                clears
+                (not call?)
+                (compiler-backend-peephole-mnemonic-single-dest? data ms mlen))]
             [last-reg : i64
               (if (or single-dest? zext?)
                 (compiler-backend-peephole-last-operand-reg-index

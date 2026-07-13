@@ -6,7 +6,8 @@
 (import stdlib.io)
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
-(import "read.tl")
+(import lex as lexer)
+(import read as reader)
 (import compiler_comptime_image_core as comptime_image)
 
 (define (tlci-string-length [text : String]) : i64
@@ -699,13 +700,13 @@
 (define (tlci-char-code-at [text : String] [idx : i64]) : i64
   (cast (tlci-string-ref text idx) : i64))
 
-(define (tlci-field-string-value [ftail : Sexpr] [fname : String]) : ResultTlciString
+(define (tlci-field-string-value [ftail : reader.Sexpr] [fname : String]) : ResultTlciString
   (match ftail
-    [(Sexpr.Cons vhead vrest)
+    [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(Sexpr.Str val)
+        [(reader.Sexpr.Str val)
           (match (box-get vrest)
-            [(Sexpr.Nil) (ResultTlciString.Ok val)]
+            [(reader.Sexpr.Nil) (ResultTlciString.Ok val)]
             [_
               (ResultTlciString.Err
                 (str_cat.str-cat
@@ -723,13 +724,13 @@
         (str_cat.str-cat "tlci metadata: field `" fname "` must be a string"))]))
 
 (define (tlci-package-fields
-  [fields : Sexpr]
+  [fields : reader.Sexpr]
   [name : String]
   [has-name : bool]
   [version : String]
   [has-version : bool]) : ResultTlciMetadata
   (match fields
-    [(Sexpr.Nil)
+    [(reader.Sexpr.Nil)
       (cond
         [(not has-name)
           (ResultTlciMetadata.Err
@@ -746,11 +747,11 @@
         [else
           (ResultTlciMetadata.Ok
             (TlciMetadata tlci-metadata-version name version))])]
-    [(Sexpr.Cons field rest)
+    [(reader.Sexpr.Cons field rest)
       (match (box-get field)
-        [(Sexpr.Cons fhead ftail)
+        [(reader.Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(Sexpr.Sym fname)
+            [(reader.Sexpr.Sym fname)
               (if (string.eq fname "name")
                 (if has-name
                   (ResultTlciMetadata.Err
@@ -791,18 +792,18 @@
           (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")])]
     [_ (ResultTlciMetadata.Err "tlci metadata: package fields must be lists")]))
 
-(define (tlci-package-from-field [ftail : Sexpr]) : ResultTlciMetadata
+(define (tlci-package-from-field [ftail : reader.Sexpr]) : ResultTlciMetadata
   (tlci-package-fields ftail "" false "" false))
 
 (define (tlci-metadata-fields
-  [fields : Sexpr]
+  [fields : reader.Sexpr]
   [version : String]
   [has-version : bool]
   [package-name : String]
   [package-version : String]
   [has-package : bool]) : ResultTlciMetadata
   (match fields
-    [(Sexpr.Nil)
+    [(reader.Sexpr.Nil)
       (cond
         [(not has-version)
           (ResultTlciMetadata.Err
@@ -816,11 +817,11 @@
         [else
           (ResultTlciMetadata.Ok
             (TlciMetadata version package-name package-version))])]
-    [(Sexpr.Cons field rest)
+    [(reader.Sexpr.Cons field rest)
       (match (box-get field)
-        [(Sexpr.Cons fhead ftail)
+        [(reader.Sexpr.Cons fhead ftail)
           (match (box-get fhead)
-            [(Sexpr.Sym fname)
+            [(reader.Sexpr.Sym fname)
               (cond
                 [(string.eq fname "version")
                   (if has-version
@@ -861,11 +862,11 @@
         [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")])]
     [_ (ResultTlciMetadata.Err "tlci metadata: fields must be lists")]))
 
-(define (tlci-metadata-from-form [form : Sexpr]) : ResultTlciMetadata
+(define (tlci-metadata-from-form [form : reader.Sexpr]) : ResultTlciMetadata
   (match form
-    [(Sexpr.Cons head rest)
+    [(reader.Sexpr.Cons head rest)
       (match (box-get head)
-        [(Sexpr.Sym name)
+        [(reader.Sexpr.Sym name)
           (if (string.eq name "typelisp-tlci-metadata")
             (tlci-metadata-fields (box-get rest) "" false "" "" false)
             (ResultTlciMetadata.Err
@@ -881,10 +882,10 @@
         "tlci metadata: expected `(typelisp-tlci-metadata ...)`")]))
 
 (define (tlci-metadata-parse [source : String]) : ResultTlciMetadata
-  (match (read-result (lex source))
-    [(ResultSexpr.Err message)
+  (match (reader.read-result (lexer.lex source))
+    [(reader.ResultSexpr.Err message)
       (ResultTlciMetadata.Err (string.append "tlci metadata: " message))]
-    [(ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
+    [(reader.ResultSexpr.Ok form) (tlci-metadata-from-form form)]))
 
 (define (tlci-quote-text) : String
   "\"")

@@ -30,6 +30,52 @@
 ;: Runtime hook backing `alloc-reset-peak`.
 (extern (alloc-reset-peak-hook) : unit (:symbol "tl_profile_alloc_reset_peak"))
 
+;; The runtime exposes one resettable peak counter, while compiler phase
+;; profiling nests driver, typecheck, lower, optimize, and backend resets. Keep
+;; a second source-level accumulator so those local resets cannot erase the
+;; compile-wide high-water mark.
+(cfg
+  compile-profile
+  (define compile-wide-peak-active : bool
+    false))
+(cfg
+  compile-profile
+  (define compile-wide-peak-start-live : i64
+    0))
+(cfg
+  compile-profile
+  (define compile-wide-peak-best : i64
+    0))
+
+(cfg
+  compile-profile
+  (define (compile-wide-peak-note!) : unit
+    (if compile-wide-peak-active
+      (let
+        [delta : i64 (- (alloc-peak-hook) compile-wide-peak-start-live)]
+        (if (> delta compile-wide-peak-best)
+          (set! compile-wide-peak-best delta)
+          unit))
+      unit)))
+
+(cfg
+  compile-profile
+  (define (compile-wide-peak-start!) : unit
+    (begin
+      (set! compile-wide-peak-start-live (alloc-live-hook))
+      (set! compile-wide-peak-best 0)
+      (set! compile-wide-peak-active true)
+      ;; Discard any process-lifetime peak from before this compile.
+      (alloc-reset-peak-hook))))
+
+(cfg
+  compile-profile
+  (define (compile-wide-peak-finish!) : i64
+    (begin
+      (compile-wide-peak-note!)
+      (set! compile-wide-peak-active false)
+      compile-wide-peak-best)))
+
 ;: Return a pointer to one slot in the shared timestamp scratch buffer.
 (define (scratch-ptr [slot : i64]) : (MutPtr i64)
   (unsafe
@@ -84,7 +130,9 @@
 
 ;: Reset the peak live byte counter to the current live byte count.
 (define (alloc-reset-peak) : unit
-  (alloc-reset-peak-hook))
+  (begin
+    (cfg compile-profile (compile-wide-peak-note!) unit)
+    (alloc-reset-peak-hook)))
 
 ;: Inline test failure helper.
 (define (test-fail) : unit

@@ -45,6 +45,8 @@ SUMMARY_OUTPUT_ASM="$WORKDIR/summary-output.s"
 NORMAL_CHECK_STDOUT="$WORKDIR/normal-check.stdout"
 NORMAL_CHECK_STDERR="$WORKDIR/normal-check.stderr"
 NORMAL_OUTPUT_ASM="$WORKDIR/normal-output.s"
+PEAK_RESET_STDOUT="$WORKDIR/profile-peak-reset.stdout"
+PEAK_RESET_STDERR="$WORKDIR/profile-peak-reset.stderr"
 BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
@@ -373,6 +375,16 @@ if ! "$COMPILER" compile tests/integration/arithmetic.tl \
 fi
 assert_not_contains_in "$NORMAL_CHECK_STDERR" "compile-profile" \
     "$NORMAL_CHECK_STDOUT" "$NORMAL_CHECK_STDERR"
+
+echo "[compile-profile] verify compile-wide peak survives nested reset"
+if ! "$PROFILE_BIN" run tests/integration/compile_profile_nested_peak_reset.tl \
+    --cfg compile-profile \
+    --stdlib-root . \
+    --stdlib-root stdlib \
+    > "$PEAK_RESET_STDOUT" 2> "$PEAK_RESET_STDERR"; then
+    show_failure_logs "$PEAK_RESET_STDOUT" "$PEAK_RESET_STDERR"
+    fail "compile-wide nested peak reset fixture failed"
+fi
 
 echo "[compile-profile] verify per-entry batch memory boundaries"
 printf '%s|%s\n%s|%s\n' \

@@ -444,7 +444,9 @@
     [(AstType.VarArgs name _) (intern-str name)]
     [(AstType.Ptr elem) (doc-cat3 "(Ptr " (doc-ast-type-id-source elem) ")")]
     [(AstType.MutPtr elem)
-      (doc-cat3 "(MutPtr " (doc-ast-type-id-source elem) ")")]))
+      (doc-cat3 "(MutPtr " (doc-ast-type-id-source elem) ")")]
+    [(AstType.Consume inner)
+      (doc-cat3 "(:consume " (doc-ast-type-id-source inner) ")")]))
 
 (define (doc-expand-escape-string-loop
   [text : String]
@@ -727,8 +729,16 @@
 
 (define (doc-ast-param-source [param : AstParam]) : String
   (match param
-    [(AstParam.Param name ty _)
-      (doc-cat5 "[" (intern-str name) " : " (doc-ast-type-source ty) "]")]))
+    [(AstParam.Param name ty _ consume?)
+      (if consume?
+        (doc-cat6
+          "["
+          (intern-str name)
+          " : "
+          (doc-ast-type-source ty)
+          " (:consume)"
+          "]")
+        (doc-cat5 "[" (intern-str name) " : " (doc-ast-type-source ty) "]"))]))
 
 (define (doc-ast-param-list-source-from
   [params : AstParamList]
@@ -742,7 +752,7 @@
         (ast-param-list-get
           (& params)
           index
-          (AstParam.Param 0 (AstType.Unit) false)))
+          (AstParam.Param 0 (AstType.Unit) false false)))
       (doc-ast-param-list-source-from params (+ index 1) count))))
 
 (define (doc-ast-param-list-source [params : AstParamList]) : String

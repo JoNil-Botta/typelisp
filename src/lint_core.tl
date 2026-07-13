@@ -1699,7 +1699,9 @@
     [(AstType.VarArgs name _)
       (lint-name-id-uses-import? name alias module-name)]
     [(AstType.Ptr inner) (lint-type-id-uses-import? inner alias module-name)]
-    [(AstType.MutPtr inner) (lint-type-id-uses-import? inner alias module-name)]))
+    [(AstType.MutPtr inner) (lint-type-id-uses-import? inner alias module-name)]
+    [(AstType.Consume inner)
+      (lint-type-id-uses-import? inner alias module-name)]))
 
 (define (lint-param-list-uses-import?
   [params : AstParamList]
@@ -1715,7 +1717,7 @@
   (if (>= index (ast-param-list-len params))
     false
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (if (lint-type-uses-import? ty alias module-name)
           true
           (lint-param-list-uses-import-at? params alias module-name (+ index 1)))])))
@@ -2663,7 +2665,7 @@
   (if (>= index (ast-param-list-len params))
     locals
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _)
+      [(AstParam.Param name _ _ _)
         (lint-param-list-add-locals-at
           params
           (lint-name-list-add locals (intern-str name))
@@ -2814,7 +2816,7 @@
   (if (>= index (ast-param-list-len params))
     locals
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty _)
+      [(AstParam.Param name ty _ _)
         (lint-copy-on-update-param-locals-at
           params
           shapes
@@ -4777,7 +4779,7 @@
   (if (>= index (ast-param-list-len params))
     items
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name ty _)
+      [(AstParam.Param name ty _ _)
         (let
           [text : String (intern-str name)]
           [with-param : LintSingleElementArrayCandidateList
@@ -6838,7 +6840,7 @@
   (if (>= index (ast-param-list-len params))
     (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param name _ _)
+      [(AstParam.Param name _ _ _)
         (let
           [text : String (intern-str name)]
           [found : LintSourceNameSpan
@@ -7021,7 +7023,7 @@
   (if (>= index (ast-param-list-len params))
     state
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _)
+      [(AstParam.Param _ ty _ _)
         (lint-unused-variable-param-types-at
           params
           (lint-unused-variable-type ty state)

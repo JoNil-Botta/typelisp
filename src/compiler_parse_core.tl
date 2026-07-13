@@ -1914,6 +1914,44 @@
     [(Sexpr.Nil) (ResultAstLifetimeList.Err message)]
     [_ (parse-ast-lifetime-list-result dispatch pools s message)]))
 
+(define (parse-ast-consuming-param-type-allowed? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Ref _ _) false]
+    [(AstType.MutRef _ _) false]
+    [(AstType.Consume _) false]
+    [_ true]))
+
+(define (parse-ast-func-param-type
+  [dispatch : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]
+  [s : Sexpr]) : ResultAstType
+  (match s
+    [(Sexpr.Cons key-node tail)
+      (match (box-get key-node)
+        [(Sexpr.Sym key)
+          (if (string.eq key ":consume")
+            (match (box-get tail)
+              [(Sexpr.Cons ty-node end)
+                (match (box-get end)
+                  [(Sexpr.Nil)
+                    (match (parse-ast-type dispatch pools (box-get ty-node))
+                      [(ResultAstType.Ok ty)
+                        (if (parse-ast-consuming-param-type-allowed? ty)
+                          (ResultAstType.Ok
+                            (ast-ty-consume-with-pools pools ty))
+                          (ResultAstType.Err
+                            "parse: :consume requires a non-reference parameter type"))]
+                      [(ResultAstType.Err message) (ResultAstType.Err message)])]
+                  [_
+                    (ResultAstType.Err
+                      "parse: (:consume T) expects exactly one type")])]
+              [_
+                (ResultAstType.Err
+                  "parse: (:consume T) expects exactly one type")])
+            (parse-ast-type dispatch pools s))]
+        [_ (parse-ast-type dispatch pools s)])]
+    [_ (parse-ast-type dispatch pools s)]))
+
 (define (parse-ast-func-type-parts
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -1927,7 +1965,7 @@
               (ResultAstFuncTypeParts.Ok (ast-type-list-new) parsed-ret)]
             [(ResultAstType.Err message) (ResultAstFuncTypeParts.Err message)])]
         [_
-          (match (parse-ast-type dispatch pools (box-get arg))
+          (match (parse-ast-func-param-type dispatch pools (box-get arg))
             [(ResultAstType.Ok parsed-arg)
               (match (parse-ast-func-type-parts dispatch pools (box-get rest))
                 [(ResultAstFuncTypeParts.Ok parsed-args parsed-ret)
@@ -2242,6 +2280,58 @@
           result)]
       [_ result])))
 
+(define (parse-ast-runtime-param-result
+  [name : String]
+  [ty : AstType]
+  [end : Sexpr]) : ResultAstParam
+  (match end
+    [(Sexpr.Nil) (ResultAstParam.Ok (ast-param name ty false))]
+    [(Sexpr.Cons metadata-node after-metadata)
+      (match (box-get after-metadata)
+        [(Sexpr.Nil)
+          (match (box-get metadata-node)
+            [(Sexpr.Cons key-node metadata-tail)
+              (match (box-get key-node)
+                [(Sexpr.Sym key)
+                  (if (string.eq key ":consume")
+                    (match (box-get metadata-tail)
+                      [(Sexpr.Nil)
+                        (if (parse-ast-consuming-param-type-allowed? ty)
+                          (ResultAstParam.Ok
+                            (ast-param-with-consume name ty false true))
+                          (ResultAstParam.Err
+                            "parse: :consume requires a non-reference parameter type"))]
+                      [_
+                        (ResultAstParam.Err
+                          "parse: (:consume) parameter metadata takes no arguments")])
+                    (if (compiler-parse-metadata-key? key)
+                      (ResultAstParam.Err
+                        (string.append "parse: unknown parameter metadata " key))
+                      (ResultAstParam.Err "parse: malformed parameter metadata")))]
+                [_ (ResultAstParam.Err "parse: malformed parameter metadata")])]
+            [_ (ResultAstParam.Err "parse: malformed parameter metadata")])]
+        [_ (ResultAstParam.Err "parse: duplicate parameter metadata")])]
+    [_ (ResultAstParam.Err "parse: malformed parameter")]))
+
+(define (parse-ast-single-consume-param-metadata? [end : Sexpr]) : bool
+  (match end
+    [(Sexpr.Cons metadata-node after-metadata)
+      (match (box-get after-metadata)
+        [(Sexpr.Nil)
+          (match (box-get metadata-node)
+            [(Sexpr.Cons key-node metadata-tail)
+              (match (box-get key-node)
+                [(Sexpr.Sym key)
+                  (and
+                    (string.eq key ":consume")
+                    (match (box-get metadata-tail)
+                      [(Sexpr.Nil) true]
+                      [_ false]))]
+                [_ false])]
+            [_ false])]
+        [_ false])]
+    [_ false]))
+
 (define (parse-ast-param
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
@@ -2274,8 +2364,12 @@
                                   (ResultAstParam.Err
                                     "parse: expected ':' in parameter"))]
                               [_
-                                (ResultAstParam.Err
-                                  "parse: malformed parameter")])]
+                                (if (parse-ast-single-consume-param-metadata?
+                                  (box-get end))
+                                  (ResultAstParam.Err
+                                    "parse: comptime parameters cannot be consuming")
+                                  (ResultAstParam.Err
+                                    "parse: malformed parameter"))])]
                           [_ (ResultAstParam.Err "parse: malformed parameter")])]
                       [_ (ResultAstParam.Err "parse: malformed parameter")])]
                   [_ (ResultAstParam.Err "parse: malformed parameter")])]
@@ -2284,18 +2378,16 @@
               [(Sexpr.Cons colon rest2)
                 (match (box-get rest2)
                   [(Sexpr.Cons ty end)
-                    (match (box-get end)
-                      [(Sexpr.Nil)
-                        (if (sexpr-colon? (box-get colon))
-                          (match (parse-ast-type dispatch pools (box-get ty))
-                            [(ResultAstType.Ok parsed-ty)
-                              (ResultAstParam.Ok
-                                (ast-param first-name parsed-ty false))]
-                            [(ResultAstType.Err message)
-                              (ResultAstParam.Err message)])
-                          (ResultAstParam.Err
-                            "parse: expected ':' in parameter"))]
-                      [_ (ResultAstParam.Err "parse: malformed parameter")])]
+                    (if (sexpr-colon? (box-get colon))
+                      (match (parse-ast-type dispatch pools (box-get ty))
+                        [(ResultAstType.Ok parsed-ty)
+                          (parse-ast-runtime-param-result
+                            first-name
+                            parsed-ty
+                            (box-get end))]
+                        [(ResultAstType.Err message)
+                          (ResultAstParam.Err message)])
+                      (ResultAstParam.Err "parse: expected ':' in parameter"))]
                   [_ (ResultAstParam.Err "parse: malformed parameter")])]
               [_ (ResultAstParam.Err "parse: malformed parameter")]))]
         [_ (ResultAstParam.Err "parse: malformed parameter")])]
@@ -2310,7 +2402,7 @@
   (if (>= index (ast-param-list-len params))
     false
     (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ _ is-comptime)
+      [(AstParam.Param _ _ is-comptime _)
         (if is-comptime
           true
           (ast-param-list-has-comptime-at? params (+ index 1)))])))
@@ -6386,11 +6478,14 @@
   (match (parse-ast-param dispatch pools (spanned-sexpr-form item))
     [(ResultAstParam.Ok param)
       (match param
-        [(AstParam.Param _ ty comptime?)
+        [(AstParam.Param _ ty comptime? consume?)
           (if comptime?
             (ResultAstExternHeadItem.Err
               "parse: extern parameters cannot be comptime")
-            (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty)))])]
+            (if consume?
+              (ResultAstExternHeadItem.Err
+                "parse: extern parameters cannot be consuming")
+              (ResultAstExternHeadItem.Ok (AstExternHeadItem.Param ty))))])]
     [(ResultAstParam.Err message) (ResultAstExternHeadItem.Err message)]))
 
 (define (parse-ast-extern-head-bracket-item
@@ -9594,21 +9689,21 @@
                       (& params)
                       0
                       (ast-param-fallback))
-                      [(AstParam.Param _ first-ty false)
+                      [(AstParam.Param _ first-ty false false)
                         (compiler-parse-type-ref-string? first-ty "r")]
                       [_ false])
                     (match (ast-param-list-get
                       (& params)
                       1
                       (ast-param-fallback))
-                      [(AstParam.Param _ second-ty false)
+                      [(AstParam.Param _ second-ty false false)
                         (compiler-parse-type-ref-str? second-ty "r")]
                       [_ false])
                     (match (ast-param-list-get
                       (& params)
                       2
                       (ast-param-fallback))
-                      [(AstParam.Param _ third-ty false)
+                      [(AstParam.Param _ third-ty false false)
                         (compiler-parse-type-mut-ref-dyn-array-i64?
                           third-ty
                           "phase")]

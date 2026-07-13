@@ -113,6 +113,9 @@
 (defstruct TcTypeEnvScopedStack
   (slots (Array TcTypeEnvScopedSlot))
   (slot-count i64)
+  ;; Latest slot per name. Restore leaves popped entries in the map; lookup
+  ;; validates the stored index against slot-count/name and scans on staleness.
+  (lookup-cache tc_i64_i64_map.Map)
   (marks (Array TcTypeEnvScopedMark))
   (mark-count i64)
   (scope-depth i64)
@@ -123,20 +126,28 @@
   (index i64))
 
 (defstruct TcTypeEnvScopedSidecar
+  ;; Immutable module/top-level snapshot. Only slots at materialize-start and
+  ;; above are newer than this tail; earlier slots mirror it for marker scans.
   (persistent TcTypeEnv)
-  (stack TcTypeEnvScopedStack))
+  (stack TcTypeEnvScopedStack)
+  (materialize-start i64))
 
 (defstruct TcTypeEnvScopedSidecarMark
   (persistent TcTypeEnv)
-  (stack-mark TcTypeEnvScopedMark))
+  (stack-mark TcTypeEnvScopedMark)
+  (materialize-start i64))
 
 (defstruct TcTypeEnvScopedCarrier
+  ;; `env` is the last immutable snapshot. A dirty carrier owns newer bindings
+  ;; in sidecar.stack and materializes them only at a legacy TcTypeEnv boundary.
   (env TcTypeEnv)
-  (sidecar TcTypeEnvScopedSidecar))
+  (sidecar TcTypeEnvScopedSidecar)
+  (dirty bool))
 
 (defstruct TcTypeEnvScopedCarrierMark
   (env TcTypeEnv)
-  (sidecar-mark TcTypeEnvScopedSidecarMark))
+  (sidecar-mark TcTypeEnvScopedSidecarMark)
+  (dirty bool))
 
 (defstruct TcTypeEnvScopedCarrierSave
   (carrier TcTypeEnvScopedCarrier)
@@ -2041,6 +2052,30 @@
     0))
 (cfg
   compile-profile
+  (define compiler-tc-env-profile-scoped-binds : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-scoped-cache-hits : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-scoped-cache-misses : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-scoped-tail-fallbacks : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-scoped-materializations : i64
+    0))
+(cfg
+  compile-profile
+  (define compiler-tc-env-profile-scoped-materialized-slots : i64
+    0))
+(cfg
+  compile-profile
   (define compiler-tc-macro-generated-module-materializations : i64
     0))
 (cfg
@@ -2127,6 +2162,45 @@
 
 (cfg
   compile-profile
+  (define (compiler-tc-env-profile-note-scoped-bind) : unit
+    (set!
+      compiler-tc-env-profile-scoped-binds
+      (+ compiler-tc-env-profile-scoped-binds 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-scoped-cache-hit) : unit
+    (set!
+      compiler-tc-env-profile-scoped-cache-hits
+      (+ compiler-tc-env-profile-scoped-cache-hits 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-scoped-cache-miss) : unit
+    (set!
+      compiler-tc-env-profile-scoped-cache-misses
+      (+ compiler-tc-env-profile-scoped-cache-misses 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-scoped-tail-fallback) : unit
+    (set!
+      compiler-tc-env-profile-scoped-tail-fallbacks
+      (+ compiler-tc-env-profile-scoped-tail-fallbacks 1))))
+
+(cfg
+  compile-profile
+  (define (compiler-tc-env-profile-note-scoped-materialization [slots : i64]) : unit
+    (begin
+      (set!
+        compiler-tc-env-profile-scoped-materializations
+        (+ compiler-tc-env-profile-scoped-materializations 1))
+      (set!
+        compiler-tc-env-profile-scoped-materialized-slots
+        (+ compiler-tc-env-profile-scoped-materialized-slots slots)))))
+
+(cfg
+  compile-profile
   (define (compiler-tc-env-profile-reset) : unit
     (begin
       (set! compiler-tc-env-profile-binds 0)
@@ -2135,7 +2209,13 @@
       (set! compiler-tc-env-profile-cache-entries 0)
       (set! compiler-tc-env-profile-marker-scans 0)
       (set! compiler-tc-env-profile-module-local-hits 0)
-      (set! compiler-tc-env-profile-module-local-misses 0))))
+      (set! compiler-tc-env-profile-module-local-misses 0)
+      (set! compiler-tc-env-profile-scoped-binds 0)
+      (set! compiler-tc-env-profile-scoped-cache-hits 0)
+      (set! compiler-tc-env-profile-scoped-cache-misses 0)
+      (set! compiler-tc-env-profile-scoped-tail-fallbacks 0)
+      (set! compiler-tc-env-profile-scoped-materializations 0)
+      (set! compiler-tc-env-profile-scoped-materialized-slots 0))))
 
 (cfg
   compile-profile
@@ -2630,7 +2710,25 @@
         compiler-tc-env-profile-module-local-hits)
       (compiler-tc-env-profile-line
         (string.append prefix "module_local_misses")
-        compiler-tc-env-profile-module-local-misses))))
+        compiler-tc-env-profile-module-local-misses)
+      (compiler-tc-env-profile-line
+        (string.append prefix "scoped_binds")
+        compiler-tc-env-profile-scoped-binds)
+      (compiler-tc-env-profile-line
+        (string.append prefix "scoped_cache_hits")
+        compiler-tc-env-profile-scoped-cache-hits)
+      (compiler-tc-env-profile-line
+        (string.append prefix "scoped_cache_misses")
+        compiler-tc-env-profile-scoped-cache-misses)
+      (compiler-tc-env-profile-line
+        (string.append prefix "scoped_tail_fallbacks")
+        compiler-tc-env-profile-scoped-tail-fallbacks)
+      (compiler-tc-env-profile-line
+        (string.append prefix "scoped_materializations")
+        compiler-tc-env-profile-scoped-materializations)
+      (compiler-tc-env-profile-line
+        (string.append prefix "scoped_materialized_slots")
+        compiler-tc-env-profile-scoped-materialized-slots))))
 
 (cfg
   compile-profile
@@ -2748,6 +2846,24 @@
       (compiler-tc-env-profile-line
         "module_local_misses"
         compiler-tc-env-profile-module-local-misses)
+      (compiler-tc-env-profile-line
+        "scoped_binds"
+        compiler-tc-env-profile-scoped-binds)
+      (compiler-tc-env-profile-line
+        "scoped_cache_hits"
+        compiler-tc-env-profile-scoped-cache-hits)
+      (compiler-tc-env-profile-line
+        "scoped_cache_misses"
+        compiler-tc-env-profile-scoped-cache-misses)
+      (compiler-tc-env-profile-line
+        "scoped_tail_fallbacks"
+        compiler-tc-env-profile-scoped-tail-fallbacks)
+      (compiler-tc-env-profile-line
+        "scoped_materializations"
+        compiler-tc-env-profile-scoped-materializations)
+      (compiler-tc-env-profile-line
+        "scoped_materialized_slots"
+        compiler-tc-env-profile-scoped-materialized-slots)
       (compiler-tc-macro-counter-profile-line
         "generated_module_materializations"
         compiler-tc-macro-generated-module-materializations)
@@ -3734,6 +3850,7 @@
       TcTypeEnvScopedSlot
       (tc-type-env-scoped-capacity slot-capacity))
     0
+    (tc_i64_i64_map.with-capacity (tc-type-env-scoped-capacity slot-capacity))
     (array.make-array
       TcTypeEnvScopedMark
       (tc-type-env-scoped-capacity mark-capacity))
@@ -3800,6 +3917,11 @@
           (tc-type-env-scoped-marker-kind-tag marker-kind)
           (struct-get stack scope-depth)
           (struct-get stack cache-generation)))
+      (tc_i64_i64_map.insert-ref!
+        (&mut (struct-get stack lookup-cache))
+        name-id
+        index)
+      (cfg compile-profile (compiler-tc-env-profile-note-scoped-bind))
       (set! (struct-get stack slot-count) (+ index 1)))))
 
 (define (tc-type-env-scoped-stack-bind-id!
@@ -3910,10 +4032,27 @@
 (define (tc-type-env-scoped-stack-lookup-id
   [stack : TcTypeEnvScopedStack]
   [name-id : i64]) : TcTypeEnvScopedLookup
-  (tc-type-env-scoped-stack-lookup-id-from
-    stack
-    name-id
-    (- (tc-type-env-scoped-stack-len stack) 1)))
+  (match (tc_i64_i64_map.get (& (struct-get stack lookup-cache)) name-id)
+    [(tc_i64_i64_map.LookupFound index)
+      (if (and
+        (>= index 0)
+        (< index (tc-type-env-scoped-stack-len stack))
+        (=
+          (struct-get (array-ref (struct-get stack slots) index) name-id)
+          name-id))
+        (begin
+          (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-hit))
+          (tc-type-env-scoped-stack-lookup-id-from stack name-id index))
+        (begin
+          (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
+          (tc-type-env-scoped-stack-lookup-id-from
+            stack
+            name-id
+            (- (tc-type-env-scoped-stack-len stack) 1))))]
+    [(tc_i64_i64_map.LookupMissing)
+      (begin
+        (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
+        TcTypeEnvScopedLookup.Missing)]))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
   [stack : TcTypeEnvScopedStack]
@@ -4036,10 +4175,13 @@
       (tc-type-env-scoped-sidecar-fill-visible-env!
         (&mut sidecar)
         (tc-type-env-marker-start env))
+      (set!
+        (struct-get sidecar materialize-start)
+        (tc-type-env-scoped-stack-len (struct-get sidecar stack)))
       sidecar)))
 
 (define (tc-type-env-scoped-sidecar-from-env [env : TcTypeEnv]) : TcTypeEnvScopedSidecar
-  (TcTypeEnvScopedSidecar env (tc-type-env-scoped-stack-new)))
+  (TcTypeEnvScopedSidecar env (tc-type-env-scoped-stack-new) 0))
 
 (define (tc-type-env-scoped-sidecar-new) : TcTypeEnvScopedSidecar
   (tc-type-env-scoped-sidecar-from-env (tc-empty-env)))
@@ -4064,13 +4206,19 @@
 (define (tc-type-env-scoped-sidecar-mark
   [sidecar : TcTypeEnvScopedSidecar]
   [stack-mark : TcTypeEnvScopedMark]) : TcTypeEnvScopedSidecarMark
-  (TcTypeEnvScopedSidecarMark (struct-get sidecar persistent) stack-mark))
+  (TcTypeEnvScopedSidecarMark
+    (struct-get sidecar persistent)
+    stack-mark
+    (struct-get sidecar materialize-start)))
 
 (define (tc-type-env-scoped-sidecar-restore!
   [sidecar : (&mut sidecar TcTypeEnvScopedSidecar)]
   [mark : TcTypeEnvScopedSidecarMark]) : unit
   (begin
     (set! (struct-get sidecar persistent) (struct-get mark persistent))
+    (set!
+      (struct-get sidecar materialize-start)
+      (struct-get mark materialize-start))
     (tc-type-env-scoped-stack-restore!
       (&mut (struct-get sidecar stack))
       (struct-get mark stack-mark))))
@@ -4086,9 +4234,6 @@
         (&mut (struct-get next stack))
         name-id
         ty)
-      (set!
-        (struct-get next persistent)
-        (tc-bind-id (struct-get next persistent) name-id ty))
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind
@@ -4110,9 +4255,6 @@
         name-id
         ty
         marker-kind)
-      (set!
-        (struct-get next persistent)
-        (tc-bind-id (struct-get next persistent) name-id ty))
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind-marker
@@ -4220,9 +4362,6 @@
         name-id
         ty
         tc-type-env-scoped-flag-unsafe)
-      (set!
-        (struct-get next persistent)
-        (tc-bind-unsafe-id (struct-get next persistent) name-id ty))
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind-c-abi-fnptr-id
@@ -4242,9 +4381,6 @@
         name-id
         ty
         tc-type-env-scoped-flag-c-abi-fnptr)
-      (set!
-        (struct-get next persistent)
-        (tc-bind-c-abi-fnptr-id (struct-get next persistent) name-id ty))
       next)))
 
 (define (tc-type-env-scoped-sidecar-bind-unsafe-c-abi-fnptr-id
@@ -4271,24 +4407,63 @@
         (bit-or
           tc-type-env-scoped-flag-unsafe
           tc-type-env-scoped-flag-c-abi-fnptr))
-      (set!
-        (struct-get next persistent)
-        (tc-bind-unsafe-c-abi-fnptr-id (struct-get next persistent) name-id ty))
       next)))
 
+;; The scoped stack owns local bindings. The persistent env is an immutable
+;; module/top-level tail and is materialized only when an older TcTypeEnv API
+;; explicitly asks for a snapshot. Walking slots from oldest to newest rebuilds
+;; the same head-first lexical order without putting a persistent node on every
+;; carrier bind.
+(define (tc-type-env-scoped-stack-materialize-at
+  [stack : TcTypeEnvScopedStack]
+  [index : i64]
+  [env : TcTypeEnv]) : TcTypeEnv
+  (if (>= index (tc-type-env-scoped-stack-len stack))
+    env
+    (let
+      [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+      (tc-type-env-scoped-stack-materialize-at
+        stack
+        (+ index 1)
+        (begin
+          (cfg compile-profile (compiler-tc-env-profile-note-bind))
+          (TcTypeEnv.Bind
+            (struct-get slot name-id)
+            (struct-get slot ty)
+            (box env)))))))
+
+(define (tc-type-env-scoped-sidecar-materialize
+  [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnv
+  (let
+    [slots : i64
+      (-
+        (tc-type-env-scoped-stack-len (struct-get sidecar stack))
+        (struct-get sidecar materialize-start))]
+    (begin
+      (cfg
+        compile-profile
+        (compiler-tc-env-profile-note-scoped-materialization slots))
+      (tc-type-env-scoped-stack-materialize-at
+        (struct-get sidecar stack)
+        (struct-get sidecar materialize-start)
+        (struct-get sidecar persistent)))))
+
 (define (tc-type-env-scoped-carrier-from-env [env : TcTypeEnv]) : TcTypeEnvScopedCarrier
-  (TcTypeEnvScopedCarrier env (tc-type-env-scoped-sidecar-from-env env)))
+  (TcTypeEnvScopedCarrier env (tc-type-env-scoped-sidecar-from-env env) false))
 
 (define (tc-type-env-scoped-carrier-from-marker-visible-env [env : TcTypeEnv]) : TcTypeEnvScopedCarrier
   (TcTypeEnvScopedCarrier
     env
-    (tc-type-env-scoped-sidecar-from-marker-visible-env env)))
+    (tc-type-env-scoped-sidecar-from-marker-visible-env env)
+    false))
 
 (define (tc-type-env-scoped-carrier-new) : TcTypeEnvScopedCarrier
   (tc-type-env-scoped-carrier-from-env (tc-empty-env)))
 
 (define (tc-type-env-scoped-carrier-env [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnv
-  (struct-get carrier env))
+  (if (struct-get carrier dirty)
+    (tc-type-env-scoped-sidecar-materialize (struct-get carrier sidecar))
+    (struct-get carrier env)))
 
 (define (tc-type-env-scoped-carrier-sidecar [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedSidecar
   (struct-get carrier sidecar))
@@ -4298,11 +4473,9 @@
   (tc-type-env-scoped-sidecar-marker-cursor (struct-get carrier sidecar)))
 
 (define (tc-type-env-scoped-carrier-with-sidecar
-  [_carrier : TcTypeEnvScopedCarrier]
+  [carrier : TcTypeEnvScopedCarrier]
   [sidecar : TcTypeEnvScopedSidecar]) : TcTypeEnvScopedCarrier
-  (TcTypeEnvScopedCarrier
-    (tc-type-env-scoped-sidecar-persistent sidecar)
-    sidecar))
+  (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar true))
 
 (define (tc-type-env-scoped-carrier-save [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierSave
   (let
@@ -4310,10 +4483,14 @@
     [stack-mark : TcTypeEnvScopedMark
       (tc-type-env-scoped-sidecar-save! (&mut sidecar))]
     (TcTypeEnvScopedCarrierSave
-      (TcTypeEnvScopedCarrier (struct-get carrier env) sidecar)
+      (TcTypeEnvScopedCarrier
+        (struct-get carrier env)
+        sidecar
+        (struct-get carrier dirty))
       (TcTypeEnvScopedCarrierMark
         (struct-get carrier env)
-        (tc-type-env-scoped-sidecar-mark sidecar stack-mark)))))
+        (tc-type-env-scoped-sidecar-mark sidecar stack-mark)
+        (struct-get carrier dirty)))))
 
 (define (tc-type-env-scoped-carrier-restore
   [carrier : TcTypeEnvScopedCarrier]
@@ -4324,7 +4501,10 @@
       (tc-type-env-scoped-sidecar-restore!
         (&mut sidecar)
         (struct-get mark sidecar-mark))
-      (TcTypeEnvScopedCarrier (struct-get mark env) sidecar))))
+      (TcTypeEnvScopedCarrier
+        (struct-get mark env)
+        sidecar
+        (struct-get mark dirty)))))
 
 (define (tc-type-env-scoped-carrier-bind-id
   [carrier : TcTypeEnvScopedCarrier]
@@ -4454,6 +4634,96 @@
       name-id
       ty)))
 
+(define (tc-type-env-scoped-carrier-lookup-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : ResultTcType
+  (match (tc-type-env-scoped-sidecar-lookup-id
+    (struct-get carrier sidecar)
+    name-id)
+    [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _) (ResultTcType.Ok ty)]
+    [(TcTypeEnvScopedLookup.Missing)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-env-profile-note-scoped-tail-fallback))
+        (tc-lookup-id
+          (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar))
+          name-id))]))
+
+(define (tc-type-env-scoped-carrier-lookup
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]) : ResultTcType
+  (tc-type-env-scoped-carrier-lookup-id carrier (tc-name-id name)))
+
+(define (tc-type-env-scoped-carrier-name-bound-id?
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : bool
+  (match (tc-type-env-scoped-carrier-lookup-id carrier name-id)
+    [(ResultTcType.Ok _) true]
+    [(ResultTcType.Err _) false]))
+
+(define (tc-type-env-scoped-carrier-name-bound?
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]) : bool
+  (tc-type-env-scoped-carrier-name-bound-id? carrier (tc-name-id name)))
+
+(define (tc-type-env-scoped-carrier-bind-alias-id-if-free
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (if (tc-type-env-scoped-carrier-name-bound-id? carrier name-id)
+    carrier
+    (tc-type-env-scoped-carrier-bind-id carrier name-id ty)))
+
+(define (tc-type-env-scoped-carrier-bind-alias-if-free
+  [carrier : TcTypeEnvScopedCarrier]
+  [name : String]
+  [ty : AstType]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-bind-alias-id-if-free
+    carrier
+    (tc-name-id name)
+    ty))
+
+(define (tc-type-env-scoped-carrier-lookup-unsafe-id
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : ResultTcTypeUnsafe
+  (match (tc-type-env-scoped-sidecar-lookup-id
+    (struct-get carrier sidecar)
+    name-id)
+    [(TcTypeEnvScopedLookup.Found ty unsafe _ _ _ _)
+      (ResultTcTypeUnsafe.Ok ty unsafe)]
+    [(TcTypeEnvScopedLookup.Missing)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-env-profile-note-scoped-tail-fallback))
+        (tc-lookup-unsafe-id
+          (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar))
+          name-id))]))
+
+(define (tc-type-env-scoped-carrier-binding-unsafe-id?
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : bool
+  (match (tc-type-env-scoped-carrier-lookup-unsafe-id carrier name-id)
+    [(ResultTcTypeUnsafe.Ok _ unsafe) unsafe]
+    [(ResultTcTypeUnsafe.Err _) false]))
+
+(define (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id?
+  [carrier : TcTypeEnvScopedCarrier]
+  [name-id : i64]) : bool
+  (match (tc-type-env-scoped-sidecar-lookup-id
+    (struct-get carrier sidecar)
+    name-id)
+    [(TcTypeEnvScopedLookup.Found _ _ c-abi-fnptr _ _ _) c-abi-fnptr]
+    [(TcTypeEnvScopedLookup.Missing)
+      (begin
+        (cfg
+          compile-profile
+          (compiler-tc-env-profile-note-scoped-tail-fallback))
+        (tc-binding-c-abi-fnptr-id?
+          (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar))
+          name-id))]))
+
 (define (tc-type-env-scoped-carrier-marker-type
   [carrier : TcTypeEnvScopedCarrier]
   [name-id : i64]) : AstMaybeType
@@ -4462,7 +4732,9 @@
     name-id)
     [(TcTypeEnvScopedLookup.Found ty _ _ _ _ _) (AstMaybeType.Some ty)]
     [(TcTypeEnvScopedLookup.Missing)
-      (tc-env-marker-type (struct-get carrier env) name-id)]))
+      (tc-env-marker-type
+        (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar))
+        name-id)]))
 
 (define (tc-type-env-scoped-carrier-in-unsafe?
   [carrier : TcTypeEnvScopedCarrier]) : bool
@@ -16214,16 +16486,21 @@
                 (match (tc-lookup-id
                   (tc-type-env-scoped-sidecar-persistent sidecar)
                   value-id)
-                  [(ResultTcType.Ok (AstType.Bool)) true]
+                  [(ResultTcType.Err _) true]
                   [_ false])
                 (match (tc-lookup-unsafe-id
-                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  (tc-type-env-scoped-sidecar-materialize sidecar)
                   fn-id)
                   [(ResultTcTypeUnsafe.Ok (AstType.I64) unsafe) unsafe]
                   [_ false])
                 (tc-binding-c-abi-fnptr-id?
-                  (tc-type-env-scoped-sidecar-persistent sidecar)
-                  fn-id))]
+                  (tc-type-env-scoped-sidecar-materialize sidecar)
+                  fn-id)
+                (match (tc-lookup-id
+                  (tc-type-env-scoped-sidecar-materialize sidecar)
+                  value-id)
+                  [(ResultTcType.Ok (AstType.Bool)) true]
+                  [_ false]))]
             (begin
               (tc-type-env-scoped-sidecar-restore! (&mut sidecar) mark)
               (and
@@ -16257,12 +16534,12 @@
                       (= depth 0))]
                   [_ false])
                 (match (tc-lookup-id
-                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  (tc-type-env-scoped-sidecar-materialize sidecar)
                   value-id)
                   [(ResultTcType.Ok (AstType.I64)) true]
                   [_ false])
                 (match (tc-lookup-id
-                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  (tc-type-env-scoped-sidecar-materialize sidecar)
                   fn-id)
                   [(ResultTcType.Err _) true]
                   [_ false])))))))))
@@ -16552,11 +16829,99 @@
               inner-ok
               restored-ok)))))))
 
+(define (tc-type-env-scoped-primary-storage-smoke?) : bool
+  (let
+    [base : TcTypeEnv
+      (tc-env-with-cache (tc-bind (tc-empty-env) "tail-only" (AstType.String)))]
+    [carrier : TcTypeEnvScopedCarrier
+      (tc-type-env-scoped-carrier-from-env base)]
+    [fn-id : i64 (tc-name-id "scoped-primary-fn")]
+    (begin
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind carrier "shadow" (AstType.I64)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind carrier "shadow" (AstType.Bool)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-alias-if-free
+          carrier
+          "shadow"
+          (AstType.String)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-alias-if-free
+          carrier
+          "alias"
+          (AstType.I64)))
+      (set!
+        carrier
+        (tc-type-env-scoped-carrier-bind-unsafe-c-abi-fnptr-id
+          carrier
+          fn-id
+          (tc-fn0 (AstType.I64))))
+      (let
+        [snapshot : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
+        [default-carrier : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-bind
+            (tc-type-env-scoped-carrier-from-env
+              (tc-env-with-cache (tc-default-env)))
+            "__tl_string_length"
+            (tc-fn1 (AstType.I64) (AstType.I64)))]
+        [hygiene-carrier : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-bind
+            (tc-type-env-scoped-carrier-from-env
+              (tc-hygiene-global-env
+                (tc-bind (tc-empty-env) "hygiene-value" (AstType.I64))))
+            "hygiene-value"
+            (AstType.Bool))]
+        [mirrored-carrier : TcTypeEnvScopedCarrier
+          (tc-type-env-scoped-carrier-bind
+            (tc-type-env-scoped-carrier-from-marker-visible-env
+              (tc-bind (tc-empty-env) "mirrored" (AstType.I64)))
+            "fresh"
+            (AstType.Bool))]
+        [mirrored-snapshot : TcTypeEnv
+          (tc-type-env-scoped-carrier-env mirrored-carrier)]
+        (and
+          (match (tc-type-env-scoped-carrier-lookup carrier "tail-only")
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (match (tc-type-env-scoped-carrier-lookup carrier "shadow")
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (match (tc-type-env-scoped-carrier-lookup carrier "alias")
+            [(ResultTcType.Ok (AstType.I64)) true]
+            [_ false])
+          (tc-type-env-scoped-carrier-binding-unsafe-id? carrier fn-id)
+          (tc-type-env-scoped-carrier-binding-c-abi-fnptr-id? carrier fn-id)
+          (match (tc-lookup snapshot "tail-only")
+            [(ResultTcType.Ok (AstType.String)) true]
+            [_ false])
+          (match (tc-lookup snapshot "shadow")
+            [(ResultTcType.Ok (AstType.Bool)) true]
+            [_ false])
+          (tc-binding-unsafe-id? snapshot fn-id)
+          (tc-binding-c-abi-fnptr-id? snapshot fn-id)
+          (not
+            (tc-default-builtin-unshadowed?
+              (tc-type-env-scoped-carrier-env default-carrier)
+              "__tl_string_length"))
+          (match (tc-lookup-hygiene-global
+            (tc-type-env-scoped-carrier-env hygiene-carrier)
+            "hygiene-value")
+            [(ResultTcType.Ok (AstType.I64)) true]
+            [_ false])
+          (= (tc-ordinary-binding-rank mirrored-snapshot "fresh") 0)
+          (= (tc-ordinary-binding-rank mirrored-snapshot "mirrored") 1))))))
+
 (define (tc-type-env-scoped-stack-smoke?) : bool
   (and
     (tc-type-env-scoped-stack-grow-smoke?)
     (tc-type-env-scoped-sidecar-smoke?)
     (tc-type-env-scoped-carrier-smoke?)
+    (tc-type-env-scoped-primary-storage-smoke?)
     (cfg test (tc-type-env-scoped-runtime-smoke?) true)))
 
 (test
@@ -16906,6 +17271,75 @@
           (tc-bind-id env name (tc-resolve-type ctx ty))
           params
           (+ index 1))])))
+
+(define (tc-type-env-scoped-carrier-bind-params
+  [ctx : TcContext]
+  [carrier : TcTypeEnvScopedCarrier]
+  [params : AstParamList]) : TcTypeEnvScopedCarrier
+  (tc-type-env-scoped-carrier-bind-params-at ctx carrier (& params) 0))
+
+(define (tc-type-env-scoped-carrier-bind-params-at
+  [ctx : TcContext]
+  [carrier : TcTypeEnvScopedCarrier]
+  [params : (& params AstParamList)]
+  [index : i64]) : TcTypeEnvScopedCarrier
+  (if (>= index (ast-param-list-len params))
+    carrier
+    (match (ast-param-list-get params index (ast-param-fallback))
+      [(AstParam.Param name ty _ _)
+        (tc-type-env-scoped-carrier-bind-params-at
+          ctx
+          (tc-type-env-scoped-carrier-bind-id
+            carrier
+            name
+            (tc-resolve-type ctx ty))
+          params
+          (+ index 1))])))
+
+(cfg
+  tc-env-scoped-dual-verify
+  (define (tc-type-env-scoped-carrier-params-match-persistent-at?
+    [carrier : TcTypeEnvScopedCarrier]
+    [persistent : TcTypeEnv]
+    [params : (& params AstParamList)]
+    [index : i64]) : bool
+    (if (>= index (ast-param-list-len params))
+      true
+      (match (ast-param-list-get params index (ast-param-fallback))
+        [(AstParam.Param name _ _ _)
+          (match (tc-type-env-scoped-carrier-lookup-id carrier name)
+            [(ResultTcType.Ok stack-ty)
+              (match (tc-lookup-id persistent name)
+                [(ResultTcType.Ok persistent-ty)
+                  (and
+                    (tc-type-eq stack-ty persistent-ty)
+                    (tc-type-env-scoped-carrier-params-match-persistent-at?
+                      carrier
+                      persistent
+                      params
+                      (+ index 1)))]
+                [(ResultTcType.Err _) false])]
+            [(ResultTcType.Err _) false])]))))
+
+(cfg
+  tc-env-scoped-dual-verify
+  (define (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
+    [carrier : TcTypeEnvScopedCarrier]
+    [persistent : TcTypeEnv]
+    [params : AstParamList]) : bool
+    (and
+      (tc-type-env-scoped-carrier-params-match-persistent-at?
+        carrier
+        persistent
+        (& params)
+        0)
+      (match (tc-type-env-scoped-carrier-current-return-type carrier)
+        [(ResultTcType.Ok stack-ret)
+          (match (tc-current-return-type persistent)
+            [(ResultTcType.Ok persistent-ret)
+              (tc-type-eq stack-ret persistent-ret)]
+            [(ResultTcType.Err _) false])]
+        [(ResultTcType.Err _) false]))))
 
 (define (tc-bind-macro-params
   [ctx : TcContext]
@@ -59312,11 +59746,28 @@
     [body : AstExpr (ast-node-get body-box)]
     [carrier : TcTypeEnvScopedCarrier
       (tc-type-env-scoped-carrier-bind-return-type
-        (tc-type-env-scoped-carrier-from-env
-          (tc-bind-params ctx global-env params))
+        (tc-type-env-scoped-carrier-bind-params
+          ctx
+          (tc-type-env-scoped-carrier-from-env global-env)
+          params)
         (tc-resolve-type ctx ret))]
     [env : TcTypeEnv (tc-type-env-scoped-carrier-env carrier)]
     (begin
+      (cfg
+        tc-env-scoped-dual-verify
+        (let
+          [persistent : TcTypeEnv
+            (tc-bind-return-type
+              (tc-bind-params ctx global-env params)
+              (tc-resolve-type ctx ret))]
+          (if (tc-type-env-scoped-carrier-fn-entry-matches-persistent?
+            carrier
+            persistent
+            params)
+            unit
+            (io.panic
+              "typecheck: scoped carrier diverged from persistent function env")))
+        unit)
       (tc-body-early-exit-function-start!)
       (tc-body-type-facts-start-recording!)
       (match (tc-expr-with-expected-or-actual-id

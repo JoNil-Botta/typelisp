@@ -44754,10 +44754,13 @@
       ;; this function's cached node types are independent of every other
       ;; function's (and never outlive this function's scratch arena).
       (tc-rtf-next-gen!)
-      ;; The context carries a scratch-owned index name while lowering one
-      ;; scalar foreach body. Never let that scoped value cross the per-function
-      ;; arena rewind into the next top-level function.
+      ;; The scalar context and recursive-helper stack carry scratch-owned
+      ;; values while lowering one function. Never let those scoped values
+      ;; cross the per-function arena rewind into the next top-level function.
       (set! lower-spmd-scalar-call-context (LowerSpmdScalarCallContext.No))
+      (set!
+        lower-spmd-inline-helper-stack
+        (lower-spmd-inline-empty-helper-stack))
       (unsafe
         (arena.tl_arena_set scratch))
       (let
@@ -44792,6 +44795,9 @@
                     (set! lower-ir-arena (arena.tl_arena_current))
                     (unsafe
                       (arena.tl_arena_set enclosing))
+                    (set!
+                      lower-spmd-inline-helper-stack
+                      (lower-spmd-inline-empty-helper-stack))
                     (let
                       [escaped-spans : CompilerSourceSpans
                         (lower-record-function-span spans logical-name body)]
@@ -44815,6 +44821,9 @@
               (begin
                 (unsafe
                   (arena.tl_arena_set enclosing))
+                (set!
+                  lower-spmd-inline-helper-stack
+                  (lower-spmd-inline-empty-helper-stack))
                 (let
                   [escaped-message : (Box CompilerDiagnostic) (clone message)]
                   [new-enclosing : i64 (arena.tl_arena_current)]

@@ -311,3 +311,7 @@ consume_parameter_generated_struct_reject|check-fail|tests/safety/consume_parame
 consume_parameter_unknown_metadata_reject|check-fail|tests/safety/consume_parameter_unknown_metadata_reject.tl|-|parse: unknown parameter metadata :unknown
 consume_parameter_duplicate_metadata_reject|check-fail|tests/safety/consume_parameter_duplicate_metadata_reject.tl|-|parse: duplicate parameter metadata
 consume_parameter_function_metadata_arity_reject|check-fail|tests/safety/consume_parameter_function_metadata_arity_reject.tl|-|parse: (:consume T) expects exactly one type
+vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_iterator_source_reuse_reject.tl|-|use of moved value `values`
+vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
+vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
+vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`

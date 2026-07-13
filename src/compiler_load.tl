@@ -104,13 +104,22 @@
   (CompilerLoadLazyImportQualified)
   (CompilerLoadLazyImportDirect))
 
-;; This is intentionally a three-bit observation rather than a source-text
-;; heuristic. The importer AST can prove qualified and direct demand, and
-;; marks macro-generated or otherwise unresolved demand conservatively.
+;; Exact structural demand is reusable by generated-module materializers. The
+;; set maps interned member names to a sentinel value and is deduplicated while
+;; the importer AST is walked.
+(defenum CompilerLoadStructuralMemberDemand
+  (CompilerLoadStructuralNoDemand)
+  (CompilerLoadStructuralExactMembers sym_i64_env.SymI64Env)
+  (CompilerLoadStructuralFullDemand))
+
+;; This remains the loader's compact observation. In addition to its existing
+;; policy bits, it carries the exact first member of each qualified use. Direct
+;; or unresolved observations convert to conservative full structural demand.
 (defstruct CompilerLoadLazyAliasDemand
   (qualified bool)
   (direct bool)
-  (unknown bool))
+  (unknown bool)
+  (members sym_i64_env.SymI64Env))
 
 (defenum CompilerLoadSurfaceDeclKind
   (CompilerLoadSurfaceValue)
@@ -2745,16 +2754,47 @@
       (struct-get summary decls))))
 
 (define (compiler-load-lazy-alias-demand-none) : CompilerLoadLazyAliasDemand
-  (CompilerLoadLazyAliasDemand false false false))
+  (CompilerLoadLazyAliasDemand false false false (sym_i64_env.sym-i64-empty)))
 
-(define (compiler-load-lazy-alias-demand-qualified) : CompilerLoadLazyAliasDemand
-  (CompilerLoadLazyAliasDemand true false false))
+(define (compiler-load-lazy-alias-demand-qualified [member : String]) : CompilerLoadLazyAliasDemand
+  (CompilerLoadLazyAliasDemand
+    true
+    false
+    false
+    (sym_i64_env.sym-i64-bind (sym_i64_env.sym-i64-empty) member 1)))
 
 (define (compiler-load-lazy-alias-demand-direct) : CompilerLoadLazyAliasDemand
-  (CompilerLoadLazyAliasDemand false true false))
+  (CompilerLoadLazyAliasDemand false true false (sym_i64_env.sym-i64-empty)))
 
 (define (compiler-load-lazy-alias-demand-unknown) : CompilerLoadLazyAliasDemand
-  (CompilerLoadLazyAliasDemand false false true))
+  (CompilerLoadLazyAliasDemand false false true (sym_i64_env.sym-i64-empty)))
+
+(define (compiler-load-structural-member-set-add-id
+  [members : sym_i64_env.SymI64Env]
+  [member-id : i64]) : sym_i64_env.SymI64Env
+  (if (sym_i64_env.sym-i64-contains-id members member-id)
+    members
+    (sym_i64_env.sym-i64-bind-id members member-id 1)))
+
+(define (compiler-load-structural-member-set-union-from
+  [members : sym_i64_env.SymI64Env]
+  [additions : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (match additions
+    [(sym_i64_env.SymI64Nil) members]
+    [(sym_i64_env.SymI64Bind member-id _ rest)
+      (compiler-load-structural-member-set-add-id
+        (compiler-load-structural-member-set-union-from members (box-get rest))
+        member-id)]))
+
+(define (compiler-load-structural-member-set-union
+  [left : sym_i64_env.SymI64Env]
+  [right : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (match left
+    [(sym_i64_env.SymI64Nil) right]
+    [_
+      (match right
+        [(sym_i64_env.SymI64Nil) left]
+        [_ (compiler-load-structural-member-set-union-from left right)])]))
 
 (define (compiler-load-lazy-alias-demand-merge
   [left : CompilerLoadLazyAliasDemand]
@@ -2762,7 +2802,10 @@
   (CompilerLoadLazyAliasDemand
     (or (struct-get left qualified) (struct-get right qualified))
     (or (struct-get left direct) (struct-get right direct))
-    (or (struct-get left unknown) (struct-get right unknown))))
+    (or (struct-get left unknown) (struct-get right unknown))
+    (compiler-load-structural-member-set-union
+      (struct-get left members)
+      (struct-get right members))))
 
 (define (compiler-load-lazy-name-qualified-by? [name : String] [alias : String]) : bool
   (let
@@ -2775,6 +2818,25 @@
       (let
         [separator : char (string.string-ref name alias-len)]
         (or (= separator '.') (= separator '/'))))))
+
+(define (compiler-load-lazy-qualified-member-end
+  [name : String]
+  [index : i64]
+  [limit : i64]) : i64
+  (if (>= index limit)
+    limit
+    (let
+      [c : char (string.string-ref name index)]
+      (if (or (= c '.') (= c '/'))
+        index
+        (compiler-load-lazy-qualified-member-end name (+ index 1) limit)))))
+
+(define (compiler-load-lazy-qualified-member [name : String] [alias : String]) : String
+  (let
+    [start : i64 (+ (string.string-length alias) 1)]
+    [limit : i64 (string.string-length name)]
+    [end : i64 (compiler-load-lazy-qualified-member-end name start limit)]
+    (string.substring name start (- end start))))
 
 (define (compiler-load-lazy-surface-variant-direct-name?
   [variants : AstVariantDefList]
@@ -2825,7 +2887,11 @@
     [text : String (intern-str name)]
     (cond
       [(compiler-load-lazy-name-qualified-by? text alias)
-        (compiler-load-lazy-alias-demand-qualified)]
+        (let
+          [member : String (compiler-load-lazy-qualified-member text alias)]
+          (if (= (string.string-length member) 0)
+            (compiler-load-lazy-alias-demand-unknown)
+            (compiler-load-lazy-alias-demand-qualified member)))]
       [(sym_i64_env.sym-i64-contains-id locals name)
         (compiler-load-lazy-alias-demand-none)]
       [(or
@@ -3636,7 +3702,7 @@
       (let
         [head : CompilerLoadLazyAliasDemand
           (compiler-load-lazy-decl-demand decl alias summary locals)]
-        (if (or (struct-get head qualified) (struct-get head unknown))
+        (if (struct-get head unknown)
           head
           (compiler-load-lazy-alias-demand-merge
             head
@@ -3658,6 +3724,73 @@
     false
     false
     (CompilerLoadLazyImportDirect)))
+
+(define (compiler-load-structural-member-demand-from-lazy
+  [demand : CompilerLoadLazyAliasDemand]) : CompilerLoadStructuralMemberDemand
+  (if (or (struct-get demand direct) (struct-get demand unknown))
+    (CompilerLoadStructuralFullDemand)
+    (if (struct-get demand qualified)
+      (CompilerLoadStructuralExactMembers (struct-get demand members))
+      (CompilerLoadStructuralNoDemand))))
+
+(define (compiler-load-structural-member-demand-with-pools
+  [decls : AstDeclList]
+  [alias : String]
+  [pools : AstNodePoolContext]) : CompilerLoadStructuralMemberDemand
+  (let
+    [_install-pools : unit (ast-node-pool-context-install! pools)]
+    (compiler-load-structural-member-demand-from-lazy
+      (compiler-load-lazy-decl-list-demand
+        decls
+        alias
+        (compiler-load-lazy-empty-surface-summary)
+        (sym_i64_env.sym-i64-empty)))))
+
+(define (compiler-load-structural-member-demand
+  [decls : AstDeclList]
+  [alias : String]) : CompilerLoadStructuralMemberDemand
+  (compiler-load-structural-member-demand-with-pools
+    decls
+    alias
+    (ast-node-pool-context-capture-active)))
+
+(define (compiler-load-structural-member-demand-contains?
+  [demand : CompilerLoadStructuralMemberDemand]
+  [member : String]) : bool
+  (match demand
+    [(CompilerLoadStructuralExactMembers members)
+      (sym_i64_env.sym-i64-contains members member)]
+    [_ false]))
+
+(define (compiler-load-structural-member-demand-union
+  [left : CompilerLoadStructuralMemberDemand]
+  [right : CompilerLoadStructuralMemberDemand]) : CompilerLoadStructuralMemberDemand
+  (match left
+    [(CompilerLoadStructuralFullDemand) (CompilerLoadStructuralFullDemand)]
+    [(CompilerLoadStructuralNoDemand) right]
+    [(CompilerLoadStructuralExactMembers left-members)
+      (match right
+        [(CompilerLoadStructuralFullDemand) (CompilerLoadStructuralFullDemand)]
+        [(CompilerLoadStructuralNoDemand) left]
+        [(CompilerLoadStructuralExactMembers right-members)
+          (CompilerLoadStructuralExactMembers
+            (compiler-load-structural-member-set-union
+              left-members
+              right-members))])]))
+
+(define (compiler-load-structural-member-set-count
+  [members : sym_i64_env.SymI64Env]) : i64
+  (match members
+    [(sym_i64_env.SymI64Nil) 0]
+    [(sym_i64_env.SymI64Bind _ _ rest)
+      (+ 1 (compiler-load-structural-member-set-count (box-get rest)))]))
+
+(define (compiler-load-structural-member-demand-count
+  [demand : CompilerLoadStructuralMemberDemand]) : i64
+  (match demand
+    [(CompilerLoadStructuralExactMembers members)
+      (compiler-load-structural-member-set-count members)]
+    [_ 0]))
 
 (define (compiler-load-lazy-import-preload-demand
   [candidate : bool]

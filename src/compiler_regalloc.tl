@@ -84,6 +84,16 @@
   (present (Array i64))
   (items (Array CompilerRegLocation)))
 
+;; Mutable inverse index for the greedy allocator's physical-register homes.
+;; `words` is a flat [register][variable-word] bitset; primary/secondary retain
+;; each variable's current pool indices so assignment updates clear old homes in
+;; O(1). Register pairs occupy both indexed registers.
+(defstruct CompilerRegGreedyOccupancy
+  (words (Array i64))
+  (word-count i64)
+  (primary (Array i64))
+  (secondary (Array i64)))
+
 (defstruct CompilerRegIntervalIndex
   (starts (Array i64))
   (ends (Array i64))
@@ -13829,6 +13839,204 @@
 ;;     => terminating. Group/pair roots are left UNASSIGNED (backend stack-homes
 ;;     them); the call-spanning save/restore rescue then runs over the integer
 ;;     result.
+(define (compiler-reg-greedy-pool-index
+  [reg-arr : (Array String)]
+  [rcount : i64]
+  [reg : String]) : i64
+  (let
+    [i : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< i rcount) (< found 0))
+        (begin
+          (if (string.eq (array-ref reg-arr i) reg)
+            (set! found i)
+            unit)
+          (set! i (+ i 1))))
+      found)))
+
+(define (compiler-reg-greedy-occupancy-word-index
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-index : i64]
+  [word-index : i64]) : i64
+  (+ (* reg-index (struct-get occupancy word-count)) word-index))
+
+(define (compiler-reg-greedy-occupancy-set-bit!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-index : i64]
+  [var : i64]
+  [present : bool]) : unit
+  (let
+    [primary : (Array i64) (struct-get occupancy primary)]
+    [word-count : i64 (struct-get occupancy word-count)]
+    (if (or (< reg-index 0) (< var 0) (>= var (array-length primary)))
+      unit
+      (let
+        [word-index : i64 (compiler-live-set-word-index var)]
+        (if (>= word-index word-count)
+          unit
+          (let
+            [words : (Array i64) (struct-get occupancy words)]
+            [flat-index : i64
+              (compiler-reg-greedy-occupancy-word-index
+                occupancy
+                reg-index
+                word-index)]
+            [mask : i64 (compiler-live-set-bit-mask var)]
+            [old : i64 (array-ref words flat-index)]
+            (array-set!
+              words
+              flat-index
+              (if present
+                (bit-or old mask)
+                (bit-and old (bit-xor mask -1))))))))))
+
+(define (compiler-reg-greedy-occupancy-clear!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [var : i64]) : unit
+  (let
+    [primary : (Array i64) (struct-get occupancy primary)]
+    [secondary : (Array i64) (struct-get occupancy secondary)]
+    (if (or (< var 0) (>= var (array-length primary)))
+      unit
+      (let
+        [first : i64 (array-ref primary var)]
+        [second : i64 (array-ref secondary var)]
+        (begin
+          (compiler-reg-greedy-occupancy-set-bit! occupancy first var false)
+          (if (and (>= second 0) (not (= first second)))
+            (compiler-reg-greedy-occupancy-set-bit! occupancy second var false)
+            unit)
+          (array-set! primary var -1)
+          (array-set! secondary var -1))))))
+
+(define (compiler-reg-greedy-occupancy-assign!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [var : i64]
+  [first : i64]
+  [second : i64]) : unit
+  (let
+    [primary : (Array i64) (struct-get occupancy primary)]
+    [secondary : (Array i64) (struct-get occupancy secondary)]
+    (if (or (< var 0) (>= var (array-length primary)))
+      unit
+      (begin
+        (compiler-reg-greedy-occupancy-clear! occupancy var)
+        (array-set! primary var first)
+        (array-set! secondary var second)
+        (compiler-reg-greedy-occupancy-set-bit! occupancy first var true)
+        (if (and (>= second 0) (not (= first second)))
+          (compiler-reg-greedy-occupancy-set-bit! occupancy second var true)
+          unit)))))
+
+(define (compiler-reg-greedy-occupancy-record-location!
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-arr : (Array String)]
+  [rcount : i64]
+  [var : i64]
+  [location : CompilerRegLocation]) : unit
+  (match location
+    [(CompilerRegLocation.Register reg)
+      (compiler-reg-greedy-occupancy-assign!
+        occupancy
+        var
+        (compiler-reg-greedy-pool-index reg-arr rcount reg)
+        -1)]
+    [(CompilerRegLocation.RegisterPair first second)
+      (compiler-reg-greedy-occupancy-assign!
+        occupancy
+        var
+        (compiler-reg-greedy-pool-index reg-arr rcount first)
+        (compiler-reg-greedy-pool-index reg-arr rcount second))]
+    [(CompilerRegLocation.Spill _) unit]
+    [(CompilerRegLocation.Remat _) unit]))
+
+(define (compiler-reg-greedy-occupancy-make
+  [assignments : CompilerRegAssignmentTable]
+  [reg-arr : (Array String)]
+  [rcount : i64]) : CompilerRegGreedyOccupancy
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    [items : (Array CompilerRegLocation) (struct-get assignments items)]
+    [n : i64 (array-length present)]
+    [word-count : i64
+      (/
+        (+ n (- (compiler-live-set-word-bits) 1))
+        (compiler-live-set-word-bits))]
+    [storage-word-count : i64
+      (if (< word-count 1)
+        1
+        word-count)]
+    [storage-reg-count : i64
+      (if (< rcount 1)
+        1
+        rcount)]
+    [words : (Array i64)
+      (array.make-array i64 (* storage-reg-count storage-word-count))]
+    [primary : (Array i64)
+      (array.make-array
+        i64
+        (if (< n 1)
+          1
+          n))]
+    [secondary : (Array i64)
+      (array.make-array
+        i64
+        (if (< n 1)
+          1
+          n))]
+    [occupancy : CompilerRegGreedyOccupancy
+      (CompilerRegGreedyOccupancy words word-count primary secondary)]
+    [var : i64 0]
+    (begin
+      (compiler-reg-fill-i64-array words 0)
+      (compiler-reg-fill-i64-array primary -1)
+      (compiler-reg-fill-i64-array secondary -1)
+      (while (< var n)
+        (begin
+          (if (= (array-ref present var) 1)
+            (compiler-reg-greedy-occupancy-record-location!
+              occupancy
+              reg-arr
+              rcount
+              var
+              (array-ref items var))
+            unit)
+          (set! var (+ var 1))))
+      occupancy)))
+
+(define (compiler-reg-greedy-assignment-register!
+  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
+  [reg-arr : (Array String)]
+  [var : i64]
+  [reg-index : i64]) : CompilerRegAssignmentTable
+  (begin
+    (compiler-reg-greedy-occupancy-assign! occupancy var reg-index -1)
+    (compiler-reg-assignment-table-insert
+      assignments
+      var
+      (CompilerRegLocation.Register (array-ref reg-arr reg-index)))))
+
+(define (compiler-reg-greedy-assignment-spill!
+  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
+  [var : i64]) : CompilerRegAssignmentTable
+  (begin
+    (compiler-reg-greedy-occupancy-clear! occupancy var)
+    (compiler-reg-assignment-table-insert
+      assignments
+      var
+      (CompilerRegLocation.Spill (compiler-reg-stack-slot-offset var)))))
+
+(define (compiler-reg-greedy-assignment-unassign!
+  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
+  [var : i64]) : CompilerRegAssignmentTable
+  (begin
+    (compiler-reg-greedy-occupancy-clear! occupancy var)
+    (compiler-reg-assignment-table-unassign assignments var)))
+
 (define (compiler-reg-greedy-string-list-to-array
   [regs : CompilerRegStringList]
   [out : (Array String)]
@@ -13842,70 +14050,72 @@
           unit)
         (compiler-reg-greedy-string-list-to-array (box-get rest) out (+ i 1)))]))
 
-(define (compiler-reg-greedy-holds-reg?
-  [assignments : CompilerRegAssignmentTable]
-  [w : i64]
-  [reg : String]) : bool
-  (match (compiler-reg-assignment-table-lookup assignments w)
-    [(CompilerRegMaybeLocation.Some location)
-      (match location
-        [(CompilerRegLocation.Register r) (string.eq r reg)]
-        [(CompilerRegLocation.RegisterPair a b)
-          (or (string.eq a reg) (string.eq b reg))]
-        [(CompilerRegLocation.Spill _) false]
-        [(CompilerRegLocation.Remat _) false])]
-    [(CompilerRegMaybeLocation.No) false]))
-
 ;; Max ref-count among vars holding `reg` that interfere with `var`; -1 if none.
 (define (compiler-reg-greedy-interferer-max
-  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [var : i64]
-  [reg : String]
-  [idx : i64]
-  [n : i64]
+  [reg-index : i64]
+  [word-index : i64]
   [acc : i64]) : i64
-  (if (>= idx n)
+  (if (>= word-index (struct-get occupancy word-count))
     acc
-    (compiler-reg-greedy-interferer-max
-      assignments
-      interval-index
-      ref-counts
-      var
-      reg
-      (+ idx 1)
-      n
-      (if (and
-        (not (= idx var))
-        (compiler-reg-greedy-holds-reg? assignments idx reg)
-        (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
-        (let
-          [w : i64
-            (if (< idx (array-length ref-counts))
-              (array-ref ref-counts idx)
-              0)]
-          (if (> w acc)
-            w
-            acc))
-        acc))))
+    (let
+      [words : (Array i64) (struct-get occupancy words)]
+      [bits : i64
+        (array-ref
+          words
+          (compiler-reg-greedy-occupancy-word-index
+            occupancy
+            reg-index
+            word-index))]
+      [best : i64 acc]
+      (begin
+        (while (not (= bits 0))
+          (let
+            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
+            (begin
+              (if (and
+                (not (= other var))
+                (compiler-reg-vars-interfere-segmented-index?
+                  interval-index
+                  var
+                  other))
+                (let
+                  [weight : i64
+                    (if (< other (array-length ref-counts))
+                      (array-ref ref-counts other)
+                      0)]
+                  (if (> weight best)
+                    (set! best weight)
+                    unit))
+                unit)
+              (set! bits (bit-and bits (- bits 1))))))
+        (compiler-reg-greedy-interferer-max
+          occupancy
+          interval-index
+          ref-counts
+          var
+          reg-index
+          (+ word-index 1)
+          best)))))
 
 (define (compiler-reg-greedy-reg-free?
-  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [var : i64]
-  [reg : String]
-  [n : i64]) : bool
+  [reg-index : i64]) : bool
   (=
     (compiler-reg-greedy-interferer-max
-      assignments
+      occupancy
       interval-index
       ref-counts
       var
-      reg
+      reg-index
       0
-      n
       (- 0 1))
     (- 0 1)))
 
@@ -13935,77 +14145,79 @@
       div-part)))
 
 (define (compiler-reg-greedy-first-free
-  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [var : i64]
   [reg-arr : (Array String)]
   [ridx : i64]
   [rcount : i64]
-  [n : i64]
-  [forbidden : CompilerRegStringList]) : String
+  [forbidden : CompilerRegStringList]) : i64
   (if (>= ridx rcount)
-    ""
+    -1
     (let
       [reg : String (array-ref reg-arr ridx)]
       (if (and
         (not (compiler-reg-string-list-contains? forbidden reg))
         (compiler-reg-greedy-reg-free?
-          assignments
+          occupancy
           interval-index
           ref-counts
           var
-          reg
-          n))
-        reg
+          ridx))
+        ridx
         (compiler-reg-greedy-first-free
-          assignments
+          occupancy
           interval-index
           ref-counts
           var
           reg-arr
           (+ ridx 1)
           rcount
-          n
           forbidden)))))
 
 ;; Copy-hint register: the reg held by the copy-neighbour, if it is in the pool
 ;; and free for `var`. Biases `var` onto its move-partner's register.
 (define (compiler-reg-greedy-hint-free-reg
   [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
-  [regs : CompilerRegStringList]
+  [allowed-regs : CompilerRegStringList]
+  [reg-arr : (Array String)]
+  [rcount : i64]
   [var : i64]
-  [n : i64]
-  [forbidden : CompilerRegStringList]) : String
+  [forbidden : CompilerRegStringList]) : i64
   (if (or (< var 0) (>= var (array-length copy-hints)))
-    ""
+    -1
     (let
       [nb : i64 (array-ref copy-hints var)]
       (if (< nb 0)
-        ""
+        -1
         (match (compiler-reg-assignment-table-lookup assignments nb)
           [(CompilerRegMaybeLocation.Some loc)
             (match loc
               [(CompilerRegLocation.Register r)
-                (if (and
-                  (not (compiler-reg-string-list-contains? forbidden r))
-                  (compiler-reg-string-list-contains? regs r)
-                  (compiler-reg-greedy-reg-free?
-                    assignments
-                    interval-index
-                    ref-counts
-                    var
-                    r
-                    n))
-                  r
-                  "")]
-              [(CompilerRegLocation.RegisterPair _ _) ""]
-              [(CompilerRegLocation.Spill _) ""]
-              [(CompilerRegLocation.Remat _) ""])]
-          [(CompilerRegMaybeLocation.No) ""])))))
+                (let
+                  [reg-index : i64
+                    (compiler-reg-greedy-pool-index reg-arr rcount r)]
+                  (if (and
+                    (>= reg-index 0)
+                    (not (compiler-reg-string-list-contains? forbidden r))
+                    (compiler-reg-string-list-contains? allowed-regs r)
+                    (compiler-reg-greedy-reg-free?
+                      occupancy
+                      interval-index
+                      ref-counts
+                      var
+                      reg-index))
+                    reg-index
+                    -1))]
+              [(CompilerRegLocation.RegisterPair _ _) -1]
+              [(CompilerRegLocation.Spill _) -1]
+              [(CompilerRegLocation.Remat _) -1])]
+          [(CompilerRegMaybeLocation.No) -1])))))
 
 ;; RAGreedy Component 1 cascade cap (LLVM canEvictInterference / cascade number).
 ;; A resident may be evicted+requeued at most this many times; once its
@@ -14029,54 +14241,71 @@
 ;; With every evict-count==0 this is byte-identical to interferer-max, so the
 ;; no-eviction forward pass is unchanged.
 (define (compiler-reg-greedy-interferer-max-capped
-  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [evict-count : (Array i64)]
   [var : i64]
-  [reg : String]
-  [idx : i64]
-  [n : i64]
+  [reg-index : i64]
+  [word-index : i64]
   [acc : i64]) : i64
-  (if (>= idx n)
+  (if (>= word-index (struct-get occupancy word-count))
     acc
     (let
-      [next-acc : i64
-        (if (and
-          (not (= idx var))
-          (compiler-reg-greedy-holds-reg? assignments idx reg)
-          (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
+      [words : (Array i64) (struct-get occupancy words)]
+      [bits : i64
+        (array-ref
+          words
+          (compiler-reg-greedy-occupancy-word-index
+            occupancy
+            reg-index
+            word-index))]
+      [best : i64 acc]
+      (begin
+        (while (and (not (= bits 0)) (< best (compiler-reg-greedy-evict-inf)))
           (let
-            [ec : i64
-              (if (< idx (array-length evict-count))
-                (array-ref evict-count idx)
-                0)]
-            [w : i64
-              (if (< idx (array-length ref-counts))
-                (array-ref ref-counts idx)
-                0)]
-            (if (>= ec (compiler-reg-greedy-evict-cascade-cap))
-              (compiler-reg-greedy-evict-inf)
-              (if (> w acc)
-                w
-                acc)))
-          acc)]
-      (compiler-reg-greedy-interferer-max-capped
-        assignments
-        interval-index
-        ref-counts
-        evict-count
-        var
-        reg
-        (+ idx 1)
-        n
-        next-acc))))
+            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
+            (begin
+              (if (and
+                (not (= other var))
+                (compiler-reg-vars-interfere-segmented-index?
+                  interval-index
+                  var
+                  other))
+                (let
+                  [ec : i64
+                    (if (< other (array-length evict-count))
+                      (array-ref evict-count other)
+                      0)]
+                  [weight : i64
+                    (if (< other (array-length ref-counts))
+                      (array-ref ref-counts other)
+                      0)]
+                  (if (>= ec (compiler-reg-greedy-evict-cascade-cap))
+                    (set! best (compiler-reg-greedy-evict-inf))
+                    (if (> weight best)
+                      (set! best weight)
+                      unit)))
+                unit)
+              (set! bits (bit-and bits (- bits 1))))))
+        (if (>= best (compiler-reg-greedy-evict-inf))
+          best
+          (compiler-reg-greedy-interferer-max-capped
+            occupancy
+            interval-index
+            ref-counts
+            evict-count
+            var
+            reg-index
+            (+ word-index 1)
+            best))))))
 
 ;; First pool register all of whose interferers are STRICTLY lower weight than
 ;; `weight` (so clearing it costs less than spilling `var`) AND none of which is
 ;; over the cascade cap; "" if none.
 (define (compiler-reg-greedy-first-evictable
-  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [evict-count : (Array i64)]
@@ -14085,30 +14314,28 @@
   [reg-arr : (Array String)]
   [ridx : i64]
   [rcount : i64]
-  [n : i64]
-  [forbidden : CompilerRegStringList]) : String
+  [forbidden : CompilerRegStringList]) : i64
   (if (>= ridx rcount)
-    ""
+    -1
     (let
       [reg : String (array-ref reg-arr ridx)]
       [m : i64
         (compiler-reg-greedy-interferer-max-capped
-          assignments
+          occupancy
           interval-index
           ref-counts
           evict-count
           var
-          (array-ref reg-arr ridx)
+          ridx
           0
-          n
           (- 0 1))]
       (if (and
         (not (compiler-reg-string-list-contains? forbidden reg))
         (>= m 0)
         (< m weight))
-        reg
+        ridx
         (compiler-reg-greedy-first-evictable
-          assignments
+          occupancy
           interval-index
           ref-counts
           evict-count
@@ -14117,7 +14344,6 @@
           reg-arr
           (+ ridx 1)
           rcount
-          n
           forbidden)))))
 
 ;; RAGreedy Component 1: evict every resident holding `reg` that interferes with
@@ -14130,39 +14356,61 @@
 ;; cascade cap, so the worklist terminates.
 (define (compiler-reg-greedy-evict-requeue!
   [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [pending : (Array i64)]
   [evict-count : (Array i64)]
   [var : i64]
-  [reg : String]
-  [idx : i64]
-  [n : i64]) : unit
-  (if (>= idx n)
+  [reg-index : i64]
+  [word-index : i64]) : unit
+  (if (>= word-index (struct-get occupancy word-count))
     unit
-    (begin
-      (if (and
-        (not (= idx var))
-        (compiler-reg-greedy-holds-reg? assignments idx reg)
-        (compiler-reg-vars-interfere-segmented-index? interval-index var idx))
-        (begin
-          (compiler-reg-assignment-table-unassign assignments idx)
-          (if (and (>= idx 0) (< idx (array-length pending)))
-            (array-set! pending idx 1)
-            unit)
-          (if (and (>= idx 0) (< idx (array-length evict-count)))
-            (array-set! evict-count idx (+ (array-ref evict-count idx) 1))
-            unit)
-          unit)
-        unit)
-      (compiler-reg-greedy-evict-requeue!
-        assignments
-        interval-index
-        pending
-        evict-count
-        var
-        reg
-        (+ idx 1)
-        n))))
+    (let
+      [words : (Array i64) (struct-get occupancy words)]
+      [bits : i64
+        (array-ref
+          words
+          (compiler-reg-greedy-occupancy-word-index
+            occupancy
+            reg-index
+            word-index))]
+      (begin
+        (while (not (= bits 0))
+          (let
+            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
+            (begin
+              (if (and
+                (not (= other var))
+                (compiler-reg-vars-interfere-segmented-index?
+                  interval-index
+                  var
+                  other))
+                (begin
+                  (compiler-reg-greedy-assignment-unassign!
+                    assignments
+                    occupancy
+                    other)
+                  (if (< other (array-length pending))
+                    (array-set! pending other 1)
+                    unit)
+                  (if (< other (array-length evict-count))
+                    (array-set!
+                      evict-count
+                      other
+                      (+ (array-ref evict-count other) 1))
+                    unit))
+                unit)
+              (set! bits (bit-and bits (- bits 1))))))
+        (compiler-reg-greedy-evict-requeue!
+          assignments
+          occupancy
+          interval-index
+          pending
+          evict-count
+          var
+          reg-index
+          (+ word-index 1))))))
 
 (define (compiler-reg-greedy-already-assigned?
   [assignments : CompilerRegAssignmentTable]
@@ -14216,40 +14464,37 @@
 ;;     hint/free/evict pick runs, so a preference can never force a spill, evict a
 ;;     value, or create interference -- it only biases a free choice.
 (define (compiler-reg-greedy-arg-pref-reg
-  [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [arg-prefs : (Array i64)]
   [reg-arr : (Array String)]
   [rcount : i64]
-  [regs : CompilerRegStringList]
   [var : i64]
-  [n : i64]
   [forbidden : CompilerRegStringList]
-  [spans-call : bool]) : String
+  [spans-call : bool]) : i64
   (if (or spans-call (< var 0) (>= var (array-length arg-prefs)))
-    ""
+    -1
     (let
       [idx : i64 (array-ref arg-prefs var)]
       (if (or (< idx 0) (>= idx rcount))
-        ""
+        -1
         (let
           [reg : String (array-ref reg-arr idx)]
           (if (and
             (not (compiler-reg-string-list-contains? forbidden reg))
-            (compiler-reg-string-list-contains? regs reg)
             (compiler-reg-greedy-reg-free?
-              assignments
+              occupancy
               interval-index
               ref-counts
               var
-              reg
-              n))
-            reg
-            ""))))))
+              idx))
+            idx
+            -1))))))
 
 (define (compiler-reg-greedy-alloc-one!
   [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
@@ -14260,7 +14505,6 @@
   [reg-arr : (Array String)]
   [rcount : i64]
   [var : i64]
-  [n : i64]
   [call-points : CompilerLiveI64Set]
   [div-points : CompilerLiveI64Set]
   [shift-points : CompilerLiveI64Set]
@@ -14310,70 +14554,73 @@
       ;; copy-hint / first-free / evict pick when the arg register is unavailable.
       ;; csr-only (call-spanning OR param) declines: arg registers are all
       ;; caller-saved.
-      [pref : String
+      [pref : i64
         (compiler-reg-greedy-arg-pref-reg
-          assignments
+          occupancy
           interval-index
           ref-counts
           arg-prefs
           reg-arr
           rcount
-          regs
           var
-          n
           forbidden
           csr-only)]
-      [hint : String
+      [hint : i64
         (compiler-reg-greedy-hint-free-reg
           assignments
+          occupancy
           interval-index
           ref-counts
           copy-hints
           hint-regs
+          reg-arr
+          rcount
           var
-          n
           forbidden)]
       ;; The ABI arg-register preference takes priority over the copy hint; both
-      ;; are free-only picks (no eviction), so a single non-empty test assigns
+      ;; are free-only picks (no eviction), so a single nonnegative test assigns
       ;; whichever applies and otherwise falls through to first-free/evict/spill.
-      [chosen : String
-        (if (not (string.eq pref ""))
+      [chosen : i64
+        (if (>= pref 0)
           pref
           hint)]
-      (if (not (string.eq chosen ""))
+      (if (>= chosen 0)
         (begin
-          (compiler-reg-assignment-table-insert
+          (compiler-reg-greedy-assignment-register!
             assignments
+            occupancy
+            reg-arr
             var
-            (CompilerRegLocation.Register chosen))
+            chosen)
           (compiler-reg-greedy-stage-rs-assign))
         (let
-          [free : String
+          [free : i64
             (compiler-reg-greedy-first-free
-              assignments
+              occupancy
               interval-index
               ref-counts
               var
               reg-arr
               start-idx
               rcount
-              n
               forbidden)]
-          (if (not (string.eq free ""))
+          (if (>= free 0)
             (begin
-              (compiler-reg-assignment-table-insert
+              (compiler-reg-greedy-assignment-register!
                 assignments
+                occupancy
+                reg-arr
                 var
-                (CompilerRegLocation.Register free))
+                free)
               (compiler-reg-greedy-stage-rs-assign))
             (let
               [weight : i64
                 (if (< var (array-length ref-counts))
                   (array-ref ref-counts var)
                   0)]
-              [ev : String
+              [ev : i64
                 (compiler-reg-greedy-first-evictable
-                  assignments
+                  occupancy
                   interval-index
                   ref-counts
                   evict-count
@@ -14382,33 +14629,33 @@
                   reg-arr
                   start-idx
                   rcount
-                  n
                   forbidden)]
-              (if (not (string.eq ev ""))
+              (if (>= ev 0)
                 (begin
                   (compiler-reg-greedy-evict-requeue!
                     assignments
+                    occupancy
                     interval-index
                     pending
                     evict-count
                     var
                     ev
-                    0
-                    n)
-                  (compiler-reg-assignment-table-insert
+                    0)
+                  (compiler-reg-greedy-assignment-register!
                     assignments
+                    occupancy
+                    reg-arr
                     var
-                    (CompilerRegLocation.Register ev))
+                    ev)
                   (compiler-reg-greedy-stage-rs-assign))
                 ;; No register available and nothing evictable: whole-interval
                 ;; spill. RS_Split when the value has segments (marks it for the
                 ;; region-split rescue), else RS_Spill.
                 (begin
-                  (compiler-reg-assignment-table-insert
+                  (compiler-reg-greedy-assignment-spill!
                     assignments
-                    var
-                    (CompilerRegLocation.Spill
-                      (compiler-reg-stack-slot-offset var)))
+                    occupancy
+                    var)
                   (if (compiler-reg-interval-index-var-has-segments?
                     interval-index
                     var)
@@ -14593,6 +14840,7 @@
   [pending : (Array i64)]
   [evict-count : (Array i64)]
   [assignments : CompilerRegAssignmentTable]
+  [occupancy : CompilerRegGreedyOccupancy]
   [interval-index : CompilerRegIntervalIndex]
   [ref-counts : (Array i64)]
   [copy-hints : (Array i64)]
@@ -14628,6 +14876,7 @@
           [stg : i64
             (compiler-reg-greedy-alloc-one!
               assignments
+              occupancy
               interval-index
               ref-counts
               copy-hints
@@ -14638,7 +14887,6 @@
               reg-arr
               rcount
               v
-              n
               call-points
               div-points
               shift-points
@@ -14653,6 +14901,7 @@
           pending
           evict-count
           assignments
+          occupancy
           interval-index
           ref-counts
           copy-hints
@@ -14708,6 +14957,8 @@
         n)]
     [pending : (Array i64) (array.make-array i64 cap)]
     [evict-count : (Array i64) (array.make-array i64 cap)]
+    [occupancy : CompilerRegGreedyOccupancy
+      (compiler-reg-greedy-occupancy-make assignments reg-arr rcount)]
     (begin
       (compiler-reg-fill-i64-array pending 0)
       (compiler-reg-fill-i64-array evict-count 0)
@@ -14716,6 +14967,7 @@
         pending
         evict-count
         assignments
+        occupancy
         interval-index
         ref-counts
         copy-hints
@@ -20357,6 +20609,37 @@
         [(CompilerRegStringList.Cons reg rest)
           (compiler-reg-string-cons reg (box-get rest))]))))
 
+;; Scratch-vreg planning runs after greedy allocation and can select from a
+;; constraint-specific GP or XMM pool, so its candidates are not necessarily in
+;; the greedy pool's occupancy index. This bounded fallback retains the prior
+;; table scan for that post-pass only; the allocator hot loop uses occupancy.
+(define (compiler-reg-scratch-register-free-from?
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [var : i64]
+  [reg : String]
+  [index : i64]
+  [vars : i64]) : bool
+  (if (>= index vars)
+    true
+    (let
+      [present : (Array i64) (struct-get assignments present)]
+      [items : (Array CompilerRegLocation) (struct-get assignments items)]
+      (if (and
+        (not (= index var))
+        (< index (array-length present))
+        (= (array-ref present index) 1)
+        (compiler-reg-location-uses-register? (array-ref items index) reg)
+        (compiler-reg-vars-interfere-segmented-index? interval-index var index))
+        false
+        (compiler-reg-scratch-register-free-from?
+          assignments
+          interval-index
+          var
+          reg
+          (+ index 1)
+          vars)))))
+
 (define (compiler-reg-scratch-pick-register
   [assignments : CompilerRegAssignmentTable]
   [interval-index : CompilerRegIntervalIndex]
@@ -20370,12 +20653,12 @@
     [(CompilerRegStringList.Cons reg rest)
       (if (and
         (not (compiler-reg-string-list-contains? excluded reg))
-        (compiler-reg-greedy-reg-free?
+        (compiler-reg-scratch-register-free-from?
           assignments
           interval-index
-          ref-counts
           var
           reg
+          0
           vars))
         reg
         (compiler-reg-scratch-pick-register

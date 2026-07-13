@@ -51127,12 +51127,22 @@
       (opt-scratch-scope-report-instrs
         (opt-scratch-test-one-block (CompilerIrInstr.AddrOf 2 1)))]
     [store-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs
-        (opt-scratch-test-one-block
-          (CompilerIrInstr.StorePtr
-            (CompilerIrValue.Var 99)
-            (CompilerIrValue.Var 1)
-            (AstType.U64))))]
+      (let
+        [roots : OptScratchRootList
+          (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+        [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
+          (OptScratchScopeReport.Report
+            1
+            32
+            (opt-scratch-blocker-reason
+              roots
+              (OptAliasFacts.Facts facts-map)
+              (CompilerIrInstr.StorePtr
+                (CompilerIrValue.Var 99)
+                (CompilerIrValue.Var 1)
+                (AstType.U64))))))]
     [arena-blocked : OptScratchScopeReport
       (opt-scratch-scope-report-instrs
         (opt-scratch-test-one-block
@@ -51142,7 +51152,20 @@
             (CompilerIrCallArgs.Nil)
             (AstType.I64))))]
     [return-blocked : OptScratchScopeReport
-      (opt-scratch-scope-report-instrs (opt-scratch-returned-instrs))]
+      (let
+        [roots : OptScratchRootList
+          (opt-scratch-root-list-add (OptScratchRootList.Nil) 1)]
+        [facts-map : opt_i64_i64_map.Map (opt_i64_i64_map.with-capacity 17)]
+        (begin
+          (opt_i64_i64_map.insert-ref! (&mut facts-map) 1 -1)
+          (OptScratchScopeReport.Report
+            1
+            32
+            (opt-scratch-blocker-reason
+              roots
+              (OptAliasFacts.Facts facts-map)
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))))))]
     [reset-positive : CompilerIrFunction
       (opt-scratch-reset-rewrite (opt-scratch-reset-positive-blocks))]
     [reset-call-blocked : CompilerIrFunction

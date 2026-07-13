@@ -1338,7 +1338,7 @@
         6]
       [else 42])))
 
-(define (main) : i64
+(define (smoke-optimizer-core-self-tests) : i64
   (cond
     [(not (= (compiler-optimize-self-test) 42)) 1]
     [(not (= (compiler-optimize-typed-fold-self-test) 42)) 2]
@@ -1358,6 +1358,10 @@
     [(not (= (smoke-nonlength-guard-bce-self-test) 42)) 16]
     [(not (= (smoke-additive-bce-self-test) 42)) 17]
     [(not (= (compiler-optimize-sccp-self-test) 42)) 18]
+    [else 42]))
+
+(define (smoke-optimizer-loop-self-tests) : i64
+  (cond
     [(not (= (compiler-optimize-global-value-number-self-test) 42)) 19]
     [(not (= (compiler-optimize-cfg-self-test) 42)) 20]
     [(not (= (compiler-optimize-switch-form-self-test) 42)) 21]
@@ -1375,6 +1379,10 @@
     [(not (= (compiler-optimize-bce-version-pipeline-self-test) 42)) 33]
     [(not (= (compiler-optimize-ssa-self-test) 42)) 34]
     [(not (= (compiler-optimize-level-self-test) 42)) 35]
+    [else 42]))
+
+(define (smoke-optimizer-late-self-tests) : i64
+  (cond
     [(not (= (compiler-optimize-callgraph-self-test) 42)) 36]
     [(not (= (compiler-optimize-scc-self-test) 42)) 37]
     [(not (= (compiler-optimize-inline-self-test) 42)) 38]
@@ -1391,7 +1399,18 @@
     [(not (= (compiler-optimize-dead-store-self-test) 42)) 49]
     [(not (= (compiler-optimize-scratch-region-self-test) 42)) 50]
     [(not (= (smoke-function-index-leaf-starts-self-test) 42)) 51]
-    [else (compiler-optimize-alias-self-test)]))
+    [else 42]))
+
+(define (main) : i64
+  (let
+    [core : i64 (smoke-optimizer-core-self-tests)]
+    (if (not (= core 42))
+      core
+      (let
+        [loops : i64 (smoke-optimizer-loop-self-tests)]
+        (if (not (= loops 42))
+          loops
+          (smoke-optimizer-late-self-tests))))))
 
 (test
   load-cse-copybytes-forwarding
@@ -1399,6 +1418,13 @@
     (compiler-optimize-load-cse-self-test)
     44
     "load-cse copybytes forwarding"))
+
+(test
+  optimizer-alias-fact-model
+  (test.assert-i64-eq
+    (compiler-optimize-alias-self-test)
+    42
+    "optimizer alias fact model"))
 
 (test
   dead-store-overwrite

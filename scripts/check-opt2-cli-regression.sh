@@ -49,6 +49,8 @@ BUILD_STDOUT="$WORKDIR/build.stdout"
 BUILD_STDERR="$WORKDIR/build.stderr"
 COMPILE_STDOUT="$WORKDIR/compile.stdout"
 COMPILE_STDERR="$WORKDIR/compile.stderr"
+SCRATCH_STDOUT="$WORKDIR/scratch-region-smoke.stdout"
+SCRATCH_STDERR="$WORKDIR/scratch-region-smoke.stderr"
 
 print_log_pair() {
     label=$1
@@ -76,6 +78,20 @@ print_asm_fingerprint() {
 }
 
 rm -f "$GENERATED"
+
+echo "[opt2-cli-gate] scratch-region optimizer smoke at opt2"
+scratch_status=0
+"$COMPILER" run src/tests/compiler_optimize_smoke.tl \
+    --stdlib-root stdlib \
+    --opt-level 2 \
+    >"$SCRATCH_STDOUT" 2>"$SCRATCH_STDERR" || scratch_status=$?
+if [ "$scratch_status" -ne 42 ]; then
+    print_log_pair \
+        "opt2 scratch-region optimizer smoke failed (status $scratch_status)" \
+        "$SCRATCH_STDOUT" \
+        "$SCRATCH_STDERR"
+    exit 1
+fi
 
 echo "[opt2-cli-gate] build release opt2 compiler ($NL_BOOTSTRAP_TARGET)"
 if ! run_with_heartbeat_capture \

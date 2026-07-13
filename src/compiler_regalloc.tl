@@ -14836,36 +14836,29 @@
   [idx : i64]
   [best : i64]
   [best-w : i64]) : i64
-  (if (>= idx n)
-    best
-    (if (and (< idx (array-length pending)) (= (array-ref pending idx) 1))
-      (let
-        [w : i64
-          (if (< idx (array-length ref-counts))
-            (array-ref ref-counts idx)
-            0)]
-        (if (or (< best 0) (> w best-w))
-          (compiler-reg-greedy-worklist-pick!
-            pending
-            ref-counts
-            n
-            (+ idx 1)
-            idx
-            w)
-          (compiler-reg-greedy-worklist-pick!
-            pending
-            ref-counts
-            n
-            (+ idx 1)
-            best
-            best-w)))
-      (compiler-reg-greedy-worklist-pick!
-        pending
-        ref-counts
-        n
-        (+ idx 1)
-        best
-        best-w))))
+  (let
+    [index : i64 idx]
+    [out-best : i64 best]
+    [out-best-w : i64 best-w]
+    (begin
+      (while (< index n)
+        (begin
+          (if (and
+            (< index (array-length pending))
+            (= (array-ref pending index) 1))
+            (let
+              [w : i64
+                (if (< index (array-length ref-counts))
+                  (array-ref ref-counts index)
+                  0)]
+              (if (or (< out-best 0) (> w out-best-w))
+                (begin
+                  (set! out-best index)
+                  (set! out-best-w w))
+                unit))
+            unit)
+          (set! index (+ index 1))))
+      out-best)))
 
 ;; Re-entrant evict-and-requeue worklist loop (RAGreedy Component 1). Pop the
 ;; highest-weight pending root, dequeue it (pending=0), run selectOrSplit

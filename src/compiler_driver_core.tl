@@ -2468,7 +2468,7 @@
         stdlib-roots
         mode
         (compiler-driver-state-target-cfgs state target cfgs)
-        true)
+        (>= opt-level 1))
       target
       has-target
       mode
@@ -2495,7 +2495,7 @@
         stdlib-roots
         mode
         (compiler-driver-state-target-cfgs state target cfgs)
-        true)
+        (>= opt-level 1))
       target
       has-target
       mode

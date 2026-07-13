@@ -2262,7 +2262,8 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
-(define (compiler-driver-state-smoke-emitted-batch-restores-scratch?) : bool
+(define (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?
+  [input-path : String]) : bool
   (let
     [state : CompilerDriverState
       (compiler-driver-state-session-program-cache-disable
@@ -2282,7 +2283,7 @@
     [emitted? : bool
       (match (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
         state
-        "tests/integration/calc.tl"
+        input-path
         (CompilerBackendTarget.Linux)
         true
         roots
@@ -2302,6 +2303,14 @@
         (arena.set! home)
         (arena.destroy scratch-end)
         (and emitted? restored?)))))
+
+(define (compiler-driver-state-smoke-emitted-batch-restores-scratch?) : bool
+  (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?
+    "tests/integration/calc.tl"))
+
+(define (compiler-driver-state-smoke-retired-dispatch-thunk?) : bool
+  (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?
+    "tests/spmd/runtime_dispatch_select.tl"))
 
 (define (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?) : bool
   (begin
@@ -2539,6 +2548,7 @@
     (unless
       (compiler-driver-state-smoke-emitted-batch-restores-scratch?)
       (return 32))
+    (unless (compiler-driver-state-smoke-retired-dispatch-thunk?) (return 33))
     (unless
       (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?)
       (return 26))

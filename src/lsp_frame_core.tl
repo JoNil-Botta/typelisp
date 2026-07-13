@@ -480,21 +480,24 @@
           "definitionProvider"
           (json.JsonBool true)
           (lsp-json-member
-            "completionProvider"
-            (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+            "documentSymbolProvider"
+            (json.JsonBool true)
             (lsp-json-member
-              "inlayHintProvider"
-              (json.JsonBool true)
+              "completionProvider"
+              (lsp-json-object1 "resolveProvider" (json.JsonBool false))
               (lsp-json-member
-                "documentFormattingProvider"
+                "inlayHintProvider"
                 (json.JsonBool true)
                 (lsp-json-member
-                  "hoverProvider"
+                  "documentFormattingProvider"
                   (json.JsonBool true)
                   (lsp-json-member
-                    "documentLinkProvider"
-                    (lsp-json-object1 "resolveProvider" (json.JsonBool false))
-                    json.JsonMemberListNil))))))))
+                    "hoverProvider"
+                    (json.JsonBool true)
+                    (lsp-json-member
+                      "documentLinkProvider"
+                      (lsp-json-object1 "resolveProvider" (json.JsonBool false))
+                      json.JsonMemberListNil)))))))))
     "serverInfo"
     (lsp-json-object2
       "name"
@@ -3908,7 +3911,7 @@
       [(json.JsonMissing) unit])))
 
 (define (lsp-decl-entry-fallback) : LspDeclEntry
-  (LspDeclEntry "" "" 0 0 0 0 0 0 0))
+  (LspDeclEntry "" "" 0 0 0 0 0 0 0 13))
 
 (define (lsp-decl-kind-at [text : String] [i : i64] [n : i64]) : String
   (let
@@ -3926,6 +3929,31 @@
           [(string.eq kw "defdispatch") "dispatch"]
           [(string.eq kw "extern") "extern"]
           [else "unknown"])))))
+
+;; LSP SymbolKind values are protocol-facing and intentionally separate from
+;; the custom declaration kind strings consumed by tl/find. In particular,
+;; legacy tl/find continues to classify every define as "function", while the
+;; standard outline distinguishes function-head and value declarations.
+(define (lsp-decl-symbol-kind-at [text : String] [i : i64] [n : i64]) : i64
+  (let
+    [after-open : i64 (lsp-skip-space text (+ i 1) n)]
+    [kw-end : i64 (lsp-scan-ident text after-open n)]
+    (if (<= kw-end after-open)
+      13
+      (let
+        [kw : String (string.substring text after-open (- kw-end after-open))]
+        [after-kw : i64 (lsp-skip-space text kw-end n)]
+        [function-head : bool
+          (and (< after-kw n) (= (string.string-ref text after-kw) '('))]
+        (cond
+          [(string.eq kw "defstruct") 23]
+          [(string.eq kw "defenum") 10]
+          [(or (string.eq kw "defmacro") (string.eq kw "defdispatch")) 12]
+          [(or (string.eq kw "define") (string.eq kw "extern"))
+            (if function-head
+              12
+              13)]
+          [else 13])))))
 
 (define (lsp-scan-decls [text : String]) : LspDeclList
   (let
@@ -3952,6 +3980,7 @@
                       (let
                         [name : String (lsp-symbol-at-offset text name-off)]
                         [kind : String (lsp-decl-kind-at text i n)]
+                        [symbol-kind : i64 (lsp-decl-symbol-kind-at text i n)]
                         [form-end : i64 (lsp-skip-paren-group text i n)]
                         [form-start-lc : LspLineCol
                           (lsp-line-col-cache-at-offset! lc-cache text i)]
@@ -3970,7 +3999,8 @@
                             (struct-get form-start-lc line)
                             (struct-get form-start-lc col)
                             (struct-get form-end-lc line)
-                            (struct-get form-end-lc col))))
+                            (struct-get form-end-lc col)
+                            symbol-kind)))
                       unit))
                   unit)
                 (set! i (+ i 1)))]
@@ -4100,6 +4130,52 @@
                     (lsp-json-number (struct-get entry name-len))
                     json.JsonMemberListNil))))))]
       (lsp-json-list-cons obj (lsp-decls-to-json-list decls (+ idx 1))))))
+
+(define (lsp-decl-selection-range-json [entry : LspDeclEntry]) : json.Json
+  (lsp-json-object2
+    "start"
+    (lsp-position (struct-get entry name-line) (struct-get entry name-col))
+    "end"
+    (lsp-position
+      (struct-get entry name-line)
+      (+ (struct-get entry name-col) (struct-get entry name-len)))))
+
+(define (lsp-decl-document-symbol-json [entry : LspDeclEntry]) : json.Json
+  (lsp-json-object4
+    "name"
+    (json.JsonString (struct-get entry name))
+    "kind"
+    (lsp-json-number (struct-get entry symbol-kind))
+    "range"
+    (lsp-decl-entry-form-range-json entry)
+    "selectionRange"
+    (lsp-decl-selection-range-json entry)))
+
+(define (lsp-decls-to-document-symbol-list [decls : LspDeclList] [idx : i64]) : json.JsonList
+  (if (>= idx (lsp-decl-list-len (& decls)))
+    json.JsonListNil
+    (let
+      [entry : LspDeclEntry
+        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+      (lsp-json-list-cons
+        (lsp-decl-document-symbol-json entry)
+        (lsp-decls-to-document-symbol-list decls (+ idx 1))))))
+
+(define (lsp-document-symbols-json [decls : LspDeclList]) : json.Json
+  (lsp-json-array (lsp-decls-to-document-symbol-list decls 0)))
+
+(define (lsp-document-symbols-for-text [text : String]) : json.Json
+  (lsp-document-symbols-json (lsp-scan-decls text)))
+
+(define (lsp-handle-document-symbol
+  [id : json.Json]
+  [params : json.Json]
+  [docs : LspDocuments]) : unit
+  (match (lsp-get-document-decls params docs)
+    [(LspDocumentDeclsLookup.Found _ _ _ decls)
+      (lsp-write-response id (lsp-document-symbols-json decls))]
+    [(LspDocumentDeclsLookup.Missing)
+      (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
 (define (lsp-decls-to-position-map-members [decls : LspDeclList] [idx : i64]) : json.JsonMemberList
   (if (>= idx (lsp-decl-list-len (& decls)))
@@ -5816,6 +5892,27 @@
                           (lsp-handle-definition id params docs stdlib-roots)]
                         [(json.JsonMissing)
                           (lsp-write-response id json.JsonNull)]))]
+                  [(json.JsonMissing) unit]))
+              (set! result (LspHandleResult.Continue docs)))
+            unit)
+          (if (and
+            (not handled)
+            (string.eq method "textDocument/documentSymbol"))
+            (begin
+              (set! handled true)
+              (let
+                [id-key : String "id"]
+                (match (json.object-get message (& id-key))
+                  [(json.JsonFound id)
+                    (let
+                      [params-key : String "params"]
+                      (match (json.object-get message (& params-key))
+                        [(json.JsonFound params)
+                          (lsp-handle-document-symbol id params docs)]
+                        [(json.JsonMissing)
+                          (lsp-write-response
+                            id
+                            (lsp-json-array json.JsonListNil))]))]
                   [(json.JsonMissing) unit]))
               (set! result (LspHandleResult.Continue docs)))
             unit)

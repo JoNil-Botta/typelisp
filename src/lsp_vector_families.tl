@@ -10,7 +10,8 @@
   (form-start-line i64)
   (form-start-col i64)
   (form-end-line i64)
-  (form-end-col i64))
+  (form-end-col i64)
+  (symbol-kind i64))
 
 (vector.family LspDeclEntry LspDeclList lsp-decl-list)
 

@@ -1,0 +1,10 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/outline.tl","languageId":"typelisp","version":1,"text":"(define (fun) : i64 1)\n(define value : i64 2)\n(defstruct Pair (x i64))\n(defenum Choice (Yes))\n(defmacro make [] unit)\n(defdispatch choose [] fun)\n(extern (puts [s : ptr]) : i64)\n(extern errno : i64)\n;; (define hidden : i64 0)\n(define text : String \"(defstruct Hidden)\")\n"}}},
+  {"jsonrpc":"2.0","id":2,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"${{TMP_URI}}/outline.tl"}}},
+  {"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":"${{TMP_URI}}/outline.tl","version":2},"contentChanges":[{"text":"(define changed : i64 3)\n"}]}},
+  {"jsonrpc":"2.0","id":3,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"${{TMP_URI}}/outline.tl"}}},
+  {"jsonrpc":"2.0","id":4,"method":"textDocument/documentSymbol","params":{"textDocument":{"uri":"${{TMP_URI}}/missing.tl"}}},
+  {"jsonrpc":"2.0","id":5,"method":"shutdown","params":null},
+  {"jsonrpc":"2.0","method":"exit"}
+]

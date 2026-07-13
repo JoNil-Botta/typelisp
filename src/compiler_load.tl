@@ -2809,6 +2809,271 @@
       (struct-get left members)
       (struct-get right members))))
 
+;; A catalog selector can ask one existing structural demand walk to retain the
+;; first member below an alias root for every qualified use it sees. This keeps
+;; the ordinary three-bit result intact while avoiding one whole-program walk
+;; per candidate member of a generated Module catalog. The observer is strictly
+;; dynamic and single-threaded. Nested demand queries save only an active outer
+;; observer; a top-level query clears the stack without copying inactive state
+;; that may belong to a reclaimed batch-entry arena.
+(defenum CompilerLoadLazyQualifiedObserverStack
+  (Empty)
+  (Frame
+    bool
+    String
+    i64
+    sym_i64_env.SymI64Env
+    String
+    i64
+    sym_i64_env.SymI64Env
+    bool
+    bool
+    (Box CompilerLoadLazyQualifiedObserverStack)))
+
+;; The primary root drives the ordinary demand result; a second root is observed
+;; opportunistically during that same walk so generated-catalog selection does
+;; not traverse the importer program a second time for its canonical module.
+(defstruct CompilerLoadLazyQualifiedObserverResult
+  (primary-members sym_i64_env.SymI64Env)
+  (secondary-members sym_i64_env.SymI64Env)
+  (secondary-qualified bool)
+  (secondary-direct bool))
+
+(define compiler-load-lazy-qualified-observer-active : bool
+  false)
+(define compiler-load-lazy-qualified-observer-exhaustive : bool
+  false)
+(define compiler-load-lazy-qualified-observer-root : String
+  "")
+(define compiler-load-lazy-qualified-observer-root-id : i64
+  0)
+(define compiler-load-lazy-qualified-observer-members : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define compiler-load-lazy-qualified-observer-secondary-root : String
+  "")
+(define compiler-load-lazy-qualified-observer-secondary-root-id : i64
+  0)
+(define compiler-load-lazy-qualified-observer-secondary-members : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-empty))
+(define compiler-load-lazy-qualified-observer-secondary-qualified : bool
+  false)
+(define compiler-load-lazy-qualified-observer-secondary-direct : bool
+  false)
+
+;; Catalog observers only need lexical bindings that shadow either observed
+;; root. Avoid allocating a lexical environment spine for every unrelated
+;; parameter, binding, and pattern during those full scans while preserving
+;; exact treatment of a local alias-name binding.
+(define (compiler-load-lazy-demand-bind-local-exhaustive
+  [locals : sym_i64_env.SymI64Env]
+  [name : i64]) : sym_i64_env.SymI64Env
+  (if (or
+    (= name compiler-load-lazy-qualified-observer-root-id)
+    (= name compiler-load-lazy-qualified-observer-secondary-root-id))
+    (sym_i64_env.sym-i64-bind-id locals name 1)
+    locals))
+
+;; Keep the nullary constructor in a function body. Older bootstrap compilers
+;; lower a direct nullary-enum global initializer as an unresolved external.
+(define (compiler-load-lazy-qualified-observer-stack-empty) : CompilerLoadLazyQualifiedObserverStack
+  CompilerLoadLazyQualifiedObserverStack.Empty)
+
+(define compiler-load-lazy-qualified-observer-stack : CompilerLoadLazyQualifiedObserverStack
+  (compiler-load-lazy-qualified-observer-stack-empty))
+
+(define (compiler-load-lazy-qualified-observer-reset!) : unit
+  (begin
+    (set! compiler-load-lazy-qualified-observer-active false)
+    (set! compiler-load-lazy-qualified-observer-exhaustive false)
+    (set! compiler-load-lazy-qualified-observer-root "")
+    (set! compiler-load-lazy-qualified-observer-root-id 0)
+    (set!
+      compiler-load-lazy-qualified-observer-members
+      (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-lazy-qualified-observer-secondary-root "")
+    (set! compiler-load-lazy-qualified-observer-secondary-root-id 0)
+    (set!
+      compiler-load-lazy-qualified-observer-secondary-members
+      (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-lazy-qualified-observer-secondary-qualified false)
+    (set! compiler-load-lazy-qualified-observer-secondary-direct false)
+    (set!
+      compiler-load-lazy-qualified-observer-stack
+      (compiler-load-lazy-qualified-observer-stack-empty))))
+
+(define (compiler-load-lazy-qualified-observer-begin-pair!
+  [root : String]
+  [secondary-root : String]) : unit
+  (begin
+    ;; A top-level query may follow a completed batch entry whose inactive
+    ;; observer frame belonged to the reclaimed entry arena. Clear it before
+    ;; preserving the ordinary push/pop semantics used by the demand walker.
+    (if compiler-load-lazy-qualified-observer-active
+      unit
+      (compiler-load-lazy-qualified-observer-reset!))
+    (set!
+      compiler-load-lazy-qualified-observer-stack
+      (CompilerLoadLazyQualifiedObserverStack.Frame
+        compiler-load-lazy-qualified-observer-active
+        compiler-load-lazy-qualified-observer-root
+        compiler-load-lazy-qualified-observer-root-id
+        compiler-load-lazy-qualified-observer-members
+        compiler-load-lazy-qualified-observer-secondary-root
+        compiler-load-lazy-qualified-observer-secondary-root-id
+        compiler-load-lazy-qualified-observer-secondary-members
+        compiler-load-lazy-qualified-observer-secondary-qualified
+        compiler-load-lazy-qualified-observer-secondary-direct
+        (box compiler-load-lazy-qualified-observer-stack)))
+    (set! compiler-load-lazy-qualified-observer-exhaustive true)
+    (set! compiler-load-lazy-qualified-observer-active true)
+    (set! compiler-load-lazy-qualified-observer-root-id (intern root))
+    (set! compiler-load-lazy-qualified-observer-root root)
+    (set!
+      compiler-load-lazy-qualified-observer-members
+      (sym_i64_env.sym-i64-empty))
+    (set!
+      compiler-load-lazy-qualified-observer-secondary-root-id
+      (intern secondary-root))
+    (set! compiler-load-lazy-qualified-observer-secondary-root secondary-root)
+    (set!
+      compiler-load-lazy-qualified-observer-secondary-members
+      (sym_i64_env.sym-i64-empty))
+    (set! compiler-load-lazy-qualified-observer-secondary-qualified false)
+    (set! compiler-load-lazy-qualified-observer-secondary-direct false)))
+
+(define (compiler-load-lazy-qualified-observer-begin! [root : String]) : unit
+  (compiler-load-lazy-qualified-observer-begin-pair! root ""))
+
+(define (compiler-load-lazy-qualified-observer-member-end
+  [text : String]
+  [index : i64]
+  [limit : i64]) : i64
+  (if (>= index limit)
+    limit
+    (let
+      [ch : char (string.string-ref text index)]
+      (if (or (= ch '.') (= ch '/'))
+        index
+        (compiler-load-lazy-qualified-observer-member-end
+          text
+          (+ index 1)
+          limit)))))
+
+(define (compiler-load-lazy-qualified-observer-members-with-note
+  [text : String]
+  [root : String]
+  [members : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (if (compiler-load-lazy-name-qualified-by? text root)
+    (let
+      [start : i64 (+ (string.string-length root) 1)]
+      [limit : i64 (string.string-length text)]
+      (if (>= start limit)
+        members
+        (let
+          [end : i64
+            (compiler-load-lazy-qualified-observer-member-end text start limit)]
+          [member-id : i64 (intern (string.substring text start (- end start)))]
+          (if (sym_i64_env.sym-i64-contains-id members member-id)
+            members
+            (sym_i64_env.sym-i64-bind-id members member-id 1)))))
+    members))
+
+(define (compiler-load-lazy-qualified-observer-note! [name : i64]) : unit
+  (set!
+    compiler-load-lazy-qualified-observer-members
+    (compiler-load-lazy-qualified-observer-members-with-note
+      (intern-str name)
+      compiler-load-lazy-qualified-observer-root
+      compiler-load-lazy-qualified-observer-members)))
+
+(define (compiler-load-lazy-qualified-observer-note-secondary!
+  [name : i64]
+  [text : String]
+  [locals : sym_i64_env.SymI64Env]) : unit
+  (begin
+    (if (compiler-load-lazy-name-qualified-by?
+      text
+      compiler-load-lazy-qualified-observer-secondary-root)
+      (begin
+        (set! compiler-load-lazy-qualified-observer-secondary-qualified true)
+        (set!
+          compiler-load-lazy-qualified-observer-secondary-members
+          (compiler-load-lazy-qualified-observer-members-with-note
+            text
+            compiler-load-lazy-qualified-observer-secondary-root
+            compiler-load-lazy-qualified-observer-secondary-members)))
+      (if (and
+        (not (sym_i64_env.sym-i64-contains-id locals name))
+        (string.eq text compiler-load-lazy-qualified-observer-secondary-root))
+        (set! compiler-load-lazy-qualified-observer-secondary-direct true)
+        unit))
+    unit))
+
+(define (compiler-load-lazy-qualified-observer-end-pair!) : CompilerLoadLazyQualifiedObserverResult
+  (let
+    [out : CompilerLoadLazyQualifiedObserverResult
+      (CompilerLoadLazyQualifiedObserverResult
+        compiler-load-lazy-qualified-observer-members
+        compiler-load-lazy-qualified-observer-secondary-members
+        compiler-load-lazy-qualified-observer-secondary-qualified
+        compiler-load-lazy-qualified-observer-secondary-direct)]
+    (begin
+      (match compiler-load-lazy-qualified-observer-stack
+        [(CompilerLoadLazyQualifiedObserverStack.Empty)
+          (begin
+            (set! compiler-load-lazy-qualified-observer-active false)
+            (set! compiler-load-lazy-qualified-observer-exhaustive false)
+            (set! compiler-load-lazy-qualified-observer-root "")
+            (set! compiler-load-lazy-qualified-observer-root-id 0)
+            (set!
+              compiler-load-lazy-qualified-observer-members
+              (sym_i64_env.sym-i64-empty))
+            (set! compiler-load-lazy-qualified-observer-secondary-root "")
+            (set! compiler-load-lazy-qualified-observer-secondary-root-id 0)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-members
+              (sym_i64_env.sym-i64-empty))
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-qualified
+              false)
+            (set! compiler-load-lazy-qualified-observer-secondary-direct false))]
+        [(CompilerLoadLazyQualifiedObserverStack.Frame
+            active
+            root
+            root-id
+            members
+            secondary-root
+            secondary-root-id
+            secondary-members
+            secondary-qualified
+            secondary-direct
+            rest)
+          (begin
+            (set! compiler-load-lazy-qualified-observer-active active)
+            (set! compiler-load-lazy-qualified-observer-root root)
+            (set! compiler-load-lazy-qualified-observer-root-id root-id)
+            (set! compiler-load-lazy-qualified-observer-members members)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-root
+              secondary-root)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-root-id
+              secondary-root-id)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-members
+              secondary-members)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-qualified
+              secondary-qualified)
+            (set!
+              compiler-load-lazy-qualified-observer-secondary-direct
+              secondary-direct)
+            (set! compiler-load-lazy-qualified-observer-stack (box-get rest)))])
+      out)))
+
+(define (compiler-load-lazy-qualified-observer-end!) : sym_i64_env.SymI64Env
+  (struct-get (compiler-load-lazy-qualified-observer-end-pair!) primary-members))
+
 (define (compiler-load-lazy-name-qualified-by? [name : String] [alias : String]) : bool
   (let
     [name-len : i64 (string.string-length name)]
@@ -2887,22 +3152,30 @@
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (let
     [text : String (intern-str name)]
-    (cond
-      [(compiler-load-lazy-name-qualified-by? text alias)
-        (let
-          [member : String (compiler-load-lazy-qualified-member text alias)]
-          (if (= (string.string-length member) 0)
-            (compiler-load-lazy-alias-demand-unknown)
-            (compiler-load-lazy-alias-demand-qualified member)))]
-      [(sym_i64_env.sym-i64-contains-id locals name)
-        (compiler-load-lazy-alias-demand-none)]
-      [(or
-          (string.eq text alias)
-          (compiler-load-lazy-surface-decls-direct-name?
-            (struct-get summary decls)
-            text))
-        (compiler-load-lazy-alias-demand-direct)]
-      [else (compiler-load-lazy-alias-demand-none)])))
+    (begin
+      (if compiler-load-lazy-qualified-observer-active
+        (compiler-load-lazy-qualified-observer-note-secondary! name text locals)
+        unit)
+      (cond
+        [(compiler-load-lazy-name-qualified-by? text alias)
+          (let
+            [member : String (compiler-load-lazy-qualified-member text alias)]
+            (if (= (string.string-length member) 0)
+              (compiler-load-lazy-alias-demand-unknown)
+              (begin
+                (if compiler-load-lazy-qualified-observer-active
+                  (compiler-load-lazy-qualified-observer-note! name)
+                  unit)
+                (compiler-load-lazy-alias-demand-qualified member))))]
+        [(sym_i64_env.sym-i64-contains-id locals name)
+          (compiler-load-lazy-alias-demand-none)]
+        [(or
+            (string.eq text alias)
+            (compiler-load-lazy-surface-decls-direct-name?
+              (struct-get summary decls)
+              text))
+          (compiler-load-lazy-alias-demand-direct)]
+        [else (compiler-load-lazy-alias-demand-none)]))))
 
 (define (compiler-load-surface-decl-decl-emitting?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -3084,13 +3357,127 @@
       [(AstParam.Param name _ _ _)
         (compiler-load-lazy-param-list-locals-at
           params
-          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (if compiler-load-lazy-qualified-observer-exhaustive
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
           (+ index 1))])))
 
 (define (compiler-load-lazy-param-list-locals
   [params : AstParamList]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-load-lazy-param-list-locals-at (& params) locals 0))
+
+;; Module-macro catalog selection shares this structural walker with lazy
+;; imports. Keep declaration signatures and generated metadata visible here so
+;; an unrelated struct/macro elsewhere in the importer does not become an
+;; artificial `unknown` demand for every alias.
+(define (compiler-load-lazy-macro-param-list-demand-at?
+  [params : (& params AstMacroParamList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-macro-param-list-len params))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param _ ty _)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-type-demand ty alias summary locals)
+          (compiler-load-lazy-macro-param-list-demand-at?
+            params
+            alias
+            summary
+            locals
+            (+ index 1)))])))
+
+(define (compiler-load-lazy-macro-param-list-demand
+  [params : AstMacroParamList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-macro-param-list-demand-at?
+    (& params)
+    alias
+    summary
+    locals
+    0))
+
+(define (compiler-load-lazy-macro-param-list-locals-at
+  [params : (& params AstMacroParamList)]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-macro-param-list-len params))
+    locals
+    (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
+      [(AstMacroParam.Param name _ _)
+        (compiler-load-lazy-macro-param-list-locals-at
+          params
+          (if compiler-load-lazy-qualified-observer-exhaustive
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
+          (+ index 1))])))
+
+(define (compiler-load-lazy-macro-param-list-locals
+  [params : AstMacroParamList]
+  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (compiler-load-lazy-macro-param-list-locals-at (& params) locals 0))
+
+(define (compiler-load-lazy-field-list-demand-at?
+  [fields : (& fields AstFieldDefList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-field-def-list-len fields))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-field-def-list-get fields index (ast-field-def-fallback))
+      [(AstFieldDef.Def _ ty _)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-type-demand ty alias summary locals)
+          (compiler-load-lazy-field-list-demand-at?
+            fields
+            alias
+            summary
+            locals
+            (+ index 1)))])))
+
+(define (compiler-load-lazy-field-list-demand
+  [fields : AstFieldDefList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-field-list-demand-at? (& fields) alias summary locals 0))
+
+(define (compiler-load-lazy-variant-list-demand-at?
+  [variants : (& variants AstVariantDefList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-variant-def-list-len variants))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ types _)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-type-list-demand types alias summary locals)
+          (compiler-load-lazy-variant-list-demand-at?
+            variants
+            alias
+            summary
+            locals
+            (+ index 1)))])))
+
+(define (compiler-load-lazy-variant-list-demand
+  [variants : AstVariantDefList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-variant-list-demand-at?
+    (& variants)
+    alias
+    summary
+    locals
+    0))
 
 (define (compiler-load-lazy-pattern-demand
   [pattern : AstPattern]
@@ -3153,8 +3540,14 @@
   [pattern : AstPattern]
   [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (match pattern
-    [(AstPattern.Var name _) (sym_i64_env.sym-i64-bind-id locals name 1)]
-    [(AstPattern.Binding name) (sym_i64_env.sym-i64-bind-id locals name 1)]
+    [(AstPattern.Var name _)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+        (sym_i64_env.sym-i64-bind-id locals name 1))]
+    [(AstPattern.Binding name)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+        (sym_i64_env.sym-i64-bind-id locals name 1))]
     [(AstPattern.Tuple patterns)
       (compiler-load-lazy-pattern-list-locals (box-get patterns) locals)]
     [(AstPattern.Variant _ patterns)
@@ -3229,7 +3622,9 @@
               bindings
               alias
               summary
-              (sym_i64_env.sym-i64-bind-id locals name 1)
+              (if compiler-load-lazy-qualified-observer-exhaustive
+                (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+                (sym_i64_env.sym-i64-bind-id locals name 1))
               (+ index 1))))])))
 
 (define (compiler-load-lazy-let-bindings-locals-at
@@ -3242,8 +3637,79 @@
       [(AstLetBinding.Binding name _ _)
         (compiler-load-lazy-let-bindings-locals-at
           bindings
-          (sym_i64_env.sym-i64-bind-id locals name 1)
+          (if compiler-load-lazy-qualified-observer-exhaustive
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
           (+ index 1))])))
+
+(define (compiler-load-lazy-resource-bindings-demand-at?
+  [bindings : (& bindings AstResourceBindingList)]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : CompilerLoadLazyAliasDemand
+  (if (>= index (ast-resource-binding-list-len bindings))
+    (compiler-load-lazy-alias-demand-none)
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name init cleanup)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-expr-demand
+            (ast-node-get init)
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-expr-demand
+              (ast-node-get cleanup)
+              alias
+              summary
+              locals)
+            (compiler-load-lazy-resource-bindings-demand-at?
+              bindings
+              alias
+              summary
+              (if compiler-load-lazy-qualified-observer-exhaustive
+                (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+                (sym_i64_env.sym-i64-bind-id locals name 1))
+              (+ index 1))))])))
+
+(define (compiler-load-lazy-resource-bindings-demand
+  [bindings : AstResourceBindingList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (compiler-load-lazy-resource-bindings-demand-at?
+    (& bindings)
+    alias
+    summary
+    locals
+    0))
+
+(define (compiler-load-lazy-resource-bindings-locals-at
+  [bindings : (& bindings AstResourceBindingList)]
+  [locals : sym_i64_env.SymI64Env]
+  [index : i64]) : sym_i64_env.SymI64Env
+  (if (>= index (ast-resource-binding-list-len bindings))
+    locals
+    (match (ast-resource-binding-list-get
+      bindings
+      index
+      (ast-resource-binding-fallback))
+      [(AstResourceBinding.Binding name _ _)
+        (compiler-load-lazy-resource-bindings-locals-at
+          bindings
+          (if compiler-load-lazy-qualified-observer-exhaustive
+            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
+            (sym_i64_env.sym-i64-bind-id locals name 1))
+          (+ index 1))])))
+
+(define (compiler-load-lazy-resource-bindings-locals
+  [bindings : AstResourceBindingList]
+  [locals : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (compiler-load-lazy-resource-bindings-locals-at (& bindings) locals 0))
 
 (define (compiler-load-lazy-match-arms-demand-at?
   [arms : (& arms AstMatchArmList)]
@@ -3310,6 +3776,8 @@
           summary
           locals)
         (compiler-load-lazy-expr-list-demand args alias summary locals))]
+    [(AstExpr.BracketClause items)
+      (compiler-load-lazy-expr-list-demand items alias summary locals)]
     [(AstExpr.If condition then-branch else-branch)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-lazy-expr-demand
@@ -3401,6 +3869,24 @@
             alias
             summary
             locals)))]
+    [(AstExpr.ArrayTake items live index)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get items)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-expr-demand
+            (ast-node-get live)
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-expr-demand
+            (ast-node-get index)
+            alias
+            summary
+            locals)))]
     [(AstExpr.ArrayPush items value)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-lazy-expr-demand
@@ -3477,6 +3963,133 @@
               summary
               locals)
             (compiler-load-lazy-match-arms-demand arms alias summary locals))])]
+    [(AstExpr.Foreach foreach-box)
+      (match (box-get foreach-box)
+        [(AstForeach.Foreach index ty start end body)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ty alias summary locals)
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-expr-demand
+                (ast-node-get start)
+                alias
+                summary
+                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get end)
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get body)
+                  alias
+                  summary
+                  (if compiler-load-lazy-qualified-observer-exhaustive
+                    (compiler-load-lazy-demand-bind-local-exhaustive
+                      locals
+                      index)
+                    (sym_i64_env.sym-i64-bind-id locals index 1))))))])]
+    [(AstExpr.SpmdReduce reduce-box)
+      (match (box-get reduce-box)
+        [(AstSpmdReduce.Reduce _ index ty start end init value)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ty alias summary locals)
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-expr-demand
+                (ast-node-get start)
+                alias
+                summary
+                locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get end)
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-alias-demand-merge
+                  (compiler-load-lazy-expr-demand
+                    (ast-node-get init)
+                    alias
+                    summary
+                    locals)
+                  (compiler-load-lazy-expr-demand
+                    (ast-node-get value)
+                    alias
+                    summary
+                    (if compiler-load-lazy-qualified-observer-exhaustive
+                      (compiler-load-lazy-demand-bind-local-exhaustive
+                        locals
+                        index)
+                      (sym_i64_env.sym-i64-bind-id locals index 1)))))))])]
+    [(AstExpr.SpmdScan scan-box)
+      (match (box-get scan-box)
+        [(AstSpmdScan.Scan _ index ty start end prefix _ init value body)
+          (let
+            [value-locals : sym_i64_env.SymI64Env
+              (if compiler-load-lazy-qualified-observer-exhaustive
+                (compiler-load-lazy-demand-bind-local-exhaustive locals index)
+                (sym_i64_env.sym-i64-bind-id locals index 1))]
+            [body-locals : sym_i64_env.SymI64Env
+              (if compiler-load-lazy-qualified-observer-exhaustive
+                (compiler-load-lazy-demand-bind-local-exhaustive
+                  value-locals
+                  prefix)
+                (sym_i64_env.sym-i64-bind-id value-locals prefix 1))]
+            (compiler-load-lazy-alias-demand-merge
+              (compiler-load-lazy-type-demand ty alias summary locals)
+              (compiler-load-lazy-alias-demand-merge
+                (compiler-load-lazy-expr-demand
+                  (ast-node-get start)
+                  alias
+                  summary
+                  locals)
+                (compiler-load-lazy-alias-demand-merge
+                  (compiler-load-lazy-expr-demand
+                    (ast-node-get end)
+                    alias
+                    summary
+                    locals)
+                  (compiler-load-lazy-alias-demand-merge
+                    (compiler-load-lazy-expr-demand
+                      (ast-node-get init)
+                      alias
+                      summary
+                      locals)
+                    (compiler-load-lazy-alias-demand-merge
+                      (compiler-load-lazy-expr-demand
+                        (ast-node-get value)
+                        alias
+                        summary
+                        value-locals)
+                      (compiler-load-lazy-expr-demand
+                        (ast-node-get body)
+                        alias
+                        summary
+                        body-locals)))))))])]
+    [(AstExpr.SpmdBroadcast value lane)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get lane)
+          alias
+          summary
+          locals))]
+    [(AstExpr.SpmdShuffle value lane)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get lane)
+          alias
+          summary
+          locals))]
     [(AstExpr.StructGet receiver _)
       (compiler-load-lazy-expr-demand
         (ast-node-get receiver)
@@ -3495,6 +4108,8 @@
           alias
           summary
           locals))]
+    [(AstExpr.WithRegion _ body)
+      (compiler-load-lazy-expr-list-demand body alias summary locals)]
     [(AstExpr.WithEscape scratch body)
       (compiler-load-lazy-alias-demand-merge
         (compiler-load-lazy-expr-demand
@@ -3531,10 +4146,64 @@
           alias
           summary
           locals))]
+    [(AstExpr.WithResource resource-box)
+      (match (box-get resource-box)
+        [(AstWithResource.WithResource bindings body)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-resource-bindings-demand
+              bindings
+              alias
+              summary
+              locals)
+            (compiler-load-lazy-expr-list-demand
+              body
+              alias
+              summary
+              (compiler-load-lazy-resource-bindings-locals bindings locals)))])]
     [(AstExpr.TypeLiteral ty)
       (compiler-load-lazy-type-demand ty alias summary locals)]
     [(AstExpr.Init maybe-ty)
       (compiler-load-lazy-maybe-type-demand maybe-ty alias summary locals)]
+    [(AstExpr.Comptime inner)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.Quote inner)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.Quasiquote inner)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.Unquote inner)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstExpr.UnquoteSplicing inner)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-expr-demand
+          (ast-node-get inner)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstExpr.Try inner)
       (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
     [(AstExpr.Return inner)
@@ -3545,13 +4214,107 @@
       (compiler-load-lazy-type-demand ty alias summary locals)]
     [(AstExpr.PtrNullCheck inner)
       (compiler-load-lazy-expr-demand (ast-node-get inner) alias summary locals)]
+    [(AstExpr.PtrAddrOf place)
+      (compiler-load-lazy-expr-demand (ast-node-get place) alias summary locals)]
+    [(AstExpr.PtrRead ptr)
+      (compiler-load-lazy-expr-demand (ast-node-get ptr) alias summary locals)]
+    [(AstExpr.PtrWrite ptr value)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand (ast-node-get ptr) alias summary locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals))]
+    [(AstExpr.PtrOffset ptr offset)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand (ast-node-get ptr) alias summary locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get offset)
+          alias
+          summary
+          locals))]
+    [(AstExpr.PtrCast ptr ty)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand (ast-node-get ptr) alias summary locals)
+        (compiler-load-lazy-type-demand ty alias summary locals))]
+    [(AstExpr.PtrToInt ptr)
+      (compiler-load-lazy-expr-demand (ast-node-get ptr) alias summary locals)]
+    [(AstExpr.IntToPtr value ty)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get value)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-type-demand ty alias summary locals))]
+    [(AstExpr.StringData text)
+      (compiler-load-lazy-expr-demand (ast-node-get text) alias summary locals)]
+    [(AstExpr.StringFromBytes ptr len)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand (ast-node-get ptr) alias summary locals)
+        (compiler-load-lazy-expr-demand (ast-node-get len) alias summary locals))]
+    [(AstExpr.ArrayData array)
+      (compiler-load-lazy-expr-demand (ast-node-get array) alias summary locals)]
     [(AstExpr.BinaryData _) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.SpmdProgramIndex) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.SpmdProgramCount) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.ProgramArgc) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.ProgramArgv) (compiler-load-lazy-alias-demand-none)]
     [(AstExpr.ProgramEnvp) (compiler-load-lazy-alias-demand-none)]
-    ;; Macro-generated and uncommon AST shapes are an explicit eager fence.
+    [(AstExpr.CpuIdEax leaf subleaf)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get leaf)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get subleaf)
+          alias
+          summary
+          locals))]
+    [(AstExpr.CpuIdEbx leaf subleaf)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get leaf)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get subleaf)
+          alias
+          summary
+          locals))]
+    [(AstExpr.CpuIdEcx leaf subleaf)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get leaf)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get subleaf)
+          alias
+          summary
+          locals))]
+    [(AstExpr.CpuIdEdx leaf subleaf)
+      (compiler-load-lazy-alias-demand-merge
+        (compiler-load-lazy-expr-demand
+          (ast-node-get leaf)
+          alias
+          summary
+          locals)
+        (compiler-load-lazy-expr-demand
+          (ast-node-get subleaf)
+          alias
+          summary
+          locals))]
+    [(AstExpr.Xgetbv index)
+      (compiler-load-lazy-expr-demand (ast-node-get index) alias summary locals)]
+    [(AstExpr.Syscall args)
+      (compiler-load-lazy-expr-list-demand args alias summary locals)]
+    ;; A future AST shape is a conservative eager fence.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
 (define (compiler-load-lazy-module-macro-demand
@@ -3647,6 +4410,16 @@
         (compiler-load-lazy-decl-module-macro-qualified-by? decl module-id)
         (compiler-load-lazy-decl-list-module-macro-qualified-by? rest module-id))]))
 
+(define (compiler-load-lazy-generated-meta-demand
+  [meta : AstGeneratedDeclMeta]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (match meta
+    [(AstGeneratedDeclMeta.No) (compiler-load-lazy-alias-demand-none)]
+    [(AstGeneratedDeclMeta.Some _ _ args _)
+      (compiler-load-lazy-expr-list-demand args alias summary locals)]))
+
 (define (compiler-load-lazy-decl-demand
   [decl : AstDecl]
   [alias : String]
@@ -3674,6 +4447,42 @@
             alias
             summary
             (compiler-load-lazy-param-list-locals params locals))))]
+    [(AstDecl.DefMacro _ params ret body)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-macro-param-list-demand
+            params
+            alias
+            summary
+            locals)
+          (compiler-load-lazy-alias-demand-merge
+            (compiler-load-lazy-type-demand ret alias summary locals)
+            (compiler-load-lazy-expr-demand
+              (ast-node-get body)
+              alias
+              summary
+              (compiler-load-lazy-macro-param-list-locals params locals))))
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.Extern _ _ _ ty)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-type-demand ty alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefEnum _ _ variants)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-variant-list-demand variants alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefEnumLifetimes _ _ _ variants)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-variant-list-demand variants alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefStruct _ _ _ fields)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-field-list-demand fields alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-field-list-demand fields alias summary locals)
+        (compiler-load-lazy-alias-demand-unknown))]
     [(AstDecl.Import
         (AstImportSpec.Spec (AstImportKind.Macro call-expr _) _ _ _ _))
       (compiler-load-lazy-module-macro-demand
@@ -3682,15 +4491,23 @@
         summary
         locals)]
     [(AstDecl.Import
-        (AstImportSpec.Spec (AstImportKind.MacroDecls _ _) _ _ _ _))
+        (AstImportSpec.Spec (AstImportKind.MacroDecls call-expr _) _ _ _ _))
       (compiler-load-lazy-alias-demand-unknown)]
     [(AstDecl.Import _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.Test _ body _)
       (compiler-load-lazy-expr-demand (ast-node-get body) alias summary locals)]
     [(AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-demand (box-get inner) alias summary locals)]
-    ;; Macro/declaration generation and aggregate declarations can add names
-    ;; after this walk. They must retain the conservative eager fallback.
+    [(AstDecl.ComptimeDecl meta inner)
+      (if compiler-load-lazy-qualified-observer-exhaustive
+        (compiler-load-lazy-alias-demand-merge
+          (compiler-load-lazy-generated-meta-demand meta alias summary locals)
+          (compiler-load-lazy-decl-demand (box-get inner) alias summary locals))
+        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
+    ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
 
 (define (compiler-load-lazy-decl-list-demand
@@ -3709,6 +4526,33 @@
           (compiler-load-lazy-alias-demand-merge
             head
             (compiler-load-lazy-decl-list-demand rest alias summary locals))))]))
+
+;; A catalog member collector needs every qualified use, not merely the first
+;; one that is sufficient for normal lazy-import admission. Keep the ordinary
+;; short-circuiting query above for loader hot paths and expose this iterative
+;; full walk for the one-pass generated-catalog observer.
+(define (compiler-load-lazy-decl-list-demand-full
+  [decls : AstDeclList]
+  [alias : String]
+  [summary : CompilerLoadSurfaceSummary]
+  [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
+  (let
+    [cursor : AstDeclList decls]
+    [out : CompilerLoadLazyAliasDemand (compiler-load-lazy-alias-demand-none)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (set!
+                out
+                (compiler-load-lazy-alias-demand-merge
+                  out
+                  (compiler-load-lazy-decl-demand decl alias summary locals)))
+              (set! cursor rest))]))
+      out)))
 
 (define (compiler-load-lazy-empty-surface-summary) : CompilerLoadSurfaceSummary
   ;; The first structural pass only decides whether a qualified or unresolved

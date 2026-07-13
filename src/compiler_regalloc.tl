@@ -1725,6 +1725,36 @@
         (+ offset 1)
         offset))))
 
+;; Live-set and greedy-occupancy words use only their low 32 bits.
+(define (compiler-reg-low-bit-index32 [bits : i64]) : i64
+  (let
+    [value : i64 bits]
+    [offset : i64 0]
+    (begin
+      (if (= (bit-and value 0xffff) 0)
+        (begin
+          (set! value (shr value 16))
+          (set! offset (+ offset 16)))
+        unit)
+      (if (= (bit-and value 0xff) 0)
+        (begin
+          (set! value (shr value 8))
+          (set! offset (+ offset 8)))
+        unit)
+      (if (= (bit-and value 0xf) 0)
+        (begin
+          (set! value (shr value 4))
+          (set! offset (+ offset 4)))
+        unit)
+      (if (= (bit-and value 0x3) 0)
+        (begin
+          (set! value (shr value 2))
+          (set! offset (+ offset 2)))
+        unit)
+      (if (= (bit-and value 0x1) 0)
+        (+ offset 1)
+        offset))))
+
 (define (compiler-reg-segment-flush-var!
   [segments : (Array CompilerRegIntervalList)]
   [starts : (Array i64)]
@@ -1781,7 +1811,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index bits)]
+      [index : i64 (compiler-reg-low-bit-index32 bits)]
       [item-var : i64 (+ var index)]
       (begin
         (compiler-reg-extend-interval starts ends item-var point)
@@ -1842,7 +1872,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index bits)]
+      [index : i64 (compiler-reg-low-bit-index32 bits)]
       [item-var : i64 (+ var index)]
       (begin
         (compiler-reg-segment-note-point!
@@ -1960,7 +1990,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index bits)]
+      [index : i64 (compiler-reg-low-bit-index32 bits)]
       (begin
         (compiler-reg-extend-interval starts ends (+ var index) point)
         (compiler-reg-extend-set-word-bits
@@ -2660,7 +2690,7 @@
   (if (= bits 0)
     unit
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       (begin
         (compiler-reg-bits-set! row base (+ var-base i))
         (compiler-reg-chunk->row! row base (bit-and bits (- bits 1)) var-base)))))
@@ -3214,7 +3244,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       (if (if (<= start c)
         (< c end)
@@ -7308,7 +7338,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       (if (if (< start c)
         (< c end)
@@ -7330,7 +7360,7 @@
     (if (= bits 0)
       0
       (let
-        [i : i64 (compiler-reg-low-bit-index bits)]
+        [i : i64 (compiler-reg-low-bit-index32 bits)]
         [c : i64 (+ var-base i)]
         [rest : i64
           (compiler-reg-call-word-count-in-range
@@ -7373,7 +7403,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       (if (if (<= start c)
         (< c end)
@@ -7418,7 +7448,7 @@
   (if (= bits 0)
     0
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       [rest : i64
         (compiler-reg-call-word-count-in-range-model
@@ -7805,7 +7835,7 @@
   (if (= bits 0)
     unit
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [var : i64 (+ var-base i)]
       (begin
         (if (and (>= var 0) (< var (array-length counts)))
@@ -12042,7 +12072,7 @@
         (begin
           (while (not (= bits 0))
             (let
-              [b : i64 (compiler-reg-low-bit-index bits)]
+              [b : i64 (compiler-reg-low-bit-index32 bits)]
               [v : i64 (+ (* wi (compiler-live-set-word-bits)) b)]
               (begin
                 (if (and (>= v 0) (< v n) (= (array-ref cand v) 1))
@@ -14074,7 +14104,7 @@
       (begin
         (while (not (= bits 0))
           (let
-            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [bit : i64 (compiler-reg-low-bit-index32 bits)]
             [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
             (begin
               (if (and
@@ -14264,7 +14294,7 @@
       (begin
         (while (and (not (= bits 0)) (< best (compiler-reg-greedy-evict-inf)))
           (let
-            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [bit : i64 (compiler-reg-low-bit-index32 bits)]
             [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
             (begin
               (if (and
@@ -14377,7 +14407,7 @@
       (begin
         (while (not (= bits 0))
           (let
-            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [bit : i64 (compiler-reg-low-bit-index32 bits)]
             [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
             (begin
               (if (and

@@ -504,10 +504,6 @@
     0))
 (cfg
   compile-profile
-  (define compiler-driver-profile-best-peak : i64
-    0))
-(cfg
-  compile-profile
   (define compiler-driver-batch-profile-start-ms : i64
     0))
 (cfg
@@ -653,15 +649,11 @@
       [end-ms : i64 (profile.now-ms)]
       [end-total : i64 (profile.alloc-total)]
       [end-live : i64 (profile.alloc-live)]
+      [end-peak : i64 (profile.alloc-peak)]
       [peak-delta : i64
         (compiler-driver-profile-nonnegative
-          (- (profile.alloc-peak) compiler-driver-profile-phase-start-live))]
+          (- end-peak compiler-driver-profile-phase-start-live))]
       (begin
-        (set!
-          compiler-driver-profile-best-peak
-          (compiler-driver-profile-max
-            compiler-driver-profile-best-peak
-            peak-delta))
         (set!
           compiler-driver-batch-profile-best-peak
           (compiler-driver-profile-max
@@ -682,7 +674,7 @@
       (set! compiler-driver-profile-total-start-ms (profile.now-ms))
       (set! compiler-driver-profile-total-start-total (profile.alloc-total))
       (set! compiler-driver-profile-total-start-live (profile.alloc-live))
-      (set! compiler-driver-profile-best-peak 0)
+      (profile.compile-wide-peak-start!)
       (ci.intern-profile-reset!)
       (cfg
         compile-profile-summary
@@ -712,26 +704,28 @@
 (cfg
   compile-profile
   (define (compiler-driver-profile-finish-total) : unit
-    (begin
-      (io.print-error
-        (compiler-driver-profile-line
-          "total"
-          (- (profile.now-ms) compiler-driver-profile-total-start-ms)
-          (- (profile.alloc-total) compiler-driver-profile-total-start-total)
-          (- (profile.alloc-live) compiler-driver-profile-total-start-live)
-          compiler-driver-profile-best-peak))
-      (compiler-driver-profile-intern-line
-        "hash_words"
-        (ci.intern-profile-hash-words-value))
-      (compiler-driver-profile-intern-line
-        "intern_calls"
-        (ci.intern-profile-intern-value))
-      (compiler-driver-profile-intern-line
-        "slice_calls"
-        (ci.intern-profile-slice-value))
-      (compiler-driver-profile-intern-line
-        "lookup_calls"
-        (ci.intern-profile-lookup-value)))))
+    (let
+      [compile-wide-peak : i64 (profile.compile-wide-peak-finish!)]
+      (begin
+        (io.print-error
+          (compiler-driver-profile-line
+            "total"
+            (- (profile.now-ms) compiler-driver-profile-total-start-ms)
+            (- (profile.alloc-total) compiler-driver-profile-total-start-total)
+            (- (profile.alloc-live) compiler-driver-profile-total-start-live)
+            compile-wide-peak))
+        (compiler-driver-profile-intern-line
+          "hash_words"
+          (ci.intern-profile-hash-words-value))
+        (compiler-driver-profile-intern-line
+          "intern_calls"
+          (ci.intern-profile-intern-value))
+        (compiler-driver-profile-intern-line
+          "slice_calls"
+          (ci.intern-profile-slice-value))
+        (compiler-driver-profile-intern-line
+          "lookup_calls"
+          (ci.intern-profile-lookup-value))))))
 
 (define (compiler-driver-lower-mode-for-target
   [target : CompilerBackendTarget]

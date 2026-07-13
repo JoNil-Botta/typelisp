@@ -5538,7 +5538,10 @@
                   (match (lsp-file-uri-to-path uri)
                     [(LspUriPath.Ok file-path)
                       (let
-                        [path : String (fs.dirname (& file-path))]
+                        [path : String
+                          (match (fs.try-file-kind (& file-path))
+                            [(fs.OkFsFileKind (fs.FsFileDirectory)) file-path]
+                            [_ (fs.dirname (& file-path))])]
                         (match (fs.try-read-dir-vec (& path))
                           [(fs.OkIoStringVector entries)
                             (let

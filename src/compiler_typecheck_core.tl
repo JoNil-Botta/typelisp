@@ -56902,8 +56902,19 @@
             (string.eq memo-target target-module)]
           [CompilerNoString false])
         false)]
+    [force-full-catalog? : bool
+      (or
+        (> (ast-decl-list-len (& catalog)) 39)
+        ;; vector_slice embeds a generated vector import whose qualified Vec
+        ;; dependency is resolved during import rewriting rather than appearing
+        ;; as a same-catalog name edge. Preserve that external closure in full.
+        (tc-string-prefix? identity "stdlib.vector_slice:")
+        (and
+          (tc-string-prefix? identity "stdlib.vector:")
+          (string.eq module "stdlib.vector_slice"))
+        (macro-generated-catalog-has-foreign-identity? catalog identity))]
     [raw-demand : MacroGeneratedModuleCatalogDemand
-      (if (and select-demand? partial-safe?)
+      (if (and select-demand? partial-safe? (not force-full-catalog?))
         (macro-generated-catalog-demand-scoped
           orig-decls
           module
@@ -56913,22 +56924,11 @@
         MacroGeneratedModuleCatalogDemand.Full)]
     [demand
       : MacroGeneratedModuleCatalogDemand
-      ;; Still derive demand for profile visibility and dependency discovery,
-      ;; then conservatively retain large or cross-identity catalogs. These
-      ;; families commonly embed or extend another generated module, so their
-      ;; full body is the safe closure until every cross-catalog edge is exact.
-      (if (or
-        (> (ast-decl-list-len (& catalog)) 39)
-        ;; vector_slice embeds a generated vector import whose qualified Vec
-        ;; dependency is resolved during import rewriting rather than appearing
-        ;; as a same-catalog name edge. Preserve that external closure in full.
-        (tc-string-prefix? identity "stdlib.vector_slice:")
-        (and
-          (tc-string-prefix? identity "stdlib.vector:")
-          (string.eq module "stdlib.vector_slice"))
-        (macro-generated-catalog-has-foreign-identity? catalog identity))
-        MacroGeneratedModuleCatalogDemand.Full
-        raw-demand)]
+      ;; Large and cross-identity catalogs are always materialized in full, so
+      ;; walking the complete importer to derive an immediately discarded
+      ;; partial demand only adds compile-time cost and cannot discover an edge
+      ;; that changes the selected declarations.
+      raw-demand]
     ;; A full catalog reaches ordinary typechecking unchanged, so it already
     ;; receives complete declaration validation. The expensive shadow check is
     ;; needed only when demand pruning would otherwise hide declarations.

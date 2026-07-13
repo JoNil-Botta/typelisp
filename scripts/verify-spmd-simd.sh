@@ -89,6 +89,12 @@ tests/spmd/vector_slice_surface_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
 tests/spmd/inline_helper_f64.tl
+tests/spmd/private_helper_i64.tl
+tests/spmd/private_helper_f64.tl
+tests/spmd/private_helper_bool.tl
+tests/spmd/private_helper_masked_load.tl
+tests/spmd/private_helper_store.tl
+tests/spmd/private_helper_effects.tl
 tests/spmd/i8_mul_reject.tl
 tests/spmd/masked_if_i64.tl
 tests/spmd/masked_if_offset_i64.tl
@@ -137,6 +143,9 @@ spmd_mode_expected_compile_diagnostic() {
             ;;
         tests/spmd/bool_lanes.tl:avx2)
             printf '%s\n' "lower: SPMD foreach bool dynamic-array lanes require AVX-512 backend mode; use scalar or avx512"
+            ;;
+        tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
+            printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
             ;;
         tests/integration/spmd_gather_read.tl:avx2 | tests/integration/spmd_gather_read.tl:avx512)
             printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"

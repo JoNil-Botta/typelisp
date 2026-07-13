@@ -79,56 +79,58 @@
           (compiler-live-set-eq? call-args (compiler-live-set3 0 1 2))
           (compiler-live-set-contains? call-live 3)
           (compiler-live-set-contains? direct-calls 6)
+          ;; Call operands retain ordinary spill eligibility; only hidden helper
+          ;; parameters are admitted to the fixed private-register allocator.
           (compiler-live-set-contains? ineligible 0)
           (compiler-live-set-contains? ineligible 1)
           (compiler-live-set-contains? ineligible 2))])))
 
 (define (compiler-reg-smoke-descriptor-pair-function) : CompilerIrFunction
-  (let
-    [kind : CompilerIrDescriptorPairKind
-      (CompilerIrDescriptorPairKind.OwnedString)]
-    (CompilerIrFunction.Function
-      "descriptor_pair"
-      (compiler-ir-param-cons
-        (CompilerIrParam.Param "handle" (AstType.String) 0)
-        CompilerIrParamList.Nil)
-      (AstType.I64)
-      8
-      (compiler-ir-block-cons
-        (compiler-ir-block
-          "entry"
+  (CompilerIrFunction.Function
+    "descriptor_pair"
+    (compiler-ir-param-cons
+      (CompilerIrParam.Param "handle" (AstType.String) 0)
+      CompilerIrParamList.Nil)
+    (AstType.I64)
+    8
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (AstType.U64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Load 1 (CompilerIrValue.Var 0) (AstType.U64))
+            (CompilerIrInstr.Gep
+              2
+              (CompilerIrValue.Var 0)
+              (CompilerIrValue.I64 8)
+              (AstType.U8))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Gep
-                2
-                (CompilerIrValue.Var 0)
-                (CompilerIrValue.I64 8)
-                (AstType.U8))
+              (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Load 3 (CompilerIrValue.Var 2) (AstType.I64))
-                (compiler-ir-instr-cons
-                  (ir-instr-descriptor-pair-pack
-                    4
+                (CompilerIrInstr.Pack
+                  4
+                  (compiler-ir-value-cons
                     (CompilerIrValue.Var 1)
-                    (CompilerIrValue.Var 3)
-                    kind)
+                    (compiler-ir-value-cons
+                      (CompilerIrValue.Var 3)
+                      CompilerIrValueList.Nil))
+                  (AstType.String))
+                (compiler-ir-instr-cons
+                  (CompilerIrInstr.Mov
+                    5
+                    (CompilerIrValue.Var 4)
+                    (AstType.String))
                   (compiler-ir-instr-cons
-                    (CompilerIrInstr.Mov
-                      5
-                      (CompilerIrValue.Var 4)
-                      (AstType.String))
+                    (ir-instr-descriptor-pair-data 6 (CompilerIrValue.Var 5))
                     (compiler-ir-instr-cons
-                      (ir-instr-descriptor-pair-data 6 (CompilerIrValue.Var 5))
+                      (ir-instr-descriptor-pair-length
+                        7
+                        (CompilerIrValue.Var 5))
                       (compiler-ir-instr-cons
-                        (ir-instr-descriptor-pair-length
-                          7
-                          (CompilerIrValue.Var 5))
-                        (compiler-ir-instr-cons
-                          (CompilerIrInstr.Return
-                            (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
-                          CompilerIrInstrList.Nil)))))))))
-        CompilerIrBlockList.Nil))))
+                        (CompilerIrInstr.Return
+                          (CompilerIrMaybeValue.Some (CompilerIrValue.Var 7)))
+                        CompilerIrInstrList.Nil)))))))))
+      CompilerIrBlockList.Nil)))
 
 (define (compiler-reg-smoke-descriptor-pair-group-ok?) : bool
   (let
@@ -153,9 +155,8 @@
 (define (main) : i64
   (let
     [base : i64 (compiler-regalloc-self-test)]
-    (if (and
-      (= base 42)
-      (compiler-reg-smoke-spmd-call-shape-ok?)
-      (compiler-reg-smoke-descriptor-pair-group-ok?))
-      42
-      1)))
+    (begin
+      (unless (= base 42) (return 2))
+      (unless (compiler-reg-smoke-spmd-call-shape-ok?) (return 3))
+      (unless (compiler-reg-smoke-descriptor-pair-group-ok?) (return 4))
+      42)))

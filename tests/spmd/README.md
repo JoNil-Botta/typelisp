@@ -39,6 +39,24 @@ of falling back to scalar code.
 - `inline_helper_f64.tl` - `foreach` over `n = 13` f64 lanes through a direct
   source-known helper with a varying floating-point argument and result. Exit
   42.
+- `private_helper_i64.tl` - scalar/AVX-512 out-of-line helper ABI coverage for
+  nested direct calls with varying i64 arguments/results and a masked tail.
+  Exit 42; AVX2 reports the staged private-call diagnostic.
+- `private_helper_f64.tl` - scalar/AVX-512 out-of-line helper ABI coverage for
+  varying f64 arguments/results loaded and stored through a tail. Exit 42;
+  AVX2 reports the staged private-call diagnostic.
+- `private_helper_bool.tl` - scalar/AVX-512 out-of-line helper ABI coverage for
+  a varying bool result consumed as a branch mask. Exit 42; AVX2 reports the
+  staged private-call diagnostic.
+- `private_helper_masked_load.tl` - scalar/AVX-512 private helper with a direct
+  array load and bounds checks under composed branch/tail masks. Exit 42;
+  AVX2 reports the staged private-call diagnostic.
+- `private_helper_store.tl` - scalar/AVX-512 private unit helper with a direct
+  store under composed branch/tail masks. Exit 42; AVX2 reports the staged
+  private-call diagnostic.
+- `private_helper_effects.tl` - scalar/AVX-512 private unit helper with a store
+  and atomic update under composed branch/tail masks. SIMD atomic bodies use
+  the specified scalar fallback; AVX2 still reports the private-call diagnostic.
 - `masked_if_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 13` i64
   lanes, with direct-index predicated reads/writes and a masked tail. Exit 42.
 - `masked_if_offset_i64.tl` - AVX2/AVX-512 masked varying `if` over `n = 12`
@@ -142,11 +160,12 @@ Coverage map:
   for these shapes.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
-  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. Focused scalar
-  and AVX-512 source-to-private-call IR coverage lives in
-  `src/tests/compiler_spmd_call_lower_*_smoke.tl`; backend emission remains
-  staged under #3767. Function-value/indirect varying calls remain rejected by
-  the safety fixtures.
+  `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The
+  `private_helper_*` fixtures execute the scalar and AVX-512 private ABI for
+  i64/f64/bool values, nested calls, direct helper loads/bounds checks, branch
+  masks, and tails. Focused source-to-private-call IR coverage also lives in
+  `src/tests/compiler_spmd_call_lower_*_smoke.tl`. Function-value/indirect
+  varying calls remain rejected by the safety fixtures.
 - `spmd-reduce` and `spmd-scan` scalar coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
   `../integration/spmd_scan_scalar.tl`.

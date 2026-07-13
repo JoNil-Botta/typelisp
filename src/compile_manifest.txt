@@ -678,7 +678,7 @@ end
 
 decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655/#4869): main-less helper module with inline tests, executable smoke coverage, package metadata emission, inspect-command parsing, and the focused code-bearing native macro proof image; general package/stdlib code emission remains staged
 
-decision|src/compiler_comptime_image_core.tl|focused native-comptime lowering proof (#4869): compiler-owned single-macro program/probe model plus host-ABI x86_64 lowering for Linux and Windows; produces the code payload and explicit macro/table/name offsets consumed by tlci_core while general macro-source lowering and automatic fuel insertion remain staged
+decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905): explicit image/host/session contexts, callback status unwind, success-only result commit, dynamic macro data layout, and Linux/Windows x86_64 emission; fixed #4902 templates remain oracle-only while general macro-source lowering and automatic fuel insertion remain staged
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 

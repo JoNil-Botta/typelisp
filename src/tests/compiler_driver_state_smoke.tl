@@ -1,5 +1,6 @@
 (import stdlib.string)
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.vector)
 (import (vector String) as svec)
 (import "../compiler_driver_core.tl")
@@ -2261,6 +2262,56 @@
       (compiler-load-session-cache-disable-for-test!)
       ok)))
 
+(define (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?
+  [input-path : String]) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    [_set-scratch : unit
+      (unsafe
+        (arena.set! scratch))]
+    [_reset-before : unit (compiler-driver-state-reset-file-state! state)]
+    [emitted? : bool
+      (match (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+        state
+        input-path
+        (CompilerBackendTarget.Linux)
+        true
+        roots
+        1
+        (CompilerBackendMode.Scalar)
+        (compiler-cfg-empty))
+        [(ResultCompilerDriverBuffer.Ok _) true]
+        [(ResultCompilerDriverBuffer.Err _) false])]
+    [scratch-end : arena.Arena (arena.current)]
+    [restored? : bool (arena.eq? scratch-end scratch)]
+    (unsafe
+      (begin
+        (arena.set! home)
+        ;; Mirror compile-batch cleanup: release driver-owned pools first, then
+        ;; destroy the caller-owned scratch chain returned by the emit wrapper.
+        (compiler-driver-state-reset-file-state! state)
+        (arena.set! home)
+        (arena.destroy scratch-end)
+        (and emitted? restored?)))))
+
+(define (compiler-driver-state-smoke-emitted-batch-restores-scratch?) : bool
+  (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?
+    "tests/integration/calc.tl"))
+
+(define (compiler-driver-state-smoke-retired-dispatch-thunk?) : bool
+  (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?
+    "tests/spmd/runtime_dispatch_select.tl"))
+
 (define (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?) : bool
   (begin
     (compiler-driver-reset-file-state!)
@@ -2494,6 +2545,10 @@
       (compiler-driver-state-smoke-batch-prelude-cache-floors?)
       (return 13))
     (unless (compiler-driver-state-smoke-scratch-batch-owned-pool?) (return 25))
+    (unless
+      (compiler-driver-state-smoke-emitted-batch-restores-scratch?)
+      (return 32))
+    (unless (compiler-driver-state-smoke-retired-dispatch-thunk?) (return 33))
     (unless
       (compiler-driver-state-smoke-global-reset-detaches-scratch-active-context?)
       (return 26))

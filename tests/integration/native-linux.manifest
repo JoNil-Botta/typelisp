@@ -31,6 +31,7 @@ compile_profile_named_vector_decls|tests/integration/compile_profile_named_vecto
 compile_profile_vector_core|tests/integration/compile_profile_vector_core.tl|42|-|-|stdlib/vector.tl
 compile_profile_vector_full|tests/integration/compile_profile_vector_full.tl|42|-|-|stdlib/vector.tl
 compile_profile_layout_spec|tests/integration/compile_profile_layout_spec.tl|42|-|-|stdlib/comptime.tl
+compile_profile_nested_peak_reset|tests/integration/compile_profile_nested_peak_reset.tl|42|-|-|stdlib/array.tl stdlib/profile.tl
 compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_escape.tl|42|-|-|-
 compile_profile_result_import|tests/integration/compile_profile_result_import.tl|42|-|-|-
 call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-

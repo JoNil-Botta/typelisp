@@ -28290,53 +28290,60 @@
       (CompilerIrInstr.TailCall name args ty)]
     [_ instr]))
 
-(define (opt-devirt-known-function-instr-seq-from
-  [instrs : CompilerIrInstrSeq]
-  [index : i64]) : CompilerIrInstrList
-  (if (>= index (compiler-ir-instr-seq-count instrs))
-    CompilerIrInstrList.Nil
-    (compiler-ir-instr-cons
-      (opt-devirt-known-function-instr (compiler-ir-instr-seq-ref instrs index))
-      (opt-devirt-known-function-instr-seq-from instrs (+ index 1)))))
-
-(define (opt-devirt-known-function-instr-seq [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
-  (opt-devirt-known-function-instr-seq-from instrs 0))
-
-(define (opt-devirt-known-function-block [block : CompilerIrBlock]) : CompilerIrBlock
+;; Optimization receives compact, exclusively owned IR sequences. Rewrite their
+;; mutable instruction arrays directly instead of rebuilding the entire program
+;; through temporary cons lists before the inliner.
+(define (opt-devirt-known-function-block! [block : CompilerIrBlock]) : unit
   (match block
-    [(CompilerIrBlock.Block label instrs)
-      (compiler-ir-block label (opt-devirt-known-function-instr-seq instrs))]))
+    [(CompilerIrBlock.Block _ instrs)
+      (compiler-ir-instr-seq-rewrite! instrs opt-devirt-known-function-instr)]))
 
-(define (opt-devirt-known-function-blocks [blocks : CompilerIrBlockList]) : CompilerIrBlockList
+(define (opt-devirt-known-function-blocks! [blocks : CompilerIrBlockList]) : unit
   (match blocks
-    [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
+    [(CompilerIrBlockList.Nil) unit]
     [(CompilerIrBlockList.Cons block rest)
-      (compiler-ir-block-cons
-        (opt-devirt-known-function-block block)
-        (opt-devirt-known-function-blocks (box-get rest)))]
+      (begin
+        (opt-devirt-known-function-block! block)
+        (opt-devirt-known-function-blocks! (box-get rest)))]
     [(CompilerIrBlockList.Array seq)
-      (opt-devirt-known-function-blocks (compiler-ir-block-seq-to-list seq))]))
+      (let
+        [index : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        (while (< index count)
+          (begin
+            (opt-devirt-known-function-block!
+              (compiler-ir-block-seq-ref seq index))
+            (set! index (+ index 1)))))]))
+
+(define (opt-devirt-known-function-function! [func : CompilerIrFunction]) : unit
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (opt-devirt-known-function-blocks! blocks)]))
 
 (define (opt-devirt-known-function-function [func : CompilerIrFunction]) : CompilerIrFunction
-  (match func
-    [(CompilerIrFunction.Function name params ret vars blocks)
-      (CompilerIrFunction.Function
-        name
-        params
-        ret
-        vars
-        (opt-devirt-known-function-blocks blocks))]))
+  (begin
+    (opt-devirt-known-function-function! func)
+    func))
 
 (define (opt-devirt-known-function-list [functions : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match functions
-    [(CompilerIrFunctionList.Nil) (CompilerIrFunctionList.Nil)]
-    [(CompilerIrFunctionList.Cons func rest)
-      (compiler-ir-function-cons
-        (opt-devirt-known-function-function func)
-        (opt-devirt-known-function-list (box-get rest)))]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-ir-function-list-compact
-        (opt-devirt-known-function-list (compiler-ir-function-seq-to-list seq)))]))
+  (begin
+    (match functions
+      [(CompilerIrFunctionList.Nil) unit]
+      [(CompilerIrFunctionList.Cons func rest)
+        (begin
+          (opt-devirt-known-function-function! func)
+          (opt-devirt-known-function-list (box-get rest))
+          unit)]
+      [(CompilerIrFunctionList.Array seq)
+        (let
+          [index : i64 0]
+          [count : i64 (compiler-ir-function-seq-count seq)]
+          (while (< index count)
+            (begin
+              (opt-devirt-known-function-function!
+                (compiler-ir-function-seq-ref seq index))
+              (set! index (+ index 1)))))])
+    functions))
 
 ;; ---------------------------------------------------------------------------
 ;; Function inlining (opt level 2 only). Splices the body of small single-block

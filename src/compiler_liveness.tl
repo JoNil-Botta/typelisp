@@ -116,9 +116,12 @@
 (define (compiler-live-set-word-at
   [set : CompilerLiveI64Set]
   [word-index : i64]) : i64
-  (if (and (>= word-index 0) (< word-index (compiler-live-set-word-count set)))
-    (array-ref (compiler-live-set-words set) word-index)
-    0))
+  (let
+    [words : (Array i64) (compiler-live-set-words set)]
+    (if (and (>= word-index 0) (< word-index (array-length words)))
+      (unsafe
+        (ptr-read (ptr-offset (array-data words) word-index)))
+      0)))
 
 (define (compiler-live-set-copy-words-into
   [dst : (Array i64)]

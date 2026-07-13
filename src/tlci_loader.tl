@@ -8,6 +8,7 @@
 ;; macro table, and invoke registered entries through the six-argument ABI.
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
+(import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import tlci_core as tlci)
 (import tlci_pages as pages)
 
@@ -857,6 +858,18 @@
               result-addr))]
         (ResultTlciMacroDispatch.Ok
           (TlciMacroDispatch status (array-ref result-storage 0))))]))
+
+;; Translate native status 2 at the host boundary. The interpreted evaluator
+;; uses the same leading message; the registered macro name supplies the native
+;; symbol context until general source-span metadata is carried in tlci images.
+(define (tlci-loader-macro-status-diagnostic [name : String] [status : i64]) : String
+  (if (= status tlci.tlci-host-callback-status-fuel-exhausted)
+    (str_cat.str-cat
+      (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message)
+      (str_cat.str-cat " in macro " name))
+    (str_cat.str-cat
+      "native comptime macro returned status "
+      (string.int->string status))))
 
 ;; Proof-only host harness: use the registered probe entry as the callback
 ;; dispatcher and select its return status through host context. Real compiler

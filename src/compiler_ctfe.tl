@@ -12,6 +12,7 @@
 (import (hashmap String i64) as ctfe_key_map)
 (import stdlib.array)
 (import "compiler_ast_types.tl")
+(import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import "compiler_diagnostic.tl")
 (import "compiler_float.tl")
 (import stdlib.string)
@@ -1469,6 +1470,9 @@
 
 (define (ctfe-fuel-limit) : i64
   10000)
+
+(define (ctfe-fuel-diagnostic-message) : String
+  (comptime_diagnostics.compiler-comptime-fuel-diagnostic-message))
 
 ;; Build a diagnostic anchored at the (possibly spanned) expression.
 (define (ctfe-diagnostic-at-expr [expr : AstExpr] [message : String]) : CompilerDiagnostic
@@ -3098,8 +3102,7 @@
 (define (compiler-ctfe-eval [expr : AstExpr] [env : CtfeEnv] [fuel : i64]) : ResultCtfe
   (if (<= fuel 0)
     (ResultCtfe.Err
-      (box
-        (ctfe-diagnostic-at-expr expr "compile-time evaluation limit exceeded")))
+      (box (ctfe-diagnostic-at-expr expr (ctfe-fuel-diagnostic-message))))
     (ctfe-eval-node expr env (- fuel 1))))
 
 (define (ctfe-eval-node [expr : AstExpr] [env : CtfeEnv] [fuel : i64]) : ResultCtfe

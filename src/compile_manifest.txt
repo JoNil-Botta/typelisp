@@ -678,11 +678,13 @@ end
 
 decision|src/tlci_core.tl|tlci v1 container and metadata parse/emit helpers (#2651/#2655/#4869): main-less helper module with inline tests, executable smoke coverage, package metadata emission, inspect-command parsing, and the focused code-bearing native macro proof image; general package/stdlib code emission remains staged
 
-decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905): explicit image/host/session contexts, callback status unwind, success-only result commit, dynamic macro data layout, and Linux/Windows x86_64 emission; fixed #4902 templates remain oracle-only while general macro-source lowering and automatic fuel insertion remain staged
+decision|src/compiler_comptime_diagnostics_core.tl|shared interpreted/native comptime fuel diagnostic prefix (#2656): main-less helper module imported by compiler_ctfe and tlci_loader so status-2 native failures retain interpreted message parity before appending the registered macro name
+
+decision|src/compiler_comptime_image_core.tl|mode-gated native-comptime IR/lowering (#4905/#2656): explicit image/host/session contexts, automatic operation-1 fuel probes at semantic calls and loop backedges, callback status unwind, success-only result commit, dynamic macro data layout, and Linux/Windows x86_64 emission; fixed templates remain oracle-only while general package/stdlib macro-source lowering remains staged
 
 decision|src/tlci_pages.tl|tlci loader host page mapping/protection shim (#2671): main-less OS-boundary helper module exercised through inline tests and intended for the future tlci loader
 
-decision|src/tlci_loader.tl|tlci comptime image loader core (#2657/#4869): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup/macro-table ranges, applies load-base fixups, calls tlci_image_entry, and invokes registered macro entries through backend raw C-ABI bridges; the cross-platform tlci_loader_smoke covers registration, lookup, success/result commit, session forwarding, and nonzero callback-status propagation
+decision|src/tlci_loader.tl|tlci comptime image loader core (#2657/#4869/#2656): main-less helper module that maps parsed tlci images through tlci_pages, validates entry/fixup/macro-table ranges, applies load-base fixups, calls tlci_image_entry, invokes registered macro entries through backend raw C-ABI bridges, and maps fuel status 2 to the interpreted diagnostic shape; the cross-platform tlci_loader_smoke covers registration, lookup, success/result commit, session forwarding, automatic fuel checks, and nonzero callback-status propagation
 
 case|selfhost_sym_i64_env|src/sym_i64_env.tl|assembly|skip|direct
 contains|_tl_sym_i64_empty:

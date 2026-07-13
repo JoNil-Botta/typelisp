@@ -1416,8 +1416,12 @@ type is compatible with `T`. The inferred lifetime participates in ordinary
 call lifetime substitution: repeated formal lifetime names must infer the same
 caller lifetime, and fixed lifetime names must match exactly. The synthesized
 borrow ends at its last use under the non-lexical lifetime rule below;
-explicit borrow expressions use the same rule. Macros are checked after
-expansion. Extern C ABI calls do
+explicit borrow expressions use the same rule. An argument that is already an
+`(&mut actual-lifetime T)` place weakens to `(& actual-lifetime T)` through the
+same tracked shared-reborrow rewrite; this does not consume the mutable
+reference, and a returned or stored shared result keeps the reborrow live until
+its last use. There is no inverse `&T` to `&mut T` strengthening. Macros are
+checked after expansion. Extern C ABI calls do
 not participate because safe reference types are not legal C ABI parameter
 values. Arbitrary rvalues and temporaries are rejected because they have no
 stable lexical owner:

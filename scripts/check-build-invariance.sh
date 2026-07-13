@@ -67,6 +67,20 @@ WORKDIR="$ROOT/target/build-invariance"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
+HANDOFF_PATH_FILE=""
+if [ "${TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE+x}" = x ]; then
+    HANDOFF_PATH_FILE=$TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE
+    if [ -z "$HANDOFF_PATH_FILE" ]; then
+        echo "build-invariance opt1 reference path file is empty" >&2
+        exit 2
+    fi
+    case "$HANDOFF_PATH_FILE" in
+        /*) ;;
+        *) HANDOFF_PATH_FILE="$ROOT/$HANDOFF_PATH_FILE" ;;
+    esac
+    rm -f "$HANDOFF_PATH_FILE"
+fi
+
 print_log_pair() {
     label=$1
     stdout=$2
@@ -277,3 +291,17 @@ corpus_seconds=$((corpus_end - corpus_start))
 
 echo "[build-invariance] corpus comparison: ${corpus_seconds}s"
 echo "build-invariance check passed for $case_count case(s)"
+
+if [ -n "$HANDOFF_PATH_FILE" ]; then
+    handoff_reference="$RIGHT_DIR/selfhost_main_opt1.s"
+    if [ ! -s "$handoff_reference" ]; then
+        echo "build-invariance validated opt1 reference is missing or empty: $handoff_reference" >&2
+        exit 1
+    fi
+    handoff_dir=$(dirname "$HANDOFF_PATH_FILE")
+    mkdir -p "$handoff_dir"
+    handoff_tmp="$HANDOFF_PATH_FILE.tmp.$$"
+    printf '%s\n' "$handoff_reference" > "$handoff_tmp"
+    mv "$handoff_tmp" "$HANDOFF_PATH_FILE"
+    echo "[build-invariance] published validated opt1 reference: $handoff_reference"
+fi

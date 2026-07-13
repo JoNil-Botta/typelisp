@@ -123,6 +123,14 @@
         (ptr-read (ptr-offset (array-data words) word-index)))
       0)))
 
+;; Callers must prove `0 <= word-index < compiler-live-set-word-count set`.
+(define (compiler-live-set-word-at-bounded
+  [set : CompilerLiveI64Set]
+  [word-index : i64]) : i64
+  (unsafe
+    (ptr-read
+      (ptr-offset (array-data (compiler-live-set-words set)) word-index))))
+
 (define (compiler-live-set-copy-words-into
   [dst : (Array i64)]
   [src : (Array i64)]
@@ -200,8 +208,8 @@
           (if (not
             (=
               (bit-and
-                (compiler-live-set-word-at a i)
-                (compiler-live-set-word-at b i))
+                (compiler-live-set-word-at-bounded a i)
+                (compiler-live-set-word-at-bounded b i))
               0))
             (set! found true)
             unit)
@@ -238,7 +246,7 @@
       (if (>= word-index capacity)
         set
         (let
-          [old-bits : i64 (compiler-live-set-word-at set word-index)]
+          [old-bits : i64 (compiler-live-set-word-at-bounded set word-index)]
           (if (= (bit-and old-bits mask) 0)
             set
             (let
@@ -363,7 +371,7 @@
             (+
               count
               (compiler-live-set-word-count-bits
-                (compiler-live-set-word-at set index)
+                (compiler-live-set-word-at-bounded set index)
                 0)))
           (set! index (+ index 1))))
       count)))
@@ -393,7 +401,7 @@
           (set!
             score
             (compiler-live-set-score-word-desc
-              (compiler-live-set-word-at set index)
+              (compiler-live-set-word-at-bounded set index)
               (* index (compiler-live-set-word-bits))
               (- (compiler-live-set-word-bits) 1)
               score))

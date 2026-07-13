@@ -72,10 +72,6 @@ has_inline_test_item() {
     grep -Eq '^[[:space:]]*\(test([[:space:]]|\)|$)' "$1"
 }
 
-safe_name() {
-    printf '%s' "$1" | sed 's#[/\\:]#_#g'
-}
-
 show_streams() {
     _stdout=$1
     _stderr=$2
@@ -102,87 +98,63 @@ if [ ! -s "$DISCOVERED" ]; then
 fi
 
 discovered_file_count=$(wc -l < "$DISCOVERED" | tr -d ' ')
-batch_check_stdout="$WORKDIR/check.batch.stdout"
-batch_check_stderr="$WORKDIR/check.batch.stderr"
-check_counts="$WORKDIR/check.counts.txt"
+batch_run_stdout="$WORKDIR/run.batch.stdout"
+batch_run_stderr="$WORKDIR/run.batch.stderr"
+run_counts="$WORKDIR/run.counts.txt"
+run_paths="$WORKDIR/run.paths.txt"
 
-echo "[inline-tests] check ($discovered_file_count file(s), one batch process)"
-# #2609: `test --check --batch` scopes each entry in its own compiler arena and
-# resets per-file compiler state between entries, matching compile --batch. Keep
-# the verifier batched so CI exercises that bounded-memory path.
-if ci_timing_run all batch-check \
-    "$COMPILER" test --check --batch "$DISCOVERED" --target "$HOST_TARGET" \
+echo "[inline-tests] run ($discovered_file_count file(s), one isolated batch process)"
+# #4820: execution batches keep every source inside its own destroyable scratch
+# arena with a full driver reset, preserving the old one-process-per-file
+# semantics without paying process/bootstrap overhead for every source.
+if ci_timing_run all batch-run \
+    "$COMPILER" test --batch "$DISCOVERED" --target "$HOST_TARGET" \
     --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-    > "$batch_check_stdout" 2> "$batch_check_stderr"; then
-    batch_check_status=0
+    > "$batch_run_stdout" 2> "$batch_run_stderr"; then
+    batch_run_status=0
 else
-    batch_check_status=$?
+    batch_run_status=$?
 fi
-if [ "$batch_check_status" -ne 0 ]; then
-    echo "inline test batch typecheck failed" >&2
-    show_streams "$batch_check_stdout" "$batch_check_stderr"
+if [ "$batch_run_status" -ne 0 ]; then
+    echo "inline test batch execution failed" >&2
+    show_streams "$batch_run_stdout" "$batch_run_stderr"
     exit 1
 fi
 
-sed -n 's/^TypeLisp test typecheck passed: \([0-9][0-9]*\) test(s)$/\1/p' "$batch_check_stdout" \
-    | tr -d '\r' > "$check_counts"
-check_count_lines=$(wc -l < "$check_counts" | tr -d ' ')
-if [ "$check_count_lines" -ne "$discovered_file_count" ]; then
-    echo "inline test batch typecheck reported $check_count_lines count line(s), expected $discovered_file_count" >&2
-    show_streams "$batch_check_stdout" "$batch_check_stderr"
+sed -n 's/^TypeLisp test file: .* (\([0-9][0-9]*\) test(s))$/\1/p' "$batch_run_stdout" \
+    | tr -d '\r' > "$run_counts"
+sed -n 's/^TypeLisp test file: \(.*\) ([0-9][0-9]* test(s))$/\1/p' "$batch_run_stdout" \
+    | tr -d '\r' > "$run_paths"
+run_count_lines=$(wc -l < "$run_counts" | tr -d ' ')
+if [ "$run_count_lines" -ne "$discovered_file_count" ]; then
+    echo "inline test execution batch reported $run_count_lines count line(s), expected $discovered_file_count" >&2
+    show_streams "$batch_run_stdout" "$batch_run_stderr"
+    exit 1
+fi
+if ! cmp -s "$DISCOVERED" "$run_paths"; then
+    echo "inline test execution batch did not preserve discovered source order" >&2
+    show_streams "$batch_run_stdout" "$batch_run_stderr"
+    exit 1
+fi
+if grep -q '^0$' "$run_counts"; then
+    echo "inline test execution batch reported zero tests for a discovered source" >&2
+    show_streams "$batch_run_stdout" "$batch_run_stderr"
     exit 1
 fi
 
-file_count=0
-test_count=0
-exec 3< "$check_counts"
-while IFS= read -r source; do
-    [ -n "$source" ] || continue
-    file_count=$((file_count + 1))
-    case_name=$(safe_name "$source")
-    run_stdout="$WORKDIR/$case_name.run.stdout"
-    run_stderr="$WORKDIR/$case_name.run.stderr"
+success_count=$(grep -c '^TypeLisp tests passed: ' "$batch_run_stderr" || true)
+if [ "$success_count" -ne "$discovered_file_count" ]; then
+    echo "inline test execution batch reported $success_count success summary line(s), expected $discovered_file_count" >&2
+    show_streams "$batch_run_stdout" "$batch_run_stderr"
+    exit 1
+fi
 
-    if ! IFS= read -r case_tests <&3; then
-        echo "inline test batch typecheck did not report a count for $source" >&2
-        show_streams "$batch_check_stdout" "$batch_check_stderr"
-        exit 1
-    fi
-    if [ -z "$case_tests" ]; then
-        echo "inline test typecheck for $source did not report a test count" >&2
-        show_streams "$batch_check_stdout" "$batch_check_stderr"
-        exit 1
-    fi
-    if [ "$case_tests" -eq 0 ]; then
-        echo "inline test discovery found $source, but typelisp test reported zero tests" >&2
-        show_streams "$batch_check_stdout" "$batch_check_stderr"
-        exit 1
-    fi
+test_count=$(awk '{ total += $1 } END { print total + 0 }' "$run_counts")
+expected_summary="TypeLisp test batch passed: $test_count test(s) in $discovered_file_count file(s)"
+if ! grep -qF "$expected_summary" "$batch_run_stdout"; then
+    echo "inline test execution batch did not report the expected aggregate" >&2
+    show_streams "$batch_run_stdout" "$batch_run_stderr"
+    exit 1
+fi
 
-    echo "[inline-tests] run $source ($case_tests test(s))"
-    if ci_timing_run "$source" run \
-        "$COMPILER" test "$source" --target "$HOST_TARGET" \
-        --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-        > "$run_stdout" 2> "$run_stderr"; then
-        run_status=0
-    else
-        run_status=$?
-    fi
-    if [ "$run_status" -ne 0 ]; then
-        echo "inline test execution failed for $source" >&2
-        show_streams "$run_stdout" "$run_stderr"
-        exit 1
-    fi
-
-    if ! ci_timing_run "$source" assert \
-        grep -q '^TypeLisp tests passed: ' "$run_stderr"; then
-        echo "inline test execution for $source did not report a success summary" >&2
-        show_streams "$run_stdout" "$run_stderr"
-        exit 1
-    fi
-
-    test_count=$((test_count + case_tests))
-done < "$DISCOVERED"
-exec 3<&-
-
-echo "inline test verification passed for $test_count test(s) in $file_count file(s)"
+echo "inline test verification passed for $test_count test(s) in $discovered_file_count file(s)"

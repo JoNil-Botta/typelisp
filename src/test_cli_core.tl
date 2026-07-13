@@ -183,24 +183,13 @@
           "test: cannot combine --batch with --manifest-path")
         (if has-source
           (ResultTestConfig.Err "test: cannot combine input paths with --batch")
-          (match test-mode
-            [(TestMode.Run)
-              (ResultTestConfig.Err "test: --batch requires --check")]
-            [(TestMode.Check)
-              (match (tltest-batch-paths list-path)
-                [(ResultTestBatchPaths.Ok paths)
-                  (if (cli_svec.is-empty? (& paths))
-                    (ResultTestConfig.Err "test: --batch list is empty")
-                    (ResultTestConfig.Ok
-                      (TestConfig.Batch
-                        paths
-                        target
-                        mode
-                        roots
-                        opt-level
-                        test-mode)))]
-                [(ResultTestBatchPaths.Err message)
-                  (ResultTestConfig.Err message)])])))]
+          (match (tltest-batch-paths list-path)
+            [(ResultTestBatchPaths.Ok paths)
+              (if (cli_svec.is-empty? (& paths))
+                (ResultTestConfig.Err "test: --batch list is empty")
+                (ResultTestConfig.Ok
+                  (TestConfig.Batch paths target mode roots opt-level test-mode)))]
+            [(ResultTestBatchPaths.Err message) (ResultTestConfig.Err message)])))]
     [(TestMaybeString.No)
       (if tltest-prefix-cache-stats
         (ResultTestConfig.Err "test: --prefix-cache-stats requires --batch")
@@ -4353,9 +4342,61 @@
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         (ResultTestFileCheck.Err 1))]))
 
+(define (tltest-run-file-loaded
+  [source : String]
+  [target : String]
+  [roots : cli_svec.Vec]
+  [opt-level : i64]
+  [decls : AstDeclList]
+  [paths : AstDeclPathList]) : ResultTestFileCheck
+  (match (tltest-build-harness source decls paths)
+    [(InlineHarness.Harness program harness-paths count)
+      (begin
+        (io.print-string (tltest-package-source-line source count))
+        (let
+          [status : i64
+            (if (= count 0)
+              (tltest-no-tests-run source target "scalar" roots opt-level)
+              (tltest-run-direct
+                source
+                program
+                harness-paths
+                roots
+                target
+                opt-level))]
+          (if (= status 0)
+            (ResultTestFileCheck.Ok count)
+            (ResultTestFileCheck.Err status))))]))
+
+(define (tltest-run-file-source
+  [source : String]
+  [target : String]
+  [roots : cli_svec.Vec]
+  [opt-level : i64]
+  [backend-target : CompilerBackendTarget]) : ResultTestFileCheck
+  (match (compiler-driver-load-file-with-runtime
+    source
+    roots
+    (tltest-cfgs backend-target))
+    [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
+      (tltest-run-file-loaded source target roots opt-level decls paths)]
+    [(ResultCompilerLoadWithPaths.Err diag)
+      (begin
+        (io.print-error (compiler-diagnostic-render (box-get diag)))
+        (ResultTestFileCheck.Err 1))]))
+
 (define (tltest-batch-summary-line [file-count : i64] [test-count : i64]) : String
   (string.append
     "TypeLisp test batch typecheck passed: "
+    (string.append
+      (string.int->string test-count)
+      (string.append
+        " test(s) in "
+        (string.append (string.int->string file-count) " file(s)\n")))))
+
+(define (tltest-batch-run-summary-line [file-count : i64] [test-count : i64]) : String
+  (string.append
+    "TypeLisp test batch passed: "
     (string.append
       (string.int->string test-count)
       (string.append
@@ -4452,6 +4493,98 @@
               unit)
             status))])))
 
+(define (tltest-run-batch-run-path
+  [source : String]
+  [target : String]
+  [roots : cli_svec.Vec]
+  [opt-level : i64]
+  [backend-target : CompilerBackendTarget]) : i64
+  ;; Keep every entry's loader pools, harness AST, lowered IR, backend scratch,
+  ;; and captured child output inside one destroyable arena. Only the scalar
+  ;; count crosses this boundary; the next entry starts with a full file reset.
+  (with-scratch
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (tltest-run-file-source
+        source
+        target
+        roots
+        opt-level
+        backend-target)
+        [(ResultTestFileCheck.Err status) (- 0 status)]
+        [(ResultTestFileCheck.Ok count) count]))))
+
+(define (tltest-run-batch-run-paths
+  [paths : cli_svec.Vec]
+  [target : String]
+  [roots : cli_svec.Vec]
+  [opt-level : i64]
+  [backend-target : CompilerBackendTarget]) : i64
+  (let
+    [count : i64 (cli_svec.len (& paths))]
+    [cursor : i64 0]
+    [files : i64 0]
+    [tests : i64 0]
+    [status : i64 0]
+    (begin
+      (while (and (= status 0) (< cursor count))
+        (let
+          [source : String (cli_svec.get (& paths) cursor "")]
+          [entry-result : i64
+            (tltest-run-batch-run-path
+              source
+              target
+              roots
+              opt-level
+              backend-target)]
+          (if (< entry-result 0)
+            (begin
+              (io.print-error
+                (string.append "\ntest: batch source failed: " source))
+              (io.print-error "\n")
+              (set! status (- 0 entry-result)))
+            (begin
+              (set! files (+ files 1))
+              (set! tests (+ tests entry-result))
+              (set! cursor (+ cursor 1))))))
+      (if (= status 0)
+        (begin
+          (io.print-string (tltest-batch-run-summary-line files tests))
+          0)
+        status))))
+
+(define (tltest-run-batch-run
+  [paths : cli_svec.Vec]
+  [target : String]
+  [roots : cli_svec.Vec]
+  [opt-level : i64]) : i64
+  (begin
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
+    (match (source-tool-target target)
+      [(ResultSourceToolTarget.Err _)
+        (begin
+          (io.print-error (tltest-unknown-target target))
+          1)]
+      [(ResultSourceToolTarget.Ok backend-target)
+        (begin
+          (if tltest-prefix-cache-stats
+            (tc-prefix-snapshot-cache-clear!)
+            unit)
+          (let
+            [status : i64
+              (tltest-run-batch-run-paths
+                paths
+                target
+                roots
+                opt-level
+                backend-target)]
+            (begin
+              (if tltest-prefix-cache-stats
+                (tc-prefix-snapshot-cache-print-stats "test-run-batch")
+                unit)
+              status)))])))
+
 (define (tltest-run-config [config : TestConfig]) : i64
   (match config
     [(TestConfig.File source target mode roots opt-level test-mode)
@@ -4494,8 +4627,10 @@
               (begin
                 (io.print-error (compiler-diagnostic-render (box-get diag)))
                 1)])])]
-    [(TestConfig.Batch paths target _ roots _ _)
-      (tltest-run-batch-check paths target roots)]
+    [(TestConfig.Batch paths target _ roots opt-level test-mode)
+      (match test-mode
+        [(TestMode.Check) (tltest-run-batch-check paths target roots)]
+        [(TestMode.Run) (tltest-run-batch-run paths target roots opt-level)])]
     [(TestConfig.Package
         manifest-path
         has-manifest

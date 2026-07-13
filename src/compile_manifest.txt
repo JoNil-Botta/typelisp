@@ -273,6 +273,7 @@ contains|_tl_tltest_run_config:
 contains|_tl_tltest_build_harness:
 contains|_tl_tltest_run_direct:
 contains|_tl_tltest_run_batch_check:
+contains|_tl_tltest_run_batch_run:
 contains|_tl_tltest_run_package:
 contains|_tl_tltest_package_run_sources:
 contains|_tl_tltest_run_harness_in_temp:
@@ -283,7 +284,7 @@ contains|_tl_optimize_program_with_spans_and_level:
 contains|_tl_opt_inline_program_functions_with_spans:
 contains|TypeLisp package tests passed:
 contains|TypeLisp test batch typecheck passed:
-contains|test: --batch requires --check
+contains|TypeLisp test batch passed:
 contains|test: --opt-level requires a value
 contains|test: invalid --opt-level
 contains|typelisp test: test executable exited with exit status:

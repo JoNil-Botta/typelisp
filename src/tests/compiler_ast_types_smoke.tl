@@ -776,6 +776,62 @@
       (compiler-ast-decl-list-module-name? right 0 "right")
       (compiler-ast-decl-list-module-name? right 1 "tail"))))
 
+(define (compiler-ast-clause-list-tail-smoke?) : bool
+  (let
+    [clauses : ast.AstExprClauseList (ast.ast-expr-clause-list-new)]
+    [bindings : ast.AstExprBindingClauseList
+      (ast.ast-expr-binding-clause-list-new)]
+    (begin
+      (ast.ast-expr-clause-list-push (&mut clauses) (ast.ast-expr-clause 1 2))
+      (ast.ast-expr-clause-list-push (&mut clauses) (ast.ast-expr-clause 3 4))
+      (ast.ast-expr-clause-list-push (&mut clauses) (ast.ast-expr-clause 5 6))
+      (ast.ast-expr-binding-clause-list-push
+        (&mut bindings)
+        (ast.ast-expr-binding-clause-id
+          10
+          false
+          0
+          100
+          (ast.ast-source-span 1 1 1 2)))
+      (ast.ast-expr-binding-clause-list-push
+        (&mut bindings)
+        (ast.ast-expr-binding-clause-id
+          11
+          false
+          0
+          101
+          (ast.ast-source-span 2 1 2 2)))
+      (ast.ast-expr-binding-clause-list-push
+        (&mut bindings)
+        (ast.ast-expr-binding-clause-id
+          12
+          false
+          0
+          102
+          (ast.ast-source-span 3 1 3 2)))
+      (let
+        [clause-tail : ast.AstExprClauseList
+          (ast.ast-expr-clause-list-tail clauses)]
+        [binding-tail : ast.AstExprBindingClauseList
+          (ast.ast-expr-binding-clause-list-tail bindings)]
+        [first-clause : ast.AstExprClause
+          (ast.ast-expr-clause-list-get
+            (& clause-tail)
+            0
+            (ast.ast-expr-clause-fallback))]
+        [first-binding : ast.AstExprBindingClause
+          (ast.ast-expr-binding-clause-list-get
+            (& binding-tail)
+            0
+            (ast.ast-expr-binding-clause-fallback))]
+        (and
+          (= (struct-get (& clause-tail) len) 2)
+          (= (struct-get first-clause first) 3)
+          (= (struct-get first-clause second) 4)
+          (= (struct-get (& binding-tail) len) 2)
+          (= (struct-get first-binding name) 11)
+          (= (struct-get first-binding init) 101))))))
+
 ;; Rewriters select an owned AST-pool context while the process-global active
 ;; pool may hold an unrelated compilation. `ast-node-set!` must update that
 ;; selected context just like `ast-node-get` and `ast-node-push` do.
@@ -803,4 +859,5 @@
     (unless (compiler-ast-program-compaction-string-payloads-smoke?) (return 8))
     (unless (compiler-ast-compat-context-set-smoke?) (return 9))
     (unless (compiler-ast-context-clone-types-only-smoke?) (return 10))
+    (unless (compiler-ast-clause-list-tail-smoke?) (return 11))
     42))

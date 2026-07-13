@@ -1934,16 +1934,16 @@
 (define (parse-ast-func-param-type
   [dispatch : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]
-  [s : Sexpr]) : ResultAstType
+  [s : reader.Sexpr]) : ResultAstType
   (match s
-    [(Sexpr.Cons key-node tail)
+    [(reader.Sexpr.Cons key-node tail)
       (match (box-get key-node)
-        [(Sexpr.Sym key)
+        [(reader.Sexpr.Sym key)
           (if (string.eq key ":consume")
             (match (box-get tail)
-              [(Sexpr.Cons ty-node end)
+              [(reader.Sexpr.Cons ty-node end)
                 (match (box-get end)
-                  [(Sexpr.Nil)
+                  [(reader.Sexpr.Nil)
                     (match (parse-ast-type dispatch pools (box-get ty-node))
                       [(ResultAstType.Ok ty)
                         (if (parse-ast-consuming-param-type-allowed? ty)
@@ -2293,19 +2293,19 @@
 (define (parse-ast-runtime-param-result
   [name : String]
   [ty : AstType]
-  [end : Sexpr]) : ResultAstParam
+  [end : reader.Sexpr]) : ResultAstParam
   (match end
-    [(Sexpr.Nil) (ResultAstParam.Ok (ast-param name ty false))]
-    [(Sexpr.Cons metadata-node after-metadata)
+    [(reader.Sexpr.Nil) (ResultAstParam.Ok (ast-param name ty false))]
+    [(reader.Sexpr.Cons metadata-node after-metadata)
       (match (box-get after-metadata)
-        [(Sexpr.Nil)
+        [(reader.Sexpr.Nil)
           (match (box-get metadata-node)
-            [(Sexpr.Cons key-node metadata-tail)
+            [(reader.Sexpr.Cons key-node metadata-tail)
               (match (box-get key-node)
-                [(Sexpr.Sym key)
+                [(reader.Sexpr.Sym key)
                   (if (string.eq key ":consume")
                     (match (box-get metadata-tail)
-                      [(Sexpr.Nil)
+                      [(reader.Sexpr.Nil)
                         (if (parse-ast-consuming-param-type-allowed? ty)
                           (ResultAstParam.Ok
                             (ast-param-with-consume name ty false true))
@@ -2323,19 +2323,19 @@
         [_ (ResultAstParam.Err "parse: duplicate parameter metadata")])]
     [_ (ResultAstParam.Err "parse: malformed parameter")]))
 
-(define (parse-ast-single-consume-param-metadata? [end : Sexpr]) : bool
+(define (parse-ast-single-consume-param-metadata? [end : reader.Sexpr]) : bool
   (match end
-    [(Sexpr.Cons metadata-node after-metadata)
+    [(reader.Sexpr.Cons metadata-node after-metadata)
       (match (box-get after-metadata)
-        [(Sexpr.Nil)
+        [(reader.Sexpr.Nil)
           (match (box-get metadata-node)
-            [(Sexpr.Cons key-node metadata-tail)
+            [(reader.Sexpr.Cons key-node metadata-tail)
               (match (box-get key-node)
-                [(Sexpr.Sym key)
+                [(reader.Sexpr.Sym key)
                   (and
                     (string.eq key ":consume")
                     (match (box-get metadata-tail)
-                      [(Sexpr.Nil) true]
+                      [(reader.Sexpr.Nil) true]
                       [_ false]))]
                 [_ false])]
             [_ false])]

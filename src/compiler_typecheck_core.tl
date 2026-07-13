@@ -13433,13 +13433,16 @@
     [_ (ResultTcLifetimeList.Err "typecheck: nominal type not found")]))
 
 (define (tc-nominal-lifetimes [ctx : TcContext] [name : String]) : ResultTcLifetimeList
+  (tc-nominal-lifetimes-id ctx (intern name)))
+
+(define (tc-nominal-lifetimes-id [ctx : TcContext] [name-id : i64]) : ResultTcLifetimeList
   (match ctx
     [(TcContext _ symbols _ _ _)
       (let
         [handle : i64
-          (compiler-symbols-lookup-type-or
+          (compiler-symbols-lookup-type-id-or
             symbols
-            name
+            name-id
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-symbols-decl-at-index
@@ -15722,9 +15725,9 @@
           [(ResultTcType.Ok receiver-ty)
             (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
               [(AstType.Struct _)
-                (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
+                (tc-struct-get-result-type-id ctx receiver-ty field)]
               [(AstType.StructArgs _ _)
-                (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
+                (tc-struct-get-result-type-id ctx receiver-ty field)]
               [_
                 (ResultTcType.Err
                   "typecheck: ptr-addr-of requires a local/parameter, struct-get, or fixed-array array-ref place")])]
@@ -28179,10 +28182,10 @@
                   [(ResultTcSpmdExprInfo.Ok value-info)
                     (match value-info
                       [(TcSpmdExprInfo _ value-class value-env)
-                        (match (tc-struct-set-field-type
+                        (match (tc-struct-set-field-type-id
                           ctx
                           receiver-ty
-                          (intern-str field))
+                          field)
                           [(ResultTcType.Ok field-ty)
                             (let
                               [write-class : TcSpmdClass
@@ -32692,12 +32695,18 @@
   [ctx : TcContext]
   [struct-name : String]
   [field : String]) : ResultTcType
+  (tc-struct-field-type-id ctx (intern struct-name) (intern field)))
+
+(define (tc-struct-field-type-id
+  [ctx : TcContext]
+  [struct-name-id : i64]
+  [field-id : i64]) : ResultTcType
   (let
     [handle : i64
-      (compiler-registries-lookup-struct-field-or
+      (compiler-registries-lookup-struct-field-id-or
         (tc-context-registries ctx)
-        struct-name
-        field
+        struct-name-id
+        field-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (let
@@ -32714,13 +32723,21 @@
       (ResultTcType.Err
         (string.append
           "typecheck: unknown struct field "
-          (compiler-struct-field-key struct-name field))))))
+          (compiler-struct-field-key
+            (intern-str struct-name-id)
+            (intern-str field-id)))))))
 
 (define (tc-lifetime-subst-from-nominal-args
   [ctx : TcContext]
   [name : String]
   [args : AstLifetimeList]) : ResultTcLifetimeSubst
-  (match (tc-nominal-lifetimes ctx name)
+  (tc-lifetime-subst-from-nominal-args-id ctx (intern name) args))
+
+(define (tc-lifetime-subst-from-nominal-args-id
+  [ctx : TcContext]
+  [name-id : i64]
+  [args : AstLifetimeList]) : ResultTcLifetimeSubst
+  (match (tc-nominal-lifetimes-id ctx name-id)
     [(ResultTcLifetimeList.Ok params)
       (tc-infer-lifetime-list params TcLifetimeSubst.Nil params args)]
     [(ResultTcLifetimeList.Err message) (ResultTcLifetimeSubst.Err message)]))
@@ -32730,12 +32747,23 @@
   [struct-name : String]
   [lifetimes : AstLifetimeList]
   [field : String]) : ResultTcType
+  (tc-struct-field-type-with-args-id
+    ctx
+    (intern struct-name)
+    lifetimes
+    (intern field)))
+
+(define (tc-struct-field-type-with-args-id
+  [ctx : TcContext]
+  [struct-name-id : i64]
+  [lifetimes : AstLifetimeList]
+  [field-id : i64]) : ResultTcType
   (let
     [handle : i64
-      (compiler-registries-lookup-struct-field-or
+      (compiler-registries-lookup-struct-field-id-or
         (tc-context-registries ctx)
-        struct-name
-        field
+        struct-name-id
+        field-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (let
@@ -32747,9 +32775,9 @@
           (tc-context-program ctx)
           handle)
           [(ResultAstType.Ok ty)
-            (match (tc-lifetime-subst-from-nominal-args
+            (match (tc-lifetime-subst-from-nominal-args-id
               field-ctx
-              struct-name
+              struct-name-id
               lifetimes)
               [(ResultTcLifetimeSubst.Ok subst)
                 (ResultTcType.Ok
@@ -32759,7 +32787,9 @@
       (ResultTcType.Err
         (string.append
           "typecheck: unknown struct field "
-          (compiler-struct-field-key struct-name field))))))
+          (compiler-struct-field-key
+            (intern-str struct-name-id)
+            (intern-str field-id)))))))
 
 (define (tc-comptime-unknown-field [owner : String] [field : String]) : ResultTcType
   (ResultTcType.Err
@@ -32801,62 +32831,78 @@
   [ctx : TcContext]
   [receiver-ty : AstType]
   [field : String]) : ResultTcType
+  (tc-struct-get-result-type-id ctx receiver-ty (intern field)))
+
+(define (tc-struct-get-result-type-id
+  [ctx : TcContext]
+  [receiver-ty : AstType]
+  [field-id : i64]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
     [(AstType.Struct struct-name)
-      (match (tc-struct-field-type ctx (intern-str struct-name) field)
+      (match (tc-struct-field-type-id ctx struct-name field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok
             (tc-project-from-region-container receiver-ty field-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstType.StructArgs struct-name lifetimes)
-      (match (tc-struct-field-type-with-args
+      (match (tc-struct-field-type-with-args-id
         ctx
-        (intern-str struct-name)
+        struct-name
         (box-get lifetimes)
-        field)
+        field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok
             (tc-project-from-region-container receiver-ty field-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstType.Ref lifetime referent-ty)
-      (match (tc-struct-get-result-type ctx (ty-node-get referent-ty) field)
+      (match (tc-struct-get-result-type-id
+        ctx
+        (ty-node-get referent-ty)
+        field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstType.MutRef lifetime referent-ty)
-      (match (tc-struct-get-result-type ctx (ty-node-get referent-ty) field)
+      (match (tc-struct-get-result-type-id
+        ctx
+        (ty-node-get referent-ty)
+        field-id)
         [(ResultTcType.Ok field-ty)
           (ResultTcType.Ok (tc-tag-region lifetime field-ty))]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstType.ExprList)
-      (tc-comptime-sequence-field-type "ExprList" (AstType.Expr) field)]
+      (tc-comptime-sequence-field-type
+        "ExprList"
+        (AstType.Expr)
+        (intern-str field-id))]
     [(AstType.Var name)
       (cond
         [(= name (intern "ExprClause"))
-          (tc-comptime-expr-clause-field-type field)]
+          (tc-comptime-expr-clause-field-type (intern-str field-id))]
         [(= name (intern "ExprClauseList"))
           (tc-comptime-sequence-field-type
             "ExprClauseList"
             (tc-macro-expr-clause-type)
-            field)]
+            (intern-str field-id))]
         [(= name (intern "ExprBindingClause"))
-          (tc-comptime-expr-binding-clause-field-type field)]
+          (tc-comptime-expr-binding-clause-field-type (intern-str field-id))]
         [(= name (intern "ExprBindingClauseList"))
           (tc-comptime-sequence-field-type
             "ExprBindingClauseList"
             (tc-macro-expr-binding-clause-type)
-            field)]
+            (intern-str field-id))]
         [(= name (intern "PatternList"))
           (tc-comptime-sequence-field-type
             "PatternList"
             (tc-macro-pattern-type)
-            field)]
-        [(= name (intern "MatchArm")) (tc-comptime-match-arm-field-type field)]
+            (intern-str field-id))]
+        [(= name (intern "MatchArm"))
+          (tc-comptime-match-arm-field-type (intern-str field-id))]
         [(= name (intern "MatchArmList"))
           (tc-comptime-sequence-field-type
             "MatchArmList"
             (tc-macro-match-arm-type)
-            field)]
+            (intern-str field-id))]
         [else (ResultTcType.Err "typecheck: struct-get requires struct")])]
     [_ (ResultTcType.Err "typecheck: struct-get requires struct")]))
 
@@ -32923,25 +32969,25 @@
         (tc-borrow-referent-type (ty-node-get referent-ty)))]
     [_ (TcBorrowPlace fallback-lifetime (tc-borrow-referent-type projected-ty))]))
 
-(define (tc-borrow-place-struct-field
+(define (tc-borrow-place-struct-field-id
   [ctx : TcContext]
   [place : TcBorrowPlace]
-  [field : String]) : ResultTcBorrowPlace
+  [field-id : i64]) : ResultTcBorrowPlace
   (match place
     [(TcBorrowPlace lifetime receiver-ty)
       (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
         [(AstType.Struct struct-name)
-          (match (tc-struct-field-type ctx (intern-str struct-name) field)
+          (match (tc-struct-field-type-id ctx struct-name field-id)
             [(ResultTcType.Ok field-ty)
               (ResultTcBorrowPlace.Ok
                 (tc-borrow-place-projected-type lifetime field-ty))]
             [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])]
         [(AstType.StructArgs struct-name lifetimes)
-          (match (tc-struct-field-type-with-args
+          (match (tc-struct-field-type-with-args-id
             ctx
-            (intern-str struct-name)
+            struct-name
             (box-get lifetimes)
-            field)
+            field-id)
             [(ResultTcType.Ok field-ty)
               (ResultTcBorrowPlace.Ok
                 (tc-borrow-place-projected-type lifetime field-ty))]
@@ -33018,7 +33064,7 @@
         [receiver : AstExpr (ast-node-get receiver-box)]
         (match (tc-borrow-place ctx env receiver)
           [(ResultTcBorrowPlace.Ok place)
-            (tc-borrow-place-struct-field ctx place (intern-str field))]
+            (tc-borrow-place-struct-field-id ctx place field)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
     [(AstExpr.TupleRef tuple-box index)
       (let
@@ -36666,26 +36712,34 @@
   [ctx : TcContext]
   [receiver-ty : AstType]
   [field : String]) : ResultTcType
+  (tc-struct-set-field-type-id ctx receiver-ty (intern field)))
+
+(define (tc-struct-set-field-type-id
+  [ctx : TcContext]
+  [receiver-ty : AstType]
+  [field-id : i64]) : ResultTcType
   (match (tc-type-strip-region (tc-resolve-type ctx receiver-ty))
-    [(AstType.Struct _) (tc-struct-get-result-type ctx receiver-ty field)]
-    [(AstType.StructArgs _ _) (tc-struct-get-result-type ctx receiver-ty field)]
-    [(AstType.MutRef _ _) (tc-struct-get-result-type ctx receiver-ty field)]
+    [(AstType.Struct _) (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+    [(AstType.StructArgs _ _)
+      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
+    [(AstType.MutRef _ _)
+      (tc-struct-get-result-type-id ctx receiver-ty field-id)]
     [(AstType.Ref _ _)
       (ResultTcType.Err
         "typecheck: set! struct field requires mutable struct access")]
     [_ (ResultTcType.Err "typecheck: set! struct field requires struct")]))
 
-(define (tc-struct-field-mutation-value
+(define (tc-struct-field-mutation-value-id
   [ctx : TcContext]
   [env : TcTypeEnv]
   [receiver : AstExpr]
-  [field : String]
+  [field-id : i64]
   [value : AstExpr]) : ResultTcType
   (match (tc-store-place-lifetime ctx env receiver)
     [(ResultTcString.Ok _)
       (match (tc-expr ctx env receiver)
         [(ResultTcType.Ok receiver-ty)
-          (match (tc-struct-set-field-type ctx receiver-ty field)
+          (match (tc-struct-set-field-type-id ctx receiver-ty field-id)
             [(ResultTcType.Ok field-ty)
               (match (tc-expr-with-expected-or-actual ctx env value field-ty)
                 [(ResultTcType.Ok value-ty)
@@ -37437,18 +37491,13 @@
     [(AstExpr.StructGet receiver-box field)
       (match (tc-expr-id ctx env receiver-box)
         [(ResultTcType.Ok receiver-ty)
-          (tc-struct-get-result-type ctx receiver-ty (intern-str field))]
+          (tc-struct-get-result-type-id ctx receiver-ty field)]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.StructSet receiver-box field value-box)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
         [value : AstExpr (ast-node-get value-box)]
-        (tc-struct-field-mutation-value
-          ctx
-          env
-          receiver
-          (intern-str field)
-          value))]
+        (tc-struct-field-mutation-value-id ctx env receiver field value))]
     [(AstExpr.WithRegion region body)
       (tc-with-region-expr-scoped ctx env region body)]
     [(AstExpr.WithEscape scratch-box body)

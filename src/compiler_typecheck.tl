@@ -1085,16 +1085,20 @@
 (import left)
 (import right)
 (define (main) : i64
-  (+
-    (left.get)
+  (let
+    [left-point : left.Point (left.Point 5)]
+    [right-point : right.Point (right.Point 7)]
     (+
-      (right.get)
+      (left.get)
       (+
-        (let ([p : right.Point (right.Point 7)])
-          (struct-get p x))
-        (match (right.Maybe.Some 1)
-          [(right.Maybe.Some v) v]
-          [right.Maybe.None 0])))))")
+        (right.get)
+        (+
+          (struct-get left-point x)
+          (+
+            (struct-get right-point x)
+            (match (right.Maybe.Some 1)
+              [(right.Maybe.Some v) v]
+              [right.Maybe.None 0])))))))")
 
 (define (compiler-typecheck-module-unqualified-import-source) : String
   "(module left)

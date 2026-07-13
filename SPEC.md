@@ -6082,7 +6082,7 @@ in documentation passes.
 | AVX2 lowering for varying `while`/`match`, and SIMD early exits | Deferred; scalar reference lowering is complete and unsupported SIMD backend modes report explicit diagnostics. |
 | Vectorized `spmd-scan`, vectorized shuffles, vectorized enum-payload gather/match | Deferred. |
 | Public vector/mask/varying source value types | Deferred by design. |
-| Out-of-line ABI for non-inlined varying helper calls | Designed; not implemented. |
+| Out-of-line ABI for non-inlined varying helper calls | Frontend analysis and private scalar/AVX-512 call IR lowering are implemented; native backend emission is deferred under #3767. |
 | Reference captures in escaping closures; mutation of captured names | Rejected by design: closure captures are by-value snapshots. |
 | Aggregate `ptr-addr-of` implementation | Designed in section 5.20: whole locals/parameters, struct-field paths, and fixed-array element paths are the v1 addressable places. Implementation is split across #4463 and #4464. |
 | Cleanup-owning enums | Reserved. |

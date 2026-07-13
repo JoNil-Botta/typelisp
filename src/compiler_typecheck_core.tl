@@ -25025,7 +25025,7 @@
   (set! tc-spmd-inline-helper-stack (tc-spmd-inline-helper-empty-stack)))
 
 (define (tc-spmd-inline-helper-recursive-message) : String
-  "typecheck: recursive SPMD inline helper call is not supported")
+  "typecheck: recursive SPMD helper call is not supported")
 
 (define (tc-spmd-inline-helper-resolve-name
   [ctx : TcContext]
@@ -25171,7 +25171,7 @@
                         (not (tc-spmd-varying-value-type-supported? bound-ty)))
                         (ResultTcSpmdInlineCallState.Err
                           (string.append
-                            "typecheck: SPMD inline helper varying parameter type is not supported: "
+                            "typecheck: SPMD helper varying parameter type is not supported: "
                             (tc-type-render (tc-type-strip-region bound-ty))))
                         (tc-spmd-inline-helper-bind-args-at
                           ctx

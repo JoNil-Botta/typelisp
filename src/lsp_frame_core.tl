@@ -5536,64 +5536,67 @@
               (match (lsp-json-string-field document "uri")
                 [(LspJsonText.Ok uri)
                   (match (lsp-file-uri-to-path uri)
-                    [(LspUriPath.Ok path)
-                      (match (fs.try-read-dir-vec (& path))
-                        [(fs.OkIoStringVector entries)
-                          (let
-                            [n : i64 (fs.string-vector-len (& entries))]
-                            [i : i64 0]
-                            [results : json.JsonList json.JsonListNil]
+                    [(LspUriPath.Ok file-path)
+                      (let
+                        [path : String (fs.dirname (& file-path))]
+                        (match (fs.try-read-dir-vec (& path))
+                          [(fs.OkIoStringVector entries)
+                            (let
+                              [n : i64 (fs.string-vector-len (& entries))]
+                              [i : i64 0]
+                              [results : json.JsonList json.JsonListNil]
+                              (begin
+                                (while (< i n)
+                                  (let
+                                    [entry : String
+                                      (fs.string-vector-get (& entries) i "")]
+                                    (begin
+                                      (if (lsp-tl-source-file-name? entry)
+                                        (let
+                                          [entry-path : String
+                                            (fs.path-join (& path) (& entry))]
+                                          (match (io.try-read-file
+                                            (& entry-path))
+                                            [(io.OkIoString source)
+                                              (if (lsp-decls-contain-name?
+                                                (lsp-scan-decls source)
+                                                name)
+                                                (let
+                                                  [entry-uri : String
+                                                    (lsp-path-to-file-uri
+                                                      (fs.path-normalize
+                                                        (& entry-path)))]
+                                                  (set!
+                                                    results
+                                                    (lsp-json-list-cons
+                                                      (lsp-json-object2
+                                                        "uri"
+                                                        (json.JsonString
+                                                          entry-uri)
+                                                        "name"
+                                                        (json.JsonString name))
+                                                      results)))
+                                                unit)]
+                                            [(io.ErrIoString _) unit]))
+                                        unit)
+                                      (set! i (+ i 1)))))
+                                (lsp-write-response
+                                  id
+                                  (lsp-json-object2
+                                    "success"
+                                    (json.JsonBool true)
+                                    "results"
+                                    (lsp-json-array results)))
+                                (LspHandleResult.Continue docs)))]
+                          [(fs.ErrIoStringVector message)
                             (begin
-                              (while (< i n)
-                                (let
-                                  [entry : String
-                                    (fs.string-vector-get (& entries) i "")]
-                                  (begin
-                                    (if (lsp-tl-source-file-name? entry)
-                                      (let
-                                        [entry-path : String
-                                          (fs.path-join (& path) (& entry))]
-                                        (match (io.try-read-file (& entry-path))
-                                          [(io.OkIoString source)
-                                            (if (lsp-decls-contain-name?
-                                              (lsp-scan-decls source)
-                                              name)
-                                              (let
-                                                [entry-uri : String
-                                                  (lsp-path-to-file-uri
-                                                    (fs.path-normalize
-                                                      (& entry-path)))]
-                                                (set!
-                                                  results
-                                                  (lsp-json-list-cons
-                                                    (lsp-json-object2
-                                                      "uri"
-                                                      (json.JsonString
-                                                        entry-uri)
-                                                      "name"
-                                                      (json.JsonString name))
-                                                    results)))
-                                              unit)]
-                                          [(io.ErrIoString _) unit]))
-                                      unit)
-                                    (set! i (+ i 1)))))
-                              (lsp-write-response
+                              (lsp-write-error
                                 id
-                                (lsp-json-object2
-                                  "success"
-                                  (json.JsonBool true)
-                                  "results"
-                                  (lsp-json-array results)))
-                              (LspHandleResult.Continue docs)))]
-                        [(fs.ErrIoStringVector message)
-                          (begin
-                            (lsp-write-error
-                              id
-                              -32600
-                              (lsp-str2
-                                "Failed to read directory: "
-                                (io.error-message message)))
-                            (LspHandleResult.Continue docs))])]
+                                -32600
+                                (lsp-str2
+                                  "Failed to read directory: "
+                                  (io.error-message message)))
+                              (LspHandleResult.Continue docs))]))]
                     [(LspUriPath.Err message)
                       (begin
                         (lsp-write-error id -32600 message)

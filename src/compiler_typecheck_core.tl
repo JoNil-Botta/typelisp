@@ -48338,6 +48338,40 @@
                     (set! steps (+ steps 1)))))))
           out)))))
 
+;; Different Module macros can intentionally extend one canonical target (for
+;; example stdlib.vector owns Vec helpers while stdlib.sort appends sort!). A
+;; declaration selected from the later catalog may depend on members retained
+;; by the earlier identity. Return those sibling catalogs so the append path can
+;; conservatively close that cross-identity dependency without re-running CTFE.
+(define (macro-generated-module-memo-sibling-catalogs
+  [identity : String]
+  [target-module : String]) : AstDeclList
+  (let
+    [identity-key : i64 (+ (intern identity) 1)]
+    [target-id : i64 (intern target-module)]
+    [index : i64 0]
+    [out : AstDeclList (ast-decl-list-new)]
+    (begin
+      (macro-generated-module-memo-ensure!)
+      (while (< index macro-generated-module-memo-capacity)
+        (let
+          [slot : i64 (array-ref macro-generated-module-memo-keys index)]
+          (begin
+            (if (and
+              (not (= slot 0))
+              (not (= slot identity-key))
+              (=
+                (array-ref macro-generated-module-memo-targets index)
+                target-id))
+              (set!
+                out
+                (macro-decl-list-append
+                  out
+                  (array-ref macro-generated-module-memo-catalogs index)))
+              unit)
+            (set! index (+ index 1)))))
+      out)))
+
 (define (macro-generated-module-memo-validated? [identity : String]) : bool
   (let
     [identity-id : i64 (intern identity)]
@@ -55921,6 +55955,38 @@
         (macro-generated-catalog-partial-safe-decl? decl)
         (macro-generated-catalog-partial-safe? rest))]))
 
+(define (macro-generated-catalog-foreign-identity-decl?
+  [decl : AstDecl]
+  [identity : String]) : bool
+  (match decl
+    [(AstDecl.ComptimeDecl meta inner-box)
+      (match meta
+        [(AstGeneratedDeclMeta.Some _ _ _ key)
+          (or
+            (not (string.eq key identity))
+            (macro-generated-catalog-foreign-identity-decl?
+              (box-get inner-box)
+              identity))]
+        [(AstGeneratedDeclMeta.No)
+          (macro-generated-catalog-foreign-identity-decl?
+            (box-get inner-box)
+            identity)])]
+    [(AstDecl.Unsafe inner-box)
+      (macro-generated-catalog-foreign-identity-decl?
+        (box-get inner-box)
+        identity)]
+    [_ false]))
+
+(define (macro-generated-catalog-has-foreign-identity?
+  [catalog : AstDeclList]
+  [identity : String]) : bool
+  (match (ast-decl-list-step catalog)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (or
+        (macro-generated-catalog-foreign-identity-decl? decl identity)
+        (macro-generated-catalog-has-foreign-identity? rest identity))]))
+
 (define (macro-generated-catalog-needs-expansion?
   [ctx : TcContext]
   [orig-decls : AstDeclList]
@@ -56438,6 +56504,10 @@
                 (begin
                   (set! tc-hygiene-active-top-env (tc-empty-type-env))
                   (set! tc-hygiene-active-top-env-ready false)))
+              ;; Validation installed its scratch program's AST/type pools for
+              ;; generated-declaration checks. Restore the caller pools before
+              ;; any package inline preflight resolves external dependencies.
+              (tc-context-capture-active-pools! ctx)
               (tc-clone-able-cache-populate! ctx)
               (unsafe
                 (arena.tl_arena_destroy scratch))
@@ -56730,7 +56800,13 @@
   (let
     [partial-safe? : bool
       (and
+        ;; Keep exact closure selection bounded to compact catalogs. Large
+        ;; generated families commonly embed or extend other catalogs; until
+        ;; every cross-catalog edge is explicit, their full body is the safe
+        ;; dependency closure.
+        (<= (ast-decl-list-len (& catalog)) 16)
         (macro-generated-catalog-partial-safe? catalog)
+        (not (macro-generated-catalog-has-foreign-identity? catalog identity))
         (not
           (macro-generated-catalog-needs-expansion?
             ctx
@@ -56872,37 +56948,42 @@
   [catalog : AstDeclList]
   [demand : MacroGeneratedModuleCatalogDemand]
   [call-expr : AstExpr]) : ResultMacroDeclExpansion
-  (match demand
-    [MacroGeneratedModuleCatalogDemand.None
-      (ResultMacroDeclExpansion.Ok (ast-decl-list-new) (ast-decl-path-list-new))]
-    [(MacroGeneratedModuleCatalogDemand.Partial selection)
-      (macro-expand-module-materialized
-        orig-decls
-        module
-        target-module
-        alias
-        span
-        decl-path
-        identity
-        memoize?
-        trusted-catalog?
-        catalog
-        selection
-        call-expr)]
-    [MacroGeneratedModuleCatalogDemand.Full
-      (macro-expand-module-materialized
-        orig-decls
-        module
-        target-module
-        alias
-        span
-        decl-path
-        identity
-        memoize?
-        trusted-catalog?
-        catalog
-        catalog
-        call-expr)]))
+  (let
+    [siblings : AstDeclList
+      (macro-generated-module-memo-sibling-catalogs identity target-module)]
+    (match demand
+      [MacroGeneratedModuleCatalogDemand.None
+        (ResultMacroDeclExpansion.Ok
+          (ast-decl-list-new)
+          (ast-decl-path-list-new))]
+      [(MacroGeneratedModuleCatalogDemand.Partial selection)
+        (macro-expand-module-materialized
+          orig-decls
+          module
+          target-module
+          alias
+          span
+          decl-path
+          identity
+          memoize?
+          trusted-catalog?
+          catalog
+          (macro-decl-list-append siblings selection)
+          call-expr)]
+      [MacroGeneratedModuleCatalogDemand.Full
+        (macro-expand-module-materialized
+          orig-decls
+          module
+          target-module
+          alias
+          span
+          decl-path
+          identity
+          memoize?
+          trusted-catalog?
+          catalog
+          (macro-decl-list-append siblings catalog)
+          call-expr)])))
 
 (define (macro-expand-module-prepared-catalog
   [ctx : TcContext]

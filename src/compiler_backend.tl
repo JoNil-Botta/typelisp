@@ -27709,7 +27709,7 @@
         instr
         func-diag
         "")]
-    [scratch-plan : CompilerRegScratchPlan
+    [_scratch-plan : CompilerRegScratchPlan
       (cfg
         scratch-vreg
         (compiler-backend-runtime-plan-scratch plan)
@@ -27717,12 +27717,12 @@
     [planned-scratch0 : String
       (cfg
         scratch-vreg
-        (compiler-backend-scratch-plan-register-here scratch-plan 0)
+        (compiler-backend-scratch-plan-register-here _scratch-plan 0)
         "")]
     [planned-scratch1 : String
       (cfg
         scratch-vreg
-        (compiler-backend-scratch-plan-register-here scratch-plan 1)
+        (compiler-backend-scratch-plan-register-here _scratch-plan 1)
         "")]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).

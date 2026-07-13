@@ -1947,7 +1947,7 @@
           id)])))
 
 (define (ast-node-pool-context-expr-get [pools : AstNodePoolContext] [id : i64]) : AstExpr
-  (ast-expr-node-pool-state-get (array-ref (struct-get pools expr-pool) 0) id))
+  (array-ref (struct-get (array-ref (struct-get pools expr-pool) 0) slots) id))
 
 (define (ast-node-pool-context-expr-set!
   [pools : AstNodePoolContext]

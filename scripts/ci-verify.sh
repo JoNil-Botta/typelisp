@@ -160,6 +160,10 @@ required_gate_unavailable() {
 # exact-source verifier uses only stage0-supported language/runtime surfaces.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
 run_gate \
+    "SPMD AVX-512 instruction harness self-tests" \
+    scripts/measure-spmd-avx512-instructions.sh \
+    --self-test
+run_gate \
     "SPMD mode instruction-count harness self-tests" \
     scripts/measure-spmd-mode-instruction-counts.sh \
     --self-test

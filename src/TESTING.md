@@ -265,6 +265,24 @@ default output root is repo-relative so the measured self-compile `-o` argument
 is stable across machines; use a repo-relative `--output` when collecting counts
 intended for baseline comparison.
 
+AVX-512 dynamic instruction counts use the separate hardware PMU harness, not
+cachegrind. On a Linux/WSL AVX-512F+BW+DQ host with PMU permission:
+
+```sh
+TYPELISP_BIN=target/stage0/typelisp \
+  scripts/measure-spmd-avx512-instructions.sh --focused --cpu 4
+TYPELISP_BIN=target/stage0/typelisp \
+  scripts/measure-spmd-avx512-instructions.sh \
+  --runs 11 --check-baseline --cpu 4
+scripts/measure-spmd-avx512-instructions.sh --self-test
+```
+
+The pure-TypeLisp launcher under `tools/spmd-avx512-perf/` owns synchronized
+`perf_event_open`/`execve` counting and signal decoding. Baselines are enforced
+within 1000 ppm only when the complete host/tool fingerprint matches; other
+hosts are report-only. Keep this full hardware measurement out of required CI
+and retain static opcode counts only as structural diagnostics.
+
 For SPMD mode-specific performance, use the separate opt-in
 `scripts/measure-spmd-mode-instruction-counts.sh`. It records scalar and AVX2
 TypeLisp/clang pairs under unambiguous benchmark+mode+implementation keys,

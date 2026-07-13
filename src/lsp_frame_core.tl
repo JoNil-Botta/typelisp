@@ -2659,6 +2659,16 @@
               (set! p (- p 1)))
             (and (>= p 0) (= (string.string-ref text p) '['))))))))
 
+(define (lsp-inlay-valid-expr? [text : String] [off : i64]) : bool
+  (let
+    [p : i64 (- off 1)]
+    (begin
+      (while (and (>= p 0) (lsp-ws? (string.string-ref text p)))
+        (set! p (- p 1)))
+      (if (< p 0)
+        false
+        (= (string.string-ref text p) '(')))))
+
 (define (lsp-inlay-range-line
   [range : json.Json]
   [which : String]
@@ -2690,13 +2700,14 @@
           [line1 : i64 (tc-inlay-hint-line-at i)]
           [col1 : i64 (tc-inlay-hint-col-at i)]
           [line0 : i64 (- line1 1)]
+          [off : i64 (lsp-offset-at-position text line0 (- col1 1))]
           (begin
             (if (and
               (>= line0 start-line)
               (<= line0 end-line)
-              (lsp-inlay-valid-binding?
-                text
-                (lsp-offset-at-position text line0 (- col1 1))))
+              (or
+                (lsp-inlay-valid-binding? text off)
+                (lsp-inlay-valid-expr? text off)))
               (set!
                 acc
                 (lsp-json-list-cons

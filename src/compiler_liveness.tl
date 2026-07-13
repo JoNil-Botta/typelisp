@@ -248,82 +248,79 @@
                 (array-set! out word-index (bit-and old-bits (bit-xor mask -1)))
                 (compiler-live-set-from-words-trimmed out capacity)))))))))
 
-(define (compiler-live-set-union-words
-  [left : CompilerLiveI64Set]
-  [right : CompilerLiveI64Set]
-  [out : (Array i64)]
-  [index : i64]
-  [count : i64]
-  [changed : bool]) : bool
-  (if (>= index count)
-    changed
-    (let
-      [left-bits : i64 (compiler-live-set-word-at left index)]
-      [merged : i64 (bit-or left-bits (compiler-live-set-word-at right index))]
-      (begin
-        (array-set! out index merged)
-        (compiler-live-set-union-words
-          left
-          right
-          out
-          (+ index 1)
-          count
-          (or changed (not (= merged left-bits))))))))
-
 (define (compiler-live-set-union
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [count : i64
-      (compiler-live-set-max
-        (compiler-live-set-word-count left)
-        (compiler-live-set-word-count right))]
+    [left-words : (Array i64) (compiler-live-set-words left)]
+    [right-words : (Array i64) (compiler-live-set-words right)]
+    [left-count : i64 (array-length left-words)]
+    [right-count : i64 (array-length right-words)]
+    [count : i64 (compiler-live-set-max left-count right-count)]
     [out : (Array i64) (make-array i64 count)]
-    [changed : bool
-      (compiler-live-set-union-words left right out 0 count false)]
-    (if changed
-      (compiler-live-set-from-words-trimmed out count)
-      left)))
+    [index : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< index count)
+        (let
+          [left-bits : i64
+            (if (< index left-count)
+              (unsafe
+                (ptr-read (ptr-offset (array-data left-words) index)))
+              0)]
+          [right-bits : i64
+            (if (< index right-count)
+              (unsafe
+                (ptr-read (ptr-offset (array-data right-words) index)))
+              0)]
+          [merged : i64 (bit-or left-bits right-bits)]
+          (begin
+            (array-set! out index merged)
+            (if (not (= merged left-bits))
+              (set! changed true)
+              unit)
+            (set! index (+ index 1)))))
+      (if changed
+        (compiler-live-set-from-words-trimmed out count)
+        left))))
 
 (define (compiler-live-set-union-into
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (compiler-live-set-union left right))
 
-(define (compiler-live-set-minus-words
-  [left : CompilerLiveI64Set]
-  [right : CompilerLiveI64Set]
-  [out : (Array i64)]
-  [index : i64]
-  [count : i64]
-  [changed : bool]) : bool
-  (if (>= index count)
-    changed
-    (let
-      [left-bits : i64 (compiler-live-set-word-at left index)]
-      [next-bits : i64
-        (bit-and left-bits (bit-xor (compiler-live-set-word-at right index) -1))]
-      (begin
-        (array-set! out index next-bits)
-        (compiler-live-set-minus-words
-          left
-          right
-          out
-          (+ index 1)
-          count
-          (or changed (not (= next-bits left-bits))))))))
-
 (define (compiler-live-set-minus
   [left : CompilerLiveI64Set]
   [right : CompilerLiveI64Set]) : CompilerLiveI64Set
   (let
-    [count : i64 (compiler-live-set-word-count left)]
+    [left-words : (Array i64) (compiler-live-set-words left)]
+    [right-words : (Array i64) (compiler-live-set-words right)]
+    [count : i64 (array-length left-words)]
+    [right-count : i64 (array-length right-words)]
     [out : (Array i64) (make-array i64 count)]
-    [changed : bool
-      (compiler-live-set-minus-words left right out 0 count false)]
-    (if changed
-      (compiler-live-set-from-words-trimmed out count)
-      left)))
+    [index : i64 0]
+    [changed : bool false]
+    (begin
+      (while (< index count)
+        (let
+          [left-bits : i64
+            (unsafe
+              (ptr-read (ptr-offset (array-data left-words) index)))]
+          [right-bits : i64
+            (if (< index right-count)
+              (unsafe
+                (ptr-read (ptr-offset (array-data right-words) index)))
+              0)]
+          [next-bits : i64 (bit-and left-bits (bit-xor right-bits -1))]
+          (begin
+            (array-set! out index next-bits)
+            (if (not (= next-bits left-bits))
+              (set! changed true)
+              unit)
+            (set! index (+ index 1)))))
+      (if changed
+        (compiler-live-set-from-words-trimmed out count)
+        left))))
 
 (define (compiler-live-set-eq?
   [left : CompilerLiveI64Set]

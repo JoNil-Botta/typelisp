@@ -56310,13 +56310,80 @@
           target-module
           rest))]))
 
-(define (macro-generated-catalog-reference-additions
-  [catalog : AstDeclList]
+(define (macro-generated-catalog-decl-references-name?
+  [decl : AstDecl]
+  [name : String]) : bool
+  (let
+    [demand : CompilerLoadLazyAliasDemand
+      (compiler-load-lazy-decl-demand
+        decl
+        name
+        (compiler-load-lazy-empty-surface-summary)
+        (sym_i64_env.sym-i64-empty))]
+    ;; An unclassified source form cannot prove that this declaration is
+    ;; independent of the candidate. Treat it as an edge, which converges to a
+    ;; full selected catalog instead of silently dropping a dependency.
+    (or
+      (struct-get demand direct)
+      (struct-get demand qualified)
+      (struct-get demand unknown))))
+
+(define (macro-generated-catalog-decl-references-variants?
+  [source : AstDecl]
+  [variants : AstVariantDefList]) : bool
+  (macro-generated-catalog-decl-references-variants-at? source (& variants) 0))
+
+(define (macro-generated-catalog-decl-references-variants-at?
+  [source : AstDecl]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]) : bool
+  (if (>= index (ast-variant-def-list-len variants))
+    false
+    (match (ast-variant-def-list-get variants index (ast-variant-def-fallback))
+      [(AstVariantDef.Def name _ _)
+        (or
+          (macro-generated-catalog-decl-references-name?
+            source
+            (intern-str name))
+          (macro-generated-catalog-decl-references-variants-at?
+            source
+            variants
+            (+ index 1)))])))
+
+(define (macro-generated-catalog-decl-references-decl?
+  [source : AstDecl]
+  [candidate : AstDecl]) : bool
+  (let
+    [visible : bool
+      (match (macro-generated-visible-name candidate)
+        [(SpecMaybeString.Some name)
+          (macro-generated-catalog-decl-references-name? source name)]
+        [(SpecMaybeString.None) false])]
+    (if visible
+      true
+      (match (macro-generated-catalog-template candidate)
+        [(AstDecl.DefEnum _ _ variants)
+          (macro-generated-catalog-decl-references-variants? source variants)]
+        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+          (macro-generated-catalog-decl-references-variants? source variants)]
+        [_ false]))))
+
+(define (macro-generated-catalog-selected-needs-decl?
   [selected : AstDeclList]
-  [references : sym_i64_env.SymI64Env]) : AstDeclList
+  [candidate : AstDecl]) : bool
+  (match (ast-decl-list-step selected)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons source rest)
+      (or
+        (macro-generated-catalog-decl-references-decl? source candidate)
+        (macro-generated-catalog-selected-needs-decl? rest candidate))]))
+
+(define (macro-generated-catalog-closure-additions
+  [catalog : AstDeclList]
+  [selected : AstDeclList]) : AstDeclList
   (let
     [cursor : AstDeclList catalog]
-    [out : AstDeclList (ast-decl-list-new)]
+    [out : AstDeclList selected]
     [done : bool false]
     (begin
       (while (not done)
@@ -56325,13 +56392,8 @@
           [(AstDeclListStep.Cons candidate rest)
             (begin
               (if (and
-                (not (macro-decl-list-contains-structural? selected candidate))
-                (=
-                  (macro-generated-catalog-decl-demand-status
-                    references
-                    (sym_i64_env.sym-i64-empty)
-                    candidate)
-                  1))
+                (not (macro-decl-list-contains-structural? out candidate))
+                (macro-generated-catalog-selected-needs-decl? out candidate))
                 (set!
                   out
                   (macro-decl-list-append
@@ -56364,37 +56426,26 @@
               (set! cursor rest))]))
       out)))
 
-(define (macro-generated-catalog-closure-demand
+(define (macro-generated-catalog-closure
   [catalog : AstDeclList]
-  [seed : AstDeclList]) : MacroGeneratedModuleCatalogDemand
+  [seed : AstDeclList]) : AstDeclList
   (let
-    [seed-count : i64 (ast-decl-list-len (& seed))]
-    [selected : AstDeclList (ast-decl-list-with-capacity seed-count)]
-    [work : AstDeclList (ast-decl-list-with-capacity seed-count)]
-    [done : bool false]
+    [selected : AstDeclList seed]
+    [changed : bool true]
     (begin
-      (macro-decl-list-append-from (&mut selected) (& seed))
-      (macro-decl-list-append-from (&mut work) (& seed))
-      (while (not done)
-        (match (ast-decl-list-step work)
-          [(AstDeclListStep.Nil) (set! done true)]
-          [(AstDeclListStep.Cons source rest)
-            (let
-              [reference-demand : CompilerLoadLazyAliasDemand
-                (compiler-load-lazy-decl-reference-demand source)]
-              (if (struct-get reference-demand unknown)
-                (return MacroGeneratedModuleCatalogDemand.Full)
-                (let
-                  [additions : AstDeclList
-                    (macro-generated-catalog-reference-additions
-                      catalog
-                      selected
-                      (struct-get reference-demand members))]
-                  (begin
-                    (set! selected (macro-decl-list-append selected additions))
-                    (set! work (macro-decl-list-append rest additions))))))]))
-      (MacroGeneratedModuleCatalogDemand.Partial
-        (macro-generated-catalog-filter-selected catalog selected)))))
+      (while changed
+        (let
+          [next : AstDeclList
+            (macro-generated-catalog-closure-additions catalog selected)]
+          (begin
+            (set!
+              changed
+              (not
+                (=
+                  (ast-decl-list-len (& next))
+                  (ast-decl-list-len (& selected)))))
+            (set! selected next))))
+      (macro-generated-catalog-filter-selected catalog selected))))
 
 ;; Generated declarations commonly build public helpers in dependency order
 ;; (for example `with-capacity` before `new`). Keep that prefix alongside the
@@ -56515,11 +56566,12 @@
                             (set! cursor rest)))]))
                   (if (or (= status 2) (= (ast-decl-list-len (& seed)) 0))
                     MacroGeneratedModuleCatalogDemand.Full
-                    (macro-generated-catalog-closure-demand
-                      catalog
-                      (macro-generated-catalog-prefix-through-selection
+                    (MacroGeneratedModuleCatalogDemand.Partial
+                      (macro-generated-catalog-closure
                         catalog
-                        seed)))))))))]))
+                        (macro-generated-catalog-prefix-through-selection
+                          catalog
+                          seed))))))))))]))
 
 (define (macro-generated-catalog-demand-scoped
   [orig-decls : AstDeclList]

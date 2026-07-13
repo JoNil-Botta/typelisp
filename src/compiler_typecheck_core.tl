@@ -58017,11 +58017,13 @@
     [previous-active : bool macro-generated-catalog-demand-scope-active]
     [previous-scope : AstDeclList macro-generated-catalog-demand-scope]
     [import-placeholder? : bool (macro-decl-import-placeholder? decl)]
+    [indexed-scope? : bool
+      (and import-placeholder? (> (string.string-length decl-path) 0))]
     (begin
-      (set! macro-generated-catalog-demand-scope-active import-placeholder?)
+      (set! macro-generated-catalog-demand-scope-active indexed-scope?)
       (set!
         macro-generated-catalog-demand-scope
-        (if import-placeholder?
+        (if indexed-scope?
           (match (macro-generated-catalog-demand-index-tail decl-path decl)
             [(MacroMaybeDeclList.Some source-rest) source-rest]
             [(MacroMaybeDeclList.No) rest])

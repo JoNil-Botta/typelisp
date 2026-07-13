@@ -410,7 +410,9 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   search primitive used by borrowed string/byte scans until source code can
   express equally efficient raw byte search. `tl_tlci_call_image_entry` is the
   raw C-ABI bridge that lets the tlci loader call a mapped `tlci_image_entry`
-  address with the host callback table and writable registration record.
+  address with the host callback table and writable registration record;
+  `tl_tlci_call_macro_entry` reshapes the loader's seven-argument raw bridge
+  call into the registered macro entry's six-argument host ABI.
   Windows `__chkstk` is required by the MSVC ABI for large stack frames. Windows
   `tl_setup_argv` and `_tl_start` are the freestanding entry bootstrap: they
   build the initial argv block from `GetCommandLineA`, clear the TEB

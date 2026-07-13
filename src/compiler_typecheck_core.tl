@@ -4910,37 +4910,11 @@
     [(AstMaybeType.Some _) (tc-active-region (struct-get carrier env))]
     [(AstMaybeType.No) (TcMaybeString.No)]))
 
-(define (tc-type-env-scoped-cleanup-owner-marker-head?
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [name : String]) : bool
-  (match (tc-type-env-scoped-marker-step cursor)
-    [(TcTypeEnvScopedMarkerStep.Done) false]
-    [(TcTypeEnvScopedMarkerStep.Bind key ty _)
-      (tc-cleanup-owner-marker-for? key ty name)]))
-
-(define (tc-type-env-scoped-arena-owner-marker-head?
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [name : String]
-  [marker-id : i64]) : bool
-  (match (tc-type-env-scoped-marker-step cursor)
-    [(TcTypeEnvScopedMarkerStep.Done) false]
-    [(TcTypeEnvScopedMarkerStep.Bind key ty _)
-      (tc-arena-owner-marker-for? marker-id key ty name)]))
-
-(define (tc-type-env-scoped-cleanup-owner-active-scan-id?
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [name : String]
-  [name-id : i64]) : bool
-  (match (tc-type-env-scoped-marker-step cursor)
-    [(TcTypeEnvScopedMarkerStep.Done) false]
-    [(TcTypeEnvScopedMarkerStep.Bind key _ rest-cursor)
-      (if (= key name-id)
-        (tc-type-env-scoped-cleanup-owner-marker-head? rest-cursor name)
-        (tc-type-env-scoped-cleanup-owner-active-scan-id?
-          rest-cursor
-          name
-          name-id))]))
-
+;; Fully materialized marker-visible snapshots use direct stack indexes here.
+;; Primary function-body ordinary-owner queries deliberately use TcTypeEnv's
+;; relevance-indexed cache sidecar below: mirroring every ordinary bind into
+;; this stack regressed self-compile work, while the immutable cache preserves
+;; the same lexical positions across scope snapshots.
 (define (tc-type-env-scoped-carrier-cleanup-owner-active?
   [carrier : TcTypeEnvScopedCarrier]
   [name : String]) : bool
@@ -4952,22 +4926,6 @@
       [index : i64
         (tc-type-env-scoped-stack-find-id-index stack (tc-name-id name))]
       (tc-type-env-scoped-stack-cleanup-owner-before? stack index name))))
-
-(define (tc-type-env-scoped-arena-owner-active-scan-id?
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [name : String]
-  [name-id : i64]
-  [marker-id : i64]) : bool
-  (match (tc-type-env-scoped-marker-step cursor)
-    [(TcTypeEnvScopedMarkerStep.Done) false]
-    [(TcTypeEnvScopedMarkerStep.Bind key _ rest-cursor)
-      (if (= key name-id)
-        (tc-type-env-scoped-arena-owner-marker-head? rest-cursor name marker-id)
-        (tc-type-env-scoped-arena-owner-active-scan-id?
-          rest-cursor
-          name
-          name-id
-          marker-id))]))
 
 (define (tc-type-env-scoped-carrier-arena-owner-active?
   [carrier : TcTypeEnvScopedCarrier]
@@ -5039,20 +4997,6 @@
     (set! tc-type-env-scoped-cache-outlives-binding-valid false)
     (set! tc-type-env-scoped-cache-outlives-lifetime-valid false)))
 
-(define (tc-type-env-scoped-lifetime-visible-scan-id?
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [lifetime : String]
-  [lifetime-id : i64]) : bool
-  (match (tc-type-env-scoped-marker-step cursor)
-    [(TcTypeEnvScopedMarkerStep.Done) false]
-    [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
-      (if (tc-env-binding-matches-lifetime-id? key ty lifetime lifetime-id)
-        true
-        (tc-type-env-scoped-lifetime-visible-scan-id?
-          rest-cursor
-          lifetime
-          lifetime-id))]))
-
 (define (tc-type-env-scoped-carrier-lifetime-visible?
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime : String]) : bool
@@ -5085,26 +5029,6 @@
             (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
             (set! tc-type-env-scoped-cache-visible-result result)
             result))))))
-
-(define (tc-type-env-scoped-lifetime-outlives-binding-scan-id
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [lifetime : String]
-  [lifetime-id : i64]
-  [target : String]
-  [target-id : i64]
-  [seen-target : bool]) : bool
-  (match (tc-type-env-scoped-marker-step cursor)
-    [(TcTypeEnvScopedMarkerStep.Done) false]
-    [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
-      (if (tc-env-binding-matches-lifetime-id? key ty lifetime lifetime-id)
-        seen-target
-        (tc-type-env-scoped-lifetime-outlives-binding-scan-id
-          rest-cursor
-          lifetime
-          lifetime-id
-          target
-          target-id
-          (or seen-target (= key target-id))))]))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-binding?
   [carrier : TcTypeEnvScopedCarrier]
@@ -5151,38 +5075,6 @@
             (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
             (set! tc-type-env-scoped-cache-outlives-binding-result result)
             result))))))
-
-(define (tc-type-env-scoped-lifetime-outlives-lifetime-scan-id
-  [cursor : TcTypeEnvScopedMarkerCursor]
-  [value-lifetime : String]
-  [value-lifetime-id : i64]
-  [target-lifetime : String]
-  [target-lifetime-id : i64]
-  [seen-target : bool]) : bool
-  (if (string.eq value-lifetime target-lifetime)
-    true
-    (match (tc-type-env-scoped-marker-step cursor)
-      [(TcTypeEnvScopedMarkerStep.Done) false]
-      [(TcTypeEnvScopedMarkerStep.Bind key ty rest-cursor)
-        (if (tc-env-binding-matches-lifetime-id?
-          key
-          ty
-          value-lifetime
-          value-lifetime-id)
-          seen-target
-          (tc-type-env-scoped-lifetime-outlives-lifetime-scan-id
-            rest-cursor
-            value-lifetime
-            value-lifetime-id
-            target-lifetime
-            target-lifetime-id
-            (or
-              seen-target
-              (tc-env-binding-matches-lifetime-id?
-                key
-                ty
-                target-lifetime
-                target-lifetime-id))))])))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-lifetime?
   [carrier : TcTypeEnvScopedCarrier]
@@ -24869,26 +24761,6 @@
                 [(ResultTcUnit.Err message) (ResultTcEnv.Err message)])]
             [(ResultTcType.Err message) (ResultTcEnv.Err message)]))])))
 
-(define (tc-lambda-captures-reference-scan-root
-  [env : TcTypeEnv]
-  [bound : TcStringList]
-  [body : AstExpr]) : bool
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) false]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-lambda-captures-reference-scan-root rest-env bound body)]
-    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (if (or
-        (= key (tc-region-marker-id))
-        (= key (tc-default-boundary-id))
-        (tc-cleanup-owner-marker-entry? key ty))
-        (tc-lambda-captures-reference-scan-root rest-env bound body)
-        (if (and
-          (tc-expr-uses-free-name? body (intern-str key) bound)
-          (tc-type-contains-reference? ty))
-          true
-          (tc-lambda-captures-reference-scan-root rest-env bound body)))]))
-
 (define (tc-lambda-captures-reference?
   [env : TcTypeEnv]
   [params : AstParamList]
@@ -30283,81 +30155,6 @@
     (ResultTcUnit.Err
       "typecheck: cannot store cleanup-required resource in longer-lived binding")
     ResultTcUnit.Ok))
-
-(define (tc-check-lambda-region-captures-scan-root
-  [root : TcTypeEnv]
-  [env : TcTypeEnv]
-  [bound : TcStringList]
-  [body : AstExpr]
-  [allow-immutable-reference-captures : bool]) : ResultTcUnit
-  (match (tc-type-env-marker-step env)
-    [(TcTypeEnvMarkerStep.Done) ResultTcUnit.Ok]
-    [(TcTypeEnvMarkerStep.Cache rest-env)
-      (tc-check-lambda-region-captures-scan-root
-        root
-        rest-env
-        bound
-        body
-        allow-immutable-reference-captures)]
-    [(TcTypeEnvMarkerStep.Bind key ty rest-env)
-      (let
-        [name : String (intern-str key)]
-        (cond
-          [(or
-              (= key (tc-region-marker-id))
-              (= key (tc-default-boundary-id))
-              (tc-cleanup-owner-marker-entry? key ty)
-              (tc-ordinary-arena-owner-marker-entry? key ty)
-              (tc-atomic-arena-owner-marker-entry? key ty))
-            (tc-check-lambda-region-captures-scan-root
-              root
-              rest-env
-              bound
-              body
-              allow-immutable-reference-captures)]
-          [(not (tc-expr-uses-free-name? body name bound))
-            (tc-check-lambda-region-captures-scan-root
-              root
-              rest-env
-              bound
-              body
-              allow-immutable-reference-captures)]
-          [(tc-expr-sets-free-name? body name bound)
-            (ResultTcUnit.Err
-              "typecheck: lambda cannot assign captured binding")]
-          [(tc-cleanup-owner-active? root name)
-            (ResultTcUnit.Err
-              "typecheck: lambda cannot capture cleanup-required resource; resource value would escape")]
-          [(tc-type-contains-mut-reference? ty)
-            (ResultTcUnit.Err
-              "typecheck: lambda cannot capture mutable reference; reference value would escape lexical scope")]
-          [(tc-type-contains-reference? ty)
-            (if allow-immutable-reference-captures
-              (tc-check-lambda-region-captures-scan-root
-                root
-                rest-env
-                bound
-                body
-                allow-immutable-reference-captures)
-              (ResultTcUnit.Err
-                "typecheck: lambda cannot capture immutable reference; reference value would escape lexical scope"))]
-          [(tc-type-contains-any-region ty)
-            (if (tc-type-regions-all-atomic-arena-owners? root ty)
-              (tc-check-lambda-region-captures-scan-root
-                root
-                rest-env
-                bound
-                body
-                allow-immutable-reference-captures)
-              (ResultTcUnit.Err
-                "typecheck: lambda cannot capture region-tagged value; region value would escape"))]
-          [else
-            (tc-check-lambda-region-captures-scan-root
-              root
-              rest-env
-              bound
-              body
-              allow-immutable-reference-captures)]))]))
 
 (define (tc-type-env-scoped-carrier-check-lambda-region-captures-scan
   [carrier : TcTypeEnvScopedCarrier]

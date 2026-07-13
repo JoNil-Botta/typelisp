@@ -46917,6 +46917,7 @@
     (set! macro-live-prescan-summary-import false)
     (set! macro-live-prescan-visible-names (TcStringList.Nil))
     (ctfe-module-macro-export-reset!)
+    (macro-generated-catalog-demand-index-invalidate!)
     (macro-generated-module-memo-reset!)
     (macro-generated-decls-memo-reset!)
     (tc-macro-helper-env-cache-reset!)
@@ -55964,6 +55965,8 @@
   (array.make-array i64 2048))
 (define macro-generated-catalog-demand-index-decls : (Array AstDeclList)
   (array.make-array AstDeclList 2048))
+(define macro-generated-catalog-demand-index-empty : AstDeclList
+  (ast-decl-list-new))
 (define macro-generated-catalog-demand-index-ready : bool
   false)
 
@@ -55982,9 +55985,27 @@
           (array-set!
             macro-generated-catalog-demand-index-decls
             index
-            (ast-decl-list-new))
+            macro-generated-catalog-demand-index-empty)
           (set! index (+ index 1))))
       (set! macro-generated-catalog-demand-index-ready true))))
+
+(define (macro-generated-catalog-demand-index-invalidate!) : unit
+  (let
+    [index : i64 0]
+    (begin
+      (while (< index macro-generated-catalog-demand-index-capacity)
+        (begin
+          (array-set! macro-generated-catalog-demand-index-keys index 0)
+          (array-set!
+            macro-generated-catalog-demand-index-decls
+            index
+            macro-generated-catalog-demand-index-empty)
+          (set! index (+ index 1))))
+      (set! macro-generated-catalog-demand-index-ready false)
+      (set! macro-generated-catalog-demand-scope-active false)
+      (set!
+        macro-generated-catalog-demand-scope
+        macro-generated-catalog-demand-index-empty))))
 
 (define (macro-generated-catalog-demand-index-slot
   [path-id : i64]
@@ -56014,6 +56035,10 @@
                       macro-generated-catalog-demand-index-keys
                       cursor
                       key)
+                    (array-set!
+                      macro-generated-catalog-demand-index-decls
+                      cursor
+                      (ast-decl-list-new))
                     (set! out cursor))
                   unit)
                 (set! done true))
@@ -62076,6 +62101,7 @@
 
 (define (compiler-typecheck-reset-file-state!) : unit
   (begin
+    (macro-generated-catalog-demand-index-invalidate!)
     (tc-fn-scratch-arena-release!)
     (tc-body-early-exit-facts-abort!)
     (tc-clone-able-cache-reset!)

@@ -28429,18 +28429,32 @@
   6)
 
 (define (opt-inline-param-count [params : CompilerIrParamList]) : i64
-  (match (compiler-ir-param-list-force-cons params)
+  (match params
     [(CompilerIrParamList.Nil) 0]
-    [(CompilerIrParamList.Array seq)
-      (opt-inline-param-count (compiler-ir-param-seq-to-list seq))]
+    [(CompilerIrParamList.Array seq) (compiler-ir-param-seq-count seq)]
     [(CompilerIrParamList.Cons _ rest)
       (+ 1 (opt-inline-param-count (box-get rest)))]))
 
+(define (opt-inline-param-seq-sequential-from?
+  [params : CompilerIrParamSeq]
+  [index : i64]
+  [expected : i64]) : bool
+  (if (>= index (compiler-ir-param-seq-count params))
+    true
+    (match (compiler-ir-param-seq-ref params index)
+      [(CompilerIrParam.Param _ _ vid)
+        (and
+          (= vid expected)
+          (opt-inline-param-seq-sequential-from?
+            params
+            (+ index 1)
+            (+ expected 1)))])))
+
 (define (opt-inline-params-sequential? [params : CompilerIrParamList] [i : i64]) : bool
-  (match (compiler-ir-param-list-force-cons params)
+  (match params
     [(CompilerIrParamList.Nil) true]
     [(CompilerIrParamList.Array seq)
-      (opt-inline-params-sequential? (compiler-ir-param-seq-to-list seq) i)]
+      (opt-inline-param-seq-sequential-from? seq 0 i)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ vid)

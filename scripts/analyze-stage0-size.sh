@@ -3,17 +3,17 @@ set -eu
 
 # analyze-stage0-size.sh - linked stage0 binary size and embedded stdlib report.
 #
-# This reports file bytes, linked section raw sizes, and source payload bytes
-# embedded through src/compiler_embedded_stdlib.tl. It is a measurement helper,
-# not a size budget gate.
+# This reports file bytes, linked section raw sizes, and compressed/expanded
+# embedded stdlib payload bytes. It is a measurement helper, not a size budget
+# gate.
 
 usage() {
     cat >&2 <<'EOF'
 usage: scripts/analyze-stage0-size.sh [options] <stage0-binary>
 
 Options:
-  --embedded-stdlib <file>  include-str manifest to count
-                            (default: src/compiler_embedded_stdlib.tl)
+  --embedded-stdlib <file>  generated payload source to count
+                            (default: src/compiler_embedded_stdlib_payload.tl)
 
 The section report uses llvm-readobj when available, then readelf, then objdump.
 It reports only the supplied binary format; Linux and Windows binaries can be
@@ -24,7 +24,7 @@ EOF
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
-EMBEDDED_STDLIB=src/compiler_embedded_stdlib.tl
+EMBEDDED_STDLIB=src/compiler_embedded_stdlib_payload.tl
 BINARY=
 
 while [ "$#" -gt 0 ]; do
@@ -318,14 +318,42 @@ done
     exit 1
 }
 
-awk '
-match($0, /\(include-str[ \t]+[^ \t]+[ \t]+"[^"]+"/) {
-    path = $0
-    sub(/^[^"]*"/, "", path)
-    sub(/".*$/, "", path)
-    print path
-}
-' "$EMBEDDED_STDLIB" | sort > "$payload_paths"
+if grep -F '(include-str ' "$EMBEDDED_STDLIB" >/dev/null 2>&1; then
+    awk '
+    match($0, /\(include-str[ \t]+[^ \t]+[ \t]+"[^"]+"/) {
+        path = $0
+        sub(/^[^"]*"/, "", path)
+        sub(/".*$/, "", path)
+        print path
+    }
+    ' "$EMBEDDED_STDLIB" | sort > "$payload_paths"
+    encoded_payload_bytes=0
+    compressed_payload_bytes=0
+else
+    tr -d '\r' < tools/embedded-stdlib-payload/modules.txt |
+        sed '/^[[:space:]]*$/d; s#^#stdlib/#' |
+        sort > "$payload_paths"
+    encoded_payload_bytes=$(awk '
+    /^[ \t]+"[A-Za-z0-9+\/=]+"[ \t]*$/ {
+        line = $0
+        sub(/^[ \t]+"/, "", line)
+        sub(/"[ \t]*$/, "", line)
+        total += length(line)
+    }
+    END { printf "%d\n", total }
+    ' "$EMBEDDED_STDLIB")
+    compressed_payload_bytes=$(awk '
+    /\(CompilerEmbeddedStdlibPayloadSome[ \t]*$/ { state = 1; next }
+    state == 1 && $0 ~ /^[ \t]+[0-9]+[ \t]*$/ { state = 2; next }
+    state == 2 && $0 ~ /^[ \t]+[0-9]+[ \t]*$/ {
+        value = $0
+        gsub(/[ \t]/, "", value)
+        total += value
+        state = 0
+    }
+    END { printf "%d\n", total }
+    ' "$EMBEDDED_STDLIB")
+fi
 
 while IFS= read -r path; do
     [ -n "$path" ] || continue
@@ -368,7 +396,9 @@ echo
 echo "embedded_stdlib_payloads"
 printf 'source_manifest\t%s\n' "$EMBEDDED_STDLIB"
 printf 'total_files\t%s\n' "$payload_files"
-printf 'total_bytes\t%s\n' "$payload_total"
+printf 'expanded_source_bytes\t%s\n' "$payload_total"
+printf 'compressed_token_bytes\t%s\n' "$compressed_payload_bytes"
+printf 'encoded_payload_bytes\t%s\n' "$encoded_payload_bytes"
 printf 'bucket\tfiles\tbytes\n'
 for bucket in stdlib_top_level_modules stdlib_tests stdlib_other other; do
     awk -F '\t' -v bucket="$bucket" '

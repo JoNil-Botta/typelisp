@@ -1187,4 +1187,162 @@ run_expect_failure lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint-parse-
 assert_empty "$WORKDIR/lint-parse-error-check.stdout"
 assert_nonempty "$WORKDIR/lint-parse-error-check.stderr"
 
+echo "[host-action-cli] opt2 build-invariance reference handoff"
+assert_contains scripts/ci-verify.sh "TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE"
+assert_contains scripts/ci-verify.sh "TYPELISP_OPT2_CLI_REFERENCE_ASM"
+handoff_build_line=$(grep -nF 'scripts/check-build-invariance.sh' scripts/ci-verify.sh | head -n 1 | cut -d: -f1)
+handoff_opt2_line=$(grep -nF 'scripts/check-opt2-cli-regression.sh' scripts/ci-verify.sh | head -n 1 | cut -d: -f1)
+if [ -z "$handoff_build_line" ] || [ -z "$handoff_opt2_line" ] || [ "$handoff_build_line" -ge "$handoff_opt2_line" ]; then
+    fail "Linux CI must run build-invariance before the opt2 regression handoff"
+fi
+HANDOFF_ROOT="$WORKDIR/opt2-handoff-repo"
+HANDOFF_SCRIPTS="$HANDOFF_ROOT/scripts"
+HANDOFF_LOG="$HANDOFF_ROOT/invocations.log"
+HANDOFF_REFERENCE="$HANDOFF_ROOT/validated-opt1.s"
+HANDOFF_SEED="$HANDOFF_ROOT/fake-seed"
+HANDOFF_GENERATED="$HANDOFF_ROOT/fake-generated"
+rm -rf "$HANDOFF_ROOT"
+mkdir -p "$HANDOFF_SCRIPTS"
+cp scripts/check-opt2-cli-regression.sh "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+cp scripts/lib-native-link.sh "$HANDOFF_SCRIPTS/lib-native-link.sh"
+cp scripts/lib-linux-entry.sh "$HANDOFF_SCRIPTS/lib-linux-entry.sh"
+printf '.text\nvalidated opt1 reference\n' > "$HANDOFF_REFERENCE"
+
+cat > "$HANDOFF_SEED" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+
+printf 'seed' >> "$OPT2_HANDOFF_TEST_LOG"
+for arg in "$@"; do
+    printf '|%s' "$arg" >> "$OPT2_HANDOFF_TEST_LOG"
+done
+printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
+
+command=${1:-}
+case "$command" in
+    run)
+        exit 42
+        ;;
+    build)
+        if [ "${OPT2_HANDOFF_TEST_SKIP_GENERATED:-0}" -eq 0 ]; then
+            mkdir -p target/release
+            cp "$OPT2_HANDOFF_TEST_GENERATED" target/release/typelisp
+            chmod +x target/release/typelisp
+        fi
+        ;;
+    compile)
+        out=""
+        shift
+        while [ "$#" -gt 0 ]; do
+            if [ "$1" = -o ]; then
+                shift
+                out=$1
+            fi
+            shift
+        done
+        [ -n "$out" ] || exit 1
+        cp "$OPT2_HANDOFF_TEST_REFERENCE" "$out"
+        ;;
+    *)
+        exit 1
+        ;;
+esac
+EOF
+
+cat > "$HANDOFF_GENERATED" <<'EOF'
+#!/usr/bin/env sh
+set -eu
+
+printf 'generated' >> "$OPT2_HANDOFF_TEST_LOG"
+for arg in "$@"; do
+    printf '|%s' "$arg" >> "$OPT2_HANDOFF_TEST_LOG"
+done
+printf '\n' >> "$OPT2_HANDOFF_TEST_LOG"
+
+[ "${1:-}" = compile ] || exit 1
+out=""
+opt_level=""
+shift
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        -o)
+            shift
+            out=$1
+            ;;
+        --opt-level)
+            shift
+            opt_level=$1
+            ;;
+    esac
+    shift
+done
+[ -n "$out" ] || exit 1
+if [ "$opt_level" = 1 ] && [ "${OPT2_HANDOFF_TEST_CROSS_MISMATCH:-0}" -eq 1 ]; then
+    printf '.text\ncross mismatch\n' > "$out"
+else
+    cp "$OPT2_HANDOFF_TEST_REFERENCE" "$out"
+fi
+EOF
+chmod +x "$HANDOFF_SEED" "$HANDOFF_GENERATED" "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+
+: > "$HANDOFF_LOG"
+run_capture opt2-handoff-supplied \
+    env \
+    TYPELISP_BIN="$HANDOFF_SEED" \
+    TYPELISP_OPT2_CLI_REFERENCE_ASM="$HANDOFF_REFERENCE" \
+    OPT2_HANDOFF_TEST_LOG="$HANDOFF_LOG" \
+    OPT2_HANDOFF_TEST_GENERATED="$HANDOFF_GENERATED" \
+    OPT2_HANDOFF_TEST_REFERENCE="$HANDOFF_REFERENCE" \
+    "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+assert_contains "$HANDOFF_LOG" "seed|build|--manifest-path|typelisp.pkg|--profile|release|--opt-level|2"
+assert_contains "$HANDOFF_LOG" "generated|compile|src/main.tl|-o|$HANDOFF_ROOT/target/opt2-cli-regression/cli-opt2.s"
+assert_contains "$HANDOFF_LOG" "generated|compile|src/main.tl|-o|$HANDOFF_ROOT/target/opt2-cli-regression/cli-opt2built-opt1.s"
+assert_not_contains "$HANDOFF_LOG" "seed|compile|src/main.tl"
+assert_contains "$WORKDIR/opt2-handoff-supplied.stdout" "reference: reuse validated build-invariance stage4 src/main @ opt1 assembly"
+assert_contains "$WORKDIR/opt2-handoff-supplied.stdout" "cross-fixpoint holds"
+
+: > "$HANDOFF_LOG"
+run_capture opt2-handoff-standalone \
+    env -u TYPELISP_OPT2_CLI_REFERENCE_ASM \
+    TYPELISP_BIN="$HANDOFF_SEED" \
+    OPT2_HANDOFF_TEST_LOG="$HANDOFF_LOG" \
+    OPT2_HANDOFF_TEST_GENERATED="$HANDOFF_GENERATED" \
+    OPT2_HANDOFF_TEST_REFERENCE="$HANDOFF_REFERENCE" \
+    "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+assert_contains "$HANDOFF_LOG" "seed|compile|src/main.tl|-o|$HANDOFF_ROOT/target/opt2-cli-regression/cli-opt1-ref.s"
+assert_contains "$WORKDIR/opt2-handoff-standalone.stdout" "reference: converged compiler compiles src/main.tl at opt1"
+assert_contains "$WORKDIR/opt2-handoff-standalone.stdout" "cross-fixpoint holds"
+
+run_expect_failure opt2-handoff-empty-reference \
+    env \
+    TYPELISP_BIN="$HANDOFF_SEED" \
+    TYPELISP_OPT2_CLI_REFERENCE_ASM= \
+    OPT2_HANDOFF_TEST_LOG="$HANDOFF_LOG" \
+    OPT2_HANDOFF_TEST_GENERATED="$HANDOFF_GENERATED" \
+    OPT2_HANDOFF_TEST_REFERENCE="$HANDOFF_REFERENCE" \
+    "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+assert_contains "$WORKDIR/opt2-handoff-empty-reference.stderr" "supplied opt1 reference path is empty"
+
+run_expect_failure opt2-handoff-missing-release \
+    env \
+    TYPELISP_BIN="$HANDOFF_SEED" \
+    TYPELISP_OPT2_CLI_REFERENCE_ASM="$HANDOFF_REFERENCE" \
+    OPT2_HANDOFF_TEST_LOG="$HANDOFF_LOG" \
+    OPT2_HANDOFF_TEST_GENERATED="$HANDOFF_GENERATED" \
+    OPT2_HANDOFF_TEST_REFERENCE="$HANDOFF_REFERENCE" \
+    OPT2_HANDOFF_TEST_SKIP_GENERATED=1 \
+    "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+assert_contains "$WORKDIR/opt2-handoff-missing-release.stderr" "generated compiler is missing or empty"
+
+run_expect_failure opt2-handoff-cross-mismatch \
+    env \
+    TYPELISP_BIN="$HANDOFF_SEED" \
+    TYPELISP_OPT2_CLI_REFERENCE_ASM="$HANDOFF_REFERENCE" \
+    OPT2_HANDOFF_TEST_LOG="$HANDOFF_LOG" \
+    OPT2_HANDOFF_TEST_GENERATED="$HANDOFF_GENERATED" \
+    OPT2_HANDOFF_TEST_REFERENCE="$HANDOFF_REFERENCE" \
+    OPT2_HANDOFF_TEST_CROSS_MISMATCH=1 \
+    "$HANDOFF_SCRIPTS/check-opt2-cli-regression.sh"
+assert_contains "$WORKDIR/opt2-handoff-cross-mismatch.stderr" "CROSS-FIXPOINT MISMATCH"
+
 echo "host-action CLI smoke passed"

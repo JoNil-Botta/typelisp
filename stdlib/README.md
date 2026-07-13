@@ -345,8 +345,10 @@ use.
   import-time instantiations such as `(import (vector i64))` or
   `(import (vector String) as svec)`. Each instantiation provides a generated
   module namespace with `Vec`, `Pop`, `new`, `with-capacity`, immutable-ref
-  reads, shared `Iter` / `IterNext` traversal, mutable-ref `push` / `set` /
-  `pop` updates, mutable `IterMut` / `IterMutNext` lending traversal, and
+  reads, shared `Iter` / `IterNext` traversal, consuming `IntoIter` /
+  `IntoNext` traversal with owned items and exactly-once checked slot moves,
+  mutable-ref `push` / `set` / `pop` updates, mutable `IterMut` / `IterMutNext`
+  lending traversal, and
   `len-mut` / `slots-mut` accessors for generated in-place algorithms and SPMD loops,
   conversion helpers, and fold/map/contains helpers. Borrow `slots` /
   `slots-mut` outside `foreach` when SPMD code needs backing storage without
@@ -682,16 +684,17 @@ contracts, and intentional panic/exit-status checks.
 3. Include a short header comment with its purpose and required primitives.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
-5. Add new top-level stdlib `.tl` files to `src/compiler_embedded_stdlib.tl`
-   so installed compiler binaries can use them through embedded stdlib
-   fallback. Do not add `stdlib/tests/*.tl` fixtures to the embedded payload.
+5. Add new top-level modules needed by installed compilers to
+   `tools/embedded-stdlib-payload/modules.txt`, then run
+   `scripts/generate-embedded-stdlib-payload.sh`. The checked-in generated
+   payload preserves exact source bytes; never add `stdlib/tests/*.tl` fixtures.
 6. Add inline `(test ...)` items next to declarations for source-local runnable
    API behavior; `scripts/verify-inline-tests.sh` discovers them automatically.
 7. Add focused fixtures under `stdlib/tests/` only for rejection, multi-file,
    resolution, host I/O stream, or intentional panic/exit-status coverage, and
    list them in `scripts/verify-stdlib.sh`'s runnable or check-only manifest.
    The stdlib verifier runs these fixtures with `--stdlib-root` and rejects
-   attempts to re-embed them in `src/compiler_embedded_stdlib.tl`.
+   attempts to add them to the embedded payload manifest.
 8. Document the intended public API coverage in `stdlib/tests/README.md`.
 9. Add `;#` module docs, attached `;:` item docs for every public top-level
    declaration, allocation-behavior notes for allocating APIs, an update to the
@@ -703,6 +706,10 @@ contracts, and intentional panic/exit-status checks.
    discovery gate picks up the new documented module without a manifest edit.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
+
+Run `scripts/verify-embedded-stdlib-payload.sh` to regenerate into `target/`,
+diff the checked-in payload, and decode every embedded module against its
+exact source bytes. `scripts/verify-stdlib.sh` includes this gate in CI.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.

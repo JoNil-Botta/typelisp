@@ -1391,6 +1391,15 @@ concrete `Done` result. `String` elements remain immutable and use `(& source
 str)` items under this convention. A future `for` macro may select the
 protocol, but it is explicit library API until its reflection support lands.
 
+**Consuming collection iterators.** A generated collection module may expose
+`into-iterator` with a `(:consume)` collection parameter and `into-next` over
+mutable iterator state. Construction moves the source exactly once. Each
+`IntoNext.Item` owns its `T` payload; `Done` is explicit and remains stable on
+repeated calls. Generated vectors keep an internal live-slot map and extract each
+item through checked `array-take!`, never through `array-ref`, `clone`, or a
+hidden copy. A future `for` macro may select this protocol for a bare owned
+source; protocol discovery remains explicit library API until that macro lands.
+
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
 

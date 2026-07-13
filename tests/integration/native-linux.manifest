@@ -16,6 +16,7 @@ mut_to_immut_reborrow_call|tests/integration/mut_to_immut_reborrow_call.tl|42|-|
 borrow_reborrow_stored_reference|tests/integration/borrow_reborrow_stored_reference.tl|0|-|-|-
 borrow_reborrow_stored_reference_aggregate|tests/integration/borrow_reborrow_stored_reference_aggregate.tl|42|-|-|-
 vector_shared_iterator|tests/integration/vector_shared_iterator.tl|42|-|-|stdlib/vector.tl
+vector_consuming_iterator|tests/integration/vector_consuming_iterator.tl|42|-|-|stdlib/vector.tl
 two_phase_mutable_call_borrow|tests/integration/two_phase_mutable_call_borrow.tl|42|-|-|-
 implicit_core_prelude|tests/integration/implicit_core_prelude.tl|42|-|-|-
 core_macros_headerless_prelude_import|tests/integration/core_macros_headerless_prelude_import.tl|42|-|-|-
@@ -34,6 +35,7 @@ compile_profile_optimizer_escape|tests/integration/compile_profile_optimizer_esc
 compile_profile_result_import|tests/integration/compile_profile_result_import.tl|42|-|-|-
 call_eval_order|tests/integration/call_eval_order.tl|42|-|-|-
 include_bin|tests/integration/include_bin.tl|42|-|-|include_bin_payload.bin
+embedded_stdlib_exact_include|tests/integration/embedded_stdlib_exact_include.tl|42|-|-|stdlib/array.tl stdlib/string.tl
 c_abi_aggregate_color|tests/integration/c_abi_aggregate_color.tl|42|-|-|benchmarks/c_abi_aggregate_color/baseline.c
 c_abi_f32_scalar|tests/integration/c_abi_f32_scalar.tl|42|-|-|benchmarks/c_abi_f32_scalar/baseline.c
 c_abi_int8_struct|tests/integration/c_abi_int8_struct.tl|42|-|-|benchmarks/c_abi_int8_struct/baseline.c

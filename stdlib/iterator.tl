@@ -5,7 +5,10 @@
 ;# a collection module exposes an `iterator` operation that returns iterator
 ;# state, and the iterator state's module exposes `next`, taking `&mut Iter` and
 ;# returning an option-like result. Generated `Vec<T>` modules implement that
-;# canonical pair with `IterNext.Item (& source T)` for shared traversal. The
+;# canonical pair with `IterNext.Item (& source T)` for shared traversal and
+;# `into-iterator` / `into-next` with owned `IntoNext.Item T` results for
+;# consuming traversal. Consuming construction uses a `(:consume)` parameter,
+;# so the source moves exactly once and cannot be reused. The
 ;# current flat stdlib compatibility names keep their module prefix, so this
 ;# module's first concrete iterator is `range` / `range-inclusive`,
 ;# `i64-range-iterator`, and `i64-range-next`.

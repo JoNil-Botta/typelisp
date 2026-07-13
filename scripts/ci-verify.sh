@@ -132,6 +132,13 @@ required_gate_unavailable() {
 # fetch-stage0.sh is unrelated — it rides out a genuinely transient mutable-asset
 # race, not a compiler crash.)
 
+# Generated payload freshness must fail before the expensive bootstrap. The
+# exact-source verifier uses only stage0-supported language/runtime surfaces.
+run_with_compiler \
+    "$SEED_TYPELISP_BIN" \
+    "embedded stdlib generated payload" \
+    scripts/verify-embedded-stdlib-payload.sh
+
 stage2_safety_corpus_supported() {
     compiler=$1
     probe_dir="$ROOT/target/ci-verify-safety-probe"
@@ -285,9 +292,36 @@ run_with_compiler "$STAGE2_BIN" "no-libc dependency guard" scripts/verify-no-lib
 run_with_compiler "$STAGE2_BIN" "stage2 cli build/run and chooser smoke" scripts/verify-selfhost-cli-build-run.sh
 run_with_compiler "$STAGE2_BIN" "stage2 public tool surface" scripts/verify-public-tools.sh
 run_with_compiler "$STAGE2_BIN" "stage2 result-import harness integrity" scripts/verify-result-import-harness.sh
-run_with_compiler "$STAGE2_BIN" "stage2 opt2-built CLI compile + cross-fixpoint regression" scripts/check-opt2-cli-regression.sh
 if [ "$HOST_OS" = linux ]; then
-    run_with_compiler "$STAGE2_BIN" "stage2 opt1/opt2 build-invariance" scripts/check-build-invariance.sh
+    OPT2_REFERENCE_PATH_FILE="$ROOT/target/ci-verify-opt2-reference.path"
+    rm -f "$OPT2_REFERENCE_PATH_FILE"
+    run_with_compiler \
+        "$STAGE2_BIN" \
+        "stage2 opt1/opt2 build-invariance" \
+        env TYPELISP_BUILD_INVARIANCE_OPT1_REFERENCE_PATH_FILE="$OPT2_REFERENCE_PATH_FILE" \
+        scripts/check-build-invariance.sh
+    if [ ! -s "$OPT2_REFERENCE_PATH_FILE" ]; then
+        required_gate_unavailable "build-invariance opt1 reference handoff" \
+            "build-invariance did not publish its validated stage4 src/main @ opt1 assembly path"
+    fi
+    OPT2_REFERENCE_ASM=$(sed -n '1p' "$OPT2_REFERENCE_PATH_FILE")
+    if [ ! -s "$OPT2_REFERENCE_ASM" ]; then
+        required_gate_unavailable "build-invariance opt1 reference handoff" \
+            "published assembly is missing or empty: $OPT2_REFERENCE_ASM"
+    fi
+    echo "[ci-verify] opt2 gate reuses build-invariance reference: $OPT2_REFERENCE_ASM"
+    run_with_compiler \
+        "$STAGE2_BIN" \
+        "stage2 opt2-built CLI compile + cross-fixpoint regression" \
+        env TYPELISP_OPT2_CLI_REFERENCE_ASM="$OPT2_REFERENCE_ASM" \
+        scripts/check-opt2-cli-regression.sh
+else
+    # Windows has no build-invariance gate, so the opt2 gate retains its
+    # standalone reference compile.
+    run_with_compiler \
+        "$STAGE2_BIN" \
+        "stage2 opt2-built CLI compile + cross-fixpoint regression" \
+        scripts/check-opt2-cli-regression.sh
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh

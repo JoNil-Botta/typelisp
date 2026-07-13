@@ -4643,16 +4643,25 @@
 (define (compiler-reg-assignment-lookup
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : CompilerRegMaybeLocation
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) CompilerRegMaybeLocation.No]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment id location)
-          (if (= id var)
-            (CompilerRegMaybeLocation.Some location)
-            (if (> id var)
-              CompilerRegMaybeLocation.No
-              (compiler-reg-assignment-lookup (box-get rest) var)))])]))
+  (let
+    [cursor : CompilerRegAssignmentList assignments]
+    [result : CompilerRegMaybeLocation CompilerRegMaybeLocation.No]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(CompilerRegAssignmentList.Nil) (set! done true)]
+          [(CompilerRegAssignmentList.Cons item rest)
+            (match item
+              [(CompilerRegAssignment.Assignment id location)
+                (if (= id var)
+                  (begin
+                    (set! result (CompilerRegMaybeLocation.Some location))
+                    (set! done true))
+                  (if (> id var)
+                    (set! done true)
+                    (set! cursor (box-get rest))))])]))
+      result)))
 
 (define (compiler-reg-location-eq?
   [left : CompilerRegLocation]

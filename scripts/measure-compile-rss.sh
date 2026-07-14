@@ -353,6 +353,10 @@ prepare_manifest_chunks() {
                 cp "$a" "$prep_case_dir/$b"
                 ;;
             contains | not-contains | count-at-least) ;;
+            lint-root)
+                [ -n "$prep_case_id" ] || fail "lint-root appears before a case"
+                [ -n "$a" ] || fail "$prep_case_id has an empty lint-root"
+                ;;
             end)
                 [ -n "$prep_case_id" ] || fail "end appears before a case"
                 if [ -n "$prep_requires_stage0_mode" ]; then

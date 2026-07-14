@@ -99,7 +99,6 @@
   (name-id i64)
   (ty AstType)
   (flags i64)
-  (marker-kind TcTypeEnvScopedMarkerKind)
   (marker-kind-tag i64)
   (scope-depth i64)
   (generation i64))
@@ -156,7 +155,8 @@
 
 (defenum TcTypeEnvScopedRuntimeSave
   (Inactive)
-  (Active TcTypeEnvScopedCarrierSave))
+  (Scope TcTypeEnvScopedCarrierMark)
+  (Replaced TcTypeEnvScopedCarrier))
 
 (defenum TcTypeEnvScopedLookup
   (Missing)
@@ -3976,9 +3976,6 @@
 (define tc-type-env-scoped-next-lookup-epoch : i64
   1)
 
-(define (tc-type-env-scoped-dense-lookup-id? [name-id : i64]) : bool
-  (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity)))
-
 (define (tc-type-env-scoped-stack-with-capacity
   [slot-capacity : i64]
   [mark-capacity : i64]) : TcTypeEnvScopedStack
@@ -4020,7 +4017,7 @@
   (struct-get stack cache-generation))
 
 (define (tc-type-env-scoped-empty-slot) : TcTypeEnvScopedSlot
-  (TcTypeEnvScopedSlot 0 (AstType.Unit) 0 TcTypeEnvScopedMarkerKind.None 0 0 0))
+  (TcTypeEnvScopedSlot 0 (AstType.Unit) 0 0 0 0))
 
 (define (tc-type-env-scoped-empty-mark) : TcTypeEnvScopedMark
   (TcTypeEnvScopedMark 0 0 0 0))
@@ -4051,6 +4048,34 @@
     [index : i64 (struct-get stack slot-count)]
     (begin
       (tc-type-env-scoped-stack-reserve-slots! stack (+ index 1))
+      ;; A restored stack reuses array storage. Invalidate the overwritten
+      ;; name's cached index so an in-range hit always names this slot.
+      (let
+        [old-name-id : i64
+          (struct-get (array-ref (struct-get stack slots) index) name-id)]
+        (if (and
+          (>= old-name-id 0)
+          (< old-name-id tc-type-env-scoped-dense-lookup-capacity))
+          (if (and
+            (=
+              (array-ref tc-type-env-scoped-dense-lookup-epochs old-name-id)
+              (struct-get stack lookup-epoch))
+            (=
+              (array-ref tc-type-env-scoped-dense-lookup-indices old-name-id)
+              index))
+            (array-set! tc-type-env-scoped-dense-lookup-epochs old-name-id 0)
+            unit)
+          (match (tc_i64_i64_map.get
+            (& (struct-get stack lookup-cache))
+            old-name-id)
+            [(tc_i64_i64_map.LookupFound old-index)
+              (if (= old-index index)
+                (tc_i64_i64_map.insert-ref!
+                  (&mut (struct-get stack lookup-cache))
+                  old-name-id
+                  -1)
+                unit)]
+            [(tc_i64_i64_map.LookupMissing) unit])))
       (array-set!
         (struct-get stack slots)
         index
@@ -4058,11 +4083,12 @@
           name-id
           ty
           flags
-          marker-kind
           (tc-type-env-scoped-marker-kind-tag marker-kind)
           (struct-get stack scope-depth)
           (struct-get stack cache-generation)))
-      (if (tc-type-env-scoped-dense-lookup-id? name-id)
+      (if (and
+        (>= name-id 0)
+        (< name-id tc-type-env-scoped-dense-lookup-capacity))
         (begin
           (array-set! tc-type-env-scoped-dense-lookup-indices name-id index)
           (array-set!
@@ -4179,14 +4205,14 @@
         (struct-get slot generation)))))
 
 (define (tc-type-env-scoped-stack-dense-lookup-id-refresh
-  [stack : TcTypeEnvScopedStack]
+  [stack : (& stack TcTypeEnvScopedStack)]
   [name-id : i64]) : i64
   (let
     [index : i64
       (tc-type-env-scoped-stack-find-id-index-from
         stack
         name-id
-        (- (tc-type-env-scoped-stack-len stack) 1))]
+        (- (struct-get stack slot-count) 1))]
     (begin
       (array-set! tc-type-env-scoped-dense-lookup-indices name-id index)
       (array-set!
@@ -4197,13 +4223,13 @@
       index)))
 
 (define (tc-type-env-scoped-stack-map-lookup-id
-  [stack : TcTypeEnvScopedStack]
+  [stack : (& stack TcTypeEnvScopedStack)]
   [name-id : i64]) : i64
   (match (tc_i64_i64_map.get (& (struct-get stack lookup-cache)) name-id)
     [(tc_i64_i64_map.LookupFound index)
       (if (and
         (>= index 0)
-        (< index (tc-type-env-scoped-stack-len stack))
+        (< index (struct-get stack slot-count))
         (=
           (struct-get (array-ref (struct-get stack slots) index) name-id)
           name-id))
@@ -4215,39 +4241,34 @@
           (tc-type-env-scoped-stack-find-id-index-from
             stack
             name-id
-            (- (tc-type-env-scoped-stack-len stack) 1))))]
+            (- (struct-get stack slot-count) 1))))]
     [(tc_i64_i64_map.LookupMissing)
       (begin
         (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
         -1)]))
 
 (define (tc-type-env-scoped-stack-lookup-index
-  [stack : TcTypeEnvScopedStack]
+  [stack : (& stack TcTypeEnvScopedStack)]
   [name-id : i64]) : i64
-  (if (tc-type-env-scoped-dense-lookup-id? name-id)
+  (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
     (if (=
       (array-ref tc-type-env-scoped-dense-lookup-epochs name-id)
       (struct-get stack lookup-epoch))
       (let
         [index : i64
           (array-ref tc-type-env-scoped-dense-lookup-indices name-id)]
-        (if (and
-          (>= index 0)
-          (< index (tc-type-env-scoped-stack-len stack))
-          (=
-            (struct-get (array-ref (struct-get stack slots) index) name-id)
-            name-id))
+        (if (< index 0)
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-cache-hit))
-            index)
-          (if (< index 0)
+            -1)
+          (if (< index (struct-get stack slot-count))
             (begin
               (cfg
                 compile-profile
                 (compiler-tc-env-profile-note-scoped-cache-hit))
-              -1)
+              index)
             (tc-type-env-scoped-stack-dense-lookup-id-refresh stack name-id))))
       (tc-type-env-scoped-stack-dense-lookup-id-refresh stack name-id))
     (tc-type-env-scoped-stack-map-lookup-id stack name-id)))
@@ -4257,7 +4278,7 @@
   [name-id : i64]) : TcTypeEnvScopedLookup
   (tc-type-env-scoped-stack-lookup-id-at
     stack
-    (tc-type-env-scoped-stack-lookup-index stack name-id)))
+    (tc-type-env-scoped-stack-lookup-index (& stack) name-id)))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
   [stack : TcTypeEnvScopedStack]
@@ -4290,7 +4311,7 @@
   (tc-type-env-scoped-stack-marker-lookup-from
     stack
     marker-kind
-    (- (tc-type-env-scoped-stack-len stack) 1)))
+    (- (struct-get stack slot-count) 1)))
 
 (define (tc-type-env-scoped-stack-owner-marker-before?
   [stack : TcTypeEnvScopedStack]
@@ -4339,7 +4360,7 @@
           (TcTypeEnvScopedMarkerCursor (struct-get cursor stack) (- index 1)))))))
 
 (define (tc-type-env-scoped-stack-find-id-index-from
-  [stack : TcTypeEnvScopedStack]
+  [stack : (& stack TcTypeEnvScopedStack)]
   [name-id : i64]
   [index : i64]) : i64
   (if (< index 0)
@@ -4351,12 +4372,12 @@
         (tc-type-env-scoped-stack-find-id-index-from stack name-id (- index 1))))))
 
 (define (tc-type-env-scoped-stack-find-id-index
-  [stack : TcTypeEnvScopedStack]
+  [stack : (& stack TcTypeEnvScopedStack)]
   [name-id : i64]) : i64
   (tc-type-env-scoped-stack-find-id-index-from
     stack
     name-id
-    (- (tc-type-env-scoped-stack-len stack) 1)))
+    (- (struct-get stack slot-count) 1)))
 
 (define (tc-type-env-scoped-stack-find-lifetime-index-from
   [stack : TcTypeEnvScopedStack]
@@ -4796,6 +4817,22 @@
         (tc-type-env-scoped-sidecar-mark sidecar stack-mark)
         (struct-get carrier dirty)))))
 
+(define (tc-type-env-scoped-carrier-snapshot-mark
+  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedCarrierMark
+  (let
+    [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
+    [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
+    (TcTypeEnvScopedCarrierMark
+      (struct-get carrier env)
+      (tc-type-env-scoped-sidecar-mark
+        sidecar
+        (TcTypeEnvScopedMark
+          (struct-get stack slot-count)
+          (struct-get stack mark-count)
+          (struct-get stack scope-depth)
+          (struct-get stack cache-generation)))
+      (struct-get carrier dirty))))
+
 (define (tc-type-env-scoped-carrier-restore
   [carrier : TcTypeEnvScopedCarrier]
   [mark : TcTypeEnvScopedCarrierMark]) : TcTypeEnvScopedCarrier
@@ -4944,7 +4981,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
     (if (>= index 0)
       (ResultTcType.Ok
         (struct-get (array-ref (struct-get stack slots) index) ty))
@@ -4967,7 +5004,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    (if (>= (tc-type-env-scoped-stack-lookup-index stack name-id) 0)
+    (if (>= (tc-type-env-scoped-stack-lookup-index (& stack) name-id) 0)
       true
       (begin
         (cfg
@@ -5005,7 +5042,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
     (if (>= index 0)
       (let
         [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
@@ -5035,7 +5072,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
     (if (>= index 0)
       (tc-type-env-scoped-slot-c-abi-fnptr?
         (array-ref (struct-get stack slots) index))
@@ -5053,9 +5090,9 @@
   (let
     [stack : TcTypeEnvScopedStack
       (struct-get (struct-get carrier sidecar) stack)]
-    [name-index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+    [name-index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
     [boundary-index : i64
-      (tc-type-env-scoped-stack-lookup-index stack (tc-default-boundary-id))]
+      (tc-type-env-scoped-stack-lookup-index (& stack) (tc-default-boundary-id))]
     (cond
       [(>= name-index 0)
         (and (>= boundary-index 0) (> boundary-index name-index))]
@@ -5117,7 +5154,7 @@
       [stack : TcTypeEnvScopedStack
         (struct-get (struct-get carrier sidecar) stack)]
       [index : i64
-        (tc-type-env-scoped-stack-find-id-index stack (tc-name-id name))]
+        (tc-type-env-scoped-stack-find-id-index (& stack) (tc-name-id name))]
       (tc-type-env-scoped-stack-cleanup-owner-before? stack index name))))
 
 (define (tc-type-env-scoped-carrier-arena-owner-active?
@@ -5130,7 +5167,7 @@
       [stack : TcTypeEnvScopedStack
         (struct-get (struct-get carrier sidecar) stack)]
       [index : i64
-        (tc-type-env-scoped-stack-find-id-index stack (tc-name-id name))]
+        (tc-type-env-scoped-stack-find-id-index (& stack) (tc-name-id name))]
       (tc-type-env-scoped-stack-owner-marker-before? stack index name marker-id))))
 
 (define (tc-type-env-scoped-carrier-ordinary-arena-owner-active?
@@ -5250,7 +5287,7 @@
               lifetime
               lifetime-id)]
           [target-index : i64
-            (tc-type-env-scoped-stack-find-id-index stack target-id)]
+            (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
           [result : bool
             (and
               (>= lifetime-index 0)
@@ -5344,14 +5381,62 @@
 (define (tc-type-env-scoped-runtime-current) : TcTypeEnvScopedCarrier
   tc-type-env-scoped-runtime-carrier)
 
+(define (tc-type-env-scoped-runtime-lookup-index [name-id : i64]) : i64
+  (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
+    (if (=
+      (array-ref tc-type-env-scoped-dense-lookup-epochs name-id)
+      (struct-get
+        (struct-get
+          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+          stack)
+        lookup-epoch))
+      (let
+        [index : i64
+          (array-ref tc-type-env-scoped-dense-lookup-indices name-id)]
+        (if (< index 0)
+          (begin
+            (cfg
+              compile-profile
+              (compiler-tc-env-profile-note-scoped-cache-hit))
+            -1)
+          (if (<
+            index
+            (struct-get
+              (struct-get
+                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                stack)
+              slot-count))
+            (begin
+              (cfg
+                compile-profile
+                (compiler-tc-env-profile-note-scoped-cache-hit))
+              index)
+            (let
+              [stack : TcTypeEnvScopedStack
+                (struct-get
+                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                  stack)]
+              (tc-type-env-scoped-stack-dense-lookup-id-refresh
+                (& stack)
+                name-id)))))
+      (let
+        [stack : TcTypeEnvScopedStack
+          (struct-get
+            (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+            stack)]
+        (tc-type-env-scoped-stack-dense-lookup-id-refresh (& stack) name-id)))
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get
+          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+          stack)]
+      (tc-type-env-scoped-stack-map-lookup-id (& stack) name-id))))
+
 (define (tc-type-env-scoped-runtime-save) : TcTypeEnvScopedRuntimeSave
   (if tc-type-env-scoped-runtime-active
-    (let
-      [saved : TcTypeEnvScopedCarrierSave
-        (tc-type-env-scoped-carrier-snapshot tc-type-env-scoped-runtime-carrier)]
-      (begin
-        (set! tc-type-env-scoped-runtime-carrier (struct-get saved carrier))
-        (TcTypeEnvScopedRuntimeSave.Active saved)))
+    (TcTypeEnvScopedRuntimeSave.Scope
+      (tc-type-env-scoped-carrier-snapshot-mark
+        tc-type-env-scoped-runtime-carrier))
     (TcTypeEnvScopedRuntimeSave.Inactive)))
 
 (define (tc-type-env-scoped-runtime-suspend!) : TcTypeEnvScopedRuntimeSave
@@ -5368,18 +5453,25 @@
       (begin
         (tc-type-env-scoped-cache-clear!)
         (set! tc-type-env-scoped-runtime-active false))]
-    [(TcTypeEnvScopedRuntimeSave.Active carrier-save)
+    [(TcTypeEnvScopedRuntimeSave.Scope mark)
       (begin
         (set!
           tc-type-env-scoped-runtime-carrier
           (tc-type-env-scoped-carrier-restore
-            (struct-get carrier-save carrier)
-            (struct-get carrier-save mark)))
+            tc-type-env-scoped-runtime-carrier
+            mark))
+        (set! tc-type-env-scoped-runtime-active true))]
+    [(TcTypeEnvScopedRuntimeSave.Replaced carrier)
+      (begin
+        (set! tc-type-env-scoped-runtime-carrier carrier)
         (set! tc-type-env-scoped-runtime-active true))]))
 
 (define (tc-type-env-scoped-runtime-enter! [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedRuntimeSave
   (let
-    [saved : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+    [saved : TcTypeEnvScopedRuntimeSave
+      (if tc-type-env-scoped-runtime-active
+        (TcTypeEnvScopedRuntimeSave.Replaced tc-type-env-scoped-runtime-carrier)
+        (TcTypeEnvScopedRuntimeSave.Inactive))]
     (begin
       (tc-type-env-scoped-runtime-marker-ids-ensure!)
       (tc-type-env-scoped-cache-clear!)
@@ -5442,7 +5534,6 @@
             (struct-get slot name-id)
             (struct-get slot ty)
             (bit-or (struct-get slot flags) flags)
-            (struct-get slot marker-kind)
             (struct-get slot marker-kind-tag)
             (struct-get slot scope-depth)
             (struct-get slot generation))))
@@ -5471,7 +5562,6 @@
             (bit-or
               (struct-get slot flags)
               (tc-type-env-scoped-runtime-slot-flags marker-kind))
-            marker-kind
             (tc-type-env-scoped-marker-kind-tag marker-kind)
             (struct-get slot scope-depth)
             (struct-get slot generation))))
@@ -5537,20 +5627,25 @@
 (define (tc-binding-c-abi-fnptr-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active
     (let
-      [sidecar : TcTypeEnvScopedSidecar
-        (struct-get tc-type-env-scoped-runtime-carrier sidecar)]
-      [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-      [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
       [scoped : bool
         (if (>= index 0)
           (tc-type-env-scoped-slot-c-abi-fnptr?
-            (array-ref (struct-get stack slots) index))
+            (array-ref
+              (struct-get
+                (struct-get
+                  (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                  stack)
+                slots)
+              index))
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-binding-c-abi-fnptr-persistent-id?
-              (tc-type-env-scoped-sidecar-persistent sidecar)
+              (struct-get
+                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                persistent)
               name-id)))]
       (begin
         (cfg
@@ -8907,22 +9002,29 @@
 (define (tc-lookup-id [env : TcTypeEnv] [name-id : i64]) : ResultTcType
   (if tc-type-env-scoped-runtime-active
     (let
-      [sidecar : TcTypeEnvScopedSidecar
-        (struct-get tc-type-env-scoped-runtime-carrier sidecar)]
-      [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-      [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
       [scoped : ResultTcType
         (if (>= index 0)
           (begin
             (cfg compile-profile (compiler-tc-env-profile-note-lookup))
             (ResultTcType.Ok
-              (struct-get (array-ref (struct-get stack slots) index) ty)))
+              (struct-get
+                (array-ref
+                  (struct-get
+                    (struct-get
+                      (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                      stack)
+                    slots)
+                  index)
+                ty)))
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-lookup-persistent-id
-              (tc-type-env-scoped-sidecar-persistent sidecar)
+              (struct-get
+                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                persistent)
               name-id)))]
       (begin
         (cfg
@@ -8967,18 +9069,17 @@
 (define (tc-name-bound-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if tc-type-env-scoped-runtime-active
     (let
-      [sidecar : TcTypeEnvScopedSidecar
-        (struct-get tc-type-env-scoped-runtime-carrier sidecar)]
-      [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
       [scoped : bool
-        (if (>= (tc-type-env-scoped-stack-lookup-index stack name-id) 0)
+        (if (>= (tc-type-env-scoped-runtime-lookup-index name-id) 0)
           true
           (begin
             (cfg
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-name-bound-persistent-id?
-              (tc-type-env-scoped-sidecar-persistent sidecar)
+              (struct-get
+                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                persistent)
               name-id)))]
       (begin
         (cfg
@@ -9043,15 +9144,18 @@
 (define (tc-lookup-unsafe-id [env : TcTypeEnv] [name-id : i64]) : ResultTcTypeUnsafe
   (if tc-type-env-scoped-runtime-active
     (let
-      [sidecar : TcTypeEnvScopedSidecar
-        (struct-get tc-type-env-scoped-runtime-carrier sidecar)]
-      [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-      [index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+      [index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
       [scoped : ResultTcTypeUnsafe
         (if (>= index 0)
           (let
             [slot : TcTypeEnvScopedSlot
-              (array-ref (struct-get stack slots) index)]
+              (array-ref
+                (struct-get
+                  (struct-get
+                    (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                    stack)
+                  slots)
+                index)]
             (begin
               (cfg compile-profile (compiler-tc-env-profile-note-lookup))
               (ResultTcTypeUnsafe.Ok
@@ -9064,7 +9168,9 @@
               compile-profile
               (compiler-tc-env-profile-note-scoped-tail-fallback))
             (tc-lookup-unsafe-persistent-id
-              (tc-type-env-scoped-sidecar-persistent sidecar)
+              (struct-get
+                (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                persistent)
               name-id)))]
       (begin
         (cfg
@@ -21093,12 +21199,9 @@
   (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
     (if tc-type-env-scoped-runtime-active
       (let
-        [sidecar : TcTypeEnvScopedSidecar
-          (struct-get tc-type-env-scoped-runtime-carrier sidecar)]
-        [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-        [name-index : i64 (tc-type-env-scoped-stack-lookup-index stack name-id)]
+        [name-index : i64 (tc-type-env-scoped-runtime-lookup-index name-id)]
         [boundary-index : i64
-          (tc-type-env-scoped-stack-lookup-index stack (tc-default-boundary-id))]
+          (tc-type-env-scoped-runtime-lookup-index (tc-default-boundary-id))]
         [scoped : bool
           (cond
             [(>= name-index 0)
@@ -21110,7 +21213,9 @@
                   compile-profile
                   (compiler-tc-env-profile-note-scoped-tail-fallback))
                 (tc-default-builtin-unshadowed-scan-id?
-                  (tc-type-env-scoped-sidecar-persistent sidecar)
+                  (struct-get
+                    (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+                    persistent)
                   name-id))])]
         (begin
           (cfg

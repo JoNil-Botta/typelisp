@@ -12372,10 +12372,20 @@
         (compiler-backend-string-contains? asm "tl_arena_poison_enable:\n"))
       (compiler-backend-string-contains? asm "tl_arena_make_atomic:\n")
       (backend-and4
-        (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 9)
-        (= (compiler-backend-string-count asm "    call VirtualFree\n") 4)
+        (and
+          (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 9)
+          (= (compiler-backend-string-count asm "    call GetLastError\n") 9))
+        (and
+          (= (compiler-backend-string-count asm "    call VirtualFree\n") 8)
+          (=
+            (compiler-backend-string-count
+              asm
+              "    call tl_windows_allocation_abort\n")
+            9))
         (not (compiler-backend-string-contains? asm "    syscall\n"))
-        (not (compiler-backend-string-contains? asm "    call WriteFile\n")))
+        (and
+          (not (compiler-backend-string-contains? asm "    call WriteFile\n"))
+          (not (compiler-backend-string-contains? asm "    ud2\n"))))
       (compiler-backend-string-contains? asm ".L_tl_alloc_win_commit_to:\n")
       (compiler-backend-string-contains? asm "    movq $0x2000, %r8\n")
       (compiler-backend-string-contains? asm "    movq $0x1000, %r8\n")
@@ -12384,10 +12394,76 @@
       (not (compiler-backend-string-contains? asm "    call _write\n"))
       (not (compiler-backend-string-contains? asm "SystemFunction036")))))
 
+(define (compiler-backend-runtime-windows-allocation-provenance-ok?) : bool
+  (let
+    [windows : String
+      (compiler-backend-runtime-functions-for-target
+        (CompilerBackendTarget.Windows)
+        (compiler-backend-runtime-helper-full-plan))]
+    [linux : String
+      (compiler-backend-runtime-functions-for-target
+        (CompilerBackendTarget.Linux)
+        (compiler-backend-runtime-helper-full-plan))]
+    (and
+      (backend-and8
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_arena_make_win_reserve_os_fail:\n    call GetLastError\n")
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_arena_make_win_initial_commit_os_fail:\n    call GetLastError\n")
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_arena_make_atomic_win_reserve_os_fail:\n    call GetLastError\n")
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_arena_make_atomic_win_initial_commit_os_fail:\n    call GetLastError\n")
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n")
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_alloc_atomic_reserve_os_fail:\n    call GetLastError\n")
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_alloc_atomic_initial_commit_os_fail:\n    call GetLastError\n")
+        (and
+          (compiler-backend-string-contains?
+            windows
+            ".L_tl_alloc_reserve_os_fail:\n    call GetLastError\n")
+          (compiler-backend-string-contains?
+            windows
+            ".L_tl_alloc_initial_commit_os_fail:\n    call GetLastError\n")))
+      (backend-and4
+        (and
+          (=
+            (compiler-backend-string-count
+              windows
+              "    call VirtualFree\n    movq %rsi, 40(%rsp)\n")
+            2)
+          (=
+            (compiler-backend-string-count
+              windows
+              "    call VirtualFree\n    movq -48(%rbp), %rax\n    movq -40(%rbp), %r8\n    movq %rax, 40(%rsp)\n")
+            2))
+        (compiler-backend-string-contains?
+          windows
+          ".L_tl_alloc_win_commit_os_fail:\n    call GetLastError\n    movl %eax, %eax\n    movq %rax, 40(%rsp)\n")
+        (compiler-backend-string-contains?
+          windows
+          "    movq $2, %rdx\n    call tl_windows_allocation_abort\n")
+        (and
+          (not (compiler-backend-string-contains? windows "    ud2\n"))
+          (not
+            (compiler-backend-string-contains?
+              linux
+              "tl_windows_allocation_abort")))))))
+
 (define (compiler-backend-runtime-page-call-inventory-ok?) : bool
   (and
     (compiler-backend-runtime-page-call-inventory-linux-ok?)
-    (compiler-backend-runtime-page-call-inventory-windows-ok?)))
+    (compiler-backend-runtime-page-call-inventory-windows-ok?)
+    (compiler-backend-runtime-windows-allocation-provenance-ok?)))
 
 (define (compiler-backend-runtime-arena-root-current-linux-ok?) : bool
   (let

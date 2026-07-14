@@ -243,8 +243,6 @@
           (capacity i64))
         (define (slots [v : (& v Vec)]) : (& v (Array ,T))
           (& (struct-get (struct-get v state) slots)))
-        (define (slots-mut [v : (&mut v Vec)]) : (&mut v (Array ,T))
-          (&mut (struct-get (struct-get v state) slots)))
         (define (len [v : (& v Vec)]) : i64
           (struct-get v len))
         (define (capacity [v : (& v Vec)]) : i64
@@ -274,7 +272,7 @@
                   unit)
                 (array-set! (struct-get (struct-get v state) slots) index value)
                 (array-set! (struct-get (struct-get v state) live) index true)))
-            unit))
+            (,cleanup-function-expr value)))
         (define (push [v : (&mut v Vec)] [value : ,T]) : unit
           (let
             [index : i64 (struct-get v len)]

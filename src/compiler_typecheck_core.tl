@@ -3034,7 +3034,10 @@
   (if (or (tc-rich-error? message) (tc-located-error? message))
     message
     (match (tc-expr-maybe-span expr)
-      [(TcMaybeAstSourceSpan.Some span) (tc-located-error span message)]
+      [(TcMaybeAstSourceSpan.Some span)
+        (if (tc-borrow-place-error-message? message)
+          (tc-rich-borrow-place-error span message)
+          (tc-located-error span message))]
       [(TcMaybeAstSourceSpan.No) message])))
 
 (define (tc-expr-id-maybe-span [expr-id : i64]) : TcMaybeAstSourceSpan
@@ -3084,6 +3087,23 @@
 (define (tc-reference-escape-help) : String
   "return an owned clone, keep the reference inside its scope, or tie the returned reference lifetime to a parameter")
 
+(define (tc-borrow-place-error-message) : String
+  "typecheck: borrow requires a local, parameter, or aggregate place")
+
+(define (tc-borrow-place-error-message? [message : String]) : bool
+  (string.eq message (tc-borrow-place-error-message)))
+
+(define (tc-borrow-place-help) : String
+  "bind the value to a local before borrowing it, or borrow a field or array element from a local aggregate")
+
+(define (tc-rich-borrow-place-error [span : AstSourceSpan] [message : String]) : String
+  (tc-rich-error-one-secondary
+    span
+    message
+    (tc-borrow-place-help)
+    span
+    "this expression produces a temporary value, not a borrowable place"))
+
 (define (tc-assignment-escape-help [target : String]) : String
   (str_cat.str-cat
     "store an owned value instead, or keep `"
@@ -3098,6 +3118,9 @@
 
 (define (tc-closure-escape-help) : String
   "move owned data into the closure or keep the closure inside the borrowed/arena scope")
+
+(define (tc-region-call-escape-help) : String
+  "pass an owned clone, keep the call inside the value's arena/scope, or use with-escape to clone out a supported arena result before passing it")
 
 (define (tc-reference-escape-message? [message : String]) : bool
   (or
@@ -3226,7 +3249,16 @@
           "a direct aggregate read through this shared vector reference is not an owned value; borrow slots from a vector place or use the generated vector get helper"
           span
           "this by-value argument reads an aggregate through a shared reference")]
-      [(TcMaybeAstSourceSpan.No) message])))
+      [(TcMaybeAstSourceSpan.No)
+        (match (tc-expr-maybe-span arg)
+          [(TcMaybeAstSourceSpan.Some span)
+            (tc-rich-error-one-secondary
+              span
+              message
+              (tc-region-call-escape-help)
+              span
+              "this argument carries an arena region that the parameter does not accept")]
+          [(TcMaybeAstSourceSpan.No) message])])))
 
 (define (tc-spanned-escape-error
   [inner : AstExpr]
@@ -20665,9 +20697,11 @@
   [inner : AstExpr]
   [span : AstSourceSpan]
   [message : String]) : ResultTcType
-  (match (tc-spanned-escape-error inner span message)
-    [(TcMaybeString.Some rich) (ResultTcType.Err rich)]
-    [(TcMaybeString.No) (tc-locate-call-arity-error inner span message)]))
+  (if (tc-borrow-place-error-message? message)
+    (ResultTcType.Err (tc-rich-borrow-place-error span message))
+    (match (tc-spanned-escape-error inner span message)
+      [(TcMaybeString.Some rich) (ResultTcType.Err rich)]
+      [(TcMaybeString.No) (tc-locate-call-arity-error inner span message)])))
 
 (define (tc-call-arity-callee-name [func : AstExpr]) : String
   (match (tc-expr-var-name func)
@@ -33099,9 +33133,7 @@
         (match (tc-borrow-place ctx env box-expr)
           [(ResultTcBorrowPlace.Ok place) (tc-borrow-place-box-get ctx place)]
           [(ResultTcBorrowPlace.Err message) (ResultTcBorrowPlace.Err message)]))]
-    [_
-      (ResultTcBorrowPlace.Err
-        "typecheck: borrow requires a local, parameter, or aggregate place")]))
+    [_ (ResultTcBorrowPlace.Err (tc-borrow-place-error-message))]))
 
 (define (tc-mut-borrow-by-value-place-message) : String
   "typecheck: mutable borrow of by-value place is only supported as an immediate call argument")

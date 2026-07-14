@@ -212,6 +212,67 @@
       (os-write 2 data len)
       unit)))
 
+;: Write one non-negative integer without constructing a String. The digit
+;: bytes come from static storage and recursion uses only the native stack, so
+;: this stays safe when the current arena is null or exhausted.
+(cfg
+  windows
+  (define (abort-write-decimal [value : u64]) : unit
+    (begin
+      (if (>= value 10)
+        (abort-write-decimal (/ value 10))
+        unit)
+      (let
+        [digit : u64 (% value 10)]
+        [digits : (Ptr u8)
+          (unsafe
+            (string-data "0123456789"))]
+        (begin
+          (os-write
+            2
+            (unsafe
+              (ptr-offset digits (cast digit : i64)))
+            1)
+          unit)))))
+
+;: Allocation-free Windows VirtualAlloc failure reporter. KIND is 0 for an
+;: ordinary arena and 1 for an atomic arena. OPERATION is 0 for reserve, 1 for
+;: initial commit, and 2 for incremental growth commit. The backend captures
+;: GetLastError immediately and passes it here after any required reservation
+;: cleanup. Static message fragments plus stack-only decimal rendering avoid
+;: re-entering tl_alloc on every path.
+(cfg
+  windows
+  (define (windows-allocation-abort
+    [kind : i64]
+    [operation : i64]
+    [requested : u64]
+    [reserved : u64]
+    [committed : u64]
+    [windows-error : u64])
+    (:export-symbol "tl_windows_allocation_abort") : never
+    (begin
+      (abort-write "tl: allocation failed: arena=")
+      (if (= kind 1)
+        (abort-write "atomic")
+        (abort-write "ordinary"))
+      (abort-write " operation=")
+      (if (= operation 0)
+        (abort-write "reserve")
+        (if (= operation 1)
+          (abort-write "initial-commit")
+          (abort-write "growth-commit")))
+      (abort-write " requested=")
+      (abort-write-decimal requested)
+      (abort-write " reserved=")
+      (abort-write-decimal reserved)
+      (abort-write " committed=")
+      (abort-write-decimal committed)
+      (abort-write " windows-error=")
+      (abort-write-decimal windows-error)
+      (abort-write "\n")
+      (os-exit 134))))
+
 ;: Fault handler for an out-of-bounds index. Exported as the fixed `tl_oob_abort`
 ;: symbol so the backend's emitted bounds checks call it unchanged.
 (define (oob-abort)

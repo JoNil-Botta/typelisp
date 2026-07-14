@@ -969,9 +969,6 @@
     (AstType.I64)
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
-(define (tltest-empty-main-decl) : AstDecl
-  (tltest-main-decl (make-array InlineTest 0)))
-
 (define (tltest-reach-mark-name [names : tltest_name_map.Map] [name : String]) : tltest_name_map.Map
   (let
     [result : tltest_name_map.Map names]
@@ -3531,18 +3528,15 @@
 (define (tltest-no-tests-run
   [source : String]
   [target : String]
-  [_mode : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
   [roots : cli_svec.Vec]
   [opt-level : i64]) : i64
-  ;; With no inline tests there is no source harness to validate here. `test
-  ;; --check` owns source typechecking; run mode only needs the zero-test runner.
-  (tltest-run-direct
-    source
-    (ast-program (ast-decl-cons (tltest-empty-main-decl) (ast-decl-list-new)))
-    (ast-decl-path-cons source (ast-decl-path-list-new))
-    roots
-    target
-    opt-level))
+  ;; `test --check` owns source typechecking. Run the zero-test harness built
+  ;; from the pruned runtime declarations so backend-emitted allocator calls
+  ;; still have their exported abort handlers; the harness replaces the source
+  ;; `main` with the generated zero-test runner.
+  (tltest-run-direct source program paths roots target opt-level))
 
 (define (tltest-source-prefix-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -4356,7 +4350,13 @@
         (let
           [status : i64
             (if (= count 0)
-              (tltest-no-tests-run source target "scalar" roots opt-level)
+              (tltest-no-tests-run
+                source
+                target
+                program
+                harness-paths
+                roots
+                opt-level)
               (tltest-run-direct
                 source
                 program
@@ -4403,16 +4403,31 @@
         " test(s) in "
         (string.append (string.int->string file-count) " file(s)\n")))))
 
+(define (tltest-batch-finish-entry
+  [entry-arena : arena.Arena]
+  [entry-result : i64]) : i64
+  ;; Reset while the entry arena is still alive but allocation has returned to
+  ;; the parent. Reset walkers may inspect the entry's globals; replacement
+  ;; empty state must outlive destruction of the entry arena.
+  (begin
+    (compiler-driver-reset-file-state!)
+    (unsafe
+      (arena.destroy entry-arena))
+    entry-result))
+
 (define (tltest-run-batch-check-path
   [source : String]
   [roots : cli_svec.Vec]
   [backend-target : CompilerBackendTarget]) : i64
-  (with-scratch
-    (begin
-      (compiler-driver-reset-file-state!)
-      (match (tltest-check-file-source source roots backend-target)
-        [(ResultTestFileCheck.Err status) (- 0 status)]
-        [(ResultTestFileCheck.Ok count) count]))))
+  (let
+    [entry-arena : arena.Arena (arena.make)]
+    [entry-result : i64
+      (in-arena
+        entry-arena
+        (match (tltest-check-file-source source roots backend-target)
+          [(ResultTestFileCheck.Err status) (- 0 status)]
+          [(ResultTestFileCheck.Ok count) count]))]
+    (tltest-batch-finish-entry entry-arena entry-result)))
 
 (define (tltest-run-batch-check-paths-from
   [paths : cli_svec.Vec]
@@ -4474,6 +4489,7 @@
   (begin
     (compiler-load-session-cache-enable!)
     (compiler-load-session-program-cache-disable!)
+    (compiler-driver-reset-file-state!)
     (match (source-tool-target target)
       [(ResultSourceToolTarget.Err _)
         (begin
@@ -4501,18 +4517,21 @@
   [backend-target : CompilerBackendTarget]) : i64
   ;; Keep every entry's loader pools, harness AST, lowered IR, backend scratch,
   ;; and captured child output inside one destroyable arena. Only the scalar
-  ;; count crosses this boundary; the next entry starts with a full file reset.
-  (with-scratch
-    (begin
-      (compiler-driver-reset-file-state!)
-      (match (tltest-run-file-source
-        source
-        target
-        roots
-        opt-level
-        backend-target)
-        [(ResultTestFileCheck.Err status) (- 0 status)]
-        [(ResultTestFileCheck.Ok count) count]))))
+  ;; test count crosses the boundary.
+  (let
+    [entry-arena : arena.Arena (arena.make)]
+    [entry-result : i64
+      (in-arena
+        entry-arena
+        (match (tltest-run-file-source
+          source
+          target
+          roots
+          opt-level
+          backend-target)
+          [(ResultTestFileCheck.Err status) (- 0 status)]
+          [(ResultTestFileCheck.Ok count) count]))]
+    (tltest-batch-finish-entry entry-arena entry-result)))
 
 (define (tltest-run-batch-run-paths
   [paths : cli_svec.Vec]
@@ -4561,6 +4580,7 @@
   (begin
     (compiler-load-session-cache-enable!)
     (compiler-load-session-program-cache-disable!)
+    (compiler-driver-reset-file-state!)
     (match (source-tool-target target)
       [(ResultSourceToolTarget.Err _)
         (begin
@@ -4606,7 +4626,13 @@
                       [(TestMode.Check)
                         (tltest-no-tests-check decls paths roots backend-target)]
                       [(TestMode.Run)
-                        (tltest-no-tests-run source target mode roots opt-level)])
+                        (tltest-no-tests-run
+                          source
+                          target
+                          program
+                          harness-paths
+                          roots
+                          opt-level)])
                     (match test-mode
                       [(TestMode.Check)
                         (tltest-check-only

@@ -68,6 +68,11 @@
     ([items (append-token (tokens.new) 1000000) tokens.cleanup-vec])
     (tokens.set (&mut items) 0 (CleanupToken 2000000))))
 
+(define (out-of-range-set-cleans-rejected-owner) : unit
+  (with
+    ([items (tokens.new) tokens.cleanup-vec])
+    (tokens.set (&mut items) 4 (CleanupToken 8000000))))
+
 (define (enum-payload-cleanup) : unit
   (with ([pair (CleanupPair.Both 4000000 5000000) cleanup-pair]) unit))
 
@@ -78,9 +83,10 @@
     (full-exhaustion)
     (early-abandonment)
     (replacement-cleans-old-and-new)
+    (out-of-range-set-cleans-rejected-owner)
     (enum-payload-cleanup)
     (test.assert-i64-eq
       cleanup-total
-      12111111
+      20111111
       "cleanup vector must clean every constructed token exactly once")
     42))

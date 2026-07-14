@@ -649,6 +649,11 @@ annotation is not resolved before macro expansion. These operands are
 distinct from `ExprClause`: `[x : i64 1]` is accepted only for
 `ExprBindingClause`, while `ExprClause` remains exactly `[expr expr]`.
 
+A fixed slot declared `type` accepts a concrete compile-time type operand. It
+may carry the validation-only kind constraint described in section 3.7.1.3,
+for example `[T : type (:kind struct enum)]`. This is a constraint on a macro
+operand, not a source-level type parameter or generic type variable.
+
 A fixed slot declared `Module` is a by-name module strategy operand. The
 operand must be an imported module alias visible at the call site or a
 visible dotted module identity; unresolved names and legacy slash-qualified
@@ -733,7 +738,8 @@ and explicit `(comptime ...)` helper code, but they have no runtime
 representation. The same rule covers `type` values, declaration metadata, and
 generated identity keys: none of them has a runtime representation. The
 compiler tracks the checked produced type of each `Expr` internally; there is
-no source-level `Expr<T>` and no generic macro type parameter.
+no source-level `Expr<T>`. Constrained `type` operands remain concrete
+macro-time values and do not introduce generic macro types.
 
 Macro bodies build expression values with quote forms. The reader accepts
 both prefix shorthand and the equivalent list-headed forms:
@@ -1123,6 +1129,131 @@ observe the same source-level types and produce byte-identical expanded
 declarations for the same inputs. A mismatch is a compiler bug or
 stdlib-version diagnostic, not a silent fallback to a separate internal
 `Expr` ABI.
+
+#### 3.7.1.3 Constraints on macro `type` operands
+
+A fixed `defmacro` operand whose declared type is exactly `type` may carry one
+optional kind constraint after its type annotation:
+
+```lisp test=ignore name=macro-type-kind-constraint-surface reason=specified-before-implementation
+[T : type (:kind i64 i32 string)]
+```
+
+The names following `:kind` are unquoted grammar names corresponding
+one-to-one with the stable strings returned by `type-kind` in section 5.17.
+The list must be non-empty and contain no duplicate names. A concrete type
+satisfies the constraint when its `type-kind` result is one of the listed
+names. Shape names such as `array`, `tuple`, `struct`, and `enum` use the same
+namespace as scalar names; reserved/partial names such as `ptr`, `ref`, and
+`type-var` may be named explicitly but gain no reflection operations beyond
+those specified in section 5.17.
+
+This initial vocabulary is intentionally shallow. `(:kind struct enum)` says
+only that the top-level concrete type is a struct or enum. It does not prove
+that every nested field is cloneable, equatable, serializable, or otherwise
+supports an operation. There are no built-in `cloneable`, `equatable`, or
+`serializable` constraint names, no user-declared constraint/implementation
+registry, and no implicit hook lookup. A macro that needs a recursive
+property must still inspect the concrete type graph during CTFE and issue a
+targeted error for an unsupported nested type. A `Module` strategy operand
+may still be checked explicitly with `module-export-macro?` / `module-hook` as
+described above; that is separate from the `type` operand's `:kind` filter.
+
+The constraint is legal on a fixed `type` operand of an expression, `: Decls`,
+or `: Module` macro. It is not legal on a variadic operand, on `Expr`,
+`ExprClause`, `Module`, or ordinary produced-type operands, or on parameters
+of `define`, `lambda`, `defstruct`, or `defenum`. Only one `(:kind ...)` form
+may appear on an operand. An unconstrained `[T : type]` retains its current
+meaning and accepts every concrete type value. These rules keep the surface
+macro-only: the operand name cannot appear as an abstract runtime type, and
+generated declarations use it only after substitution with the concrete type
+argument.
+
+Constraint processing has two distinct times:
+
+1. When a macro declaration is collected, the compiler validates placement,
+   arity, and every kind name. An empty list, duplicate or unknown kind,
+   additional constraint form, or constraint on an unsupported operand is a
+   macro-definition diagnostic at the constraint span. Unsupported future
+   spellings must be rejected rather than ignored.
+2. At every macro call or generated-module import, the compiler first resolves
+   each `type` operand to its concrete type, then validates its `:kind`
+   constraint before the transformer body executes, before any nested
+   generator CTFE can observe the operand, and before a cached generated
+   module is reused. A passing operand is bound as the same concrete
+   compile-time `type` value as an unconstrained operand. A failing operand
+   does not run the transformer and does not create or reuse generated output.
+
+The normal post-expansion typecheck remains mandatory. Kind constraints move
+unsupported top-level shapes to the operand site; they do not by themselves
+prove a generated body correct for all nested concrete types. They are also
+the initial fact vocabulary available to a later abstract macro-body checker:
+inside a branch justified by `[T : type (:kind struct)]`, that checker may
+permit struct reflection on `T`, but it must not infer unrelated capabilities.
+
+A failed satisfaction diagnostic must point at the concrete type operand and
+name the canonical macro, parameter, rendered concrete type, and allowed kind
+set. `type-key` may be included as supplementary identity information but is
+opaque and must not be the only rendering of the type. For example:
+
+```text
+typecheck: macro app.scalar-eq type operand T rejects (Array i64 4): expected one of :kind i64, i32, bool
+```
+
+Definition diagnostics must similarly name the macro and operand, for example
+`typecheck: macro app.bad type operand T has unknown constraint kind record`.
+Nested generated-module imports use the nested call's operand span and macro
+name, so an outer generator failure does not obscure which constraint failed.
+
+An equality-like expression macro can state its finite scalar surface without
+claiming a general equality trait:
+
+```lisp test=ignore name=macro-type-kind-constraint-equality reason=specified-before-implementation
+(defmacro (scalar-eq
+  [T : type (:kind i64 i32 i16 i8 u64 u32 u16 u8 f64 f32 bool char)]
+  [left : Expr]
+  [right : Expr]) : bool
+  `(= ,left ,right))
+
+;; Accepted: T resolves to i64 before transformer CTFE.
+(scalar-eq i64 left right)
+
+;; Rejected at `(Array i64 4)`, before scalar-eq executes.
+(scalar-eq (Array i64 4) left right)
+```
+
+A generated serializer family can restrict its first slice to reflected
+aggregate shapes while keeping format behavior in an explicit strategy
+module:
+
+```lisp test=ignore name=macro-type-kind-constraint-generated-module reason=specified-before-implementation
+(defmacro (record-codec
+  [format : Module]
+  [T : type (:kind struct enum)]) : Module
+  (let
+    [name : Expr
+      (expr-var
+        (string-append
+          (string-append
+            (string-append "generated.codec." (module-name format))
+            ".")
+          (type-key T)))]
+    `(begin
+      (module ,name)
+      (define reflected-kind : String ,(expr-string (type-kind T))))))
+
+(import stdlib.json as json)
+(import (record-codec json Person) as person-json)
+```
+
+For `: Module` identity and deduplication, a constraint is signature
+validation only and does not add an argument-key component. A successful call
+continues to key by canonical macro identity plus the concrete `type-key` and
+other evaluated argument keys described above. Reordering or narrowing the
+allowed `:kind` list therefore changes which calls are accepted, not the
+identity of output for a still-valid concrete argument. A rejected call has
+no generated identity. The existing structural same-identity check continues
+to diagnose a generator that emits different declarations for the same key.
 
 #### 3.7.2 Hygienic expression macros
 
@@ -5561,6 +5692,13 @@ explicit low-level exception and carry no safety guarantees.
 - Non-escaping aggregate fat/inline storage is usually kept in the current
   stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
+- Fatal page-allocation failures terminate with status 134 without allocating
+  while reporting the failure. On Windows, `VirtualAlloc` failures include the
+  ordinary/atomic arena kind, reserve/initial-commit/growth-commit operation,
+  unsigned-decimal attempted/reserved/committed byte counts, and the
+  immediately captured numeric `GetLastError` value. Arithmetic overflow
+  guards retain the generic allocation-failure diagnostic because no OS
+  allocation was attempted.
 - There is **no garbage collector** and no general `free`.
 - Each thread has its own default arena. Default-arena allocations remain
   live until the program exits unless an explicit same-thread region reset
@@ -6656,7 +6794,16 @@ dispatch-variant ::= "(" dispatch-isa ident ")"
 dispatch-isa  ::= "scalar" | "avx2" | "avx512"
 defmacro      ::= "(" "defmacro" "(" ident macro-operand* ")" ":" macro-result-type expr+ ")"
 macro-operand ::= "[" ident ":" type "]"
+                | "[" ident ":" "type" macro-type-constraint "]"
                 | "[" ident ":" type "..." "]"      ; variadic final operand only
+macro-type-constraint ::= "(" ":kind" macro-type-kind+ ")"
+macro-type-kind ::= "i64" | "i32" | "i16" | "i8"
+                  | "u64" | "u32" | "u16" | "u8"
+                  | "f64" | "f32" | "bool" | "char"
+                  | "string" | "unit" | "never"
+                  | "array" | "dyn-array" | "function" | "tuple"
+                  | "struct" | "enum" | "str" | "ptr" | "mut-ptr"
+                  | "ref" | "mut-ref" | "region" | "type-var"
 macro-result-type ::= type
                     | "module"                      ; declaration-emitting macro
                     | "decls"                       ; declaration-splicing macro

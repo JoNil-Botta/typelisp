@@ -272,8 +272,10 @@
     (compiler-load-runtime-prelude-cache-clear!)
     (tc-prefix-snapshot-cache-clear!)))
 
-(define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
-  [state : CompilerDriverState]) : unit
+(define (compiler-driver-state-replace-owned-pool-arena-if-uncached!
+  [state : CompilerDriverState]
+  [expr-capacity : i64]
+  [type-capacity : i64]) : unit
   (if (or
     (not (compiler-driver-state-has-owned-pool-arena? state))
     (compiler-driver-state-session-cache-enabled? state))
@@ -286,27 +288,52 @@
         (ast-node-pool-context-base-arena
           (compiler-driver-state-pool-context state))]
       [new-arena : i64 (arena.tl_arena_make)]
-      [pools : AstNodePoolContext
-        (ast-node-pool-context-new-with-capacities-in-arena
-          compiler-driver-compile-load-expr-pool-initial-capacity
-          compiler-driver-compile-type-pool-initial-capacity
-          new-arena)]
       (begin
         (compiler-driver-state-clear-pool-backed-caches!)
-        (array-set!
-          (struct-get state pool-arena)
-          0
-          (ast-node-pool-context-base-arena pools))
-        (array-set!
-          (struct-get state expr-pool)
-          0
-          (array-ref (struct-get pools expr-pool) 0))
-        (array-set!
-          (struct-get state type-pool)
-          0
-          (array-ref (struct-get pools type-pool) 0))
+        ;; Do not materialize the replacement backing arrays while the retired
+        ;; pool chain is still live. If that chain is also the active arena,
+        ;; move allocation to the already-created replacement root first.
+        (if (= (arena.tl_arena_current) old-newest)
+          (unsafe
+            (arena.tl_arena_set new-arena))
+          unit)
         (unsafe
-          (arena.tl_arena_destroy old-newest))))))
+          (arena.tl_arena_destroy old-newest))
+        (let
+          [pools : AstNodePoolContext
+            (ast-node-pool-context-new-with-capacities-in-arena
+              expr-capacity
+              type-capacity
+              new-arena)]
+          (begin
+            (array-set!
+              (struct-get state pool-arena)
+              0
+              (ast-node-pool-context-base-arena pools))
+            (array-set!
+              (struct-get state expr-pool)
+              0
+              (array-ref (struct-get pools expr-pool) 0))
+            (array-set!
+              (struct-get state type-pool)
+              0
+              (array-ref (struct-get pools type-pool) 0))))))))
+
+(define (compiler-driver-state-reset-owned-pool-arena-if-uncached!
+  [state : CompilerDriverState]) : unit
+  (compiler-driver-state-replace-owned-pool-arena-if-uncached!
+    state
+    compiler-driver-compile-load-expr-pool-initial-capacity
+    compiler-driver-compile-type-pool-initial-capacity))
+
+;; Batch emission has finished using the entry's pools, but its caller-owned
+;; scratch chain must remain mapped until loader/typecheck/lower cleanup is
+;; complete. Replace the retired pool with only a valid one-slot compatibility
+;; context here; the next entry's ordinary reset prepares full load capacity
+;; after the previous scratch chain has been destroyed.
+(define (compiler-driver-state-release-owned-pool-arena-if-uncached!
+  [state : CompilerDriverState]) : unit
+  (compiler-driver-state-replace-owned-pool-arena-if-uncached! state 1 1))
 
 (define (compiler-driver-state-reset-owned-intern-arena-if-uncached!
   [state : CompilerDriverState]) : unit
@@ -501,16 +528,46 @@
         (compiler-driver-state-capture-active-interns! state)
         (compiler-driver-state-capture-active-transients! state)))))
 
+;; Post-emission batch cleanup. This runs while the caller-owned entry scratch
+;; arena is still live, so it performs the same cache/intern/lower teardown as a
+;; full file reset but leaves only a one-slot pool context behind. The next
+;; entry's normal reset grows a fresh load pool after the old scratch chain is
+;; gone instead of keeping a 4.39M-slot replacement live between entries.
+(define (compiler-driver-state-release-file-state!
+  [state : CompilerDriverState]) : unit
+  (begin
+    (compiler-driver-state-apply-session-flags! state)
+    (compiler-driver-state-release-owned-pool-arena-if-uncached! state)
+    (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
+    (let
+      [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+      (begin
+        (compiler-load-session-reset-pools-with-pools! pools)
+        (compiler-load-session-reset-interns-with-state!
+          (array-ref (struct-get state intern-state) 0))
+        (compiler-driver-state-install-pools! state)
+        (compiler-driver-state-install-interns! state)
+        (compiler-typecheck-reset-intern-owned-state!)
+        (compiler-driver-state-install-transients! state)
+        (compiler-driver-state-reset-builtins! state)
+        (ctfe-builtin-reset!)
+        (compiler-typecheck-reset-file-state!)
+        (lower-reset-file-state!)
+        (lower-arenas-release!)
+        (compiler-driver-state-capture-active-interns! state)
+        (compiler-driver-state-capture-active-transients! state)))))
+
 (cfg
   compile-profile
-  (define (compiler-driver-state-reset-file-state-profiled!
+  (define (compiler-driver-state-release-file-state-profiled!
     [state : CompilerDriverState]
     [ordinal : i64]) : unit
     (begin
       (compiler-driver-state-apply-session-flags! state)
-      ;; This phase includes allocation of the replacement pools before the
-      ;; retired pool chain is released, so its peak exposes their overlap.
-      (compiler-driver-state-reset-owned-pool-arena-if-uncached! state)
+      ;; Post-emission cleanup deliberately installs only the compact one-slot
+      ;; compatibility context. The next entry prepares full load capacity
+      ;; after this entry's scratch chain is gone.
+      (compiler-driver-state-release-owned-pool-arena-if-uncached! state)
       (compiler-driver-batch-profile-mark! ordinal "owned-pool-release")
       (compiler-driver-state-reset-owned-intern-arena-if-uncached! state)
       (let

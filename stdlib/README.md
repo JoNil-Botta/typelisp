@@ -411,7 +411,9 @@ the exact global-symbol allowlist emitted by the full runtime-helper assembly.
   `tl_alloc`, `tl_arena_make`, `tl_arena_make_atomic`, `tl_arena_destroy`, and
   `tl_region_reset(0)`, plus the current arena make fatal-exit syscalls;
   Windows uses kernel32 `VirtualAlloc`/`VirtualFree` in the corresponding page
-  acquisition/release paths. Nonzero `tl_region_reset(mark)` retires overflow
+  acquisition/release paths, captures `GetLastError` immediately on failure,
+  and delegates to the allocation-free `tl_windows_allocation_abort` runtime
+  prelude reporter. Nonzero `tl_region_reset(mark)` retires overflow
   chunks on the arena root instead of releasing them immediately, and reset-all
   or destroy releases those retained chunks. Revisit this classification after
   #3290 provides an allocation-free TLS access design.

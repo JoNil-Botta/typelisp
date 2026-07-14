@@ -37,22 +37,20 @@
 (defenum DocTestLine
   (Line i64 String))
 
-(vector.family DocTestLine DocTestLineList doc-test-line-vec)
+(import (vector.vector DocTestLine core) as doc_line_vec)
 
 (defenum DocTestExample
   (Example i64 i64 DocTestExpectation String))
 
-(defstruct DocTestExampleList
-  (slots (Array DocTestExample))
-  (len i64))
+(import (vector.vector DocTestExample core) as doc_example_vec)
 
 (defenum DocTestError
   (Error i64 String))
 
-(vector.family DocTestError DocTestErrorList doc-test-error-vec)
+(import (vector.vector DocTestError core) as doc_error_vec)
 
 (defenum DocTestExtraction
-  (Extraction DocTestExampleList DocTestErrorList))
+  (Extraction doc_example_vec.Vec doc_error_vec.Vec))
 
 (defenum DocTestMaybeString
   (No)
@@ -64,63 +62,63 @@
   (Malformed DocTestError))
 
 (defenum DocTestCodeCollect
-  (Collect i64 String DocTestLineList bool))
+  (Collect i64 String doc_line_vec.Vec bool))
 
 (defenum DocTestMaybeOutput
   (No String)
   (Some String))
 
 (defenum DocTestRunMetadata
-  (Metadata bool i64 bool String bool String DocTestErrorList))
+  (Metadata bool i64 bool String bool String doc_error_vec.Vec))
 
 (defenum DocTestRunMetadataParse
   (Ok DocTestExpectation)
-  (Err DocTestErrorList))
+  (Err doc_error_vec.Vec))
 
 (defenum DocTestScanState
-  (State DocTestExampleList DocTestErrorList i64))
+  (State doc_example_vec.Vec doc_error_vec.Vec i64))
 
-(define (doc-test-example-list-empty) : DocTestExampleList
-  (DocTestExampleList (make-array DocTestExample 0) 0))
+(define (doc-test-example-list-empty) : doc_example_vec.Vec
+  (doc_example_vec.new))
 
-(define (doc-test-example-list-count [examples : DocTestExampleList]) : i64
-  (struct-get examples len))
+(define (doc-test-example-list-count [examples : doc_example_vec.Vec]) : i64
+  (doc_example_vec.len (& examples)))
 
 (define (doc-test-example-list-ref
-  [examples : DocTestExampleList]
+  [examples : doc_example_vec.Vec]
   [index : i64]) : DocTestExample
-  (array-ref (struct-get examples slots) index))
+  (doc_example_vec.get
+    (& examples)
+    index
+    (DocTestExample.Example 0 0 (DocTestExpectation.Pass) "")))
 
 (define (doc-test-example-list-append
-  [examples : DocTestExampleList]
-  [example : DocTestExample]) : DocTestExampleList
-  (let
-    [n : i64 (struct-get examples len)]
-    [slots : (Array DocTestExample) (struct-get examples slots)]
-    (begin
-      (array-push! slots example)
-      (DocTestExampleList slots (+ n 1)))))
+  [examples : doc_example_vec.Vec]
+  [example : DocTestExample]) : doc_example_vec.Vec
+  (begin
+    (doc_example_vec.push (&mut examples) example)
+    examples))
 
-(define (doc-test-error-list-empty) : DocTestErrorList
-  (doc-test-error-vec-new))
+(define (doc-test-error-list-empty) : doc_error_vec.Vec
+  (doc_error_vec.new))
 
-(define (doc-test-error-list-count [errors : DocTestErrorList]) : i64
-  (doc-test-error-vec-len (& errors)))
+(define (doc-test-error-list-count [errors : doc_error_vec.Vec]) : i64
+  (doc_error_vec.len (& errors)))
 
-(define (doc-test-error-list-ref [errors : DocTestErrorList] [index : i64]) : DocTestError
-  (doc-test-error-vec-get (& errors) index (DocTestError.Error 0 "")))
+(define (doc-test-error-list-ref [errors : doc_error_vec.Vec] [index : i64]) : DocTestError
+  (doc_error_vec.get (& errors) index (DocTestError.Error 0 "")))
 
 (define (doc-test-error-list-append
-  [errors : DocTestErrorList]
-  [err : DocTestError]) : DocTestErrorList
+  [errors : doc_error_vec.Vec]
+  [err : DocTestError]) : doc_error_vec.Vec
   (begin
-    (doc-test-error-vec-push (&mut errors) err)
+    (doc_error_vec.push (&mut errors) err)
     errors))
 
 (define (doc-test-error-list-append-all-from
-  [errors : DocTestErrorList]
-  [more : DocTestErrorList]
-  [index : i64]) : DocTestErrorList
+  [errors : doc_error_vec.Vec]
+  [more : doc_error_vec.Vec]
+  [index : i64]) : doc_error_vec.Vec
   (if (>= index (doc-test-error-list-count more))
     errors
     (doc-test-error-list-append-all-from
@@ -129,8 +127,8 @@
       (+ index 1))))
 
 (define (doc-test-error-list-append-all
-  [errors : DocTestErrorList]
-  [more : DocTestErrorList]) : DocTestErrorList
+  [errors : doc_error_vec.Vec]
+  [more : doc_error_vec.Vec]) : doc_error_vec.Vec
   (doc-test-error-list-append-all-from errors more 0))
 
 (define (doc-test-line-number [line : DocTestLine]) : i64
@@ -556,13 +554,13 @@
           (DocTestFenceInfo.Ignore))))))
 
 (define (doc-test-skip-ignored-fence-from
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [index : i64]) : i64
-  (if (>= index (doc-test-line-vec-len (& lines)))
-    (doc-test-line-vec-len (& lines))
+  (if (>= index (doc_line_vec.len (& lines)))
+    (doc_line_vec.len (& lines))
     (let
       [line : DocTestLine
-        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 ""))]
+        (doc_line_vec.get (& lines) index (DocTestLine.Line 0 ""))]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
@@ -570,33 +568,33 @@
         (doc-test-skip-ignored-fence-from lines (+ index 1))))))
 
 (define (doc-test-collect-code-inner
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [index : i64]
   [code : String]
-  [collected : DocTestLineList]) : DocTestCodeCollect
-  (if (>= index (doc-test-line-vec-len (& lines)))
+  [collected : doc_line_vec.Vec]) : DocTestCodeCollect
+  (if (>= index (doc_line_vec.len (& lines)))
     (DocTestCodeCollect.Collect
-      (doc-test-line-vec-len (& lines))
+      (doc_line_vec.len (& lines))
       code
       collected
       false)
     (let
       [line : DocTestLine
-        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 ""))]
+        (doc_line_vec.get (& lines) index (DocTestLine.Line 0 ""))]
       (if (doc-test-string-prefix?
         (doc-test-trim-left (doc-test-line-text line))
         "```")
         (DocTestCodeCollect.Collect (+ index 1) code collected true)
         (begin
-          (doc-test-line-vec-push (&mut collected) line)
+          (doc_line_vec.push (&mut collected) line)
           (doc-test-collect-code-inner
             lines
             (+ index 1)
             (string.append code (string.append (doc-test-line-text line) "\n"))
             collected))))))
 
-(define (doc-test-collect-code [lines : DocTestLineList] [index : i64]) : DocTestCodeCollect
-  (doc-test-collect-code-inner lines index "" (doc-test-line-vec-new)))
+(define (doc-test-collect-code [lines : doc_line_vec.Vec] [index : i64]) : DocTestCodeCollect
+  (doc-test-collect-code-inner lines index "" (doc_line_vec.new)))
 
 (define (doc-test-metadata-value [line : DocTestLine] [prefix : String]) : DocTestMaybeString
   (let
@@ -771,26 +769,26 @@
                 metadata)])])]))
 
 (define (doc-test-run-metadata-parse-lines-from
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [metadata : DocTestRunMetadata]
   [index : i64]) : DocTestRunMetadata
-  (if (>= index (doc-test-line-vec-len (& lines)))
+  (if (>= index (doc_line_vec.len (& lines)))
     metadata
     (doc-test-run-metadata-parse-lines-from
       lines
       (doc-test-run-metadata-parse-line
         metadata
-        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 "")))
+        (doc_line_vec.get (& lines) index (DocTestLine.Line 0 "")))
       (+ index 1))))
 
 (define (doc-test-run-metadata-parse-lines
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [metadata : DocTestRunMetadata]) : DocTestRunMetadata
   (doc-test-run-metadata-parse-lines-from lines metadata 0))
 
 (define (doc-test-parse-run-metadata
   [source-line : i64]
-  [lines : DocTestLineList]) : DocTestRunMetadataParse
+  [lines : doc_line_vec.Vec]) : DocTestRunMetadataParse
   (match (doc-test-run-metadata-parse-lines
     lines
     (DocTestRunMetadata.Metadata
@@ -810,7 +808,7 @@
         expected-stderr
         errors)
       (let
-        [all-errors : DocTestErrorList
+        [all-errors : doc_error_vec.Vec
           (if has-exit
             errors
             (doc-test-error-list-append
@@ -827,7 +825,7 @@
           (DocTestRunMetadataParse.Err all-errors)))]))
 
 (define (doc-test-scan-type-lisp-fence
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [index : i64]
   [state : DocTestScanState]
   [source-line : i64]
@@ -894,14 +892,14 @@
               next-index))])]))
 
 (define (doc-test-scan-doc-block-from
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [index : i64]
   [state : DocTestScanState]) : DocTestScanState
-  (if (>= index (doc-test-line-vec-len (& lines)))
+  (if (>= index (doc_line_vec.len (& lines)))
     state
     (let
       [line : DocTestLine
-        (doc-test-line-vec-get (& lines) index (DocTestLine.Line 0 ""))]
+        (doc_line_vec.get (& lines) index (DocTestLine.Line 0 ""))]
       [trimmed : String (doc-test-trim-left (doc-test-line-text line))]
       (if (doc-test-string-prefix? trimmed "```")
         (let
@@ -933,7 +931,7 @@
         (doc-test-scan-doc-block-from lines (+ index 1) state)))))
 
 (define (doc-test-scan-doc-block
-  [lines : DocTestLineList]
+  [lines : doc_line_vec.Vec]
   [state : DocTestScanState]) : DocTestScanState
   (doc-test-scan-doc-block-from lines 0 state))
 
@@ -942,8 +940,8 @@
     [n : i64 (string.string-length src)]
     [pos : i64 0]
     [line-number : i64 1]
-    [module-lines : DocTestLineList (doc-test-line-vec-new)]
-    [pending-lines : DocTestLineList (doc-test-line-vec-new)]
+    [module-lines : doc_line_vec.Vec (doc_line_vec.new)]
+    [pending-lines : doc_line_vec.Vec (doc_line_vec.new)]
     [state : DocTestScanState
       (DocTestScanState.State
         (doc-test-example-list-empty)
@@ -958,8 +956,8 @@
             (match (doc-test-module-doc-comment-body line)
               [(DocTestMaybeString.Some body)
                 (begin
-                  (set! pending-lines (doc-test-line-vec-new))
-                  (doc-test-line-vec-push
+                  (set! pending-lines (doc_line_vec.new))
+                  (doc_line_vec.push
                     (&mut module-lines)
                     (DocTestLine.Line line-number body)))]
               [(DocTestMaybeString.No)
@@ -967,10 +965,10 @@
                   unit
                   (begin
                     (set! state (doc-test-scan-doc-block module-lines state))
-                    (set! module-lines (doc-test-line-vec-new))
+                    (set! module-lines (doc_line_vec.new))
                     (match (doc-test-item-doc-comment-body line)
                       [(DocTestMaybeString.Some body)
-                        (doc-test-line-vec-push
+                        (doc_line_vec.push
                           (&mut pending-lines)
                           (DocTestLine.Line line-number body))]
                       [(DocTestMaybeString.No)
@@ -979,8 +977,8 @@
                             (set!
                               state
                               (doc-test-scan-doc-block pending-lines state))
-                            (set! pending-lines (doc-test-line-vec-new)))
-                          (set! pending-lines (doc-test-line-vec-new)))])))])
+                            (set! pending-lines (doc_line_vec.new)))
+                          (set! pending-lines (doc_line_vec.new)))])))])
             (set! pos (doc-test-next-line-start src line-end n))
             (set! line-number (+ line-number 1)))))
       (set! state (doc-test-scan-doc-block module-lines state))
@@ -996,13 +994,11 @@
 (defenum DocTestRunFailure
   (Failure String i64 i64 String))
 
-(defstruct DocTestRunFailureList
-  (slots (Array DocTestRunFailure))
-  (len i64))
+(import (vector.vector DocTestRunFailure core) as doc_run_failure_vec)
 
 ;; Outcome of running a source: how many examples were checked and which failed.
 (defenum DocTestRunReport
-  (Report i64 DocTestRunFailureList))
+  (Report i64 doc_run_failure_vec.Vec))
 
 (defenum DocTestMaybeFailure
   (No)
@@ -1028,20 +1024,23 @@
   (match report
     [(DocTestRunReport.Report count _) count]))
 
-(define (doc-test-run-report-failures [report : DocTestRunReport]) : DocTestRunFailureList
+(define (doc-test-run-report-failures [report : DocTestRunReport]) : doc_run_failure_vec.Vec
   (match report
     [(DocTestRunReport.Report _ failures) failures]))
 
-(define (doc-test-run-failure-list-empty) : DocTestRunFailureList
-  (DocTestRunFailureList (make-array DocTestRunFailure 0) 0))
+(define (doc-test-run-failure-list-empty) : doc_run_failure_vec.Vec
+  (doc_run_failure_vec.new))
 
-(define (doc-test-run-failure-list-count [failures : DocTestRunFailureList]) : i64
-  (struct-get failures len))
+(define (doc-test-run-failure-list-count [failures : doc_run_failure_vec.Vec]) : i64
+  (doc_run_failure_vec.len (& failures)))
 
 (define (doc-test-run-failure-list-ref
-  [failures : DocTestRunFailureList]
+  [failures : doc_run_failure_vec.Vec]
   [index : i64]) : DocTestRunFailure
-  (array-ref (struct-get failures slots) index))
+  (doc_run_failure_vec.get
+    (& failures)
+    index
+    (DocTestRunFailure.Failure "" 0 0 "")))
 
 (define (doc-test-run-report-ok? [report : DocTestRunReport]) : bool
   (= (doc-test-run-failure-list-count (doc-test-run-report-failures report)) 0))
@@ -1054,20 +1053,17 @@
     (doc-test-run-report-failures report)))
 
 (define (doc-test-run-failure-list-append
-  [failures : DocTestRunFailureList]
-  [failure : DocTestRunFailure]) : DocTestRunFailureList
-  (let
-    [n : i64 (struct-get failures len)]
-    [slots : (Array DocTestRunFailure) (struct-get failures slots)]
-    (begin
-      (array-push! slots failure)
-      (DocTestRunFailureList slots (+ n 1)))))
+  [failures : doc_run_failure_vec.Vec]
+  [failure : DocTestRunFailure]) : doc_run_failure_vec.Vec
+  (begin
+    (doc_run_failure_vec.push (&mut failures) failure)
+    failures))
 
 ;; Grow the generated error collection past its initial capacity while preserving
 ;; source order. The extraction path uses this same helper.
 (define (doc-test-error-vector-growth-smoke-ok?) : bool
   (let
-    [errors : DocTestErrorList (doc-test-error-list-empty)]
+    [errors : doc_error_vec.Vec (doc-test-error-list-empty)]
     [index : i64 1]
     (begin
       (while (<= index 5)
@@ -1080,30 +1076,88 @@
           (set! index (+ index 1))))
       (and
         (= (doc-test-error-list-count errors) 5)
+        (= (doc_error_vec.capacity (& errors)) 8)
         (= (doc-test-error-line (doc-test-error-list-ref errors 4)) 5)))))
 
 ;; Grow the generated line collection past its initial capacity while preserving
 ;; physical source-line order. Extraction uses this same helper.
 (define (doc-test-line-vector-growth-smoke-ok?) : bool
   (let
-    [lines : DocTestLineList (doc-test-line-vec-new)]
+    [lines : doc_line_vec.Vec (doc_line_vec.new)]
     [index : i64 1]
     (begin
       (while (<= index 5)
         (begin
-          (doc-test-line-vec-push
+          (doc_line_vec.push
             (&mut lines)
             (DocTestLine.Line index (string.int->string index)))
           (set! index (+ index 1))))
       (and
-        (= (doc-test-line-vec-len (& lines)) 5)
+        (= (doc_line_vec.len (& lines)) 5)
+        (= (doc_line_vec.capacity (& lines)) 8)
         (=
           (doc-test-line-number
-            (doc-test-line-vec-get (& lines) 0 (DocTestLine.Line 0 "")))
+            (doc_line_vec.get (& lines) 0 (DocTestLine.Line 0 "")))
           1)
         (=
           (doc-test-line-number
-            (doc-test-line-vec-get (& lines) 4 (DocTestLine.Line 0 "")))
+            (doc_line_vec.get (& lines) 4 (DocTestLine.Line 0 "")))
+          5)))))
+
+;; The two formerly hand-written collections also contain move-only strings.
+;; Exercise canonical core growth across the initial capacity without requiring
+;; clone/pop support, and confirm that source order survives the move-based copy.
+(define (doc-test-example-vector-growth-smoke-ok?) : bool
+  (let
+    [examples : doc_example_vec.Vec (doc-test-example-list-empty)]
+    [index : i64 1]
+    (begin
+      (while (<= index 5)
+        (begin
+          (set!
+            examples
+            (doc-test-example-list-append
+              examples
+              (DocTestExample.Example
+                index
+                (+ index 10)
+                (DocTestExpectation.Pass)
+                (string.int->string index))))
+          (set! index (+ index 1))))
+      (and
+        (= (doc-test-example-list-count examples) 5)
+        (= (doc_example_vec.capacity (& examples)) 8)
+        (= (doc-test-example-index (doc-test-example-list-ref examples 0)) 1)
+        (string.eq
+          (doc-test-example-code (doc-test-example-list-ref examples 4))
+          "5")))))
+
+(define (doc-test-run-failure-vector-growth-smoke-ok?) : bool
+  (let
+    [failures : doc_run_failure_vec.Vec (doc-test-run-failure-list-empty)]
+    [index : i64 1]
+    (begin
+      (while (<= index 5)
+        (begin
+          (set!
+            failures
+            (doc-test-run-failure-list-append
+              failures
+              (DocTestRunFailure.Failure
+                (string.int->string index)
+                (+ index 10)
+                index
+                (string.int->string index))))
+          (set! index (+ index 1))))
+      (and
+        (= (doc-test-run-failure-list-count failures) 5)
+        (= (doc_run_failure_vec.capacity (& failures)) 8)
+        (string.eq
+          (doc-test-run-failure-path (doc-test-run-failure-list-ref failures 0))
+          "1")
+        (=
+          (doc-test-run-failure-index
+            (doc-test-run-failure-list-ref failures 4))
           5)))))
 
 ;; Render a failure as `path:line: message`. Fence-level extraction
@@ -1686,16 +1740,16 @@
 
 (define (doc-test-run-examples
   [path : String]
-  [examples : DocTestExampleList]
-  [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  [examples : doc_example_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
   (doc-test-run-examples-with-roots path examples failures (doc_svec.new)))
 
 (define (doc-test-run-examples-with-roots-from
   [path : String]
-  [examples : DocTestExampleList]
+  [examples : doc_example_vec.Vec]
   [index : i64]
-  [failures : DocTestRunFailureList]
-  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
+  [failures : doc_run_failure_vec.Vec]
+  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1718,17 +1772,17 @@
 
 (define (doc-test-run-examples-with-roots
   [path : String]
-  [examples : DocTestExampleList]
-  [failures : DocTestRunFailureList]
-  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
+  [examples : doc_example_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]
+  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
   (doc-test-run-examples-with-roots-from path examples 0 failures stdlib-roots))
 
 (define (doc-test-typecheck-examples-with-roots-from
   [path : String]
-  [examples : DocTestExampleList]
+  [examples : doc_example_vec.Vec]
   [index : i64]
-  [failures : DocTestRunFailureList]
-  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
+  [failures : doc_run_failure_vec.Vec]
+  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1751,9 +1805,9 @@
 
 (define (doc-test-typecheck-examples-with-roots
   [path : String]
-  [examples : DocTestExampleList]
-  [failures : DocTestRunFailureList]
-  [stdlib-roots : doc_svec.Vec]) : DocTestRunFailureList
+  [examples : doc_example_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]
+  [stdlib-roots : doc_svec.Vec]) : doc_run_failure_vec.Vec
   (doc-test-typecheck-examples-with-roots-from
     path
     examples
@@ -1763,12 +1817,12 @@
 
 (define (doc-test-typecheck-package-examples-with-roots-from
   [path : String]
-  [examples : DocTestExampleList]
+  [examples : doc_example_vec.Vec]
   [index : i64]
-  [failures : DocTestRunFailureList]
+  [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunFailureList
+  [deps : CompilerPkgDeps]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-example-list-count examples))
     failures
     (let
@@ -1800,11 +1854,11 @@
 
 (define (doc-test-typecheck-package-examples-with-roots
   [path : String]
-  [examples : DocTestExampleList]
-  [failures : DocTestRunFailureList]
+  [examples : doc_example_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]
   [stdlib-roots : doc_svec.Vec]
   [manifest-dir : String]
-  [deps : CompilerPkgDeps]) : DocTestRunFailureList
+  [deps : CompilerPkgDeps]) : doc_run_failure_vec.Vec
   (doc-test-typecheck-package-examples-with-roots-from
     path
     examples
@@ -1818,9 +1872,9 @@
 ;; example index, so it is recorded with index `-1`.
 (define (doc-test-errors-to-failures-from
   [path : String]
-  [errors : DocTestErrorList]
+  [errors : doc_error_vec.Vec]
   [index : i64]
-  [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
   (if (>= index (doc-test-error-list-count errors))
     failures
     (let
@@ -1839,8 +1893,8 @@
 
 (define (doc-test-errors-to-failures
   [path : String]
-  [errors : DocTestErrorList]
-  [failures : DocTestRunFailureList]) : DocTestRunFailureList
+  [errors : doc_error_vec.Vec]
+  [failures : doc_run_failure_vec.Vec]) : doc_run_failure_vec.Vec
   (doc-test-errors-to-failures-from path errors 0 failures))
 
 ;; Extract and check every example in `source` (attributed to `path`). Extraction
@@ -2063,7 +2117,7 @@
 
 ;; Render every failure as `path:line: ...`, one per line, in extraction order.
 (define (doc-test-run-failures-render-from
-  [failures : DocTestRunFailureList]
+  [failures : doc_run_failure_vec.Vec]
   [index : i64]) : String
   (if (>= index (doc-test-run-failure-list-count failures))
     ""
@@ -2074,7 +2128,7 @@
         "\n")
       (doc-test-run-failures-render-from failures (+ index 1)))))
 
-(define (doc-test-run-failures-render [failures : DocTestRunFailureList]) : String
+(define (doc-test-run-failures-render [failures : doc_run_failure_vec.Vec]) : String
   (doc-test-run-failures-render-from failures 0))
 
 ;; Human-readable report text. Success mirrors the Rust CLI's
@@ -2232,7 +2286,7 @@
       [_ false])))
 
 (define (doc-test-error-list-has-from?
-  [errors : DocTestErrorList]
+  [errors : doc_error_vec.Vec]
   [index : i64]
   [line : i64]
   [message-fragment : String]) : bool
@@ -2253,12 +2307,12 @@
         (doc-test-error-list-has-from? errors (+ index 1) line message-fragment)))))
 
 (define (doc-test-error-list-has?
-  [errors : DocTestErrorList]
+  [errors : doc_error_vec.Vec]
   [line : i64]
   [message-fragment : String]) : bool
   (doc-test-error-list-has-from? errors 0 line message-fragment))
 
-(define (doc-test-smoke-examples-ok? [examples : DocTestExampleList]) : bool
+(define (doc-test-smoke-examples-ok? [examples : doc_example_vec.Vec]) : bool
   (if (= (doc-test-example-list-count examples) 2)
     (let
       [first : DocTestExample (doc-test-example-list-ref examples 0)]
@@ -2268,7 +2322,7 @@
         false))
     false))
 
-(define (doc-test-malformed-errors-ok? [errors : DocTestErrorList]) : bool
+(define (doc-test-malformed-errors-ok? [errors : doc_error_vec.Vec]) : bool
   (if (= (doc-test-error-list-count errors) 3)
     (let
       [first : DocTestError (doc-test-error-list-ref errors 0)]
@@ -2496,7 +2550,7 @@
   (let
     [report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-error-source))]
-    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
     (if (= (doc-test-run-failure-list-count failures) 1)
       (let
         [failure : DocTestRunFailure (doc-test-run-failure-list-ref failures 0)]
@@ -2516,7 +2570,7 @@
   (let
     [report : DocTestRunReport
       (doc-test-run-source "docs/bad.tl" (doc-test-run-unexpected-pass-source))]
-    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
     (if (= (doc-test-run-failure-list-count failures) 1)
       (doc-test-string-contains?
         (doc-test-run-failure-message
@@ -2552,7 +2606,7 @@
         "docs/run.tl"
         (doc-test-runnable-source)
         (doc-test-run-smoke-stdlib-roots))]
-    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
     (if (= (doc-test-run-report-count report) 2)
       (if (= (doc-test-run-failure-list-count failures) 2)
         (let
@@ -2600,7 +2654,7 @@
         "docs/run.tl"
         source
         (doc-test-run-smoke-stdlib-roots))]
-    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
     (if (= (doc-test-run-report-count report) 1)
       (if (= (doc-test-run-failure-list-count failures) 1)
         (doc-test-string-contains?
@@ -2666,7 +2720,7 @@
       (doc-test-typecheck-source
         "docs/bad.tl"
         (doc-test-run-unexpected-pass-source))]
-    [failures : DocTestRunFailureList (doc-test-run-report-failures report)]
+    [failures : doc_run_failure_vec.Vec (doc-test-run-report-failures report)]
     (if (= (doc-test-run-failure-list-count failures) 1)
       (doc-test-string-contains?
         (doc-test-run-failure-message
@@ -2854,6 +2908,14 @@ typecheck: return type mismatch"))]
     (unless
       (doc-test-line-vector-growth-smoke-ok?)
       (return (io.panic "doc-test-run: generated line vector growth mismatch")))
+    (unless
+      (doc-test-example-vector-growth-smoke-ok?)
+      (return
+        (io.panic "doc-test-run: generated example vector growth mismatch")))
+    (unless
+      (doc-test-run-failure-vector-growth-smoke-ok?)
+      (return
+        (io.panic "doc-test-run: generated failure vector growth mismatch")))
     (unless
       (doc-test-run-smoke-pass-ok?)
       (return (io.panic "doc-test-run: pass-case mismatch")))

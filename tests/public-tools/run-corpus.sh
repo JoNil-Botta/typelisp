@@ -3,7 +3,7 @@ set -eu
 
 # Self-hosted REPL and LSP corpus runner for tests/public-tools/.
 # Usage:
-#   TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh [repl|lsp]
+#   TYPELISP_BIN=./target/stage0/typelisp tests/public-tools/run-corpus.sh [repl|lsp] [fresh|batch|differential]
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
 FIXTURE_ROOT="$ROOT/tests/public-tools"
@@ -40,10 +40,35 @@ MODE=${1:-all}
 case "$MODE" in
     all | repl | lsp) ;;
     *)
-        echo "usage: tests/public-tools/run-corpus.sh [repl|lsp]" >&2
+        echo "usage: tests/public-tools/run-corpus.sh [repl|lsp] [fresh|batch|differential]" >&2
         exit 1
         ;;
 esac
+LSP_MODE=${2:-}
+if [ -z "$LSP_MODE" ]; then
+    if [ "$HOST_OS" = linux ]; then
+        LSP_MODE=differential
+    elif [ "$HOST_OS" = windows ]; then
+        LSP_MODE=batch
+    else
+        LSP_MODE=fresh
+    fi
+fi
+case "$LSP_MODE" in
+    fresh | batch | differential) ;;
+    *)
+        echo "usage: tests/public-tools/run-corpus.sh [repl|lsp] [fresh|batch|differential]" >&2
+        exit 1
+        ;;
+esac
+if [ "$HOST_OS" != linux ] && [ "$LSP_MODE" = differential ]; then
+    echo "LSP differential mode is supported only on Linux" >&2
+    exit 1
+fi
+TIME_BIN=
+if [ "$HOST_OS" = linux ] && [ -x /usr/bin/time ]; then
+    TIME_BIN=/usr/bin/time
+fi
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -397,6 +422,15 @@ file_uri_for_path() {
     fi
 }
 
+compiler_file_path() {
+    path=$1
+    if [ "$HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m -a -l "$path"
+    else
+        printf '%s' "$path"
+    fi
+}
+
 frame_append() {
     frame_file=$1
     frame_body=$2
@@ -572,82 +606,313 @@ check_lsp_result() {
     fi
 }
 
-run_lsp_fixture() {
-    path=$1
-    name=$2
-    binary=$3
-    base=${path%.in.json}
-    spec="$base.spec.json"
-    prep="$base.prep.sh"
-    case_id=$(printf '%s' "$name" | tr '/.' '__')
-    stdin_file="$WORKDIR/$case_id.in"
-    out="$WORKDIR/$case_id.out"
-    err="$WORKDIR/$case_id.err"
-    messages="$WORKDIR/$case_id.messages"
-    errors="$WORKDIR/$case_id.errors"
-    : > "$errors"
-
-    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lsp-fixture.XXXXXX")
-    tmp_path=$(canonical_tmp_path "$tmpdir")
-    tmp_uri=$(file_uri_for_path "$tmp_path")
-
-    if [ -f "$prep" ]; then
-        FIXTURE_TMP=$tmpdir FIXTURE_TMP_URI=$tmp_uri sh "$prep"
+write_lsp_case_list() {
+    cases=$1
+    : > "$cases"
+    lsp_dir="$FIXTURE_ROOT/lsp"
+    if [ -d "$lsp_dir" ]; then
+        for path in "$lsp_dir"/*.in.json; do
+            [ -f "$path" ] || continue
+            base=${path%.in.json}
+            name="lsp/$(basename "$path")"
+            printf '%s\t%s\t%s\t%s\n' "$path" "$name" public "$base.spec.json" >> "$cases"
+        done
     fi
 
-    write_json_frames "$path" "$stdin_file" "$tmp_path" "$tmp_uri"
-
-    set +e
-    "$binary" lsp < "$stdin_file" > "$out" 2> "$err"
-    code=$?
-    set -e
-
-    extract_lsp_bodies "$out" "$messages"
-    check_lsp_result "$name" "$spec" "$out" "$err" "$code" "$messages" "$tmp_path" "$tmp_uri" "$errors"
-    rm -rf "$tmpdir"
+    selfhost_lsp_dir="$FIXTURE_ROOT/selfhost-lsp"
+    if [ "$HOST_OS" = linux ] && [ -d "$selfhost_lsp_dir" ]; then
+        for path in "$selfhost_lsp_dir"/*.linux.in "$selfhost_lsp_dir"/*.linux.in.json; do
+            [ -f "$path" ] || continue
+            case "$path" in
+                *.linux.in.json) base=${path%.linux.in.json} ;;
+                *.linux.in) base=${path%.linux.in} ;;
+                *) continue ;;
+            esac
+            name="selfhost-lsp/$(basename "$path")"
+            printf '%s\t%s\t%s\t%s\n' "$path" "$name" selfhost "$base.linux.spec.json" >> "$cases"
+        done
+    fi
 }
 
-run_selfhost_lsp_fixture() {
-    path=$1
-    name=$2
-    spec=$3
-    binary=$4
+prepare_lsp_case() {
+    run_dir=$1
+    path=$2
+    name=$3
+    kind=$4
+    manifest=$5
     case_id=$(printf '%s' "$name" | tr '/.' '__')
-    stdin_file="$WORKDIR/$case_id.in"
-    out="$WORKDIR/$case_id.out"
-    err="$WORKDIR/$case_id.err"
-    messages="$WORKDIR/$case_id.messages"
-    errors="$WORKDIR/$case_id.errors"
+    stdin_file="$run_dir/$case_id.in"
+    out="$run_dir/$case_id.out"
+    err="$run_dir/$case_id.err"
+    status="$run_dir/$case_id.status"
+    errors="$run_dir/$case_id.errors"
     : > "$errors"
 
-    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-selfhost-lsp-fixture.XXXXXX")
+    shared_group=
+    case "$name" in
+        lsp/reset-document-*) shared_group=reset-document-shared ;;
+        lsp/reset-compiler-state-*) shared_group=reset-compiler-state-shared ;;
+    esac
+    if [ -n "$shared_group" ]; then
+        tmpdir="$run_dir/$shared_group"
+        mkdir -p "$tmpdir"
+    else
+        tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lsp-fixture.XXXXXX")
+    fi
     tmp_path=$(canonical_tmp_path "$tmpdir")
     tmp_uri=$(file_uri_for_path "$tmp_path")
+    printf '%s\n' "$tmpdir" > "$run_dir/$case_id.tmpdir"
+    printf '%s\n' "$tmp_path" > "$run_dir/$case_id.tmp-path"
+    printf '%s\n' "$tmp_uri" > "$run_dir/$case_id.tmp-uri"
 
-    case "$path" in
-        *.in.json)
-            write_json_frames "$path" "$stdin_file" "$tmp_path" "$tmp_uri"
-            ;;
-        *)
-            awk -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
-            {
-                line = $0
-                gsub(/\$\{\{TMP_URI\}\}/, tmp_uri, line)
-                gsub(/\$\{\{TMP\}\}/, tmp_path, line)
-                print line
-            }
-            ' "$path" > "$stdin_file"
-            ;;
+    if [ "$kind" = public ]; then
+        base=${path%.in.json}
+        prep="$base.prep.sh"
+        if [ -f "$prep" ]; then
+            FIXTURE_TMP=$tmpdir FIXTURE_TMP_URI=$tmp_uri sh "$prep"
+        fi
+        write_json_frames "$path" "$stdin_file" "$tmp_path" "$tmp_uri"
+    else
+        case "$path" in
+            *.in.json)
+                write_json_frames "$path" "$stdin_file" "$tmp_path" "$tmp_uri"
+                ;;
+            *)
+                awk -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
+                {
+                    line = $0
+                    gsub(/\$\{\{TMP_URI\}\}/, tmp_uri, line)
+                    gsub(/\$\{\{TMP\}\}/, tmp_path, line)
+                    print line
+                }
+                ' "$path" > "$stdin_file"
+                ;;
+        esac
+    fi
+
+    if [ -n "$manifest" ]; then
+        compiler_stdin=$(compiler_file_path "$stdin_file")
+        compiler_out=$(compiler_file_path "$out")
+        compiler_err=$(compiler_file_path "$err")
+        compiler_status=$(compiler_file_path "$status")
+        printf '%s\t%s\t%s\t%s\t%s\n' \
+            "$case_id" "$compiler_stdin" "$compiler_out" "$compiler_err" "$compiler_status" >> "$manifest"
+        printf 'lsp-transcript-batch-result\t%s\n' "$case_id" >> "$run_dir/expected-results.tsv"
+    fi
+}
+
+prepare_lsp_cases() {
+    run_dir=$1
+    cases=$2
+    manifest=$3
+    mkdir -p "$run_dir"
+    if [ -n "$manifest" ]; then
+        printf '%s\n' 'typelisp-lsp-transcript-batch-v1' > "$manifest"
+        : > "$run_dir/expected-results.tsv"
+    fi
+    while IFS="$(printf '\t')" read -r path name kind spec || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        prepare_lsp_case "$run_dir" "$path" "$name" "$kind" "$manifest"
+    done < "$cases"
+}
+
+run_lsp_fresh_cases() {
+    run_dir=$1
+    cases=$2
+    prepare_lsp_cases "$run_dir" "$cases" ""
+    while IFS="$(printf '\t')" read -r path name kind spec || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        case_id=$(printf '%s' "$name" | tr '/.' '__')
+        set +e
+        if [ -n "$TIME_BIN" ]; then
+            "$TIME_BIN" -f '%e\t%M' -o "$run_dir/$case_id.time" \
+                "$COMPILER" lsp < "$run_dir/$case_id.in" \
+                > "$run_dir/$case_id.out" 2> "$run_dir/$case_id.err"
+            code=$?
+        else
+            "$COMPILER" lsp < "$run_dir/$case_id.in" \
+                > "$run_dir/$case_id.out" 2> "$run_dir/$case_id.err"
+            code=$?
+        fi
+        set -e
+        printf '%s\n' "$code" > "$run_dir/$case_id.status"
+    done < "$cases"
+}
+
+run_lsp_batch_cases() {
+    run_dir=$1
+    cases=$2
+    manifest="$run_dir/manifest.tsv"
+    prepare_lsp_cases "$run_dir" "$cases" "$manifest"
+    compiler_manifest=$(compiler_file_path "$manifest")
+    batch_stdout="$run_dir/results.tsv"
+    batch_stderr="$run_dir/batch.stderr"
+    batch_status=0
+    if [ -n "$TIME_BIN" ]; then
+        if "$TIME_BIN" -f '%e\t%M' -o "$run_dir/batch.time" \
+            "$COMPILER" lsp --transcript-batch "$compiler_manifest" \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+            > "$batch_stdout" 2> "$batch_stderr"; then
+            :
+        else
+            batch_status=$?
+        fi
+    else
+        if "$COMPILER" lsp --transcript-batch "$compiler_manifest" \
+            --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
+            > "$batch_stdout" 2> "$batch_stderr"; then
+            :
+        else
+            batch_status=$?
+        fi
+    fi
+    if [ "$batch_status" -ne 0 ]; then
+        echo "LSP transcript batch exited $batch_status" >&2
+        sed 's/^/  /' "$batch_stderr" >&2 || true
+        return "$batch_status"
+    fi
+    if [ -s "$batch_stderr" ]; then
+        echo "LSP transcript batch wrote unexpected process stderr" >&2
+        sed 's/^/  /' "$batch_stderr" >&2 || true
+        return 1
+    fi
+    if ! cmp -s "$run_dir/expected-results.tsv" "$batch_stdout"; then
+        echo "LSP transcript batch result rows were missing, duplicated, reordered, or extra" >&2
+        diff -u "$run_dir/expected-results.tsv" "$batch_stdout" >&2 || true
+        return 1
+    fi
+}
+
+lsp_now_ms() {
+    value=$(date +%s%3N 2>/dev/null || true)
+    case "$value" in
+        '' | *[!0-9]*) value=$(($(date +%s) * 1000)) ;;
     esac
+    printf '%s' "$value"
+}
 
-    set +e
-    "$binary" lsp < "$stdin_file" > "$out" 2> "$err"
-    code=$?
-    set -e
+report_lsp_fresh_memory() {
+    run_dir=$1
+    if [ -n "$TIME_BIN" ]; then
+        awk -F '\t' '
+            BEGIN { max = 0 }
+            $2 + 0 > max { max = $2 + 0 }
+            END { printf "[public-tools] LSP fresh max_child_peak_rss_kib=%d\n", max }
+        ' "$run_dir"/*.time
+    fi
+}
 
-    extract_lsp_bodies "$out" "$messages"
-    check_lsp_result "$name" "$spec" "$out" "$err" "$code" "$messages" "$tmp_path" "$tmp_uri" "$errors"
-    rm -rf "$tmpdir"
+report_lsp_batch_memory() {
+    run_dir=$1
+    if [ -n "$TIME_BIN" ] && [ -f "$run_dir/batch.time" ]; then
+        awk -F '\t' '
+            { printf "[public-tools] LSP batch child_elapsed_s=%s peak_rss_kib=%s\n", $1, $2 }
+        ' "$run_dir/batch.time"
+    fi
+}
+
+normalize_lsp_differential_stream() {
+    input=$1
+    output=$2
+    tmp_path=$3
+    tmp_uri=$4
+    awk -v tmp_path="$tmp_path" -v tmp_uri="$tmp_uri" '
+function replace_literal(text, needle, replacement,    out, at) {
+    if (needle == "") return text
+    out = ""
+    while ((at = index(text, needle)) > 0) {
+        out = out substr(text, 1, at - 1) replacement
+        text = substr(text, at + length(needle))
+    }
+    return out text
+}
+{
+    line = $0
+    sub(/\r$/, "", line)
+    line = replace_literal(line, tmp_uri, "${{TMP_URI}}")
+    line = replace_literal(line, tmp_path, "${{TMP}}")
+    print line
+}
+' "$input" > "$output"
+}
+
+compare_lsp_differential_cases() {
+    fresh_dir=$1
+    batch_dir=$2
+    cases=$3
+    while IFS="$(printf '\t')" read -r path name kind spec || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        case_id=$(printf '%s' "$name" | tr '/.' '__')
+        errors="$batch_dir/$case_id.errors"
+        for stream in out err status; do
+            fresh="$fresh_dir/$case_id.$stream"
+            batch="$batch_dir/$case_id.$stream"
+            if [ ! -f "$fresh" ] || [ ! -f "$batch" ]; then
+                printf 'differential %s result missing\n' "$stream" >> "$errors"
+                continue
+            fi
+            fresh_normal="$fresh_dir/$case_id.$stream.normalized"
+            batch_normal="$batch_dir/$case_id.$stream.normalized"
+            fresh_tmp_path=$(sed -n '1p' "$fresh_dir/$case_id.tmp-path")
+            fresh_tmp_uri=$(sed -n '1p' "$fresh_dir/$case_id.tmp-uri")
+            batch_tmp_path=$(sed -n '1p' "$batch_dir/$case_id.tmp-path")
+            batch_tmp_uri=$(sed -n '1p' "$batch_dir/$case_id.tmp-uri")
+            normalize_lsp_differential_stream \
+                "$fresh" "$fresh_normal" "$fresh_tmp_path" "$fresh_tmp_uri"
+            normalize_lsp_differential_stream \
+                "$batch" "$batch_normal" "$batch_tmp_path" "$batch_tmp_uri"
+            if ! cmp -s "$fresh_normal" "$batch_normal"; then
+                printf 'fresh-vs-batch %s mismatch\n' "$stream" >> "$errors"
+            fi
+        done
+    done < "$cases"
+}
+
+check_lsp_cases() {
+    run_dir=$1
+    cases=$2
+    while IFS="$(printf '\t')" read -r path name kind spec || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        case_id=$(printf '%s' "$name" | tr '/.' '__')
+        out="$run_dir/$case_id.out"
+        err="$run_dir/$case_id.err"
+        status="$run_dir/$case_id.status"
+        messages="$run_dir/$case_id.messages"
+        errors="$run_dir/$case_id.errors"
+        tmp_path=$(sed -n '1p' "$run_dir/$case_id.tmp-path")
+        tmp_uri=$(sed -n '1p' "$run_dir/$case_id.tmp-uri")
+        if [ ! -f "$out" ] || [ ! -f "$err" ] || [ ! -f "$status" ]; then
+            printf 'missing transcript result file\n' >> "$errors"
+            : > "$out"
+            : > "$err"
+            code=255
+        else
+            code=$(sed -n '1p' "$status" | tr -d '\r')
+            case "$code" in
+                '' | *[!0-9]*)
+                    printf 'malformed transcript status: %s\n' "$code" >> "$errors"
+                    code=255
+                    ;;
+            esac
+        fi
+        extract_lsp_bodies "$out" "$messages"
+        check_lsp_result \
+            "$name" "$spec" "$out" "$err" "$code" "$messages" \
+            "$tmp_path" "$tmp_uri" "$errors"
+    done < "$cases"
+}
+
+cleanup_lsp_cases() {
+    run_dir=$1
+    cases=$2
+    while IFS="$(printf '\t')" read -r path name kind spec || [ -n "$path" ]; do
+        [ -n "$path" ] || continue
+        case_id=$(printf '%s' "$name" | tr '/.' '__')
+        if [ -f "$run_dir/$case_id.tmpdir" ]; then
+            tmpdir=$(sed -n '1p' "$run_dir/$case_id.tmpdir")
+            rm -rf "$tmpdir"
+        fi
+    done < "$cases"
 }
 
 run_repl_corpus() {
@@ -681,27 +946,57 @@ run_repl_corpus() {
 }
 
 run_lsp_corpus() {
-    lsp_dir="$FIXTURE_ROOT/lsp"
-    if [ -d "$lsp_dir" ]; then
-        for path in "$lsp_dir"/*.in.json; do
-            [ -f "$path" ] || continue
-            fixture_name=$(basename "$path")
-            run_lsp_fixture "$path" "lsp/$fixture_name" "$COMPILER"
-        done
+    cases="$WORKDIR/lsp-cases.tsv"
+    write_lsp_case_list "$cases"
+    case_count=$(wc -l < "$cases" | tr -d ' ')
+    if [ "$case_count" -eq 0 ]; then
+        echo "LSP corpus found no fixtures" >&2
+        exit 1
     fi
 
-    selfhost_lsp_dir="$FIXTURE_ROOT/selfhost-lsp"
-    if [ "$HOST_OS" = linux ] && [ -d "$selfhost_lsp_dir" ]; then
-        for path in "$selfhost_lsp_dir"/*.linux.in "$selfhost_lsp_dir"/*.linux.in.json; do
-            [ -f "$path" ] || continue
-            case "$path" in
-                *.linux.in.json) base=${path%.linux.in.json} ;;
-                *.linux.in) base=${path%.linux.in} ;;
-                *) continue ;;
-            esac
-            run_selfhost_lsp_fixture "$path" "selfhost-lsp/$(basename "$path")" "$base.linux.spec.json" "$COMPILER"
-        done
-    fi
+    case "$LSP_MODE" in
+        fresh)
+            echo "[public-tools] LSP fresh mode: $case_count process(es)"
+            run_dir="$WORKDIR/lsp-fresh"
+            phase_start=$(lsp_now_ms)
+            run_lsp_fresh_cases "$run_dir" "$cases"
+            phase_end=$(lsp_now_ms)
+            echo "[public-tools] LSP fresh elapsed_ms=$((phase_end - phase_start))"
+            report_lsp_fresh_memory "$run_dir"
+            check_lsp_cases "$run_dir" "$cases"
+            cleanup_lsp_cases "$run_dir" "$cases"
+            ;;
+        batch)
+            echo "[public-tools] LSP batch mode: 1 process for $case_count session(s)"
+            run_dir="$WORKDIR/lsp-batch"
+            phase_start=$(lsp_now_ms)
+            run_lsp_batch_cases "$run_dir" "$cases"
+            phase_end=$(lsp_now_ms)
+            echo "[public-tools] LSP batch elapsed_ms=$((phase_end - phase_start))"
+            report_lsp_batch_memory "$run_dir"
+            check_lsp_cases "$run_dir" "$cases"
+            cleanup_lsp_cases "$run_dir" "$cases"
+            ;;
+        differential)
+            echo "[public-tools] LSP differential mode: $case_count fresh + 1 batch process(es)"
+            fresh_dir="$WORKDIR/lsp-fresh"
+            batch_dir="$WORKDIR/lsp-batch"
+            phase_start=$(lsp_now_ms)
+            run_lsp_fresh_cases "$fresh_dir" "$cases"
+            phase_end=$(lsp_now_ms)
+            echo "[public-tools] LSP fresh elapsed_ms=$((phase_end - phase_start))"
+            report_lsp_fresh_memory "$fresh_dir"
+            phase_start=$(lsp_now_ms)
+            run_lsp_batch_cases "$batch_dir" "$cases"
+            phase_end=$(lsp_now_ms)
+            echo "[public-tools] LSP batch elapsed_ms=$((phase_end - phase_start))"
+            report_lsp_batch_memory "$batch_dir"
+            compare_lsp_differential_cases "$fresh_dir" "$batch_dir" "$cases"
+            check_lsp_cases "$batch_dir" "$cases"
+            cleanup_lsp_cases "$fresh_dir" "$cases"
+            cleanup_lsp_cases "$batch_dir" "$cases"
+            ;;
+    esac
 }
 
 case "$MODE" in

@@ -64,6 +64,22 @@
   (stderr String)
   (status i64))
 
+(defstruct LspTranscriptBatchEntry
+  (case-id String)
+  (input-path String)
+  (stdout-path String)
+  (stderr-path String)
+  (status-path String))
+
+(defenum ResultLspTranscriptBatchEntry
+  (Ok LspTranscriptBatchEntry)
+  (Err String))
+
+(defenum LspTranscriptBatchOption
+  (None)
+  (Path String)
+  (Err String))
+
 (defenum LspLengthParse
   (Ignore)
   (Ok i64)
@@ -6432,11 +6448,6 @@
         unit)
       status)))
 
-(define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
-  (lsp-frame-run-with-config
-    (lsp-stdlib-roots-from idx count)
-    (lsp-prefix-cache-stats-from idx count)))
-
 ;; Clear every serial LSP/compiler owner before a transcript arena is retired.
 ;; Document storage itself is local to lsp-frame-run-with-config; clearing the
 ;; cache arena here makes that empty collection the only document owner visible
@@ -6485,6 +6496,307 @@
       (unsafe
         (arena.tl_arena_destroy transport-head))]
     (LspTranscriptResult captured-stdout captured-stderr status)))
+
+(define lsp-transcript-batch-header : String
+  "typelisp-lsp-transcript-batch-v1")
+
+(define (lsp-transcript-batch-line-end [text : String] [start : i64] [n : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and
+        (< i n)
+        (not (= (string.string-ref text i) '\n'))
+        (not (= (string.string-ref text i) '\r')))
+        (set! i (+ i 1)))
+      i)))
+
+(define (lsp-transcript-batch-next-line
+  [text : String]
+  [line-end : i64]
+  [n : i64]) : i64
+  (if (>= line-end n)
+    n
+    (if (and
+      (= (string.string-ref text line-end) '\r')
+      (< (+ line-end 1) n)
+      (= (string.string-ref text (+ line-end 1)) '\n'))
+      (+ line-end 2)
+      (+ line-end 1))))
+
+(define (lsp-transcript-batch-tab [text : String] [start : i64] [end : i64]) : i64
+  (let
+    [i : i64 start]
+    (begin
+      (while (and (< i end) (not (= (string.string-ref text i) '\t')))
+        (set! i (+ i 1)))
+      i)))
+
+(define (lsp-transcript-batch-field [text : String] [start : i64] [end : i64]) : String
+  (string.substring text start (- end start)))
+
+(define (lsp-transcript-batch-parse-entry
+  [text : String]
+  [start : i64]
+  [end : i64]
+  [line-number : i64]) : ResultLspTranscriptBatchEntry
+  (let
+    [tab1 : i64 (lsp-transcript-batch-tab text start end)]
+    [tab2 : i64
+      (if (< tab1 end)
+        (lsp-transcript-batch-tab text (+ tab1 1) end)
+        end)]
+    [tab3 : i64
+      (if (< tab2 end)
+        (lsp-transcript-batch-tab text (+ tab2 1) end)
+        end)]
+    [tab4 : i64
+      (if (< tab3 end)
+        (lsp-transcript-batch-tab text (+ tab3 1) end)
+        end)]
+    [extra : i64
+      (if (< tab4 end)
+        (lsp-transcript-batch-tab text (+ tab4 1) end)
+        end)]
+    [line-label : String
+      (string.append
+        "lsp: invalid transcript batch manifest line "
+        (string.int->string line-number))]
+    (if (or (= tab1 end) (= tab2 end) (= tab3 end) (= tab4 end) (< extra end))
+      (ResultLspTranscriptBatchEntry.Err
+        (string.append line-label ": expected five tab-separated fields"))
+      (let
+        [case-id : String (lsp-transcript-batch-field text start tab1)]
+        [input-path : String (lsp-transcript-batch-field text (+ tab1 1) tab2)]
+        [stdout-path : String (lsp-transcript-batch-field text (+ tab2 1) tab3)]
+        [stderr-path : String (lsp-transcript-batch-field text (+ tab3 1) tab4)]
+        [status-path : String (lsp-transcript-batch-field text (+ tab4 1) end)]
+        (if (or
+          (= (string.string-length case-id) 0)
+          (= (string.string-length input-path) 0)
+          (= (string.string-length stdout-path) 0)
+          (= (string.string-length stderr-path) 0)
+          (= (string.string-length status-path) 0))
+          (ResultLspTranscriptBatchEntry.Err
+            (string.append line-label ": fields must be non-empty"))
+          (ResultLspTranscriptBatchEntry.Ok
+            (LspTranscriptBatchEntry
+              case-id
+              input-path
+              stdout-path
+              stderr-path
+              status-path)))))))
+
+(define (lsp-transcript-batch-id-seen? [ids : lsp_svec.Vec] [case-id : String]) : bool
+  (let
+    [i : i64 0]
+    [seen : bool false]
+    (begin
+      (while (and (< i (lsp_svec.len (& ids))) (not seen))
+        (begin
+          (if (string.eq (lsp_svec.get (& ids) i "") case-id)
+            (set! seen true)
+            unit)
+          (set! i (+ i 1))))
+      seen)))
+
+(define (lsp-transcript-batch-validate [text : String]) : String
+  (let
+    [n : i64 (string.string-length text)]
+    [first-end : i64 (lsp-transcript-batch-line-end text 0 n)]
+    [first : String (lsp-transcript-batch-field text 0 first-end)]
+    [cursor : i64 (lsp-transcript-batch-next-line text first-end n)]
+    [line-number : i64 2]
+    [entries : i64 0]
+    [ids : lsp_svec.Vec (lsp_svec.new)]
+    [result-paths : lsp_svec.Vec (lsp_svec.new)]
+    [error : String ""]
+    (begin
+      (if (not (string.eq first lsp-transcript-batch-header))
+        (set! error "lsp: invalid transcript batch manifest header")
+        unit)
+      (while (and (= (string.string-length error) 0) (< cursor n))
+        (let
+          [line-end : i64 (lsp-transcript-batch-line-end text cursor n)]
+          [next : i64 (lsp-transcript-batch-next-line text line-end n)]
+          (begin
+            (if (= cursor line-end)
+              (set!
+                error
+                (string.append
+                  "lsp: invalid transcript batch manifest empty line "
+                  (string.int->string line-number)))
+              (match (lsp-transcript-batch-parse-entry
+                text
+                cursor
+                line-end
+                line-number)
+                [(ResultLspTranscriptBatchEntry.Err message)
+                  (set! error message)]
+                [(ResultLspTranscriptBatchEntry.Ok entry)
+                  (let
+                    [case-id : String (struct-get entry case-id)]
+                    [stdout-path : String (struct-get entry stdout-path)]
+                    [stderr-path : String (struct-get entry stderr-path)]
+                    [status-path : String (struct-get entry status-path)]
+                    (cond
+                      [(lsp-transcript-batch-id-seen? ids case-id)
+                        (set!
+                          error
+                          (string.append
+                            "lsp: duplicate transcript batch case id: "
+                            case-id))]
+                      [(or
+                          (lsp-transcript-batch-id-seen?
+                            result-paths
+                            stdout-path)
+                          (lsp-transcript-batch-id-seen?
+                            result-paths
+                            stderr-path)
+                          (lsp-transcript-batch-id-seen?
+                            result-paths
+                            status-path)
+                          (string.eq stdout-path stderr-path)
+                          (string.eq stdout-path status-path)
+                          (string.eq stderr-path status-path))
+                        (set!
+                          error
+                          (string.append
+                            "lsp: duplicate transcript batch result path in case: "
+                            case-id))]
+                      [(not (io.file-exists? (struct-get entry input-path)))
+                        (set!
+                          error
+                          (string.append
+                            "lsp: transcript batch input does not exist: "
+                            (struct-get entry input-path)))]
+                      [else
+                        (begin
+                          (lsp_svec.push (&mut ids) case-id)
+                          (lsp_svec.push (&mut result-paths) stdout-path)
+                          (lsp_svec.push (&mut result-paths) stderr-path)
+                          (lsp_svec.push (&mut result-paths) status-path)
+                          (set! entries (+ entries 1)))]))]))
+            (set! cursor next)
+            (set! line-number (+ line-number 1)))))
+      (if (and (= (string.string-length error) 0) (= entries 0))
+        "lsp: transcript batch manifest has no entries"
+        error))))
+
+(define (lsp-transcript-batch-run-entries
+  [text : String]
+  [stdlib-roots : lsp_svec.Vec]
+  [prefix-cache-stats : bool]) : i64
+  (let
+    [n : i64 (string.string-length text)]
+    [first-end : i64 (lsp-transcript-batch-line-end text 0 n)]
+    [cursor : i64 (lsp-transcript-batch-next-line text first-end n)]
+    [line-number : i64 2]
+    [status : i64 0]
+    (begin
+      (while (and (= status 0) (< cursor n))
+        (let
+          [line-end : i64 (lsp-transcript-batch-line-end text cursor n)]
+          [next : i64 (lsp-transcript-batch-next-line text line-end n)]
+          (begin
+            (match (lsp-transcript-batch-parse-entry
+              text
+              cursor
+              line-end
+              line-number)
+              [(ResultLspTranscriptBatchEntry.Err message)
+                (begin
+                  (io.print-error message)
+                  (io.print-error "\n")
+                  (set! status 2))]
+              [(ResultLspTranscriptBatchEntry.Ok entry)
+                (let
+                  [input : String (io.read-file (struct-get entry input-path))]
+                  [result : LspTranscriptResult
+                    (lsp-frame-run-transcript
+                      (& input)
+                      stdlib-roots
+                      prefix-cache-stats)]
+                  (begin
+                    (io.write-file
+                      (struct-get entry stdout-path)
+                      (struct-get result stdout))
+                    (io.write-file
+                      (struct-get entry stderr-path)
+                      (struct-get result stderr))
+                    (io.write-file
+                      (struct-get entry status-path)
+                      (string.append
+                        (string.int->string (struct-get result status))
+                        "\n"))
+                    (io.print-string
+                      (lsp-str3
+                        "lsp-transcript-batch-result\t"
+                        (struct-get entry case-id)
+                        "\n"))))])
+            (set! cursor next)
+            (set! line-number (+ line-number 1)))))
+      status)))
+
+(define (lsp-transcript-batch-run
+  [manifest-path : String]
+  [stdlib-roots : lsp_svec.Vec]
+  [prefix-cache-stats : bool]) : i64
+  (if (not (io.file-exists? manifest-path))
+    (begin
+      (io.print-error
+        (string.append
+          "lsp: transcript batch manifest does not exist: "
+          manifest-path))
+      (io.print-error "\n")
+      2)
+    (let
+      [text : String (io.read-file manifest-path)]
+      [error : String (lsp-transcript-batch-validate text)]
+      (if (> (string.string-length error) 0)
+        (begin
+          (io.print-error error)
+          (io.print-error "\n")
+          2)
+        (lsp-transcript-batch-run-entries text stdlib-roots prefix-cache-stats)))))
+
+(define (lsp-transcript-batch-option-from [idx : i64] [count : i64]) : LspTranscriptBatchOption
+  (let
+    [i : i64 idx]
+    [path : String ""]
+    [error : String ""]
+    (begin
+      (while (and (< i count) (= (string.string-length error) 0))
+        (if (string.eq (io.arg i) "--transcript-batch")
+          (if (>= (+ i 1) count)
+            (set! error "lsp: --transcript-batch requires a manifest path")
+            (if (> (string.string-length path) 0)
+              (set! error "lsp: --transcript-batch was provided more than once")
+              (begin
+                (set! path (io.arg (+ i 1)))
+                (set! i (+ i 1)))))
+          unit)
+        (set! i (+ i 1)))
+      (if (> (string.string-length error) 0)
+        (LspTranscriptBatchOption.Err error)
+        (if (> (string.string-length path) 0)
+          (LspTranscriptBatchOption.Path path)
+          (LspTranscriptBatchOption.None))))))
+
+(define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
+  (let
+    [roots : lsp_svec.Vec (lsp-stdlib-roots-from idx count)]
+    [prefix-cache-stats : bool (lsp-prefix-cache-stats-from idx count)]
+    (match (lsp-transcript-batch-option-from idx count)
+      [(LspTranscriptBatchOption.None)
+        (lsp-frame-run-with-config roots prefix-cache-stats)]
+      [(LspTranscriptBatchOption.Path manifest-path)
+        (lsp-transcript-batch-run manifest-path roots prefix-cache-stats)]
+      [(LspTranscriptBatchOption.Err message)
+        (begin
+          (io.print-error message)
+          (io.print-error "\n")
+          2)])))
 
 (define (lsp-frame-run) : i64
   (lsp-frame-run-from 1 (arg-count)))

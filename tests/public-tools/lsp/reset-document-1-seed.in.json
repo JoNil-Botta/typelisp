@@ -1,0 +1,5 @@
+[
+  {"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}},
+  {"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":"${{TMP_URI}}/reset-document.tl","languageId":"typelisp","version":1,"text":"(define (seed) : i64 1)"}}},
+  {"jsonrpc":"2.0","method":"exit"}
+]

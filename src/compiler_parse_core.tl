@@ -165,10 +165,6 @@
   (Ok AstFieldDefList)
   (Err String))
 
-(defenum ResultAstFieldDefListBuild
-  (Ok)
-  (Err String))
-
 (defenum ResultAstFieldCleanup
   (Ok AstFieldCleanup)
   (Err String))
@@ -236,10 +232,6 @@
 
 (defenum ResultAstVariantDefList
   (Ok AstVariantDefList)
-  (Err String))
-
-(defenum ResultAstVariantDefListBuild
-  (Ok)
   (Err String))
 
 (defenum ResultAstDispatchIsa
@@ -817,12 +809,6 @@
 
 (define (compiler-parse-tag-expr-array-take) : i64
   303)
-
-(define (compiler-parse-tag-expr-string-ref) : i64
-  242)
-
-(define (compiler-parse-tag-expr-char-at) : i64
-  243)
 
 (define (compiler-parse-tag-expr-match) : i64
   244)
@@ -1783,9 +1769,6 @@
     (= tag (compiler-parse-tag-bin-shl))
     (= tag (compiler-parse-tag-bin-shr))))
 
-(define (ast-binop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
-  (ast-binop-tag? (compiler-parse-dispatch-tag dispatch name)))
-
 (define (ast-left-fold-binop-tag? [tag : i64]) : bool
   (or
     (= tag (compiler-parse-tag-bin-add))
@@ -1813,9 +1796,6 @@
     [(= tag (compiler-parse-tag-bin-shl)) (AstBinOp.Shl)]
     [else (AstBinOp.Shr)]))
 
-(define (ast-binop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstBinOp
-  (ast-binop-from-tag (compiler-parse-dispatch-tag dispatch name)))
-
 (define (ast-unop-tag? [tag : i64]) : bool
   (if (= tag (compiler-parse-tag-un-not))
     true
@@ -1823,18 +1803,12 @@
       true
       (= tag (compiler-parse-tag-un-bit-not)))))
 
-(define (ast-unop? [dispatch : sym_i64_env.SymI64Env] [name : String]) : bool
-  (ast-unop-tag? (compiler-parse-dispatch-tag dispatch name)))
-
 (define (ast-unop-from-tag [tag : i64]) : AstUnOp
   (if (= tag (compiler-parse-tag-un-not))
     (AstUnOp.Not)
     (if (= tag (compiler-parse-tag-un-neg))
       (AstUnOp.Neg)
       (AstUnOp.BitNot))))
-
-(define (ast-unop-from-name [dispatch : sym_i64_env.SymI64Env] [name : String]) : AstUnOp
-  (ast-unop-from-tag (compiler-parse-dispatch-tag dispatch name)))
 
 (define (parse-ast-type-list
   [dispatch : sym_i64_env.SymI64Env]
@@ -2675,46 +2649,6 @@
         [_ (ResultAstFieldDef.Err "parse: malformed field definition")])]
     [_ (ResultAstFieldDef.Err "parse: malformed field definition")]))
 
-(define (parse-ast-field-def-list-into
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]
-  [out : (&mut out AstFieldDefList)]) : ResultAstFieldDefListBuild
-  (match s
-    [(reader.Sexpr.Nil) (ResultAstFieldDefListBuild.Ok)]
-    [(reader.Sexpr.Cons head tail)
-      (match (parse-ast-field-def dispatch pools (box-get head) allow-cleanup)
-        [(ResultAstFieldDef.Ok parsed-head)
-          (begin
-            (ast-field-def-list-push out parsed-head)
-            (parse-ast-field-def-list-into
-              dispatch
-              pools
-              (box-get tail)
-              allow-cleanup
-              out))]
-        [(ResultAstFieldDef.Err message)
-          (ResultAstFieldDefListBuild.Err message)])]
-    [_ (ResultAstFieldDefListBuild.Err "parse: malformed field list")]))
-
-(define (parse-ast-field-def-list
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]) : ResultAstFieldDefList
-  (let
-    [out : AstFieldDefList (ast-field-def-list-new)]
-    (match (parse-ast-field-def-list-into
-      dispatch
-      pools
-      s
-      allow-cleanup
-      (&mut out))
-      [(ResultAstFieldDefListBuild.Ok) (ResultAstFieldDefList.Ok out)]
-      [(ResultAstFieldDefListBuild.Err message)
-        (ResultAstFieldDefList.Err message)])))
-
 (define (compiler-parse-metadata-key? [name : String]) : bool
   (and (> (string.string-length name) 0) (= (string.string-ref name 0) ':')))
 
@@ -2969,21 +2903,6 @@
             seen-cleanup)])]
     [_ (ResultAstStructDefParts.Err "parse: malformed field list")]))
 
-(define (compiler-parse-type-list-has-metadata? [s : reader.Sexpr]) : bool
-  (match s
-    [(reader.Sexpr.Nil) false]
-    [(reader.Sexpr.Cons head rest)
-      (match (box-get head)
-        [(reader.Sexpr.Cons key-node _)
-          (match (box-get key-node)
-            [(reader.Sexpr.Sym key)
-              (if (compiler-parse-metadata-key? key)
-                true
-                (compiler-parse-type-list-has-metadata? (box-get rest)))]
-            [_ (compiler-parse-type-list-has-metadata? (box-get rest))])]
-        [_ (compiler-parse-type-list-has-metadata? (box-get rest))])]
-    [_ false]))
-
 (define (compiler-parse-metadata-sexpr? [s : reader.Sexpr]) : bool
   (match s
     [(reader.Sexpr.Cons key-node _)
@@ -3102,46 +3021,6 @@
                 (ResultAstVariantDef.Err message)]))]
         [_ (ResultAstVariantDef.Err "parse: malformed variant definition")])]
     [_ (ResultAstVariantDef.Err "parse: malformed variant definition")]))
-
-(define (parse-ast-variant-def-list-into
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]
-  [out : (&mut out AstVariantDefList)]) : ResultAstVariantDefListBuild
-  (match s
-    [(reader.Sexpr.Nil) (ResultAstVariantDefListBuild.Ok)]
-    [(reader.Sexpr.Cons head tail)
-      (match (parse-ast-variant-def dispatch pools (box-get head) allow-cleanup)
-        [(ResultAstVariantDef.Ok parsed-head)
-          (begin
-            (ast-variant-def-list-push out parsed-head)
-            (parse-ast-variant-def-list-into
-              dispatch
-              pools
-              (box-get tail)
-              allow-cleanup
-              out))]
-        [(ResultAstVariantDef.Err message)
-          (ResultAstVariantDefListBuild.Err message)])]
-    [_ (ResultAstVariantDefListBuild.Err "parse: malformed variant list")]))
-
-(define (parse-ast-variant-def-list
-  [dispatch : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [s : reader.Sexpr]
-  [allow-cleanup : bool]) : ResultAstVariantDefList
-  (let
-    [out : AstVariantDefList (ast-variant-def-list-new)]
-    (match (parse-ast-variant-def-list-into
-      dispatch
-      pools
-      s
-      allow-cleanup
-      (&mut out))
-      [(ResultAstVariantDefListBuild.Ok) (ResultAstVariantDefList.Ok out)]
-      [(ResultAstVariantDefListBuild.Err message)
-        (ResultAstVariantDefList.Err message)])))
 
 (define (parse-ast-dispatch-isa [name : String]) : ResultAstDispatchIsa
   (cond
@@ -8245,23 +8124,12 @@
 (define (parse-ast-decl-vec-len [v : (& v ParseAstDeclVec)]) : i64
   (struct-get v len))
 
-(define (parse-ast-decl-vec-capacity [v : (& v ParseAstDeclVec)]) : i64
-  (array-length (struct-get v slots)))
-
 (define (parse-ast-decl-vec-get
   [v : (& v ParseAstDeclVec)]
   [index : i64]
   [fallback : AstDecl]) : AstDecl
   (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
     (array-ref (struct-get v slots) index)
-    fallback))
-
-(define (parse-ast-decl-vec-span-get
-  [v : (& v ParseAstDeclVec)]
-  [index : i64]
-  [fallback : AstSourceSpan]) : AstSourceSpan
-  (if (and (>= index 0) (< index (parse-ast-decl-vec-len v)))
-    (array-ref (struct-get v spans) index)
     fallback))
 
 (define (parse-ast-decl-vec-copy-range
@@ -8439,20 +8307,6 @@
       (match (parse-ast-program-forms dispatch pools toks cur)
         [(ResultAstDeclList.Ok decls) (ResultAstProgram.Ok (ast-program decls))]
         [(ResultAstDeclList.Err message) (ResultAstProgram.Err message)]))))
-
-(define (parse-ast-program-with-cfg
-  [toks : (Array token.SpannedToken)]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
-  (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [result : ResultAstProgram
-      (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
-    (begin
-      (ast-node-pool-context-install! pools)
-      result)))
-
-(define (parse-ast-program [toks : (Array token.SpannedToken)]) : ResultAstProgram
-  (parse-ast-program-with-cfg toks (compiler-cfg-empty)))
 
 (define (parse-ast-source [src : String]) : ResultAstProgram
   (parse-ast-source-with-cfg src (compiler-cfg-empty)))
@@ -8672,11 +8526,6 @@
       [(ResultParseAstDeclVecDiagnostic.Err diag)
         (ResultAstDeclListDiagnostic.Err diag)])))
 
-(define (parse-ast-program-diagnostic
-  [path : String]
-  [toks : (Array token.SpannedToken)]) : ResultAstProgramDiagnostic
-  (parse-ast-program-diagnostic-with-cfg path toks (compiler-cfg-empty)))
-
 (define (parse-ast-program-diagnostic-with-cfg-and-pools
   [path : String]
   [toks : (Array token.SpannedToken)]
@@ -8693,18 +8542,6 @@
           (ResultAstProgramDiagnostic.Ok (ast-program decls))]
         [(ResultAstDeclListDiagnostic.Err diag)
           (ResultAstProgramDiagnostic.Err diag)]))))
-
-(define (parse-ast-program-diagnostic-with-cfg
-  [path : String]
-  [toks : (Array token.SpannedToken)]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
-  (let
-    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
-    [result : ResultAstProgramDiagnostic
-      (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
-    (begin
-      (ast-node-pool-context-install! pools)
-      result)))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))

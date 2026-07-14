@@ -116,6 +116,21 @@
 (define compiler-driver-compile-type-pool-initial-capacity : i64
   32768)
 
+;; A process-lifetime one-slot compatibility target used only to detach legacy
+;; globals before an explicitly owned pool arena is destroyed. Production jobs
+;; do not read or write through this context; their next load receives its
+;; `AstNodePoolContext` directly.
+(define compiler-driver-detached-compat-pools : AstNodePoolContext
+  (ast-node-pool-context-new-with-capacities 1 1))
+
+(define (compiler-driver-state-detach-active-pools-if-owned!
+  [pools : AstNodePoolContext]) : unit
+  (if (=
+    (ast-node-pool-base-arena-handle)
+    (ast-node-pool-context-base-arena pools))
+    (ast-node-pool-context-install! compiler-driver-detached-compat-pools)
+    unit))
+
 (define (compiler-driver-state-new-for-compile) : CompilerDriverState
   (let
     [pool-arena : i64 (arena.tl_arena_make)]
@@ -332,6 +347,8 @@
           (unsafe
             (arena.tl_arena_set new-arena))
           unit)
+        (compiler-driver-state-detach-active-pools-if-owned!
+          (compiler-driver-state-pool-context state))
         (unsafe
           (arena.tl_arena_destroy old-newest))
         (let
@@ -408,6 +425,9 @@
   (ci.intern-compat-state-pool-len
     (array-ref (struct-get state intern-state) 0)))
 
+(define (compiler-driver-state-owned-interns [state : CompilerDriverState]) : ci.InternCompatState
+  (array-ref (struct-get state intern-state) 0))
+
 (define (compiler-driver-state-intern-pool-data-addr
   [state : CompilerDriverState]) : i64
   (ci.intern-compat-state-pool-data-addr
@@ -460,7 +480,9 @@
 (define (compiler-driver-state-capture-session-floors!
   [state : CompilerDriverState]) : unit
   (begin
-    (compiler-driver-state-capture-active-pools! state)
+    ;; Load/typecheck/lower mutate the state-owned context cells directly; do
+    ;; not overwrite them from whichever compatibility pool happens to be
+    ;; installed when a batch entry finishes.
     (compiler-driver-state-capture-active-interns! state)
     (compiler-driver-state-capture-active-transients! state)
     (compiler-load-session-state-use! (struct-get state load-session))))
@@ -549,8 +571,6 @@
         (compiler-load-session-reset-pools-with-pools! pools)
         (compiler-load-session-reset-interns-with-state!
           (array-ref (struct-get state intern-state) 0))
-        (compiler-driver-state-install-pools! state)
-        (compiler-driver-state-install-interns! state)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-driver-state-reset-builtins! state)
@@ -560,7 +580,6 @@
         ;; Drop the previous entry's lowerer arenas. At opt level 0
         ;; the escaped IR stays alive until the next file reset.
         (lower-arenas-release!)
-        (compiler-driver-state-capture-active-interns! state)
         (compiler-driver-state-capture-active-transients! state)))))
 
 ;; Post-emission batch cleanup. This runs while the caller-owned entry scratch
@@ -580,8 +599,6 @@
         (compiler-load-session-reset-pools-with-pools! pools)
         (compiler-load-session-reset-interns-with-state!
           (array-ref (struct-get state intern-state) 0))
-        (compiler-driver-state-install-pools! state)
-        (compiler-driver-state-install-interns! state)
         (compiler-typecheck-reset-intern-owned-state!)
         (compiler-driver-state-install-transients! state)
         (compiler-driver-state-reset-builtins! state)
@@ -589,7 +606,6 @@
         (compiler-typecheck-reset-file-state!)
         (lower-reset-file-state!)
         (lower-arenas-release!)
-        (compiler-driver-state-capture-active-interns! state)
         (compiler-driver-state-capture-active-transients! state)))))
 
 (cfg
@@ -611,8 +627,6 @@
           (compiler-load-session-reset-pools-with-pools! pools)
           (compiler-load-session-reset-interns-with-state!
             (array-ref (struct-get state intern-state) 0))
-          (compiler-driver-state-install-pools! state)
-          (compiler-driver-state-install-interns! state)
           (compiler-typecheck-reset-intern-owned-state!)
           (compiler-driver-state-install-transients! state)
           (compiler-driver-state-reset-builtins! state)
@@ -622,7 +636,6 @@
           (lower-reset-file-state!)
           (lower-arenas-release!)
           (compiler-driver-batch-profile-mark! ordinal "lower-cleanup")
-          (compiler-driver-state-capture-active-interns! state)
           (compiler-driver-state-capture-active-transients! state))))))
 
 (cfg
@@ -903,6 +916,31 @@
     (compiler-cfg-enable (compiler-cfg-enable cfgs "windows") "target-windows")
     "os-windows"))
 
+(define (compiler-driver-enable-linux-cfgs-with-intern-state
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (compiler-cfg-enable-with-intern-state
+    (compiler-cfg-enable-with-intern-state
+      (compiler-cfg-enable-with-intern-state
+        (compiler-cfg-enable-with-intern-state cfgs "linux" intern-state)
+        "unix"
+        intern-state)
+      "target-linux"
+      intern-state)
+    "os-linux"
+    intern-state))
+
+(define (compiler-driver-enable-windows-cfgs-with-intern-state
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (compiler-cfg-enable-with-intern-state
+    (compiler-cfg-enable-with-intern-state
+      (compiler-cfg-enable-with-intern-state cfgs "windows" intern-state)
+      "target-windows"
+      intern-state)
+    "os-windows"
+    intern-state))
+
 (define (compiler-driver-enable-language-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (compiler-cfg-enable
     (compiler-cfg-enable
@@ -924,6 +962,41 @@
       "feature-comptime-public-fields")
     "feature-cleanup-owner-reflection"))
 
+(define (compiler-driver-enable-language-cfgs-with-intern-state
+  [cfgs : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (compiler-cfg-enable-with-intern-state
+    (compiler-cfg-enable-with-intern-state
+      (compiler-cfg-enable-with-intern-state
+        (compiler-cfg-enable-with-intern-state
+          (compiler-cfg-enable-with-intern-state
+            (compiler-cfg-enable-with-intern-state
+              (compiler-cfg-enable-with-intern-state
+                (compiler-cfg-enable-with-intern-state
+                  (compiler-cfg-enable-with-intern-state
+                    (compiler-cfg-enable-with-intern-state
+                      cfgs
+                      "feature-ptr-addr-of"
+                      intern-state)
+                    "feature-str-view"
+                    intern-state)
+                  "feature-runtime-str-view-extern"
+                  intern-state)
+                "feature-private-string-intrinsics"
+                intern-state)
+              "feature-compiler-private-string-intrinsics"
+              intern-state)
+            "array-helper-intrinsics"
+            intern-state)
+          "feature-tl-memchr"
+          intern-state)
+        "feature-plain-comptime-well-known"
+        intern-state)
+      "feature-comptime-public-fields"
+      intern-state)
+    "feature-cleanup-owner-reflection"
+    intern-state))
+
 (define (compiler-driver-target-cfgs
   [target : CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -937,14 +1010,20 @@
   [state : CompilerDriverState]
   [target : CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (begin
-    (compiler-driver-state-install-interns! state)
-    (let
-      [target-cfgs : sym_i64_env.SymI64Env
-        (compiler-driver-target-cfgs target cfgs)]
-      (begin
-        (compiler-driver-state-capture-active-interns! state)
-        target-cfgs))))
+  (let
+    [intern-state : ci.InternCompatState
+      (array-ref (struct-get state intern-state) 0)]
+    (compiler-driver-enable-language-cfgs-with-intern-state
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (compiler-driver-enable-linux-cfgs-with-intern-state
+            cfgs
+            intern-state)]
+        [(CompilerBackendTarget.Windows)
+          (compiler-driver-enable-windows-cfgs-with-intern-state
+            cfgs
+            intern-state)])
+      intern-state)))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]

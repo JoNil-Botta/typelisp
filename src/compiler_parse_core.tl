@@ -394,6 +394,16 @@
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind cfgs (compiler-cfg-key name) 1))
 
+(define (compiler-cfg-enable-with-intern-state
+  [cfgs : sym_i64_env.SymI64Env]
+  [name : String]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind-with-intern-state
+    cfgs
+    (compiler-cfg-key name)
+    1
+    intern-state))
+
 (define (compiler-cfg-enable-private-dynamic-buffer
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-bind cfgs (compiler-cfg-private-dynamic-buffer-key) 1))

@@ -5,8 +5,8 @@ set -eu
 #
 # Fetches the published stage0 artifact when TYPELISP_BIN is unset. The seed
 # performs the single compiler build of the flow: the stage1->stage2->stage3
-# bootstrap fixpoint over src/main.tl. Every remaining gate then runs on
-# the freshly bootstrapped stage2 compiler (the branch-built full CLI).
+# bootstrap fixpoint over src/main.tl, with a stage4 fallback when needed. Every
+# remaining gate then runs on the converged compiler (the branch-built full CLI).
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
@@ -21,8 +21,9 @@ usage: scripts/ci-verify.sh
 Runs the repository's CI verification gate.
 If TYPELISP_BIN is unset, downloads stage0-latest with scripts/fetch-stage0.sh.
 TYPELISP_BIN is the seed compiler and performs the single compiler build of
-the flow: the bootstrap stage1->stage2->stage3 fixpoint over src/main.tl.
-Every remaining gate runs on the bootstrapped stage2 compiler.
+the flow: the bootstrap stage1->stage2->stage3 fixpoint over src/main.tl, with
+a stage4 fallback when needed. Every remaining gate runs on the converged
+bootstrapped compiler.
 EOF
 }
 
@@ -270,26 +271,28 @@ stage2_can_compile_native_windows() {
 echo "[ci-verify] host=$HOST_OS seed=$SEED_TYPELISP_BIN"
 
 # The single compiler build of the flow: the seed bootstraps src/main.tl through
-# successive stages at opt2 until the compiler's own code converges (stage3 ==
-# stage4 fixpoint). Every gate below runs on the resulting converged compiler -
-# the branch-built full CLI, handed over via the stage2 path file - so the
-# artifact under test is the one the bootstrap just produced. Do not add per-gate
-# compiler rebuilds here.
+# successive stages at opt2 until the compiler's own code converges (normally
+# stage2 == stage3, with a stage3 == stage4 fallback). Every gate below runs on
+# the resulting converged compiler -
+# the branch-built full CLI, handed over via the compatibility-named stage2 path
+# file - so the artifact under test is the one the bootstrap just produced. Do
+# not add per-gate compiler rebuilds here.
 STAGE1_PATH_FILE="$ROOT/target/ci-verify-stage1.path"
 STAGE2_PATH_FILE="$ROOT/target/ci-verify-stage2.path"
 rm -f "$STAGE1_PATH_FILE" "$STAGE2_PATH_FILE"
 TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE=$STAGE1_PATH_FILE
 TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE=$STAGE2_PATH_FILE
 export TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
-run_gate "bootstrap fixpoint (stage3==stage4)" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
+run_gate "bootstrap adaptive control flow" scripts/verify-bootstrap-fixpoint-control.sh
+run_gate "bootstrap fixpoint" scripts/check-bootstrap-fixpoint.sh "$SEED_TYPELISP_BIN"
 unset TYPELISP_BOOTSTRAP_STAGE1_PATH_FILE TYPELISP_BOOTSTRAP_STAGE2_PATH_FILE
 if [ ! -s "$STAGE2_PATH_FILE" ]; then
-    required_gate_unavailable "bootstrap fixpoint stage2 capture" \
-        "bootstrap did not persist a stage2 compiler path for the downstream gates"
+    required_gate_unavailable "bootstrap fixpoint compiler capture" \
+        "bootstrap did not persist a converged compiler path for the downstream gates"
 fi
 STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
-ensure_executable "stage2" "$STAGE2_BIN"
-echo "[ci-verify] every gate runs the freshly bootstrapped stage2 compiler: $STAGE2_BIN"
+ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
+echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
 # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
 # RUN a native program before the run-assert tiers below may execute. A failed

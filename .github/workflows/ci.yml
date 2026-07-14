@@ -14,8 +14,8 @@ permissions:
 jobs:
   # TypeLisp is self-hosted. The single verification flow fetches the published
   # stage0 (cli.tl), runs the one compiler build of the flow (the
-  # stage1->stage2->stage3 bootstrap fixpoint over src/main.tl), and then
-  # runs every gate on the resulting stage2 compiler.
+  # stage1->stage2->stage3 bootstrap fixpoint over src/main.tl, with a stage4
+  # fallback when needed), and then runs every gate on the converged compiler.
   # The gate is fail-closed: Linux and Windows must run every applicable gate.
   # Do not add skip flags; compiler/runtime capability changes should land first,
   # then a follow-up PR can use the new capability.

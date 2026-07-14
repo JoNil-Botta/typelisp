@@ -1057,6 +1057,20 @@
     (string.eq name "tl_bytes_view_from_bytes_parts")
     (string.eq name "tl_bytes_mut_view_from_bytes_parts")))
 
+(define (tltest-reach-mark-atomic-runtime-for-call
+  [name : String]
+  [names : tltest_name_map.Map]) : tltest_name_map.Map
+  ;; Inline harness pruning precedes lowering. Preserve exactly the TypeLisp
+  ;; runtime export that a reachable public/wrapper atomic call can target.
+  (let
+    [helper : String
+      (lower-runtime-prelude-string-helper-name
+        (lower-atomic-runtime-symbol-for-source
+          (tltest-reach-name-dot-leaf (tc-qualified-name-base name))))]
+    (if (string.eq helper "")
+      names
+      (tltest-reach-mark-name names helper))))
+
 (define (tltest-reach-mark-lowered-runtime-for-call
   [name : String]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
@@ -1070,7 +1084,7 @@
         (string.eq name "tl_str_view")
         (tltest-bytes-view-from-parts-name? name))
       (tltest-reach-mark-str-view-runtime names)]
-    [else names]))
+    [else (tltest-reach-mark-atomic-runtime-for-call name names)]))
 
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
@@ -2658,6 +2672,62 @@
   (if (tltest-runtime-string-helper-roots-self-test?)
     unit
     (io.panic "test CLI inline harness pruned runtime string helper root")))
+
+(define (tltest-runtime-atomic-helper-reachability-self-test?) : bool
+  (let
+    [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
+    [fetch-name : String "atomic-i64-fetch-add-ptr!"]
+    [load-name : String "atomic-i64-load-ptr"]
+    [wrapper-name : String "__tl_atomic_runtime_caller"]
+    [fetch-decl : AstDecl
+      (ast-decl-def-fn fetch-name (ast-param-list-new) (AstType.Unit) unit-expr)]
+    [load-decl : AstDecl
+      (ast-decl-def-fn load-name (ast-param-list-new) (AstType.Unit) unit-expr)]
+    [wrapper-decl : AstDecl
+      (ast-decl-def-fn
+        wrapper-name
+        (ast-param-list-new)
+        (AstType.Unit)
+        (tltest-call-expr "atomic-i64-fetch-add!"))]
+    [span : AstSourceSpan (ast-source-span 20 1 20 1)]
+    [decls : AstDeclList
+      (ast-decl-cons
+        fetch-decl
+        (ast-decl-cons
+          load-decl
+          (ast-decl-cons
+            wrapper-decl
+            (ast-decl-cons
+              (ast-decl-test
+                "keeps-atomic-runtime-helper"
+                (tltest-call-expr wrapper-name)
+                span)
+              (ast-decl-list-new)))))]
+    [paths : AstDeclPathList
+      (ast-decl-path-cons
+        "stdlib/runtime.tl"
+        (ast-decl-path-cons
+          "stdlib/runtime.tl"
+          (ast-decl-path-cons
+            "driver.tl"
+            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
+    (match (tltest-build-harness "driver.tl" decls paths)
+      [(InlineHarness.Harness program _ count)
+        (match program
+          [(AstProgram.Program harness-decls-box)
+            (let
+              [harness-decls : AstDeclList (box-get harness-decls-box)]
+              (and
+                (= count 1)
+                (tltest-decl-list-has-name? harness-decls fetch-name)
+                (not (tltest-decl-list-has-name? harness-decls load-name))
+                (tltest-decl-list-has-name? harness-decls wrapper-name)))])])))
+
+(test
+  test-cli-inline-harness-keeps-required-atomic-runtime-helper
+  (if (tltest-runtime-atomic-helper-reachability-self-test?)
+    unit
+    (io.panic "test CLI inline harness atomic runtime reachability mismatch")))
 
 (define (tltest-generated-wrapper [item : String] [decl : AstDecl]) : AstDecl
   (ast-decl-comptime-decl-with-meta

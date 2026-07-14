@@ -32308,6 +32308,32 @@
         scan
         (compiler-ir-instr-seq-ref instrs index)))))
 
+;; Only an EntryArgc instruction can seed the argc expression tracked by the
+;; full scan below. Large generated initializers can contain tens of thousands
+;; of unrelated moves in one block; building and repeatedly invalidating an
+;; expression environment for those functions is quadratic work that cannot
+;; produce an argc-return summary.
+(define (opt-loop-bce-argc-seq-has-entry? [instrs : CompilerIrInstrSeq]) : bool
+  (let
+    [index : i64 0]
+    [count : i64 (compiler-ir-instr-seq-count instrs)]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.EntryArgc _) (set! found true)]
+          [_ (set! index (+ index 1))]))
+      found)))
+
+(define (opt-loop-bce-argc-single-block-returns? [instrs : CompilerIrInstrSeq]) : bool
+  (if (not (opt-loop-bce-argc-seq-has-entry? instrs))
+    false
+    (match (opt-loop-bce-argc-scan-seq-from
+      instrs
+      0
+      (OptLoopBceArgcScan.Scan (OptLoopBceExprEnv.Nil) false true))
+      [(OptLoopBceArgcScan.Scan _ seen ok) (and seen ok)])))
+
 (define (opt-loop-bce-function-returns-argc? [func : CompilerIrFunction]) : bool
   (match func
     [(CompilerIrFunction.Function _ params _ _ blocks)
@@ -32319,26 +32345,51 @@
               [(CompilerIrBlockList.Nil)
                 (match block
                   [(CompilerIrBlock.Block _ instrs)
-                    (match (opt-loop-bce-argc-scan-seq-from
-                      instrs
-                      0
-                      (OptLoopBceArgcScan.Scan
-                        (OptLoopBceExprEnv.Nil)
-                        false
-                        true))
-                      [(OptLoopBceArgcScan.Scan _ seen ok) (and seen ok)])])]
+                    (opt-loop-bce-argc-single-block-returns? instrs)])]
               [_ false])]
           [(CompilerIrBlockList.Array seq)
             (if (= (compiler-ir-block-seq-count seq) 1)
               (match (compiler-ir-block-seq-ref seq 0)
                 [(CompilerIrBlock.Block _ instrs)
-                  (match (opt-loop-bce-argc-scan-seq-from
-                    instrs
-                    0
-                    (OptLoopBceArgcScan.Scan (OptLoopBceExprEnv.Nil) false true))
-                    [(OptLoopBceArgcScan.Scan _ seen ok) (and seen ok)])])
+                  (opt-loop-bce-argc-single-block-returns? instrs)])
               false)]
           [(CompilerIrBlockList.Nil) false]))]))
+
+(define (opt-loop-bce-argc-summary-test-function [has-entry : bool]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    (if has-entry
+      "returns-argc"
+      "returns-constant")
+    (CompilerIrParamList.Nil)
+    (AstType.I64)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (if has-entry
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.EntryArgc 0)
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.I64))
+              (compiler-ir-instr-cons
+                (CompilerIrInstr.Return
+                  (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
+                (CompilerIrInstrList.Nil))))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Mov 0 (CompilerIrValue.I64 7) (AstType.I64))
+            (compiler-ir-instr-cons
+              (CompilerIrInstr.Return
+                (CompilerIrMaybeValue.Some (CompilerIrValue.Var 0)))
+              (CompilerIrInstrList.Nil)))))
+      (CompilerIrBlockList.Nil))))
+
+(define (opt-loop-bce-argc-summary-prescan-self-test?) : bool
+  (and
+    (not
+      (opt-loop-bce-function-returns-argc?
+        (opt-loop-bce-argc-summary-test-function false)))
+    (opt-loop-bce-function-returns-argc?
+      (opt-loop-bce-argc-summary-test-function true))))
 
 (define (opt-loop-bce-argc-return-map
   [functions : CompilerIrFunctionList]
@@ -35763,6 +35814,7 @@
         (begin
           (unless (= (opt-count-arith-instrs stale-optimized) 1) (return 4))
           (unless (= (compiler-optimize-vector-mask-self-test) 42) (return 5))
+          (unless (opt-loop-bce-argc-summary-prescan-self-test?) (return 6))
           42)))))
 
 (define (opt-typed-fold-u64-shr-instrs) : CompilerIrInstrList

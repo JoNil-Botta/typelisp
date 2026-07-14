@@ -227,6 +227,9 @@
 
 (defenum LowerVectorMapValue
   (Array i64)
+  ;; A dynamic array indexed by `(program-index)`. Unlike `Array`, this source
+  ;; repeats the same lane vector for every foreach gang.
+  (LaneArray i64)
   (Uniform CompilerIrValue)
   (BroadcastArray i64 CompilerIrValue)
   (LaneIndex)
@@ -31429,6 +31432,15 @@
     [(AstExpr.Var found) (string.eq (intern-str found) name)]
     [_ false]))
 
+(define (lower-expr-is-program-index? [ctx : TcContext] [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-expr-is-program-index? ctx (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-expr-is-program-index? ctx (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.SpmdProgramIndex) true]
+    [_ false]))
+
 (define (lower-dynamic-array-var
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -31497,6 +31509,27 @@
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : AstExpr (lower-context-expr-get ctx idx-box)]
         (if (lower-expr-is-var? ctx idx index)
+          (lower-dynamic-array-var ctx env type-env arr)
+          (LowerMaybeArrayVar.No)))]
+    [_ (LowerMaybeArrayVar.No)]))
+
+(define (lower-array-ref-var-for-program-index
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]) : LowerMaybeArrayVar
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-array-ref-var-for-program-index
+        ctx
+        env
+        type-env
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.ArrayRef arr-box idx-box)
+      (let
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [idx : AstExpr (lower-context-expr-get ctx idx-box)]
+        (if (lower-expr-is-program-index? ctx idx)
           (lower-dynamic-array-var ctx env type-env arr)
           (LowerMaybeArrayVar.No)))]
     [_ (LowerMaybeArrayVar.No)]))
@@ -35628,7 +35661,14 @@
             (LowerMaybeVectorMapValue.Some
               (LowerVectorMapValue.Array array-var))
             (LowerMaybeVectorMapValue.No))]
-        [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])]
+        [(LowerMaybeArrayVar.No)
+          (match (lower-array-ref-var-for-program-index ctx env type-env value)
+            [(LowerMaybeArrayVar.Some array-var array-elem)
+              (if (tc-type-eq array-elem dst-elem)
+                (LowerMaybeVectorMapValue.Some
+                  (LowerVectorMapValue.LaneArray array-var))
+                (LowerMaybeVectorMapValue.No))]
+            [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [source : AstExpr (lower-context-expr-get ctx value-box)]
@@ -35745,6 +35785,7 @@
   (match plan
     [(LowerVectorMapValue.Array array-var)
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
+    [(LowerVectorMapValue.LaneArray _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.Uniform _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.BroadcastArray array-var _)
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
@@ -37065,6 +37106,18 @@
         (CompilerIrValue.Var index-var)
         lanes
         elem-ty)]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-array-len-value state (CompilerIrValue.Var array-var))
+        [(LowerExpr.Expr len-state array-len _)
+          (lower-emit-vector-load
+            (lower-emit-bounds-check
+              len-state
+              (CompilerIrValue.I64 (- lanes 1))
+              array-len)
+            (CompilerIrValue.Var array-var)
+            (CompilerIrValue.I64 0)
+            lanes
+            elem-ty)])]
     [(LowerVectorMapValue.Uniform value)
       (lower-emit-splat state value lanes elem-ty)]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
@@ -37123,6 +37176,32 @@
         mask
         lanes
         elem-ty)]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-emit-binop
+        state
+        CompilerIrBinOp.Sub
+        end-value
+        (CompilerIrValue.Var index-var)
+        (AstType.I64))
+        [(LowerExpr.Expr count-state active-lanes _)
+          (match (lower-emit-binop
+            count-state
+            CompilerIrBinOp.Sub
+            active-lanes
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+            [(LowerExpr.Expr last-state last-lane _)
+              (match (lower-array-len-value
+                last-state
+                (CompilerIrValue.Var array-var))
+                [(LowerExpr.Expr len-state array-len _)
+                  (lower-emit-predicated-load
+                    (lower-emit-bounds-check len-state last-lane array-len)
+                    (CompilerIrValue.Var array-var)
+                    (CompilerIrValue.I64 0)
+                    mask
+                    lanes
+                    elem-ty)])])])]
     [(LowerVectorMapValue.Uniform value)
       (lower-emit-splat state value lanes elem-ty)]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
@@ -37186,6 +37265,7 @@
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(LowerVectorMapValue.BroadcastArray _ _) true]
+    [(LowerVectorMapValue.LaneArray _) true]
     [(LowerVectorMapValue.LaneIndex) true]
     [(LowerVectorMapValue.LaneCount) true]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
@@ -37220,6 +37300,23 @@
         elem-ty)
         [(LowerExpr.Expr addr-state elem-ptr _)
           (lower-emit-load addr-state elem-ptr elem-ty)])]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-emit-binop
+        state
+        CompilerIrBinOp.Sub
+        (CompilerIrValue.Var current-index-var)
+        (CompilerIrValue.Var base-index-var)
+        (AstType.I64))
+        [(LowerExpr.Expr lane-state lane-index _)
+          (match (lower-array-element-addr
+            ctx
+            lane-state
+            (CompilerIrValue.Var array-var)
+            lane-index
+            (AstType.I64)
+            elem-ty)
+            [(LowerExpr.Expr addr-state elem-ptr _)
+              (lower-emit-load addr-state elem-ptr elem-ty)])])]
     [(LowerVectorMapValue.Uniform value) (LowerExpr.Expr state value elem-ty)]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
       (match (lower-emit-binop
@@ -57737,6 +57834,36 @@
           (= (lower-test-function-vector-load-count functions "fill") 0)])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-spmd-lane-array-source) : String
+  "(define (fill [zeros : (Array f32)] [out : (Array f32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (array-ref zeros (program-index)))))")
+
+(define (compiler-lower-spmd-lane-array-shape-ok?
+  [mode : CompilerLowerMode]
+  [predicated? : bool]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-spmd-lane-array-source)
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (> (lower-test-function-vector-load-count functions "fill") 0)
+            (> (lower-test-function-vector-store-count functions "fill") 0)
+            (> (lower-test-function-bounds-count functions "fill") 0)
+            (if predicated?
+              (and
+                (>
+                  (lower-test-function-predicated-load-count functions "fill")
+                  0)
+                (>
+                  (lower-test-function-predicated-store-count functions "fill")
+                  0))
+              true))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-simd-foreach-fallback-diagnostic-ok?) : bool
   (and
     (compiler-lower-mode-error-ok?
@@ -57930,6 +58057,8 @@
       (compiler-lower-avx512-foreach-map-shape-ok?)
       (compiler-lower-avx2-foreach-uniform-shape-ok?))
     (compiler-lower-avx512-foreach-uniform-shape-ok?)
+    (compiler-lower-spmd-lane-array-shape-ok? (CompilerLowerMode.Avx2) false)
+    (compiler-lower-spmd-lane-array-shape-ok? (CompilerLowerMode.Avx512) true)
     (compiler-lower-spmd-broadcast-avx2-shape-ok?)
     (compiler-lower-spmd-broadcast-avx512-shape-ok?)
     (compiler-lower-scalar-foreach-stays-scalar-ok?)

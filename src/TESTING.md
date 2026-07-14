@@ -334,6 +334,17 @@ check. They deliberately do not fail on wall-clock noise. Use
 `TYPELISP_LSP_CHECK_SMALL_LINES`, `TYPELISP_LSP_CHECK_LARGE_LINES`, or
 `TYPELISP_LSP_CHECK_WORKDIR` to adjust a local run.
 
+`lsp-frame-run-transcript` is the TypeLisp-only in-process framing adapter for
+tests that need exact stdin bytes plus exact captured stdout, stderr, and exit
+status. It runs the production frame parser and request handlers in a
+destroyable session arena, keeps transport buffers in a separate destroyable
+arena so nested tool scratch scopes cannot own captured output, copies the
+result to the caller arena, and performs the fresh-session reset before either
+arena is destroyed. `src/tests/lsp_frame_smoke.tl` covers EOF/error framing,
+ordered messages, message-owned JSON-RPC ids, and document/compiler cache A/B
+isolation. Public transcript-corpus discovery and process-count measurement
+remain owned by the public-tool verifier rather than this substrate.
+
 `scripts/measure-unused-import-cost.sh` is the paired #3803 diagnostic harness
 for the unused legacy-string import experiment. It copies `src/*.tl` into two
 same-length scratch source trees under `target/`, injects only the

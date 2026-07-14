@@ -14,6 +14,7 @@
 (import read as reader)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
+(import compiler_builtin_ids as cbi)
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
@@ -52,6 +53,14 @@
   (Ok String)
   (Eof)
   (Err String))
+
+;; Exact bytes captured from one in-process transcript run. JSON-RPC ids do
+;; not appear here because they are owned by each input message and echoed by
+;; the shared handlers; there is no process/session id counter to reset.
+(defstruct LspTranscriptResult
+  (stdout String)
+  (stderr String)
+  (status i64))
 
 (defenum LspLengthParse
   (Ignore)
@@ -246,6 +255,139 @@
       (lsp_svec.push (&mut next-items) value)
       next-items)))
 
+;; The LSP is serial, so the narrow frame boundary can select one active
+;; memory transport without plumbing transport arguments through every request
+;; handler. Stdio remains the default and the transcript wrapper always clears
+;; this handle before its session arena is retired.
+(define lsp-frame-memory-active : bool
+  false)
+(define lsp-frame-memory-arena : i64
+  0)
+(define lsp-frame-memory-input : String
+  "")
+(define lsp-frame-memory-input-offset : i64
+  0)
+(define lsp-frame-memory-eof : bool
+  false)
+(define lsp-frame-memory-stdout : String
+  "")
+(define lsp-frame-memory-stderr : String
+  "")
+
+(define (lsp-frame-memory-reset!) : unit
+  (begin
+    (set! lsp-frame-memory-active false)
+    (set! lsp-frame-memory-arena 0)
+    (set! lsp-frame-memory-input "")
+    (set! lsp-frame-memory-input-offset 0)
+    (set! lsp-frame-memory-eof false)
+    (set! lsp-frame-memory-stdout "")
+    (set! lsp-frame-memory-stderr "")))
+
+(define (lsp-frame-memory-install!
+  [input : (& input str)]
+  [transport-arena : i64]) : unit
+  (begin
+    (let
+      [active-arena : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set transport-arena))
+        (set! lsp-frame-memory-input (string.copy input))
+        (set! lsp-frame-memory-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set active-arena))))
+    (set! lsp-frame-memory-input-offset 0)
+    (set! lsp-frame-memory-eof false)
+    (set! lsp-frame-memory-stdout "")
+    (set! lsp-frame-memory-stderr "")
+    (set! lsp-frame-memory-active true)))
+
+(define (lsp-frame-memory-stdout-append! [text : String]) : unit
+  (let
+    [active-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set lsp-frame-memory-arena))
+      (set!
+        lsp-frame-memory-stdout
+        (string.append lsp-frame-memory-stdout text))
+      (set! lsp-frame-memory-arena (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set active-arena)))))
+
+(define (lsp-frame-memory-stderr-append! [text : String]) : unit
+  (let
+    [active-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (unsafe
+        (arena.tl_arena_set lsp-frame-memory-arena))
+      (set!
+        lsp-frame-memory-stderr
+        (string.append lsp-frame-memory-stderr text))
+      (set! lsp-frame-memory-arena (arena.tl_arena_current))
+      (unsafe
+        (arena.tl_arena_set active-arena)))))
+
+(define (lsp-frame-memory-read-line) : io.StdinRead
+  (let
+    [n : i64 (string.string-length lsp-frame-memory-input)]
+    [start : i64 lsp-frame-memory-input-offset]
+    (if (or lsp-frame-memory-eof (>= start n))
+      (begin
+        (set! lsp-frame-memory-eof true)
+        (io.StdinRead "" true))
+      (let
+        [end : i64 start]
+        [found-newline : bool false]
+        (begin
+          (while (and (< end n) (not found-newline))
+            (if (= (string.string-ref lsp-frame-memory-input end) '\n')
+              (set! found-newline true)
+              (set! end (+ end 1))))
+          (if found-newline
+            (begin
+              (set! lsp-frame-memory-input-offset (+ end 1))
+              (io.StdinRead
+                (string.substring lsp-frame-memory-input start (- end start))
+                false))
+            (begin
+              (set! lsp-frame-memory-input-offset n)
+              (set! lsp-frame-memory-eof true)
+              (io.StdinRead
+                (string.substring lsp-frame-memory-input start (- n start))
+                true))))))))
+
+(define (lsp-frame-memory-read-bytes [count : i64]) : io.StdinRead
+  (let
+    [n : i64 (string.string-length lsp-frame-memory-input)]
+    [start : i64 lsp-frame-memory-input-offset]
+    [available : i64 (- n lsp-frame-memory-input-offset)]
+    [take : i64
+      (if (< available count)
+        available
+        count)]
+    [next : i64 (+ lsp-frame-memory-input-offset take)]
+    [short : bool (< available count)]
+    (begin
+      (set! lsp-frame-memory-input-offset next)
+      (if short
+        (set! lsp-frame-memory-eof true)
+        unit)
+      (io.StdinRead
+        (string.substring lsp-frame-memory-input start take)
+        lsp-frame-memory-eof))))
+
+(define (lsp-frame-input-read-line) : io.StdinRead
+  (if lsp-frame-memory-active
+    (lsp-frame-memory-read-line)
+    (stdin-read-line)))
+
+(define (lsp-frame-input-read-bytes [count : i64]) : io.StdinRead
+  (if lsp-frame-memory-active
+    (lsp-frame-memory-read-bytes count)
+    (io.stdin-read-bytes count)))
+
 (define (lsp-frame-read-message) : LspFrameRead
   (let
     [content-length : i64 -1]
@@ -257,7 +399,7 @@
     (begin
       (while (not done)
         (let
-          [line-read : io.StdinRead (stdin-read-line)]
+          [line-read : io.StdinRead (lsp-frame-input-read-line)]
           [line : String
             (lsp-frame-trim-right-space-cr (io.stdin-read-text line-read))]
           (if (io.stdin-read-eof? line-read)
@@ -298,7 +440,8 @@
         [(< content-length 0) (LspFrameRead.Err "lsp: missing Content-Length")]
         [else
           (let
-            [payload-read : io.StdinRead (io.stdin-read-bytes content-length)]
+            [payload-read : io.StdinRead
+              (lsp-frame-input-read-bytes content-length)]
             [payload : String (io.stdin-read-text payload-read)]
             (if (and
               (io.stdin-read-eof? payload-read)
@@ -307,10 +450,19 @@
               (LspFrameRead.Ok payload)))]))))
 
 (define (lsp-frame-stdout-write [text : String]) : unit
-  (io.stdout-write (& text)))
+  (if lsp-frame-memory-active
+    (lsp-frame-memory-stdout-append! text)
+    (io.stdout-write (& text))))
 
 (define (lsp-frame-stderr-write [text : String]) : unit
-  (io.stderr-write (& text)))
+  (if lsp-frame-memory-active
+    (lsp-frame-memory-stderr-append! text)
+    (io.stderr-write (& text))))
+
+(define (lsp-frame-stdout-flush) : unit
+  (if lsp-frame-memory-active
+    unit
+    (stdout-flush)))
 
 (define (lsp-frame-write-body [body : String]) : unit
   (begin
@@ -321,7 +473,7 @@
         "\r\n\r\n"
         body
         ""))
-    (stdout-flush)))
+    (lsp-frame-stdout-flush)))
 
 (define (lsp-json-number [value : i64]) : json.Json
   (json.JsonNumber (string.int->string value)))
@@ -6213,13 +6365,13 @@
         (compiler-load-session-cache-disable-for-test!)
         ok))))
 
-(define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
+(define (lsp-frame-run-with-config
+  [stdlib-roots : lsp_svec.Vec]
+  [prefix-cache-stats : bool]) : i64
   (let
     [done : bool false]
     [status : i64 0]
     [docs : LspDocuments (lsp-documents-new)]
-    [stdlib-roots : lsp_svec.Vec (lsp-stdlib-roots-from idx count)]
-    [prefix-cache-stats : bool (lsp-prefix-cache-stats-from idx count)]
     (begin
       (lsp-frame-session-cache-enable!)
       (while (not done)
@@ -6247,6 +6399,60 @@
         (tc-prefix-snapshot-cache-print-stats "lsp")
         unit)
       status)))
+
+(define (lsp-frame-run-from [idx : i64] [count : i64]) : i64
+  (lsp-frame-run-with-config
+    (lsp-stdlib-roots-from idx count)
+    (lsp-prefix-cache-stats-from idx count)))
+
+;; Clear every serial LSP/compiler owner before a transcript arena is retired.
+;; Document storage itself is local to lsp-frame-run-with-config; clearing the
+;; cache arena here makes that empty collection the only document owner visible
+;; to the next run.
+(define (lsp-frame-fresh-session-reset!) : unit
+  (begin
+    (lsp-frame-memory-reset!)
+    (set! lsp-document-cache-arena 0)
+    (tc-prefix-snapshot-cache-clear!)
+    (compiler-load-session-fresh-reset!)
+    (compiler-typecheck-reset-intern-owned-state!)
+    (cbi.compiler-builtin-reset!)
+    (ctfe-builtin-reset!)
+    (compiler-typecheck-reset-file-state!)
+    (ast-node-pool-active-context-clear!)))
+
+;; Run exact framed bytes through the production parser and request handlers.
+;; Input and captured results live in the enclosing arena; all transient
+;; parser, document, check, and transport state lives in a destroyable arena.
+(define (lsp-frame-run-transcript
+  [input : (& input str)]
+  [stdlib-roots : lsp_svec.Vec]
+  [prefix-cache-stats : bool]) : LspTranscriptResult
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [_fresh-before : unit (lsp-frame-fresh-session-reset!)]
+    [session : i64 (arena.tl_arena_make)]
+    [_install-session : unit
+      (unsafe
+        (arena.tl_arena_set session))]
+    [transport : i64 (arena.tl_arena_make)]
+    [_install-transport : unit (lsp-frame-memory-install! input transport)]
+    [status : i64 (lsp-frame-run-with-config stdlib-roots prefix-cache-stats)]
+    [session-head : i64 (arena.tl_arena_current)]
+    [_restore-enclosing : unit
+      (unsafe
+        (arena.tl_arena_set enclosing))]
+    [captured-stdout : String (string.copy (& lsp-frame-memory-stdout))]
+    [captured-stderr : String (string.copy (& lsp-frame-memory-stderr))]
+    [transport-head : i64 lsp-frame-memory-arena]
+    [_fresh-after : unit (lsp-frame-fresh-session-reset!)]
+    [_destroy-session : unit
+      (unsafe
+        (arena.tl_arena_destroy session-head))]
+    [_destroy-transport : unit
+      (unsafe
+        (arena.tl_arena_destroy transport-head))]
+    (LspTranscriptResult captured-stdout captured-stderr status)))
 
 (define (lsp-frame-run) : i64
   (lsp-frame-run-from 1 (arg-count)))

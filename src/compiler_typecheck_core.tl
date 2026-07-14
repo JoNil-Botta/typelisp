@@ -58989,9 +58989,9 @@
 ;; A bare `AstExpr.Var`/`AstExpr.Set` target is never a call -> false (matching
 ;; the gate). `AstExpr.PtrAddrOf` follows its place operand because addressable
 ;; places can now contain macro-expanded field/element forms. This walk covers
-;; expr/compat macros only; the call site additionally gates on
-;; `has-expr-type-macros` being false (type macros expand from type positions the
-;; gate does not see).
+;; every expression position from which a macro can fire. Whether a transformer
+;; asks for an operand's type changes how that call is evaluated, not how the
+;; call is represented, so expr-type macros use the same syntactic call gate.
 (define (macro-expr-list-might-fire? [exprs : AstExprList]) : bool
   (macro-expr-list-might-fire-at? (& exprs) 0))
 
@@ -59384,8 +59384,7 @@
 ;; pushed to the macro-expand output unchanged (shared). Every other decl kind
 ;; returns false so it falls through to the precise `macro-expand-decl-with-path`
 ;; path (which shares or expands import placeholders, splices, defmacro, unsafe,
-;; comptime templates, etc. correctly). Consulted only when the program has no
-;; expr-type macros.
+;; comptime templates, etc. correctly).
 (define (macro-decl-cannot-fire? [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Def _ _ expr-box)
@@ -60074,13 +60073,7 @@
                                           (or
                                             ctfe-needs-metadata
                                             macro-live-prescan-has-defmacro))
-                                        (set!
-                                          cur-can-share
-                                          (and
-                                            cur-can-share
-                                            (match macro-live-prescan-expr-type-names
-                                              [(TcStringList.Nil) true]
-                                              [_ false]))))
+                                        unit)
                                       unit)
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
@@ -60219,13 +60212,7 @@
                                   (or
                                     ctfe-needs-metadata
                                     macro-live-prescan-has-defmacro))
-                                (set!
-                                  cur-can-share
-                                  (and
-                                    cur-can-share
-                                    (match macro-live-prescan-expr-type-names
-                                      [(TcStringList.Nil) true]
-                                      [_ false])))
+                                unit
                                 (match (macro-expand-rebuild-context-for-splice
                                   cur-ctx
                                   next-decls
@@ -60538,7 +60525,7 @@
                                     (cfg
                                       compile-profile
                                       (compiler-tc-macro-profile-note-walk-share-gate
-                                        (not has-expr-type-macros)))
+                                        true))
                                     (match (macro-expand-decls
                                       ctx
                                       top-env
@@ -60546,7 +60533,7 @@
                                       decls
                                       paths
                                       ""
-                                      (not has-expr-type-macros)
+                                      true
                                       stdlib-roots
                                       cfgs)
                                       [(ResultMacroDeclsWithPaths.Ok

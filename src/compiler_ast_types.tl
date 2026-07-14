@@ -6234,6 +6234,11 @@
   (begin
     (ast-node-pool-context-reset-to! dest-pools 0 0)
     (let
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [map-arena : i64 (arena.tl_arena_make)]
+      [_set-map-arena : unit
+        (unsafe
+          (arena.tl_arena_set map-arena))]
       [expr-map : (Array i64)
         (ast-compaction-id-map-create
           (ast-node-pool-context-expr-len source-pools))]
@@ -6242,7 +6247,6 @@
           (ast-node-pool-context-type-len source-pools))]
       [remap : AstProgramCompactionRemap
         (AstProgramCompactionRemap source-pools dest-pools expr-map type-map)]
-      [prev-arena : i64 (arena.tl_arena_current)]
       [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
       [out-program : AstProgram
         (begin
@@ -6257,9 +6261,12 @@
               (unsafe
                 (arena.tl_arena_set prev-arena))
               out)))]
-      (AstProgramCompaction
-        out-program
-        (ast-node-pool-context-snapshot dest-pools)))))
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy map-arena))
+        (AstProgramCompaction
+          out-program
+          (ast-node-pool-context-snapshot dest-pools))))))
 
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty

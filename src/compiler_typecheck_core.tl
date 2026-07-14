@@ -3808,11 +3808,20 @@
   (tc-bind-unsafe-id env (tc-name-id name) ty))
 
 (define (tc-bind-unsafe-id [env : TcTypeEnv] [name-id : i64] [ty : AstType]) : TcTypeEnv
-  (tc-env-compact-local-if-threshold
-    (tc-bind-raw-id
-      (tc-bind-raw-id env (tc-unsafe-decl-marker-id name-id) (AstType.Unit))
-      name-id
-      ty)))
+  (let
+    [next-env : TcTypeEnv
+      (tc-env-compact-local-if-threshold
+        (tc-bind-raw-id
+          (tc-bind-raw-id env (tc-unsafe-decl-marker-id name-id) (AstType.Unit))
+          name-id
+          ty))]
+    (begin
+      (if tc-type-env-scoped-runtime-active
+        (tc-type-env-scoped-runtime-mark-latest-flags-id!
+          name-id
+          tc-type-env-scoped-flag-unsafe)
+        unit)
+      next-env)))
 
 (define (tc-c-abi-fnptr-marker-prefix) : String
   " __tl_c_abi_fnptr:")
@@ -3852,11 +3861,20 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnv
-  (tc-env-compact-local-if-threshold
-    (tc-bind-raw-id
-      (tc-bind-raw-id env (tc-c-abi-fnptr-marker-id name-id) (AstType.Unit))
-      name-id
-      ty)))
+  (let
+    [next-env : TcTypeEnv
+      (tc-env-compact-local-if-threshold
+        (tc-bind-raw-id
+          (tc-bind-raw-id env (tc-c-abi-fnptr-marker-id name-id) (AstType.Unit))
+          name-id
+          ty))]
+    (begin
+      (if tc-type-env-scoped-runtime-active
+        (tc-type-env-scoped-runtime-mark-latest-flags-id!
+          name-id
+          tc-type-env-scoped-flag-c-abi-fnptr)
+        unit)
+      next-env)))
 
 (define (tc-bind-c-abi-fnptr [env : TcTypeEnv] [name : String] [ty : AstType]) : TcTypeEnv
   (tc-bind-c-abi-fnptr-id env (tc-name-id name) ty))
@@ -3865,14 +3883,28 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]) : TcTypeEnv
-  (tc-env-compact-local-if-threshold
-    (tc-bind-raw-id
-      (tc-bind-raw-id
-        (tc-bind-raw-id env (tc-c-abi-fnptr-marker-id name-id) (AstType.Unit))
-        (tc-unsafe-decl-marker-id name-id)
-        (AstType.Unit))
-      name-id
-      ty)))
+  (let
+    [next-env : TcTypeEnv
+      (tc-env-compact-local-if-threshold
+        (tc-bind-raw-id
+          (tc-bind-raw-id
+            (tc-bind-raw-id
+              env
+              (tc-c-abi-fnptr-marker-id name-id)
+              (AstType.Unit))
+            (tc-unsafe-decl-marker-id name-id)
+            (AstType.Unit))
+          name-id
+          ty))]
+    (begin
+      (if tc-type-env-scoped-runtime-active
+        (tc-type-env-scoped-runtime-mark-latest-flags-id!
+          name-id
+          (bit-or
+            tc-type-env-scoped-flag-unsafe
+            tc-type-env-scoped-flag-c-abi-fnptr))
+        unit)
+      next-env)))
 
 (define tc-type-env-scoped-flag-unsafe : i64
   1)
@@ -5376,25 +5408,74 @@
   [_next-env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]
-  [rest-env : TcTypeEnv]) : unit
+  [_rest-env : TcTypeEnv]) : unit
+  (begin
+    (tc-type-env-scoped-stack-push-slot!
+      (&mut
+        (struct-get
+          (struct-get tc-type-env-scoped-runtime-carrier sidecar)
+          stack))
+      name-id
+      ty
+      0
+      TcTypeEnvScopedMarkerKind.None)
+    (set! (struct-get tc-type-env-scoped-runtime-carrier dirty) true)))
+
+(define (tc-type-env-scoped-runtime-mark-latest-flags-id!
+  [name-id : i64]
+  [flags : i64]) : unit
   (let
-    [marker-kind : TcTypeEnvScopedMarkerKind
-      (tc-type-env-scoped-visible-marker-kind name-id ty)]
-    [flags : i64
-      (bit-or
-        (tc-type-env-scoped-runtime-slot-flags marker-kind)
-        (tc-type-env-scoped-visible-bind-flags rest-env name-id))]
-    (begin
-      (tc-type-env-scoped-stack-push-slot!
-        (&mut
-          (struct-get
-            (struct-get tc-type-env-scoped-runtime-carrier sidecar)
-            stack))
-        name-id
-        ty
-        flags
-        marker-kind)
-      (set! (struct-get tc-type-env-scoped-runtime-carrier dirty) true))))
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get tc-type-env-scoped-runtime-carrier sidecar) stack)]
+    [index : i64 (- (struct-get stack slot-count) 1)]
+    (if (and
+      (>= index 0)
+      (=
+        (struct-get (array-ref (struct-get stack slots) index) name-id)
+        name-id))
+      (let
+        [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+        (array-set!
+          (struct-get stack slots)
+          index
+          (TcTypeEnvScopedSlot
+            (struct-get slot name-id)
+            (struct-get slot ty)
+            (bit-or (struct-get slot flags) flags)
+            (struct-get slot marker-kind)
+            (struct-get slot marker-kind-tag)
+            (struct-get slot scope-depth)
+            (struct-get slot generation))))
+      unit)))
+
+(define (tc-type-env-scoped-runtime-mark-latest-marker-id!
+  [name-id : i64]
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : unit
+  (let
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get tc-type-env-scoped-runtime-carrier sidecar) stack)]
+    [index : i64 (- (struct-get stack slot-count) 1)]
+    (if (and
+      (>= index 0)
+      (=
+        (struct-get (array-ref (struct-get stack slots) index) name-id)
+        name-id))
+      (let
+        [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
+        (array-set!
+          (struct-get stack slots)
+          index
+          (TcTypeEnvScopedSlot
+            (struct-get slot name-id)
+            (struct-get slot ty)
+            (bit-or
+              (struct-get slot flags)
+              (tc-type-env-scoped-runtime-slot-flags marker-kind))
+            marker-kind
+            (tc-type-env-scoped-marker-kind-tag marker-kind)
+            (struct-get slot scope-depth)
+            (struct-get slot generation))))
+      unit)))
 
 (define (tc-type-env-scoped-runtime-enter-env! [env : TcTypeEnv]) : TcTypeEnvScopedRuntimeSave
   (if tc-type-env-scoped-runtime-active
@@ -5406,8 +5487,14 @@
   [env : TcTypeEnv]
   [name-id : i64]
   [ty : AstType]
-  [_marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnv
-  (tc-bind-id env name-id ty))
+  [marker-kind : TcTypeEnvScopedMarkerKind]) : TcTypeEnv
+  (let
+    [next-env : TcTypeEnv (tc-bind-id env name-id ty)]
+    (begin
+      (if tc-type-env-scoped-runtime-active
+        (tc-type-env-scoped-runtime-mark-latest-marker-id! name-id marker-kind)
+        unit)
+      next-env)))
 
 (define (tc-c-abi-fnptr-marker-near-id?
   [env : TcTypeEnv]

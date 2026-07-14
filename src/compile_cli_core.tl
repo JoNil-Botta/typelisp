@@ -3,7 +3,7 @@
 ;; Wraps compiler_driver_core.tl's input/output API with the selfhost compile CLI:
 ;; `compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>]
 ;; [--opt-level <0|1|2>] [--backend-mode scalar] [--stdlib-root <dir>...]
-;; [--cfg <name>...]`,
+;; [--cfg <name>...] [--profile-allocations]`,
 ;; plus `check <file.tl> [--stdlib-root <dir>...]`.
 ;; Bootstrap scripts call the retained `compile.tl` driver with the same
 ;; `compile` subcommand shape used by the unified CLI.
@@ -21,6 +21,7 @@
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
+(import compiler_allocation_profile as allocation_profile)
 (import "compiler_check_core.tl")
 (import "compiler_driver_core.tl")
 (import "doc_test.tl")
@@ -35,6 +36,9 @@
   ;; stage-0 compiler's allocation budget.
   (Ok cli_svec.Vec)
   (Err i64))
+
+(define compile-cli-allocation-profile-requested : bool
+  false)
 
 (defstruct CompileCliCfgNames
   (slots (Array String))
@@ -177,7 +181,7 @@
   (and (> (string.string-length value) 0) (= (string.string-ref value 0) '-')))
 
 (define (compile-cli-usage) : String
-  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats]")
+  "Usage:\n  typelisp check <file.tl> [--stdlib-root <dir>...]\n  typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]\n  typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]")
 
 (define (compile-cli-message-with-usage [message : String]) : String
   (string.append message (string.append "\n\n" (compile-cli-usage))))
@@ -459,6 +463,27 @@
             has-opt-level
             opt-level
             backend-mode)]
+        [(string.eq current "--profile-allocations")
+          (if compile-cli-allocation-profile-requested
+            (ResultCompileCliConfig.Err
+              "compile: --profile-allocations was provided more than once")
+            (begin
+              (set! compile-cli-allocation-profile-requested true)
+              (compile-cli-parse-options
+                (+ idx 1)
+                count
+                input-path
+                output-path
+                has-output
+                has-target
+                target
+                stdlib-roots
+                cfgs
+                emit-ir
+                pic
+                has-opt-level
+                opt-level
+                backend-mode)))]
         [else
           (if (compile-cli-flag? current)
             (ResultCompileCliConfig.Err
@@ -618,6 +643,24 @@
             opt-level
             backend-mode
             true)]
+        [(string.eq current "--profile-allocations")
+          (if compile-cli-allocation-profile-requested
+            (ResultCompileCliBatchConfig.Err
+              "compile: --profile-allocations was provided more than once")
+            (begin
+              (set! compile-cli-allocation-profile-requested true)
+              (compile-cli-batch-parse-options
+                (+ idx 1)
+                count
+                batch-path
+                has-target
+                target
+                stdlib-roots
+                cfgs
+                has-opt-level
+                opt-level
+                backend-mode
+                prefix-cache-stats)))]
         [else
           (if (compile-cli-flag? current)
             (ResultCompileCliBatchConfig.Err
@@ -1201,8 +1244,8 @@
             (tc-prefix-snapshot-cache-disable!)
             status))])))
 
-(define (compile-cli-run [count : i64]) : i64
-  (match (compile-cli-dispatch count)
+(define (compile-cli-run-action [action : CompileCliAction]) : i64
+  (match action
     [(CompileCliAction.Run config)
       (match config
         [(CompileCliConfig.Config
@@ -1262,3 +1305,31 @@
       (begin
         (io.print-error message)
         1)]))
+
+(define (compile-cli-run [count : i64]) : i64
+  (let
+    [action : CompileCliAction
+      (begin
+        (set! compile-cli-allocation-profile-requested false)
+        (compile-cli-dispatch count))]
+    [profile? : bool compile-cli-allocation-profile-requested]
+    (begin
+      (if profile?
+        (begin
+          (allocation_profile.compiler-allocation-profile-start!)
+          (compiler-driver-allocation-profile-snapshot! "start"))
+        unit)
+      (let
+        [status : i64 (compile-cli-run-action action)]
+        (begin
+          (if profile?
+            (begin
+              ;; Diagnostics do not all include a trailing newline. Keep the
+              ;; final machine-readable phase on its own line after failures.
+              (if (= status 0)
+                unit
+                (io.print-error "\n"))
+              (compiler-driver-allocation-profile-snapshot! "complete")
+              (allocation_profile.compiler-allocation-profile-finish!))
+            unit)
+          status)))))

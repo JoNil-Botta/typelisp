@@ -23,6 +23,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import stdlib.array)
 (import stdlib.vector)
+(import compiler_allocation_profile as allocation_profile)
 (import "compiler_ir_types.tl")
 (import "compiler_float.tl")
 (import stdlib.arena)
@@ -26989,6 +26990,10 @@
             scratch
             summaries)]
         (begin
+          (allocation_profile.compiler-allocation-profile-snapshot!
+            "optimize"
+            "optimizer-scratch"
+            scratch)
           (unsafe
             (arena.tl_arena_destroy scratch))
           result))
@@ -27001,6 +27006,10 @@
             scratch
             summaries)]
         (begin
+          (allocation_profile.compiler-allocation-profile-snapshot!
+            "optimize"
+            "optimizer-scratch"
+            scratch)
           (unsafe
             (arena.tl_arena_destroy scratch))
           result)))))

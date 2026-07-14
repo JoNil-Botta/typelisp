@@ -252,8 +252,8 @@ Options:
 
 (define (cli-compile-help-text) : String
   "Usage:
-    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...]
-    typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats]
+    typelisp compile <file.tl> [-o <file>] [--emit-ir] [--pic] [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--profile-allocations]
+    typelisp compile --batch <input-output-list> [--target <target>] [--backend-mode <mode>] [--opt-level <0|1|2>] [--stdlib-root <dir>...] [--cfg <name>...] [--prefix-cache-stats] [--profile-allocations]
 
 Summary:
     Generate assembly or an IR summary.
@@ -267,6 +267,7 @@ Options:
     --target <target>              linux-x86_64 or windows-x86_64
     --backend-mode <mode>          scalar, avx2, or avx512
     --opt-level <0|1|2>            Select optimizer level
+    --profile-allocations          Report compiler arena ownership by phase
     --stdlib-root <dir>            Search root for stdlib/... imports
     --cfg <name>                   Enable a compile-time cfg predicate name
 ")

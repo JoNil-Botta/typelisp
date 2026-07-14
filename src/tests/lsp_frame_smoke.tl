@@ -7,6 +7,8 @@
 (import stdlib.vector)
 (import (vector String) as lsp_svec)
 (import "../lsp_frame_core.tl")
+(import (vector.vector LspDeclEntry core) as lsp_decl_vec)
+(import (vector.vector LspDocument core) as lsp_document_vec)
 
 (define (lsp-smoke-string-vec-contains?
   [items : lsp_svec.Vec]
@@ -343,29 +345,30 @@
   (let
     [uri : String "file:///tmp/cache.tl"]
     [path : String "/tmp/cache.tl"]
-    [docs0 : LspDocuments (lsp-documents-new)]
-    [docs1 : LspDocuments (lsp-documents-set docs0 uri path "" uri)]
-    [doc1 : LspDocument (lsp-documents-get (& docs1) 0 (lsp-document-fallback))]
-    [empty-decls : LspDeclList (lsp-document-decls doc1 docs1)]
+    [docs0 : lsp_document_vec.Vec (lsp_document_vec.new)]
+    [docs1 : lsp_document_vec.Vec (lsp-documents-set docs0 uri path "" uri)]
+    [doc1 : LspDocument
+      (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
+    [empty-decls : lsp_decl_vec.Vec (lsp-document-decls doc1 docs1)]
     [cached-empty-doc : LspDocument
-      (lsp-documents-get (& docs1) 0 (lsp-document-fallback))]
-    [docs2 : LspDocuments (lsp-documents-set docs1 uri path "" "diag")]
+      (lsp_document_vec.get (& docs1) 0 (lsp-document-fallback))]
+    [docs2 : lsp_document_vec.Vec (lsp-documents-set docs1 uri path "" "diag")]
     [same-text-doc : LspDocument
-      (lsp-documents-get (& docs2) 0 (lsp-document-fallback))]
-    [docs3 : LspDocuments
+      (lsp_document_vec.get (& docs2) 0 (lsp-document-fallback))]
+    [docs3 : lsp_document_vec.Vec
       (lsp-documents-set docs2 uri path "(define cached : i64 1)" "diag")]
     [changed-doc : LspDocument
-      (lsp-documents-get (& docs3) 0 (lsp-document-fallback))]
-    [changed-decls : LspDeclList (lsp-document-decls changed-doc docs3)]
+      (lsp_document_vec.get (& docs3) 0 (lsp-document-fallback))]
+    [changed-decls : lsp_decl_vec.Vec (lsp-document-decls changed-doc docs3)]
     [cached-changed-doc : LspDocument
-      (lsp-documents-get (& docs3) 0 (lsp-document-fallback))]
+      (lsp_document_vec.get (& docs3) 0 (lsp-document-fallback))]
     (and
-      (= (lsp-decl-list-len (& empty-decls)) 0)
+      (= (lsp_decl_vec.len (& empty-decls)) 0)
       (struct-get cached-empty-doc decls-valid)
-      (= (lsp-decl-list-len (struct-get cached-empty-doc decls)) 0)
+      (= (lsp_decl_vec.len (struct-get cached-empty-doc decls)) 0)
       (struct-get same-text-doc decls-valid)
       (not (struct-get changed-doc decls-valid))
-      (= (lsp-decl-list-len (& changed-decls)) 1)
+      (= (lsp_decl_vec.len (& changed-decls)) 1)
       (struct-get cached-changed-doc decls-valid))))
 
 (define (lsp-document-disk-resync-ok?) : bool
@@ -380,7 +383,7 @@
       (lsp-json-object1
         "textDocument"
         (lsp-json-object1 "uri" (json.JsonString uri)))]
-    [docs : LspDocuments (lsp-documents-new)]
+    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
@@ -394,7 +397,7 @@
               (string.contains (& text) (& fresh-name))]
             [(LspDocumentLookup.Missing) false])]
         [cached-doc : LspDocument
-          (lsp-documents-get (& docs) 0 (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) 0 (lsp-document-fallback))]
         [cache-ok : bool
           (and
             (string.contains (& (struct-get cached-doc text)) (& fresh-name))
@@ -404,14 +407,14 @@
             [(LspDocumentDeclsLookup.Found _ text _ decls)
               (let
                 [entry : LspDeclEntry
-                  (lsp-decl-list-get (& decls) 0 (lsp-decl-entry-fallback))]
+                  (lsp_decl_vec.get (& decls) 0 (lsp-decl-entry-fallback))]
                 (and
                   (string.contains (& text) (& fresh-name))
-                  (= (lsp-decl-list-len (& decls)) 1)
+                  (= (lsp_decl_vec.len (& decls)) 1)
                   (string.eq (struct-get entry name) fresh-name)))]
             [(LspDocumentDeclsLookup.Missing) false])]
         [cached-decls-doc : LspDocument
-          (lsp-documents-get (& docs) 0 (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) 0 (lsp-document-fallback))]
         (and
           lookup-ok
           cache-ok
@@ -425,8 +428,8 @@
     [uri : String (lsp-resolved-path-to-file-uri path)]
     [initial : String "(define (main) : i64 1)"]
     [updated : String "(define (main) : i64 42)"]
-    [docs : LspDocuments
-      (lsp-documents-set (lsp-documents-new) uri path initial uri)]
+    [docs : lsp_document_vec.Vec
+      (lsp-documents-set (lsp_document_vec.new) uri path initial uri)]
     (begin
       (match (fs.try-mkdir-if-missing (& dir))
         [(io.OkIoUnit) unit]
@@ -436,7 +439,7 @@
           (let
             [disk-text : String (io.read-file path)]
             [cached-doc : LspDocument
-              (lsp-documents-get (& next-docs) 0 (lsp-document-fallback))]
+              (lsp_document_vec.get (& next-docs) 0 (lsp-document-fallback))]
             (and
               (string.eq disk-text updated)
               (string.eq (struct-get cached-doc text) updated)
@@ -448,15 +451,15 @@
     [first : String "(define (alpha) : i64 1)"]
     [second : String
       ";; one\n;; two\n;; three\n\n(define (wide) : i64 2)\n(define (next) : i64 3)"]
-    [first-decls : LspDeclList (lsp-scan-decls first)]
-    [second-decls : LspDeclList (lsp-scan-decls second)]
+    [first-decls : lsp_decl_vec.Vec (lsp-scan-decls first)]
+    [second-decls : lsp_decl_vec.Vec (lsp-scan-decls second)]
     [wide : LspDeclEntry
-      (lsp-decl-list-get (& second-decls) 0 (lsp-decl-entry-fallback))]
+      (lsp_decl_vec.get (& second-decls) 0 (lsp-decl-entry-fallback))]
     [next : LspDeclEntry
-      (lsp-decl-list-get (& second-decls) 1 (lsp-decl-entry-fallback))]
+      (lsp_decl_vec.get (& second-decls) 1 (lsp-decl-entry-fallback))]
     (and
-      (= (lsp-decl-list-len (& first-decls)) 1)
-      (= (lsp-decl-list-len (& second-decls)) 2)
+      (= (lsp_decl_vec.len (& first-decls)) 1)
+      (= (lsp_decl_vec.len (& second-decls)) 2)
       (string.eq (struct-get wide name) "wide")
       (= (struct-get wide form-start-line) 5)
       (= (struct-get wide form-start-col) 1)

@@ -5,7 +5,9 @@
 ;; (those write to stdout and are harder to verify in a self-hosted test).
 (import stdlib.string)
 (import stdlib.json)
+(import stdlib.vector)
 (import "../lsp_frame_core.tl")
+(import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 
 ;; --------------------------------------------------------------------------
 ;; lsp-find-form-at-offset / lsp-find-form-end-at-offset
@@ -97,15 +99,15 @@
   (let
     [text : String
       "(define (foo) : i64 1)\n\n(define (bar) : i64 2)\n\n(define (baz) : i64 3)"]
-    [decls : LspDeclList (lsp-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text)]
     [foo-idx : i64 (lsp-decl-list-find-name decls "foo")]
     [baz-idx : i64 (lsp-decl-list-find-name decls "baz")]
     (if (and (= foo-idx 0) (= baz-idx 2))
       (let
         [foo-entry : LspDeclEntry
-          (lsp-decl-list-get (& decls) foo-idx (lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) foo-idx (lsp-decl-entry-fallback))]
         [baz-entry : LspDeclEntry
-          (lsp-decl-list-get (& decls) baz-idx (lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) baz-idx (lsp-decl-entry-fallback))]
         [moved : String
           (format-rules-render-source-width
             (lsp-move-form-after text foo-entry baz-entry)
@@ -119,7 +121,7 @@
   (let
     [text : String
       "(define (foo) : i64\n  ;; )\n  (let [s : String \")\"]\n    (+ 1 2)))\n(define (bar) : i64 3)"]
-    [decls : LspDeclList (lsp-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text)]
     [params : json.Json (lsp-json-object1 "position" (lsp-position 3 6))]
     [name : String (lsp-structural-move-name-with-decls params text decls)]
     (match (lsp-replace-form-at-position-with-decls

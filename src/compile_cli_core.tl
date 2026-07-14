@@ -852,69 +852,76 @@
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
-  (let
-    [doctest-status : i64
-      (compile-cli-typecheck-doctests input-path stdlib-roots)]
-    (if (= doctest-status 0)
-      (let
-        [inline-test-status : i64
-          (if inline-preflight
-            (tltest-inline-typecheck-file-with-cfg
-              input-path
-              stdlib-roots
-              (compiler-driver-target-cfgs
-                target
-                (compile-cli-cfg-names-to-env cfgs))
-              "typecheck-prefix-inline-compile")
-            0)]
-        (if (= inline-test-status 0)
-          (begin
-            (compiler-driver-state-reset-file-state! state)
-            (let
-              [emit-cfgs : sym_i64_env.SymI64Env
-                (compile-cli-cfg-names-to-env-with-intern-state
-                  cfgs
-                  (compiler-driver-state-owned-interns state))]
-              [status : i64
-                (if emit-ir
-                  (compiler-driver-write-result
-                    (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-                      state
-                      input-path
-                      target
-                      stdlib-roots
-                      opt-level
-                      backend-mode
-                      emit-cfgs)
-                    output-path)
-                  (if pic
-                    (compiler-driver-write-pic-result
-                      (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+  (begin
+    ;; Doctest and inline preflight still enter the standalone compiler-check
+    ;; call graph before this job's state-aware reset. Make that residual
+    ;; compatibility boundary explicit instead of relying on the previous
+    ;; batch entry's cleanup to leave these globals installed.
+    (compiler-driver-state-install-pools! state)
+    (compiler-driver-state-install-interns! state)
+    (let
+      [doctest-status : i64
+        (compile-cli-typecheck-doctests input-path stdlib-roots)]
+      (if (= doctest-status 0)
+        (let
+          [inline-test-status : i64
+            (if inline-preflight
+              (tltest-inline-typecheck-file-with-cfg
+                input-path
+                stdlib-roots
+                (compiler-driver-target-cfgs
+                  target
+                  (compile-cli-cfg-names-to-env cfgs))
+                "typecheck-prefix-inline-compile")
+              0)]
+          (if (= inline-test-status 0)
+            (begin
+              (compiler-driver-state-reset-file-state! state)
+              (let
+                [emit-cfgs : sym_i64_env.SymI64Env
+                  (compile-cli-cfg-names-to-env-with-intern-state
+                    cfgs
+                    (compiler-driver-state-owned-interns state))]
+                [status : i64
+                  (if emit-ir
+                    (compiler-driver-write-result
+                      (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
                         state
                         input-path
                         target
-                        true
                         stdlib-roots
                         opt-level
                         backend-mode
                         emit-cfgs)
                       output-path)
-                    (compiler-driver-write-buffer-result
-                      (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
-                        state
-                        input-path
-                        target
-                        true
-                        stdlib-roots
-                        opt-level
-                        backend-mode
-                        emit-cfgs)
-                      output-path)))]
-              (begin
-                (compiler-driver-state-capture-session-floors! state)
-                status)))
-          inline-test-status))
-      doctest-status)))
+                    (if pic
+                      (compiler-driver-write-pic-result
+                        (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+                          state
+                          input-path
+                          target
+                          true
+                          stdlib-roots
+                          opt-level
+                          backend-mode
+                          emit-cfgs)
+                        output-path)
+                      (compiler-driver-write-buffer-result
+                        (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+                          state
+                          input-path
+                          target
+                          true
+                          stdlib-roots
+                          opt-level
+                          backend-mode
+                          emit-cfgs)
+                        output-path)))]
+                (begin
+                  (compiler-driver-state-capture-session-floors! state)
+                  status)))
+            inline-test-status))
+        doctest-status))))
 
 (define (compile-cli-run-batch-inline-tests-from
   [entries : (& entries cli_svec.Vec)]

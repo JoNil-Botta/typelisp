@@ -515,7 +515,9 @@ import graph; `--manifest-path` documents a package.
 
 `typelisp lint` includes staged migration rules such as
 `--deprecated-string-concat`, `--redundant-function-name`, and
-`--prefer-dotted-field`. Dead-code lint treats library packages as external
+`--prefer-dotted-field`. `--name-case` checks top-level values as
+SCREAMING-KEBAB-CASE, functions/macros and local binders as kebab-case, and
+struct/enum types as UpperCamelCase. Dead-code lint treats library packages as external
 API roots and reports unreachable declarations in `bin` packages.
 
 ## Self-hosting and bootstrap

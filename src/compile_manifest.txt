@@ -6,6 +6,7 @@
 #   copy|source|staged-name
 #   requires-stage0-symbol|symbol
 #   requires-stage0-mode|reason
+#   lint-root|source-declaration-name
 #   contains|assembly text
 #   not-contains|assembly text
 #   count-at-least|assembly text|minimum-count
@@ -485,7 +486,9 @@ end
 case|selfhost_compiler_parse_core|src/compiler_parse_core.tl|assembly|skip|direct
 contains|_tl_parse_ast_source:
 contains|_tl_parse_ast_source_with_cfg:
+lint-root|parse-ast-program
 contains|_tl_parse_ast_program:
+lint-root|parse-ast-program-with-cfg
 contains|_tl_parse_ast_program_with_cfg:
 contains|_tl_parse_ast_decl:
 contains|_tl_compiler_cfg_enable:

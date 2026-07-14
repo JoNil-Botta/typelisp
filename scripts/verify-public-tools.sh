@@ -1973,6 +1973,37 @@ EOF
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
+    cat > "$WORKDIR/lint_name_case.tl" <<'EOF'
+(define bad-global : i64 1)
+(defstruct bad-type
+  (field i64))
+(define (BadFunction [BadParam : i64]) : i64
+  BadParam)
+EOF
+    run_cmd lint-name-case-default "$COMPILER" lint "$WORKDIR/lint_name_case.tl" --check
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "lint: 0 finding(s)"
+
+    run_cmd lint-name-case "$COMPILER" lint "$WORKDIR/lint_name_case.tl" --name-case
+    assert_success
+    assert_stderr_empty
+    assert_contains "$out" "global name case"
+    assert_contains "$out" "function name case"
+    assert_contains "$out" "local name case"
+    assert_contains "$out" "type name case"
+    assert_contains "$out" 'consider `BAD-GLOBAL`'
+    assert_contains "$out" 'consider `bad-function`'
+    assert_contains "$out" 'consider `bad-param`'
+    assert_contains "$out" 'consider `BadType`'
+    assert_contains "$out" "lint: 4 finding(s)"
+    assert_not_contains "$out" ":0:0:"
+
+    run_cmd lint-name-case-check "$COMPILER" lint "$WORKDIR/lint_name_case.tl" --name-case --check
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "lint: 4 finding(s)"
+
     run_cmd lint-multi "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_bad.tl"
     assert_success
     assert_stderr_empty
@@ -2045,12 +2076,22 @@ EOF
 
 (define (dead-lib) : i64
   7)
+
+(define bad-global : i64
+  1)
 EOF
     run_cmd lint-package-lib "$COMPILER" lint --check --manifest-path "$LINT_PKG_LIB/typelisp.pkg"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
     assert_not_contains "$out" "dead-lib"
+
+    run_cmd lint-package-lib-name-case "$COMPILER" lint --name-case --check --manifest-path "$LINT_PKG_LIB/typelisp.pkg"
+    assert_failure
+    assert_stderr_empty
+    assert_contains "$out" "global name case"
+    assert_contains "$out" 'consider `BAD-GLOBAL`'
+    assert_contains "$out" "lint: 1 finding(s)"
 
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
     run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint

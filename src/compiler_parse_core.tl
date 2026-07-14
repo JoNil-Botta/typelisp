@@ -8557,6 +8557,9 @@
         [(ResultAstDeclListDiagnostic.Err diag)
           (ResultAstProgramDiagnostic.Err diag)]))))
 
+;; This token-level diagnostic/cfg API is intentionally retained for callers
+;; that already own lexed tokens.
+;; lint-allow: dead-code
 (define (parse-ast-program-diagnostic-with-cfg
   [path : String]
   [toks : (Array token.SpannedToken)]

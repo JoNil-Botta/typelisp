@@ -6,6 +6,7 @@
 (import stdlib.vector)
 (import (vector String) as svec)
 (cfg compile-profile (import stdlib.profile))
+(import compiler_allocation_profile as allocation_profile)
 (import "compiler_backend.tl")
 (import compiler_builtin_ids as cbi)
 (import "compiler_diagnostic.tl")
@@ -185,6 +186,40 @@
 
 (define (compiler-driver-node-pool-base-arena) : i64
   (ast-node-pool-base-arena-handle))
+
+;; Emit owner candidates plus the active arena at stable compiler phase
+;; boundaries. `arena_root` lets consumers de-duplicate an active arena that is
+;; also one of the named owners.
+(define (compiler-driver-allocation-profile-snapshot! [phase : String]) : unit
+  (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
+    unit
+    (begin
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "active"
+        (arena.tl_arena_current))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "source-pools"
+        (compiler-driver-node-pool-base-arena))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "intern-persistent"
+        (ci.intern-persistent-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "lower-scratch"
+        lower-scratch-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
+        "lower-ir"
+        lower-ir-arena)
+      unit)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells
@@ -1111,6 +1146,7 @@
             (cfg
               compile-profile
               (compiler-driver-profile-finish-phase "optimize"))
+            (compiler-driver-allocation-profile-snapshot! "optimize")
             (compiler-driver-release-lowered-ir! opt-level)
             (if (ast-node-pool-reader-type-exhausted?)
               (ResultCompilerDriverBuffer.Err
@@ -1139,12 +1175,14 @@
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
+                      (compiler-driver-allocation-profile-snapshot! "backend")
                       (ResultCompilerDriverBuffer.Ok asm))]
                   [(ResultCompilerBackendBuffer.Err diag)
                     (begin
                       (cfg
                         compile-profile
                         (compiler-driver-profile-finish-phase "backend"))
+                      (compiler-driver-allocation-profile-snapshot! "backend")
                       (ResultCompilerDriverBuffer.Err
                         (box
                           (compiler-diagnostic-with-path
@@ -2071,6 +2109,7 @@
       [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (compiler-driver-allocation-profile-snapshot! "load")
           (cfg compile-profile (compiler-driver-profile-start-phase))
           (compiler-driver-state-install-transients! state)
           (compiler-driver-state-install-pools! state)
@@ -2152,6 +2191,7 @@
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
+                  (compiler-driver-allocation-profile-snapshot! "lower")
                   (if (ast-node-pool-reader-type-exhausted?)
                     (ResultCompilerDriverLowered.Err
                       (box
@@ -2172,10 +2212,12 @@
                   (cfg
                     compile-profile
                     (compiler-driver-profile-finish-phase "lower"))
+                  (compiler-driver-allocation-profile-snapshot! "lower")
                   (ResultCompilerDriverLowered.Err diag))])))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "load"))
+          (compiler-driver-allocation-profile-snapshot! "load")
           (ResultCompilerDriverLowered.Err diag))])))
 
 (define (compiler-driver-load-and-lower-escaping-with-state
@@ -3128,6 +3170,7 @@
             (compiler-driver-write-text-buf output-path buf))]
         (begin
           (cfg compile-profile (compiler-driver-profile-finish-phase "write"))
+          (compiler-driver-allocation-profile-snapshot! "write")
           (cfg compile-profile (compiler-driver-profile-finish-total))
           (if (= status 0)
             (begin
@@ -3137,6 +3180,7 @@
             status)))]
     [(ResultCompilerDriverBuffer.Err diag)
       (begin
+        (compiler-driver-allocation-profile-snapshot! "write-error")
         (cfg compile-profile (compiler-driver-profile-finish-total))
         (io.print-error (compiler-diagnostic-render (box-get diag)))
         1)]))

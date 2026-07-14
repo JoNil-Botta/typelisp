@@ -361,6 +361,29 @@ check. They deliberately do not fail on wall-clock noise. Use
 `TYPELISP_LSP_CHECK_SMALL_LINES`, `TYPELISP_LSP_CHECK_LARGE_LINES`, or
 `TYPELISP_LSP_CHECK_WORKDIR` to adjust a local run.
 
+`compile --profile-allocations` emits opt-in arena ownership rows for any input
+program. Rows report the phase, owner, arena root, bump-position bytes,
+committed bytes, reserved bytes, and segment count. Arena roots make overlapping `active` and
+named-owner rows explicit so consumers can de-duplicate them. Without the flag,
+the compiler emits no rows and keeps the allocator fast path unchanged.
+`bump_bytes` includes the retained high-water position of rewound overflow
+segments; use `committed_bytes` when reconciling the rows with OS commitment.
+
+On Windows, correlate those rows with the compiler process's working set and
+private bytes using:
+
+```powershell
+scripts/measure-compile-memory.ps1 `
+  -Compiler target/stage0/typelisp.exe `
+  -Source src/main.tl `
+  -OptLevel 1
+```
+
+The helper samples the child every 5 ms by default and writes raw owner samples
+plus per-phase, de-duplicated committed totals under
+`target/compile-memory/windows/`. This distinguishes arena commitment from
+unattributed process memory such as stacks, code, and other mappings.
+
 `lsp-frame-run-transcript` is the TypeLisp-only in-process framing adapter for
 tests that need exact stdin bytes plus exact captured stdout, stderr, and exit
 status. It runs the production frame parser and request handlers in a

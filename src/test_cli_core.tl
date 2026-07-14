@@ -4481,6 +4481,12 @@
   ;; empty state must outlive destruction of the entry arena.
   (begin
     (compiler-driver-reset-file-state!)
+    ;; A cache floor may still retain the just-finished entry's compiler state.
+    ;; Retire the complete session before destroying that entry arena so long
+    ;; batches cannot accumulate floors or retain pointers into reclaimed pages.
+    (compiler-load-session-fresh-reset!)
+    (compiler-load-session-cache-enable!)
+    (compiler-load-session-program-cache-disable!)
     (unsafe
       (arena.destroy entry-arena))
     entry-result))

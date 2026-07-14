@@ -127,6 +127,31 @@
 (define (compile-cli-cfg-names-to-env [names : CompileCliCfgNames]) : sym_i64_env.SymI64Env
   (compile-cli-cfg-names-to-env-from (& names) 0 (compiler-cfg-empty)))
 
+(define (compile-cli-cfg-names-to-env-with-intern-state-from
+  [names : (& names CompileCliCfgNames)]
+  [index : i64]
+  [env : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (if (>= index (struct-get names len))
+    env
+    (compile-cli-cfg-names-to-env-with-intern-state-from
+      names
+      (+ index 1)
+      (compiler-cfg-enable-with-intern-state
+        env
+        (compile-cli-cfg-names-get names index)
+        intern-state)
+      intern-state)))
+
+(define (compile-cli-cfg-names-to-env-with-intern-state
+  [names : CompileCliCfgNames]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (compile-cli-cfg-names-to-env-with-intern-state-from
+    (& names)
+    0
+    (compiler-cfg-empty)
+    intern-state))
+
 (defenum CompileCliConfig
   (Config
     String
@@ -847,7 +872,9 @@
             (compiler-driver-state-reset-file-state! state)
             (let
               [emit-cfgs : sym_i64_env.SymI64Env
-                (compile-cli-cfg-names-to-env cfgs)]
+                (compile-cli-cfg-names-to-env-with-intern-state
+                  cfgs
+                  (compiler-driver-state-owned-interns state))]
               [status : i64
                 (if emit-ir
                   (compiler-driver-write-result

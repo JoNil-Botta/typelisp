@@ -1129,6 +1129,7 @@
             (compiler-driver-state-intern-pool-data-addr state-b)))
         (set! ok false))
       (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-install-interns! state-a)
       (intern-persistent-storage-enable!)
       (let
         [a-shared : i64
@@ -1161,6 +1162,7 @@
         (begin
           (compiler-driver-state-capture-active-interns! state-a)
           (compiler-driver-state-reset-file-state! state-b)
+          (compiler-driver-state-install-interns! state-b)
           (intern-persistent-storage-enable!)
           (let
             ;; Insert the different name first so equal spellings receive
@@ -1284,6 +1286,111 @@
                     "sssssssssssssssssssssssssssssssssssssssssssssssss")
                   (set! ok false))
                 ok))))))))
+
+(define (compiler-driver-state-smoke-reset-does-not-install?) : bool
+  (let
+    [prior-pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [pools-b : AstNodePoolContext (compiler-driver-state-pool-context state-b)]
+    [expr-id : i64
+      (ast-node-pool-context-expr-push
+        pools-b
+        (AstExpr.Literal (ast-lit-int 4705)))]
+    [type-id : i64 (ast-node-pool-context-type-push pools-b (AstType.I64))]
+    (begin
+      (compiler-driver-state-install-pools! state-b)
+      (compiler-driver-state-install-interns! state-b)
+      (intern-reset!)
+      (let
+        [name-id : i64 (intern "state-b-reset-decoy")]
+        [owner : InternIdProvenance (intern-id-provenance-capture)]
+        [generation : i64 (intern-generation)]
+        [pool-address : i64 (intern-active-pool-data-addr)]
+        (let
+          [ok : bool
+            (begin
+              (compiler-driver-state-capture-active-interns! state-b)
+              (compiler-driver-state-reset-file-state! state-a)
+              (compiler-driver-state-release-file-state! state-a)
+              (and
+                (= (intern-generation) generation)
+                (= (intern-active-pool-data-addr) pool-address)
+                (compiler-driver-state-smoke-render-ok?
+                  owner
+                  name-id
+                  "state-b-reset-decoy")
+                (compiler-driver-state-smoke-global-expr-int? expr-id 4705)
+                (compiler-driver-state-smoke-global-type-i64? type-id)))]
+          (begin
+            (ast-node-pool-context-install! prior-pools)
+            ok))))))
+
+(define (compiler-driver-state-smoke-target-cfgs-do-not-install?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-install-interns! state-b)
+      (intern-reset!)
+      (let
+        [decoy-id : i64 (intern "state-b-cfg-decoy")]
+        [owner : InternIdProvenance (intern-id-provenance-capture)]
+        [generation : i64 (intern-generation)]
+        [pool-address : i64 (intern-active-pool-data-addr)]
+        (begin
+          (compiler-driver-state-capture-active-interns! state-b)
+          (let
+            [intern-state : InternCompatState
+              (array-ref (struct-get state-a intern-state) 0)]
+            [_persistent : unit
+              (intern-compat-state-persistent-storage-enable! intern-state)]
+            [qualified-id : i64
+              (with-scratch
+                (intern-compat-state-intern
+                  intern-state
+                  (string.substring "pkg/name.part-extra" 0 13)))]
+            [cfgs : sym_i64_env.SymI64Env
+              (compiler-driver-state-target-cfgs
+                state-a
+                (CompilerBackendTarget.Linux)
+                (compiler-cfg-empty))]
+            (and
+              (= (intern-generation) generation)
+              (= (intern-active-pool-data-addr) pool-address)
+              (compiler-driver-state-smoke-render-ok?
+                owner
+                decoy-id
+                "state-b-cfg-decoy")
+              (intern-compat-state-qualified? intern-state qualified-id)
+              (= (intern-compat-state-first-dot intern-state qualified-id) 8)
+              (intern-private-string-eq
+                (intern-compat-state-str
+                  intern-state
+                  (intern-compat-state-leading-dot-id intern-state qualified-id))
+                "pkg/name")
+              (intern-private-string-eq
+                (intern-compat-state-str
+                  intern-state
+                  (intern-compat-state-qualified-module-id
+                    intern-state
+                    qualified-id))
+                "pkg")
+              (intern-private-string-eq
+                (intern-compat-state-str
+                  intern-state
+                  (intern-compat-state-qualified-base-id
+                    intern-state
+                    qualified-id))
+                "name.part")
+              (sym_i64_env.sym-i64-contains-with-intern-state
+                cfgs
+                "cfg:linux"
+                intern-state)
+              (sym_i64_env.sym-i64-contains-with-intern-state
+                cfgs
+                "cfg:feature-cleanup-owner-reflection"
+                intern-state))))))))
 
 (define (compiler-driver-state-smoke-intern-arena-reset-isolated?) : bool
   (let
@@ -2760,6 +2867,10 @@
       (compiler-driver-state-smoke-builtins-scratch-capture-stable?)
       (return 10))
     (unless (compiler-driver-state-smoke-interns-isolated?) (return 29))
+    (unless (compiler-driver-state-smoke-reset-does-not-install?) (return 36))
+    (unless
+      (compiler-driver-state-smoke-target-cfgs-do-not-install?)
+      (return 37))
     (unless
       (compiler-driver-state-smoke-intern-arena-reset-isolated?)
       (return 32))

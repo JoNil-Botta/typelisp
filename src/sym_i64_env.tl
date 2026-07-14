@@ -14,6 +14,13 @@
 (define (sym-i64-bind [e : SymI64Env] [k : String] [v : i64]) : SymI64Env
   (sym-i64-bind-id e (ci.intern k) v))
 
+(define (sym-i64-bind-with-intern-state
+  [e : SymI64Env]
+  [k : String]
+  [v : i64]
+  [intern-state : ci.InternCompatState]) : SymI64Env
+  (sym-i64-bind-id e (ci.intern-compat-state-intern intern-state k) v))
+
 (define (sym-i64-bind-id [e : SymI64Env] [k : i64] [v : i64]) : SymI64Env
   (SymI64Bind k v (box e)))
 
@@ -55,6 +62,14 @@
 
 (define (sym-i64-contains [e : SymI64Env] [k : String]) : bool
   (sym-i64-contains-id e (ci.intern k)))
+
+(define (sym-i64-contains-with-intern-state
+  [e : SymI64Env]
+  [k : String]
+  [intern-state : ci.InternCompatState]) : bool
+  (match (ci.intern-compat-state-lookup intern-state k)
+    [(ci.InternLookupFound id) (sym-i64-contains-id e id)]
+    [(ci.InternLookupMissing) false]))
 
 (define (sym-i64-contains-id [e : SymI64Env] [k : i64]) : bool
   (let

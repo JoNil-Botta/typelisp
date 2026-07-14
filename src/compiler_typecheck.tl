@@ -5882,7 +5882,7 @@
       "(define (f [b : bool]) : i64 (cast b : i64))"
       "typecheck: cast requires scalar numeric (integer/char/float) source and target")))
 
-;; spmd-reduce operator/type rules (SPEC 5.15): `sum` accepts i32/i64/f64,
+;; spmd-reduce operator/type rules (SPEC 5.15): `sum` accepts i32/i64/f32/f64,
 ;; `min`/`max` accept i32/i64, `all`/`any` accept bool. (The varying-value
 ;; purity/effect rules are a separate slice.)
 (define (compiler-typecheck-spmd-reduce-op-tests-ok?) : bool
@@ -5890,13 +5890,18 @@
     (compiler-typecheck-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-typecheck-ok?
+      "(define (main [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
+    (compiler-typecheck-ok?
       "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce all ([i : i64 0 n]) true (array-ref bs i)))")
     (compiler-typecheck-error-ok?
       "(define (main [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce all ([i : i64 0 n]) 0 (array-ref xs i)))"
       "typecheck: spmd-reduce all requires a bool type")
     (compiler-typecheck-error-ok?
       "(define (main [bs : (Array bool)] [n : i64]) : bool (spmd-reduce sum ([i : i64 0 n]) true (array-ref bs i)))"
-      "typecheck: spmd-reduce sum requires an i32, i64, or f64 type")))
+      "typecheck: spmd-reduce sum requires an i32, i64, f32, or f64 type")
+    (compiler-typecheck-error-ok?
+      "(define (main [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce min ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "typecheck: spmd-reduce min requires an i32 or i64 type")))
 
 ;; spmd-reduce purity rules (SPEC.md 5.15): the per-lane value
 ;; expression accepts pure arithmetic over dynamic-array reads and the varying

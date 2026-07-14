@@ -35803,6 +35803,7 @@
       (match elem
         [(AstType.I64) true]
         [(AstType.I32) true]
+        [(AstType.F32) true]
         [(AstType.F64) true]
         [_ false])]
     [(AstReduceOp.Min)
@@ -58048,7 +58049,10 @@
         (CompilerLowerMode.Avx2)
         4)
       true)
-    true))
+    (compiler-lower-avx2-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      (AstType.F32)
+      8)))
 
 (define (compiler-lower-avx512-spmd-reduce-tests-ok?) : bool
   (compiler-lower-and8
@@ -58079,9 +58083,12 @@
     (compiler-lower-spmd-reduce-lane-identity-shape-ok?
       (CompilerLowerMode.Avx512)
       8)
-    true))
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      (AstType.F32)
+      16)))
 
-;; `spmd-reduce` lowering: integer and f64 sum reductions lower (to
+;; `spmd-reduce` lowering: integer, f32, and f64 sum reductions lower (to
 ;; an accumulator loop, so `main` holds the guard branch + fold/increment
 ;; binops), and the min/max/all/any reduction ops lower as well.
 (define (compiler-lower-spmd-reduce-tests-ok?) : bool
@@ -58090,6 +58097,8 @@
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-lower-ok?
       "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+    (compiler-lower-ok?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
     (compiler-lower-foreach-shape-ok?
       "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
     (compiler-lower-ok?

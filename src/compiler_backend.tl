@@ -1912,6 +1912,7 @@
       (match elem-ty
         [(AstType.I64) "vpaddq"]
         [(AstType.I32) "vpaddd"]
+        [(AstType.F32) "vaddps"]
         [(AstType.F64) "vaddpd"]
         [_ ""])]
     [(CompilerIrVectorReduceOp.Min)
@@ -8931,6 +8932,54 @@
   [acc-xmm : String]
   [scratch-xmm : String]) : String
   (match elem-ty
+    [(AstType.F32)
+      (string.append
+        (string.append
+          (str_cat.str-cat
+            "    vextractf128 $1, "
+            ymm
+            ", "
+            acc-xmm
+            "\n    "
+            mnemonic
+            " "
+            acc-xmm
+            ", "
+            xmm
+            ", "
+            acc-xmm
+            "\n")
+          (str-cat
+            "    vshufps $78, "
+            acc-xmm
+            ", "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
+            mnemonic
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
+            ""))
+        (str_cat.str-cat
+          "    vshufps $177, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddss "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
     [(AstType.F64)
       (string.append
         (str_cat.str-cat
@@ -9116,6 +9165,70 @@
   [acc-ymm : String]
   [scratch-xmm : String]) : String
   (match elem-ty
+    [(AstType.F32)
+      (string.append
+        (string.append
+          (string.append
+            (str_cat.str-cat
+              "    vextractf32x8 $1, "
+              zmm
+              ", "
+              acc-ymm
+              "\n    "
+              mnemonic
+              " "
+              acc-ymm
+              ", "
+              ymm
+              ", "
+              acc-ymm
+              "\n")
+            (str-cat
+              "    vextractf128 $1, "
+              acc-ymm
+              ", "
+              scratch-xmm
+              "\n    "
+              mnemonic
+              " "
+              scratch-xmm
+              ", "
+              acc-xmm
+              ", "
+              acc-xmm
+              "\n"
+              ""))
+          (str-cat
+            "    vshufps $78, "
+            acc-xmm
+            ", "
+            acc-xmm
+            ", "
+            scratch-xmm
+            "\n    "
+            mnemonic
+            " "
+            scratch-xmm
+            ", "
+            acc-xmm
+            ", "
+            acc-xmm
+            "\n"
+            ""))
+        (str_cat.str-cat
+          "    vshufps $177, "
+          acc-xmm
+          ", "
+          acc-xmm
+          ", "
+          scratch-xmm
+          "\n    vaddss "
+          scratch-xmm
+          ", "
+          acc-xmm
+          ", "
+          acc-xmm
+          "\n"))]
     [(AstType.F64)
       (string.append
         (string.append

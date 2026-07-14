@@ -18,6 +18,8 @@
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
+(import (vector.vector LspDeclEntry core) as lsp_decl_vec)
+(import (vector.vector LspDocument core) as lsp_document_vec)
 (import stdlib.string)
 (import token)
 (import sym_i64_env)
@@ -84,12 +86,12 @@
   (Missing))
 
 (defenum LspDocumentDeclsLookup
-  (Found String String String LspDeclList)
+  (Found String String String lsp_decl_vec.Vec)
   (Missing))
 
 (defenum LspHandleResult
-  (Continue LspDocuments)
-  (Exit LspDocuments))
+  (Continue lsp_document_vec.Vec)
+  (Exit lsp_document_vec.Vec))
 
 (defstruct LspLineCol
   (line i64)
@@ -121,7 +123,7 @@
   (Err String))
 
 (defenum LspSaveResult
-  (Ok LspDocuments)
+  (Ok lsp_document_vec.Vec)
   (Err String))
 
 (defenum LspBatchOpResult
@@ -658,13 +660,13 @@
       (json.JsonString "selfhost"))))
 
 (define (lsp-document-fallback) : LspDocument
-  (LspDocument "" "" "" "" (lsp-decl-list-new) false LspCheckCacheInvalid))
+  (LspDocument "" "" "" "" (lsp_decl_vec.new) false LspCheckCacheInvalid))
 
 (define lsp-document-cache-arena : i64
   0)
 
 (define (lsp-documents-find-index-from
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [index : i64]) : i64
   (let
@@ -672,46 +674,46 @@
     [found : i64 -1]
     [done : bool false]
     (begin
-      (while (< i (lsp-documents-len (& docs)))
+      (while (< i (lsp_document_vec.len (& docs)))
         (if done
-          (set! i (lsp-documents-len (& docs)))
+          (set! i (lsp_document_vec.len (& docs)))
           (let
             [doc : LspDocument
-              (lsp-documents-get (& docs) i (lsp-document-fallback))]
+              (lsp_document_vec.get (& docs) i (lsp-document-fallback))]
             (if (string.eq (struct-get doc uri) uri)
               (begin
                 (set! found i)
                 (set! done true)
-                (set! i (lsp-documents-len (& docs))))
+                (set! i (lsp_document_vec.len (& docs))))
               (set! i (+ i 1))))))
       found)))
 
-(define (lsp-documents-find-index [docs : LspDocuments] [uri : String]) : i64
+(define (lsp-documents-find-index [docs : lsp_document_vec.Vec] [uri : String]) : i64
   (lsp-documents-find-index-from docs uri 0))
 
 (define lsp-documents-max-capacity : i64
   16)
 
 (define (lsp-documents-set
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
   [text : String]
-  [diagnostic-uri : String]) : LspDocuments
+  [diagnostic-uri : String]) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
         [old-doc : LspDocument
-          (lsp-documents-get (& docs) index (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
         [old-text : String (struct-get old-doc text)]
-        [old-decls : LspDeclList (struct-get old-doc decls)]
+        [old-decls : lsp_decl_vec.Vec (struct-get old-doc decls)]
         [old-decls-valid : bool (struct-get old-doc decls-valid)]
         [old-check-cache : LspCheckCache (struct-get old-doc check-cache)]
-        [new-decls : LspDeclList
+        [new-decls : lsp_decl_vec.Vec
           (if (string.eq old-text text)
             old-decls
-            (lsp-decl-list-new))]
+            (lsp_decl_vec.new))]
         [new-decls-valid : bool
           (if (string.eq old-text text)
             old-decls-valid
@@ -721,7 +723,7 @@
             old-check-cache
             LspCheckCacheInvalid)]
         (begin
-          (lsp-documents-set!
+          (lsp_document_vec.set
             (&mut docs)
             index
             (LspDocument
@@ -740,33 +742,33 @@
             path
             text
             diagnostic-uri
-            (lsp-decl-list-new)
+            (lsp_decl_vec.new)
             false
             LspCheckCacheInvalid)]
-        (if (>= (lsp-documents-len (& docs)) lsp-documents-max-capacity)
+        (if (>= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
           (begin
             (lsp-documents-shift-left! docs 0)
-            (lsp-documents-set!
+            (lsp_document_vec.set
               (&mut docs)
-              (- (lsp-documents-len (& docs)) 1)
+              (- (lsp_document_vec.len (& docs)) 1)
               doc)
             docs)
           (begin
-            (lsp-documents-push (&mut docs) doc)
+            (lsp_document_vec.push (&mut docs) doc)
             docs))))))
 
 (define (lsp-documents-set-check-cache
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
-  [check-cache : LspCheckCache]) : LspDocuments
+  [check-cache : LspCheckCache]) : lsp_document_vec.Vec
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
         [doc : LspDocument
-          (lsp-documents-get (& docs) index (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
         (begin
-          (lsp-documents-set!
+          (lsp_document_vec.set
             (&mut docs)
             index
             (LspDocument
@@ -780,21 +782,21 @@
           docs))
       docs)))
 
-(define (lsp-documents-shift-left! [docs : LspDocuments] [index : i64]) : unit
+(define (lsp-documents-shift-left! [docs : lsp_document_vec.Vec] [index : i64]) : unit
   (let
     [i : i64 index]
-    [last : i64 (- (lsp-documents-len (& docs)) 1)]
+    [last : i64 (- (lsp_document_vec.len (& docs)) 1)]
     (while (< i last)
       (let
         [next : LspDocument
-          (lsp-documents-get (& docs) (+ i 1) (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) (+ i 1) (lsp-document-fallback))]
         (begin
-          (lsp-documents-set! (&mut docs) i next)
+          (lsp_document_vec.set (&mut docs) i next)
           (set! i (+ i 1)))))))
 
-(define (lsp-documents-remove-index [docs : LspDocuments] [index : i64]) : LspDocuments
+(define (lsp-documents-remove-index [docs : lsp_document_vec.Vec] [index : i64]) : lsp_document_vec.Vec
   (if (if (>= index 0)
-    (< index (lsp-documents-len (& docs)))
+    (< index (lsp_document_vec.len (& docs)))
     false)
     (begin
       (lsp-documents-shift-left! docs index)
@@ -802,26 +804,28 @@
       docs)
     docs))
 
-(define (lsp-documents-remove [docs : LspDocuments] [uri : String]) : LspDocuments
+(define (lsp-documents-remove [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
   (lsp-documents-remove-index docs (lsp-documents-find-index docs uri)))
 
-(define (lsp-documents-lookup [docs : LspDocuments] [uri : String]) : LspDocumentLookup
+(define (lsp-documents-lookup [docs : lsp_document_vec.Vec] [uri : String]) : LspDocumentLookup
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
       (let
         [doc : LspDocument
-          (lsp-documents-get (& docs) index (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
         (LspDocumentLookup.Found
           (struct-get doc path)
           (struct-get doc text)
           (struct-get doc diagnostic-uri)))
       LspDocumentLookup.Missing)))
 
-(define (lsp-document-refresh-from-disk [docs : LspDocuments] [index : i64]) : LspDocument
+(define (lsp-document-refresh-from-disk
+  [docs : lsp_document_vec.Vec]
+  [index : i64]) : LspDocument
   (let
     [doc : LspDocument
-      (lsp-documents-get (& docs) index (lsp-document-fallback))]
+      (lsp_document_vec.get (& docs) index (lsp-document-fallback))]
     [path : String (struct-get doc path)]
     (if (string.eq path "")
       doc
@@ -836,15 +840,17 @@
                   path
                   disk-text
                   (struct-get doc diagnostic-uri)
-                  (lsp-decl-list-new)
+                  (lsp_decl_vec.new)
                   false
                   LspCheckCacheInvalid)]
               (begin
-                (lsp-documents-set! (&mut docs) index updated)
+                (lsp_document_vec.set (&mut docs) index updated)
                 updated)))]
         [(io.ErrIoString _) doc]))))
 
-(define (lsp-documents-lookup-resynced [docs : LspDocuments] [uri : String]) : LspDocumentLookup
+(define (lsp-documents-lookup-resynced
+  [docs : lsp_document_vec.Vec]
+  [uri : String]) : LspDocumentLookup
   (let
     [index : i64 (lsp-documents-find-index docs uri)]
     (if (>= index 0)
@@ -856,16 +862,18 @@
           (struct-get doc diagnostic-uri)))
       LspDocumentLookup.Missing)))
 
-(define (lsp-documents-smoke-add [docs : LspDocuments] [uri : String]) : LspDocuments
+(define (lsp-documents-smoke-add [docs : lsp_document_vec.Vec] [uri : String]) : lsp_document_vec.Vec
   (lsp-documents-set docs uri uri uri uri))
 
-(define (lsp-documents-smoke-missing? [docs : LspDocuments] [uri : String]) : bool
+(define (lsp-documents-smoke-missing?
+  [docs : lsp_document_vec.Vec]
+  [uri : String]) : bool
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ _ _) false]
     [(LspDocumentLookup.Missing) true]))
 
 (define (lsp-documents-smoke-text-eq?
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [expected-text : String]) : bool
   (match (lsp-documents-lookup docs uri)
@@ -873,7 +881,7 @@
     [(LspDocumentLookup.Missing) false]))
 
 (define (lsp-documents-smoke-check-cache-ok?
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]) : bool
   (let
     [idx : i64 (lsp-documents-find-index docs uri)]
@@ -881,13 +889,13 @@
       false
       (let
         [doc : LspDocument
-          (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
         (match (struct-get doc check-cache)
           [(LspCheckCacheOk) true]
           [_ false])))))
 
 (define (lsp-documents-smoke-check-cache-invalid?
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]) : bool
   (let
     [idx : i64 (lsp-documents-find-index docs uri)]
@@ -895,7 +903,7 @@
       false
       (let
         [doc : LspDocument
-          (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+          (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
         (match (struct-get doc check-cache)
           [(LspCheckCacheInvalid) true]
           [_ false])))))
@@ -903,24 +911,28 @@
 (define (lsp-documents-check-cache-smoke-ok?) : bool
   (let
     [uri : String "file:///cached.tl"]
-    [docs : LspDocuments (lsp-documents-new)]
+    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
       (set! docs (lsp-documents-set docs uri "cached.tl" "same" ""))
       (set! docs (lsp-documents-set-check-cache docs uri LspCheckCacheOk))
       (let
-        [preserved-docs : LspDocuments
+        [preserved-docs : lsp_document_vec.Vec
           (lsp-documents-set docs uri "cached.tl" "same" "")]
         (if (not (lsp-documents-smoke-check-cache-ok? preserved-docs uri))
           false
           (let
-            [invalidated-docs : LspDocuments
+            [invalidated-docs : lsp_document_vec.Vec
               (lsp-documents-set docs uri "cached.tl" "changed" "")]
             (lsp-documents-smoke-check-cache-invalid? invalidated-docs uri)))))))
 
 (define (lsp-documents-cache-bound-smoke-ok?) : bool
   (let
-    [docs : LspDocuments (lsp-documents-new)]
+    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
+    [empty-docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
+      ;; Dropping an empty canonical vector is a no-op; removing below covers
+      ;; the non-empty direct-len path after shift-left mutation.
+      (lsp-documents-drop-last! (&mut empty-docs))
       (set! docs (lsp-documents-smoke-add docs "file:///doc00.tl"))
       (set! docs (lsp-documents-smoke-add docs "file:///doc01.tl"))
       (set! docs (lsp-documents-smoke-add docs "file:///doc02.tl"))
@@ -947,7 +959,7 @@
           "diag10"))
       (set! docs (lsp-documents-smoke-add docs "file:///doc16.tl"))
       (and
-        (= (lsp-documents-len (& docs)) lsp-documents-max-capacity)
+        (= (lsp_document_vec.len (& docs)) lsp-documents-max-capacity)
         (lsp-documents-smoke-missing? docs "file:///doc00.tl")
         (lsp-documents-smoke-text-eq?
           docs
@@ -957,7 +969,20 @@
         (lsp-documents-smoke-text-eq?
           docs
           "file:///doc16.tl"
-          "file:///doc16.tl")))))
+          "file:///doc16.tl")
+        (= (lsp_document_vec.len (& empty-docs)) 0)
+        (let
+          [trimmed : lsp_document_vec.Vec
+            (lsp-documents-remove docs "file:///doc08.tl")]
+          [shifted : LspDocument
+            (lsp_document_vec.get (& trimmed) 7 (lsp-document-fallback))]
+          [last : LspDocument
+            (lsp_document_vec.get (& trimmed) 14 (lsp-document-fallback))]
+          (and
+            (= (lsp_document_vec.len (& trimmed)) 15)
+            (lsp-documents-smoke-missing? trimmed "file:///doc08.tl")
+            (string.eq (struct-get shifted uri) "file:///doc09.tl")
+            (string.eq (struct-get last uri) "file:///doc16.tl")))))))
 
 (define (lsp-hex-value [c : char]) : i64
   (let
@@ -1361,7 +1386,7 @@
     (lsp-json-list-cons (lsp-diagnostic 1 1 message "") json.JsonListNil)))
 
 (define (lsp-clear-stale-diagnostic
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [next-diagnostic-uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
@@ -1374,7 +1399,9 @@
         (lsp-publish-diagnostics old-diagnostic-uri json.JsonListNil))]
     [(LspDocumentLookup.Missing) unit]))
 
-(define (lsp-clear-close-diagnostics [docs : LspDocuments] [uri : String]) : unit
+(define (lsp-clear-close-diagnostics
+  [docs : lsp_document_vec.Vec]
+  [uri : String]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ _ old-diagnostic-uri)
       (begin
@@ -1513,7 +1540,7 @@
 
 (define (lsp-did-open
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [key : String "textDocument"]
@@ -1534,7 +1561,7 @@
                         uri
                         (struct-get analysis diagnostic-uri))
                       (let
-                        [updated-docs : LspDocuments
+                        [updated-docs : lsp_document_vec.Vec
                           (lsp-documents-set-check-cache
                             (lsp-documents-set
                               docs
@@ -1554,7 +1581,7 @@
 
 (define (lsp-did-change
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [key : String "textDocument"]
@@ -1575,7 +1602,7 @@
                           uri
                           (struct-get analysis diagnostic-uri))
                         (let
-                          [updated-docs : LspDocuments
+                          [updated-docs : lsp_document_vec.Vec
                             (lsp-documents-set-check-cache
                               (lsp-documents-set
                                 docs
@@ -1605,7 +1632,7 @@
           [(LspJsonText.Missing) (LspHandleResult.Continue docs)])]
       [(json.JsonMissing) (LspHandleResult.Continue docs)])))
 
-(define (lsp-did-close [params : json.Json] [docs : LspDocuments]) : LspHandleResult
+(define (lsp-did-close [params : json.Json] [docs : lsp_document_vec.Vec]) : LspHandleResult
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -1994,15 +2021,15 @@
       (string.string-length needle))))
 
 (define (lsp-find-definition-in-docs
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [current-uri : String]
   [needle : String]
   [idx : i64]) : LspDefLocation
-  (if (>= idx (lsp-documents-len (& docs)))
+  (if (>= idx (lsp_document_vec.len (& docs)))
     LspDefLocation.Missing
     (let
       [doc : LspDocument
-        (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+        (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
       (if (string.eq (struct-get doc uri) current-uri)
         (lsp-find-definition-in-docs docs current-uri needle (+ idx 1))
         (let
@@ -2393,7 +2420,7 @@
 ;; Resolve `needle`: current document, then any other open document, then the
 ;; modules transitively reachable from this document.
 (define (lsp-find-definition
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [current-uri : String]
   [current-path : String]
   [current-text : String]
@@ -2478,7 +2505,7 @@
   [id : json.Json]
   [uri : String]
   [position : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
@@ -2520,7 +2547,7 @@
 (define (lsp-handle-definition
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
@@ -2546,7 +2573,7 @@
     (if (not (string.eq sym "foo"))
       false
       (match (lsp-find-definition
-        (lsp-documents-new)
+        (lsp_document_vec.new)
         "file:///smoke.tl"
         "smoke.tl"
         src
@@ -2561,7 +2588,7 @@
     [src : String
       "(define greeting : String \"(define decoy 1)\")\n(define (use) : i64 0)\n"]
     (match (lsp-find-definition
-      (lsp-documents-new)
+      (lsp_document_vec.new)
       "file:///smoke.tl"
       "smoke.tl"
       src
@@ -2575,7 +2602,7 @@
     [src : String
       "(define (quote-char) : char '\"')\n(define (apostrophe-quote-char) : char '\"')\n(define (target) : i64 1)\n(define (use) : i64 (target))\n"]
     (match (lsp-find-definition
-      (lsp-documents-new)
+      (lsp_document_vec.new)
       "file:///smoke.tl"
       "smoke.tl"
       src
@@ -2749,21 +2776,21 @@
       out)))
 
 (define (lsp-collect-def-names-all
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [idx : i64]
   [acc : lsp_svec.Vec]) : lsp_svec.Vec
-  (if (>= idx (lsp-documents-len (& docs)))
+  (if (>= idx (lsp_document_vec.len (& docs)))
     acc
     (lsp-collect-def-names-all
       docs
       (+ idx 1)
       (lsp-collect-def-names
         (struct-get
-          (lsp-documents-get (& docs) idx (lsp-document-fallback))
+          (lsp_document_vec.get (& docs) idx (lsp-document-fallback))
           text)
         acc))))
 
-(define (lsp-completion-respond [id : json.Json] [docs : LspDocuments]) : unit
+(define (lsp-completion-respond [id : json.Json] [docs : lsp_document_vec.Vec]) : unit
   (let
     [names : lsp_svec.Vec (lsp-collect-def-names-all docs 0 (lsp_svec.new))]
     [items : json.JsonList
@@ -2876,7 +2903,7 @@
   [id : json.Json]
   [uri : String]
   [range : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
@@ -2899,7 +2926,7 @@
 (define (lsp-handle-inlay
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
@@ -2942,7 +2969,7 @@
 (define (lsp-formatting-respond
   [id : json.Json]
   [uri : String]
-  [docs : LspDocuments]) : unit
+  [docs : lsp_document_vec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found _ text _)
       (match (format-rules-render-source-width-result text 80)
@@ -2966,7 +2993,7 @@
 (define (lsp-handle-formatting
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : unit
+  [docs : lsp_document_vec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
     (match (json.object-get params (& td-key))
@@ -3305,15 +3332,15 @@
       found)))
 
 (define (lsp-hover-resolve-in-docs
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [current-uri : String]
   [needle : String]
   [idx : i64]) : LspDefSource
-  (if (>= idx (lsp-documents-len (& docs)))
+  (if (>= idx (lsp_document_vec.len (& docs)))
     LspDefSource.Missing
     (let
       [doc : LspDocument
-        (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+        (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
       (if (string.eq (struct-get doc uri) current-uri)
         (lsp-hover-resolve-in-docs docs current-uri needle (+ idx 1))
         (let
@@ -3337,7 +3364,7 @@
         (lsp-hover-resolve-in-modules set needle (+ idx 1))))))
 
 (define (lsp-hover-resolve
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [current-uri : String]
   [current-path : String]
   [current-text : String]
@@ -3587,15 +3614,15 @@
         LspVariantHit.Missing))))
 
 (define (lsp-resolve-variant-in-docs
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [current-uri : String]
   [needle : String]
   [idx : i64]) : LspVariantHit
-  (if (>= idx (lsp-documents-len (& docs)))
+  (if (>= idx (lsp_document_vec.len (& docs)))
     LspVariantHit.Missing
     (let
       [doc : LspDocument
-        (lsp-documents-get (& docs) idx (lsp-document-fallback))]
+        (lsp_document_vec.get (& docs) idx (lsp-document-fallback))]
       (if (string.eq (struct-get doc uri) current-uri)
         (lsp-resolve-variant-in-docs docs current-uri needle (+ idx 1))
         (match (lsp-enum-of-variant (struct-get doc text) needle)
@@ -3621,7 +3648,7 @@
 ;; Find the enum/variant in the current document, other open documents, then
 ;; imported modules (same reach as go-to-definition).
 (define (lsp-resolve-variant
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [current-uri : String]
   [current-path : String]
   [current-text : String]
@@ -3851,7 +3878,7 @@
   [id : json.Json]
   [uri : String]
   [position : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
@@ -3941,7 +3968,7 @@
 (define (lsp-handle-hover
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
@@ -4028,7 +4055,7 @@
 (define (lsp-document-link-respond
   [id : json.Json]
   [uri : String]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (match (lsp-documents-lookup docs uri)
     [(LspDocumentLookup.Found path text _)
@@ -4041,7 +4068,7 @@
 (define (lsp-handle-document-link
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : unit
   (let
     [td-key : String "textDocument"]
@@ -4107,12 +4134,12 @@
               13)]
           [else 13])))))
 
-(define (lsp-scan-decls [text : String]) : LspDeclList
+(define (lsp-scan-decls [text : String]) : lsp_decl_vec.Vec
   (let
     [n : i64 (string.string-length text)]
     [i : i64 0]
     [depth : i64 0]
-    [result : LspDeclList (lsp-decl-list-with-capacity 16)]
+    [result : lsp_decl_vec.Vec (lsp_decl_vec.with-capacity 16)]
     [lc-cache : LspLineColCache (LspLineColCache -1 1 1)]
     (begin
       (while (< i n)
@@ -4140,7 +4167,7 @@
                           (lsp-line-col-cache-at-offset! lc-cache text name-off)]
                         [form-end-lc : LspLineCol
                           (lsp-line-col-cache-at-offset! lc-cache text form-end)]
-                        (lsp-decl-list-push
+                        (lsp_decl_vec.push
                           (&mut result)
                           (LspDeclEntry
                             kind
@@ -4164,7 +4191,7 @@
       result)))
 
 ;; Helper: extract document from params
-(define (lsp-get-document [params : json.Json] [docs : LspDocuments]) : LspDocumentLookup
+(define (lsp-get-document [params : json.Json] [docs : lsp_document_vec.Vec]) : LspDocumentLookup
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -4174,7 +4201,9 @@
           [(LspJsonText.Missing) LspDocumentLookup.Missing])]
       [(json.JsonMissing) LspDocumentLookup.Missing])))
 
-(define (lsp-get-document-decls [params : json.Json] [docs : LspDocuments]) : LspDocumentDeclsLookup
+(define (lsp-get-document-decls
+  [params : json.Json]
+  [docs : lsp_document_vec.Vec]) : LspDocumentDeclsLookup
   (let
     [key : String "textDocument"]
     (match (json.object-get params (& key))
@@ -4198,16 +4227,16 @@
 ;; Helper: get cached decls or scan and cache them
 (define (lsp-document-decls-cache-on-current-arena
   [doc : LspDocument]
-  [docs : LspDocuments]) : LspDeclList
+  [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
   (let
     [text : String (struct-get doc text)]
     [uri : String (struct-get doc uri)]
-    [scanned : LspDeclList (lsp-scan-decls text)]
+    [scanned : lsp_decl_vec.Vec (lsp-scan-decls text)]
     [idx : i64 (lsp-documents-find-index docs uri)]
     (begin
       (if (>= idx 0)
         (begin
-          (lsp-documents-set!
+          (lsp_document_vec.set
             (&mut docs)
             idx
             (LspDocument
@@ -4222,9 +4251,9 @@
         unit)
       scanned)))
 
-(define (lsp-document-decls [doc : LspDocument] [docs : LspDocuments]) : LspDeclList
+(define (lsp-document-decls [doc : LspDocument] [docs : lsp_document_vec.Vec]) : lsp_decl_vec.Vec
   (let
-    [cached : LspDeclList (struct-get doc decls)]
+    [cached : lsp_decl_vec.Vec (struct-get doc decls)]
     (if (struct-get doc decls-valid)
       cached
       (let
@@ -4235,7 +4264,7 @@
               (arena.tl_arena_set lsp-document-cache-arena))
             unit)
           (let
-            [scanned : LspDeclList
+            [scanned : lsp_decl_vec.Vec
               (lsp-document-decls-cache-on-current-arena doc docs)]
             (begin
               (if (> lsp-document-cache-arena 0)
@@ -4244,25 +4273,25 @@
                 unit)
               scanned)))))))
 
-;; Helper: build json.Json array of declaration names from LspDeclList
-(define (lsp-decls-to-name-list [decls : LspDeclList] [idx : i64]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len (& decls)))
+;; Helper: build a json.Json array of names from the canonical declaration vector.
+(define (lsp-decls-to-name-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonList
+  (if (>= idx (lsp_decl_vec.len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       [name : String (struct-get entry name)]
       (lsp-json-list-cons
         (json.JsonString name)
         (lsp-decls-to-name-list decls (+ idx 1))))))
 
 ;; Helper: build json.Json array of all declarations with metadata
-(define (lsp-decls-to-json-list [decls : LspDeclList] [idx : i64]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len (& decls)))
+(define (lsp-decls-to-json-list [decls : lsp_decl_vec.Vec] [idx : i64]) : json.JsonList
+  (if (>= idx (lsp_decl_vec.len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       [obj : json.Json
         (lsp-json-object
           (lsp-json-member
@@ -4303,17 +4332,19 @@
     "selectionRange"
     (lsp-decl-selection-range-json entry)))
 
-(define (lsp-decls-to-document-symbol-list [decls : LspDeclList] [idx : i64]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len (& decls)))
+(define (lsp-decls-to-document-symbol-list
+  [decls : lsp_decl_vec.Vec]
+  [idx : i64]) : json.JsonList
+  (if (>= idx (lsp_decl_vec.len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       (lsp-json-list-cons
         (lsp-decl-document-symbol-json entry)
         (lsp-decls-to-document-symbol-list decls (+ idx 1))))))
 
-(define (lsp-document-symbols-json [decls : LspDeclList]) : json.Json
+(define (lsp-document-symbols-json [decls : lsp_decl_vec.Vec]) : json.Json
   (lsp-json-array (lsp-decls-to-document-symbol-list decls 0)))
 
 (define (lsp-document-symbols-for-text [text : String]) : json.Json
@@ -4322,19 +4353,21 @@
 (define (lsp-handle-document-symbol
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : unit
+  [docs : lsp_document_vec.Vec]) : unit
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found _ _ _ decls)
       (lsp-write-response id (lsp-document-symbols-json decls))]
     [(LspDocumentDeclsLookup.Missing)
       (lsp-write-response id (lsp-json-array json.JsonListNil))]))
 
-(define (lsp-decls-to-position-map-members [decls : LspDeclList] [idx : i64]) : json.JsonMemberList
-  (if (>= idx (lsp-decl-list-len (& decls)))
+(define (lsp-decls-to-position-map-members
+  [decls : lsp_decl_vec.Vec]
+  [idx : i64]) : json.JsonMemberList
+  (if (>= idx (lsp_decl_vec.len (& decls)))
     json.JsonMemberListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       (lsp-json-member
         (struct-get entry name)
         (lsp-position (struct-get entry name-line) (struct-get entry name-col))
@@ -4398,17 +4431,17 @@
                   json.JsonMemberListNil)))))))))
 
 (define (lsp-decls-to-find-list
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [idx : i64]
   [exact-name : String]
   [contains-filter : String]
   [prefix : String]
   [kind : String]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len (& decls)))
+  (if (>= idx (lsp_decl_vec.len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       [rest : json.JsonList
         (lsp-decls-to-find-list
           decls
@@ -4458,7 +4491,7 @@
 (define (lsp-handle-tl-list-functions
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
@@ -4475,7 +4508,7 @@
 (define (lsp-handle-tl-ast-dump
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
@@ -4493,7 +4526,7 @@
 (define (lsp-handle-tl-find
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
@@ -4528,7 +4561,7 @@
 (define (lsp-handle-tl-find-position
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -4537,7 +4570,7 @@
             [kind-param : String
               (lsp-json-string-field-default params "kind" "")]
             [i : i64 0]
-            [n : i64 (lsp-decl-list-len (& decls))]
+            [n : i64 (lsp_decl_vec.len (& decls))]
             [found : bool false]
             [result-line : i64 0]
             [result-col : i64 0]
@@ -4545,7 +4578,7 @@
               (while (and (< i n) (not found))
                 (let
                   [entry : LspDeclEntry
-                    (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+                    (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
                   (if (and
                     (string.eq (struct-get entry name) name)
                     (or
@@ -4640,7 +4673,7 @@
 
 (define (lsp-decl-index-at-position
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]) : i64
   (if (or (< line 0) (< col 0))
@@ -4651,13 +4684,13 @@
         -1
         (let
           [i : i64 0]
-          [n : i64 (lsp-decl-list-len (& decls))]
+          [n : i64 (lsp_decl_vec.len (& decls))]
           [found : i64 -1]
           (begin
             (while (and (< i n) (= found -1))
               (let
                 [entry : LspDeclEntry
-                  (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+                  (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
                 (if (lsp-decl-entry-contains-offset? text entry offset)
                   (set! found i)
                   (set! i (+ i 1)))))
@@ -4667,7 +4700,7 @@
 (define (lsp-structural-name-from-position-with-decls
   [params : json.Json]
   [text : String]
-  [decls : LspDeclList]) : String
+  [decls : lsp_decl_vec.Vec]) : String
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -4679,7 +4712,7 @@
           (if (= idx -1)
             ""
             (struct-get
-              (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))
+              (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
               name)))]
       [(json.JsonMissing) ""])))
 
@@ -4693,7 +4726,7 @@
 (define (lsp-structural-move-name-with-decls
   [params : json.Json]
   [text : String]
-  [decls : LspDeclList]) : String
+  [decls : lsp_decl_vec.Vec]) : String
   (match (lsp-json-string-field params "name")
     [(LspJsonText.Ok name)
       (if (= (string.string-length name) 0)
@@ -4705,16 +4738,16 @@
 (define (lsp-structural-move-name [params : json.Json] [text : String]) : String
   (lsp-structural-move-name-with-decls params text (lsp-scan-decls text)))
 
-(define (lsp-decl-list-find-name [decls : LspDeclList] [name : String]) : i64
+(define (lsp-decl-list-find-name [decls : lsp_decl_vec.Vec] [name : String]) : i64
   (let
     [i : i64 0]
-    [n : i64 (lsp-decl-list-len (& decls))]
+    [n : i64 (lsp_decl_vec.len (& decls))]
     [found : i64 -1]
     (begin
       (while (and (< i n) (= found -1))
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
           (if (string.eq (struct-get entry name) name)
             (set! found i)
             (set! i (+ i 1)))))
@@ -4754,18 +4787,18 @@
 
 (define (lsp-nearest-decl-index
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [offset : i64]) : i64
   (let
     [i : i64 0]
-    [n : i64 (lsp-decl-list-len (& decls))]
+    [n : i64 (lsp_decl_vec.len (& decls))]
     [best : i64 -1]
     [best-distance : i64 (+ (string.string-length text) 1)]
     (begin
       (while (< i n)
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
           [start : i64 (lsp-offset-from-entry-start text entry)]
           [end : i64 (lsp-offset-from-entry-end text entry)]
           [distance : i64 (lsp-decl-range-distance offset start end)]
@@ -4791,7 +4824,7 @@
 
 (define (lsp-position-context-json [text : String] [line : i64] [col : i64]) : json.Json
   (let
-    [decls : LspDeclList (lsp-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text)]
     [offset : i64
       (if (or (< line 0) (< col 0))
         -1
@@ -4806,10 +4839,7 @@
       (if (>= nearest-index 0)
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get
-              (& decls)
-              nearest-index
-              (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) nearest-index (lsp-decl-entry-fallback))]
           (begin
             (set! nearest-line (- (struct-get entry form-start-line) 1))
             (set! nearest-col (- (struct-get entry form-start-col) 1))
@@ -4884,14 +4914,14 @@
   32)
 
 (define (lsp-decls-to-name-list-capped
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [idx : i64]
   [remaining : i64]) : json.JsonList
-  (if (or (>= idx (lsp-decl-list-len (& decls))) (<= remaining 0))
+  (if (or (>= idx (lsp_decl_vec.len (& decls))) (<= remaining 0))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       [name : String (struct-get entry name)]
       (lsp-json-list-cons
         (json.JsonString name)
@@ -4923,14 +4953,14 @@
       (>= (lsp-common-prefix-len needle name) 2))))
 
 (define (lsp-decls-to-similar-name-list
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [idx : i64]
   [needle : String]) : json.JsonList
-  (if (>= idx (lsp-decl-list-len (& decls)))
+  (if (>= idx (lsp_decl_vec.len (& decls)))
     json.JsonListNil
     (let
       [entry : LspDeclEntry
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
       [name : String (struct-get entry name)]
       [rest : json.JsonList
         (lsp-decls-to-similar-name-list decls (+ idx 1) needle)]
@@ -4938,9 +4968,11 @@
         (lsp-json-list-cons (json.JsonString name) rest)
         rest))))
 
-(define (lsp-declaration-context-json [decls : LspDeclList] [name : String]) : json.Json
+(define (lsp-declaration-context-json
+  [decls : lsp_decl_vec.Vec]
+  [name : String]) : json.Json
   (let
-    [all-name-count : i64 (lsp-decl-list-len (& decls))]
+    [all-name-count : i64 (lsp_decl_vec.len (& decls))]
     (lsp-json-object
       (lsp-json-member
         "requestedName"
@@ -4977,7 +5009,7 @@
 
 (define (lsp-write-declaration-context-error
   [id : json.Json]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [name : String]
   [message : String]) : unit
   (lsp-write-error-with-context
@@ -4988,7 +5020,7 @@
 
 (define (lsp-write-declaration-not-found-error
   [id : json.Json]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [name : String]) : unit
   (lsp-write-declaration-context-error
     id
@@ -5018,7 +5050,7 @@
     (string.copy (& text))))
 
 (define (lsp-tl-save-doc
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
   [diagnostic-uri : String]
@@ -5047,7 +5079,7 @@
 
 (define (lsp-tl-save-known-and-continue
   [id : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
   [diagnostic-uri : String]
@@ -5073,7 +5105,7 @@
 (define (lsp-tl-save-and-continue
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [formatted : String]) : LspHandleResult
   (match (lsp-tl-request-uri params)
     [(LspJsonText.Ok uri)
@@ -5102,7 +5134,7 @@
 (define (lsp-write-structural-edit-success
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [result : String]) : LspHandleResult
   (let
     [formatted : String (lsp-format-edit-text result)]
@@ -5111,7 +5143,7 @@
 (define (lsp-write-position-context-error-from-params
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [base-message : String]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found _ text _)
@@ -5137,7 +5169,7 @@
 (define (lsp-write-declaration-context-error-from-params
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found _ text _ decls)
       (let
@@ -5153,7 +5185,7 @@
 (define (lsp-write-contextual-edit-error
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [message : String]) : LspHandleResult
   (cond
     [(string.eq message "No form found at position")
@@ -5168,7 +5200,7 @@
 (define (lsp-write-structural-edit-result
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [result : LspEditResult]) : LspHandleResult
   (match result
     [(LspEditResult.Ok replaced)
@@ -5179,7 +5211,7 @@
 (define (lsp-write-read-form-success
   [id : json.Json]
   [form-text : String]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (begin
     (lsp-write-response
       id
@@ -5194,7 +5226,7 @@
   [id : json.Json]
   [params : json.Json]
   [result : LspStringResult]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match result
     [(LspStringResult.Ok form-text)
       (lsp-write-read-form-success id form-text docs)]
@@ -5204,7 +5236,7 @@
 (define (lsp-write-missing-structural-name-error
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (let
     [pos-key : String "position"]
     (match (json.object-get params (& pos-key))
@@ -5222,9 +5254,9 @@
 (define (lsp-structural-move-after-destination
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [name : String]
   [destination : String]) : LspHandleResult
   (match (lsp-structural-move-after-destination-text
@@ -5256,9 +5288,9 @@
 (define (lsp-structural-move-direction
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [name : String]
   [direction : String]) : LspHandleResult
   (match (lsp-structural-move-direction-text text decls name direction)
@@ -5277,7 +5309,7 @@
 (define (lsp-handle-tl-structural-move
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (let
@@ -5323,20 +5355,20 @@
 (define (lsp-handle-tl-expand-macro
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
         [(LspJsonText.Ok name)
           (let
             [i : i64 0]
-            [n : i64 (lsp-decl-list-len (& decls))]
+            [n : i64 (lsp_decl_vec.len (& decls))]
             [found-idx : i64 -1]
             (begin
               (while (and (< i n) (= found-idx -1))
                 (let
                   [entry : LspDeclEntry
-                    (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+                    (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
                   (if (string.eq (struct-get entry name) name)
                     (set! found-idx i)
                     (set! i (+ i 1)))))
@@ -5346,7 +5378,7 @@
                   (LspHandleResult.Continue docs))
                 (let
                   [entry : LspDeclEntry
-                    (lsp-decl-list-get
+                    (lsp_decl_vec.get
                       (& decls)
                       found-idx
                       (lsp-decl-entry-fallback))]
@@ -5458,7 +5490,7 @@
   [uri : String]
   [path : String]
   [text : String]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [check-cache : LspCheckCache LspCheckCacheInvalid]
@@ -5473,7 +5505,7 @@
 (define (lsp-handle-tl-check
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [uri : String
@@ -5497,7 +5529,7 @@
         (if (>= doc-index 0)
           (let
             [doc : LspDocument
-              (lsp-documents-get (& docs) doc-index (lsp-document-fallback))]
+              (lsp_document_vec.get (& docs) doc-index (lsp-document-fallback))]
             [check-cache : LspCheckCache (struct-get doc check-cache)]
             (if (lsp-check-cache-valid? check-cache)
               (begin
@@ -5569,7 +5601,7 @@
 (define (lsp-handle-tl-get-type-at
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
@@ -5674,7 +5706,7 @@
 (define (lsp-handle-tl-find-references
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found _ text _)
       (let
@@ -5731,16 +5763,16 @@
         (= (string.string-ref entry (- entry-len 2)) 't')
         (= (string.string-ref entry (- entry-len 1)) 'l')))))
 
-(define (lsp-decls-contain-name? [decls : LspDeclList] [needle : String]) : bool
+(define (lsp-decls-contain-name? [decls : lsp_decl_vec.Vec] [needle : String]) : bool
   (let
-    [n : i64 (lsp-decl-list-len (& decls))]
+    [n : i64 (lsp_decl_vec.len (& decls))]
     [i : i64 0]
     [found : bool false]
     (begin
       (while (and (< i n) (not found))
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
           (if (string.eq (struct-get entry name) needle)
             (set! found true)
             (set! i (+ i 1)))))
@@ -5750,7 +5782,7 @@
 (define (lsp-handle-tl-project-search
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-json-string-field params "name")
     [(LspJsonText.Ok name)
       (if (string.eq name "")
@@ -5852,7 +5884,7 @@
 (define (lsp-handle-tl-eval-at-point
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -5881,7 +5913,7 @@
 (define (lsp-handle-tl-signature-help
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -5910,7 +5942,7 @@
 (define (lsp-handle-tl-append-function
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -5925,14 +5957,14 @@
                   (lsp-validate-forms-error new-text)))
               (LspHandleResult.Continue docs))
             (let
-              [n : i64 (lsp-decl-list-len (& decls))]
+              [n : i64 (lsp_decl_vec.len (& decls))]
               [result : String ""]
               (begin
                 (if (= n 0)
                   (set! result (lsp-str3 text "\n\n" new-text))
                   (let
                     [last-entry : LspDeclEntry
-                      (lsp-decl-list-get
+                      (lsp_decl_vec.get
                         (& decls)
                         (- n 1)
                         (lsp-decl-entry-fallback))]
@@ -5958,7 +5990,7 @@
 ;; Main LSP request dispatch
 (define (lsp-handle-message
   [message : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (match (lsp-json-string-field message "method")
     [(LspJsonText.Ok method)
@@ -6230,7 +6262,7 @@
   [message : json.Json]
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (cond
     [(string.eq method "tl/astDump") (lsp-handle-tl-ast-dump id params docs)]
@@ -6293,7 +6325,7 @@
 (define (lsp-handle-tool-message!
   [method : String]
   [message : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [stdlib-roots : lsp_svec.Vec]) : LspHandleResult
   (let
     [id-key : String "id"]
@@ -6371,7 +6403,7 @@
   (let
     [done : bool false]
     [status : i64 0]
-    [docs : LspDocuments (lsp-documents-new)]
+    [docs : lsp_document_vec.Vec (lsp_document_vec.new)]
     (begin
       (lsp-frame-session-cache-enable!)
       (while (not done)
@@ -6486,7 +6518,7 @@
 (define (lsp-handle-tl-rename
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -6534,7 +6566,7 @@
 (define (lsp-handle-tl-replace-pattern
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -6551,14 +6583,14 @@
                   [(LspJsonText.Ok new-pattern)
                     (let
                       [i : i64 0]
-                      [n : i64 (lsp-decl-list-len (& decls))]
+                      [n : i64 (lsp_decl_vec.len (& decls))]
                       [found : bool false]
                       [result : String ""]
                       (begin
                         (while (and (< i n) (not found))
                           (let
                             [entry : LspDeclEntry
-                              (lsp-decl-list-get
+                              (lsp_decl_vec.get
                                 (& decls)
                                 i
                                 (lsp-decl-entry-fallback))]
@@ -6704,10 +6736,10 @@
   [text : String]
   [name : String]
   [new-body : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (let
     [i : i64 0]
-    [n : i64 (lsp-decl-list-len (& decls))]
+    [n : i64 (lsp_decl_vec.len (& decls))]
     [found : bool false]
     [result : String ""]
     [err : String ""]
@@ -6715,7 +6747,7 @@
       (while (and (< i n) (not found))
         (let
           [entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
           (if (string.eq (struct-get entry name) name)
             (begin
               (set! found true)
@@ -6789,7 +6821,7 @@
   [new-body : String]) : LspEditResult
   (let
     [text-copy : String (string.copy (& text))]
-    [decls : LspDeclList (lsp-scan-decls text-copy)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text-copy)]
     (lsp-replace-body-text-with-decls text name new-body decls)))
 
 (define (lsp-replace-pattern-text-with-decls
@@ -6797,12 +6829,12 @@
   [name : String]
   [old-pattern : String]
   [new-pattern : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (if (string.eq old-pattern "")
     (LspEditResult.Err "oldPattern cannot be empty")
     (let
       [i : i64 0]
-      [n : i64 (lsp-decl-list-len (& decls))]
+      [n : i64 (lsp_decl_vec.len (& decls))]
       [found : bool false]
       [result : String ""]
       [err : String ""]
@@ -6810,7 +6842,7 @@
         (while (and (< i n) (not found))
           (let
             [entry : LspDeclEntry
-              (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+              (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
             (if (string.eq (struct-get entry name) name)
               (begin
                 (set! found true)
@@ -6895,7 +6927,7 @@
   [new-pattern : String]) : LspEditResult
   (let
     [text-copy : String (string.copy (& text))]
-    [decls : LspDeclList (lsp-scan-decls text-copy)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text-copy)]
     (lsp-replace-pattern-text-with-decls
       text
       name
@@ -6907,7 +6939,7 @@
   [text : String]
   [name : String]
   [new-text : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (if (not (lsp-text-is-valid-forms new-text))
     (LspEditResult.Err
       (lsp-str2
@@ -6915,14 +6947,14 @@
         (lsp-validate-forms-error new-text)))
     (let
       [i : i64 0]
-      [n : i64 (lsp-decl-list-len (& decls))]
+      [n : i64 (lsp_decl_vec.len (& decls))]
       [found : bool false]
       [result : String ""]
       (begin
         (while (and (< i n) (not found))
           (let
             [entry : LspDeclEntry
-              (lsp-decl-list-get (& decls) i (lsp-decl-entry-fallback))]
+              (lsp_decl_vec.get (& decls) i (lsp-decl-entry-fallback))]
             (if (string.eq (struct-get entry name) name)
               (begin
                 (set!
@@ -6949,7 +6981,7 @@
   [new-text : String]) : LspEditResult
   (let
     [text-copy : String (string.copy (& text))]
-    [decls : LspDeclList (lsp-scan-decls text-copy)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text-copy)]
     (lsp-structural-replace-text-with-decls text name new-text decls)))
 
 ;; tl/patch - Find and replace text anywhere in the file, then validate
@@ -6997,7 +7029,7 @@
 (define (lsp-handle-tl-patch
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (match (lsp-json-string-field params "oldText")
@@ -7100,7 +7132,7 @@
   (let
     [text : String
       "(define (n00) : i64 0)\n(define (n01) : i64 1)\n(define (n02) : i64 2)\n(define (n03) : i64 3)\n(define (n04) : i64 4)\n(define (n05) : i64 5)\n(define (n06) : i64 6)\n(define (n07) : i64 7)\n(define (n08) : i64 8)\n(define (n09) : i64 9)\n(define (n10) : i64 10)\n(define (n11) : i64 11)\n(define (n12) : i64 12)\n(define (n13) : i64 13)\n(define (n14) : i64 14)\n(define (n15) : i64 15)\n(define (n16) : i64 16)\n(define (n17) : i64 17)\n(define (n18) : i64 18)\n(define (n19) : i64 19)\n(define (n20) : i64 20)\n(define (n21) : i64 21)\n(define (n22) : i64 22)\n(define (n23) : i64 23)\n(define (n24) : i64 24)\n(define (n25) : i64 25)\n(define (n26) : i64 26)\n(define (n27) : i64 27)\n(define (n28) : i64 28)\n(define (n29) : i64 29)\n(define (n30) : i64 30)\n(define (n31) : i64 31)\n(define (n32) : i64 32)\n(define (n33) : i64 33)\n"]
-    [decls : LspDeclList (lsp-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text)]
     [context-text : String
       (json.stringify (lsp-declaration-context-json decls "n3x"))]
     [all-name-count-fragment : String "\"allNameCount\":34"]
@@ -7218,7 +7250,7 @@
 ;; Any position inside a top-level form selects that entire form.
 (define (lsp-replace-form-at-position-with-decls
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]
   [new-text : String]) : LspEditResult
@@ -7228,7 +7260,7 @@
       (LspEditResult.Err "No form found at position")
       (let
         [entry : LspDeclEntry
-          (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
@@ -7249,7 +7281,7 @@
 
 (define (lsp-replace-form-at-position-from-params-with-decls
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [params : json.Json]
   [new-text : String]) : LspEditResult
   (let
@@ -7277,7 +7309,7 @@
 (define (lsp-handle-tl-structural-replace-at-position
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -7304,7 +7336,7 @@
 (define (lsp-handle-tl-structural-replace-at
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -7438,14 +7470,14 @@
 (define (lsp-read-form-by-name-with-decls
   [text : String]
   [name : String]
-  [decls : LspDeclList]) : LspStringResult
+  [decls : lsp_decl_vec.Vec]) : LspStringResult
   (let
     [idx : i64 (lsp-decl-list-find-name decls name)]
     (if (= idx -1)
       (LspStringResult.Err "Declaration not found")
       (lsp-form-text-by-entry
         text
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))))))
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))))))
 
 (define (lsp-json-has-field? [value : json.Json] [key : String]) : bool
   (match (json.object-get value (& key))
@@ -7740,7 +7772,7 @@
 
 (define (lsp-lookup-form-path
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [path : json.JsonList]) : LspPathLookup
   (match path
     [(json.JsonListNil) (LspPathLookup.Err "path must not be empty")]
@@ -7753,7 +7785,7 @@
               (LspPathLookup.Err "Declaration not found")
               (let
                 [entry : LspDeclEntry
-                  (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+                  (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
                 [start : i64 (lsp-offset-from-entry-start text entry)]
                 [end : i64 (lsp-offset-from-entry-end text entry)]
                 (if (or
@@ -7771,7 +7803,7 @@
   [text : String]
   [path : json.JsonList]
   [new-text : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (if (not (lsp-text-is-valid-forms new-text))
     (LspEditResult.Err
       (lsp-str2
@@ -7792,7 +7824,7 @@
   [text : String]
   [path : json.JsonList]
   [new-body : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (let
     [single-name : String (lsp-json-path-single-name path)]
     (if (> (string.string-length single-name) 0)
@@ -7836,7 +7868,7 @@
 (define (lsp-handle-tl-list-nested
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document params docs)
     [(LspDocumentLookup.Found path text _)
       (let
@@ -7888,7 +7920,7 @@
 (define (lsp-handle-tl-find-path
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-path-field params)
@@ -7915,7 +7947,7 @@
 
 (define (lsp-delete-form-at-position-with-decls
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]) : LspEditResult
   (let
@@ -7924,7 +7956,7 @@
       (LspEditResult.Err "No form found at position")
       (let
         [entry : LspDeclEntry
-          (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
@@ -7936,7 +7968,7 @@
 
 (define (lsp-delete-form-at-position-from-params-with-decls
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [params : json.Json]) : LspEditResult
   (let
     [pos-key : String "position"]
@@ -7960,14 +7992,14 @@
 (define (lsp-delete-form-by-name-with-decls
   [text : String]
   [name : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (let
     [idx : i64 (lsp-decl-list-find-name decls name)]
     (if (= idx -1)
       (LspEditResult.Err "Declaration not found")
       (let
         [entry : LspDeclEntry
-          (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))]
+          (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))]
         [start : i64 (lsp-offset-from-entry-start text entry)]
         [end : i64 (lsp-offset-from-entry-end text entry)]
         (if (or (< start 0) (<= end start) (> end (string.string-length text)))
@@ -7993,7 +8025,7 @@
 
 (define (lsp-insert-after-position-with-decls
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [line : i64]
   [col : i64]
   [new-text : String]) : LspEditResult
@@ -8003,7 +8035,7 @@
       (LspEditResult.Err "No form found at position")
       (lsp-insert-after-entry
         text
-        (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))
+        (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
         new-text))))
 
 (define (lsp-insert-after-position
@@ -8020,7 +8052,7 @@
 
 (define (lsp-insert-after-position-from-params-with-decls
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [params : json.Json]
   [new-text : String]) : LspEditResult
   (let
@@ -8048,7 +8080,7 @@
   [text : String]
   [params : json.Json]
   [new-text : String]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (if (not (lsp-text-is-valid-forms new-text))
     (LspEditResult.Err
       (lsp-str2
@@ -8068,7 +8100,7 @@
               (LspEditResult.Err "Declaration not found")
               (lsp-insert-after-entry
                 text
-                (lsp-decl-list-get (& decls) idx (lsp-decl-entry-fallback))
+                (lsp_decl_vec.get (& decls) idx (lsp-decl-entry-fallback))
                 new-text))))]
       [(LspJsonText.Missing)
         (lsp-insert-after-position-from-params-with-decls
@@ -8081,7 +8113,7 @@
 (define (lsp-handle-tl-delete-at
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -8118,7 +8150,7 @@
 (define (lsp-handle-tl-insert-after
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newText")
@@ -8214,7 +8246,7 @@
 (define (lsp-handle-tl-replace-body
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "newBody")
@@ -8258,7 +8290,7 @@
 (define (lsp-handle-tl-replace-pattern-at
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "oldPattern")
@@ -8297,7 +8329,7 @@
 (define (lsp-handle-tl-read-form-at
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-get-document-decls params docs)
     [(LspDocumentDeclsLookup.Found path text _ decls)
       (match (lsp-json-string-field params "name")
@@ -8326,7 +8358,7 @@
 
 (define (lsp-structural-move-after-destination-text
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [name : String]
   [destination : String]) : LspEditResult
   (let
@@ -8340,19 +8372,19 @@
       [else
         (let
           [found-entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) found-idx (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) found-idx (lsp-decl-entry-fallback))]
           [dest-entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) dest-idx (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) dest-idx (lsp-decl-entry-fallback))]
           (LspEditResult.Ok (lsp-move-form-after text found-entry dest-entry)))])))
 
 (define (lsp-structural-move-direction-text
   [text : String]
-  [decls : LspDeclList]
+  [decls : lsp_decl_vec.Vec]
   [name : String]
   [direction : String]) : LspEditResult
   (let
     [found-idx : i64 (lsp-decl-list-find-name decls name)]
-    [n : i64 (lsp-decl-list-len (& decls))]
+    [n : i64 (lsp_decl_vec.len (& decls))]
     [target-idx : i64
       (if (string.eq direction "up")
         (- found-idx 1)
@@ -8366,9 +8398,9 @@
       [else
         (let
           [found-entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) found-idx (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) found-idx (lsp-decl-entry-fallback))]
           [target-entry : LspDeclEntry
-            (lsp-decl-list-get (& decls) target-idx (lsp-decl-entry-fallback))]
+            (lsp_decl_vec.get (& decls) target-idx (lsp-decl-entry-fallback))]
           [found-first : bool (< found-idx target-idx)]
           [first-entry : LspDeclEntry
             (if found-first
@@ -8400,7 +8432,7 @@
 (define (lsp-structural-move-text-with-decls
   [text : String]
   [params : json.Json]
-  [decls : LspDeclList]) : LspEditResult
+  [decls : lsp_decl_vec.Vec]) : LspEditResult
   (let
     [name : String (lsp-structural-move-name-with-decls params text decls)]
     (if (= (string.string-length name) 0)
@@ -8425,7 +8457,7 @@
   [text : String]) : LspEditResult
   (let
     [text-copy : String (string.copy (& text))]
-    [decls : LspDeclList (lsp-scan-decls text-copy)]
+    [decls : lsp_decl_vec.Vec (lsp-scan-decls text-copy)]
     (cond
       [(string.eq method "tl/replaceAt")
         (match (lsp-json-string-field params "newText")
@@ -8703,7 +8735,7 @@
 
 (define (lsp-batch-save-success-or-failure
   [id : json.Json]
-  [docs : LspDocuments]
+  [docs : lsp_document_vec.Vec]
   [uri : String]
   [path : String]
   [diagnostic-uri : String]
@@ -8731,7 +8763,7 @@
 (define (lsp-handle-tl-batch
   [id : json.Json]
   [params : json.Json]
-  [docs : LspDocuments]) : LspHandleResult
+  [docs : lsp_document_vec.Vec]) : LspHandleResult
   (match (lsp-tl-request-uri params)
     [(LspJsonText.Ok uri)
       (match (lsp-documents-lookup-resynced docs uri)
@@ -8826,7 +8858,7 @@
       [(LspEditResult.Err message)
         (string.eq message "No form found at position")])))
 
-(define (lsp-test-scan-decls [text : String]) : LspDeclList
+(define (lsp-test-scan-decls [text : String]) : lsp_decl_vec.Vec
   (let
     [copy : String (string.copy (& text))]
     (lsp-scan-decls copy)))
@@ -8835,7 +8867,7 @@
   (let
     [text : String
       "(define (foo) : i64 1)\n(define (bar) : i64 2)\n(define (baz) : i64 3)"]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     [rendered : String
       (json.stringify
         (lsp-json-array (lsp-decls-to-find-list decls 0 "" "ba" "" "function")))]
@@ -8859,7 +8891,7 @@
 (define (lsp-structural-replace-by-name-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     (match (lsp-structural-replace-text-with-decls
       text
       "bar"
@@ -8872,7 +8904,7 @@
 (define (lsp-delete-form-by-name-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     (match (lsp-delete-form-by-name-with-decls text "bar" decls)
       [(LspEditResult.Ok deleted)
         (string.eq deleted "(define (foo) : i64 1)\n")]
@@ -8881,7 +8913,7 @@
 (define (lsp-read-form-by-name-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     (match (lsp-read-form-by-name-with-decls text "bar" decls)
       [(LspStringResult.Ok form-text)
         (string.eq form-text "(define (bar) : i64 2)")]
@@ -8890,7 +8922,7 @@
 (define (lsp-replace-pattern-by-name-smoke-ok?) : bool
   (let
     [text : String "(define (foo) : i64 1)\n(define (bar) : i64 2)"]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     (match (lsp-replace-pattern-text-with-decls text "bar" "2" "4" decls)
       [(LspEditResult.Ok replaced)
         (string.eq replaced "(define (foo) : i64 1)\n(define (bar) : i64 4)")]
@@ -8925,7 +8957,7 @@
 (define (lsp-find-path-nested-smoke-ok?) : bool
   (let
     [text : String (lsp-nested-path-test-text)]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     [path : json.JsonList (lsp-test-path4 "foo" "let" "match" "Ok")]
     [needle : String "(Ok value)"]
     (match (lsp-lookup-form-path text decls path)
@@ -8938,7 +8970,7 @@
 (define (lsp-replace-form-by-path-smoke-ok?) : bool
   (let
     [text : String (lsp-nested-path-test-text)]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     [path : json.JsonList (lsp-test-path3 "foo" "let" "match")]
     [new-text : String "(+ x 1)"]
     [old-match : String "(match x"]
@@ -8952,7 +8984,7 @@
 (define (lsp-replace-body-by-path-smoke-ok?) : bool
   (let
     [text : String (lsp-nested-path-test-text)]
-    [decls : LspDeclList (lsp-test-scan-decls text)]
+    [decls : lsp_decl_vec.Vec (lsp-test-scan-decls text)]
     [path : json.JsonList (lsp-test-path1 "foo")]
     [new-body : String "(+ x 2)"]
     [old-match : String "(match x"]

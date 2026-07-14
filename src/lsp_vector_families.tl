@@ -13,7 +13,7 @@
   (form-end-col i64)
   (symbol-kind i64))
 
-(vector.family LspDeclEntry LspDeclList lsp-decl-list)
+(import (vector.vector LspDeclEntry core) as lsp_decl_vec)
 
 (defenum LspCheckCache
   (LspCheckCacheInvalid)
@@ -25,13 +25,13 @@
   (path String)
   (text String)
   (diagnostic-uri String)
-  (decls LspDeclList)
+  (decls lsp_decl_vec.Vec)
   (decls-valid bool)
   (check-cache LspCheckCache))
 
-(vector.family LspDocument LspDocuments lsp-documents)
+(import (vector.vector LspDocument core) as lsp_document_vec)
 
-(define (lsp-documents-drop-last! [docs : (&mut docs LspDocuments)]) : unit
+(define (lsp-documents-drop-last! [docs : (&mut docs lsp_document_vec.Vec)]) : unit
   (if (> (struct-get docs len) 0)
     (set! (struct-get docs len) (- (struct-get docs len) 1))
     unit))

@@ -44,6 +44,36 @@
 (define (reduce-sum-f64 [fs : (Array f64)] [n : i64]) : f64
   (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref fs i)))
 
+(define (f32-from-bits [bits : u32]) : f32
+  (let
+    [buf : (Array u32) (array.make-array u32 1)]
+    (begin
+      (array-set! buf 0 bits)
+      (unsafe
+        (ptr-read (ptr-cast (array-data buf) : (Ptr f32)))))))
+
+(define (f32-bits [value : f32]) : u32
+  (let
+    [buf : (Array f32) (array.make-array f32 1)]
+    (begin
+      (array-set! buf 0 value)
+      (unsafe
+        (ptr-read (ptr-cast (array-data buf) : (Ptr u32)))))))
+
+(define (manual-sum-f32 [values : (Array f32)] [n : i64] [seed : f32]) : f32
+  (let
+    [acc : f32 seed]
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (set! acc (+ acc (array-ref values i)))
+          (set! i (+ i 1))))
+      acc)))
+
+(define (reduce-sum-f32 [values : (Array f32)] [n : i64] [seed : f32]) : f32
+  (spmd-reduce sum ([i : i64 0 n]) seed (array-ref values i)))
+
 ; i32 sum.
 (define (reduce-sum-i32 [gs : (Array i32)] [n : i64]) : i32
   (spmd-reduce sum ([i : i64 0 n]) (cast 0 : i32) (array-ref gs i)))
@@ -73,6 +103,38 @@
     (array-set! fs 3 4.0)
     (array-set! fs 4 5.0)))
 
+(define (fill-f32 [values : (Array f32)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! values i (cast (+ i 1) : f32))
+          (set! i (+ i 1))))
+      ; Include a negative lane while keeping every value and partial sum
+      ; exactly representable in binary32.
+      (array-set! values 1 (cast -2.0 : f32)))))
+
+(define (fill-f32-negative-zero [values : (Array f32)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    (while (< i n)
+      (begin
+        (array-set! values i (cast -0.0 : f32))
+        (set! i (+ i 1))))))
+
+(define (fill-f32-overflow [values : (Array f32)] [n : i64]) : unit
+  (let
+    [i : i64 0]
+    [max-finite : f32 (f32-from-bits (cast 0x7f7fffff : u32))]
+    (begin
+      (while (< i n)
+        (begin
+          (array-set! values i (cast 0.0 : f32))
+          (set! i (+ i 1))))
+      (array-set! values 0 max-finite)
+      (array-set! values 1 max-finite))))
+
 (define (fill-i32 [gs : (Array i32)] [n : i64]) : unit
   (foreach ([i : i64 0 n]) (array-set! gs i (cast (+ i 1) : i32))))
 
@@ -98,11 +160,19 @@
     [n32 : i64 11]
     [gs : (Array i32) (array.make-array i32 11)]
     [hs : (Array i32) (array.make-array i32 11)]
+    [f32-values : (Array f32) (array.make-array f32 19)]
+    [f32-zeros : (Array f32) (array.make-array f32 16)]
+    [f32-overflow : (Array f32) (array.make-array f32 16)]
+    [f32-pos-zero : f32 (cast 0.0 : f32)]
+    [f32-neg-zero : f32 (cast -0.0 : f32)]
     (begin
       (fill-i64 xs n)
       (fill-f64 fs)
       (fill-i32 gs n32)
       (fill-signed-i32 hs)
+      (fill-f32 f32-values 19)
+      (fill-f32-negative-zero f32-zeros 16)
+      (fill-f32-overflow f32-overflow 16)
       ; xs = [1,2,3,4,5]; gs = [1..11]; hs has mixed signed i32 values;
       ; fs = [1.0..5.0].
       (cond
@@ -134,4 +204,30 @@
         [(!= (reduce-sum-i32 hs n32) (cast (- 0 7) : i32)) 26]
         [(!= (reduce-max-i32 hs n32 (cast (- 0 100) : i32)) (cast 12 : i32)) 27]
         [(!= (reduce-min-i32 hs n32 (cast 100 : i32)) (cast (- 0 20) : i32)) 28]
+        ; f32: empty, sub-gang, exact AVX2/AVX-512 gangs, a 16+3 tail,
+        ; negative data, signed zero, and finite-input overflow.
+        [(!=
+            (f32-bits (reduce-sum-f32 f32-values 0 f32-neg-zero))
+            (cast 0x80000000 : u32))
+          29]
+        [(!= (reduce-sum-f32 f32-values 3 f32-pos-zero) (cast 2.0 : f32)) 30]
+        [(!= (reduce-sum-f32 f32-values 8 f32-pos-zero) (cast 32.0 : f32)) 31]
+        [(!= (reduce-sum-f32 f32-values 16 f32-pos-zero) (cast 132.0 : f32)) 32]
+        [(!= (reduce-sum-f32 f32-values 19 f32-pos-zero) (cast 186.0 : f32)) 33]
+        [(!=
+            (reduce-sum-f32 f32-values 19 f32-pos-zero)
+            (manual-sum-f32 f32-values 19 f32-pos-zero))
+          34]
+        [(!=
+            (f32-bits (reduce-sum-f32 f32-zeros 16 f32-neg-zero))
+            (cast 0x80000000 : u32))
+          35]
+        [(!=
+            (f32-bits (reduce-sum-f32 f32-overflow 16 f32-pos-zero))
+            (cast 0x7f800000 : u32))
+          36]
+        [(!=
+            (f32-bits (reduce-sum-f32 f32-overflow 16 f32-pos-zero))
+            (f32-bits (manual-sum-f32 f32-overflow 16 f32-pos-zero)))
+          37]
         [else 42]))))

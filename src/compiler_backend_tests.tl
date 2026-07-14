@@ -10194,7 +10194,13 @@
       "    vaddpd "
       "    vextractf128 $1, "
       "    vaddsd "
-      "    movsd %xmm2, ")))
+      "    movsd %xmm2, ")
+    (compiler-backend-avx2-reduce-asm-contains?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "    vaddps "
+      "    vextractf128 $1, "
+      "    vaddss "
+      "    movss %xmm2, ")))
 
 (define (compiler-backend-avx512-reduce-asm-contains?
   [src : String]
@@ -10275,6 +10281,12 @@
       "    vextractf64x4 $1, "
       "    vaddsd "
       "    movsd %xmm2, ")
+    (compiler-backend-avx512-reduce-asm-contains?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      "    vaddps "
+      "    vextractf32x8 $1, "
+      "    vaddss "
+      "    movss %xmm2, ")
     (compiler-backend-avx512-vector-reduce-i64-minmax-ok?)))
 
 (define (compiler-backend-vector-reduce-direct-assignments

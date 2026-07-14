@@ -4143,25 +4143,27 @@ Evaluation and empty ranges:
   after combining the current iteration's `value`; `value` and `body` are
   skipped for empty ranges.
 - Integer `sum` uses the modulo-wrapping integer `+` semantics.
-- `f64 sum` uses the ordered scalar `+` semantics of an explicit loop in
-  scalar backend modes. SIMD backend modes may use deterministic horizontal
-  lane grouping for eligible contiguous array folds; strict bit-for-bit
-  scalar floating-point accumulation order is reserved for future FP policy
-  controls.
+- `f32` and `f64` `sum` use the ordered scalar `+` semantics of an explicit
+  loop in scalar backend modes. SIMD backend modes may use deterministic
+  horizontal lane grouping for eligible contiguous array folds; strict
+  bit-for-bit scalar floating-point accumulation order is reserved for future
+  FP policy controls. No fast-math reassociation is enabled. NaN payload/sign
+  propagation and rounding therefore follow the documented scalar order or
+  the backend mode's fixed horizontal tree.
 
 Type rules:
 
-- `sum` supports `i32`, `i64`, and `f64`. `min` and `max` support `i32` and
-  `i64`. `all` and `any` support `bool`.
+- `sum` supports `i32`, `i64`, `f32`, and `f64`. `min` and `max` support
+  `i32` and `i64`. `all` and `any` support `bool`.
 - `init` and `value` must have the same supported type for the chosen `op`,
   and the `spmd-reduce` result type is that same type.
 - `spmd-scan` uses the same operators but supports only `i32`/`i64` for
   `sum`/`min`/`max` and `bool` for `all`/`any`. `f32`/`f64` scans are
   rejected with a diagnostic noting that floating-point scan ordering is
   deferred by design. `prefix` has the same type as `init` and `value`.
-- `f32`, narrow integer widths, unsigned integer widths, `char`, `String`,
-  structs, enums, tuples, arrays, function values, and vector/mask values are
-  rejected as reduction types.
+- Narrow integer widths, unsigned integer widths, `char`, `String`, structs,
+  enums, tuples, arrays, function values, and vector/mask values are rejected
+  as reduction types. `f32` remains rejected for `min`/`max`, as does `f64`.
 
 Backend coverage: scalar lowering covers every supported operator/type
 combination above, and `spmd-scan` has the in-order scalar reference

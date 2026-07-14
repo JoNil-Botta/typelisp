@@ -4,8 +4,8 @@
 ;; License: BSD-3-Clause; see kernel.ispc and LICENSE.BSD-3-Clause.
 ;;
 ;; The source deliberately preserves f32 accumulation and horizontal-sum
-;; intent. Until #4969 lands, every backend mode must reject `loads` with the
-;; exact diagnostic recorded in case.tsv; do not widen this case to f64.
+;; intent. Scalar, AVX2, and AVX-512 TypeLisp modes must all pass the fixed
+;; bit-pattern oracle; do not widen this case to f64.
 (import stdlib.array)
 (import stdlib.io)
 

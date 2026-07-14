@@ -110,8 +110,8 @@ of falling back to scalar code.
   empty, sub-lane, exact-lane, and tail lengths. Scalar exits 42; AVX2 reports
   the staged bool-lane diagnostic.
 - `../integration/spmd_reduce_scalar.tl` — `spmd-reduce` `sum`/`max`/`min` over
-  i64/i32/f64 plus `all`/`any` bool reductions across empty, sub-lane,
-  exact-lane, and tail lengths. Exit 42.
+  i64/i32/f64, f32 `sum`, plus `all`/`any` bool reductions across empty,
+  sub-lane, exact-lane, tail, signed-zero, and finite-overflow cases. Exit 42.
 - `../integration/spmd_scan_scalar.tl` - `spmd-scan` inclusive prefixes for
   i64 sum/min/max, i32 sum/min/max, and bool all/any across empty, sub-lane,
   exact-lane, and tail lengths. Exit 42.
@@ -168,7 +168,8 @@ Coverage map:
   varying calls remain rejected by the safety fixtures.
 - `spmd-reduce` and `spmd-scan` scalar coverage for the documented
   operator/type surface lives in `../integration/spmd_reduce_scalar.tl` and
-  `../integration/spmd_scan_scalar.tl`.
+  `../integration/spmd_scan_scalar.tl`; the former also executes f32 sums in
+  scalar, AVX2, and AVX-512 modes through `scripts/verify-spmd-simd.sh`.
 - `spmd-broadcast` executable coverage lives in the `broadcast_lane*_{i64,u64,u32}.tl`
   fixtures, with mode-specific expectations in `scripts/verify-spmd-broadcast.sh`.
 - `spmd-shuffle` scalar executable coverage lives in
@@ -183,7 +184,7 @@ Coverage map:
   and `src/compiler_backend_tests.tl`; this corpus runs the executable
   scalar/SIMD comparison for the same reduction fixture.
 - Unsupported SPMD diagnostics are covered by `tests/safety/manifest.txt`,
-  including outer mutation, unsupported `f64` min reduction, unsupported
+  including outer mutation, unsupported f32/f64 min reductions, unsupported
   floating-point scans, nested scan bodies, and function-value/indirect varying
   calls that are outside the v1 private out-of-line call ABI.
 ## Running

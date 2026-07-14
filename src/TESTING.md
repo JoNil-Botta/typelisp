@@ -451,6 +451,73 @@ and diagnostic strings. Gates that need a command binary build `src/main.tl`
 and invoke the subcommand directly (e.g. `cli build --direct …`,
 `cli check <file>`, `cli fmt --check …`, `cli doc --html …`).
 
+### CLI gate behavior inventory
+
+[`../scripts/cli-gate-coverage.tsv`](../scripts/cli-gate-coverage.tsv) defines
+the version-1 machine-readable schema used to inventory compiler invocations in
+large shell gates. The schema and checker are intentionally independent of the
+production-gate migration: a later inventory registers each owning script with
+a `# source<TAB>path` metadata line and adds one row per expanded case.
+
+The 19 TSV fields are:
+
+1. `schema`, fixed to `1`;
+2. stable `case_id` and `gate` names;
+3. repository-relative `source` and invocation `kind` (`wrapper`, `direct`, or
+   `delegated`);
+4. `host`, `compiler`, and normalized `argv` identity;
+5. `fixture`, `stdin`, `cwd`, `process`, and `environment` identity;
+6. `expected_status`, `stdout`, `stderr`, and filesystem/other `effects`;
+7. `canonical_owner` and `duplicate_reason`.
+
+Every field is required. Use `-` for an explicit absence, not an empty field.
+Values are compared byte-for-byte after validation: ordering inside composite
+fields (argv, environment, assertion lists) is part of the checked schema and
+must be deterministic. Literal tab, LF, CR, and percent bytes are written as
+`%09`, `%0A`, `%0D`, and `%25`; percent escapes are uppercase, and no other
+escape syntax or percent sequence is accepted. Paths are repository-relative
+and may not contain `..` components. These rules deliberately avoid inferred
+equivalence: stdin bytes, cwd, heartbeat environment, process boundaries, and
+each output/effect assertion remain distinct duplicate-key fields.
+
+An inventory row binds to an executing source site through a comment placed
+immediately before the wrapper, direct compiler command, or delegated corpus
+command:
+
+```sh
+# cli-gate-case public-help wrapper run_cmd
+run_cmd public-help "$COMPILER" --help
+```
+
+The final annotation word is the exact first shell token of the next nonblank,
+noncomment line. The checker only proves that narrow binding; it does not parse
+arbitrary shell semantics. The annotation kind and source path must match the
+inventory row.
+
+Loops and matrices use an explicit Cartesian expansion. Axis and value order is
+deterministic, every axis must appear in the ID pattern, and the expanded IDs
+each require their own inventory row:
+
+```sh
+# cli-gate-expand compile-{host}-{mode} wrapper run_cmd host=linux,windows mode=scalar,avx2
+run_cmd "$label" "$COMPILER" compile "$source" --backend-mode "$mode"
+```
+
+Run the fast static checker and its fixture self-tests with:
+
+```sh
+scripts/check-cli-gate-coverage.sh
+scripts/check-cli-gate-coverage.sh --self-test
+```
+
+The checker fails closed on malformed rows/expansions, missing or stale
+row-to-annotation links, duplicate IDs or annotations, and unknown canonical
+owners. The duplicate identity includes every semantic field from `kind`
+through `effects`. Exact repeated identities are accepted only when every row
+names the same owner from that duplicate group and supplies a non-`-` checked
+reason. Successful output contains sorted counts per gate and source site,
+one count for every expanded case, and a sorted duplicate report.
+
 Use `scripts/fetch-stage0.sh <stage0-tag>` to pin an immutable artifact. The
 script downloads the host platform asset, verifies the file is non-empty,
 checks `SHA256SUMS` when the release provides it, and installs the command under

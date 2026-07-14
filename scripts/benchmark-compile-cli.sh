@@ -45,13 +45,12 @@ if [ "$#" -eq 1 ]; then
     esac
 fi
 
-fetch_stage0_compiler "$ROOT" || exit 1
-
 if [ "$#" -eq 1 ]; then
     SEED=$1
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     SEED=$TYPELISP_BIN
 else
+    fetch_stage0_compiler "$ROOT" || exit 1
     SEED=$(stage0_compiler_path "$ROOT") || exit 1
 fi
 
@@ -98,11 +97,13 @@ PROFILE_TSV="$WORKDIR/profile.tsv"
 PROFILE_DETAIL_TSV="$WORKDIR/profile-detail.tsv"
 PROFILE_DETAIL_TOP_TSV="$WORKDIR/profile-detail-top.tsv"
 SUMMARY_TSV="$WORKDIR/summary.tsv"
+COMMANDS_TSV="$WORKDIR/commands.tsv"
 printf 'opt_level\tphase\telapsed_ms\n' > "$TIMINGS"
 printf 'build_opt_level\tworkload_opt_level\tphase\telapsed_ms\talloc_delta_bytes\tlive_delta_bytes\tpeak_live_delta_bytes\n' > "$PROFILE_TSV"
 printf 'build_opt_level\tworkload_opt_level\tphase\telapsed_ms\tname\n' > "$PROFILE_DETAIL_TSV"
 printf 'build_opt_level\tworkload_opt_level\tphase\telapsed_ms\tname\n' > "$PROFILE_DETAIL_TOP_TSV"
 printf 'build_opt_level\tworkload_opt_level\tcompile_ms\tprofile_total_ms\tprofile_peak_live_delta_bytes\n' > "$SUMMARY_TSV"
+printf 'stage_label\tstart_epoch_ms\tend_epoch_ms\tcompiler\tcompiler_sha256\texit_code\tstdout\tstderr\targv\n' > "$COMMANDS_TSV"
 
 fail() {
     echo "[compile-bench] $*" >&2
@@ -144,6 +145,52 @@ sha_files() {
     fi
 }
 
+sha_file() {
+    file=$1
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$file" | awk '{ print $1 }'
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$file" | awk '{ print $1 }'
+    else
+        fail "sha256sum or shasum is required to record compiler identity"
+    fi
+}
+
+# Preserve the exact binary and argv for every compiler stage. The line-per-arg
+# file stays unambiguous without shell quoting, and epoch timestamps let the
+# Windows allocation campaign correlate a failure with system commit samples.
+record_command_start() {
+    EVIDENCE_LABEL=$1
+    EVIDENCE_STDOUT=$2
+    EVIDENCE_STDERR=$3
+    shift 3
+    EVIDENCE_COMPILER=$1
+    EVIDENCE_ARGV="$(dirname -- "$EVIDENCE_STDOUT")/$EVIDENCE_LABEL.argv"
+    EVIDENCE_SHA=$(sha_file "$EVIDENCE_COMPILER")
+    EVIDENCE_START=$(now_ms)
+    {
+        echo "# argv, one argument per line"
+        for argument do
+            printf '%s\n' "$argument"
+        done
+    } > "$EVIDENCE_ARGV"
+}
+
+record_command_finish() {
+    status=$1
+    EVIDENCE_END=$(now_ms)
+    printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$EVIDENCE_LABEL" \
+        "$EVIDENCE_START" \
+        "$EVIDENCE_END" \
+        "$EVIDENCE_COMPILER" \
+        "$EVIDENCE_SHA" \
+        "$status" \
+        "$EVIDENCE_STDOUT" \
+        "$EVIDENCE_STDERR" \
+        "$EVIDENCE_ARGV" >> "$COMMANDS_TSV"
+}
+
 strip_if_needed() {
     bin=$1
     if [ "$NL_HOST_OS" = linux ] && command -v strip >/dev/null 2>&1; then
@@ -177,14 +224,19 @@ compile_cli_to_asm() {
     stderr="$logdir/$label.stderr"
     echo "[compile-bench] opt$opt_level $label"
     start=$(now_ms)
-    if ! run_with_heartbeat "$label" \
-        "$compiler" compile src/main.tl -o "$asm" \
+    set -- "$compiler" compile src/main.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root src \
-        --opt-level "$opt_level" \
-        >"$stdout" 2>"$stderr"; then
+        --opt-level "$opt_level"
+    record_command_start "opt$opt_level-$label" "$stdout" "$stderr" "$@"
+    set +e
+    run_with_heartbeat "$label" "$@" >"$stdout" 2>"$stderr"
+    status=$?
+    set -e
+    record_command_finish "$status"
+    if [ "$status" -ne 0 ]; then
         echo "[compile-bench] $label failed" >&2
         show_failure_logs "$stdout" "$stderr"
         exit 1
@@ -217,14 +269,19 @@ measure_compile_cli_to_asm() {
     stderr="$logdir/$label.stderr"
     echo "[compile-bench] opt$opt_level measure $label"
     start=$(now_ms)
-    if ! run_with_heartbeat "$label" \
-        "$compiler" compile src/main.tl -o "$asm" \
+    set -- "$compiler" compile src/main.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root src \
-        --opt-level "$opt_level" \
-        >"$stdout" 2>"$stderr"; then
+        --opt-level "$opt_level"
+    record_command_start "opt$opt_level-$label" "$stdout" "$stderr" "$@"
+    set +e
+    run_with_heartbeat "$label" "$@" >"$stdout" 2>"$stderr"
+    status=$?
+    set -e
+    record_command_finish "$status"
+    if [ "$status" -ne 0 ]; then
         echo "[compile-bench] $label failed" >&2
         show_failure_logs "$stdout" "$stderr"
         exit 1
@@ -347,16 +404,21 @@ build_profile_driver() {
 
     echo "[compile-bench] opt$build_opt_level build shared profile-enabled compile driver"
     start=$(now_ms)
-    if ! run_with_heartbeat "opt$build_opt_level-profile-compile-driver" \
-        "$build_bin" compile src/main.tl -o "$PROFILE_ASM" \
+    label="opt$build_opt_level-profile-compile-driver"
+    set -- "$build_bin" compile src/main.tl -o "$PROFILE_ASM" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root src \
         --opt-level "$build_opt_level" \
-        --cfg compile-profile \
-        >"$profile_build_stdout" \
-        2>"$profile_build_stderr"; then
+        --cfg compile-profile
+    record_command_start "$label" "$profile_build_stdout" "$profile_build_stderr" "$@"
+    set +e
+    run_with_heartbeat "$label" "$@" >"$profile_build_stdout" 2>"$profile_build_stderr"
+    status=$?
+    set -e
+    record_command_finish "$status"
+    if [ "$status" -ne 0 ]; then
         echo "[compile-bench] profile compile driver build failed" >&2
         show_failure_logs "$profile_build_stdout" "$profile_build_stderr"
         exit 1
@@ -379,14 +441,20 @@ run_profile_workload() {
 
     echo "[compile-bench] opt$build_opt_level-built profile driver run opt$workload_opt_level phase breakdown"
     start=$(now_ms)
-    if ! "$PROFILE_BIN" compile src/main.tl -o "$profile_cli_asm" \
+    label="profile-workload-opt$workload_opt_level"
+    set -- "$PROFILE_BIN" compile src/main.tl -o "$profile_cli_asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
         --stdlib-root stdlib \
         --stdlib-root src \
-        --opt-level "$workload_opt_level" \
-        >"$profile_run_stdout" \
-        2>"$profile_run_stderr"; then
+        --opt-level "$workload_opt_level"
+    record_command_start "$label" "$profile_run_stdout" "$profile_run_stderr" "$@"
+    set +e
+    "$@" >"$profile_run_stdout" 2>"$profile_run_stderr"
+    status=$?
+    set -e
+    record_command_finish "$status"
+    if [ "$status" -ne 0 ]; then
         echo "[compile-bench] profiled compile failed" >&2
         show_failure_logs "$profile_run_stdout" "$profile_run_stderr"
         exit 1
@@ -498,4 +566,5 @@ write_profile_detail_top_rows
 echo "[compile-bench] profile detail: $PROFILE_DETAIL_TSV"
 echo "[compile-bench] profile detail top rows: $PROFILE_DETAIL_TOP_TSV"
 cat "$PROFILE_DETAIL_TOP_TSV"
+echo "[compile-bench] commands: $COMMANDS_TSV"
 echo "[compile-bench] artifacts: $WORKDIR"

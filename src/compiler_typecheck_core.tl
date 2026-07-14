@@ -11,6 +11,7 @@
 (import "compiler_ctfe.tl")
 (import "compiler_specialize.tl")
 (import "compiler_clone.tl")
+(import compiler_allocation_profile as allocation_profile)
 (import (hashmap i64 i64) as tc_i64_i64_map)
 (import (hashmap String i64) as tc_string_i64_map)
 (import "compiler_parse_core.tl")
@@ -47451,6 +47452,32 @@
 (define macro-live-registries-fallback : bool
   true)
 
+;; Whole-program symbol/registry rebuilds replace the previous tables, but the
+;; ordinary compile arena retains every obsolete generation until process exit.
+;; Keep those tables in one independently owned arena so a successful rebuild
+;; can retire its predecessor without putting the longer-lived macro output or
+;; top environments in the same lifetime domain.
+(define macro-live-symbols-arena : i64
+  0)
+(define macro-live-symbols-retired-arena : i64
+  0)
+
+(define (macro-live-symbols-promote-owner-names! [symbols : CompilerSymbols]) : unit
+  (let
+    [owner-names : (Array String) (compiler-symbols-owner-names symbols)]
+    [count : i64 (array-length owner-names)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [owner-name : String (array-ref owner-names index)]
+        (begin
+          ;; Resolved nominal AstType values stored in persistent top-env tails
+          ;; retain this spelling after their source symbol table is obsolete.
+          (if (string.contains-char (& owner-name) '/')
+            (array-set! owner-names index (string.copy (& owner-name)))
+            unit)
+          (set! index (+ index 1)))))))
+
 (define (macro-live-symbols-reset!) : unit
   (begin
     (set! macro-live-symbols-ready false)
@@ -47619,7 +47646,62 @@
 (define (macro-live-symbols-build-fresh
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerSymbols
-  (macro-live-symbols-build-fresh-current program paths))
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [intern-persistent-before : bool (intern-persistent-storage-on?)]
+    [next-arena : i64 (arena.tl_arena_make)]
+    [_switch : unit
+      (unsafe
+        (arena.tl_arena_set next-arena))]
+    [_persist-interns : unit
+      (if intern-persistent-before
+        unit
+        (intern-persistent-storage-enable!))]
+    ;; A reused registry can still point into the previous symbols arena. Keep
+    ;; the generation self-contained so retiring it cannot strand those maps.
+    [_rebuild-registries : unit (set! macro-live-registries-fallback true)]
+    [built : ResultCompilerSymbols
+      (macro-live-symbols-build-fresh-current program paths)]
+    [next-head : i64 (arena.tl_arena_current)]
+    (begin
+      (if intern-persistent-before
+        unit
+        (intern-persistent-storage-disable!))
+      (unsafe
+        (arena.tl_arena_set enclosing))
+      (match built
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [previous : i64 macro-live-symbols-arena]
+            [retired : i64 macro-live-symbols-retired-arena]
+            (begin
+              (macro-live-symbols-promote-owner-names! symbols)
+              (allocation_profile.compiler-allocation-profile-control!
+                2
+                "typecheck.macro"
+                "symbols-current"
+                next-head)
+              (set! macro-live-symbols-arena next-head)
+              (set! macro-live-symbols-retired-arena previous)
+              (if (= retired 0)
+                unit
+                (begin
+                  (allocation_profile.compiler-allocation-profile-control!
+                    2
+                    "typecheck.macro"
+                    "symbols-retired"
+                    retired)
+                  (unsafe
+                    (arena.tl_arena_destroy retired))))
+              (ResultCompilerSymbols.Ok symbols)))]
+        [(ResultCompilerSymbols.Err message)
+          ;; Preserve the public error after releasing the failed generation.
+          (let
+            [stable-message : String (string.copy (& message))]
+            (begin
+              (unsafe
+                (arena.tl_arena_destroy next-head))
+              (ResultCompilerSymbols.Err stable-message)))]))))
 
 (define (macro-live-symbols-build-or-reuse!
   [program : AstProgram]

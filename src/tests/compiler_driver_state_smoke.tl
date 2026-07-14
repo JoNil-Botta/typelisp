@@ -2528,12 +2528,34 @@
     (unsafe
       (begin
         (arena.set! home)
-        ;; Mirror compile-batch cleanup: release driver-owned pools first, then
-        ;; destroy the caller-owned scratch chain returned by the emit wrapper.
-        (compiler-driver-state-reset-file-state! state)
+        ;; Mirror compile-batch cleanup: retain only a one-slot compatibility
+        ;; pool while entry-owned caches are detached, then destroy the caller
+        ;; scratch chain. Full load capacity is prepared only for the next
+        ;; entry, after the old chain is gone.
+        (compiler-driver-state-release-file-state! state)
+        (let
+          [released-pools : AstNodePoolContext
+            (compiler-driver-state-pool-context state)]
+          (unless
+            (and
+              (= (ast-node-pool-context-expr-capacity released-pools) 1)
+              (= (ast-node-pool-context-type-capacity released-pools) 1))
+            (set! restored? false)))
         (arena.set! home)
         (arena.destroy scratch-end)
-        (and emitted? restored?)))))
+        (compiler-driver-state-reset-file-state! state)
+        (let
+          [next-pools : AstNodePoolContext
+            (compiler-driver-state-pool-context state)]
+          (and
+            emitted?
+            restored?
+            (=
+              (ast-node-pool-context-expr-capacity next-pools)
+              compiler-driver-compile-load-expr-pool-initial-capacity)
+            (=
+              (ast-node-pool-context-type-capacity next-pools)
+              compiler-driver-compile-type-pool-initial-capacity)))))))
 
 (define (compiler-driver-state-smoke-emitted-batch-restores-scratch?) : bool
   (compiler-driver-state-smoke-emitted-batch-path-restores-scratch?

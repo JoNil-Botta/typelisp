@@ -155,7 +155,9 @@ in_arena_ordinary_return_reject|check-fail|tests/safety/in_arena_ordinary_return
 in_arena_ordinary_lambda_capture_reject|check-fail|tests/safety/in_arena_ordinary_lambda_capture_reject.tl|-|lambda cannot capture region-tagged value
 arena_mark_handle_mismatch_reject|check-fail|tests/safety/arena_mark_handle_mismatch_reject.tl|-|typecheck: argument type mismatch
 spmd_outer_mutation_reject|check-fail|tests/safety/spmd_outer_mutation_reject.tl|-|foreach cannot set binding declared outside foreach
+spmd_reduce_f32_min_reject|check-fail|tests/safety/spmd_reduce_f32_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
 spmd_reduce_f64_min_reject|check-fail|tests/safety/spmd_reduce_f64_min_reject.tl|-|spmd-reduce min requires an i32 or i64 type
+spmd_scan_f32_sum_reject|check-fail|tests/safety/spmd_scan_f32_sum_reject.tl|-|spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred
 spmd_scan_f64_sum_reject|check-fail|tests/safety/spmd_scan_f64_sum_reject.tl|-|spmd-scan sum requires an i32 or i64 type; floating-point scan ordering is deferred
 spmd_scan_malformed_range_reject|check-fail|tests/safety/spmd_scan_malformed_range_reject.tl|-|malformed spmd-scan range binding
 spmd_scan_unsupported_exclusive_reject|check-fail|tests/safety/spmd_scan_unsupported_exclusive_reject.tl|-|unsupported spmd-scan operator `exclusive`

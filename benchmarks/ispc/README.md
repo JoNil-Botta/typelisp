@@ -23,11 +23,11 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 
 | Case | Lane type | Upstream kernel | Current TypeLisp status |
 | --- | --- | --- | --- |
-| [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Unsupported pending #4969 |
+| [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
 
 `perfbench_loads` uses only integer-valued binary32 inputs and keeps every
 partial sum within the exactly representable integer range. Its scalar oracle,
-ISPC horizontal reduction, and future TypeLisp reduction must therefore agree
+ISPC horizontal reduction, and TypeLisp reduction therefore agree
 bit-for-bit despite their different grouping. Grouping differences are semantic
 metadata, not codegen regressions, for these exact cases.
 

@@ -1,17 +1,18 @@
 #!/usr/bin/env sh
 set -eu
 
-# Required corpus/diagnostic contract and optional real ISPC correctness for
+# Required TypeLisp corpus correctness and optional real ISPC correctness for
 # benchmarks/ispc/perfbench_loads (#4973). The generic reporting harness is
 # tracked separately by #4968.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 cd "$ROOT"
 
+. "$ROOT/scripts/lib-linux-entry.sh"
+
 CASE_DIR="$ROOT/benchmarks/ispc/perfbench_loads"
 METADATA="$CASE_DIR/case.tsv"
 WORKDIR="$ROOT/target/ispc-perfbench-loads-verify"
-EXPECTED_DIAGNOSTIC="typecheck: spmd-reduce sum requires an i32, i64, or f64 type"
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 
@@ -25,7 +26,6 @@ done
 awk -F '\t' '
 BEGIN {
     expected_header = "schema\tcase\tmode\ttypelisp_status\ttypelisp_diagnostic\tispc_status\tispc_diagnostic\tispc_target\tgang_width\tlane_type\ttypelisp_source\ttypelisp_symbol\tispc_source\tispc_symbol\tdriver\targuments\trepetitions\texpected_exit\tupstream_tag\tupstream_commit\tupstream_path\tupstream_function\tlicense"
-    expected_diag = "typecheck: spmd-reduce sum requires an i32, i64, or f64 type"
     scalar_ispc_diag = "ISPC v1.31.0 has no width-1 CPU target; smallest generic target is generic-i32x4"
     commit = "c6adb4f86f5678ce6c41951b1e2b59f727455697"
 }
@@ -38,8 +38,8 @@ NR == 1 {
 }
 {
     if (NF != 23 || $1 != "typelisp-ispc-case-v1" ||
-        $2 != "perfbench_loads" || $4 != "unsupported" ||
-        $5 != expected_diag || $10 != "f32" || $11 != "bench.tl" ||
+        $2 != "perfbench_loads" || $4 != "supported" || $5 != "" ||
+        $10 != "f32" || $11 != "bench.tl" ||
         $12 != "loads" || $13 != "kernel.ispc" || $14 != "loads" ||
         $15 != "driver.c" ||
         $16 != "array:f32[];count:i32;zeros:f32[];result:f32[1]" ||
@@ -83,31 +83,104 @@ esac
     exit 1
 }
 
+HOST_OS=linux
+case "$(uname -s)" in
+    Linux*) HOST_OS=linux ;;
+    MINGW* | MSYS* | CYGWIN*) HOST_OS=windows ;;
+    *)
+        echo "perfbench_loads: unsupported host" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$HOST_OS" = linux ]; then
+    command -v as >/dev/null 2>&1 || {
+        echo "perfbench_loads: missing assembler: as" >&2
+        exit 1
+    }
+    command -v ld >/dev/null 2>&1 || {
+        echo "perfbench_loads: missing linker: ld" >&2
+        exit 1
+    }
+fi
+
+SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh")
+typelisp_mode_runnable() {
+    case "$1" in
+        scalar) return 0 ;;
+        avx2) printf '%s\n' "$SIMD_ISAS" | grep -qx avx2 ;;
+        avx512) printf '%s\n' "$SIMD_ISAS" | grep -qx avx512bw ;;
+        *) return 1 ;;
+    esac
+}
+
 for mode in scalar avx2 avx512; do
     stdout="$WORKDIR/typelisp-$mode.stdout"
     stderr="$WORKDIR/typelisp-$mode.stderr"
     asm="$WORKDIR/typelisp-$mode.s"
-    set +e
-    "$COMPILER" compile "$CASE_DIR/bench.tl" \
+    if ! "$COMPILER" compile "$CASE_DIR/bench.tl" \
         --backend-mode "$mode" --opt-level 2 --stdlib-root "$ROOT/stdlib" \
-        -o "$asm" > "$stdout" 2> "$stderr"
-    status=$?
-    set -e
-    if [ "$status" -eq 0 ]; then
-        echo "perfbench_loads: TypeLisp $mode unexpectedly compiled; update case support after #4969" >&2
-        exit 1
-    fi
-    if ! grep -qF "$EXPECTED_DIAGNOSTIC" "$stderr"; then
-        echo "perfbench_loads: TypeLisp $mode diagnostic drifted" >&2
+        -o "$asm" > "$stdout" 2> "$stderr"; then
+        echo "perfbench_loads: TypeLisp $mode compile failed" >&2
         sed 's/^/  /' "$stderr" >&2 || true
         exit 1
     fi
-    [ ! -e "$asm" ] || {
-        echo "perfbench_loads: unsupported TypeLisp $mode emitted assembly" >&2
+    [ -s "$asm" ] || {
+        echo "perfbench_loads: TypeLisp $mode emitted no assembly" >&2
         exit 1
     }
+    case "$mode" in
+        scalar)
+            grep -q 'addss' "$asm" || {
+                echo "perfbench_loads: TypeLisp scalar assembly lacks f32 add" >&2
+                exit 1
+            }
+            ;;
+        avx2)
+            grep -q 'vaddps' "$asm" || {
+                echo "perfbench_loads: TypeLisp AVX2 assembly lacks packed f32 add" >&2
+                exit 1
+            }
+            ;;
+        avx512)
+            grep -q 'vextractf32x8' "$asm" || {
+                echo "perfbench_loads: TypeLisp AVX-512 assembly lacks f32 horizontal extract" >&2
+                exit 1
+            }
+            ;;
+    esac
+
+    if typelisp_mode_runnable "$mode"; then
+        run_stdout="$WORKDIR/typelisp-$mode.run.stdout"
+        run_stderr="$WORKDIR/typelisp-$mode.run.stderr"
+        if [ "$HOST_OS" = linux ]; then
+            obj="$WORKDIR/typelisp-$mode.o"
+            bin="$WORKDIR/typelisp-$mode"
+            as "$asm" -o "$obj"
+            ld "$obj" -o "$bin" -static -e "$(linux_entry_symbol_for_asm "$asm")"
+            set +e
+            "$bin" > "$run_stdout" 2> "$run_stderr"
+            status=$?
+            set -e
+        else
+            set +e
+            "$COMPILER" run "$CASE_DIR/bench.tl" \
+                --backend-mode "$mode" --opt-level 2 --stdlib-root "$ROOT/stdlib" \
+                > "$run_stdout" 2> "$run_stderr"
+            status=$?
+            set -e
+        fi
+        if [ "$status" -ne 42 ] || [ -s "$run_stdout" ] || [ -s "$run_stderr" ]; then
+            echo "perfbench_loads: TypeLisp $mode correctness failed (exit $status)" >&2
+            sed 's/^/  /' "$run_stdout" >&2 || true
+            sed 's/^/  /' "$run_stderr" >&2 || true
+            exit 1
+        fi
+        echo "perfbench_loads TypeLisp $mode correctness passed"
+    else
+        echo "perfbench_loads TypeLisp $mode execution skipped (host ISA unavailable; compile shape passed)"
+    fi
 done
-echo "perfbench_loads TypeLisp unsupported-mode contract passed"
 
 ISPC=${ISPC_BIN:-}
 if [ -z "$ISPC" ]; then
@@ -133,7 +206,6 @@ command -v "$CC" >/dev/null 2>&1 || {
     exit 1
 }
 
-SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh")
 run_ispc_target() {
     mode=$1
     target=$2

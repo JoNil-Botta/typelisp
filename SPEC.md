@@ -1397,8 +1397,12 @@ mutable iterator state. Construction moves the source exactly once. Each
 `IntoNext.Item` owns its `T` payload; `Done` is explicit and remains stable on
 repeated calls. Generated vectors keep an internal live-slot map and extract each
 item through checked `array-take!`, never through `array-ref`, `clone`, or a
-hidden copy. A future `for` macro may select this protocol for a bare owned
-source; protocol discovery remains explicit library API until that macro lands.
+hidden copy. For cleanup-owning element types, backing storage contains only
+constructed elements: capacity never creates spare owners. `IntoNext` is itself
+cleanup-owning, so an abandoned `Item` cleans its payload, while abandoning the
+`IntoIter` drains exactly the still-live, unvisited slots and `Done` is a no-op.
+A future `for` macro may select this protocol for a bare owned source; protocol
+discovery remains explicit library API until that macro lands.
 
 **Lifetime name selection.** For `(& place)`, the checker chooses the reference
 lifetime from the owner:
@@ -2970,13 +2974,14 @@ Cleanup functions return `unit`; if a cleanup function panics, the program
 aborts and the language does not guarantee that remaining field, nested, or
 outer cleanups run. A direct `panic`/abort has no unwinding cleanup guarantee.
 
-Cleanup-owning `defenum` declarations are reserved with the shape
+Cleanup-owning `defenum` declarations use the shape
 `(defenum Name (:cleanup cleanup-fn) variant+)`. The metadata is accepted and
 validated: payload cleanup functions are typechecked, and ordinary enum
 payloads that store cleanup-required or cleanup-owning values without an
-owning cleanup contract are rejected. A cleanup-owning enum cleans only the
-active variant payload, in reverse payload declaration order, using
-field-style `(:cleanup ...)` and `(:owned)` payload metadata.
+owning cleanup contract are rejected. Lowering emits the declared cleanup
+function as a match over the active variant. It cleans only that variant's
+payload, in reverse payload declaration order, using field-style `(:cleanup
+...)` and `(:owned)` payload metadata.
 
 #### 4.7.2 Move-only aggregate handle semantics
 
@@ -4389,6 +4394,8 @@ Primitive names and signatures are fixed as follows:
 | `(expr-type expr)` | `type` | Produced type of a macro-captured `Expr`; does not evaluate the runtime expression. |
 | `(type-kind type-expr)` | `String` | One of the fixed kind strings below. |
 | `(type-key type-expr)` | `String` | Opaque deterministic key for generated declarations. |
+| `(type-cleanup-owning? type-expr)` | `bool` | True exactly for a struct or enum with type-level cleanup metadata. |
+| `(type-cleanup-function type-expr)` | `String` | Canonical cleanup-function identity for a cleanup-owning struct or enum; other types reject. |
 | `(type-nominal-module type-expr)` | `String` | Canonical module identity for a struct/enum type. |
 | `(type-nominal-name type-expr)` | `String` | Unqualified nominal type name for a struct/enum type. |
 | `(struct-field-count type-expr)` | `i64` | Requires a struct type. |
@@ -4703,6 +4710,8 @@ CTFE, and the section 5.17 reflection primitives. V1 assigns:
 | 167 | `expr-binding-clause-list-nth` |
 | 168 | `expr-binding-clause-list->expr-list` |
 | 169 | `pattern-list-bindings` |
+| 170 | `type-cleanup-owning?` |
+| 171 | `type-cleanup-function` |
 
 `comptime-error` and `stdlib.comptime.error` are not separate operations; they
 call `diagnostic` and return status `1`. `type-info` returns a host-owned

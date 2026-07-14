@@ -315,3 +315,5 @@ vector_into_iterator_source_reuse_reject|check-fail|tests/safety/vector_into_ite
 vector_into_iterator_borrow_live_reject|check-fail|tests/safety/vector_into_iterator_borrow_live_reject.tl|-|cannot move borrowed place `values`
 vector_into_iterator_mutate_after_reject|check-fail|tests/safety/vector_into_iterator_mutate_after_reject.tl|-|use of moved value `values`
 vector_into_iterator_second_consume_reject|check-fail|tests/safety/vector_into_iterator_second_consume_reject.tl|-|use of moved value `values`
+vector_cleanup_owner_let_reject|check-fail|tests/safety/vector_cleanup_owner_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with
+vector_cleanup_into_next_let_reject|check-fail|tests/safety/vector_cleanup_into_next_let_reject.tl|-|ordinary let cannot own cleanup-required resource; use with

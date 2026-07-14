@@ -314,16 +314,18 @@
               (compiler-cfg-enable
                 (compiler-cfg-enable
                   (compiler-cfg-enable
-                    (compiler-cfg-empty)
-                    "feature-ptr-addr-of")
-                  "feature-str-view")
-                "feature-runtime-str-view-extern")
-              "feature-private-string-intrinsics")
-            "feature-compiler-private-string-intrinsics")
-          "array-helper-intrinsics")
-        "feature-tl-memchr")
-      "feature-plain-comptime-well-known")
-    "feature-comptime-public-fields"))
+                    (compiler-cfg-enable
+                      (compiler-cfg-empty)
+                      "feature-ptr-addr-of")
+                    "feature-str-view")
+                  "feature-runtime-str-view-extern")
+                "feature-private-string-intrinsics")
+              "feature-compiler-private-string-intrinsics")
+            "array-helper-intrinsics")
+          "feature-tl-memchr")
+        "feature-plain-comptime-well-known")
+      "feature-comptime-public-fields")
+    "feature-cleanup-owner-reflection"))
 
 (define (typecheck-compiler-source-load [src : String]) : ResultCompilerLoadWithPaths
   (let

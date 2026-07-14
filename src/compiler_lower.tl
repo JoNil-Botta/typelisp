@@ -2742,6 +2742,40 @@
           name-str
           name
           name-str))]
+    [(AstDecl.DefEnum _ cleanup _)
+      (match cleanup
+        [(AstEnumCleanup.No) names]
+        [(AstEnumCleanup.Fn cleanup-name)
+          (let
+            [cleanup-str : String (intern-str cleanup-name)]
+            (lower-name-env-add-import-alias-binding-base-id
+              names
+              alias
+              cleanup-str
+              cleanup-name
+              (lower-alias-logical-name
+                entry-path
+                decl-path
+                module
+                cleanup-str
+                path-aware)))])]
+    [(AstDecl.DefEnumLifetimes _ _ cleanup _)
+      (match cleanup
+        [(AstEnumCleanup.No) names]
+        [(AstEnumCleanup.Fn cleanup-name)
+          (let
+            [cleanup-str : String (intern-str cleanup-name)]
+            (lower-name-env-add-import-alias-binding-base-id
+              names
+              alias
+              cleanup-str
+              cleanup-name
+              (lower-alias-logical-name
+                entry-path
+                decl-path
+                module
+                cleanup-str
+                path-aware)))])]
     [(AstDecl.DefStruct _ _ cleanup _)
       (match cleanup
         [(AstStructCleanup.No) names]
@@ -2852,6 +2886,40 @@
           name-str
           name
           name-str))]
+    [(AstDecl.DefEnum _ cleanup _)
+      (match cleanup
+        [(AstEnumCleanup.No) names]
+        [(AstEnumCleanup.Fn cleanup-name)
+          (let
+            [cleanup-str : String (intern-str cleanup-name)]
+            (lower-name-env-add-import-alias-binding-base-cache-id
+              names
+              base-cache
+              dedup-base
+              alias
+              cleanup-str
+              cleanup-name
+              (lower-current-decl-logical-name-cache
+                base-cache
+                module
+                cleanup-str)))])]
+    [(AstDecl.DefEnumLifetimes _ _ cleanup _)
+      (match cleanup
+        [(AstEnumCleanup.No) names]
+        [(AstEnumCleanup.Fn cleanup-name)
+          (let
+            [cleanup-str : String (intern-str cleanup-name)]
+            (lower-name-env-add-import-alias-binding-base-cache-id
+              names
+              base-cache
+              dedup-base
+              alias
+              cleanup-str
+              cleanup-name
+              (lower-current-decl-logical-name-cache
+                base-cache
+                module
+                cleanup-str)))])]
     [(AstDecl.DefStruct _ _ cleanup _)
       (match cleanup
         [(AstStructCleanup.No) names]
@@ -5972,6 +6040,85 @@
         fields
         (+ index 1)))))
 
+(define (lower-reach-enum-payload-cleanup-roots
+  [all-functions : lower_string_i64_map.Map]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [variants : AstVariantDefList]) : LowerReachState
+  (lower-reach-enum-payload-cleanup-roots-at
+    all-functions
+    entry-path
+    decl-path
+    module
+    names
+    state
+    (& variants)
+    0
+    0))
+
+(define (lower-reach-enum-payload-cleanup-roots-at
+  [all-functions : lower_string_i64_map.Map]
+  [entry-path : String]
+  [decl-path : String]
+  [module : String]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [variants : (& variants AstVariantDefList)]
+  [variant-index : i64]
+  [payload-index : i64]) : LowerReachState
+  (if (>= variant-index (ast-variant-def-list-len variants))
+    state
+    (match (ast-variant-def-list-get
+      variants
+      variant-index
+      (ast-variant-def-fallback))
+      [(AstVariantDef.Def _ _ cleanups)
+        (if (>=
+          payload-index
+          (ast-variant-payload-cleanup-list-len (& cleanups)))
+          (lower-reach-enum-payload-cleanup-roots-at
+            all-functions
+            entry-path
+            decl-path
+            module
+            names
+            state
+            variants
+            (+ variant-index 1)
+            0)
+          (let
+            [next : LowerReachState
+              (match (ast-variant-payload-cleanup-list-get
+                (& cleanups)
+                payload-index
+                (ast-variant-payload-cleanup-fallback))
+                [(AstVariantPayloadCleanup.Fn cleanup-name)
+                  (let
+                    [cleanup-str : String (intern-str cleanup-name)]
+                    [logical-name : String
+                      (if (tc-name-qualified-id? cleanup-name)
+                        (lower-name-cache-resolve-hygiene names cleanup-str)
+                        (lower-decl-logical-name
+                          entry-path
+                          decl-path
+                          module
+                          cleanup-str))]
+                    (lower-reach-add-logical all-functions state logical-name))]
+                [_ state])]
+            (lower-reach-enum-payload-cleanup-roots-at
+              all-functions
+              entry-path
+              decl-path
+              module
+              names
+              next
+              variants
+              variant-index
+              (+ payload-index 1))))])))
+
 (define (lower-reach-cleanup-metadata-roots-in-module
   [all-functions : lower_string_i64_map.Map]
   [decls : AstDeclList]
@@ -6017,6 +6164,28 @@
                   state
                   fields)
                 state)]
+            [(AstDecl.DefEnum _ cleanup variants)
+              (if (ast-enum-cleanup? cleanup)
+                (lower-reach-enum-payload-cleanup-roots
+                  all-functions
+                  entry-path
+                  decl-path
+                  module
+                  names
+                  state
+                  variants)
+                state)]
+            [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+              (if (ast-enum-cleanup? cleanup)
+                (lower-reach-enum-payload-cleanup-roots
+                  all-functions
+                  entry-path
+                  decl-path
+                  module
+                  names
+                  state
+                  variants)
+                state)]
             [(AstDecl.ComptimeDecl _ template-box)
               (let
                 [template : AstDecl (box-get template-box)]
@@ -6042,6 +6211,28 @@
                         names
                         state
                         fields)
+                      state)]
+                  [(AstDecl.DefEnum _ cleanup variants)
+                    (if (ast-enum-cleanup? cleanup)
+                      (lower-reach-enum-payload-cleanup-roots
+                        all-functions
+                        entry-path
+                        decl-path
+                        module
+                        names
+                        state
+                        variants)
+                      state)]
+                  [(AstDecl.DefEnumLifetimes _ _ cleanup variants)
+                    (if (ast-enum-cleanup? cleanup)
+                      (lower-reach-enum-payload-cleanup-roots
+                        all-functions
+                        entry-path
+                        decl-path
+                        module
+                        names
+                        state
+                        variants)
                       state)]
                   [_ state]))]
             [(AstDecl.Module next-module)
@@ -45168,6 +45359,26 @@
                   struct-name))])])]
     [(ResultTcStructDecl.Err message) (ResultTcString.Err message)]))
 
+(define (lower-enum-cleanup-name-for-enum
+  [ctx : TcContext]
+  [enum-name : String]) : ResultTcString
+  (match (tc-enum-decl ctx enum-name)
+    [(ResultTcEnumDecl.Ok decl)
+      (match decl
+        [(TcEnumDecl cleanup _)
+          (match cleanup
+            [(AstEnumCleanup.Fn cleanup-name)
+              (ResultTcString.Ok
+                (lower-struct-cleanup-qualified-name
+                  enum-name
+                  (intern-str cleanup-name)))]
+            [(AstEnumCleanup.No)
+              (ResultTcString.Err
+                (string.append
+                  "lower: owned cleanup payload type has no cleanup function "
+                  enum-name))])])]
+    [(ResultTcEnumDecl.Err message) (ResultTcString.Err message)]))
+
 (define (lower-struct-cleanup-name-for-type [ctx : TcContext] [ty : AstType]) : ResultTcString
   (let
     [resolved : AstType (tc-type-strip-region (tc-resolve-type ctx ty))]
@@ -45176,10 +45387,14 @@
         (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
       [(AstType.StructArgs name _)
         (lower-struct-cleanup-name-for-struct ctx (intern-str name))]
+      [(AstType.Enum name)
+        (lower-enum-cleanup-name-for-enum ctx (intern-str name))]
+      [(AstType.EnumArgs name _)
+        (lower-enum-cleanup-name-for-enum ctx (intern-str name))]
       [_
         (ResultTcString.Err
           (string.append
-            "lower: owned cleanup field type is not a cleanup-owning struct "
+            "lower: owned cleanup field type is not a cleanup-owning aggregate "
             (tc-type-render resolved)))])))
 
 (define (lower-struct-cleanup-call-expr
@@ -45315,6 +45530,203 @@
         logical-name
         struct-ty
         fields
+        spans
+        names
+        mode)]))
+
+(define (lower-enum-cleanup-payload-name [index : i64]) : String
+  (string.append "__tl_cleanup_payload_" (string.int->string index)))
+
+(define (lower-enum-cleanup-call-expr
+  [cleanup-name : String]
+  [value-name : String]) : i64
+  (ast-expr-call
+    (ast-node-push (AstExpr.Var (intern cleanup-name)))
+    (ast-expr-cons
+      (ast-node-push (AstExpr.Var (intern value-name)))
+      (ast-expr-list-new))))
+
+(define (lower-enum-cleanup-payload-patterns [count : i64]) : AstPatternList
+  (lower-enum-cleanup-payload-patterns-at
+    count
+    0
+    (ast-pattern-list-with-capacity count)))
+
+(define (lower-enum-cleanup-payload-patterns-at
+  [count : i64]
+  [index : i64]
+  [out : AstPatternList]) : AstPatternList
+  (if (>= index count)
+    out
+    (let
+      [next : AstPatternList out]
+      (begin
+        (ast-pattern-list-push
+          (&mut next)
+          (ast-pat-binding (lower-enum-cleanup-payload-name index)))
+        (lower-enum-cleanup-payload-patterns-at count (+ index 1) next)))))
+
+(define (lower-enum-cleanup-payload-exprs
+  [ctx : TcContext]
+  [payloads : AstTypeList]
+  [cleanups : AstVariantPayloadCleanupList]) : ResultAstExprList
+  (lower-enum-cleanup-payload-exprs-at
+    ctx
+    (& payloads)
+    (& cleanups)
+    0
+    (ast-expr-list-new)))
+
+(define (lower-enum-cleanup-payload-exprs-at
+  [ctx : TcContext]
+  [payloads : (& payloads AstTypeList)]
+  [cleanups : (& cleanups AstVariantPayloadCleanupList)]
+  [index : i64]
+  [acc : AstExprList]) : ResultAstExprList
+  (if (>= index (ast-type-list-len payloads))
+    (ResultAstExprList.Ok acc)
+    (let
+      [cleanup : AstVariantPayloadCleanup
+        (ast-variant-payload-cleanup-list-get
+          cleanups
+          index
+          (ast-variant-payload-cleanup-fallback))]
+      [value-name : String (lower-enum-cleanup-payload-name index)]
+      (match cleanup
+        [(AstVariantPayloadCleanup.No)
+          (lower-enum-cleanup-payload-exprs-at
+            ctx
+            payloads
+            cleanups
+            (+ index 1)
+            acc)]
+        [(AstVariantPayloadCleanup.Fn cleanup-name)
+          (lower-enum-cleanup-payload-exprs-at
+            ctx
+            payloads
+            cleanups
+            (+ index 1)
+            (ast-expr-cons
+              (lower-enum-cleanup-call-expr
+                (intern-str cleanup-name)
+                value-name)
+              acc))]
+        [(AstVariantPayloadCleanup.Owned)
+          (match (lower-struct-cleanup-name-for-type
+            ctx
+            (tc-context-type-get
+              ctx
+              (ast-type-list-get payloads index (ast-type-id-fallback))))
+            [(ResultTcString.Ok cleanup-name)
+              (lower-enum-cleanup-payload-exprs-at
+                ctx
+                payloads
+                cleanups
+                (+ index 1)
+                (ast-expr-cons
+                  (lower-enum-cleanup-call-expr cleanup-name value-name)
+                  acc))]
+            [(ResultTcString.Err message) (ResultAstExprList.Err message)])]))))
+
+(define (lower-enum-cleanup-arm [ctx : TcContext] [variant : AstVariantDef]) : ResultAstMatchArm
+  (match variant
+    [(AstVariantDef.Def name payloads cleanups)
+      (match (lower-enum-cleanup-payload-exprs ctx payloads cleanups)
+        [(ResultAstExprList.Ok exprs)
+          (ResultAstMatchArm.Ok
+            (ast-match-arm
+              (ast-pat-variant
+                (intern-str name)
+                (lower-enum-cleanup-payload-patterns
+                  (ast-type-list-len (& payloads))))
+              (ast-node-push
+                (if (= (ast-expr-list-len exprs) 0)
+                  (AstExpr.Literal AstLiteral.Unit)
+                  (AstExpr.Begin exprs)))))]
+        [(ResultAstExprList.Err message) (ResultAstMatchArm.Err message)])]))
+
+(define (lower-enum-cleanup-arms
+  [ctx : TcContext]
+  [variants : AstVariantDefList]) : ResultAstMatchArmList
+  (lower-enum-cleanup-arms-at
+    ctx
+    (& variants)
+    0
+    (ast-match-arm-list-with-capacity (ast-variant-def-list-len (& variants)))))
+
+(define (lower-enum-cleanup-arms-at
+  [ctx : TcContext]
+  [variants : (& variants AstVariantDefList)]
+  [index : i64]
+  [out : AstMatchArmList]) : ResultAstMatchArmList
+  (if (>= index (ast-variant-def-list-len variants))
+    (ResultAstMatchArmList.Ok out)
+    (match (lower-enum-cleanup-arm
+      ctx
+      (ast-variant-def-list-get variants index (ast-variant-def-fallback)))
+      [(ResultAstMatchArm.Ok arm)
+        (let
+          [next : AstMatchArmList out]
+          (begin
+            (ast-match-arm-list-push (&mut next) arm)
+            (lower-enum-cleanup-arms-at ctx variants (+ index 1) next)))]
+      [(ResultAstMatchArm.Err message) (ResultAstMatchArmList.Err message)])))
+
+(define (lower-enum-cleanup-function
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [logical-name : String]
+  [enum-ty : AstType]
+  [variants : AstVariantDefList]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (let
+    [value-name : String (lower-struct-cleanup-param-name)]
+    (match (lower-enum-cleanup-arms ctx variants)
+      [(ResultAstMatchArmList.Ok arms)
+        (lower-function-escaping
+          ctx
+          top-env
+          type-cache
+          logical-name
+          (ast-param-cons
+            (ast-param value-name enum-ty false)
+            (ast-param-list-new))
+          (AstType.Unit)
+          (ast-node-get
+            (ast-expr-match
+              (ast-node-push (AstExpr.Var (intern value-name)))
+              arms))
+          spans
+          names
+          mode)]
+      [(ResultAstMatchArmList.Err message)
+        (ResultLowerFunction.Err (box (lower-diagnostic message)))])))
+
+(define (lower-enum-cleanup-decl
+  [ctx : TcContext]
+  [top-env : TcTypeEnv]
+  [type-cache : LowerTypeCache]
+  [logical-name : String]
+  [cleanup : AstEnumCleanup]
+  [enum-ty : AstType]
+  [variants : AstVariantDefList]
+  [spans : CompilerSourceSpans]
+  [names : LowerNameCache]
+  [mode : CompilerLowerMode]) : ResultLowerFunction
+  (match cleanup
+    [(AstEnumCleanup.No)
+      (ResultLowerFunction.Ok CompilerIrFunctionList.Nil spans)]
+    [(AstEnumCleanup.Fn _)
+      (lower-enum-cleanup-function
+        ctx
+        top-env
+        type-cache
+        logical-name
+        enum-ty
+        variants
         spans
         names
         mode)]))
@@ -46528,36 +46940,117 @@
                               (box (lower-diagnostic message))))
                           (set! done true))]))]
                 [(AstDecl.Test _ _ _) (set! cur-decls rest)]
-                [(AstDecl.DefEnum name _ variants)
-                  (begin
-                    (if (lower-comptime-runtime-skip-module? cur-module)
-                      unit
-                      (set!
-                        cur-globals
-                        (lower-nullary-variant-globals
+                [(AstDecl.DefEnum name cleanup variants)
+                  (let
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [logical-name : String
+                      (match cleanup
+                        [(AstEnumCleanup.No) ""]
+                        [(AstEnumCleanup.Fn cleanup-name)
                           (lower-current-decl-logical-name-cache
                             cur-name-cache
                             cur-module
-                            (intern-str name))
-                          variants
-                          0
-                          cur-globals)))
-                    (set! cur-decls rest))]
-                [(AstDecl.DefEnumLifetimes name _ _ variants)
-                  (begin
-                    (if (lower-comptime-runtime-skip-module? cur-module)
-                      unit
-                      (set!
-                        cur-globals
-                        (lower-nullary-variant-globals
-                          (lower-current-decl-logical-name
-                            names
+                            (intern-str cleanup-name))])]
+                    [enum-ty : AstType
+                      (AstType.Enum
+                        (intern
+                          (compiler-symbol-module-key
                             cur-module
-                            (intern-str name))
-                          variants
-                          0
-                          cur-globals)))
-                    (set! cur-decls rest))]
+                            (intern-str name))))]
+                    (begin
+                      (if (lower-comptime-runtime-skip-module? cur-module)
+                        unit
+                        (set!
+                          cur-globals
+                          (lower-nullary-variant-globals
+                            (lower-current-decl-logical-name-cache
+                              cur-name-cache
+                              cur-module
+                              (intern-str name))
+                            variants
+                            0
+                            cur-globals)))
+                      (match (lower-enum-cleanup-decl
+                        decl-ctx
+                        cur-local-top-env
+                        cur-type-cache
+                        logical-name
+                        cleanup
+                        enum-ty
+                        variants
+                        cur-spans
+                        cur-name-cache
+                        mode)
+                        [(ResultLowerFunction.Ok
+                            cleanup-functions
+                            cleanup-spans)
+                          (begin
+                            (compiler-ir-function-builder-append-list!
+                              (&mut cur-functions)
+                              cleanup-functions)
+                            (set! cur-spans cleanup-spans)
+                            (set! cur-decls rest))]
+                        [(ResultLowerFunction.Err message)
+                          (begin
+                            (set! result (ResultLowerDecls.Err message))
+                            (set! done true))])))]
+                [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
+                  (let
+                    [decl-ctx : TcContext
+                      (tc-context-with-module ctx cur-module)]
+                    [logical-name : String
+                      (match cleanup
+                        [(AstEnumCleanup.No) ""]
+                        [(AstEnumCleanup.Fn cleanup-name)
+                          (lower-current-decl-logical-name-cache
+                            cur-name-cache
+                            cur-module
+                            (intern-str cleanup-name))])]
+                    [enum-ty : AstType
+                      (ast-ty-enum-args
+                        (intern
+                          (compiler-symbol-module-key
+                            cur-module
+                            (intern-str name)))
+                        lifetimes)]
+                    (begin
+                      (if (lower-comptime-runtime-skip-module? cur-module)
+                        unit
+                        (set!
+                          cur-globals
+                          (lower-nullary-variant-globals
+                            (lower-current-decl-logical-name
+                              names
+                              cur-module
+                              (intern-str name))
+                            variants
+                            0
+                            cur-globals)))
+                      (match (lower-enum-cleanup-decl
+                        decl-ctx
+                        cur-local-top-env
+                        cur-type-cache
+                        logical-name
+                        cleanup
+                        enum-ty
+                        variants
+                        cur-spans
+                        cur-name-cache
+                        mode)
+                        [(ResultLowerFunction.Ok
+                            cleanup-functions
+                            cleanup-spans)
+                          (begin
+                            (compiler-ir-function-builder-append-list!
+                              (&mut cur-functions)
+                              cleanup-functions)
+                            (set! cur-spans cleanup-spans)
+                            (set! cur-decls rest))]
+                        [(ResultLowerFunction.Err message)
+                          (begin
+                            (set! result (ResultLowerDecls.Err message))
+                            (set! done true))])))]
                 [(AstDecl.DefStruct name _ cleanup fields)
                   (let
                     [decl-ctx : TcContext
@@ -49931,6 +50424,17 @@
   (buffer i64 (:cleanup close-buffer)))
 (define (main) : i64
   (with ([b (BufferedFile (FileHandle 10) 20) cleanup-buffered-file])
+    42))")
+
+(define (compiler-lower-cleanup-enum-source) : String
+  "(define (close-a [value : i64]) : unit unit)
+(define (close-b [value : i64]) : unit unit)
+(defenum Owned
+  (:cleanup cleanup-owned)
+  (None)
+  (Both i64 (:cleanup close-a) i64 (:cleanup close-b)))
+(define (main) : i64
+  (with ([value (Owned.Both 10 20) cleanup-owned])
     42))")
 
 (define (compiler-lower-ok? [src : String]) : bool
@@ -54453,6 +54957,31 @@
               "cleanup-file-handle"))])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-cleanup-enum-shape-ok?) : bool
+  (match (lower-compiler-source (compiler-lower-cleanup-enum-source))
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (=
+              (lower-test-function-direct-call-count
+                functions
+                "cleanup-owned"
+                "close-a")
+              1)
+            (=
+              (lower-test-function-direct-call-count
+                functions
+                "cleanup-owned"
+                "close-b")
+              1)
+            (lower-test-function-call-before?
+              functions
+              "cleanup-owned"
+              "close-b"
+              "close-a"))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
   (match (lower-compiler-source src)
     [(ResultCompilerLower.Ok program _)
@@ -58173,6 +58702,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-cleanup-struct-nested-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-cleanup-enum-shape-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-ok? (compiler-lower-array-length-source))

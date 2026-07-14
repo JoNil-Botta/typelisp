@@ -8352,6 +8352,12 @@
       (set! out (tc-bind out "type-key" (tc-fn1 expr (AstType.String))))
       (set!
         out
+        (tc-bind out "type-cleanup-owning?" (tc-fn1 expr (AstType.Bool))))
+      (set!
+        out
+        (tc-bind out "type-cleanup-function" (tc-fn1 expr (AstType.String))))
+      (set!
+        out
         (tc-bind out "type-nominal-module" (tc-fn1 expr (AstType.String))))
       (set!
         out
@@ -61070,16 +61076,6 @@
       (ResultTcUnit.Err (tc-struct-cleanup-repr-c-message struct-name))
       (tc-check-cleanup-struct-fields ctx env struct-name cleanup fields))))
 
-(define (tc-enum-cleanup-fn-mismatch-message
-  [enum-name : String]
-  [cleanup-name : String]) : String
-  (str_cat.str-cat
-    "typecheck: enum "
-    enum-name
-    " cleanup function "
-    cleanup-name
-    " type mismatch"))
-
 (define (tc-enum-payload-cleanup-outside-message
   [enum-name : String]
   [variant-name : String]) : String
@@ -61128,25 +61124,6 @@
     " cleanup function "
     cleanup-name
     " type mismatch"))
-
-(define (tc-check-enum-cleanup-fn
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [enum-name : String]
-  [cleanup : AstEnumCleanup]
-  [enum-ty : AstType]) : ResultTcUnit
-  (match cleanup
-    [(AstEnumCleanup.No) ResultTcUnit.Ok]
-    [(AstEnumCleanup.Fn cleanup-name)
-      (match (tc-lookup-visible-id ctx env cleanup-name)
-        [(ResultTcType.Ok cleanup-ty)
-          (tc-expect
-            cleanup-ty
-            (tc-fn1 (tc-type-without-regions enum-ty) (AstType.Unit))
-            (tc-enum-cleanup-fn-mismatch-message
-              enum-name
-              (intern-str cleanup-name)))]
-        [(ResultTcType.Err message) (ResultTcUnit.Err message)])]))
 
 (define (tc-check-enum-payload-cleanup-fn
   [ctx : TcContext]
@@ -61329,19 +61306,14 @@
   [ctx : TcContext]
   [env : TcTypeEnv]
   [name : String]
-  [lifetimes : AstLifetimeList]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : ResultTcUnit
   (let
     [enum-name : String name]
-    [enum-ty : AstType
-      (if (ast-lifetime-list-empty? (& lifetimes))
-        (AstType.Enum (intern enum-name))
-        (ast-ty-enum-args (intern enum-name) lifetimes))]
-    (match (tc-check-enum-cleanup-fn ctx env enum-name cleanup enum-ty)
-      [(ResultTcUnit.Ok)
-        (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)]
-      [(ResultTcUnit.Err message) (ResultTcUnit.Err message)])))
+    ;; The declared name denotes the cleanup function synthesized by lowering;
+    ;; it is not a user implementation to look up and validate. Its signature
+    ;; is fixed from `enum-ty`, just like synthesized struct cleanup functions.
+    (tc-check-cleanup-enum-variants ctx env enum-name cleanup variants)))
 
 ;: Check one function declaration's body against its signature.
 (define (tc-check-fn-decl-body
@@ -61594,7 +61566,6 @@
           ctx
           top-env
           (tc-check-decl-scoped-name ctx name)
-          (ast-lifetime-list-new)
           cleanup
           variants)]
       [(AstDecl.DefEnumLifetimes name lifetimes cleanup variants)
@@ -61602,7 +61573,6 @@
           ctx
           top-env
           (tc-check-decl-scoped-name ctx name)
-          lifetimes
           cleanup
           variants)]
       [(AstDecl.DefStruct name repr cleanup fields)

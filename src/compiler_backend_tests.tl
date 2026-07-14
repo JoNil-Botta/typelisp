@@ -2995,6 +2995,7 @@
         (AstType.I64)
         assignments
         ""
+        ""
         CompilerRegVarTypeList.Nil
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil
@@ -3144,6 +3145,7 @@
         (CompilerIrCallArgs.Nil)
         slots
         assignments
+        ""
         ""
         CompilerRegVarTypeList.Nil
         CompilerIrFunctionList.Nil
@@ -3409,6 +3411,8 @@
     "-24(%rbp)"
     false
     false
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok stack-asm)
       (match (compiler-backend-emit-pack-words
@@ -3419,6 +3423,8 @@
         "%r13"
         false
         false
+        ""
+        ""
         (compiler-diagnostic-at-start "" ""))
         [(ResultCompilerBackend.Ok reg-asm)
           (and
@@ -3467,6 +3473,8 @@
       "-24(%rbp)"
       false
       false
+      ""
+      ""
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok gp-asm)
         (match (compiler-backend-emit-pack-words
@@ -3477,6 +3485,8 @@
           "-24(%rbp)"
           true
           true
+          ""
+          ""
           (compiler-diagnostic-at-start "" ""))
           [(ResultCompilerBackend.Ok xmm-asm)
             (and
@@ -4716,6 +4726,7 @@
       0
       0
       0
+      ""
       (compiler-diagnostic-at-start "" "")
       index
       4)
@@ -4941,6 +4952,8 @@
         ty
         3
         index
+        ""
+        ""
         (compiler-diagnostic-at-start "" ""))]
     [data : ResultCompilerBackend
       (compiler-backend-emit-word
@@ -4950,6 +4963,7 @@
         0
         (AstType.U64)
         3
+        ""
         (compiler-diagnostic-at-start "" ""))]
     [length : ResultCompilerBackend
       (compiler-backend-emit-word
@@ -4959,6 +4973,7 @@
         1
         (AstType.I64)
         3
+        ""
         (compiler-diagnostic-at-start "" ""))]
     [_group-disable : unit (compiler-backend-group-vars-disable!)]
     (and
@@ -5023,6 +5038,8 @@
         ty
         4
         index
+        ""
+        ""
         (compiler-diagnostic-at-start "" ""))]
     [data : ResultCompilerBackend
       (compiler-backend-emit-word
@@ -5032,6 +5049,7 @@
         0
         (AstType.U64)
         4
+        ""
         (compiler-diagnostic-at-start "" ""))]
     [length : ResultCompilerBackend
       (compiler-backend-emit-word
@@ -5041,6 +5059,7 @@
         1
         (AstType.I64)
         4
+        ""
         (compiler-diagnostic-at-start "" ""))]
     [copied : ResultCompilerBackend
       (compiler-backend-emit-mov
@@ -6971,6 +6990,7 @@
         0
         (AstType.I64)
         8
+        ""
         diag)
         [(ResultCompilerBackend.Ok asm) (string.eq asm "    movq %r12, %r13\n")]
         [(ResultCompilerBackend.Err _) false])
@@ -7244,7 +7264,9 @@
       (compiler-backend-program-index-build
         CompilerIrFunctionList.Nil
         CompilerIrExternList.Nil)
-      4)
+      4
+      ""
+      "")
       [(ResultCompilerBackend.Ok asm)
         (and
           ;; `1 < %r14` is emitted as `%r14 > 1`, so the false edge uses
@@ -7275,7 +7297,9 @@
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
-    4)
+    4
+    ""
+    "")
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movq $1, -8(%rbp)\n")
@@ -7299,7 +7323,9 @@
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
       CompilerIrExternList.Nil)
-    4)
+    4
+    ""
+    "")
     [(ResultCompilerBackend.Ok reg-reg)
       (match (compiler-backend-emit-phi-edge-copies
         (compiler-reg-assignment-cons
@@ -7315,7 +7341,9 @@
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
-        4)
+        4
+        ""
+        "")
         [(ResultCompilerBackend.Ok spill-reg)
           (match (compiler-backend-emit-phi-edge-copies
             (compiler-reg-assignment-cons
@@ -7333,7 +7361,9 @@
             (compiler-backend-program-index-build
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
-            4)
+            4
+            ""
+            "")
             [(ResultCompilerBackend.Ok reg-spill)
               (and
                 (compiler-backend-string-contains?
@@ -7670,7 +7700,9 @@
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
-        0)
+        0
+        ""
+        "")
         [(ResultCompilerBackend.Ok same-home)
           (match (compiler-backend-emit-phi-edge-copies
             CompilerRegAssignmentList.Nil
@@ -7680,7 +7712,9 @@
             (compiler-backend-program-index-build
               CompilerIrFunctionList.Nil
               CompilerIrExternList.Nil)
-            0)
+            0
+            ""
+            "")
             [(ResultCompilerBackend.Ok cycle)
               (and
                 (string.eq same-home "")
@@ -7722,7 +7756,9 @@
         "join"
         "back"
         (compiler-backend-register-group-test-index)
-        4)
+        4
+        ""
+        "")
         [(ResultCompilerBackend.Ok cycle)
           (and
             (compiler-backend-string-contains?
@@ -7768,7 +7804,9 @@
           (compiler-backend-program-index-build
             CompilerIrFunctionList.Nil
             CompilerIrExternList.Nil)
-          2)
+          2
+          ""
+          "")
           [(ResultCompilerBackend.Ok cycle)
             (and
               (compiler-backend-string-contains?
@@ -7788,7 +7826,9 @@
           "join"
           "back"
           (compiler-backend-register-group-f64-test-index)
-          4)
+          4
+          ""
+          "")
           [(ResultCompilerBackend.Ok cycle)
             (and
               (compiler-backend-string-contains?
@@ -7874,6 +7914,7 @@
       0
       1
       0
+      ""
       (compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
         CompilerIrFunctionList.Nil
@@ -7911,6 +7952,7 @@
       0
       1
       0
+      ""
       (compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
         CompilerIrFunctionList.Nil
@@ -7947,6 +7989,7 @@
       0
       0
       0
+      ""
       (compiler-diagnostic-at-start "" "")
       (compiler-backend-program-index-build
         CompilerIrFunctionList.Nil
@@ -13977,6 +14020,8 @@
         ty
         4
         index
+        ""
+        ""
         diag)
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq %r12, %r14\n    movq %rbx, %r15\n")]
@@ -13988,6 +14033,8 @@
         ty
         4
         index
+        ""
+        ""
         diag)
         [(ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(ResultCompilerBackend.Err _) false]))))
@@ -18318,6 +18365,7 @@
     0
     0
     0
+    ""
     (compiler-diagnostic-at-start "" "")
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
@@ -18344,7 +18392,8 @@
       (CompilerIrValue.Var 0)
       (AstType.F32)
       true
-      0)
+      0
+      "")
       [(ResultCompilerBackend.Ok asm)
         (and
           (compiler-backend-string-contains? asm "    movd %xmm3, %r10d\n")
@@ -18367,6 +18416,7 @@
       (CompilerIrValue.Var 0)
       0
       2
+      ""
       ty
       (compiler-backend-register-group-f64-test-index))
       [(ResultCompilerBackend.Ok asm)
@@ -18614,6 +18664,7 @@
     CompilerRegAssignmentList.Nil
     (compiler-backend-i64-immediate-call-args8)
     (compiler-backend-i64-type-list8)
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (if (compiler-backend-target-windows? target)
@@ -18803,6 +18854,7 @@
         (AstType.I64)
         assignments
         ""
+        ""
         types
         1
         CompilerIrFunctionList.Nil
@@ -18888,6 +18940,7 @@
           args
           ret
           CompilerRegAssignmentList.Nil
+          ""
           CompilerRegVarTypeList.Nil
           (CompilerBackendGlobalTypeList.Nil)
           0
@@ -19099,6 +19152,7 @@
       (AstType.I64)
       CompilerRegAssignmentList.Nil
       ""
+      ""
       CompilerRegVarTypeList.Nil
       functions
       CompilerIrExternList.Nil
@@ -19120,6 +19174,7 @@
       CompilerIrCallArgs.Nil
       (AstType.I64)
       CompilerRegAssignmentList.Nil
+      ""
       ""
       CompilerRegVarTypeList.Nil
       functions
@@ -20714,6 +20769,73 @@
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
+(define (compiler-backend-scratch-vreg-aggregate-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Pack
+          2
+          (compiler-ir-value-cons
+            (CompilerIrValue.Var 0)
+            (compiler-ir-value-cons
+              (CompilerIrValue.Var 1)
+              CompilerIrValueList.Nil))
+          (AstType.Tuple
+            (box
+              (ast-type-cons
+                (AstType.I64)
+                (ast-type-cons (AstType.I64) (ast-type-list-new))))))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-aggregate-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r10"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r11"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.RegisterPair "%r12" "%r13"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-scratch-vreg-phi-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Jump "join")
+        CompilerIrInstrList.Nil))
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "join"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Phi
+            0
+            (compiler-ir-phi-input-cons
+              (CompilerIrValue.Var 1)
+              "entry"
+              CompilerIrPhiInputList.Nil)
+            (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              1
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                "entry"
+                CompilerIrPhiInputList.Nil)
+              (AstType.I64))
+            CompilerIrInstrList.Nil)))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-backend-scratch-vreg-phi-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r13"))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-scratch-test-types-from [var : i64] [vars : i64]) : CompilerRegVarTypeList
   (if (>= var vars)
     CompilerRegVarTypeList.Nil
@@ -20790,14 +20912,14 @@
       [reg : String (compiler-backend-scratch-test-register listed 0)]
       [dense-reg : String (compiler-backend-scratch-test-register dense 0)]
       (and
-        (= (compiler-backend-scratch-test-plan-count listed) 1)
+        (= (compiler-backend-scratch-test-plan-count listed) 2)
         (= (compiler-backend-scratch-test-success-count listed) 1)
         (string.eq reg "%r12")
         (string.eq dense-reg reg)
         (match listed
           [(CompilerRegScratchPlanResult.Result out-plan scratch)
             (and
-              (= (compiler-reg-plan-var-count out-plan 3) 4)
+              (= (compiler-reg-plan-var-count out-plan 3) 5)
               (match (array-ref (struct-get scratch items) 0)
                 [(CompilerRegScratchAssignment requirement assigned)
                   (and
@@ -20827,7 +20949,7 @@
                 (=
                   (compiler-reg-scratch-plan-count
                     (compiler-backend-runtime-plan-scratch wrapped))
-                  1)
+                  2)
                 (=
                   (compiler-reg-scratch-plan-count
                     (compiler-backend-runtime-plan-scratch base))
@@ -20872,6 +20994,240 @@
         (string.eq table-reg (compiler-backend-scratch-test-register dense 1))))
     true))
 
+(define (compiler-backend-scratch-vreg-aggregate-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [result : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_aggregate"
+          (compiler-backend-scratch-vreg-aggregate-test-blocks)
+          3
+          (compiler-backend-scratch-vreg-aggregate-test-assignments))]
+      [reg0 : String (compiler-backend-scratch-test-register result 0)]
+      [reg1 : String (compiler-backend-scratch-test-register result 1)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count result) 2)
+        (= (compiler-backend-scratch-test-success-count result) 2)
+        (not (string.eq reg0 ""))
+        (not (string.eq reg1 ""))
+        (not (string.eq reg0 reg1))
+        (not (string.eq reg0 "%r10"))
+        (not (string.eq reg0 "%r11"))
+        (not (string.eq reg0 "%r12"))
+        (not (string.eq reg0 "%r13"))
+        (not (string.eq reg1 "%r10"))
+        (not (string.eq reg1 "%r11"))
+        (not (string.eq reg1 "%r12"))
+        (not (string.eq reg1 "%r13"))
+        (match result
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.AggregateWord) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.AggregateWord) true]
+                [_ false]))])))
+    true))
+
+(define (compiler-backend-scratch-vreg-phi-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [result : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_phi"
+          (compiler-backend-scratch-vreg-phi-test-blocks)
+          2
+          (compiler-backend-scratch-vreg-phi-test-assignments))]
+      [cycle : String (compiler-backend-scratch-test-register result 0)]
+      [stage : String (compiler-backend-scratch-test-register result 1)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count result) 2)
+        (= (compiler-backend-scratch-test-success-count result) 2)
+        (not (string.eq cycle ""))
+        (not (string.eq stage ""))
+        (not (string.eq cycle stage))
+        (not (string.eq cycle "%r12"))
+        (not (string.eq cycle "%r13"))
+        (not (string.eq stage "%r12"))
+        (not (string.eq stage "%r13"))
+        (match result
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.PhiCycle) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.PhiStage) true]
+                [_ false]))])))
+    true))
+
+(define (compiler-backend-scratch-vreg-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [scalar-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -16))
+          CompilerRegAssignmentList.Nil)]
+      [phi-stage-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -16))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
+            CompilerRegAssignmentList.Nil))]
+      [cycle-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            0
+            (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              1
+              (CompilerRegLocation.Register "%r13"))
+            CompilerRegAssignmentList.Nil))]
+      [index : CompilerBackendProgramIndex
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)]
+      (match (compiler-backend-emit-pack-words
+        cycle-assignments
+        (CompilerIrValue.Var 0)
+        (CompilerIrValue.Var 1)
+        "-24(%rbp)"
+        "-32(%rbp)"
+        false
+        false
+        "%r14"
+        "%r15"
+        (compiler-diagnostic-at-start "" ""))
+        [(ResultCompilerBackend.Ok aggregate)
+          (match (compiler-backend-emit-scalar-stack-call-arg
+            (CompilerBackendTarget.Linux)
+            scalar-assignments
+            (CompilerIrValue.Var 0)
+            (AstType.I64)
+            false
+            0
+            "%r14")
+            [(ResultCompilerBackend.Ok call-stage)
+              (match (compiler-backend-emit-phi-edge-copies
+                phi-stage-assignments
+                (compiler-backend-phi-same-home-blocks)
+                "join"
+                "entry"
+                index
+                2
+                "%r15"
+                "%r14")
+                [(ResultCompilerBackend.Ok phi-stage)
+                  (match (compiler-backend-emit-phi-edge-copies
+                    cycle-assignments
+                    (compiler-backend-phi-cycle-blocks)
+                    "join"
+                    "back"
+                    index
+                    2
+                    "%r14"
+                    "%r15")
+                    [(ResultCompilerBackend.Ok phi-cycle)
+                      (and
+                        (string.eq
+                          (compiler-backend-phi-planned-avoiding-value-home
+                            cycle-assignments
+                            (CompilerIrValue.Var 0)
+                            "%r12")
+                          "")
+                        (string.eq
+                          (compiler-backend-phi-planned-avoiding-value-home
+                            cycle-assignments
+                            (CompilerIrValue.Var 0)
+                            "%r14")
+                          "%r14")
+                        (compiler-backend-string-contains?
+                          aggregate
+                          "    movq %r12, %r14\n")
+                        (compiler-backend-string-contains?
+                          aggregate
+                          "    movq %r13, %r15\n")
+                        (compiler-backend-string-contains?
+                          call-stage
+                          "    movq -16(%rbp), %r14\n")
+                        (compiler-backend-string-contains?
+                          call-stage
+                          "    movq %r14, 0(%rsp)\n")
+                        (compiler-backend-string-contains?
+                          phi-stage
+                          "    movq -16(%rbp), %r14\n")
+                        (compiler-backend-string-contains?
+                          phi-stage
+                          "    movq %r14, -8(%rbp)\n")
+                        (not
+                          (compiler-backend-string-contains? phi-stage "pushq"))
+                        (not
+                          (compiler-backend-string-contains? phi-stage "popq"))
+                        (compiler-backend-string-contains?
+                          phi-cycle
+                          "    movq %r12, %r14\n")
+                        (compiler-backend-string-contains?
+                          phi-cycle
+                          "    movq %r14, %r13\n")
+                        (not
+                          (compiler-backend-string-contains?
+                            phi-cycle
+                            (compiler-backend-cycle-temp-slot 0))))]
+                    [(ResultCompilerBackend.Err _) false])]
+                [(ResultCompilerBackend.Err _) false])]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false]))
+    true))
+
+(define (compiler-backend-scratch-vreg-future-window-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [previous-occupied : (Array i64)
+        compiler-backend-scavenge-ctx-occupied-masks]
+      [previous-scratch : (Array i64)
+        compiler-backend-scavenge-ctx-scratch-masks]
+      [occupied : (Array i64) (array.make-array i64 2)]
+      [scratch : (Array i64) (array.make-array i64 2)]
+      [r8 : i64 (compiler-backend-scavenge-reg-bit "%r8")]
+      [r10 : i64 (compiler-backend-scavenge-reg-bit "%r10")]
+      [ok : bool false]
+      (begin
+        (array-set! occupied 0 r8)
+        (array-set! occupied 1 (bit-or r8 r10))
+        (array-set! scratch 0 0)
+        (array-set! scratch 1 r10)
+        (set! compiler-backend-scavenge-ctx-occupied-masks occupied)
+        (set! compiler-backend-scavenge-ctx-scratch-masks scratch)
+        (set!
+          ok
+          (and
+            ;; A future planned temporary does not lengthen an unrelated
+            ;; legacy staging window backwards into this instruction.
+            (= (compiler-backend-scavenge-occupied-mask-over-range 0 2) r8)
+            ;; At its own point it remains occupied, so simultaneous legacy
+            ;; scratch cannot select the planned home.
+            (=
+              (compiler-backend-scavenge-occupied-mask-over-range 2 2)
+              (bit-or r8 r10))))
+        (set! compiler-backend-scavenge-ctx-occupied-masks previous-occupied)
+        (set! compiler-backend-scavenge-ctx-scratch-masks previous-scratch)
+        ok))
+    true))
+
 (define (compiler-backend-scratch-vreg-c-abi-return-plan-ok?) : bool
   (cfg
     scratch-vreg
@@ -20884,7 +21240,7 @@
           (compiler-backend-scratch-vreg-c-abi-return-test-assignments))]
       [planned : String (compiler-backend-scratch-test-register result 0)]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 1)
+        (= (compiler-backend-scratch-test-plan-count result) 2)
         (= (compiler-backend-scratch-test-success-count result) 1)
         (string.eq planned "%r12")
         (string.eq
@@ -20932,7 +21288,7 @@
       (and
         ;; The stable slot remains present but has an explicit empty assignment,
         ;; so emission falls back instead of using a restored callee-saved home.
-        (= (compiler-backend-scratch-test-plan-count result) 1)
+        (= (compiler-backend-scratch-test-plan-count result) 2)
         (= (compiler-backend-scratch-test-success-count result) 0)
         (string.eq (compiler-backend-scratch-test-register result 0) "")))
     true))
@@ -21426,6 +21782,10 @@
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
         (compiler-backend-scratch-vreg-call-target-plan-ok?)
         (compiler-backend-scratch-vreg-switch-plan-ok?)
+        (compiler-backend-scratch-vreg-aggregate-plan-ok?)
+        (compiler-backend-scratch-vreg-phi-plan-ok?)
+        (compiler-backend-scratch-vreg-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-future-window-ok?)
         (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
         (compiler-backend-scratch-vreg-bounds-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)

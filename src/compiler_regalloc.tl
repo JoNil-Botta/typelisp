@@ -19940,6 +19940,10 @@
 
 (defenum CompilerRegScratchRole
   (CallTarget)
+  (CallStage)
+  (AggregateWord)
+  (PhiCycle)
+  (PhiStage)
   (SwitchIndex)
   (SwitchTable)
   (BoundsLength))
@@ -20014,16 +20018,32 @@
                 (struct-get item register)
                 ""))))))))
 
-(define (compiler-reg-scratch-vreg-slots [_instr : CompilerIrInstr]) : i64
+(define (compiler-reg-scratch-vreg-slots
+  [_instr : CompilerIrInstr]
+  [phi-targets : CompilerRegStringList]) : i64
   (cfg
     scratch-vreg
     (match _instr
       ;; Fixed-width ordinals keep the map independent of assignment failure.
-      [(CompilerIrInstr.CallIndirect _ _ _ _) 1]
-      [(CompilerIrInstr.CallIndirectC _ _ _ _) 1]
-      [(CompilerIrInstr.CallCAbiStoreResult _) 1]
-      [(CompilerIrInstr.CallIndirectCAbiStoreResult _) 1]
-      [(CompilerIrInstr.TailCallIndirect _ _ _) 1]
+      [(CompilerIrInstr.Call _ _ _ _) 1]
+      [(CompilerIrInstr.CallIndirect _ _ _ _) 2]
+      [(CompilerIrInstr.CallIndirectC _ _ _ _) 2]
+      [(CompilerIrInstr.CallCAbiStoreResult _) 2]
+      [(CompilerIrInstr.CallIndirectCAbiStoreResult _) 2]
+      [(CompilerIrInstr.TailCall _ _ _) 1]
+      [(CompilerIrInstr.TailCallIndirect _ _ _) 2]
+      [(CompilerIrInstr.Pack _ _ _) 2]
+      [(CompilerIrInstr.Word _ _ _ _) 1]
+      [(CompilerIrInstr.Jump target)
+        (if (compiler-reg-string-list-contains? phi-targets target)
+          2
+          0)]
+      [(CompilerIrInstr.Branch _ true-label false-label)
+        (if (or
+          (compiler-reg-string-list-contains? phi-targets true-label)
+          (compiler-reg-string-list-contains? phi-targets false-label))
+          2
+          0)]
       [(CompilerIrInstr.Switch _ _ _ _) 2]
       [(CompilerIrInstr.BoundsCheck _ _ _) 1]
       [_ 0])
@@ -20031,6 +20051,7 @@
 
 (define (compiler-reg-scratch-vreg-count-seq
   [instrs : CompilerIrInstrSeq]
+  [phi-targets : CompilerRegStringList]
   [count : i64]) : i64
   (let
     [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
@@ -20042,12 +20063,15 @@
         (begin
           (set!
             out
-            (+ out (compiler-reg-scratch-vreg-slots (array-ref slots i))))
+            (+
+              out
+              (compiler-reg-scratch-vreg-slots (array-ref slots i) phi-targets)))
           (set! i (+ i 1))))
       out)))
 
 (define (compiler-reg-scratch-vreg-count-blocks
   [blocks : CompilerIrBlockList]
+  [phi-targets : CompilerRegStringList]
   [count : i64]) : i64
   (match blocks
     [(CompilerIrBlockList.Nil) count]
@@ -20056,7 +20080,8 @@
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-scratch-vreg-count-blocks
             (box-get rest)
-            (compiler-reg-scratch-vreg-count-seq instrs count))])]
+            phi-targets
+            (compiler-reg-scratch-vreg-count-seq instrs phi-targets count))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -20067,7 +20092,9 @@
             (begin
               (match (compiler-ir-block-seq-ref seq i)
                 [(CompilerIrBlock.Block _ instrs)
-                  (set! out (compiler-reg-scratch-vreg-count-seq instrs out))])
+                  (set!
+                    out
+                    (compiler-reg-scratch-vreg-count-seq instrs phi-targets out))])
               (set! i (+ i 1))))
           out))]))
 
@@ -20179,7 +20206,9 @@
 
 (defstruct CompilerRegScratchPolicy
   (call-allowed CompilerRegStringList)
-  (tail-call-allowed CompilerRegStringList))
+  (tail-call-allowed CompilerRegStringList)
+  (gp-allowed CompilerRegStringList)
+  (phi-excluded CompilerRegStringList))
 
 (define (compiler-reg-scratch-call-target-excluded) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -20229,10 +20258,23 @@
 
 (define (compiler-reg-scratch-policy
   [abi : CompilerRegTargetAbi]
-  [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPolicy
+  [assignments : CompilerRegAssignmentList]
+  [phi-excluded : CompilerRegStringList]) : CompilerRegScratchPolicy
   (CompilerRegScratchPolicy
     (compiler-reg-scratch-call-target-allowed abi assignments false)
-    (compiler-reg-scratch-call-target-allowed abi assignments true)))
+    (compiler-reg-scratch-call-target-allowed abi assignments true)
+    (compiler-reg-string-cons
+      "%r8"
+      (compiler-reg-string-cons
+        "%r9"
+        (compiler-reg-string-cons
+          "%r10"
+          (compiler-reg-string-cons
+            "%r11"
+            (compiler-reg-scratch-used-registers
+              assignments
+              (compiler-reg-callee-saved-integer-registers-for-abi abi))))))
+    phi-excluded))
 
 (define (compiler-reg-scratch-call-target-constraint
   [allowed : CompilerRegStringList]) : CompilerRegScratchConstraint
@@ -20249,21 +20291,183 @@
     CompilerRegStringList.Nil
     ""))
 
+(define (compiler-reg-scratch-gp-constraint-excluding
+  [excluded : CompilerRegStringList]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Gp)
+    CompilerRegStringList.Nil
+    excluded
+    ""))
+
+(define (compiler-reg-scratch-call-stage-constraint
+  [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Gp)
+    (struct-get policy call-allowed)
+    (compiler-reg-scratch-call-target-excluded)
+    ""))
+
+(define (compiler-reg-scratch-location-registers
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : CompilerRegStringList
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.Some location)
+      (match location
+        [(CompilerRegLocation.Register reg)
+          (compiler-reg-string-cons reg CompilerRegStringList.Nil)]
+        [(CompilerRegLocation.RegisterPair lo hi)
+          (compiler-reg-string-cons
+            lo
+            (compiler-reg-string-cons hi CompilerRegStringList.Nil))]
+        [_ CompilerRegStringList.Nil])]
+    [(CompilerRegMaybeLocation.No) CompilerRegStringList.Nil]))
+
+(define (compiler-reg-scratch-aggregate-constraint
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Gp)
+    (struct-get policy gp-allowed)
+    (compiler-reg-scratch-location-registers assignments dst)
+    ""))
+
+(define (compiler-reg-scratch-phi-constraint
+  [policy : CompilerRegScratchPolicy]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Gp)
+    (struct-get policy gp-allowed)
+    (struct-get policy phi-excluded)
+    ""))
+
+;; Phi copies execute on predecessor edges, before the merge block's phi
+;; destinations become live.  Exclude every phi destination home in the
+;; function from both edge scratch slots; source homes already interfere at the
+;; predecessor terminator point.  The function-wide union is conservative but
+;; also covers fused terminators without rebuilding edge-specific liveness.
+(define (compiler-reg-scratch-phi-dst-registers-instr
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]) : CompilerRegStringList
+  (match instr
+    [(CompilerIrInstr.Phi dst _ _)
+      (compiler-reg-scratch-location-registers assignments dst)]
+    [_ CompilerRegStringList.Nil]))
+
+(define (compiler-reg-scratch-seq-starts-with-phi?
+  [instrs : CompilerIrInstrSeq]) : bool
+  (if (= (compiler-ir-instr-seq-count instrs) 0)
+    false
+    (match (compiler-ir-instr-seq-ref instrs 0)
+      [(CompilerIrInstr.Phi _ _ _) true]
+      [_ false])))
+
+(define (compiler-reg-scratch-phi-targets-block-seq-from
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : CompilerRegStringList
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    CompilerRegStringList.Nil
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block label instrs)
+        (let
+          [tail : CompilerRegStringList
+            (compiler-reg-scratch-phi-targets-block-seq-from blocks (+ index 1))]
+          (if (compiler-reg-scratch-seq-starts-with-phi? instrs)
+            (compiler-reg-string-cons label tail)
+            tail))])))
+
+(define (compiler-reg-scratch-phi-targets-blocks [blocks : CompilerIrBlockList]) : CompilerRegStringList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block label instrs)
+          (let
+            [tail : CompilerRegStringList
+              (compiler-reg-scratch-phi-targets-blocks (box-get rest))]
+            (if (compiler-reg-scratch-seq-starts-with-phi? instrs)
+              (compiler-reg-string-cons label tail)
+              tail))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-scratch-phi-targets-block-seq-from seq 0)]))
+
+(define (compiler-reg-scratch-phi-dst-registers-seq-from
+  [assignments : CompilerRegAssignmentList]
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerRegStringList
+  (if (>= index (compiler-ir-instr-seq-count instrs))
+    CompilerRegStringList.Nil
+    (compiler-reg-string-list-append
+      (compiler-reg-scratch-phi-dst-registers-instr
+        assignments
+        (compiler-ir-instr-seq-ref instrs index))
+      (compiler-reg-scratch-phi-dst-registers-seq-from
+        assignments
+        instrs
+        (+ index 1)))))
+
+(define (compiler-reg-scratch-phi-dst-registers-block-seq-from
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockSeq]
+  [index : i64]) : CompilerRegStringList
+  (if (>= index (compiler-ir-block-seq-count blocks))
+    CompilerRegStringList.Nil
+    (match (compiler-ir-block-seq-ref blocks index)
+      [(CompilerIrBlock.Block _ instrs)
+        (compiler-reg-string-list-append
+          (compiler-reg-scratch-phi-dst-registers-seq-from assignments instrs 0)
+          (compiler-reg-scratch-phi-dst-registers-block-seq-from
+            assignments
+            blocks
+            (+ index 1)))])))
+
+(define (compiler-reg-scratch-phi-dst-registers-blocks
+  [assignments : CompilerRegAssignmentList]
+  [blocks : CompilerIrBlockList]) : CompilerRegStringList
+  (match blocks
+    [(CompilerIrBlockList.Nil) CompilerRegStringList.Nil]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (compiler-reg-string-list-append
+            (compiler-reg-scratch-phi-dst-registers-seq-from
+              assignments
+              instrs
+              0)
+            (compiler-reg-scratch-phi-dst-registers-blocks
+              assignments
+              (box-get rest)))])]
+    [(CompilerIrBlockList.Array seq)
+      (compiler-reg-scratch-phi-dst-registers-block-seq-from assignments seq 0)]))
+
 (define (compiler-reg-scratch-requirement
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
   [instr : CompilerIrInstr]
   [point : i64]
   [ordinal : i64]
   [var : i64]) : CompilerRegScratchRequirement
   (match instr
+    [(CompilerIrInstr.Call _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.CallStage)
+        (compiler-reg-scratch-call-stage-constraint policy)
+        point
+        (+ point 1)
+        var)]
     [(CompilerIrInstr.CallIndirect _ _ _ _)
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.CallTarget)
-        (compiler-reg-scratch-call-target-constraint
-          (struct-get policy call-allowed))
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.CallTarget)
+          (CompilerRegScratchRole.CallStage))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-call-target-constraint
+            (struct-get policy call-allowed))
+          (compiler-reg-scratch-call-stage-constraint policy))
         point
         (+ point 1)
         var)]
@@ -20271,9 +20475,13 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.CallTarget)
-        (compiler-reg-scratch-call-target-constraint
-          (struct-get policy call-allowed))
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.CallTarget)
+          (CompilerRegScratchRole.CallStage))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-call-target-constraint
+            (struct-get policy call-allowed))
+          (compiler-reg-scratch-call-stage-constraint policy))
         point
         (+ point 1)
         var)]
@@ -20281,9 +20489,13 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.CallTarget)
-        (compiler-reg-scratch-call-target-constraint
-          (struct-get policy call-allowed))
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.CallTarget)
+          (CompilerRegScratchRole.CallStage))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-call-target-constraint
+            (struct-get policy call-allowed))
+          (compiler-reg-scratch-call-stage-constraint policy))
         point
         (+ point 1)
         var)]
@@ -20291,9 +20503,13 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.CallTarget)
-        (compiler-reg-scratch-call-target-constraint
-          (struct-get policy call-allowed))
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.CallTarget)
+          (CompilerRegScratchRole.CallStage))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-call-target-constraint
+            (struct-get policy call-allowed))
+          (compiler-reg-scratch-call-stage-constraint policy))
         point
         (+ point 1)
         var)]
@@ -20301,9 +20517,62 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.CallTarget)
-        (compiler-reg-scratch-call-target-constraint
-          (struct-get policy tail-call-allowed))
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.CallTarget)
+          (CompilerRegScratchRole.CallStage))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-call-target-constraint
+            (struct-get policy tail-call-allowed))
+          (compiler-reg-scratch-call-stage-constraint policy))
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.TailCall _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.CallStage)
+        (compiler-reg-scratch-call-stage-constraint policy)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Pack dst _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.AggregateWord)
+        (compiler-reg-scratch-aggregate-constraint policy assignments dst)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Word dst _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.AggregateWord)
+        (compiler-reg-scratch-aggregate-constraint policy assignments dst)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Jump _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.PhiCycle)
+          (CompilerRegScratchRole.PhiStage))
+        (compiler-reg-scratch-phi-constraint policy)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Branch _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.PhiCycle)
+          (CompilerRegScratchRole.PhiStage))
+        (compiler-reg-scratch-phi-constraint policy)
         point
         (+ point 1)
         var)]
@@ -20314,7 +20583,8 @@
         (if (= ordinal 0)
           (CompilerRegScratchRole.SwitchIndex)
           (CompilerRegScratchRole.SwitchTable))
-        (compiler-reg-scratch-gp-constraint)
+        (compiler-reg-scratch-gp-constraint-excluding
+          (struct-get policy phi-excluded))
         point
         (+ point 1)
         var)]
@@ -20376,6 +20646,7 @@
 (define (compiler-reg-scratch-fill-slots!
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
   [instr : CompilerIrInstr]
   [point : i64]
   [scratch-base : i64]
@@ -20396,6 +20667,7 @@
         (compiler-reg-scratch-requirement
           abi
           policy
+          assignments
           instr
           point
           slot
@@ -20415,6 +20687,7 @@
         (compiler-reg-scratch-fill-slots!
           abi
           policy
+          assignments
           instr
           point
           scratch-base
@@ -20431,7 +20704,9 @@
 (define (compiler-reg-scratch-fill-seq!
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrSeq]
+  [phi-targets : CompilerRegStringList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -20453,13 +20728,14 @@
       (while (< i len)
         (let
           [instr : CompilerIrInstr (array-ref instr-slots i)]
-          [n : i64 (compiler-reg-scratch-vreg-slots instr)]
+          [n : i64 (compiler-reg-scratch-vreg-slots instr phi-targets)]
           (begin
             (array-set! firsts instruction item)
             (array-set! slot-counts instruction n)
             (compiler-reg-scratch-fill-slots!
               abi
               policy
+              assignments
               instr
               (* 2 instruction)
               scratch-base
@@ -20480,7 +20756,9 @@
 (define (compiler-reg-scratch-fill-blocks!
   [abi : CompilerRegTargetAbi]
   [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
+  [phi-targets : CompilerRegStringList]
   [instruction-start : i64]
   [item-start : i64]
   [scratch-base : i64]
@@ -20501,7 +20779,9 @@
           (match (compiler-reg-scratch-fill-seq!
             abi
             policy
+            assignments
             instrs
+            phi-targets
             instruction-start
             item-start
             scratch-base
@@ -20517,7 +20797,9 @@
               (compiler-reg-scratch-fill-blocks!
                 abi
                 policy
+                assignments
                 (box-get rest)
+                phi-targets
                 next-instruction
                 next-item
                 scratch-base
@@ -20543,7 +20825,9 @@
                   (match (compiler-reg-scratch-fill-seq!
                     abi
                     policy
+                    assignments
                     instrs
+                    phi-targets
                     instruction
                     item
                     scratch-base
@@ -20726,8 +21010,10 @@
     (match _func
       [(CompilerIrFunction.Function _ _ _ _ blocks)
         (let
+          [phi-targets : CompilerRegStringList
+            (compiler-reg-scratch-phi-targets-blocks blocks)]
           [scratch-count : i64
-            (compiler-reg-scratch-vreg-count-blocks blocks 0)]
+            (compiler-reg-scratch-vreg-count-blocks blocks phi-targets 0)]
           [instruction-count : i64
             (compiler-reg-scratch-vreg-instr-count-blocks blocks 0)]
           (if (= scratch-count 0)
@@ -20742,7 +21028,10 @@
               [scratch-policy : CompilerRegScratchPolicy
                 (compiler-reg-scratch-policy
                   _abi
-                  (compiler-reg-plan-assignments plan))]
+                  (compiler-reg-plan-assignments plan)
+                  (compiler-reg-scratch-phi-dst-registers-blocks
+                    (compiler-reg-plan-assignments plan)
+                    blocks))]
               [base-type-info : CompilerRegVarTypes
                 (compiler-reg-var-types-from-list
                   (compiler-reg-plan-types plan)
@@ -20801,7 +21090,9 @@
                       (compiler-reg-scratch-fill-blocks!
                         _abi
                         scratch-policy
+                        (compiler-reg-plan-assignments plan)
                         blocks
+                        phi-targets
                         0
                         0
                         _vars

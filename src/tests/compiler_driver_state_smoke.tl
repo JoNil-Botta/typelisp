@@ -1106,10 +1106,20 @@
                 (set! ok false))
               ok)))))))
 
+(define (compiler-driver-state-smoke-render-ok?
+  [owner : InternIdProvenance]
+  [id : i64]
+  [expected : String]) : bool
+  (match (intern-id-render owner id)
+    [(InternIdRender.Ok text) (string.eq text expected)]
+    [_ false]))
+
 (define (compiler-driver-state-smoke-interns-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [a-address : (Box i64) (box 0)]
+    [b-address : (Box i64) (box 0)]
     [ok : bool true]
     (begin
       (unless
@@ -1119,65 +1129,161 @@
             (compiler-driver-state-intern-pool-data-addr state-b)))
         (set! ok false))
       (compiler-driver-state-reset-file-state! state-a)
+      (intern-persistent-storage-enable!)
       (let
-        [a-shared : i64 (intern "shared-name")]
-        [a-only : i64 (intern "state-a-only")]
+        [a-shared : i64
+          (with-scratch
+            (let
+              [name : String
+                (string.substring
+                  "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+                  0
+                  49)]
+              (intern name)))]
+        [a-only : i64
+          (with-scratch
+            (let
+              [name : String
+                (string.substring
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                  0
+                  49)]
+              (begin
+                (set!
+                  (box-get a-address)
+                  (cast
+                    (unsafe
+                      (ptr->int (string-data (& name))))
+                    : i64))
+                (intern name))))]
+        [a-mark : i64 (intern-pool-len)]
+        [a-owner : InternIdProvenance (intern-id-provenance-capture)]
         (begin
           (compiler-driver-state-capture-active-interns! state-a)
           (compiler-driver-state-reset-file-state! state-b)
-          (match (intern-lookup "state-a-only")
-            [(InternLookupMissing) unit]
-            [(InternLookupFound _) (set! ok false)])
+          (intern-persistent-storage-enable!)
           (let
-            [b-shared : i64 (intern "shared-name")]
-            [b-only : i64 (intern "state-b-only")]
+            ;; Insert the different name first so equal spellings receive
+            ;; different numeric ids, while id 0 means different things in A/B.
+            [b-only : i64
+              (with-scratch
+                (let
+                  [name : String
+                    (string.substring
+                      "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                      0
+                      49)]
+                  (begin
+                    (set!
+                      (box-get b-address)
+                      (cast
+                        (unsafe
+                          (ptr->int (string-data (& name))))
+                        : i64))
+                    (intern name))))]
+            [b-shared : i64
+              (with-scratch
+                (intern
+                  (string.substring
+                    "ssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssssss"
+                    0
+                    49)))]
+            [b-owner : InternIdProvenance (intern-id-provenance-capture)]
+            [b-generation : i64 (intern-generation)]
             (begin
               (compiler-driver-state-capture-active-interns! state-b)
               (unless
-                (= (compiler-driver-state-intern-pool-len state-a) 2)
+                (= (box-get a-address) (box-get b-address))
+                (set! ok false))
+              (unless (= a-shared 0) (set! ok false))
+              (unless (= a-only 1) (set! ok false))
+              (unless (= b-only 0) (set! ok false))
+              (unless (= b-shared 1) (set! ok false))
+              (unless
+                (compiler-driver-state-smoke-render-ok?
+                  b-owner
+                  b-only
+                  "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                (set! ok false))
+              (match (intern-id-render a-owner a-only)
+                [(InternIdRender.WrongOwner) unit]
+                [_ (set! ok false)])
+              (compiler-driver-state-install-interns! state-a)
+              (unless
+                (compiler-driver-state-smoke-render-ok?
+                  a-owner
+                  a-shared
+                  "sssssssssssssssssssssssssssssssssssssssssssssssss")
                 (set! ok false))
               (unless
-                (= (compiler-driver-state-intern-pool-len state-b) 2)
+                (compiler-driver-state-smoke-render-ok?
+                  a-owner
+                  a-only
+                  "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
                 (set! ok false))
-              (unless (= a-shared b-shared) (set! ok false))
-              (unless (= a-only 1) (set! ok false))
-              (unless (= b-only 1) (set! ok false))
-              (compiler-driver-state-install-interns! state-a)
-              (match (intern-lookup "state-a-only")
-                [(InternLookupFound found)
-                  (unless (= found a-only) (set! ok false))]
-                [(InternLookupMissing) (set! ok false)])
-              (match (intern-lookup "state-b-only")
-                [(InternLookupMissing) unit]
-                [(InternLookupFound _) (set! ok false)])
-              (unless (= (intern "shared-name") a-shared) (set! ok false))
-              (compiler-driver-state-install-interns! state-b)
-              (match (intern-lookup "state-b-only")
-                [(InternLookupFound found)
-                  (unless (= found b-only) (set! ok false))]
-                [(InternLookupMissing) (set! ok false)])
-              (match (intern-lookup "state-a-only")
-                [(InternLookupMissing) unit]
-                [(InternLookupFound _) (set! ok false)])
-              (unless (= (intern "shared-name") b-shared) (set! ok false))
+              (match (intern-id-render b-owner b-only)
+                [(InternIdRender.WrongOwner) unit]
+                [_ (set! ok false)])
               (let
-                [state-a-generation : i64
-                  (compiler-driver-state-intern-generation state-a)]
-                [state-b-generation : i64
-                  (compiler-driver-state-intern-generation state-b)]
+                [dropped : i64 (intern "drop-after-mark")]
+                [before-reset : InternIdProvenance
+                  (intern-id-provenance-capture)]
                 (begin
-                  (compiler-driver-state-reset-file-state! state-b)
-                  (unless
-                    (=
-                      (compiler-driver-state-intern-generation state-a)
-                      state-a-generation)
-                    (set! ok false))
-                  (unless
-                    (>
-                      (compiler-driver-state-intern-generation state-b)
-                      state-b-generation)
-                    (set! ok false))
-                  ok)))))))))
+                  (unless (= dropped a-mark) (set! ok false))
+                  (intern-reset-to! a-mark)
+                  (match (intern-id-render a-owner a-only)
+                    [(InternIdRender.StaleGeneration) unit]
+                    [_ (set! ok false)])
+                  (match (intern-id-render before-reset dropped)
+                    [(InternIdRender.StaleGeneration) unit]
+                    [_ (set! ok false)])
+                  (let
+                    [a-fresh-owner : InternIdProvenance
+                      (intern-id-provenance-capture)]
+                    (begin
+                      (unless
+                        (compiler-driver-state-smoke-render-ok?
+                          a-fresh-owner
+                          a-only
+                          "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+                        (set! ok false))
+                      (match (intern-id-render a-fresh-owner dropped)
+                        [(InternIdRender.InvalidId) unit]
+                        [_ (set! ok false)]))))
+                (compiler-driver-state-capture-active-interns! state-a)
+                (compiler-driver-state-install-interns! state-b)
+                (unless (= (intern-generation) b-generation) (set! ok false))
+                (unless
+                  (compiler-driver-state-smoke-render-ok?
+                    b-owner
+                    b-shared
+                    "sssssssssssssssssssssssssssssssssssssssssssssssss")
+                  (set! ok false))
+                ;; Reset A through its owned state while B stays installed.
+                (compiler-load-session-reset-interns-with-state!
+                  (array-ref (struct-get state-a intern-state) 0))
+                (unless (= (intern-generation) b-generation) (set! ok false))
+                (unless
+                  (compiler-driver-state-smoke-render-ok?
+                    b-owner
+                    b-only
+                    "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                  (set! ok false))
+                (compiler-driver-state-install-interns! state-a)
+                (match (intern-id-render a-owner a-only)
+                  [(InternIdRender.StaleGeneration) unit]
+                  [_ (set! ok false)])
+                (match (intern-id-render (intern-id-provenance-capture) a-only)
+                  [(InternIdRender.InvalidId) unit]
+                  [_ (set! ok false)])
+                (compiler-driver-state-install-interns! state-b)
+                (unless
+                  (compiler-driver-state-smoke-render-ok?
+                    b-owner
+                    b-shared
+                    "sssssssssssssssssssssssssssssssssssssssssssssssss")
+                  (set! ok false))
+                ok))))))))
 
 (define (compiler-driver-state-smoke-intern-arena-reset-isolated?) : bool
   (let

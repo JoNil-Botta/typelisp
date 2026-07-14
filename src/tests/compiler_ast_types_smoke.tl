@@ -848,6 +848,74 @@
           (ast.ast-node-pool-compat-context-clear!)
           (and (= id 0) (compiler-ast-context-expr-int-lit? pools id 42)))))))
 
+(define (compiler-ast-name-provenance-smoke?) : bool
+  (begin
+    (ci.intern-reset!)
+    (let
+      ;; This is the historical parser-only assertion in executable form: a
+      ;; compatibility constructor must accept synthesis whose spelling was not
+      ;; already present as a parser token.
+      [empty-was-not-parsed : bool
+        (match (ci.intern-lookup "")
+          [(ci.InternLookupMissing) true]
+          [(ci.InternLookupFound _) false])]
+      [empty-decl : ast.AstDecl (ast.ast-decl-def "" (ast.AstMaybeType.No) 0)]
+      [generated-id : i64 (ci.intern "generated.module/helper")]
+      [generated-decl : ast.AstDecl
+        (ast.ast-decl-module-body-id generated-id (ast.ast-decl-list-new))]
+      [hygiene-id : i64 (ci.intern "__macro_hygiene_42")]
+      [hygiene-expr : ast.AstExpr (ast.AstExpr.Var hygiene-id)]
+      [builtin-decl : ast.AstDecl
+        (ast.ast-decl-extern
+          "tl_alloc"
+          (ast.AstExternKind.Function)
+          (ast.AstExternMetadata.Metadata
+            (ast.AstExternAbi.C)
+            "tl_alloc"
+            (ast.ast-extern-link-input-list-new)
+            false)
+          (ast.AstType.I64))]
+      [fallback-param : ast.AstParam (ast.ast-param-fallback)]
+      [sentinel-type : ast.AstType (ast.AstType.Struct -1)]
+      [structural-type : ast.AstType
+        (ast.AstType.Enum (+ (ci.intern-capacity) 7))]
+      (and
+        empty-was-not-parsed
+        (match empty-decl
+          [(ast.AstDecl.Def name _ _) (string.eq (ci.intern-str name) "")]
+          [_ false])
+        (match generated-decl
+          [(ast.AstDecl.ModuleBody name _)
+            (and
+              (= name generated-id)
+              (string.eq (ci.intern-str name) "generated.module/helper"))]
+          [_ false])
+        (match hygiene-expr
+          [(ast.AstExpr.Var name)
+            (and
+              (= name hygiene-id)
+              (string.eq (ci.intern-str name) "__macro_hygiene_42"))]
+          [_ false])
+        (match builtin-decl
+          [(ast.AstDecl.Extern name _ _ _)
+            (string.eq (ci.intern-str name) "tl_alloc")]
+          [_ false])
+        ;; Fallback payload ids are shape sentinels and are never rendered.
+        (match fallback-param
+          [(ast.AstParam.Param name _ _ _) (= name 0)])
+        (match sentinel-type
+          [(ast.AstType.Struct name)
+            (string.eq
+              (ast.ast-nominal-name-display name)
+              "<structural-nominal>")]
+          [_ false])
+        (match structural-type
+          [(ast.AstType.Enum name)
+            (string.eq
+              (ast.ast-nominal-name-display name)
+              "<structural-nominal>")]
+          [_ false])))))
+
 (define (main) : i64
   (begin
     (unless (= (ast.compiler-ast-smoke) 23) (return 2))
@@ -860,4 +928,5 @@
     (unless (compiler-ast-compat-context-set-smoke?) (return 9))
     (unless (compiler-ast-context-clone-types-only-smoke?) (return 10))
     (unless (compiler-ast-clause-list-tail-smoke?) (return 11))
+    (unless (compiler-ast-name-provenance-smoke?) (return 12))
     42))

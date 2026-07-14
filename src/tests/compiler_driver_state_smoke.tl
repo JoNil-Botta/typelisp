@@ -1307,24 +1307,23 @@
         [owner : InternIdProvenance (intern-id-provenance-capture)]
         [generation : i64 (intern-generation)]
         [pool-address : i64 (intern-active-pool-data-addr)]
-        (let
-          [ok : bool
-            (begin
-              (compiler-driver-state-capture-active-interns! state-b)
-              (compiler-driver-state-reset-file-state! state-a)
-              (compiler-driver-state-release-file-state! state-a)
-              (and
-                (= (intern-generation) generation)
-                (= (intern-active-pool-data-addr) pool-address)
-                (compiler-driver-state-smoke-render-ok?
-                  owner
-                  name-id
-                  "state-b-reset-decoy")
-                (compiler-driver-state-smoke-global-expr-int? expr-id 4705)
-                (compiler-driver-state-smoke-global-type-i64? type-id)))]
+        [ok : bool
           (begin
-            (ast-node-pool-context-install! prior-pools)
-            ok))))))
+            (compiler-driver-state-capture-active-interns! state-b)
+            (compiler-driver-state-reset-file-state! state-a)
+            (compiler-driver-state-release-file-state! state-a)
+            (and
+              (= (intern-generation) generation)
+              (= (intern-active-pool-data-addr) pool-address)
+              (compiler-driver-state-smoke-render-ok?
+                owner
+                name-id
+                "state-b-reset-decoy")
+              (compiler-driver-state-smoke-global-expr-int? expr-id 4705)
+              (compiler-driver-state-smoke-global-type-i64? type-id)))]
+        (begin
+          (ast-node-pool-context-install! prior-pools)
+          ok)))))
 
 (define (compiler-driver-state-smoke-target-cfgs-do-not-install?) : bool
   (let

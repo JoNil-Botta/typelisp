@@ -26990,7 +26990,8 @@
             scratch
             summaries)]
         (begin
-          (allocation_profile.compiler-allocation-profile-snapshot!
+          (allocation_profile.compiler-allocation-profile-control!
+            2
             "optimize"
             "optimizer-scratch"
             scratch)
@@ -27006,7 +27007,8 @@
             scratch
             summaries)]
         (begin
-          (allocation_profile.compiler-allocation-profile-snapshot!
+          (allocation_profile.compiler-allocation-profile-control!
+            2
             "optimize"
             "optimizer-scratch"
             scratch)

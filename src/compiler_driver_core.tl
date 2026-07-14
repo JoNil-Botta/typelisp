@@ -191,29 +191,35 @@
 ;; boundaries. `arena_root` lets consumers de-duplicate an active arena that is
 ;; also one of the named owners.
 (define (compiler-driver-allocation-profile-snapshot! [phase : String]) : unit
-  (if (not (allocation_profile.compiler-allocation-profile-enabled?))
+  (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
     unit
     (begin
-      (allocation_profile.compiler-allocation-profile-snapshot!
+      (allocation_profile.compiler-allocation-profile-control!
+        2
         phase
         "active"
         (arena.tl_arena_current))
-      (allocation_profile.compiler-allocation-profile-snapshot!
+      (allocation_profile.compiler-allocation-profile-control!
+        2
         phase
         "source-pools"
         (compiler-driver-node-pool-base-arena))
-      (allocation_profile.compiler-allocation-profile-snapshot!
+      (allocation_profile.compiler-allocation-profile-control!
+        2
         phase
         "intern-persistent"
         (ci.intern-persistent-arena-handle))
-      (allocation_profile.compiler-allocation-profile-snapshot!
+      (allocation_profile.compiler-allocation-profile-control!
+        2
         phase
         "lower-scratch"
         lower-scratch-arena)
-      (allocation_profile.compiler-allocation-profile-snapshot!
+      (allocation_profile.compiler-allocation-profile-control!
+        2
         phase
         "lower-ir"
-        lower-ir-arena))))
+        lower-ir-arena)
+      unit)))
 
 (define (compiler-driver-state-pool-context [state : CompilerDriverState]) : AstNodePoolContext
   (ast-node-pool-context-from-cells

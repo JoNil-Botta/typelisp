@@ -1316,7 +1316,7 @@
     (begin
       (if profile?
         (begin
-          (allocation_profile.compiler-allocation-profile-start!)
+          (allocation_profile.compiler-allocation-profile-control! 1 "" "" 0)
           (compiler-driver-allocation-profile-snapshot! "start"))
         unit)
       (let
@@ -1330,6 +1330,11 @@
                 unit
                 (io.print-error "\n"))
               (compiler-driver-allocation-profile-snapshot! "complete")
-              (allocation_profile.compiler-allocation-profile-finish!))
+              (allocation_profile.compiler-allocation-profile-control!
+                3
+                ""
+                ""
+                0)
+              unit)
             unit)
           status)))))

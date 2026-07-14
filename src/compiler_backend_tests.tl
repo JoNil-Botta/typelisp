@@ -10449,6 +10449,21 @@
           (compiler-backend-string-contains? asm "register home unavailable")))]
     [(ResultCompilerBackend.Err _) false]))
 
+(define (compiler-backend-xmm-family-conversion-ok?) : bool
+  (and
+    (string.eq (compiler-backend-vector-home-to-reg "%vec6" "xmm") "%xmm6")
+    (string.eq (compiler-backend-vector-home-to-reg "%vec6" "ymm") "%ymm6")
+    (string.eq (compiler-backend-vector-home-to-reg "%vec6" "zmm") "%zmm6")
+    (string.eq (compiler-backend-vector-home-to-reg "%ymm7" "zmm") "%zmm7")
+    (string.eq (compiler-backend-vector-reg-lower-xmm "%zmm14") "%xmm14")
+    (string.eq (compiler-backend-vector-reg-lower-ymm "%zmm15") "%ymm15")
+    (string.eq (compiler-backend-xmm-to-ymm "%xmm3") "%ymm3")
+    (compiler-backend-vector-home-valid? "%vec6")
+    (compiler-backend-vector-home-valid? "%zmm13")
+    (not (compiler-backend-vector-home-valid? "%xmm2"))
+    (not (compiler-backend-vector-home-valid? "%vec14"))
+    (string.eq (compiler-backend-vector-home-to-reg "%k1" "zmm") "")))
+
 (define (compiler-backend-avx512-select-false-home-asm-ok?) : bool
   (match (compiler-backend-emit-program-target-with-mode
     (compiler-backend-vector-home-program
@@ -11315,6 +11330,7 @@
     (compiler-backend-avx2-vector-reduce-ok?)
     (compiler-backend-avx512-vector-reduce-ok?)
     (compiler-backend-vector-reduce-direct-store-ok?)
+    (compiler-backend-xmm-family-conversion-ok?)
     (compiler-backend-avx2-vector-homes-ok?)
     (compiler-backend-avx512-mask-homes-ok?)
     (compiler-backend-avx512-mask-load-temp-ok?)

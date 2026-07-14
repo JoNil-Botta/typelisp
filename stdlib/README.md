@@ -354,14 +354,15 @@ use.
   `len-mut` / `slots-mut` accessors for generated in-place algorithms and SPMD loops,
   conversion helpers, and fold/map/contains helpers. Borrow `slots` /
   `slots-mut` outside `foreach` when SPMD code needs backing storage without
-  public `(Array T)` signatures. It also keeps the named `vector-family` macro
-  for flat no-pop compatibility families that need stable local names. The
-  family metadata is not scalar-only: checked
-  fixtures cover
-  nominal enum and struct element types, with `push`/`set!` moving values into
-  array slots, `pop` moving the last element out, and growth/snapshot helpers
-  copying the live prefix through the same move semantics. Current aggregate
-  slots use the handle representation; after the inline-aggregate flip
+  public `(Array T)` signatures. Use
+  `(import (vector.vector T core) as name)` for the compact append-oriented
+  surface, including non-cloneable aggregate elements; omit `core` when the
+  full iterator, clone/pop, conversion, map/fold, reverse, and contains surface
+  is required. Checked fixtures cover nominal enum and struct element types,
+  with `push`/`set` moving values into array slots, `pop` moving the last
+  element out, and growth/snapshot helpers copying the live prefix through the
+  same move semantics. Current aggregate slots use the handle representation;
+  after the inline-aggregate flip
   (#1867/#2357), the same API stores aggregate elements inline in the backing
   array. Cleanup-owning element types use a constructed-only specialization:
   spare capacity creates no fake owners, `push-owned` supports expression-style

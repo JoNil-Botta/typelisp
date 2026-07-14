@@ -432,6 +432,10 @@ prepare_compile_batch() {
                 cp "$a" "$prep_case_dir/$b"
                 ;;
             contains | not-contains | count-at-least) ;;
+            lint-root)
+                [ -n "$prep_case_id" ] || fail "lint-root appears before a case"
+                [ -n "$a" ] || fail "$prep_case_id has an empty lint-root"
+                ;;
             end)
                 [ -n "$prep_case_id" ] || fail "end appears before a case"
                 if [ "$EXPECTATION_MODE" = stage1 ] && [ -n "$prep_requires_stage0_mode" ]; then
@@ -614,6 +618,10 @@ while IFS='|' read -r kind a b c d e; do
             [ -n "$case_id" ] || fail "contains appears before a case"
             ensure_compiled
             contains_text "$a"
+            ;;
+        lint-root)
+            [ -n "$case_id" ] || fail "lint-root appears before a case"
+            [ -n "$a" ] || fail "$case_id has an empty lint-root"
             ;;
         not-contains)
             [ -n "$case_id" ] || fail "not-contains appears before a case"

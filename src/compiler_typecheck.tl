@@ -373,6 +373,28 @@
   (let [r : (& n i64) (& n)]
     (lambda () : i64 (take r))))")
 
+(define (compiler-typecheck-direct-borrow-temporary-diagnostic-source) : String
+  "(define (take [value : (& n i64)]) : i64 0)
+(define (main [n : i64]) : i64
+  (take (& (+ n 1))))")
+
+(define (compiler-typecheck-auto-borrow-temporary-diagnostic-source) : String
+  "(define (take [value : (& n i64)]) : i64 0)
+(define (main [n : i64]) : i64
+  (take (+ n 1)))")
+
+(define (compiler-typecheck-region-call-diagnostic-source) : String
+  (compiler-typecheck-with-alloc-string-helper-source
+    "(define (use [text : String]) : i64 (__tl_string_length text))
+(define (main) : i64
+  (with-arena phase (use (string.int->string 42))))"))
+
+(define (compiler-typecheck-rendered-error-ok? [src : String] [want : String]) : bool
+  (match (typecheck-compiler-source src)
+    [(ResultCompilerTypecheck.Err diag)
+      (string.eq (compiler-diagnostic-render-source (box-get diag) src) want)]
+    [(ResultCompilerTypecheck.Ok _) false]))
+
 (define (compiler-typecheck-vector-ref-rvalue-diagnostic-source) : String
   "(import stdlib.comptime)
 (defmacro (for-each [vec : Expr] [body : Expr]) : unit
@@ -430,7 +452,59 @@
       "typecheck: cannot pass region-tagged value to function parameter; region value would escape; direct aggregate reads through a shared vector borrow are not owned values; borrow slots from a vector place or use the generated vector get helper"
       24
       13
-      1)))
+      1)
+    (compiler-typecheck-rendered-error-ok?
+      (compiler-typecheck-direct-borrow-temporary-diagnostic-source)
+      "error[E0200]: typecheck: borrow requires a local, parameter, or aggregate place
+  --> :3:9
+   |
+ 3 |   (take (& (+ n 1))))
+   |         ^^^^^^^^^^
+  --> :3:9
+   |
+ 3 |   (take (& (+ n 1))))
+   |         ^^^^^^^^^^ this expression produces a temporary value, not a borrowable place
+   = help: bind the value to a local before borrowing it, or borrow a field or array element from a local aggregate
+")
+    (compiler-typecheck-rendered-error-ok?
+      (compiler-typecheck-auto-borrow-temporary-diagnostic-source)
+      "error[E0200]: typecheck: borrow requires a local, parameter, or aggregate place
+  --> :3:9
+   |
+ 3 |   (take (+ n 1)))
+   |         ^^^^^^
+  --> :3:9
+   |
+ 3 |   (take (+ n 1)))
+   |         ^^^^^^ this expression produces a temporary value, not a borrowable place
+   = help: bind the value to a local before borrowing it, or borrow a field or array element from a local aggregate
+")
+    (compiler-typecheck-rendered-error-ok?
+      (compiler-typecheck-region-call-diagnostic-source)
+      "error[E0200]: typecheck: cannot pass region-tagged value to function parameter; region value would escape
+  --> :13:26
+   |
+13 |   (with-arena phase (use (string.int->string 42))))
+   |                          ^^^^^^^^^^^^^^^^^^^^^^
+  --> :13:26
+   |
+13 |   (with-arena phase (use (string.int->string 42))))
+   |                          ^^^^^^^^^^^^^^^^^^^^^^ this argument carries an arena region that the parameter does not accept
+   = help: pass an owned clone, keep the call inside the value's arena/scope, or use with-escape to clone out a supported arena result before passing it
+")
+    (compiler-typecheck-rendered-error-ok?
+      (compiler-typecheck-escape-with-arena-diagnostic-source)
+      "error[E0200]: typecheck: region-tagged value cannot escape with-arena 'phase'
+  --> :4:21
+   |
+ 4 |   (with-arena phase (string.int->string 42)))
+   |                     ^^^^^^^^^^^^^^^^^^^^^^
+  --> :4:3
+   |
+ 4 |   (with-arena phase (string.int->string 42)))
+   |   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ with-arena `phase` scope resets before this value can escape
+   = help: use with-escape to clone one supported result out of `phase`, or keep the value inside the with-arena scope
+")))
 
 (define (compiler-typecheck-diagnostic-code-tests-ok?) : bool
   (and

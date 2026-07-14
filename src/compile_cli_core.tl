@@ -1170,6 +1170,12 @@
           (begin
             (arena.set! home)
             (arena.destroy scratch-end)))
+        ;; The next standalone preflight and the opt-in allocation profiler
+        ;; still observe compatibility globals between batch entries. Install
+        ;; the already-reset job context at that explicit boundary, after the
+        ;; entry scratch owner has been destroyed.
+        (compiler-driver-state-install-pools! state)
+        (compiler-driver-state-install-interns! state)
         (cfg
           compile-profile
           (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")

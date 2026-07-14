@@ -20020,7 +20020,7 @@
 
 (define (compiler-reg-scratch-vreg-slots
   [_instr : CompilerIrInstr]
-  [phi-targets : CompilerRegStringList]) : i64
+  [_phi-targets : CompilerRegStringList]) : i64
   (cfg
     scratch-vreg
     (match _instr
@@ -20035,13 +20035,13 @@
       [(CompilerIrInstr.Pack _ _ _) 2]
       [(CompilerIrInstr.Word _ _ _ _) 1]
       [(CompilerIrInstr.Jump target)
-        (if (compiler-reg-string-list-contains? phi-targets target)
+        (if (compiler-reg-string-list-contains? _phi-targets target)
           2
           0)]
       [(CompilerIrInstr.Branch _ true-label false-label)
         (if (or
-          (compiler-reg-string-list-contains? phi-targets true-label)
-          (compiler-reg-string-list-contains? phi-targets false-label))
+          (compiler-reg-string-list-contains? _phi-targets true-label)
+          (compiler-reg-string-list-contains? _phi-targets false-label))
           2
           0)]
       [(CompilerIrInstr.Switch _ _ _ _) 2]

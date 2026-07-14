@@ -851,26 +851,50 @@
   [index : i64]
   [target : CompilerBackendTarget]
   [stdlib-roots : cli_svec.Vec]
-  [cfgs : CompileCliCfgNames]) : i64
+  [cfgs : CompileCliCfgNames]
+  [ran-preflight : bool]) : i64
   (if (>= index (cli_svec.len entries))
-    0
+    (if ran-preflight
+      (begin
+        ;; Detach the final preflight's loaded AST before its scratch owner is
+        ;; gone and before the separate batch driver state is installed.
+        (tltest-inline-clear-load-only-caches!)
+        (compiler-driver-reset-file-state!)
+        0)
+      0)
     (let
       [input-path : String (cli_svec.get entries index "")]
-      [status : i64
-        (tltest-inline-typecheck-file-with-cfg
-          input-path
-          stdlib-roots
-          (compiler-driver-target-cfgs
-            target
-            (compile-cli-cfg-names-to-env cfgs))
-          "typecheck-prefix-inline-compile-batch")]
+      [has-inline-tests : bool (tltest-source-has-inline-tests? input-path)]
+      [status
+        : i64
+        ;; Match package inline preflight isolation: each source owns a
+        ;; destroyable scratch chain and starts from a full file reset. Rebuild
+        ;; cfg ids inside that reset because intern generations are per entry.
+        (if has-inline-tests
+          (with-scratch
+            (begin
+              (tltest-inline-clear-load-only-caches!)
+              (compiler-driver-reset-file-state!)
+              (tltest-inline-typecheck-file-with-cfg
+                input-path
+                stdlib-roots
+                (compiler-driver-target-cfgs
+                  target
+                  (compile-cli-cfg-names-to-env cfgs))
+                "typecheck-prefix-inline-compile-batch")))
+          0)]
+      [_clear-entry : unit
+        (if has-inline-tests
+          (tltest-inline-clear-load-caches!)
+          unit)]
       (if (= status 0)
         (compile-cli-run-batch-inline-tests-from
           entries
           (+ index 2)
           target
           stdlib-roots
-          cfgs)
+          cfgs
+          (or ran-preflight has-inline-tests))
         (begin
           (io.print-error
             (str_cat.str-cat "\ncompile: batch source failed: " input-path "\n"))
@@ -886,7 +910,8 @@
     0
     target
     stdlib-roots
-    cfgs))
+    cfgs
+    false))
 
 (define (compile-cli-batch-line-end [text : String] [start : i64] [n : i64]) : i64
   (let
@@ -1055,8 +1080,8 @@
         ;; loader/typecheck caches may hold scratch-backed nodes until reset.
         (cfg
           compile-profile
-          (compiler-driver-state-reset-file-state-profiled! state ordinal)
-          (compiler-driver-state-reset-file-state! state))
+          (compiler-driver-state-release-file-state-profiled! state ordinal)
+          (compiler-driver-state-release-file-state! state))
         (unsafe
           (begin
             (arena.set! home)

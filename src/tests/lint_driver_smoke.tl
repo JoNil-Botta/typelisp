@@ -362,6 +362,61 @@
 (defmacro (build [p : Point]) : Expr
   `(field ,(struct-get p x)))")
 
+(define (lint-driver-smoke-name-case-source) : String
+  "(define badGlobal : i64 1)
+(defstruct bad-type (field i64))
+(defenum bad_enum (Value))
+(define (BadFunction [BadParam : i64] [_BadUnused : i64]) : i64
+  (let
+    [BadLocal : i64 BadParam]
+    ((lambda ([BadLambda : i64]) : i64 BadLambda) BadLocal)))
+(defmacro (BadMacro [BadMacroParam : Expr]) : Expr BadMacroParam)
+(defdispatch BadDispatch
+  (scalar BadFunction)
+  (avx2 BadFunction)
+  (avx512 BadFunction))
+(unsafe (define (BadUnsafe) : i64 0))
+(comptime-decl (define bad-comptime : i64 1))")
+
+(define (lint-driver-smoke-name-case-binders-source) : String
+  "(defenum Choice (Some i64) (None))
+(define (cleanup [value : i64]) : unit unit)
+(define (binder-cases [n : i64]) : i64
+  (begin
+    (match (Some 1)
+      [(Some BadPattern) BadPattern]
+      [None 0])
+    (foreach ([BadIndex : i64 0 n]) unit)
+    (spmd-reduce sum ([BadReduce : i64 0 n]) 0 BadReduce)
+    (spmd-scan sum
+      ([BadScanIndex : i64 0 n] [BadPrefix : i64 0])
+      BadScanIndex
+      BadPrefix)
+    (with ([BadResource 1 cleanup]) BadResource)
+    0))")
+
+(define (lint-driver-smoke-name-case-suppressed-source) : String
+  ";; lint-allow: global-name-case
+(define bad-global : i64 1)
+;; lint-allow: type-name-case
+(defstruct bad-type (field i64))
+;; lint-allow: function-name-case
+(define (BadFunction) : i64 1)
+(define (good-function
+  ;; lint-allow: local-name-case
+  [BadParam : i64]) : i64 BadParam)")
+
+(define (lint-driver-smoke-name-case-out-of-scope-source) : String
+  "(defstruct GoodType (bad_Field i64))
+(defenum GoodEnum (bad-variant))
+(extern BadExtern : i64)
+(import pkg.data as BadAlias)
+(test BadTest unit)
+(defmacro (builder [t : type]) : Module
+  `(begin
+    (module generated.Bad)
+    (define BadGenerated : i64 1)))")
+
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
   (lint-findings-count
@@ -390,6 +445,64 @@
     false
     false
     true))
+
+(define (lint-driver-smoke-source-findings-with-name-case [source : String]) : LintFindings
+  (selfhost-lint-source-with-roots-and-all-options
+    "lint_driver_smoke_test.tl"
+    source
+    (lint_svec.new)
+    false
+    false
+    false
+    true))
+
+(define (lint-driver-smoke-source-rule-count-with-name-case
+  [source : String]
+  [rule : String]) : i64
+  (selfhost-lint-findings-rule-count
+    (lint-driver-smoke-source-findings-with-name-case source)
+    rule))
+
+(define (lint-driver-smoke-name-case-rule-count [findings : LintFindings]) : i64
+  (+
+    (selfhost-lint-findings-rule-count findings (lint-rule-global-name-case-id))
+    (+
+      (selfhost-lint-findings-rule-count
+        findings
+        (lint-rule-function-name-case-id))
+      (+
+        (selfhost-lint-findings-rule-count
+          findings
+          (lint-rule-local-name-case-id))
+        (selfhost-lint-findings-rule-count
+          findings
+          (lint-rule-type-name-case-id))))))
+
+(define (lint-driver-smoke-name-case-spans-positive-from
+  [findings : LintFindings]
+  [index : i64]) : bool
+  (if (>= index (lint-findings-count findings))
+    true
+    (let
+      [finding : LintFinding (lint-findings-ref findings index)]
+      [rule : String (struct-get finding rule-id)]
+      [is-name-case : bool
+        (or
+          (string.eq rule (lint-rule-global-name-case-id))
+          (string.eq rule (lint-rule-function-name-case-id))
+          (string.eq rule (lint-rule-local-name-case-id))
+          (string.eq rule (lint-rule-type-name-case-id)))]
+      [span : AstSourceSpan (struct-get finding span)]
+      (and
+        (if is-name-case
+          (and
+            (> (ast-source-span-start-line span) 0)
+            (> (ast-source-span-start-col span) 0))
+          true)
+        (lint-driver-smoke-name-case-spans-positive-from findings (+ index 1))))))
+
+(define (lint-driver-smoke-name-case-spans-positive? [findings : LintFindings]) : bool
+  (lint-driver-smoke-name-case-spans-positive-from findings 0))
 
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
   [source : String]
@@ -989,6 +1102,149 @@
         80]
       [else 42])))
 
+(define (lint-driver-smoke-name-case-self-test) : i64
+  (let
+    [findings : LintFindings
+      (lint-driver-smoke-source-findings-with-name-case
+        (lint-driver-smoke-name-case-source))]
+    [binder-findings : LintFindings
+      (lint-driver-smoke-source-findings-with-name-case
+        (lint-driver-smoke-name-case-binders-source))]
+    [default-findings : LintFindings
+      (selfhost-lint-source-with-roots
+        "lint_driver_smoke_test.tl"
+        (lint-driver-smoke-name-case-source)
+        (lint_svec.new))]
+    (cond
+      [(not
+          (and
+            (lint-name-case-kebab? "good-name")
+            (lint-name-case-kebab? "ready?")
+            (lint-name-case-kebab? "mutate!")
+            (lint-name-case-kebab? "int->string")
+            (lint-name-case-kebab? "+")
+            (lint-name-case-kebab? "name2")
+            (not (lint-name-case-kebab? "Bad"))
+            (not (lint-name-case-kebab? "bad_name"))
+            (not (lint-name-case-kebab? "-bad"))
+            (not (lint-name-case-kebab? "bad-"))
+            (not (lint-name-case-kebab? "bad--name"))
+            (not (lint-name-case-kebab? "bad->"))
+            (not (lint-name-case-kebab? "bad->->name"))
+            (not (lint-name-case-kebab? "2bad"))))
+        81]
+      [(not
+          (and
+            (lint-name-case-local-kebab? "_unused")
+            (lint-name-case-local-kebab? "_")
+            (not (lint-name-case-local-kebab? "__unused"))
+            (not (lint-name-case-local-kebab? "_Bad"))))
+        82]
+      [(not
+          (and
+            (lint-name-case-screaming-kebab? "GOOD")
+            (lint-name-case-screaming-kebab? "GOOD-NAME")
+            (lint-name-case-screaming-kebab? "ABI2")
+            (not (lint-name-case-screaming-kebab? "Good"))
+            (not (lint-name-case-screaming-kebab? "GOOD_NAME"))
+            (not (lint-name-case-screaming-kebab? "-GOOD"))
+            (not (lint-name-case-screaming-kebab? "GOOD--NAME"))
+            (not (lint-name-case-screaming-kebab? "2GOOD"))))
+        83]
+      [(not
+          (and
+            (lint-name-case-upper-camel? "ByteBuf")
+            (lint-name-case-upper-camel? "TlciHostABI")
+            (lint-name-case-upper-camel? "A2")
+            (not (lint-name-case-upper-camel? "byteBuf"))
+            (not (lint-name-case-upper-camel? "Bad-Type"))
+            (not (lint-name-case-upper-camel? "Bad_Type"))
+            (not (lint-name-case-upper-camel? "2Bad"))))
+        84]
+      [(not
+          (and
+            (string.eq
+              (lint-name-case-kebab-suggestion "BadFunction" false)
+              "bad-function")
+            (string.eq
+              (lint-name-case-screaming-suggestion "badGlobal")
+              "BAD-GLOBAL")
+            (string.eq
+              (lint-name-case-upper-camel-suggestion "bad-type")
+              "BadType")))
+        85]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              findings
+              (lint-rule-global-name-case-id))
+            2))
+        86]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              findings
+              (lint-rule-function-name-case-id))
+            4))
+        87]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              findings
+              (lint-rule-type-name-case-id))
+            2))
+        88]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              findings
+              (lint-rule-local-name-case-id))
+            5))
+        89]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              binder-findings
+              (lint-rule-local-name-case-id))
+            6))
+        90]
+      [(not
+          (and
+            (lint-driver-smoke-name-case-spans-positive? findings)
+            (lint-driver-smoke-name-case-spans-positive? binder-findings)))
+        91]
+      [(not
+          (=
+            (lint-driver-smoke-name-case-rule-count
+              (lint-driver-smoke-source-findings-with-name-case
+                (lint-driver-smoke-name-case-suppressed-source)))
+            0))
+        92]
+      [(not
+          (=
+            (lint-driver-smoke-name-case-rule-count
+              (lint-driver-smoke-source-findings-with-name-case
+                (lint-driver-smoke-name-case-out-of-scope-source)))
+            0))
+        93]
+      [(not (= (lint-driver-smoke-name-case-rule-count default-findings) 0)) 94]
+      [(not
+          (and
+            (not
+              (string.eq (lint-rule-message (lint-rule-global-name-case-id)) ""))
+            (not
+              (string.eq
+                (lint-rule-suggestion (lint-rule-function-name-case-id))
+                ""))
+            (not
+              (string.eq (lint-rule-message (lint-rule-local-name-case-id)) ""))
+            (not
+              (string.eq
+                (lint-rule-suggestion (lint-rule-type-name-case-id))
+                ""))))
+        95]
+      [else 42])))
+
 (define (main) : i64
   (begin
     ;; The imported driver core defines printing helpers; keep the print-string
@@ -1058,7 +1314,14 @@
                                                               (if (=
                                                                 copy-result
                                                                 42)
-                                                                (lint-driver-smoke-prefer-dotted-field-self-test)
+                                                                (let
+                                                                  [dotted-result : i64
+                                                                    (lint-driver-smoke-prefer-dotted-field-self-test)]
+                                                                  (if (=
+                                                                    dotted-result
+                                                                    42)
+                                                                    (lint-driver-smoke-name-case-self-test)
+                                                                    dotted-result))
                                                                 copy-result))
                                                             unused-unsafe-result))
                                                         unused-variable-result))

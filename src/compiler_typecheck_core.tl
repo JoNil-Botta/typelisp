@@ -47486,13 +47486,29 @@
     (set! macro-live-registries-fallback true)))
 
 (define (macro-live-symbols-clear!) : unit
-  (begin
-    (set! macro-live-symbols-ready false)
-    (set! macro-live-symbols-fallback false)
-    (set! macro-live-registries-ready false)
-    (set! macro-live-registries-fallback true)
-    (set! macro-live-symbols-value (compiler-symbols-empty))
-    (set! macro-live-registries-value (compiler-registries-empty))))
+  (let
+    [current : i64 macro-live-symbols-arena]
+    [retired : i64 macro-live-symbols-retired-arena]
+    (begin
+      (set! macro-live-symbols-ready false)
+      (set! macro-live-symbols-fallback false)
+      (set! macro-live-registries-ready false)
+      (set! macro-live-registries-fallback true)
+      (set! macro-live-symbols-value (compiler-symbols-empty))
+      (set! macro-live-registries-value (compiler-registries-empty))
+      ;; The completed expansion no longer has a consumer for either retained
+      ;; generation. Release both here instead of carrying their raw handles
+      ;; into the next independent typecheck entry.
+      (set! macro-live-symbols-arena 0)
+      (set! macro-live-symbols-retired-arena 0)
+      (if (= current 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy current)))
+      (if (or (= retired 0) (= retired current))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
 
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice

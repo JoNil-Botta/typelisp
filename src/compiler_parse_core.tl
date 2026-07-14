@@ -9420,13 +9420,6 @@
 (extern (printf [fmt : (Ptr u8)] ...) : i32 (:symbol \"printf\"))
 (extern (local-add [a : i64] [b : i64]) : i64 (:symbol \"foreign_add_exact\"))")
 
-(define (compiler-parse-define-export-symbol-source) : String
-  "(define (_write [fd : i32] [buf : (Ptr u8)] [n : i32]) (:export-symbol \"_write\") : i32
-  0)")
-
-(define (compiler-parse-param-list-count [params : AstParamList]) : i64
-  (ast-param-list-len (& params)))
-
 (define (compiler-parse-type-list-count [types : AstTypeList]) : i64
   (ast-type-list-len (& types)))
 
@@ -9650,30 +9643,6 @@
         [_ false])]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-define-export-symbol-ok?) : bool
-  (match (parse-ast-source (compiler-parse-define-export-symbol-source))
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons (AstDecl.DefFn name params ret _ export) rest)
-            (let
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (and
-                    (= name (intern "_write"))
-                    (= (compiler-parse-param-list-count params) 3)
-                    (match ret
-                      [(AstType.I32) true]
-                      [_ false])
-                    (match export
-                      [(AstFnExport.Export symbol) (= symbol (intern "_write"))]
-                      [_ false]))]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
 (define (compiler-parse-raw-pointer-ops-ok?) : bool
   (compiler-parse-ok? (compiler-parse-raw-pointer-ops-source)))
 
@@ -9784,44 +9753,6 @@
     (& x x)
     (&mut x)
     x))")
-
-(define (compiler-parse-borrow-inferred-var? [expr : AstExpr] [name : String]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Borrow false AstBorrowLifetime.Inferred place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (ast-expr-unspan place)
-          [(AstExpr.Var place-name) (string.eq (intern-str place-name) name)]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-mut-borrow-inferred-var?
-  [expr : AstExpr]
-  [name : String]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Borrow true AstBorrowLifetime.Inferred place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (ast-expr-unspan place)
-          [(AstExpr.Var place-name) (string.eq (intern-str place-name) name)]
-          [_ false]))]
-    [_ false]))
-
-(define (compiler-parse-borrow-named-var?
-  [expr : AstExpr]
-  [lifetime : String]
-  [name : String]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Borrow false (AstBorrowLifetime.Named actual-lifetime) place-box)
-      (let
-        [place : AstExpr (ast-node-get place-box)]
-        (match (ast-expr-unspan place)
-          [(AstExpr.Var place-name)
-            (and
-              (string.eq actual-lifetime lifetime)
-              (string.eq (intern-str place-name) name))]
-          [_ false]))]
-    [_ false]))
 
 (define (compiler-parse-borrow-ok?) : bool
   (match (parse-ast-source (compiler-parse-borrow-source))
@@ -9937,26 +9868,6 @@
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-unit-expr? [expr : AstExpr]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Literal AstLiteral.Unit) true]
-    [_ false]))
-
-(define (compiler-parse-return-then-unit-begin? [expr : AstExpr]) : bool
-  (match (ast-expr-unspan expr)
-    [(AstExpr.Begin exprs)
-      (if (= (struct-get (& exprs) len) 2)
-        (let
-          [first : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 0 0))]
-          [last : AstExpr (ast-node-get (ast-expr-list-get (& exprs) 1 0))]
-          (and
-            (match (ast-expr-unspan first)
-              [(AstExpr.Return _) true]
-              [_ false])
-            (compiler-parse-unit-expr? last)))
-        false)]
-    [_ false]))
 
 (define (compiler-parse-call-head-name? [expr : AstExpr] [name : String]) : bool
   (match (ast-expr-unspan expr)
@@ -10448,31 +10359,6 @@
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
-(define (compiler-parse-comptime-repr-c-source) : String
-  "(comptime-decl (defstruct Stat (:repr c) (size i64)))")
-
-(define (compiler-parse-comptime-repr-c-ok?) : bool
-  (match (parse-ast-source (compiler-parse-comptime-repr-c-source))
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons (AstDecl.ComptimeDecl _ template-box) rest)
-            (let
-              [template : AstDecl (box-get template-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match template
-                    [(AstDecl.DefStruct _ repr _ fields)
-                      (and
-                        (ast-struct-repr-c? repr)
-                        (= (compiler-parse-field-count fields) 1))]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
 (define (compiler-parse-inline-test-source) : String
   "(test parser-basic
   (+ 1 2)
@@ -10684,24 +10570,6 @@
     (compiler-parse-error-ok?
       "(unsafe (extern (a) : i64) (extern (b) : i64))"
       "parse: unsafe declaration expects exactly one declaration")))
-
-(define (compiler-parse-define-export-metadata-error-tests-ok?) : bool
-  (and
-    (compiler-parse-error-ok?
-      "(define (f) (:export-symbol \"\") : i64 0)"
-      "parse: define :export-symbol must not be empty")
-    (compiler-parse-error-ok?
-      "(define (f) (:export-symbol bad) : i64 0)"
-      "parse: malformed define :export-symbol metadata")
-    (compiler-parse-error-ok?
-      "(define (f) (:export-symbol \"a\") (:export-symbol \"b\") : i64 0)"
-      "parse: duplicate define :export-symbol metadata")
-    (compiler-parse-error-ok?
-      "(define (f) (:link-lib \"m\") : i64 0)"
-      "parse: unknown define metadata :link-lib")
-    (compiler-parse-error-ok?
-      "(define (f [comptime n : i64]) (:export-symbol \"f\") : i64 n)"
-      "parse: define :export-symbol cannot be used on functions with comptime parameters")))
 
 (define (compiler-parse-flat-let-call-body-ok?) : bool
   (match (parse-ast-source
@@ -11268,121 +11136,6 @@
       "(define (main) : i64 (with-arena r))"
       "parse: with-arena 'r' requires a non-empty body")))
 
-(define (compiler-parse-with-escape-shape-ok?) : bool
-  (match (parse-ast-source
-    "(define (main) : String (with-escape (arena-make) (string.int->string 42)))")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match (ast-expr-unspan body)
-                    [(AstExpr.WithEscape scratch-box body-exprs)
-                      (let
-                        [scratch : AstExpr (ast-node-get scratch-box)]
-                        (match (ast-expr-unspan scratch)
-                          [(AstExpr.Call callee-box call-args)
-                            (let
-                              [callee : AstExpr (ast-node-get callee-box)]
-                              (match (ast-expr-unspan callee)
-                                [(AstExpr.Var name)
-                                  (and
-                                    (= (struct-get (& call-args) len) 0)
-                                    (string.eq (intern-str name) "arena-make")
-                                    (= (struct-get (& body-exprs) len) 1))]
-                                [_ false]))]
-                          [_ false]))]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-with-escape-tests-ok?) : bool
-  (and
-    (compiler-parse-with-escape-shape-ok?)
-    (compiler-parse-ok?
-      "(define (main) : i64 (let ([scratch : Arena (arena-make)]) (with-escape scratch 1 2 3)))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (with-escape))"
-      "parse: with-escape requires a scratch arena before its body")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (with-escape (arena-make)))"
-      "parse: with-escape requires a non-empty body")))
-
-(define (compiler-parse-with-scratch-shape-ok?) : bool
-  (match (parse-ast-source
-    "(define (main) : String (with-scratch (string.int->string 41) (string.int->string 42)))")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match (ast-expr-unspan body)
-                    [(AstExpr.WithScratch body-exprs)
-                      (= (struct-get (& body-exprs) len) 2)]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-with-scratch-tests-ok?) : bool
-  (and
-    (compiler-parse-with-scratch-shape-ok?)
-    (compiler-parse-ok? "(define (main) : i64 (with-scratch 1 2 3))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (with-scratch))"
-      "parse: with-scratch requires a non-empty body")))
-
-(define (compiler-parse-in-arena-shape-ok?) : bool
-  (match (parse-ast-source
-    "(define (main [arena : Arena]) : i64 (in-arena arena 1 2))")
-    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        (match (ast-decl-list-step decls)
-          [(AstDeclListStep.Cons (AstDecl.DefFn _ _ _ body-box _) rest)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              [rest : AstDeclList rest]
-              (match (ast-decl-list-step rest)
-                [(AstDeclListStep.Nil)
-                  (match (ast-expr-unspan body)
-                    [(AstExpr.InArena arena-box body-exprs)
-                      (let
-                        [arena : AstExpr (ast-node-get arena-box)]
-                        (match (ast-expr-unspan arena)
-                          [(AstExpr.Var name)
-                            (and
-                              (string.eq (intern-str name) "arena")
-                              (= (struct-get (& body-exprs) len) 2))]
-                          [_ false]))]
-                    [_ false])]
-                [_ false]))]
-          [_ false]))]
-    [(ResultAstProgram.Err _) false]))
-
-(define (compiler-parse-in-arena-tests-ok?) : bool
-  (and
-    (compiler-parse-in-arena-shape-ok?)
-    (compiler-parse-ok?
-      "(define (main) : i64 (let ([arena : Arena (arena-current)]) (in-arena arena 1 2 3)))")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (in-arena))"
-      "parse: in-arena requires an arena before its body")
-    (compiler-parse-error-ok?
-      "(define (main) : i64 (in-arena 0))"
-      "parse: in-arena requires a non-empty body")))
-
 (define (compiler-parse-resource-with-source) : String
   "(define (main) : i64
   (with ([h (open-handle) close-handle]
@@ -11635,182 +11388,6 @@
     (compiler-parse-error-ok?
       "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
       "parse: variadic macro operand must be final")))
-
-(define (compiler-parse-dispatch-index-env-matches?
-  [dispatch : sym_i64_env.SymI64Env]) : bool
-  (let
-    [ok : bool (compiler-parse-dispatch-indexed? dispatch)]
-    [cursor : sym_i64_env.SymI64Env dispatch]
-    [done : bool false]
-    (begin
-      (while (and ok (not done))
-        (match cursor
-          [(sym_i64_env.SymI64Nil) (set! done true)]
-          [(sym_i64_env.SymI64Bind name-id tag rest)
-            (if (= (compiler-parse-dispatch-index-lookup-id name-id) tag)
-              (set! cursor (box-get rest))
-              (set! ok false))]))
-      (and ok done))))
-
-(define (compiler-parse-dispatch-index-ok?) : bool
-  (let
-    [full : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
-    [partial : sym_i64_env.SymI64Env
-      (compiler-parse-dispatch-binops (sym_i64_env.sym-i64-empty))]
-    [cfgs : sym_i64_env.SymI64Env
-      (compiler-cfg-enable (compiler-cfg-empty) "dispatch-index-test")]
-    [configured : sym_i64_env.SymI64Env
-      (parse-ast-program-dispatch-with-cfg cfgs)]
-    [private : sym_i64_env.SymI64Env
-      (compiler-parse-dispatch-private-types full)]
-    (and
-      (compiler-parse-dispatch-index-env-matches? full)
-      (= (compiler-parse-dispatch-tag full "if") (compiler-parse-tag-expr-if))
-      (=
-        (compiler-parse-dispatch-tag full "not-parser-syntax")
-        (compiler-parse-tag-unknown))
-      (not (compiler-parse-dispatch-indexed? partial))
-      (= (compiler-parse-dispatch-tag partial "+") (compiler-parse-tag-bin-add))
-      (=
-        (compiler-parse-dispatch-tag partial "if")
-        (compiler-parse-tag-unknown))
-      (compiler-parse-dispatch-indexed? configured)
-      (compiler-cfg-enabled? configured "dispatch-index-test")
-      (compiler-parse-dispatch-indexed? private)
-      (compiler-cfg-private-dynamic-buffer-enabled? private))))
-
-(define (compiler-parse-shape-tests-front-ok? [program : AstProgram]) : bool
-  (and
-    (= (compiler-parse-smoke-score program) 36)
-    (compiler-parse-nested-expr-span-ok?)
-    (compiler-parse-error-span-ok?)
-    (compiler-parse-float-literal-ok?)
-    (compiler-parse-region-ok?)
-    (compiler-parse-arena-ok?)))
-
-(define (compiler-parse-shape-tests-middle-ok?) : bool
-  (and
-    (compiler-parse-dispatch-index-ok?)
-    (compiler-parse-comptime-decl-ok?)
-    (compiler-parse-unsafe-decl-ok?)
-    (compiler-parse-module-decl-ok?)
-    (compiler-parse-import-metadata-ok?)
-    (compiler-parse-dotted-import-metadata-ok?)
-    (compiler-parse-module-macro-surface-ok?)
-    (compiler-parse-defdispatch-tests-ok?)
-    (compiler-parse-flat-let-call-body-ok?)
-    (compiler-parse-implicit-body-tail-ok?)
-    (compiler-parse-inline-test-ok?)
-    (compiler-parse-try-ok?)))
-
-(define (compiler-parse-error-suite-front-ok?) : bool
-  (and
-    (compiler-parse-error-tests-ok?)
-    (compiler-parse-declaration-tests-ok?)
-    (compiler-parse-let-tests-ok?)
-    (compiler-parse-spmd-tests-ok?)
-    (compiler-parse-pattern-tests-ok?)
-    (compiler-parse-pattern-string-char-tests-ok?)))
-
-(define (compiler-parse-error-suite-middle-ok?) : bool
-  (and
-    (compiler-parse-enum-struct-tests-ok?)
-    (compiler-parse-operator-tests-ok?)
-    (compiler-parse-type-literal-tests-ok?)
-    (compiler-parse-region-tests-ok?)
-    (compiler-parse-repl-tests-ok?)
-    (compiler-parse-comptime-param-tests-ok?)))
-
-(define (compiler-parse-error-suite-back-ok?) : bool
-  (and
-    (compiler-parse-defmacro-tests-ok?)
-    (compiler-parse-resource-with-tests-ok?)
-    (compiler-parse-with-escape-tests-ok?)
-    (compiler-parse-with-scratch-tests-ok?)
-    (compiler-parse-in-arena-tests-ok?)
-    (compiler-parse-quote-syntax-tests-ok?)
-    (compiler-parse-define-export-metadata-error-tests-ok?)
-    (compiler-parse-dotted-import-errors-ok?)))
-
-(define (compiler-parse-smoke-shapes [program : AstProgram]) : unit
-  (begin
-    (if (compiler-parse-shape-tests-front-ok? program)
-      unit
-      (io.panic "parse: compiler AST front shape tests failed"))
-    (if (compiler-parse-shape-tests-middle-ok?)
-      unit
-      (io.panic "parse: compiler AST middle shape tests failed"))
-    (if (compiler-parse-repr-c-ok?)
-      unit
-      (io.panic "parse: repr c shape test failed"))
-    (if (compiler-parse-cleanup-metadata-ok?)
-      unit
-      (io.panic "parse: cleanup metadata shape test failed"))
-    (if (compiler-parse-raw-pointer-ok?)
-      unit
-      (io.panic "parse: raw pointer shape test failed"))
-    (if (compiler-parse-extern-metadata-ok?)
-      unit
-      (io.panic "parse: extern metadata shape test failed"))
-    (if (compiler-parse-extern-varargs-metadata-rejected-ok?)
-      unit
-      (io.panic "parse: extern c-varargs metadata retirement test failed"))
-    (if (compiler-parse-extern-function-head-varargs-ok?)
-      unit
-      (io.panic "parse: extern function-head varargs shape test failed"))
-    (if (compiler-parse-define-export-symbol-ok?)
-      unit
-      (io.panic "parse: define export-symbol shape test failed"))
-    (if (compiler-parse-raw-pointer-ops-ok?)
-      unit
-      (io.panic "parse: raw pointer ops shape test failed"))
-    (if (compiler-parse-init-ok?)
-      unit
-      (io.panic "parse: init shape test failed"))
-    (if (compiler-parse-contextual-init-ok?)
-      unit
-      (io.panic "parse: contextual init shape test failed"))
-    (if (compiler-parse-init-call-name-ok?)
-      unit
-      (io.panic "parse: init call name compatibility test failed"))
-    (if (compiler-parse-box-ok?)
-      unit
-      (io.panic "parse: box shape test failed"))
-    (if (compiler-parse-reference-ok?)
-      unit
-      (io.panic "parse: reference shape test failed"))
-    (if (compiler-parse-borrow-ok?)
-      unit
-      (io.panic "parse: borrow shape test failed"))
-    (if (compiler-parse-resource-with-shape-ok?)
-      unit
-      (io.panic "parse: resource with shape test failed"))
-    (if (compiler-parse-with-escape-shape-ok?)
-      unit
-      (io.panic "parse: with-escape shape test failed"))
-    (if (compiler-parse-with-scratch-shape-ok?)
-      unit
-      (io.panic "parse: with-scratch shape test failed"))
-    (if (compiler-parse-in-arena-shape-ok?)
-      unit
-      (io.panic "parse: in-arena shape test failed"))
-    (if (compiler-parse-quote-syntax-shape-ok?)
-      unit
-      (io.panic "parse: quote syntax shape test failed"))
-    unit))
-
-(define (compiler-parse-smoke-errors) : unit
-  (begin
-    (if (compiler-parse-error-suite-front-ok?)
-      unit
-      (io.panic "parse: front error-path self-tests failed"))
-    (if (compiler-parse-error-suite-middle-ok?)
-      unit
-      (io.panic "parse: middle error-path self-tests failed"))
-    (if (compiler-parse-error-suite-back-ok?)
-      unit
-      (io.panic "parse: back error-path self-tests failed"))
-    unit))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))

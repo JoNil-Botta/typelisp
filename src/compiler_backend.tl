@@ -517,10 +517,6 @@
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail profile))
 
-(define (compiler-backend-runtime-tail-hash-string?
-  [tail : CompilerBackendRuntimeTailPlan]) : bool
-  (struct-get tail hash-string))
-
 (define (compiler-backend-runtime-tail-tlci-macro-entry?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail tlci-macro-entry))
@@ -1817,17 +1813,6 @@
     [(CompilerIrMaskBinOp.Or)
       (string.append "or" (compiler-backend-avx512-mask-int-suffix lanes))]))
 
-(define (compiler-backend-avx2-vector-value-reg
-  [assignments : CompilerRegAssignmentList]
-  [value : CompilerIrValue]
-  [role : String]) : ResultBackendReg
-  (match value
-    [(CompilerIrValue.Var var)
-      (compiler-backend-vector-var-reg assignments var role "ymm")]
-    [_
-      (ResultBackendReg.Err
-        (string.append "backend: unsupported AVX2 vector " role))]))
-
 (define (compiler-backend-avx2-vector-move [elem-ty : AstType]) : String
   (match elem-ty
     [(AstType.F64) "vmovupd"]
@@ -2697,17 +2682,6 @@
           (string.int->string lanes)
           " x "
           (compiler-ir-type-name elem-ty))))))
-
-(define (compiler-backend-avx512-vector-value-reg
-  [assignments : CompilerRegAssignmentList]
-  [value : CompilerIrValue]
-  [role : String]) : ResultBackendReg
-  (match value
-    [(CompilerIrValue.Var var)
-      (compiler-backend-vector-var-reg assignments var role "zmm")]
-    [_
-      (ResultBackendReg.Err
-        (string.append "backend: unsupported AVX-512 vector " role))]))
 
 (define (compiler-backend-avx512-mask-value-reg
   [assignments : CompilerRegAssignmentList]
@@ -3699,33 +3673,6 @@
   (if (> lanes 0)
     (/ 32 lanes)
     0))
-
-(define (compiler-backend-avx2-mask-var-home?
-  [assignments : CompilerRegAssignmentList]
-  [var : i64]
-  [role : String]) : bool
-  (match (compiler-backend-mask-var-reg assignments var role)
-    [(ResultBackendReg.Ok _) false]
-    [(ResultBackendReg.Err _)
-      (match (compiler-backend-vector-var-stack-operand assignments var)
-        [(CompilerBackendMaybeStackOperand.Some _) true]
-        [(CompilerBackendMaybeStackOperand.No)
-          (match (compiler-backend-vector-var-reg assignments var role "ymm")
-            [(ResultBackendReg.Ok _) true]
-            [(ResultBackendReg.Err _) false])])]))
-
-(define (compiler-backend-avx2-mask-home?
-  [assignments : CompilerRegAssignmentList]
-  [value : CompilerIrValue]) : bool
-  (match value
-    [(CompilerIrValue.Var var)
-      (compiler-backend-avx2-mask-var-home? assignments var "mask")]
-    [_ false]))
-
-(define (compiler-backend-avx2-mask-dst?
-  [assignments : CompilerRegAssignmentList]
-  [dst : i64]) : bool
-  (compiler-backend-avx2-mask-var-home? assignments dst "mask dst"))
 
 (define (compiler-backend-avx2-int-compare-eq-mnemonic [elem-ty : AstType]) : String
   (match elem-ty
@@ -6624,48 +6571,11 @@
       (+ base (* 2 vars))
       base)))
 
-(define (compiler-backend-param-var? [params : CompilerIrParamList] [var : i64]) : bool
-  (match (compiler-ir-param-list-force-cons params)
-    [(CompilerIrParamList.Nil) false]
-    [(CompilerIrParamList.Array seq)
-      (compiler-backend-param-var? (compiler-ir-param-seq-to-list seq) var)]
-    [(CompilerIrParamList.Cons param rest)
-      (match param
-        [(CompilerIrParam.Param _ _ param-var)
-          (if (= var param-var)
-            true
-            (compiler-backend-param-var? (box-get rest) var))])]))
-
-(define (compiler-backend-drop-param-assignments
-  [assignments : CompilerRegAssignmentList]
-  [params : CompilerIrParamList]) : CompilerRegAssignmentList
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) CompilerRegAssignmentList.Nil]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment var _)
-          (let
-            [tail : CompilerRegAssignmentList
-              (compiler-backend-drop-param-assignments (box-get rest) params)]
-            (if (compiler-backend-param-var? params var)
-              tail
-              (compiler-reg-assignment-cons item tail)))])]))
-
 (define (compiler-backend-callee-save-slot [vars : i64] [idx : i64]) : String
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))
 
 (define (compiler-backend-asm-label [function : String] [label : String]) : String
   (str_cat.str-cat ".L" (compiler-backend-asm-safe-symbol function) "_" label))
-
-(define (compiler-backend-arg-reg [idx : i64]) : ResultBackendReg
-  (compiler-backend-result-reg
-    (compiler-abi-gp-arg-register CompilerRegTargetAbi.Linux idx)
-    "backend: too many call args"))
-
-(define (compiler-backend-float-arg-reg [idx : i64]) : ResultBackendReg
-  (compiler-backend-result-reg
-    (compiler-abi-float-arg-register CompilerRegTargetAbi.Linux idx)
-    "backend: too many call args"))
 
 (define (compiler-backend-emit-stack-sub
   [target : CompilerBackendTarget]
@@ -15665,17 +15575,6 @@
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)]))))]))
 
-(define (compiler-backend-compare-lhs-scratch
-  [assignments : CompilerRegAssignmentList]
-  [rhs : CompilerIrValue]) : String
-  (if (compiler-backend-current-fn-win64?)
-    (if (string.eq
-      (compiler-backend-value-scalar-register-home assignments rhs)
-      "%rax")
-      "%r10"
-      "%rax")
-    "%rax"))
-
 (define (compiler-backend-emit-compare-branch
   [assignments : CompilerRegAssignmentList]
   [function : String]
@@ -19325,13 +19224,6 @@
               ""
               "backend: unsupported bitcast type")))])))
 
-(define (compiler-backend-ir-value-list-count [args : CompilerIrValueList]) : i64
-  (match args
-    [(CompilerIrValueList.Nil) 0]
-    [(CompilerIrValueList.Array seq) (struct-get seq len)]
-    [(CompilerIrValueList.Cons _ rest)
-      (+ 1 (compiler-backend-ir-value-list-count (box-get rest)))]))
-
 (define (compiler-backend-call-args-count [args : CompilerIrCallArgs]) : i64
   (match args
     [(CompilerIrCallArgs.Nil) 0]
@@ -19488,10 +19380,6 @@
 
 ;; Number of f64 argument registers. System V uses xmm0..xmm7 (8) and
 ;; Windows shares its 4 positional slots, so the float bank also tops out at 4.
-(define (compiler-backend-call-float-register-count
-  [target : CompilerBackendTarget]) : i64
-  (compiler-abi-float-arg-register-count (compiler-backend-target-abi target)))
-
 (define (compiler-backend-emit-call-space-sub [space : i64]) : String
   (if (= space 0)
     ""
@@ -19532,33 +19420,6 @@
 (define (compiler-backend-type-list-count [types : AstTypeList]) : i64
   (ast-type-list-len (& types)))
 
-(define (compiler-backend-type-list-slice-into
-  [types : (& types AstTypeList)]
-  [start : i64]
-  [out : (&mut out AstTypeList)]
-  [index : i64]) : unit
-  (if (>= index (ast-type-list-len types))
-    unit
-    (begin
-      (if (>= index start)
-        (ast-type-list-push
-          out
-          (ast-type-list-get types index (ast-type-id-fallback)))
-        unit)
-      (compiler-backend-type-list-slice-into types start out (+ index 1)))))
-
-(define (compiler-backend-type-list-slice [types : AstTypeList] [start : i64]) : AstTypeList
-  (let
-    [len : i64 (ast-type-list-len (& types))]
-    [out : AstTypeList
-      (ast-type-list-with-capacity
-        (if (< start len)
-          (- len start)
-          0))]
-    (begin
-      (compiler-backend-type-list-slice-into (& types) start (&mut out) 0)
-      out)))
-
 (define (compiler-backend-param-list-from-types
   [types : AstTypeList]
   [idx : i64]) : CompilerIrParamList
@@ -19583,128 +19444,6 @@
     (compiler-ir-value-cons
       (CompilerIrValue.Var idx)
       (compiler-backend-var-value-list count (+ idx 1)))))
-
-(define (compiler-backend-function-param-types
-  [functions : CompilerIrFunctionList]
-  [name : String]) : AstTypeList
-  (match functions
-    [(CompilerIrFunctionList.Nil) (ast-type-list-new)]
-    [(CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(CompilerIrFunction.Function fname params _ _ _)
-          (if (string.eq fname name)
-            (compiler-backend-param-type-list params)
-            (compiler-backend-function-param-types (box-get rest) name))])]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-param-types-seq seq name 0)]))
-
-(define (compiler-backend-function-param-types-seq
-  [functions : CompilerIrFunctionSeq]
-  [name : String]
-  [index : i64]) : AstTypeList
-  (if (>= index (compiler-ir-function-seq-count functions))
-    (ast-type-list-new)
-    (match (compiler-ir-function-seq-ref functions index)
-      [(CompilerIrFunction.Function fname params _ _ _)
-        (if (string.eq fname name)
-          (compiler-backend-param-type-list params)
-          (compiler-backend-function-param-types-seq functions name (+ index 1)))])))
-
-(define (compiler-backend-extern-param-types
-  [externs : CompilerIrExternList]
-  [name : String]) : AstTypeList
-  (match externs
-    [(CompilerIrExternList.Nil) (ast-type-list-new)]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
-          (if (string.eq extern-name name)
-            (match ty
-              [(AstType.Func args _) (box-get args)]
-              [_ (ast-type-list-new)])
-            (compiler-backend-extern-param-types (box-get rest) name))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-extern-param-types-seq seq name 0)]))
-
-(define (compiler-backend-extern-param-types-seq
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : AstTypeList
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    (ast-type-list-new)
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
-        (if (string.eq extern-name name)
-          (match ty
-            [(AstType.Func args _) (box-get args)]
-            [_ (ast-type-list-new)])
-          (compiler-backend-extern-param-types-seq externs name (+ index 1)))])))
-
-(define (compiler-backend-function-signature
-  [functions : CompilerIrFunctionList]
-  [name : String]) : CompilerBackendMaybeSignature
-  (match functions
-    [(CompilerIrFunctionList.Nil) (CompilerBackendMaybeSignature.No)]
-    [(CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(CompilerIrFunction.Function fname params ret-ty _ _)
-          (if (string.eq fname name)
-            (CompilerBackendMaybeSignature.Some
-              (compiler-backend-param-type-list params)
-              ret-ty)
-            (compiler-backend-function-signature (box-get rest) name))])]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-function-signature-seq seq name 0)]))
-
-(define (compiler-backend-function-signature-seq
-  [functions : CompilerIrFunctionSeq]
-  [name : String]
-  [index : i64]) : CompilerBackendMaybeSignature
-  (if (>= index (compiler-ir-function-seq-count functions))
-    (CompilerBackendMaybeSignature.No)
-    (match (compiler-ir-function-seq-ref functions index)
-      [(CompilerIrFunction.Function fname params ret-ty _ _)
-        (if (string.eq fname name)
-          (CompilerBackendMaybeSignature.Some
-            (compiler-backend-param-type-list params)
-            ret-ty)
-          (compiler-backend-function-signature-seq functions name (+ index 1)))])))
-
-(define (compiler-backend-extern-signature
-  [externs : CompilerIrExternList]
-  [name : String]) : CompilerBackendMaybeSignature
-  (match externs
-    [(CompilerIrExternList.Nil) (CompilerBackendMaybeSignature.No)]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
-          (if (string.eq extern-name name)
-            (match ty
-              [(AstType.Func args ret-ty)
-                (CompilerBackendMaybeSignature.Some
-                  (box-get args)
-                  (ast-node-pool-reader-type-get ret-ty))]
-              [_ (CompilerBackendMaybeSignature.No)])
-            (compiler-backend-extern-signature (box-get rest) name))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-extern-signature-seq seq name 0)]))
-
-(define (compiler-backend-extern-signature-seq
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : CompilerBackendMaybeSignature
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    (CompilerBackendMaybeSignature.No)
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name ty _ _ _ _)
-        (if (string.eq extern-name name)
-          (match ty
-            [(AstType.Func args ret-ty)
-              (CompilerBackendMaybeSignature.Some
-                (box-get args)
-                (ast-node-pool-reader-type-get ret-ty))]
-            [_ (CompilerBackendMaybeSignature.No)])
-          (compiler-backend-extern-signature-seq externs name (+ index 1)))])))
 
 (define (compiler-backend-function-list-count
   [functions : CompilerIrFunctionList]) : i64
@@ -20806,16 +20545,6 @@
           (ResultCompilerBackendSymbolValidation.Err message)])]
     [(ResultCompilerBackendSymbolValidation.Err message)
       (ResultCompilerBackendSymbolValidation.Err message)]))
-
-(define (compiler-backend-signature
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [name : String]) : CompilerBackendMaybeSignature
-  (match (compiler-backend-function-signature functions name)
-    [(CompilerBackendMaybeSignature.Some args ret-ty)
-      (CompilerBackendMaybeSignature.Some args ret-ty)]
-    [(CompilerBackendMaybeSignature.No)
-      (compiler-backend-extern-signature externs name)]))
 
 (define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
   (let
@@ -22600,11 +22329,6 @@
     int-idx
     position))
 
-(define (compiler-backend-arg-moves-build
-  [target : CompilerBackendTarget]
-  [args : CompilerIrCallArgs]) : CompilerBackendArgMoveList
-  (compiler-backend-arg-moves-build-at target args 0 0))
-
 (define (compiler-backend-call-args-gp-fit-from?
   [target : CompilerBackendTarget]
   [index : i64]
@@ -22683,21 +22407,6 @@
 
 ;; GP arg-reg threshold SysV 6 / Win64 4 -- mirrors compiler-reg-arg-reg-limit-for-abi
 ;; (regalloc); keep the two in sync (the rev6 integration test guards 6-arg SysV).
-(define (compiler-backend-call-args-gp-parallel?
-  [target : CompilerBackendTarget]
-  [args : CompilerIrCallArgs]
-  [types : AstTypeList]
-  [c-abi? : bool]
-  [program-index : CompilerBackendProgramIndex]) : bool
-  (compiler-backend-call-args-gp-parallel-from?
-    target
-    args
-    types
-    c-abi?
-    program-index
-    0
-    0))
-
 (define (compiler-backend-emit-call-args-with-assignments
   [target : CompilerBackendTarget]
   [arg-assignments : CompilerRegAssignmentList]
@@ -23296,20 +23005,6 @@
   (match copy
     [(CompilerBackendPhiCopy.Copy _ source _)
       (compiler-backend-phi-source-uses-home? assignments source dst)]))
-
-(define (compiler-backend-phi-copy-list-source-uses-home?
-  [assignments : CompilerRegAssignmentList]
-  [copies : CompilerBackendPhiCopyList]
-  [dst : i64]) : bool
-  (match copies
-    [(CompilerBackendPhiCopyList.Nil) false]
-    [(CompilerBackendPhiCopyList.Cons copy rest)
-      (if (compiler-backend-phi-copy-source-uses-home? assignments copy dst)
-        true
-        (compiler-backend-phi-copy-list-source-uses-home?
-          assignments
-          (box-get rest)
-          dst))]))
 
 (define (compiler-backend-var-parallel-resource0
   [assignments : CompilerRegAssignmentList]
@@ -24489,38 +24184,6 @@
                     (ResultCompilerBackend.Err message)]))])]
         [(CompilerBackendMaybePhiCopy.No)
           (compiler-backend-parallel-move-missing "phi" copy-id)])]))
-
-(define (compiler-backend-leading-phi-copies
-  [assignments : CompilerRegAssignmentList]
-  [instrs : CompilerIrInstrList]
-  [from-label : String]) : ResultBackendPhiCopies
-  (match instrs
-    [(CompilerIrInstrList.Nil)
-      (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)]
-    [(CompilerIrInstrList.Cons instr rest)
-      (match instr
-        [(CompilerIrInstr.Phi dst inputs ty)
-          (match (compiler-backend-phi-input-value inputs from-label)
-            [(ResultBackendValue.Ok value)
-              (match (compiler-backend-leading-phi-copies
-                assignments
-                (box-get rest)
-                from-label)
-                [(ResultBackendPhiCopies.Ok tail)
-                  (if (compiler-backend-phi-same-home? assignments dst value)
-                    (ResultBackendPhiCopies.Ok tail)
-                    (ResultBackendPhiCopies.Ok
-                      (compiler-backend-phi-copy-cons
-                        (CompilerBackendPhiCopy.Copy
-                          dst
-                          (CompilerBackendPhiSource.Value value)
-                          ty)
-                        tail)))]
-                [(ResultBackendPhiCopies.Err message)
-                  (ResultBackendPhiCopies.Err message)])]
-            [(ResultBackendValue.Err message)
-              (ResultBackendPhiCopies.Err message)])]
-        [_ (ResultBackendPhiCopies.Ok CompilerBackendPhiCopyList.Nil)])]))
 
 (define (compiler-backend-leading-phi-copies-seq-from
   [assignments : CompilerRegAssignmentList]
@@ -35419,77 +35082,6 @@
 (define compiler-backend-emit-current-count : i64
   0)
 
-;; r8-collision detector (cfg r8-collision-check): with %r8 pooled, logs every
-;; emitted %r8-write that occurs while a live value occupies %r8. Logs (does not panic) so one compile
-;; yields the complete site list.
-(define compiler-backend-r8c-len0 : i64
-  0)
-(define compiler-backend-r8c-point : i64
-  0)
-
-(define (compiler-backend-r8c-delta
-  [chunks : TextBufChunkList]
-  [need : i64]
-  [acc : i64]
-  [out : String]) : String
-  (if (>= acc need)
-    out
-    (match chunks
-      [(TextBufChunkNil) out]
-      [(TextBufChunkCons s rest)
-        (compiler-backend-r8c-delta
-          (box-get rest)
-          need
-          (+ acc (string-length s))
-          (str-cat s out))])))
-
-(define (compiler-backend-r8c-write? [delta : String] [reg : String]) : bool
-  (or
-    (compiler-backend-string-contains? delta (str-cat reg "\n"))
-    (compiler-backend-string-contains? delta (str-cat reg "d\n"))
-    (compiler-backend-string-contains? delta (str-cat reg "w\n"))
-    (compiler-backend-string-contains? delta (str-cat reg "b\n"))))
-
-(define (compiler-backend-r8c-occupied-strict? [point : i64] [reg : String]) : bool
-  (let
-    [v : i64 0]
-    [hit : bool false]
-    (begin
-      (while (and (< v compiler-backend-scavenge-ctx-vars) (not hit))
-        (begin
-          (if (and
-            (>= (array-ref compiler-backend-scavenge-ctx-starts v) 0)
-            (< (array-ref compiler-backend-scavenge-ctx-starts v) point)
-            (< point (array-ref compiler-backend-scavenge-ctx-ends v))
-            (compiler-backend-scavenge-var-holds?
-              compiler-backend-scavenge-ctx-assignment-index
-              v
-              reg))
-            (set! hit true)
-            unit)
-          (set! v (+ v 1))))
-      hit)))
-
-(define (compiler-backend-r8c-check-reg! [delta : String] [reg : String]) : unit
-  (if (and
-    (compiler-backend-r8c-write? delta reg)
-    (compiler-backend-r8c-occupied-strict? compiler-backend-r8c-point reg))
-    (print-error (str-cat "=RXC= " reg "\n" delta))
-    unit))
-
-(define (compiler-backend-r8c-check! [_function : String] [nb : TextBuf]) : unit
-  (let
-    [dl : i64 (- (text_buf.length nb) compiler-backend-r8c-len0)]
-    (if (> dl 0)
-      (let
-        [delta : String
-          (compiler-backend-r8c-delta (struct-get nb chunks) dl 0 "")]
-        (begin
-          (compiler-backend-r8c-check-reg! delta "%r8")
-          (compiler-backend-r8c-check-reg! delta "%r10")
-          (compiler-backend-r8c-check-reg! delta "%r11")))
-      unit)))
-
 (define (compiler-backend-emit-instrs-loop
   [target : CompilerBackendTarget]
   [function : String]
@@ -35530,18 +35122,6 @@
               (set!
                 compiler-backend-emit-current-count
                 (compiler-ir-instr-list-count current-instrs))
-              (cfg
-                r8-collision-check
-                (begin
-                  (set! compiler-backend-r8c-len0 (text_buf.length current-buf))
-                  (set!
-                    compiler-backend-r8c-point
-                    (*
-                      2
-                      (-
-                        compiler-backend-emit-instr-post-base
-                        (compiler-ir-instr-list-count current-instrs)))))
-                unit)
               (cfg
                 scavenge-self-check
                 (match current-instrs
@@ -35641,12 +35221,6 @@
             [(ResultCompilerBackend.Ok asm)
               (if compiler-backend-emit-instrs-continue-pending
                 (begin
-                  (cfg
-                    r8-collision-check
-                    (compiler-backend-r8c-check!
-                      function
-                      compiler-backend-emit-instrs-next-buf)
-                    unit)
                   (set! current-mode compiler-backend-emit-instrs-next-mode)
                   (set! current-instrs compiler-backend-emit-instrs-next-instrs)
                   (set! current-buf compiler-backend-emit-instrs-next-buf))
@@ -36618,12 +36192,6 @@
 ;; = 2*I. The self-check walks the same traversal, so the mapping is consistent
 ;; by construction; the checks below catch any divergence loudly via panic.
 ;; Does var v occupy `reg` (the register itself, or either half of a pair)?
-(define (compiler-backend-scavenge-var-holds?
-  [assignment-index : CompilerRegAssignmentIndex]
-  [v : i64]
-  [reg : String]) : bool
-  (compiler-reg-assignment-index-var-uses-register? assignment-index v reg))
-
 ;; Character-dispatch register-name -> scavenge bit. The scavenger queries
 ;; this per emitted operand; the string.eq ladder paid up to eighteen string
 ;; compares per call. Length plus three character reads decide every case.
@@ -38521,8 +38089,8 @@
 ;; On ANY audit failure the ORIGINAL text is returned unchanged -- that
 ;; function simply keeps rbp addressing (needs-rbp), preserving behavior.
 ;;
-;; The post-emission peephole recognizes both slot spellings
-;; (compiler-backend-peephole-stack-slot-operand?). Within any owner-map
+;; The post-emission peephole recognizes both slot spellings through its
+;; parsed stack-slot range predicate. Within any owner-map
 ;; lifetime every %rsp-mutating line (pushq/popq/subq/addq/leave/movq-to-rsp/
 ;; leaq-to-rsp/ret) conservatively clears the map; a returned call restores
 ;; %rsp and keeps only callee-saved stack-slot owners. Equal operand strings
@@ -40405,9 +39973,6 @@
       (compiler-backend-deadstore-sweep-report-and-reset!)
       (struct-get result buf))))
 
-(define (compiler-backend-deadstore-sweep [asm : String]) : String
-  (text_buf.render (compiler-backend-deadstore-sweep-buffer asm)))
-
 ;; ============================================================================
 ;; GAP9: gep displacement folding (codegen phase 9 / P7a).
 ;;
@@ -41992,129 +41557,6 @@
       (compiler-backend-clear-function-emit-state!)
       result)))
 
-(define (compiler-backend-emit-functions-into
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [functions : CompilerIrFunctionList]
-  [all-functions : CompilerIrFunctionList]
-  [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [span-index : CompilerBackendSourceSpanIndex]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [buf : text_buf.TextBuf]) : ResultCompilerBackend
-  (match functions
-    [(CompilerIrFunctionList.Nil)
-      (ResultCompilerBackend.Ok (text_buf.render buf))]
-    [(CompilerIrFunctionList.Cons func rest)
-      (match (compiler-backend-emit-function-escaping
-        target
-        (compiler-backend-effective-function-mode mode func)
-        func
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        emit-entry
-        crt-entry)
-        [(ResultCompilerBackend.Ok head)
-          (compiler-backend-emit-functions-into
-            target
-            mode
-            (box-get rest)
-            all-functions
-            globals
-            global-types
-            externs
-            plan
-            program-index
-            spans
-            span-index
-            emit-entry
-            crt-entry
-            (text_buf.append buf (compiler-backend-emergency-wrap head)))]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])]
-    [(CompilerIrFunctionList.Array seq)
-      (compiler-backend-emit-function-seq-into
-        target
-        mode
-        seq
-        0
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        emit-entry
-        crt-entry
-        buf)]))
-
-(define (compiler-backend-emit-function-seq-into
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [functions : CompilerIrFunctionSeq]
-  [index : i64]
-  [all-functions : CompilerIrFunctionList]
-  [globals : CompilerIrGlobalList]
-  [global-types : CompilerBackendGlobalTypeList]
-  [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]
-  [program-index : CompilerBackendProgramIndex]
-  [spans : CompilerSourceSpans]
-  [span-index : CompilerBackendSourceSpanIndex]
-  [emit-entry : bool]
-  [crt-entry : bool]
-  [buf : text_buf.TextBuf]) : ResultCompilerBackend
-  (if (>= index (compiler-ir-function-seq-count functions))
-    (ResultCompilerBackend.Ok (text_buf.render buf))
-    (let
-      [func : CompilerIrFunction (compiler-ir-function-seq-ref functions index)]
-      (match (compiler-backend-emit-function-escaping
-        target
-        (compiler-backend-effective-function-mode mode func)
-        func
-        all-functions
-        globals
-        global-types
-        externs
-        plan
-        program-index
-        spans
-        span-index
-        emit-entry
-        crt-entry)
-        [(ResultCompilerBackend.Ok head)
-          (compiler-backend-emit-function-seq-into
-            target
-            mode
-            functions
-            (+ index 1)
-            all-functions
-            globals
-            global-types
-            externs
-            plan
-            program-index
-            spans
-            span-index
-            emit-entry
-            crt-entry
-            (text_buf.append buf (compiler-backend-emergency-wrap head)))]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)]))))
-
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
   (CompilerIrFunction.Function
     "main"
@@ -42711,27 +42153,6 @@
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
-
-(define (compiler-backend-emit-closure-entry-adapters-into
-  [target : CompilerBackendTarget]
-  [names : BackendStringList]
-  [functions : CompilerIrFunctionList]
-  [externs : CompilerIrExternList]
-  [plan : CompilerBackendRuntimePlan]
-  [program-index : CompilerBackendProgramIndex]
-  [buf : text_buf.TextBuf]) : ResultCompilerBackend
-  (match (compiler-backend-emit-closure-entry-adapters-buffer-into
-    target
-    names
-    functions
-    externs
-    plan
-    program-index
-    buf)
-    [(ResultCompilerBackendBuffer.Ok out)
-      (ResultCompilerBackend.Ok (text_buf.render out))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
   [target : CompilerBackendTarget]
@@ -43594,21 +43015,6 @@
             [(ResultCompilerBackend.Err message)
               (ResultCompilerBackend.Err message)])))]))
 
-(define (compiler-backend-emit-globals-into
-  [target : CompilerBackendTarget]
-  [globals : CompilerIrGlobalList]
-  [buf : text_buf.TextBuf]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
-  (match (compiler-backend-emit-globals-buffer-into
-    target
-    globals
-    buf
-    program-index)
-    [(ResultCompilerBackendBuffer.Ok out)
-      (ResultCompilerBackend.Ok (text_buf.render out))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
-
 (define (compiler-backend-emit-globals-buffer-into
   [target : CompilerBackendTarget]
   [globals : CompilerIrGlobalList]
@@ -43752,62 +43158,6 @@
             functions
             helper
             (+ index 1)))])))
-
-(define (compiler-backend-extern-list-references?
-  [externs : CompilerIrExternList]
-  [name : String]) : bool
-  (match externs
-    [(CompilerIrExternList.Nil) false]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
-          (if (string.eq extern-name name)
-            true
-            (if (string.eq link-symbol name)
-              true
-              (compiler-backend-extern-list-references? (box-get rest) name)))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-extern-seq-references? seq name 0)]))
-
-(define (compiler-backend-extern-seq-references?
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : bool
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    false
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
-        (if (string.eq extern-name name)
-          true
-          (if (string.eq link-symbol name)
-            true
-            (compiler-backend-extern-seq-references? externs name (+ index 1))))])))
-
-(define (compiler-backend-extern-list-link-symbol
-  [externs : CompilerIrExternList]
-  [name : String]) : String
-  (match externs
-    [(CompilerIrExternList.Nil) name]
-    [(CompilerIrExternList.Cons item rest)
-      (match item
-        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
-          (if (string.eq extern-name name)
-            link-symbol
-            (compiler-backend-extern-list-link-symbol (box-get rest) name))])]
-    [(CompilerIrExternList.Array seq)
-      (compiler-backend-extern-seq-link-symbol seq name 0)]))
-
-(define (compiler-backend-extern-seq-link-symbol
-  [externs : CompilerIrExternSeq]
-  [name : String]
-  [index : i64]) : String
-  (if (>= index (compiler-ir-extern-seq-count externs))
-    name
-    (match (compiler-ir-extern-seq-ref externs index)
-      [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ _)
-        (if (string.eq extern-name name)
-          link-symbol
-          (compiler-backend-extern-seq-link-symbol externs name (+ index 1)))])))
 
 (define (compiler-backend-binop-needs-div-abort?
   [op : CompilerIrBinOp]
@@ -44985,11 +44335,6 @@ tl_current_arena:
   (if (compiler-backend-target-windows? target)
     (str_cat.str-cat "    movq " src ", %gs:0x28\n")
     (str_cat.str-cat "    movq " src ", %fs:tl_current_arena@tpoff\n")))
-
-(define (compiler-backend-current-arena-clear [target : CompilerBackendTarget]) : String
-  (if (compiler-backend-target-windows? target)
-    "    movq $0, %gs:0x28\n"
-    "    movq $0, %fs:tl_current_arena@tpoff\n"))
 
 (define (compiler-backend-runtime-profile-data [profile : bool]) : String
   (if profile
@@ -47341,16 +46686,6 @@ tl_tlci_call_macro_entry:
   [_target : CompilerBackendTarget]) : String
   "")
 
-(define (compiler-backend-runtime-linux-only
-  [target : CompilerBackendTarget]
-  [enabled : bool]
-  [asm : String]) : String
-  (if enabled
-    (if (compiler-backend-target-windows? target)
-      ""
-      asm)
-    ""))
-
 (define (compiler-backend-runtime-functions-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
@@ -47544,7 +46879,7 @@ tl_tlci_call_macro_entry:
           ""))]))
 
 ;; Argument register for call arg `idx` under the target's calling convention.
-;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9 via `compiler-backend-arg-reg`;
+;; System V (Linux) uses rdi/rsi/rdx/rcx/r8/r9;
 ;; Windows x64 passes the first four integer/pointer args in rcx/rdx/r8/r9.
 (define (compiler-backend-target-arg-reg
   [target : CompilerBackendTarget]
@@ -47777,16 +47112,6 @@ tl_tlci_call_macro_entry:
     (CompilerBackendTarget.Linux)
     spans
     true))
-
-(define (compiler-backend-emit-program-linux-with-spans-and-entry
-  [program : CompilerIrProgram]
-  [spans : CompilerSourceSpans]
-  [emit-entry : bool]) : ResultCompilerBackend
-  (compiler-backend-emit-program-target
-    program
-    (CompilerBackendTarget.Linux)
-    spans
-    emit-entry))
 
 (define (compiler-backend-emit-program-with-spans-for-target
   [program : CompilerIrProgram]
@@ -48656,23 +47981,6 @@ tl_tlci_call_macro_entry:
         (compiler-ir-value-seq-to-list seq))]
     [(CompilerIrValueList.Cons value rest)
       (compiler-backend-object-value-list-ref
-        (compiler-backend-object-value-ref parts site value)
-        site
-        (box-get rest))]))
-
-(define (compiler-backend-object-phi-inputs
-  [parts : CompilerBackendObjectParts]
-  [site : String]
-  [inputs : CompilerIrPhiInputList]) : CompilerBackendObjectParts
-  (match (compiler-ir-phi-input-list-force-cons inputs)
-    [(CompilerIrPhiInputList.Nil) parts]
-    [(CompilerIrPhiInputList.Array seq)
-      (compiler-backend-object-phi-inputs
-        parts
-        site
-        (compiler-ir-phi-input-seq-to-list seq))]
-    [(CompilerIrPhiInputList.Cons value _ rest)
-      (compiler-backend-object-phi-inputs
         (compiler-backend-object-value-ref parts site value)
         site
         (box-get rest))]))
@@ -51467,18 +50775,6 @@ tl_tlci_call_macro_entry:
       (struct-get line end)
       (struct-get line newline))))
 
-(define (compiler-backend-peephole-append-pending-line
-  [buf : (text_buf_borrowed.TextBufBorrowed asm)]
-  [asm : String]
-  [start : i64]
-  [end : i64]
-  [owned-line : String]
-  [owned? : bool]
-  [newline : bool]) : (text_buf_borrowed.TextBufBorrowed asm)
-  (if owned?
-    (compiler-backend-peephole-append-line buf owned-line newline)
-    (compiler-backend-peephole-append-line-range buf asm start end newline)))
-
 (define (compiler-backend-peephole-find-comma-space
   [line : String]
   [start : i64]) : i64
@@ -51579,17 +50875,6 @@ tl_tlci_call_macro_entry:
           (CompilerBackendPeepholeMove.NoMove)))
       (CompilerBackendPeepholeMove.NoMove))))
 
-(define (compiler-backend-peephole-line-movq
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [start : i64]
-  [end : i64]
-  [owned-line : String]
-  [owned? : bool]) : CompilerBackendPeepholeMove
-  (if owned?
-    (compiler-backend-peephole-movq owned-line)
-    (compiler-backend-peephole-movq-range asm asm-data start end)))
-
 (define (compiler-backend-peephole-register-operand? [operand : String]) : bool
   (and
     (> (string.string-length operand) 0)
@@ -51605,22 +50890,12 @@ tl_tlci_call_macro_entry:
 ;; for a tracked owner, and equal operand strings imply equal addresses (and
 ;; distinct strings, distinct addresses). Indexed forms contain "(%rsp," /
 ;; "(%rbp," and stay excluded.
-(define (compiler-backend-peephole-stack-slot-operand? [operand : String]) : bool
-  (or
-    (compiler-backend-string-contains? operand "(%rbp)")
-    (compiler-backend-string-contains? operand "(%rsp)")))
-
 ;; SCAV2: true iff `operand` is a RIP-relative global reference `SYM(%rip)` -- a
 ;; load of a module-level global's contents. Its address is a fixed symbol, so
 ;; the operand string uniquely identifies the memory location (equal strings =>
 ;; equal addresses, distinct strings => distinct addresses), exactly like a stack
 ;; slot. Indexed rip forms do not exist on x86-64, so a trailing "(%rip)" is
 ;; unambiguous. Distinct from stack slots (which spell "(%rbp)"/"(%rsp)").
-(define (compiler-backend-peephole-global-rip-operand? [operand : String]) : bool
-  (let
-    [len : i64 (string.string-length operand)]
-    (and (>= len 6) (string.eq (string.substring operand (- len 6) 6) "(%rip)"))))
-
 ;; SCAV2: memory operands the owner map may track with structured identity:
 ;; rbp/rsp stack slots AND SYM(%rip) globals. Both are stable addresses whose contents
 ;; change only via a store to that exact operand: a store to a slot clears just
@@ -51631,11 +50906,6 @@ tl_tlci_call_macro_entry:
 ;; store cannot alias a global and vice versa, keeping a global mirror across a
 ;; stack store (and a slot mirror across a global store's whole-map clear is
 ;; moot) is sound.
-(define (compiler-backend-peephole-trackable-mem-operand? [operand : String]) : bool
-  (or
-    (compiler-backend-peephole-stack-slot-operand? operand)
-    (compiler-backend-peephole-global-rip-operand? operand)))
-
 (define (compiler-backend-peephole-owner-key-unknown) : i64
   0)
 
@@ -51763,87 +51033,6 @@ tl_tlci_call_macro_entry:
                 (set! walked (+ walked 1)))))))
       (compiler-backend-peephole-owner-key-unknown))))
 
-(define (compiler-backend-peephole-owner-global-key
-  [operand : String]
-  [symbol-len : i64]) : i64
-  (compiler-backend-peephole-owner-global-key-range
-    operand
-    (unsafe
-      (string-data operand))
-    0
-    symbol-len))
-
-(define (compiler-backend-peephole-string-suffix-eq?
-  [text : String]
-  [suffix : String]) : bool
-  (let
-    [n : i64 (string.string-length text)]
-    [sn : i64 (string.string-length suffix)]
-    (if (< n sn)
-      false
-      (let
-        [start : i64 (- n sn)]
-        [i : i64 0]
-        [ok : bool true]
-        (begin
-          (while (and ok (< i sn))
-            (begin
-              (if (=
-                (string.string-ref text (+ start i))
-                (string.string-ref suffix i))
-                unit
-                (set! ok false))
-              (set! i (+ i 1))))
-          ok)))))
-
-(define (compiler-backend-peephole-decimal-prefix-valid?
-  [text : String]
-  [end : i64]) : bool
-  (let
-    [i : i64 0]
-    [ok : bool true]
-    (begin
-      (if (<= end 0)
-        (set! ok false)
-        unit)
-      (if (and ok (= (cast (string.string-ref text 0) : i64) 45))
-        (begin
-          (set! i 1)
-          (if (= end 1)
-            (set! ok false)
-            unit))
-        unit)
-      (while (and ok (< i end))
-        (let
-          [b : i64 (cast (string.string-ref text i) : i64)]
-          (begin
-            (if (and (>= b 48) (<= b 57))
-              unit
-              (set! ok false))
-            (set! i (+ i 1)))))
-      ok)))
-
-(define (compiler-backend-peephole-decimal-prefix-value
-  [text : String]
-  [end : i64]) : i64
-  (let
-    [neg : bool (and (> end 0) (= (cast (string.string-ref text 0) : i64) 45))]
-    [i : i64
-      (if neg
-        1
-        0)]
-    [value : i64 0]
-    (begin
-      (while (< i end)
-        (let
-          [b : i64 (cast (string.string-ref text i) : i64)]
-          (begin
-            (set! value (+ (* value 10) (- b 48)))
-            (set! i (+ i 1)))))
-      (if neg
-        (- 0 value)
-        value))))
-
 (define (compiler-backend-peephole-stack-owner-key-from-parts
   [base : i64]
   [offset : i64]
@@ -51861,50 +51050,6 @@ tl_tlci_call_macro_entry:
             (if explicit
               1
               0)))))))
-
-(define (compiler-backend-peephole-stack-owner-key
-  [operand : String]
-  [suffix : String]
-  [base : i64]) : i64
-  (let
-    [len : i64 (string.string-length operand)]
-    [suffix-len : i64 (string.string-length suffix)]
-    (if (not (compiler-backend-peephole-string-suffix-eq? operand suffix))
-      (compiler-backend-peephole-owner-key-unknown)
-      (let
-        [prefix-len : i64 (- len suffix-len)]
-        (cond
-          [(= prefix-len 0)
-            (compiler-backend-peephole-stack-owner-key-from-parts base 0 false)]
-          [(compiler-backend-peephole-decimal-prefix-valid? operand prefix-len)
-            (compiler-backend-peephole-stack-owner-key-from-parts
-              base
-              (compiler-backend-peephole-decimal-prefix-value
-                operand
-                prefix-len)
-              true)]
-          [else (compiler-backend-peephole-owner-key-unknown)])))))
-
-(define (compiler-backend-peephole-owner-key-from-operand [operand : String]) : i64
-  (let
-    [rbp : i64 (compiler-backend-peephole-stack-owner-key operand "(%rbp)" 0)]
-    (if (compiler-backend-peephole-owner-key-known? rbp)
-      rbp
-      (let
-        [rsp : i64
-          (compiler-backend-peephole-stack-owner-key operand "(%rsp)" 1)]
-        (if (compiler-backend-peephole-owner-key-known? rsp)
-          rsp
-          (let
-            [len : i64 (string.string-length operand)]
-            [suffix-len : i64 6]
-            (if (and
-              (> len suffix-len)
-              (compiler-backend-peephole-string-suffix-eq? operand "(%rip)"))
-              (compiler-backend-peephole-owner-global-key
-                operand
-                (- len suffix-len))
-              (compiler-backend-peephole-owner-key-unknown))))))))
 
 ;; Range forms used by the streaming descriptor path. They preserve operand
 ;; identity without allocating a substring for each side of every movq.
@@ -52054,42 +51199,6 @@ tl_tlci_call_macro_entry:
       (= (string.string-ref operand 0) '-')
       (compiler-backend-string-contains? operand "(%rbp)"))))
 
-(define (compiler-backend-peephole-local-move-operand? [operand : String]) : bool
-  (or
-    (compiler-backend-peephole-register-operand? operand)
-    (compiler-backend-peephole-stack-slot-operand? operand)))
-
-(define (compiler-backend-peephole-self-move-operands?
-  [src : String]
-  [dst : String]) : bool
-  (and (string.eq src dst) (compiler-backend-peephole-local-move-operand? src)))
-
-(define (compiler-backend-peephole-redundant-move-operands?
-  [src : String]
-  [dst : String]
-  [next-src : String]
-  [next-dst : String]) : bool
-  (and
-    (compiler-backend-peephole-local-move-operand? src)
-    (compiler-backend-peephole-local-move-operand? dst)
-    (compiler-backend-peephole-local-move-operand? next-src)
-    (compiler-backend-peephole-local-move-operand? next-dst)
-    (or
-      (and (string.eq src next-src) (string.eq dst next-dst))
-      (and (string.eq src next-dst) (string.eq dst next-src)))))
-
-(define (compiler-backend-peephole-overwritten-frame-store-operands?
-  [src : String]
-  [dst : String]
-  [next-src : String]
-  [next-dst : String]) : bool
-  (and
-    (compiler-backend-peephole-register-operand? src)
-    (compiler-backend-peephole-local-frame-slot-operand? dst)
-    (compiler-backend-peephole-register-operand? next-src)
-    (compiler-backend-peephole-local-frame-slot-operand? next-dst)
-    (string.eq dst next-dst)))
-
 (define (compiler-backend-peephole-forward-frame-load-operands?
   [src : String]
   [dst : String]
@@ -52126,36 +51235,12 @@ tl_tlci_call_macro_entry:
 ;; the forward scan proves %r10's next textual touch is a clean re-write with only
 ;; non-%r10 movq lines in between (conservative: any non-movq / control flow stops
 ;; the scan as "not provably dead").
-(define (compiler-backend-peephole-mem-base-r10? [operand : String]) : bool
-  (let
-    [len : i64 (string.string-length operand)]
-    (and (>= len 6) (string.eq (string.substring operand (- len 6) 6) "(%r10)"))))
-
 (define (compiler-backend-peephole-r10-base-rewrite
   [operand : String]
   [base : String]) : String
   (let
     [len : i64 (string.string-length operand)]
     (str_cat.str-cat (string.substring operand 0 (- len 6)) "(" base ")")))
-
-(define (compiler-backend-peephole-r10-base-fold-operands?
-  [src : String]
-  [dst : String]
-  [next-src : String]
-  [next-dst : String]) : bool
-  (and
-    (compiler-backend-peephole-register-operand? src)
-    (not (string.eq src "%r10"))
-    ;; #rbp-base (M-G3 stage 2): never fold a %rbp base into a memory operand.
-    ;; In FPO functions %rbp is a pool value register and the emitters stage
-    ;; rbp-based derefs through a scratch precisely so that "(%rbp" only ever
-    ;; spells a frame reference; folding would recreate `DISP(%rbp)` which the
-    ;; slot recognizers above treat as a frame slot (rbp-write invalidation is
-    ;; not modeled for slot keys).
-    (not (string.eq src "%rbp"))
-    (string.eq dst "%r10")
-    (compiler-backend-peephole-mem-base-r10? next-src)
-    (compiler-backend-peephole-register-operand? next-dst)))
 
 (define (compiler-backend-peephole-range-mentions-r10?
   [asm : String]
@@ -52232,314 +51317,18 @@ tl_tlci_call_macro_entry:
         unit)
       (= result 1))))
 
-(define (compiler-backend-peephole-r10-base-fold-line-range
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [pending-start : i64]
-  [pending-end : i64]
-  [pending-line : String]
-  [pending-owned? : bool]
-  [next-start : i64]
-  [next-end : i64]) : String
-  (match (compiler-backend-peephole-line-movq
-    asm
-    asm-data
-    pending-start
-    pending-end
-    pending-line
-    pending-owned?)
-    [(CompilerBackendPeepholeMove.Move src dst)
-      (match (compiler-backend-peephole-movq-range
-        asm
-        asm-data
-        next-start
-        next-end)
-        [(CompilerBackendPeepholeMove.Move next-src next-dst)
-          (str_cat.str-cat
-            "    movq "
-            (compiler-backend-peephole-r10-base-rewrite next-src src)
-            ", "
-            next-dst)]
-        [(CompilerBackendPeepholeMove.NoMove)
-          (string.substring asm next-start (- next-end next-start))])]
-    [(CompilerBackendPeepholeMove.NoMove)
-      (string.substring asm next-start (- next-end next-start))]))
-
-(define (compiler-backend-peephole-line-self-move?
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [start : i64]
-  [end : i64]
-  [owned-line : String]
-  [owned? : bool]) : bool
-  (match (compiler-backend-peephole-line-movq
-    asm
-    asm-data
-    start
-    end
-    owned-line
-    owned?)
-    [(CompilerBackendPeepholeMove.Move src dst)
-      (compiler-backend-peephole-self-move-operands? src dst)]
-    [(CompilerBackendPeepholeMove.NoMove) false]))
-
 ;; Zext dedup: the 64-bit destination register of a `movzbq`/`movzbl` line over
 ;; [start,end), or "" when the line is not a byte zero-extend into a tracked GP
 ;; register. Both forms leave the full 64-bit destination holding a value in
 ;; [0,255] (32-bit writes zero the upper half), so a following
 ;; `movzbq %<dst-low-byte>, %<dst>` re-extend is an identity.
-(define (compiler-backend-peephole-zext-line-dst
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : String
-  (let
-    [ms : i64 start]
-    (begin
-      (while (and (< ms end) (= (compiler-backend-peephole-byte-at data ms) 32))
-        (set! ms (+ ms 1)))
-      (let
-        [me : i64 ms]
-        (begin
-          (while (and
-            (< me end)
-            (let
-              [b : i64 (compiler-backend-peephole-byte-at data me)]
-              (and (>= b 97) (<= b 122))))
-            (set! me (+ me 1)))
-          (if (or
-            (compiler-backend-peephole-range-eq? data ms me "movzbq")
-            (compiler-backend-peephole-range-eq? data ms me "movzbl"))
-            (compiler-backend-peephole-last-operand-reg data ms end)
-            ""))))))
-
 ;; True when the line [ns,ne) is exactly `movzbq %B, R` with %B the low-byte
 ;; sub-register of R. Paired with a pending byte zero-extend into R, this
 ;; re-extend is an identity and is dropped (pair-action 2). The source token
 ;; must be a byte register ('l'/'b' suffix); 16/32-bit sub-register tokens and
 ;; memory operands never match.
-(define (compiler-backend-peephole-redundant-zext-next?
-  [data : (Ptr u8)]
-  [ns : i64]
-  [ne : i64]
-  [reg : String]) : bool
-  (let
-    [ms : i64 ns]
-    (begin
-      (while (and (< ms ne) (= (compiler-backend-peephole-byte-at data ms) 32))
-        (set! ms (+ ms 1)))
-      (let
-        [me : i64 ms]
-        (begin
-          (while (and
-            (< me ne)
-            (let
-              [b : i64 (compiler-backend-peephole-byte-at data me)]
-              (and (>= b 97) (<= b 122))))
-            (set! me (+ me 1)))
-          (if (not (compiler-backend-peephole-range-eq? data ms me "movzbq"))
-            false
-            (let
-              [ts : i64 me]
-              (begin
-                (while (and
-                  (< ts ne)
-                  (= (compiler-backend-peephole-byte-at data ts) 32))
-                  (set! ts (+ ts 1)))
-                (let
-                  [te : i64 ts]
-                  (begin
-                    (while (and
-                      (< te ne)
-                      (let
-                        [b : i64 (compiler-backend-peephole-byte-at data te)]
-                        (or
-                          (= b 37)
-                          (and (>= b 97) (<= b 122))
-                          (and (>= b 48) (<= b 57)))))
-                      (set! te (+ te 1)))
-                    (if (or
-                      (= ts te)
-                      (not (= (compiler-backend-peephole-byte-at data ts) 37)))
-                      false
-                      (let
-                        [last : i64
-                          (compiler-backend-peephole-byte-at data (- te 1))]
-                        (if (not (or (= last 108) (= last 98)))
-                          false
-                          (and
-                            (string.eq
-                              (compiler-backend-peephole-subreg-to-reg
-                                data
-                                ts
-                                te)
-                              reg)
-                            (string.eq
-                              (compiler-backend-peephole-last-operand-reg
-                                data
-                                ms
-                                ne)
-                              reg)))))))))))))))
-
 ;; True when pending is a byte zero-extend into register R and next is the
 ;; identity re-extend `movzbq %<R-low-byte>, R`.
-(define (compiler-backend-peephole-redundant-zext-pair?
-  [asm-data : (Ptr u8)]
-  [pending-start : i64]
-  [pending-end : i64]
-  [pending-line : String]
-  [pending-owned? : bool]
-  [next-start : i64]
-  [next-end : i64]) : bool
-  (let
-    [dst : String
-      (if pending-owned?
-        (let
-          [pdata : (Ptr u8)
-            (unsafe
-              (string-data pending-line))]
-          (compiler-backend-peephole-zext-line-dst
-            pdata
-            0
-            (string.string-length pending-line)))
-        (compiler-backend-peephole-zext-line-dst
-          asm-data
-          pending-start
-          pending-end))]
-    (if (string.eq dst "")
-      false
-      (compiler-backend-peephole-redundant-zext-next?
-        asm-data
-        next-start
-        next-end
-        dst))))
-
-(define (compiler-backend-peephole-pair-action-range
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [pending-start : i64]
-  [pending-end : i64]
-  [pending-line : String]
-  [pending-owned? : bool]
-  [next-start : i64]
-  [next-end : i64]) : i64
-  (if (compiler-backend-peephole-redundant-zext-pair?
-    asm-data
-    pending-start
-    pending-end
-    pending-line
-    pending-owned?
-    next-start
-    next-end)
-    2
-    (compiler-backend-peephole-pair-action-range-movq
-      asm
-      asm-data
-      pending-start
-      pending-end
-      pending-line
-      pending-owned?
-      next-start
-      next-end)))
-
-(define (compiler-backend-peephole-pair-action-range-movq
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [pending-start : i64]
-  [pending-end : i64]
-  [pending-line : String]
-  [pending-owned? : bool]
-  [next-start : i64]
-  [next-end : i64]) : i64
-  (match (compiler-backend-peephole-line-movq
-    asm
-    asm-data
-    pending-start
-    pending-end
-    pending-line
-    pending-owned?)
-    [(CompilerBackendPeepholeMove.Move src dst)
-      (if (compiler-backend-peephole-self-move-operands? src dst)
-        1
-        (match (compiler-backend-peephole-movq-range
-          asm
-          asm-data
-          next-start
-          next-end)
-          [(CompilerBackendPeepholeMove.Move next-src next-dst)
-            (cond
-              [(compiler-backend-peephole-overwritten-frame-store-operands?
-                  src
-                  dst
-                  next-src
-                  next-dst)
-                1]
-              [(compiler-backend-peephole-redundant-move-operands?
-                  src
-                  dst
-                  next-src
-                  next-dst)
-                2]
-              [(compiler-backend-peephole-forward-frame-load-operands?
-                  src
-                  dst
-                  next-src
-                  next-dst)
-                3]
-              [(and
-                  (compiler-backend-peephole-r10-base-fold-operands?
-                    src
-                    dst
-                    next-src
-                    next-dst)
-                  (or
-                    (string.eq next-dst "%r10")
-                    (compiler-backend-peephole-r10-dead-after?
-                      asm
-                      asm-data
-                      (if (< next-end (string.string-length asm))
-                        (+ next-end 1)
-                        next-end)
-                      (string.string-length asm))))
-                4]
-              [else 0])]
-          [(CompilerBackendPeepholeMove.NoMove) 0]))]
-    [(CompilerBackendPeepholeMove.NoMove) 0]))
-
-(define (compiler-backend-peephole-forward-frame-load-line-range
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [pending-start : i64]
-  [pending-end : i64]
-  [pending-line : String]
-  [pending-owned? : bool]
-  [next-start : i64]
-  [next-end : i64]) : String
-  (match (compiler-backend-peephole-line-movq
-    asm
-    asm-data
-    pending-start
-    pending-end
-    pending-line
-    pending-owned?)
-    [(CompilerBackendPeepholeMove.Move src dst)
-      (match (compiler-backend-peephole-movq-range
-        asm
-        asm-data
-        next-start
-        next-end)
-        [(CompilerBackendPeepholeMove.Move next-src next-dst)
-          (if (compiler-backend-peephole-forward-frame-load-operands?
-            src
-            dst
-            next-src
-            next-dst)
-            (str_cat.str-cat "    movq " src ", " next-dst)
-            (string.substring asm next-start (- next-end next-start)))]
-        [(CompilerBackendPeepholeMove.NoMove)
-          (string.substring asm next-start (- next-end next-start))])]
-    [(CompilerBackendPeepholeMove.NoMove)
-      (string.substring asm next-start (- next-end next-start))]))
-
 ;; All-unknown owner map: every tracked register mirrors no known location.
 (define (compiler-backend-peephole-owners-empty) : CompilerBackendPeepholeOwners
   (CompilerBackendPeepholeOwners
@@ -52614,65 +51403,8 @@ tl_tlci_call_macro_entry:
                     [else -1])]
                 [else -1]))))))))
 
-(define (compiler-backend-peephole-reg-index [reg : String]) : i64
-  (let
-    [n : i64 (string.string-length reg)]
-    (if (if (< n 3)
-      true
-      (> n 4))
-      -1
-      (let
-        [data : (Ptr u8)
-          (unsafe
-            (string-data reg))]
-        [b0 : i64 (compiler-backend-peephole-byte-at data 0)]
-        [b1 : i64 (compiler-backend-peephole-byte-at data 1)]
-        [b2 : i64 (compiler-backend-peephole-byte-at data 2)]
-        ;; every tracked register is "%r..": bail on the first mismatched byte.
-        (if (if (not (= b0 37))
-          true
-          (not (= b1 114)))
-          -1
-          (if (= n 3)
-            ;; "%r8" / "%r9"
-            (cond [(= b2 56) 6] [(= b2 57) 7] [else -1])
-            ;; n == 4: third byte selects the register family, fourth disambiguates.
-            (let
-              [b3 : i64 (compiler-backend-peephole-byte-at data 3)]
-              (cond
-                [(= b2 97)
-                  (if (= b3 120)
-                    0
-                    -1)]
-                [(= b2 99)
-                  (if (= b3 120)
-                    1
-                    -1)]
-                [(= b2 100) (cond [(= b3 120) 2] [(= b3 105) 5] [else -1])]
-                [(= b2 98)
-                  (if (= b3 120)
-                    3
-                    -1)]
-                [(= b2 115)
-                  (if (= b3 105)
-                    4
-                    -1)]
-                [(= b2 49)
-                  (cond
-                    [(= b3 48) 8]
-                    [(= b3 49) 9]
-                    [(= b3 50) 10]
-                    [(= b3 51) 11]
-                    [(= b3 52) 12]
-                    [(= b3 53) 13]
-                    [else -1])]
-                [else -1]))))))))
-
 ;; True iff `operand` is exactly one of the 14 general-purpose registers owned
 ;; by the register allocator. %rbp and %rsp are deliberately excluded.
-(define (compiler-backend-peephole-owner-reg? [operand : String]) : bool
-  (>= (compiler-backend-peephole-reg-index operand) 0))
-
 ;; Location currently mirrored by `reg`, or Unknown if unknown / `reg` is not tracked.
 (define (compiler-backend-peephole-owners-get-index
   [owners : CompilerBackendPeepholeOwners]
@@ -52693,13 +51425,6 @@ tl_tlci_call_macro_entry:
     [(= idx 12) (struct-get owners r14)]
     [(= idx 13) (struct-get owners r15)]
     [else (compiler-backend-peephole-owner-key-unknown)]))
-
-(define (compiler-backend-peephole-owners-get
-  [owners : CompilerBackendPeepholeOwners]
-  [reg : String]) : i64
-  (compiler-backend-peephole-owners-get-index
-    owners
-    (compiler-backend-peephole-reg-index reg)))
 
 ;; The first tracked GP register whose mirrored location equals `slot`, other than
 ;; `exclude`, or "" if none. Drives cross-register reload reuse: a redundant
@@ -52803,15 +51528,6 @@ tl_tlci_call_macro_entry:
           "%r15"]
         [else ""]))))
 
-(define (compiler-backend-peephole-owners-find-reg-for-slot
-  [owners : CompilerBackendPeepholeOwners]
-  [slot : i64]
-  [exclude : String]) : String
-  (compiler-backend-peephole-owners-find-reg-for-slot-index
-    owners
-    slot
-    (compiler-backend-peephole-reg-index exclude)))
-
 ;; Owner map with `reg`'s owner set to `slot` (Unknown clears it). No-op when `reg`
 ;; is not a tracked register (e.g. an immediate or untracked register source).
 (define (compiler-backend-peephole-owners-set-reg-index
@@ -52861,15 +51577,6 @@ tl_tlci_call_macro_entry:
     (if (= idx 13)
       slot
       (struct-get owners r15))))
-
-(define (compiler-backend-peephole-owners-set-reg
-  [owners : CompilerBackendPeepholeOwners]
-  [reg : String]
-  [slot : i64]) : CompilerBackendPeepholeOwners
-  (compiler-backend-peephole-owners-set-reg-index
-    owners
-    (compiler-backend-peephole-reg-index reg)
-    slot))
 
 ;; Owner map with every register that mirrored `slot` reset to unknown. Used
 ;; when `slot` is written (its memory value changed) so stale mirrors are dropped.
@@ -52991,30 +51698,6 @@ tl_tlci_call_macro_entry:
       (compiler-backend-peephole-owners-set-reg-index owners dst-reg src-key)]
     [else (compiler-backend-peephole-owners-empty)]))
 
-(define (compiler-backend-peephole-movq-owners-transfer-keyed
-  [owners : CompilerBackendPeepholeOwners]
-  [src : String]
-  [dst : String]
-  [src-key : i64]
-  [dst-key : i64]) : CompilerBackendPeepholeOwners
-  (compiler-backend-peephole-movq-owners-transfer-keyed-index
-    owners
-    (compiler-backend-peephole-reg-index src)
-    (compiler-backend-peephole-reg-index dst)
-    src-key
-    dst-key))
-
-(define (compiler-backend-peephole-movq-owners-transfer
-  [owners : CompilerBackendPeepholeOwners]
-  [src : String]
-  [dst : String]) : CompilerBackendPeepholeOwners
-  (compiler-backend-peephole-movq-owners-transfer-keyed
-    owners
-    src
-    dst
-    (compiler-backend-peephole-owner-key-from-operand src)
-    (compiler-backend-peephole-owner-key-from-operand dst)))
-
 ;; Length of the leading non-space token (the mnemonic) starting at `i`.
 (define (compiler-backend-peephole-token-len
   [data : (Ptr u8)]
@@ -53066,15 +51749,6 @@ tl_tlci_call_macro_entry:
           (= tlen 5)
           (compiler-backend-peephole-size-suffix-byte?
             (compiler-backend-peephole-byte-at data (+ i 4))))))))
-
-(define (compiler-backend-peephole-cmp-or-test?
-  [data : (Ptr u8)]
-  [i : i64]
-  [end : i64]) : bool
-  (compiler-backend-peephole-cmp-or-test-token?
-    data
-    i
-    (compiler-backend-peephole-token-len data i end)))
 
 ;; SCAV2: true iff line [start,end) is `call <F>` where F is a runtime NORETURN
 ;; abort helper (tl_oob_abort / tl_shift_abort / tl_div_abort / tl_region_abort /
@@ -53177,23 +51851,6 @@ tl_tlci_call_macro_entry:
 ;;  * everything else (call, ret, leave, syscall, every arithmetic/vector op, any
 ;;    store through a pointer/index/segment, and any unrecognized mnemonic) may
 ;;    write a GP register or alias a frame slot -> invalidate conservatively.
-(define (compiler-backend-peephole-line-clears-owners?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (let
-    [i : i64 start]
-    (begin
-      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
-        (set! i (+ i 1)))
-      (cond
-        [(>= i end) false]
-        [(= (compiler-backend-peephole-byte-at data (- end 1)) 58) true]
-        [(= (compiler-backend-peephole-byte-at data i) 46) false]
-        [(= (compiler-backend-peephole-byte-at data i) 106) false]
-        [(compiler-backend-peephole-cmp-or-test? data i end) false]
-        [else true]))))
-
 ;; True iff the mnemonic token is a call instruction (`call` or `callq`).
 (define (compiler-backend-peephole-mnemonic-call?
   [data : (Ptr u8)]
@@ -53300,14 +51957,6 @@ tl_tlci_call_macro_entry:
       (= (compiler-backend-peephole-byte-at data start) 45)
       (compiler-backend-peephole-range-contains? data start end "(%rbp)"))))
 
-(define (compiler-backend-peephole-local-move-range?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (or
-    (compiler-backend-peephole-register-range? data start end)
-    (compiler-backend-peephole-stack-slot-range? data start end)))
-
 (define compiler-backend-peephole-op-register-flag : i64
   1)
 (define compiler-backend-peephole-op-stack-flag : i64
@@ -53387,15 +52036,6 @@ tl_tlci_call_macro_entry:
 ;; whole-map clear. %rbp/%rsp sub-registers (%ebp/%esp/%bp/%sp/%bpl/%spl) are
 ;; DELIBERATELY unmapped -> "" -> whole-map clear, preserving the frame/stack
 ;; pointer invalidation invariant (owner-reg? already excludes %rbp/%rsp).
-(define (compiler-backend-peephole-subreg-to-reg
-  [data : (Ptr u8)]
-  [ts : i64]
-  [te : i64]) : String
-  (if (>= (compiler-backend-peephole-reg-index-range data ts te) 0)
-    ""
-    (compiler-backend-peephole-reg-name-from-index
-      (compiler-backend-peephole-token-reg-index-range data ts te))))
-
 ;; Dense owner-register index for a full or partial GP register token. The
 ;; token grammar is a fixed set, so classify its 3--5 bytes once instead of
 ;; walking 56 literal comparisons. Partial-register writes map to their 64-bit
@@ -53519,24 +52159,6 @@ tl_tlci_call_macro_entry:
                   [else -1])
                 -1))])))))
 
-(define (compiler-backend-peephole-reg-name-from-index [index : i64]) : String
-  (cond
-    [(= index 0) "%rax"]
-    [(= index 1) "%rcx"]
-    [(= index 2) "%rdx"]
-    [(= index 3) "%rbx"]
-    [(= index 4) "%rsi"]
-    [(= index 5) "%rdi"]
-    [(= index 6) "%r8"]
-    [(= index 7) "%r9"]
-    [(= index 8) "%r10"]
-    [(= index 9) "%r11"]
-    [(= index 10) "%r12"]
-    [(= index 11) "%r13"]
-    [(= index 12) "%r14"]
-    [(= index 13) "%r15"]
-    [else ""]))
-
 ;; The single tracked GP register that is the LAST operand of the line [start,end),
 ;; or "" if the last operand is not a simple tracked register (memory, immediate,
 ;; xmm, or an untracked reg). Used to invalidate exactly the register a single-dest
@@ -53572,13 +52194,6 @@ tl_tlci_call_macro_entry:
                 (or (= pb 32) (= pb 44) (= pb 9)))))
             (compiler-backend-peephole-token-reg-index-range data ts te)
             -1))))))
-
-(define (compiler-backend-peephole-last-operand-reg
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : String
-  (compiler-backend-peephole-reg-name-from-index
-    (compiler-backend-peephole-last-operand-reg-index data start end)))
 
 ;; True iff the mnemonic token [i,i+mlen) is an instruction whose ONLY written GP
 ;; register is its last operand (so invalidating just that register is sound):
@@ -53949,17 +52564,6 @@ tl_tlci_call_macro_entry:
 
 ;; True iff the line [start,end) is a label (non-blank after leading spaces and
 ;; ends in ':'). Mirrors the label arm of line-clears-owners?.
-(define (compiler-backend-peephole-line-is-label?
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]) : bool
-  (let
-    [i : i64 start]
-    (begin
-      (while (and (< i end) (= (compiler-backend-peephole-byte-at data i) 32))
-        (set! i (+ i 1)))
-      (and (< i end) (= (compiler-backend-peephole-byte-at data (- end 1)) 58)))))
-
 ;; True iff the label on line [start,end) (its name = first-non-space..':') is in
 ;; the backend-collected carry-safe set -- i.e. a block reached only by
 ;; fall-through from its single layout-adjacent predecessor, so the running owner
@@ -54002,53 +52606,6 @@ tl_tlci_call_macro_entry:
 ;;    clear only that register's owner (everything else's reg<->slot mirror
 ;;    survives).
 ;;  * Otherwise fall back to the conservative whole-map clear.
-(define (compiler-backend-peephole-line-clobber-owners
-  [owners : CompilerBackendPeepholeOwners]
-  [src : String]
-  [data : (Ptr u8)]
-  [start : i64]
-  [end : i64]
-  [prev-abort? : bool]) : CompilerBackendPeepholeOwners
-  (cond
-    [(compiler-backend-peephole-line-noreturn-abort? data start end) owners]
-    [(compiler-backend-peephole-line-is-label? data start end)
-      (if (or
-        (compiler-backend-peephole-label-carry-safe? src data start end)
-        (and
-          prev-abort?
-          (compiler-backend-peephole-label-guard-ok? data start end)))
-        owners
-        (compiler-backend-peephole-owners-empty))]
-    [(not (compiler-backend-peephole-line-clears-owners? data start end))
-      owners]
-    [else
-      (let
-        [i : i64 start]
-        (begin
-          (while (and
-            (< i end)
-            (= (compiler-backend-peephole-byte-at data i) 32))
-            (set! i (+ i 1)))
-          (let
-            [mlen : i64 (compiler-backend-peephole-token-len data i end)]
-            (cond
-              [(compiler-backend-peephole-mnemonic-call? data i mlen)
-                (compiler-backend-peephole-owners-clear-call-clobbers owners)]
-              [(compiler-backend-peephole-mnemonic-single-dest? data i mlen)
-                (let
-                  [dreg : i64
-                    (compiler-backend-peephole-last-operand-reg-index
-                      data
-                      start
-                      end)]
-                  (if (< dreg 0)
-                    (compiler-backend-peephole-owners-empty)
-                    (compiler-backend-peephole-owners-set-reg-index
-                      owners
-                      dreg
-                      (compiler-backend-peephole-owner-key-unknown))))]
-              [else (compiler-backend-peephole-owners-empty)]))))]))
-
 (define (compiler-backend-peephole-line-clobber-owners-desc
   [owners : CompilerBackendPeepholeOwners]
   [line : CompilerBackendPeepholeLine]
@@ -54404,136 +52961,9 @@ tl_tlci_call_macro_entry:
         line
         prev-abort?))))
 
-(define (compiler-backend-peephole-emit-pending-line
-  [out : (text_buf_borrowed.TextBufBorrowed asm)]
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [pending-start : i64]
-  [pending-end : i64]
-  [pending-line : String]
-  [pending-owned? : bool]
-  [pending-newline : bool]
-  [owners : CompilerBackendPeepholeOwners]
-  [prev-abort? : bool]) : (CompilerBackendPeepholeEmitResult asm)
-  (match (compiler-backend-peephole-line-movq
-    asm
-    asm-data
-    pending-start
-    pending-end
-    pending-line
-    pending-owned?)
-    [(CompilerBackendPeepholeMove.Move src dst)
-      (let
-        ;; SCAV2: `src` is a trackable memory operand -- a stack slot OR a
-        ;; SYM(%rip) global load -- so the same reload-elision machinery CSEs
-        ;; repeated global-handle loads (drop, or reg-reg reuse).
-        [src-key : i64 (compiler-backend-peephole-owner-key-from-operand src)]
-        [dst-key : i64 (compiler-backend-peephole-owner-key-from-operand dst)]
-        [is-slot : bool (compiler-backend-peephole-owner-key-known? src-key)]
-        ;; same-register elision: dst already mirrors this slot/global -> drop.
-        [dst-owns : bool
-          (and
-            is-slot
-            (compiler-backend-peephole-owner-key-eq?
-              (compiler-backend-peephole-owners-get owners dst)
-              src-key))]
-        ;; cross-register reuse: another GP reg already holds this slot -> rewrite
-        ;; the memory reload `movq SLOT, dst` as the cheaper `movq <ry>, dst`.
-        [ry : String
-          (if (and
-            is-slot
-            (not dst-owns)
-            (compiler-backend-peephole-owner-reg? dst))
-            (compiler-backend-peephole-owners-find-reg-for-slot
-              owners
-              src-key
-              dst)
-            "")]
-        [next-out : (text_buf_borrowed.TextBufBorrowed asm)
-          (cond
-            [dst-owns out]
-            [(not (string.eq ry ""))
-              (let
-                [b1 : (text_buf_borrowed.TextBufBorrowed asm)
-                  (text_buf_borrowed.append-owned out "    movq ")]
-                [b2 : (text_buf_borrowed.TextBufBorrowed asm)
-                  (text_buf_borrowed.append-owned b1 ry)]
-                [b3 : (text_buf_borrowed.TextBufBorrowed asm)
-                  (text_buf_borrowed.append-owned b2 ", ")]
-                [b4 : (text_buf_borrowed.TextBufBorrowed asm)
-                  (text_buf_borrowed.append-owned b3 dst)]
-                (if pending-newline
-                  (text_buf_borrowed.append-char b4 '\n')
-                  b4))]
-            [else
-              (compiler-backend-peephole-append-pending-line
-                out
-                asm
-                pending-start
-                pending-end
-                pending-line
-                pending-owned?
-                pending-newline)])]
-        ;; The owner transfer is keyed on the ORIGINAL move (SLOT -> dst): dst now
-        ;; mirrors SLOT regardless of whether the line was emitted as the reload or
-        ;; the reg-reg rewrite (both leave dst holding SLOT's value).
-        [next-owners : CompilerBackendPeepholeOwners
-          (compiler-backend-peephole-movq-owners-transfer-keyed
-            owners
-            src
-            dst
-            src-key
-            dst-key)]
-        (CompilerBackendPeepholeEmitResult next-out next-owners))]
-    [(CompilerBackendPeepholeMove.NoMove)
-      (let
-        [next-owners : CompilerBackendPeepholeOwners
-          (if pending-owned?
-            (compiler-backend-peephole-line-clobber-owners
-              owners
-              pending-line
-              (unsafe
-                (string-data pending-line))
-              0
-              (string.string-length pending-line)
-              prev-abort?)
-            (compiler-backend-peephole-line-clobber-owners
-              owners
-              asm
-              asm-data
-              pending-start
-              pending-end
-              prev-abort?))]
-        (CompilerBackendPeepholeEmitResult
-          (compiler-backend-peephole-append-pending-line
-            out
-            asm
-            pending-start
-            pending-end
-            pending-line
-            pending-owned?
-            pending-newline)
-          next-owners))]))
-
 ;; SCAV2: true iff the pending line (owned String or asm byte range) is a
 ;; noreturn abort call. Threaded as `prev-abort?` so the guard-ok label emitted
 ;; immediately after it carries the owner map (line-clobber-owners label arm).
-(define (compiler-backend-peephole-pending-noreturn-abort?
-  ;; lint-allow: unused-variable
-  [asm : String]
-  [asm-data : (Ptr u8)]
-  [start : i64]
-  [end : i64]
-  [line : String]
-  [owned? : bool]) : bool
-  (if owned?
-    (compiler-backend-peephole-line-noreturn-abort?
-      (unsafe
-        (string-data line))
-      0
-      (string.string-length line))
-    (compiler-backend-peephole-line-noreturn-abort? asm-data start end)))
-
 ;; User-function chunks begin with `.globl`; processing either side separately
 ;; preserves the legacy pass because that directive/function-entry boundary
 ;; clears pending pair and owner state.  Chunks that split a function remain in
@@ -54929,39 +53359,6 @@ tl_tlci_call_macro_entry:
 
 (define (compiler-backend-peephole-asm [asm : String]) : String
   (text_buf.render (compiler-backend-peephole-asm-buffer asm)))
-
-(define (compiler-backend-peephole-text-buf [buf : text_buf.TextBuf]) : text_buf.TextBuf
-  (compiler-backend-peephole-asm-buffer (text_buf.render buf)))
-
-(define (compiler-backend-emit-program-target-with-mode-raw-asm-and-crt
-  [program : CompilerIrProgram]
-  [target : CompilerBackendTarget]
-  [mode : CompilerBackendMode]
-  [spans : CompilerSourceSpans]
-  [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
-  ;; Keep this helper arena-neutral: backend emission records global metadata
-  ;; that the peephole consumes, so raw emission state must stay alive until the
-  ;; peephole finishes. The caller scopes both raw output and peephole
-  ;; intermediates together.
-  (match (if crt-entry
-    (compiler-backend-emit-program-target-with-mode-buffer-and-crt
-      program
-      target
-      mode
-      spans
-      emit-entry
-      crt-entry)
-    (compiler-backend-emit-program-target-with-mode-buffer
-      program
-      target
-      mode
-      spans
-      emit-entry))
-    [(ResultCompilerBackendBuffer.Ok buf)
-      (ResultCompilerBackend.Ok (text_buf.render buf))]
-    [(ResultCompilerBackendBuffer.Err message)
-      (ResultCompilerBackend.Err message)]))
 
 (define (compiler-backend-emit-program-target-with-mode-final-buffer-and-crt
   [program : CompilerIrProgram]

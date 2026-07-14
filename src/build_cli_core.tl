@@ -21,6 +21,7 @@
 (import "package_source_core.tl")
 (import "package_cache_core.tl")
 (import "package_lock_core.tl")
+(import (vector.vector PackageLockEntry core) as package_lock_entry_vec)
 (import "compiler_diagnostic.tl")
 (import "compiler_parse_core.tl")
 (import "compiler_driver_core.tl")
@@ -141,7 +142,7 @@
 
 (defstruct BuildPackageLockState
   (path String)
-  (entries PackageLockEntryList)
+  (entries package_lock_entry_vec.Vec)
   (has-lock bool))
 
 (defenum ResultBuildPackageLockState
@@ -158,7 +159,7 @@
 
 (defstruct BuildResolvedPkgDeps
   (deps CompilerPkgDepList)
-  (lock-entries PackageLockEntryList)
+  (lock-entries package_lock_entry_vec.Vec)
   (has-remote bool))
 
 (defenum ResultBuildResolvedPkgDeps
@@ -1395,11 +1396,11 @@
               (ResultBuildPackageLockState.Ok
                 (BuildPackageLockState path (struct-get lock entries) true))])])
       (ResultBuildPackageLockState.Ok
-        (BuildPackageLockState path (package-lock-entry-vec-new) false)))))
+        (BuildPackageLockState path (package_lock_entry_vec.new) false)))))
 
 (define (build-write-package-lock
   [state : BuildPackageLockState]
-  [entries : PackageLockEntryList]) : ResultBuildString
+  [entries : package_lock_entry_vec.Vec]) : ResultBuildString
   (let
     [lock : PackageLockFile (PackageLockFile package-lock-version entries)]
     [text : String (package-lock-emit lock)]
@@ -1430,7 +1431,7 @@
           (& (struct-get dep pin-value))))]))
 
 (define (build-package-lock-matching-entry
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildMaybeLockEntry
   (match (package-lock-entry-list-lookup entries alias)
@@ -1441,7 +1442,7 @@
         (BuildMaybeLockEntry.No))]))
 
 (define (build-package-lock-entry-status
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [alias : String]
   [dep : (& dep BuildGitDependency)]) : BuildPackageLockEntryStatus
   (match (package-lock-entry-list-lookup entries alias)
@@ -1979,7 +1980,7 @@
   [manifest-dir : String]
   [alias : String]
   [dep : BuildGitDependency]
-  [lock-entries : PackageLockEntryList]
+  [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]) : ResultBuildResolvedGitDependency
   (if (build-package-lock-policy-update? lock-policy)
     (build-resolve-github-dependency-without-lock manifest-dir alias dep)
@@ -2009,7 +2010,7 @@
 
 (define (build-package-resolve-dep-with-lock
   [manifest-dir : String]
-  [lock-entries : PackageLockEntryList]
+  [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
   [dep : CompilerPkgDep]) : ResultBuildResolvedPkgDep
   (let
@@ -2048,7 +2049,7 @@
   [dep : CompilerPkgDep]) : ResultBuildPkgDep
   (match (build-package-resolve-dep-with-lock
     manifest-dir
-    (package-lock-entry-vec-new)
+    (package_lock_entry_vec.new)
     (BuildPackageLockPolicy.Default)
     dep)
     [(ResultBuildResolvedPkgDep.Err message) (ResultBuildPkgDep.Err message)]
@@ -2056,7 +2057,7 @@
       (ResultBuildPkgDep.Ok (struct-get resolved dep))]))
 
 (define (build-package-lock-entry-list-add
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [maybe-entry : BuildMaybeLockEntry]) : ResultPackageLockEntryList
   (match maybe-entry
     [(BuildMaybeLockEntry.No) (ResultPackageLockEntryList.Ok entries)]
@@ -2064,7 +2065,7 @@
       (package-lock-entry-list-insert entries entry)]))
 
 (define (build-package-lock-list-has-exact-entry?
-  [entries : PackageLockEntryList]
+  [entries : package_lock_entry_vec.Vec]
   [entry : PackageLockEntry]) : bool
   (package-lock-list-has-entry?
     entries
@@ -2075,32 +2076,32 @@
     (struct-get entry commit)))
 
 (define (build-package-lock-list-contains-all?
-  [haystack : PackageLockEntryList]
-  [needles : PackageLockEntryList]) : bool
+  [haystack : package_lock_entry_vec.Vec]
+  [needles : package_lock_entry_vec.Vec]) : bool
   (build-package-lock-list-contains-all-from haystack (& needles) 0))
 
 (define (build-package-lock-list-contains-all-from
-  [haystack : PackageLockEntryList]
-  [needles : (& needles PackageLockEntryList)]
+  [haystack : package_lock_entry_vec.Vec]
+  [needles : (& needles package_lock_entry_vec.Vec)]
   [index : i64]) : bool
-  (if (>= index (package-lock-entry-vec-len needles))
+  (if (>= index (package_lock_entry_vec.len needles))
     true
     (and
       (build-package-lock-list-has-exact-entry?
         haystack
-        (package-lock-entry-vec-get
+        (package_lock_entry_vec.get
           needles
           index
           (package-lock-entry-list-fallback)))
       (build-package-lock-list-contains-all-from haystack needles (+ index 1)))))
 
 (define (build-package-lock-list-eq?
-  [left : PackageLockEntryList]
-  [right : PackageLockEntryList]) : bool
+  [left : package_lock_entry_vec.Vec]
+  [right : package_lock_entry_vec.Vec]) : bool
   (and
     (=
-      (package-lock-entry-vec-len (& left))
-      (package-lock-entry-vec-len (& right)))
+      (package_lock_entry_vec.len (& left))
+      (package_lock_entry_vec.len (& right)))
     (build-package-lock-list-contains-all? left right)))
 
 (define (build-package-lock-policy-check
@@ -2136,7 +2137,7 @@
 
 (define (build-package-resolve-deps-with-lock
   [manifest-dir : String]
-  [lock-entries : PackageLockEntryList]
+  [lock-entries : package_lock_entry_vec.Vec]
   [lock-policy : BuildPackageLockPolicy]
   [deps : CompilerPkgDepList]) : ResultBuildResolvedPkgDeps
   (match deps
@@ -2144,7 +2145,7 @@
       (ResultBuildResolvedPkgDeps.Ok
         (BuildResolvedPkgDeps
           CompilerPkgDepNil
-          (package-lock-entry-vec-new)
+          (package_lock_entry_vec.new)
           false))]
     [(CompilerPkgDepCons dep rest)
       (match (build-package-resolve-dep-with-lock

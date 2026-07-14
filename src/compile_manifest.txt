@@ -512,7 +512,6 @@ contains|specialize: expected type value
 end
 
 case|selfhost_compiler_symbols|src/compiler_symbols.tl|assembly|skip|direct
-contains|_tl_compiler_symbols_add_decl:
 contains|_tl_compiler_symbols_self_test:
 contains|symbols: duplicate value declaration
 end

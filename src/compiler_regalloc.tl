@@ -1725,6 +1725,36 @@
         (+ offset 1)
         offset))))
 
+;; Live-set and greedy-occupancy words use only their low 32 bits.
+(define (compiler-reg-low-bit-index32 [bits : i64]) : i64
+  (let
+    [value : i64 bits]
+    [offset : i64 0]
+    (begin
+      (if (= (bit-and value 0xffff) 0)
+        (begin
+          (set! value (shr value 16))
+          (set! offset (+ offset 16)))
+        unit)
+      (if (= (bit-and value 0xff) 0)
+        (begin
+          (set! value (shr value 8))
+          (set! offset (+ offset 8)))
+        unit)
+      (if (= (bit-and value 0xf) 0)
+        (begin
+          (set! value (shr value 4))
+          (set! offset (+ offset 4)))
+        unit)
+      (if (= (bit-and value 0x3) 0)
+        (begin
+          (set! value (shr value 2))
+          (set! offset (+ offset 2)))
+        unit)
+      (if (= (bit-and value 0x1) 0)
+        (+ offset 1)
+        offset))))
+
 (define (compiler-reg-segment-flush-var!
   [segments : (Array CompilerRegIntervalList)]
   [starts : (Array i64)]
@@ -1781,7 +1811,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index bits)]
+      [index : i64 (compiler-reg-low-bit-index32 bits)]
       [item-var : i64 (+ var index)]
       (begin
         (compiler-reg-extend-interval starts ends item-var point)
@@ -1821,7 +1851,7 @@
           segments
           segment-starts
           segment-ends
-          (compiler-live-set-word-at set index)
+          (compiler-live-set-word-at-bounded set index)
           (* index (compiler-live-set-word-bits))
           point)
         (set! index (+ index 1))))))
@@ -1842,7 +1872,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index bits)]
+      [index : i64 (compiler-reg-low-bit-index32 bits)]
       [item-var : i64 (+ var index)]
       (begin
         (compiler-reg-segment-note-point!
@@ -1875,7 +1905,7 @@
           segments
           segment-starts
           segment-ends
-          (compiler-live-set-word-at set index)
+          (compiler-live-set-word-at-bounded set index)
           (* index (compiler-live-set-word-bits))
           point)
         (set! index (+ index 1))))))
@@ -1946,7 +1976,7 @@
         (compiler-reg-extend-set-word-bits
           starts
           ends
-          (compiler-live-set-word-at set index)
+          (compiler-live-set-word-at-bounded set index)
           (* index (compiler-live-set-word-bits))
           point)
         (set! index (+ index 1))))))
@@ -1960,7 +1990,7 @@
   (if (= bits 0)
     unit
     (let
-      [index : i64 (compiler-reg-low-bit-index bits)]
+      [index : i64 (compiler-reg-low-bit-index32 bits)]
       (begin
         (compiler-reg-extend-interval starts ends (+ var index) point)
         (compiler-reg-extend-set-word-bits
@@ -2660,7 +2690,7 @@
   (if (= bits 0)
     unit
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       (begin
         (compiler-reg-bits-set! row base (+ var-base i))
         (compiler-reg-chunk->row! row base (bit-and bits (- bits 1)) var-base)))))
@@ -2676,7 +2706,7 @@
       (compiler-reg-chunk->row!
         row
         base
-        (compiler-live-set-word-at set word-index)
+        (compiler-live-set-word-at-bounded set word-index)
         (* word-index (compiler-live-set-word-bits)))
       (compiler-reg-set-words->row! set row base (+ word-index 1)))))
 
@@ -3214,7 +3244,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       (if (if (<= start c)
         (< c end)
@@ -3234,7 +3264,7 @@
   (if (>= word-index (compiler-live-set-word-count set))
     false
     (if (compiler-reg-param-pin-word-in-range?
-      (compiler-live-set-word-at set word-index)
+      (compiler-live-set-word-at-bounded set word-index)
       (* word-index (compiler-live-set-word-bits))
       start
       end)
@@ -4613,16 +4643,25 @@
 (define (compiler-reg-assignment-lookup
   [assignments : CompilerRegAssignmentList]
   [var : i64]) : CompilerRegMaybeLocation
-  (match assignments
-    [(CompilerRegAssignmentList.Nil) CompilerRegMaybeLocation.No]
-    [(CompilerRegAssignmentList.Cons item rest)
-      (match item
-        [(CompilerRegAssignment.Assignment id location)
-          (if (= id var)
-            (CompilerRegMaybeLocation.Some location)
-            (if (> id var)
-              CompilerRegMaybeLocation.No
-              (compiler-reg-assignment-lookup (box-get rest) var)))])]))
+  (let
+    [cursor : CompilerRegAssignmentList assignments]
+    [result : CompilerRegMaybeLocation CompilerRegMaybeLocation.No]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match cursor
+          [(CompilerRegAssignmentList.Nil) (set! done true)]
+          [(CompilerRegAssignmentList.Cons item rest)
+            (match item
+              [(CompilerRegAssignment.Assignment id location)
+                (if (= id var)
+                  (begin
+                    (set! result (CompilerRegMaybeLocation.Some location))
+                    (set! done true))
+                  (if (> id var)
+                    (set! done true)
+                    (set! cursor (box-get rest))))])]))
+      result)))
 
 (define (compiler-reg-location-eq?
   [left : CompilerRegLocation]
@@ -7308,7 +7347,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       (if (if (< start c)
         (< c end)
@@ -7330,7 +7369,7 @@
     (if (= bits 0)
       0
       (let
-        [i : i64 (compiler-reg-low-bit-index bits)]
+        [i : i64 (compiler-reg-low-bit-index32 bits)]
         [c : i64 (+ var-base i)]
         [rest : i64
           (compiler-reg-call-word-count-in-range
@@ -7352,7 +7391,7 @@
   (if (>= word-index (compiler-live-set-word-count set))
     false
     (if (compiler-reg-call-word-in-range?
-      (compiler-live-set-word-at set word-index)
+      (compiler-live-set-word-at-bounded set word-index)
       (* word-index (compiler-live-set-word-bits))
       start
       end)
@@ -7373,7 +7412,7 @@
   (if (= bits 0)
     false
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       (if (if (<= start c)
         (< c end)
@@ -7393,7 +7432,7 @@
   (if (>= word-index (compiler-live-set-word-count set))
     false
     (if (compiler-reg-clobber-word-in-range-inclusive-start?
-      (compiler-live-set-word-at set word-index)
+      (compiler-live-set-word-at-bounded set word-index)
       (* word-index (compiler-live-set-word-bits))
       start
       end)
@@ -7418,7 +7457,7 @@
   (if (= bits 0)
     0
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [c : i64 (+ var-base i)]
       [rest : i64
         (compiler-reg-call-word-count-in-range-model
@@ -7441,7 +7480,7 @@
     0
     (+
       (compiler-reg-call-word-count-in-range-model
-        (compiler-live-set-word-at set word-index)
+        (compiler-live-set-word-at-bounded set word-index)
         (* word-index (compiler-live-set-word-bits))
         start
         end)
@@ -7805,7 +7844,7 @@
   (if (= bits 0)
     unit
     (let
-      [i : i64 (compiler-reg-low-bit-index bits)]
+      [i : i64 (compiler-reg-low-bit-index32 bits)]
       [var : i64 (+ var-base i)]
       (begin
         (if (and (>= var 0) (< var (array-length counts)))
@@ -7832,7 +7871,7 @@
     (begin
       (compiler-reg-ref-counts-add-word!
         counts
-        (compiler-live-set-word-at set word-index)
+        (compiler-live-set-word-at-bounded set word-index)
         (* word-index (compiler-live-set-word-bits)))
       (compiler-reg-ref-counts-add-set-words! counts set (+ word-index 1)))))
 
@@ -7851,7 +7890,7 @@
     (begin
       (compiler-reg-ref-counts-add-word-weighted!
         counts
-        (compiler-live-set-word-at set word-index)
+        (compiler-live-set-word-at-bounded set word-index)
         (* word-index (compiler-live-set-word-bits))
         weight)
       (compiler-reg-ref-counts-add-set-words-weighted!
@@ -12038,11 +12077,11 @@
     [wc : i64 (compiler-live-set-word-count set)]
     (while (< wi wc)
       (let
-        [bits : i64 (compiler-live-set-word-at set wi)]
+        [bits : i64 (compiler-live-set-word-at-bounded set wi)]
         (begin
           (while (not (= bits 0))
             (let
-              [b : i64 (compiler-reg-low-bit-index bits)]
+              [b : i64 (compiler-reg-low-bit-index32 bits)]
               [v : i64 (+ (* wi (compiler-live-set-word-bits)) b)]
               (begin
                 (if (and (>= v 0) (< v n) (= (array-ref cand v) 1))
@@ -12795,7 +12834,7 @@
       0
       (+
         (compiler-reg-call-word-count-in-range
-          (compiler-live-set-word-at set word-index)
+          (compiler-live-set-word-at-bounded set word-index)
           (* word-index (compiler-live-set-word-bits))
           start
           end)
@@ -14074,7 +14113,7 @@
       (begin
         (while (not (= bits 0))
           (let
-            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [bit : i64 (compiler-reg-low-bit-index32 bits)]
             [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
             (begin
               (if (and
@@ -14264,7 +14303,7 @@
       (begin
         (while (and (not (= bits 0)) (< best (compiler-reg-greedy-evict-inf)))
           (let
-            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [bit : i64 (compiler-reg-low-bit-index32 bits)]
             [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
             (begin
               (if (and
@@ -14377,7 +14416,7 @@
       (begin
         (while (not (= bits 0))
           (let
-            [bit : i64 (compiler-reg-low-bit-index bits)]
+            [bit : i64 (compiler-reg-low-bit-index32 bits)]
             [other : i64 (+ (* word-index (compiler-live-set-word-bits)) bit)]
             (begin
               (if (and
@@ -14797,36 +14836,29 @@
   [idx : i64]
   [best : i64]
   [best-w : i64]) : i64
-  (if (>= idx n)
-    best
-    (if (and (< idx (array-length pending)) (= (array-ref pending idx) 1))
-      (let
-        [w : i64
-          (if (< idx (array-length ref-counts))
-            (array-ref ref-counts idx)
-            0)]
-        (if (or (< best 0) (> w best-w))
-          (compiler-reg-greedy-worklist-pick!
-            pending
-            ref-counts
-            n
-            (+ idx 1)
-            idx
-            w)
-          (compiler-reg-greedy-worklist-pick!
-            pending
-            ref-counts
-            n
-            (+ idx 1)
-            best
-            best-w)))
-      (compiler-reg-greedy-worklist-pick!
-        pending
-        ref-counts
-        n
-        (+ idx 1)
-        best
-        best-w))))
+  (let
+    [index : i64 idx]
+    [out-best : i64 best]
+    [out-best-w : i64 best-w]
+    (begin
+      (while (< index n)
+        (begin
+          (if (and
+            (< index (array-length pending))
+            (= (array-ref pending index) 1))
+            (let
+              [w : i64
+                (if (< index (array-length ref-counts))
+                  (array-ref ref-counts index)
+                  0)]
+              (if (or (< out-best 0) (> w out-best-w))
+                (begin
+                  (set! out-best index)
+                  (set! out-best-w w))
+                unit))
+            unit)
+          (set! index (+ index 1))))
+      out-best)))
 
 ;; Re-entrant evict-and-requeue worklist loop (RAGreedy Component 1). Pop the
 ;; highest-weight pending root, dequeue it (pending=0), run selectOrSplit
@@ -21915,7 +21947,7 @@
     [word-count : i64 (compiler-live-set-word-count uses)]
     (while (< word-index word-count)
       (let
-        [bits : i64 (compiler-live-set-word-at uses word-index)]
+        [bits : i64 (compiler-live-set-word-at-bounded uses word-index)]
         [base : i64 (* word-index (compiler-live-set-word-bits))]
         [bit : i64 0]
         (begin
@@ -21966,7 +21998,7 @@
       (begin
         (while (< word-index word-count)
           (let
-            [bits : i64 (compiler-live-set-word-at uses word-index)]
+            [bits : i64 (compiler-live-set-word-at-bounded uses word-index)]
             [base : i64 (* word-index (compiler-live-set-word-bits))]
             [bit : i64 0]
             (begin

@@ -8225,9 +8225,11 @@
   (Err))
 
 (define (opt-var-set-add-unique [set : opt_i64_i64_map.Map] [var : i64]) : OptVarSetResult
-  (if (opt-used-contains set var)
-    (OptVarSetResult.Err)
-    (OptVarSetResult.Ok (opt-used-add set var))))
+  (let
+    [out : opt_i64_i64_map.Map set]
+    (if (opt_i64_i64_map.insert-if-absent-ref! (&mut out) var 1)
+      (OptVarSetResult.Ok out)
+      (OptVarSetResult.Err))))
 
 (define (opt-instr-def-var [instr : CompilerIrInstr]) : option_i64.Option
   (match instr

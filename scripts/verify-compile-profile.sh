@@ -537,7 +537,7 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        4390912 \
+        8781824 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \

@@ -857,6 +857,13 @@
     ;; call graph before this job's state-aware reset. Make that residual
     ;; compatibility boundary explicit instead of relying on the previous
     ;; batch entry's cleanup to leave these globals installed.
+    ;; A fresh state must advance its generation before installation: otherwise
+    ;; process-level parser caches from CLI startup can mistake generation zero
+    ;; for their owner and reuse ids from the bootstrap compatibility table.
+    (if (= (compiler-driver-state-intern-generation state) 0)
+      (ci.intern-compat-state-reset!
+        (compiler-driver-state-owned-interns state))
+      unit)
     (compiler-driver-state-install-pools! state)
     (compiler-driver-state-install-interns! state)
     (let

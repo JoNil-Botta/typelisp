@@ -24,6 +24,7 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 | Case | Lane type | Upstream kernel | Current TypeLisp status |
 | --- | --- | --- | --- |
 | [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
+| [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` | Supported |
 
 `perfbench_loads` uses only integer-valued binary32 inputs and keeps every
 partial sum within the exactly representable integer range. Its scalar oracle,
@@ -37,10 +38,17 @@ a 19-element signed tail (`-5`, `0xc0a00000`), positive/negative cancellation
 (`+0`, `0x00000000`), and 65,536 ones (`0x47800000`). Both drivers validate
 these fixed result bytes, not just mutual agreement with an oracle.
 
+`perfbench_stores` is backend-mode-observable: scalar, AVX2, and AVX-512 use
+gang widths 1, 8, and 16 for f32. Its distinct integer-valued lane inputs make
+the complete output byte pattern repeat at exactly that width. The TypeLisp
+and width-matched ISPC rows must agree, while generic x4 is validation only.
+
 Validate the required metadata/diagnostic contract, and optionally the real
 ISPC generic/AVX2 driver when v1.31.0 is installed, with:
 
 ```sh
 scripts/verify-ispc-perfbench-loads.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-loads.sh
+scripts/verify-ispc-perfbench-stores.sh
+ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-stores.sh
 ```

@@ -19,8 +19,8 @@
 ;; enforcing mode was requested (exit non-zero when findings are present), and
 ;; whether staged migration rules are enabled.
 (defenum SelfhostLintConfig
-  (File lint_svec.Vec lint_svec.Vec bool bool bool bool)
-  (Package String bool lint_svec.Vec bool bool bool bool))
+  (File lint_svec.Vec lint_svec.Vec bool bool bool bool bool)
+  (Package String bool lint_svec.Vec bool bool bool bool bool))
 
 (defenum ResultSelfhostLintConfig
   (Ok SelfhostLintConfig)
@@ -37,7 +37,8 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : ResultSelfhostLintConfig
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : ResultSelfhostLintConfig
   (if (lint_svec.is-empty? (& input-paths))
     (ResultSelfhostLintConfig.Ok
       (SelfhostLintConfig.Package
@@ -47,7 +48,8 @@
         enforcing
         deprecated-string-concat
         redundant-function-name
-        prefer-dotted-field))
+        prefer-dotted-field
+        name-case))
     (if has-manifest
       (ResultSelfhostLintConfig.Err
         "selfhost-lint: cannot combine input paths with --manifest-path")
@@ -58,7 +60,8 @@
           enforcing
           deprecated-string-concat
           redundant-function-name
-          prefer-dotted-field)))))
+          prefer-dotted-field
+          name-case)))))
 
 (define (selfhost-lint-parse-options
   [idx : i64]
@@ -70,7 +73,8 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : ResultSelfhostLintConfig
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : ResultSelfhostLintConfig
   (if (>= idx count)
     (selfhost-lint-config-finish
       input-paths
@@ -80,7 +84,8 @@
       enforcing
       deprecated-string-concat
       redundant-function-name
-      prefer-dotted-field)
+      prefer-dotted-field
+      name-case)
     (let
       [current : String (io.arg idx)]
       (cond
@@ -95,7 +100,8 @@
             true
             deprecated-string-concat
             redundant-function-name
-            prefer-dotted-field)]
+            prefer-dotted-field
+            name-case)]
         [(string.eq current "--deprecated-string-concat")
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -107,7 +113,8 @@
             enforcing
             true
             redundant-function-name
-            prefer-dotted-field)]
+            prefer-dotted-field
+            name-case)]
         [(string.eq current "--redundant-function-name")
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -119,7 +126,8 @@
             enforcing
             deprecated-string-concat
             true
-            prefer-dotted-field)]
+            prefer-dotted-field
+            name-case)]
         [(string.eq current "--prefer-dotted-field")
           (selfhost-lint-parse-options
             (+ idx 1)
@@ -131,6 +139,20 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
+            true
+            name-case)]
+        [(string.eq current "--name-case")
+          (selfhost-lint-parse-options
+            (+ idx 1)
+            count
+            input-paths
+            manifest-path
+            has-manifest
+            stdlib-roots
+            enforcing
+            deprecated-string-concat
+            redundant-function-name
+            prefer-dotted-field
             true)]
         [(string.eq current "--stdlib-root")
           (if (>= (+ idx 1) count)
@@ -150,7 +172,8 @@
               enforcing
               deprecated-string-concat
               redundant-function-name
-              prefer-dotted-field))]
+              prefer-dotted-field
+              name-case))]
         [(string.eq current "--manifest-path")
           (if (>= (+ idx 1) count)
             (ResultSelfhostLintConfig.Err
@@ -168,7 +191,8 @@
                 enforcing
                 deprecated-string-concat
                 redundant-function-name
-                prefer-dotted-field)))]
+                prefer-dotted-field
+                name-case)))]
         [(selfhost-lint-flag? current)
           (ResultSelfhostLintConfig.Err
             (string.append "selfhost-lint: unknown flag " current))]
@@ -187,7 +211,8 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
-            prefer-dotted-field)]))))
+            prefer-dotted-field
+            name-case)]))))
 
 ;; Parse the `lint` config from arguments starting at `start`.
 (define (selfhost-lint-config-from [start : i64] [count : i64]) : ResultSelfhostLintConfig
@@ -198,6 +223,7 @@
     ""
     false
     (lint_svec.new)
+    false
     false
     false
     false
@@ -569,26 +595,24 @@
     0
     (lint-findings-empty)))
 
-(define (selfhost-lint-program-findings-with-options
+(define (selfhost-lint-program-findings-with-all-options
   [source : String]
   [program : AstProgram]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : LintFindings
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : LintFindings
   (match program
     [(AstProgram.Program decls-box)
       (let
         [decls : AstDeclList (box-get decls-box)]
         [base : LintFindings
-          (if deprecated-string-concat
-            (lint-program-with-deprecated-string-concat
-              source
-              (ast-program decls)
-              (lint-default-ladder-threshold))
-            (lint-program-with-source
-              source
-              (ast-program decls)
-              (lint-default-ladder-threshold)))]
+          (lint-program-with-source-options
+            source
+            (ast-program decls)
+            (lint-default-ladder-threshold)
+            deprecated-string-concat
+            name-case)]
         [with-redundant : LintFindings
           (if redundant-function-name
             (lint-redundant-function-names-in-program
@@ -603,6 +627,20 @@
               with-redundant)
             with-redundant)]
         (selfhost-lint-filter-derived-origins source with-prefer))]))
+
+(define (selfhost-lint-program-findings-with-options
+  [source : String]
+  [program : AstProgram]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : LintFindings
+  (selfhost-lint-program-findings-with-all-options
+    source
+    program
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    false))
 
 (define (selfhost-lint-program-findings
   [source : String]
@@ -676,23 +714,26 @@
   [stdlib-roots : lint_svec.Vec]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : LintFindings
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : LintFindings
   (selfhost-lint-findings-append
-    (selfhost-lint-program-findings-with-options
+    (selfhost-lint-program-findings-with-all-options
       source
       program
       deprecated-string-concat
       redundant-function-name
-      prefer-dotted-field)
+      prefer-dotted-field
+      name-case)
     (selfhost-lint-unused-unsafe-findings path source program stdlib-roots)))
 
-(define (selfhost-lint-source-with-roots-and-staged-options
+(define (selfhost-lint-source-with-roots-and-all-options
   [path : String]
   [source : String]
   [stdlib-roots : lint_svec.Vec]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : LintFindings
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : LintFindings
   (match (parse-ast-source-diagnostic path source)
     [(ResultAstProgramDiagnostic.Ok program)
       (selfhost-lint-program-and-typed-findings
@@ -702,8 +743,25 @@
         stdlib-roots
         deprecated-string-concat
         redundant-function-name
-        prefer-dotted-field)]
+        prefer-dotted-field
+        name-case)]
     [(ResultAstProgramDiagnostic.Err _) (lint-findings-empty)]))
+
+(define (selfhost-lint-source-with-roots-and-staged-options
+  [path : String]
+  [source : String]
+  [stdlib-roots : lint_svec.Vec]
+  [deprecated-string-concat : bool]
+  [redundant-function-name : bool]
+  [prefer-dotted-field : bool]) : LintFindings
+  (selfhost-lint-source-with-roots-and-all-options
+    path
+    source
+    stdlib-roots
+    deprecated-string-concat
+    redundant-function-name
+    prefer-dotted-field
+    false))
 
 (define (selfhost-lint-source-with-roots-and-options
   [path : String]
@@ -746,7 +804,8 @@
 (defstruct SelfhostLintDeadSourceSet
   (sources lint_svec.Vec)
   (root-sources lint_svec.Vec)
-  (reportable-sources lint_svec.Vec))
+  (reportable-sources lint_svec.Vec)
+  (explicit-roots lint_svec.Vec))
 
 (defenum ResultSelfhostLintDeadSourceList
   (Ok lint_svec.Vec)
@@ -866,6 +925,22 @@
     (struct-get scan decls)
     (selfhost-lint-dead-root-add (struct-get scan roots) name)))
 
+(define (selfhost-lint-dead-scan-add-roots-from
+  [scan : SelfhostLintDeadScan]
+  [roots : lint_svec.Vec]
+  [index : i64]) : SelfhostLintDeadScan
+  (if (>= index (lint_svec.len (& roots)))
+    scan
+    (selfhost-lint-dead-scan-add-roots-from
+      (selfhost-lint-dead-scan-add-root scan (lint_svec.get (& roots) index ""))
+      roots
+      (+ index 1))))
+
+(define (selfhost-lint-dead-scan-add-roots
+  [scan : SelfhostLintDeadScan]
+  [roots : lint_svec.Vec]) : SelfhostLintDeadScan
+  (selfhost-lint-dead-scan-add-roots-from scan roots 0))
+
 (define (selfhost-lint-dead-module-key [module : String] [name : String]) : String
   (if (= (string.string-length module) 0)
     name
@@ -904,6 +979,41 @@
     (if (or (< sep 0) (>= (+ sep 1) name-len))
       ""
       (string.substring ref (+ sep 1) (- name-len (+ sep 1))))))
+
+(define (selfhost-lint-dead-source-root-prefix) : String
+  "\nselfhost-lint-dead-source-root\n")
+
+(define (selfhost-lint-dead-source-root [path : String] [name : String]) : String
+  (string.append
+    (selfhost-lint-dead-source-root-prefix)
+    (string.append
+      (compiler-load-normalize-path path)
+      (string.append "\n" name))))
+
+(define (selfhost-lint-dead-source-root? [root : String]) : bool
+  (selfhost-lint-prefix-at? root 0 (selfhost-lint-dead-source-root-prefix)))
+
+(define (selfhost-lint-dead-source-root-separator [root : String]) : i64
+  (string.index-of-byte
+    (& root)
+    (string.string-length (selfhost-lint-dead-source-root-prefix))
+    (cast '\n' : u8)))
+
+(define (selfhost-lint-dead-source-root-path [root : String]) : String
+  (let
+    [start : i64 (string.string-length (selfhost-lint-dead-source-root-prefix))]
+    [sep : i64 (selfhost-lint-dead-source-root-separator root)]
+    (if (< sep start)
+      ""
+      (string.substring root start (- sep start)))))
+
+(define (selfhost-lint-dead-source-root-name [root : String]) : String
+  (let
+    [sep : i64 (selfhost-lint-dead-source-root-separator root)]
+    [n : i64 (string.string-length root)]
+    (if (or (< sep 0) (>= (+ sep 1) n))
+      ""
+      (string.substring root (+ sep 1) (- n (+ sep 1))))))
 
 (define (selfhost-lint-dead-local-ref [module : String] [ref : String]) : String
   (if (or
@@ -1476,6 +1586,20 @@
           (set! i (+ i 1))))
       found)))
 
+(define (selfhost-lint-dead-find-name-prefix-from
+  [source : String]
+  [needle : String]
+  [idx : i64]) : i64
+  (let
+    [found : i64 (selfhost-lint-dead-find-prefix-from source needle idx)]
+    (if (< found 0)
+      found
+      (if (selfhost-lint-form-delim?
+        source
+        (+ found (string.string-length needle)))
+        found
+        (selfhost-lint-dead-find-name-prefix-from source needle (+ found 1))))))
+
 (define (selfhost-lint-dead-index-line [source : String] [target : i64]) : i64
   (let
     [i : i64 0]
@@ -1519,12 +1643,12 @@
   [body-span : AstSourceSpan]) : AstSourceSpan
   (let
     [fn-needle : String (string.append "(define (" name)]
-    [fn-idx : i64 (selfhost-lint-dead-find-prefix-from source fn-needle 0)]
+    [fn-idx : i64 (selfhost-lint-dead-find-name-prefix-from source fn-needle 0)]
     (if (>= fn-idx 0)
       (selfhost-lint-dead-index-span source fn-idx body-span)
       (selfhost-lint-dead-index-span
         source
-        (selfhost-lint-dead-find-prefix-from
+        (selfhost-lint-dead-find-name-prefix-from
           source
           (string.append "(define " name)
           0)
@@ -1710,6 +1834,7 @@
   [scan : SelfhostLintDeadScan]
   [path : String]
   [module : String]
+  [source : String]
   [name : String]
   [span : AstSourceSpan]
   [refs : lint_svec.Vec]
@@ -1718,9 +1843,15 @@
   (let
     [with-node : SelfhostLintDeadScan
       (selfhost-lint-dead-add-node scan path module name span refs reportable)]
+    [explicit-root : bool
+      (selfhost-lint-suppressed? source (lint-dead-code-finding name span))]
     (if root
       (selfhost-lint-dead-scan-add-root with-node name)
-      with-node)))
+      (if explicit-root
+        (selfhost-lint-dead-scan-add-root
+          with-node
+          (selfhost-lint-dead-source-root path name))
+        with-node))))
 
 (define (selfhost-lint-dead-scan-decl
   [scan : SelfhostLintDeadScan]
@@ -1757,6 +1888,7 @@
           scan
           path
           module
+          source
           text
           span
           refs
@@ -1780,6 +1912,7 @@
           scan
           path
           module
+          source
           text
           span
           refs
@@ -1790,6 +1923,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (selfhost-lint-dead-expr-span body)
         (selfhost-lint-dead-expr-refs
@@ -1804,6 +1938,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-type-refs
@@ -1816,6 +1951,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
@@ -1828,6 +1964,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-variant-def-list-refs
@@ -1840,6 +1977,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
@@ -1852,6 +1990,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-field-def-list-refs
@@ -1877,6 +2016,7 @@
         scan
         path
         module
+        source
         (intern-str name)
         (lint-no-span)
         (selfhost-lint-dead-dispatch-variant-list-refs variants (lint_svec.new))
@@ -2122,12 +2262,36 @@
           items)]
       (selfhost-lint-dead-mark-root-name-from next name (+ index 1)))))
 
+(define (selfhost-lint-dead-mark-source-root-from
+  [items : SelfhostLintDeadDecls]
+  [path : String]
+  [name : String]
+  [index : i64]) : SelfhostLintDeadDecls
+  (if (>= index (selfhost-lint-dead-decls-count items))
+    items
+    (let
+      [decl : SelfhostLintDeadDecl (selfhost-lint-dead-decls-ref items index)]
+      [next : SelfhostLintDeadDecls
+        (if (and
+          (string.eq (struct-get decl path) path)
+          (string.eq (struct-get decl name) name))
+          (selfhost-lint-dead-mark-reachable-index items index)
+          items)]
+      (selfhost-lint-dead-mark-source-root-from next path name (+ index 1)))))
+
 (define (selfhost-lint-dead-mark-root-name
   [items : SelfhostLintDeadDecls]
   [name : String]) : SelfhostLintDeadDecls
-  (if (selfhost-lint-dead-qualified-ref? name)
-    (selfhost-lint-dead-mark-reachable-ref items name)
-    (selfhost-lint-dead-mark-root-name-from items name 0)))
+  (cond
+    [(selfhost-lint-dead-source-root? name)
+      (selfhost-lint-dead-mark-source-root-from
+        items
+        (selfhost-lint-dead-source-root-path name)
+        (selfhost-lint-dead-source-root-name name)
+        0)]
+    [(selfhost-lint-dead-qualified-ref? name)
+      (selfhost-lint-dead-mark-reachable-ref items name)]
+    [else (selfhost-lint-dead-mark-root-name-from items name 0)]))
 
 (define (selfhost-lint-dead-mark-roots-from
   [items : SelfhostLintDeadDecls]
@@ -2334,6 +2498,144 @@
       root-sources
       stdlib-roots)))
 
+(define (selfhost-lint-dead-manifest-trim-cr [value : String]) : String
+  (let
+    [n : i64 (string.string-length value)]
+    (if (> n 0)
+      (if (= (string.string-ref value (- n 1)) '\r')
+        (string.substring value 0 (- n 1))
+        value)
+      value)))
+
+(define (selfhost-lint-dead-manifest-field [line : String] [target : i64]) : String
+  (let
+    [n : i64 (string.string-length line)]
+    [field : i64 0]
+    [start : i64 0]
+    [index : i64 0]
+    [found : bool false]
+    [value : String ""]
+    (begin
+      (while (and (<= index n) (not found))
+        (let
+          [delimiter : bool
+            (if (= index n)
+              true
+              (= (string.string-ref line index) '|'))]
+          (if delimiter
+            (if (= field target)
+              (begin
+                (set!
+                  value
+                  (selfhost-lint-dead-manifest-trim-cr
+                    (string.substring line start (- index start))))
+                (set! found true))
+              (begin
+                (set! field (+ field 1))
+                (set! start (+ index 1))
+                (set! index (+ index 1))))
+            (set! index (+ index 1)))))
+      value)))
+
+(define (selfhost-lint-dead-manifest-line-end [source : String] [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 start]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (if (>= index n)
+          (set! done true)
+          (if (= (string.string-ref source index) '\n')
+            (set! done true)
+            (set! index (+ index 1)))))
+      index)))
+
+(define (selfhost-lint-dead-manifest-roots-from
+  [source : String]
+  [manifest-dir : String]
+  [index : i64]
+  [case-path : String]
+  [roots : lint_svec.Vec]) : lint_svec.Vec
+  (let
+    [n : i64 (string.string-length source)]
+    (if (>= index n)
+      roots
+      (let
+        [line-end : i64 (selfhost-lint-dead-manifest-line-end source index)]
+        [line : String (string.substring source index (- line-end index))]
+        [kind : String (selfhost-lint-dead-manifest-field line 0)]
+        [next-index : i64
+          (if (< line-end n)
+            (+ line-end 1)
+            line-end)]
+        (cond
+          [(string.eq kind "case")
+            (let
+              [relative : String (selfhost-lint-dead-manifest-field line 2)]
+              [next-path : String
+                (if (= (string.string-length relative) 0)
+                  ""
+                  (compiler-load-normalize-path
+                    (compiler-load-join-root-path manifest-dir relative)))]
+              (selfhost-lint-dead-manifest-roots-from
+                source
+                manifest-dir
+                next-index
+                next-path
+                roots))]
+          [(string.eq kind "lint-root")
+            (let
+              [name : String (selfhost-lint-dead-manifest-field line 1)]
+              [next-roots : lint_svec.Vec
+                (if (or
+                  (= (string.string-length case-path) 0)
+                  (= (string.string-length name) 0))
+                  roots
+                  (selfhost-lint-dead-root-add
+                    roots
+                    (selfhost-lint-dead-source-root case-path name)))]
+              (selfhost-lint-dead-manifest-roots-from
+                source
+                manifest-dir
+                next-index
+                case-path
+                next-roots))]
+          [(string.eq kind "end")
+            (selfhost-lint-dead-manifest-roots-from
+              source
+              manifest-dir
+              next-index
+              ""
+              roots)]
+          [else
+            (selfhost-lint-dead-manifest-roots-from
+              source
+              manifest-dir
+              next-index
+              case-path
+              roots)])))))
+
+(define (selfhost-lint-dead-manifest-roots
+  [source : String]
+  [manifest-dir : String]) : lint_svec.Vec
+  (selfhost-lint-dead-manifest-roots-from
+    source
+    manifest-dir
+    0
+    ""
+    (lint_svec.new)))
+
+(define (selfhost-lint-package-dead-compile-manifest-roots
+  [source-set : PackageSourceSet]) : lint_svec.Vec
+  (let
+    [manifest-dir : String (struct-get source-set manifest-dir)]
+    [path : String
+      (compiler-load-join-root-path manifest-dir "src/compile_manifest.txt")]
+    (if (io.file-exists? path)
+      (selfhost-lint-dead-manifest-roots (io.read-file path) manifest-dir)
+      (lint_svec.new))))
+
 (define (selfhost-lint-package-dead-repository-test-roots
   [source-set : PackageSourceSet]) : lint_svec.Vec
   (match (package-source-scan-optional-dir
@@ -2441,6 +2743,8 @@
     [manifest : CompilerPkgManifest (struct-get source-set manifest)]
     [package-roots : lint_svec.Vec
       (selfhost-lint-package-import-roots source-set stdlib-roots)]
+    [explicit-roots : lint_svec.Vec
+      (selfhost-lint-package-dead-compile-manifest-roots source-set)]
     [kind : CompilerPkgKind (struct-get manifest kind)]
     (if (selfhost-lint-package-kind-entry? kind)
       (let
@@ -2470,12 +2774,14 @@
                   (SelfhostLintDeadSourceSet
                     graph-sources
                     root-sources
-                    (struct-get source-set sources)))])]))
+                    (struct-get source-set sources)
+                    explicit-roots))])]))
       (ResultSelfhostLintDeadSources.Ok
         (SelfhostLintDeadSourceSet
           (struct-get source-set sources)
           (selfhost-lint-package-empty-source-list)
-          (struct-get source-set sources))))))
+          (struct-get source-set sources)
+          explicit-roots)))))
 
 (define (selfhost-lint-package-dead-code
   [source-set : SelfhostLintDeadSourceSet]
@@ -2485,18 +2791,20 @@
     [visible-root : bool (selfhost-lint-package-dead-visible-root? kind)]
     [reportable : bool (selfhost-lint-package-dead-reportable? kind)]
     [scan : SelfhostLintDeadScan
-      (selfhost-lint-package-dead-add-kind-roots
-        (selfhost-lint-package-dead-scan-files
-          (struct-get source-set sources)
-          (struct-get source-set reportable-sources)
-          stdlib-roots
-          0
-          visible-root
-          reportable
-          (SelfhostLintDeadScan
-            (selfhost-lint-dead-decls-empty)
-            (lint_svec.new)))
-        kind)]
+      (selfhost-lint-dead-scan-add-roots
+        (selfhost-lint-package-dead-add-kind-roots
+          (selfhost-lint-package-dead-scan-files
+            (struct-get source-set sources)
+            (struct-get source-set reportable-sources)
+            stdlib-roots
+            0
+            visible-root
+            reportable
+            (SelfhostLintDeadScan
+              (selfhost-lint-dead-decls-empty)
+              (lint_svec.new)))
+          kind)
+        (struct-get source-set explicit-roots))]
     (selfhost-lint-dead-mark-roots-from
       (struct-get scan decls)
       (struct-get scan roots)
@@ -2610,7 +2918,8 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : i64
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : i64
   (let
     ;; Keep each input file's parse/typecheck work in a destroyable arena so a
     ;; long lint batch does not retain earlier files until process exit.
@@ -2633,7 +2942,8 @@
           enforcing
           deprecated-string-concat
           redundant-function-name
-          prefer-dotted-field))]
+          prefer-dotted-field
+          name-case))]
     (begin
       (unsafe
         (arena.set! home))
@@ -2656,6 +2966,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
+  [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
   (let
     [home : arena.Arena (arena.current)]
@@ -2678,6 +2989,7 @@
           deprecated-string-concat
           redundant-function-name
           prefer-dotted-field
+          name-case
           dead-decls))]
     (begin
       (unsafe
@@ -2698,7 +3010,8 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : i64
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : i64
   (let
     [source : String (io.read-file input-path)]
     ;; Parse directly INTO the installed compat-context pools rather than the
@@ -2724,7 +3037,8 @@
               stdlib-roots
               deprecated-string-concat
               redundant-function-name
-              prefer-dotted-field)]
+              prefer-dotted-field
+              name-case)]
           (begin
             (selfhost-lint-print-findings input-path findings)
             (io.print-string
@@ -2748,6 +3062,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
+  [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]) : i64
   (let
     [source : String (io.read-file input-path)]
@@ -2774,7 +3089,8 @@
               stdlib-roots
               deprecated-string-concat
               redundant-function-name
-              prefer-dotted-field)]
+              prefer-dotted-field
+              name-case)]
           [ordinary-count : i64
             (selfhost-lint-print-findings input-path findings)]
           [dead-count : i64
@@ -2802,6 +3118,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
+  [name-case : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (if (>= index (lint_svec.len (& input-paths)))
@@ -2820,7 +3137,8 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
-            prefer-dotted-field))]
+            prefer-dotted-field
+            name-case))]
       (selfhost-lint-files-from
         input-paths
         (+ index 1)
@@ -2829,6 +3147,7 @@
         deprecated-string-concat
         redundant-function-name
         prefer-dotted-field
+        name-case
         print-headers
         (if (= status 0)
           file-status
@@ -2841,6 +3160,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
+  [name-case : bool]
   [print-headers : bool]
   [status : i64]) : i64
   (selfhost-lint-files-from
@@ -2851,6 +3171,7 @@
     deprecated-string-concat
     redundant-function-name
     prefer-dotted-field
+    name-case
     print-headers
     status))
 
@@ -2862,6 +3183,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
+  [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
@@ -2882,6 +3204,7 @@
             deprecated-string-concat
             redundant-function-name
             prefer-dotted-field
+            name-case
             dead-decls))]
       (selfhost-lint-package-files-from
         input-paths
@@ -2891,6 +3214,7 @@
         deprecated-string-concat
         redundant-function-name
         prefer-dotted-field
+        name-case
         dead-decls
         print-headers
         (if (= status 0)
@@ -2904,6 +3228,7 @@
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
   [prefer-dotted-field : bool]
+  [name-case : bool]
   [dead-decls : SelfhostLintDeadDecls]
   [print-headers : bool]
   [status : i64]) : i64
@@ -2915,6 +3240,7 @@
     deprecated-string-concat
     redundant-function-name
     prefer-dotted-field
+    name-case
     dead-decls
     print-headers
     status))
@@ -2926,7 +3252,8 @@
   [enforcing : bool]
   [deprecated-string-concat : bool]
   [redundant-function-name : bool]
-  [prefer-dotted-field : bool]) : i64
+  [prefer-dotted-field : bool]
+  [name-case : bool]) : i64
   (match (package-source-discover-for "lint" manifest-path has-manifest)
     [(ResultPackageSourceSet.Err message)
       (begin
@@ -2953,6 +3280,7 @@
                 deprecated-string-concat
                 redundant-function-name
                 prefer-dotted-field
+                name-case
                 dead-decls
                 (> (lint_svec.len (& sources)) 1)
                 0))]
@@ -2972,7 +3300,8 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
-            prefer-dotted-field)
+            prefer-dotted-field
+            name-case)
           (selfhost-lint-files
             input-paths
             stdlib-roots
@@ -2980,6 +3309,7 @@
             deprecated-string-concat
             redundant-function-name
             prefer-dotted-field
+            name-case
             (> (lint_svec.len (& input-paths)) 1)
             0)]
         [(SelfhostLintConfig.Package
@@ -2989,7 +3319,8 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
-            prefer-dotted-field)
+            prefer-dotted-field
+            name-case)
           (selfhost-lint-package
             manifest-path
             has-manifest
@@ -2997,7 +3328,8 @@
             enforcing
             deprecated-string-concat
             redundant-function-name
-            prefer-dotted-field)])]
+            prefer-dotted-field
+            name-case)])]
     [(ResultSelfhostLintConfig.Err message)
       (begin
         (io.print-error (string.append message "\n"))
@@ -3237,6 +3569,25 @@
 
 (define (selfhost-lint-package-dead-test-root-source) : String
   "(define (main) : i64 (test-reached-helper))")
+
+(define (selfhost-lint-package-dead-manifest-root-source) : String
+  "(define (manifest-entry) : i64 (manifest-helper))
+(define (manifest-helper) : i64 7)
+(define (manifest-unused) : i64 9)")
+
+(define (selfhost-lint-package-dead-manifest-root-manifest) : String
+  "case|lint-root-fixture|src/manifest_api.tl|assembly|skip|direct
+lint-root|manifest-entry
+contains|_tl_manifest_entry:
+end
+")
+
+(define (selfhost-lint-package-dead-explicit-root-source) : String
+  "(define (retained-api-with-extra) : i64 1)
+;; lint-allow: dead-code
+(define (retained-api) : i64 (retained-helper))
+(define (retained-helper) : i64 7)
+(define (explicit-unused) : i64 9)")
 
 (define (selfhost-lint-package-dead-cfg-source) : String
   "(define (main) : i64
@@ -3797,6 +4148,48 @@
       (struct-get scan roots)
       0)))
 
+(define (selfhost-lint-package-dead-code-manifest-root-fixture-decls) : SelfhostLintDeadDecls
+  (let
+    [manifest-dir : String "pkg"]
+    [path : String
+      (compiler-load-normalize-path
+        (compiler-load-join-root-path manifest-dir "src/manifest_api.tl"))]
+    [source : String (selfhost-lint-package-dead-manifest-root-source)]
+    [roots : lint_svec.Vec
+      (selfhost-lint-dead-manifest-roots
+        (selfhost-lint-package-dead-manifest-root-manifest)
+        manifest-dir)]
+    [scan-source : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (lint_svec.new))
+        path
+        source
+        false
+        true)]
+    [scan : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-add-roots scan-source roots)]
+    (selfhost-lint-dead-mark-roots-from
+      (struct-get scan decls)
+      (struct-get scan roots)
+      0)))
+
+(define (selfhost-lint-package-dead-code-explicit-root-fixture-decls) : SelfhostLintDeadDecls
+  (let
+    [source : String (selfhost-lint-package-dead-explicit-root-source)]
+    [scan-source : SelfhostLintDeadScan
+      (selfhost-lint-dead-scan-source
+        (SelfhostLintDeadScan (selfhost-lint-dead-decls-empty) (lint_svec.new))
+        "pkg/explicit_api.tl"
+        source
+        false
+        true)]
+    [scan : SelfhostLintDeadScan
+      (selfhost-lint-package-dead-add-kind-roots scan-source CompilerPkgKindBin)]
+    (selfhost-lint-dead-mark-roots-from
+      (struct-get scan decls)
+      (struct-get scan roots)
+      0)))
+
 (define (selfhost-lint-package-dead-code-cfg-fixture-decls) : SelfhostLintDeadDecls
   (let
     [source : String (selfhost-lint-package-dead-cfg-source)]
@@ -3951,6 +4344,25 @@
         "pkg/src/main.tl"
         (selfhost-lint-package-dead-entry-source)
         test-root-decls)]
+    [manifest-root-source : String
+      (selfhost-lint-package-dead-manifest-root-source)]
+    [manifest-root-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-manifest-root-fixture-decls)]
+    [manifest-root-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        (compiler-load-normalize-path
+          (compiler-load-join-root-path "pkg" "src/manifest_api.tl"))
+        manifest-root-source
+        manifest-root-decls)]
+    [explicit-root-source : String
+      (selfhost-lint-package-dead-explicit-root-source)]
+    [explicit-root-decls : SelfhostLintDeadDecls
+      (selfhost-lint-package-dead-code-explicit-root-fixture-decls)]
+    [explicit-root-count : i64
+      (selfhost-lint-package-dead-count-for-source
+        "pkg/explicit_api.tl"
+        explicit-root-source
+        explicit-root-decls)]
     [cfg-bin-decls : SelfhostLintDeadDecls
       (selfhost-lint-package-dead-code-cfg-fixture-decls)]
     [cfg-bin-count : i64
@@ -3981,6 +4393,10 @@
       [(not (= lib-count-a 0)) 52]
       [(not (= lib-count-b 0)) 53]
       [(not (= test-root-count 1)) 57]
+      [(not (= manifest-root-count 1)) 62]
+      ;; The explicit API and its dependency stay live. The prefix-colliding
+      ;; declaration and the unrelated sibling remain dead.
+      [(not (= explicit-root-count 2)) 63]
       ;; scratch-vreg reaches its helper, while the inactive experimental cfg
       ;; stays absent and the ordinary bin-local declaration remains dead.
       [(not (= cfg-bin-count 1)) 61]

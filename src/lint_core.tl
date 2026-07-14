@@ -242,6 +242,42 @@
 (define (lint-rule-unused-unsafe-suggestion) : String
   "remove the unsafe wrapper")
 
+(define (lint-rule-global-name-case-id) : String
+  "global-name-case")
+
+(define (lint-rule-global-name-case-message) : String
+  "global name case: top-level value bindings use SCREAMING-KEBAB-CASE")
+
+(define (lint-rule-global-name-case-suggestion) : String
+  "rename the binding to SCREAMING-KEBAB-CASE")
+
+(define (lint-rule-function-name-case-id) : String
+  "function-name-case")
+
+(define (lint-rule-function-name-case-message) : String
+  "function name case: functions, dispatch functions, and macros use kebab-case")
+
+(define (lint-rule-function-name-case-suggestion) : String
+  "rename the declaration to kebab-case")
+
+(define (lint-rule-local-name-case-id) : String
+  "local-name-case")
+
+(define (lint-rule-local-name-case-message) : String
+  "local name case: parameters and local binders use kebab-case")
+
+(define (lint-rule-local-name-case-suggestion) : String
+  "rename the parameter or local binding to kebab-case")
+
+(define (lint-rule-type-name-case-id) : String
+  "type-name-case")
+
+(define (lint-rule-type-name-case-message) : String
+  "type name case: struct and enum declarations use UpperCamelCase")
+
+(define (lint-rule-type-name-case-suggestion) : String
+  "rename the type declaration to UpperCamelCase")
+
 ;: Metadata for one lint rule. Rule id is stable public API for suppressions;
 ;: message is the rendered finding text; suggestion is structured helper text
 ;: that drivers or tooling can render separately from the message.
@@ -397,6 +433,30 @@
     (lint-rule-unused-unsafe-message)
     (lint-rule-unused-unsafe-suggestion)))
 
+(define (lint-rule-global-name-case) : LintRule
+  (LintRule
+    (lint-rule-global-name-case-id)
+    (lint-rule-global-name-case-message)
+    (lint-rule-global-name-case-suggestion)))
+
+(define (lint-rule-function-name-case) : LintRule
+  (LintRule
+    (lint-rule-function-name-case-id)
+    (lint-rule-function-name-case-message)
+    (lint-rule-function-name-case-suggestion)))
+
+(define (lint-rule-local-name-case) : LintRule
+  (LintRule
+    (lint-rule-local-name-case-id)
+    (lint-rule-local-name-case-message)
+    (lint-rule-local-name-case-suggestion)))
+
+(define (lint-rule-type-name-case) : LintRule
+  (LintRule
+    (lint-rule-type-name-case-id)
+    (lint-rule-type-name-case-message)
+    (lint-rule-type-name-case-suggestion)))
+
 (define (lint-rule-cons [rule : LintRule] [rest : LintRuleList]) : LintRuleList
   (LintRuleList.Cons rule (box rest)))
 
@@ -449,7 +509,15 @@
                                               (lint-rule-unused-unsafe)
                                               (lint-rule-cons
                                                 (lint-rule-transitional-core-macro-qualifier)
-                                                LintRuleList.Nil))))))))))))))))))))))))
+                                                (lint-rule-cons
+                                                  (lint-rule-global-name-case)
+                                                  (lint-rule-cons
+                                                    (lint-rule-function-name-case)
+                                                    (lint-rule-cons
+                                                      (lint-rule-local-name-case)
+                                                      (lint-rule-cons
+                                                        (lint-rule-type-name-case)
+                                                        LintRuleList.Nil))))))))))))))))))))))))))))
 
 (define (lint-rule-find-in [rules : LintRuleList] [rule-id : String]) : LintMaybeRule
   (match rules
@@ -971,6 +1039,381 @@
       (lint-rule-redundant-function-name-id)
       0
       span)))
+
+(define (lint-name-case-ascii-lower? [c : char]) : bool
+  (and (>= c 'a') (<= c 'z')))
+
+(define (lint-name-case-ascii-upper? [c : char]) : bool
+  (and (>= c 'A') (<= c 'Z')))
+
+(define (lint-name-case-ascii-letter? [c : char]) : bool
+  (or (lint-name-case-ascii-lower? c) (lint-name-case-ascii-upper? c)))
+
+(define (lint-name-case-ascii-digit? [c : char]) : bool
+  (and (>= c '0') (<= c '9')))
+
+(define (lint-name-case-has-ascii-letter? [name : String]) : bool
+  (let
+    [n : i64 (string.string-length name)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (< index n) (not found))
+        (if (lint-name-case-ascii-letter? (string.string-ref name index))
+          (set! found true)
+          (set! index (+ index 1))))
+      found)))
+
+(define (lint-name-case-terminal-suffix-start [name : String]) : i64
+  (let
+    [n : i64 (string.string-length name)]
+    (if (= n 0)
+      0
+      (let
+        [last : char (string.string-ref name (- n 1))]
+        (if (or (= last '?') (= last '!'))
+          (- n 1)
+          n)))))
+
+(define (lint-name-case-kebab-range? [name : String] [start : i64] [end : i64]) : bool
+  (let
+    [index : i64 start]
+    [segment-start : bool true]
+    [ok : bool (< start end)]
+    (begin
+      (while (and ok (< index end))
+        (let
+          [c : char (string.string-ref name index)]
+          (cond
+            [(lint-name-case-ascii-lower? c)
+              (begin
+                (set! segment-start false)
+                (set! index (+ index 1)))]
+            [(lint-name-case-ascii-digit? c)
+              (if segment-start
+                (set! ok false)
+                (set! index (+ index 1)))]
+            [(= c '-')
+              (if segment-start
+                (set! ok false)
+                (begin
+                  (set! segment-start true)
+                  (if (and
+                    (< (+ index 1) end)
+                    (= (string.string-ref name (+ index 1)) '>'))
+                    (set! index (+ index 2))
+                    (set! index (+ index 1)))))]
+            [else (set! ok false)])))
+      (and ok (not segment-start)))))
+
+;: True for project kebab-case. Predicate/mutator suffixes and the `->`
+;: conversion separator are accepted. Names without ASCII letters are operator
+;: spellings and are exempt.
+(define (lint-name-case-kebab? [name : String]) : bool
+  (if (not (lint-name-case-has-ascii-letter? name))
+    true
+    (lint-name-case-kebab-range?
+      name
+      0
+      (lint-name-case-terminal-suffix-start name))))
+
+;: Local names use kebab-case and may carry exactly one intentional-unused `_`
+;: prefix. The wildcard `_` is not a named binding and is accepted here.
+(define (lint-name-case-local-kebab? [name : String]) : bool
+  (if (string.eq name "_")
+    true
+    (if (not (lint-name-case-has-ascii-letter? name))
+      true
+      (let
+        [n : i64 (string.string-length name)]
+        [start : i64
+          (if (and (> n 0) (= (string.string-ref name 0) '_'))
+            1
+            0)]
+        (lint-name-case-kebab-range?
+          name
+          start
+          (lint-name-case-terminal-suffix-start name))))))
+
+;: Top-level values use uppercase ASCII segments separated by one hyphen.
+(define (lint-name-case-screaming-kebab? [name : String]) : bool
+  (if (not (lint-name-case-has-ascii-letter? name))
+    true
+    (let
+      [n : i64 (string.string-length name)]
+      [index : i64 0]
+      [segment-start : bool true]
+      [ok : bool (> n 0)]
+      (begin
+        (while (and ok (< index n))
+          (let
+            [c : char (string.string-ref name index)]
+            (cond
+              [(lint-name-case-ascii-upper? c)
+                (begin
+                  (set! segment-start false)
+                  (set! index (+ index 1)))]
+              [(lint-name-case-ascii-digit? c)
+                (if segment-start
+                  (set! ok false)
+                  (set! index (+ index 1)))]
+              [(= c '-')
+                (if segment-start
+                  (set! ok false)
+                  (begin
+                    (set! segment-start true)
+                    (set! index (+ index 1))))]
+              [else (set! ok false)])))
+        (and ok (not segment-start))))))
+
+;: Struct and enum names use uppercase-initial CamelCase. Acronym runs remain
+;: valid; separators and non-ASCII alphanumerics are rejected.
+(define (lint-name-case-upper-camel? [name : String]) : bool
+  (if (not (lint-name-case-has-ascii-letter? name))
+    true
+    (let
+      [n : i64 (string.string-length name)]
+      [index : i64 1]
+      [ok : bool
+        (and (> n 0) (lint-name-case-ascii-upper? (string.string-ref name 0)))]
+      (begin
+        (while (and ok (< index n))
+          (let
+            [c : char (string.string-ref name index)]
+            (if (or
+              (lint-name-case-ascii-letter? c)
+              (lint-name-case-ascii-digit? c))
+              (set! index (+ index 1))
+              (set! ok false))))
+        ok))))
+
+(define (lint-name-case-lower-char-string [c : char]) : String
+  (if (lint-name-case-ascii-upper? c)
+    (string.substring
+      "abcdefghijklmnopqrstuvwxyz"
+      (- (cast c : i64) (cast 'A' : i64))
+      1)
+    (string.substring
+      "abcdefghijklmnopqrstuvwxyz"
+      (- (cast c : i64) (cast 'a' : i64))
+      1)))
+
+(define (lint-name-case-upper-char-string [c : char]) : String
+  (if (lint-name-case-ascii-lower? c)
+    (string.substring
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      (- (cast c : i64) (cast 'a' : i64))
+      1)
+    (string.substring
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+      (- (cast c : i64) (cast 'A' : i64))
+      1)))
+
+(define (lint-name-case-lower-suggestion-from
+  [name : String]
+  [index : i64]
+  [end : i64]
+  [out : String]
+  [at-word-start : bool]) : String
+  (if (>= index end)
+    out
+    (let
+      [c : char (string.string-ref name index)]
+      (cond
+        [(lint-name-case-ascii-lower? c)
+          (lint-name-case-lower-suggestion-from
+            name
+            (+ index 1)
+            end
+            (string.append out (string.substring name index 1))
+            false)]
+        [(lint-name-case-ascii-upper? c)
+          (let
+            [prefix : String
+              (if (or at-word-start (string.eq out ""))
+                out
+                (string.append out "-"))]
+            [lower : String (lint-name-case-lower-char-string c)]
+            (lint-name-case-lower-suggestion-from
+              name
+              (+ index 1)
+              end
+              (string.append prefix lower)
+              false))]
+        [(lint-name-case-ascii-digit? c)
+          (if at-word-start
+            ""
+            (lint-name-case-lower-suggestion-from
+              name
+              (+ index 1)
+              end
+              (string.append out (string.substring name index 1))
+              false))]
+        [(or (= c '_') (= c '-'))
+          (if (and
+            (= c '-')
+            (< (+ index 1) end)
+            (= (string.string-ref name (+ index 1)) '>'))
+            (if at-word-start
+              ""
+              (lint-name-case-lower-suggestion-from
+                name
+                (+ index 2)
+                end
+                (string.append out "->")
+                true))
+            (lint-name-case-lower-suggestion-from
+              name
+              (+ index 1)
+              end
+              (if at-word-start
+                out
+                (string.append out "-"))
+              true))]
+        [else ""]))))
+
+(define (lint-name-case-kebab-suggestion [name : String] [allow-unused : bool]) : String
+  (let
+    [n : i64 (string.string-length name)]
+    [unused : bool
+      (and allow-unused (> n 1) (= (string.string-ref name 0) '_'))]
+    [start : i64
+      (if unused
+        1
+        0)]
+    [end : i64 (lint-name-case-terminal-suffix-start name)]
+    [body : String
+      (lint-name-case-lower-suggestion-from name start end "" true)]
+    [suffix : String
+      (if (< end n)
+        (string.substring name end 1)
+        "")]
+    (if (string.eq body "")
+      ""
+      (let
+        [with-unused : String
+          (if unused
+            (string.append "_" body)
+            body)]
+        (string.append with-unused suffix)))))
+
+(define (lint-name-case-uppercase-suggestion-from
+  [name : String]
+  [index : i64]
+  [out : String]) : String
+  (if (>= index (string.string-length name))
+    out
+    (let
+      [c : char (string.string-ref name index)]
+      (cond
+        [(lint-name-case-ascii-letter? c)
+          (lint-name-case-uppercase-suggestion-from
+            name
+            (+ index 1)
+            (string.append out (lint-name-case-upper-char-string c)))]
+        [(or (lint-name-case-ascii-digit? c) (= c '-'))
+          (lint-name-case-uppercase-suggestion-from
+            name
+            (+ index 1)
+            (string.append out (string.substring name index 1)))]
+        [else ""]))))
+
+(define (lint-name-case-screaming-suggestion [name : String]) : String
+  (let
+    [lower : String (lint-name-case-kebab-suggestion name false)]
+    (if (string.eq lower "")
+      ""
+      (lint-name-case-uppercase-suggestion-from lower 0 ""))))
+
+(define (lint-name-case-upper-camel-suggestion-from
+  [name : String]
+  [index : i64]
+  [out : String]
+  [capitalize : bool]) : String
+  (if (>= index (string.string-length name))
+    out
+    (let
+      [c : char (string.string-ref name index)]
+      (cond
+        [(lint-name-case-ascii-letter? c)
+          (let
+            [piece : String
+              (if capitalize
+                (lint-name-case-upper-char-string c)
+                (string.substring name index 1))]
+            (lint-name-case-upper-camel-suggestion-from
+              name
+              (+ index 1)
+              (string.append out piece)
+              false))]
+        [(lint-name-case-ascii-digit? c)
+          (if (string.eq out "")
+            ""
+            (lint-name-case-upper-camel-suggestion-from
+              name
+              (+ index 1)
+              (string.append out (string.substring name index 1))
+              false))]
+        [(or (= c '-') (= c '_'))
+          (lint-name-case-upper-camel-suggestion-from name (+ index 1) out true)]
+        [else ""]))))
+
+(define (lint-name-case-upper-camel-suggestion [name : String]) : String
+  (lint-name-case-upper-camel-suggestion-from name 0 "" true))
+
+(define (lint-name-case-message
+  [base : String]
+  [name : String]
+  [suggested : String]) : String
+  (let
+    [suffix : String
+      (if (string.eq suggested "")
+        "`"
+        (let
+          [closed : String (string.append suggested "`")]
+          (string.append "`; consider `" closed)))]
+    [with-name : String (string.append name suffix)]
+    [detail : String (string.append ": `" with-name)]
+    (string.append base detail)))
+
+(define (lint-name-case-finding
+  [name : String]
+  [rule-id : String]
+  [suggested : String]
+  [span : AstSourceSpan]) : LintFinding
+  (LintFinding
+    (lint-name-case-message (lint-rule-message rule-id) name suggested)
+    rule-id
+    0
+    span))
+
+(define (lint-global-name-case-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (lint-name-case-finding
+    name
+    (lint-rule-global-name-case-id)
+    (lint-name-case-screaming-suggestion name)
+    span))
+
+(define (lint-function-name-case-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (lint-name-case-finding
+    name
+    (lint-rule-function-name-case-id)
+    (lint-name-case-kebab-suggestion name false)
+    span))
+
+(define (lint-local-name-case-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (lint-name-case-finding
+    name
+    (lint-rule-local-name-case-id)
+    (lint-name-case-kebab-suggestion name true)
+    span))
+
+(define (lint-type-name-case-finding [name : String] [span : AstSourceSpan]) : LintFinding
+  (lint-name-case-finding
+    name
+    (lint-rule-type-name-case-id)
+    (lint-name-case-upper-camel-suggestion name)
+    span))
 
 (define (lint-no-effect-span [expr : AstExpr]) : AstSourceSpan
   (match expr
@@ -6147,7 +6590,9 @@
 (defstruct LintUnusedVariableState
   (source String)
   (frames LintUnusedVariableFrameList)
-  (findings LintFindings))
+  (findings LintFindings)
+  (name-case bool)
+  (report-unused bool))
 
 (define (lint-source-prefix-at?
   [source : String]
@@ -6294,6 +6739,432 @@
       (LintSourceNameSpan
         (lint-source-index-span source found width fallback)
         (+ found width)))))
+
+(define (lint-source-name-span-between
+  [source : String]
+  [name : String]
+  [cursor : i64]
+  [limit : i64]) : LintSourceNameSpan
+  (let
+    [found : i64 (lint-source-find-name-from source name cursor)]
+    [width : i64 (string.string-length name)]
+    (if (or (< found 0) (>= found limit))
+      (LintSourceNameSpan (lint-no-span) cursor)
+      (LintSourceNameSpan
+        (lint-source-index-span source found width (lint-no-span))
+        (+ found width)))))
+
+(defstruct LintNameCasePatternScan
+  (findings LintFindings)
+  (next-index i64))
+
+(defstruct LintNameCaseLocalScan
+  (state LintUnusedVariableState)
+  (next-index i64))
+
+(define (lint-unused-variable-scan-local-name
+  [state : LintUnusedVariableState]
+  [name : String]
+  [cursor : i64]
+  [limit : i64]) : LintNameCaseLocalScan
+  (let
+    [found : LintSourceNameSpan
+      (lint-source-name-span-between
+        (struct-get state source)
+        name
+        cursor
+        limit)]
+    (LintNameCaseLocalScan
+      (lint-unused-variable-add-local-name-case
+        state
+        name
+        (struct-get found span))
+      (struct-get found next-index))))
+
+(define (lint-unused-variable-scan-form-local-name
+  [state : LintUnusedVariableState]
+  [name : String]
+  [span : AstSourceSpan]
+  [form-head : String]) : LintNameCaseLocalScan
+  (let
+    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    [limit : i64 (lint-source-span-end-index (struct-get state source) span)]
+    (if (or (< start 0) (< limit 0))
+      (LintNameCaseLocalScan state 0)
+      (lint-unused-variable-scan-local-name
+        state
+        name
+        (+ start (string.string-length form-head))
+        limit))))
+
+(define (lint-name-case-pattern-add
+  [source : String]
+  [name : String]
+  [cursor : i64]
+  [limit : i64]
+  [findings : LintFindings]
+  [report : bool]) : LintNameCasePatternScan
+  (let
+    [found : LintSourceNameSpan
+      (lint-source-name-span-between source name cursor limit)]
+    [span : AstSourceSpan (struct-get found span)]
+    [next : LintFindings
+      (if (and
+        report
+        (lint-name-case-source-span? span)
+        (not (lint-name-case-local-kebab? name)))
+        (lint-findings-add (lint-local-name-case-finding name span) findings)
+        findings)]
+    (LintNameCasePatternScan next (struct-get found next-index))))
+
+(define (lint-name-case-pattern-list
+  [patterns : AstPatternList]
+  [source : String]
+  [cursor : i64]
+  [limit : i64]
+  [findings : LintFindings]) : LintNameCasePatternScan
+  (lint-name-case-pattern-list-at (& patterns) source cursor limit findings 0))
+
+(define (lint-name-case-pattern-list-at
+  [patterns : (& patterns AstPatternList)]
+  [source : String]
+  [cursor : i64]
+  [limit : i64]
+  [findings : LintFindings]
+  [index : i64]) : LintNameCasePatternScan
+  (if (>= index (struct-get patterns len))
+    (LintNameCasePatternScan findings cursor)
+    (let
+      [scanned : LintNameCasePatternScan
+        (lint-name-case-pattern
+          (ast-pattern-list-get patterns index (ast-pattern-fallback))
+          source
+          cursor
+          limit
+          findings)]
+      (lint-name-case-pattern-list-at
+        patterns
+        source
+        (struct-get scanned next-index)
+        limit
+        (struct-get scanned findings)
+        (+ index 1)))))
+
+(define (lint-name-case-pattern
+  [pattern : AstPattern]
+  [source : String]
+  [cursor : i64]
+  [limit : i64]
+  [findings : LintFindings]) : LintNameCasePatternScan
+  (match pattern
+    [(AstPattern.Var name _)
+      (lint-name-case-pattern-add
+        source
+        (intern-str name)
+        cursor
+        limit
+        findings
+        true)]
+    [(AstPattern.Binding name)
+      (lint-name-case-pattern-add
+        source
+        (intern-str name)
+        cursor
+        limit
+        findings
+        true)]
+    [(AstPattern.Tuple items)
+      (lint-name-case-pattern-list (box-get items) source cursor limit findings)]
+    [(AstPattern.Variant name items)
+      (let
+        [variant : LintNameCasePatternScan
+          (lint-name-case-pattern-add
+            source
+            (intern-str name)
+            cursor
+            limit
+            findings
+            false)]
+        (lint-name-case-pattern-list
+          (box-get items)
+          source
+          (struct-get variant next-index)
+          limit
+          (struct-get variant findings)))]
+    [(AstPattern.Wildcard) (LintNameCasePatternScan findings cursor)]
+    [(AstPattern.Literal _) (LintNameCasePatternScan findings cursor)]))
+
+;; A bare match-arm symbol is syntactically ambiguous until typechecking: it
+;; may be a nullary enum variant. Skip that root spelling, while constructor
+;; payload patterns and nested tuple positions remain definite binder slots.
+(define (lint-name-case-match-pattern
+  [pattern : AstPattern]
+  [source : String]
+  [cursor : i64]
+  [limit : i64]
+  [findings : LintFindings]) : LintNameCasePatternScan
+  (match pattern
+    [(AstPattern.Binding name)
+      (lint-name-case-pattern-add
+        source
+        (intern-str name)
+        cursor
+        limit
+        findings
+        false)]
+    [_ (lint-name-case-pattern pattern source cursor limit findings)]))
+
+(defstruct LintNameCaseDeclState
+  (source String)
+  (cursor i64)
+  (findings LintFindings))
+
+(define (lint-name-case-space? [c : char]) : bool
+  (or (= c ' ') (= c '\t') (= c '\n') (= c '\r')))
+
+(define (lint-name-case-skip-space-comments [source : String] [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 start]
+    [again : bool true]
+    (begin
+      (while (and again (< index n))
+        (begin
+          (set! again false)
+          (while (and
+            (< index n)
+            (lint-name-case-space? (string.string-ref source index)))
+            (set! index (+ index 1)))
+          (if (and (< index n) (= (string.string-ref source index) ';'))
+            (begin
+              (while (and
+                (< index n)
+                (not (= (string.string-ref source index) '\n')))
+                (set! index (+ index 1)))
+              (set! again true))
+            unit)))
+      index)))
+
+(define (lint-name-case-skip-line [source : String] [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 start]
+    (begin
+      (while (and (< index n) (not (= (string.string-ref source index) '\n')))
+        (set! index (+ index 1)))
+      index)))
+
+(define (lint-name-case-skip-quoted
+  [source : String]
+  [start : i64]
+  [delimiter : char]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 (+ start 1)]
+    [done : bool false]
+    (begin
+      (while (and (< index n) (not done))
+        (let
+          [c : char (string.string-ref source index)]
+          (cond
+            [(= c '\\') (set! index (+ index 2))]
+            [(= c delimiter)
+              (begin
+                (set! index (+ index 1))
+                (set! done true))]
+            [else (set! index (+ index 1))])))
+      index)))
+
+;; Find a form head in source code, excluding text in comments and literals.
+(define (lint-name-case-find-code-prefix-from
+  [source : String]
+  [needle : String]
+  [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 start]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< index n))
+        (let
+          [c : char (string.string-ref source index)]
+          (cond
+            [(= c ';') (set! index (lint-name-case-skip-line source index))]
+            [(= c '"')
+              (set! index (lint-name-case-skip-quoted source index '"'))]
+            [(= c '\'')
+              (set! index (lint-name-case-skip-quoted source index '\''))]
+            [(lint-source-prefix-at? source index needle) (set! found index)]
+            [else (set! index (+ index 1))])))
+      found)))
+
+(define (lint-name-case-find-decl-name-from
+  [source : String]
+  [cursor : i64]
+  [form : String]
+  [name : String]
+  [function-head : bool]) : LintSourceNameSpan
+  (let
+    [needle : String (string.append "(" form)]
+    [n : i64 (string.string-length source)]
+    [search : i64 cursor]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< search n))
+        (let
+          [form-index : i64
+            (lint-name-case-find-code-prefix-from source needle search)]
+          (if (< form-index 0)
+            (set! search n)
+            (let
+              [after-form : i64
+                (lint-name-case-skip-space-comments
+                  source
+                  (+ form-index (string.string-length needle)))]
+              [name-index : i64
+                (if function-head
+                  (if (and
+                    (< after-form n)
+                    (= (string.string-ref source after-form) '('))
+                    (lint-name-case-skip-space-comments source (+ after-form 1))
+                    (- 0 1))
+                  (if (and
+                    (< after-form n)
+                    (= (string.string-ref source after-form) '('))
+                    (- 0 1)
+                    after-form))]
+              (if (and
+                (>= name-index 0)
+                (lint-source-name-at? source name-index name))
+                (set! found name-index)
+                (set! search (+ form-index 1)))))))
+      (if (< found 0)
+        (LintSourceNameSpan (lint-no-span) cursor)
+        (LintSourceNameSpan
+          (lint-source-index-span
+            source
+            found
+            (string.string-length name)
+            (lint-no-span))
+          (+ found (string.string-length name)))))))
+
+(define (lint-name-case-decl-state-add
+  [state : LintNameCaseDeclState]
+  [form : String]
+  [name : String]
+  [function-head : bool]
+  [kind : i64]) : LintNameCaseDeclState
+  (let
+    [found : LintSourceNameSpan
+      (lint-name-case-find-decl-name-from
+        (struct-get state source)
+        (struct-get state cursor)
+        form
+        name
+        function-head)]
+    [span : AstSourceSpan (struct-get found span)]
+    [valid : bool
+      (cond
+        [(= kind 0) (lint-name-case-screaming-kebab? name)]
+        [(= kind 1) (lint-name-case-kebab? name)]
+        [else (lint-name-case-upper-camel? name)])]
+    [next : LintFindings
+      (if (or (not (lint-name-case-source-span? span)) valid)
+        (struct-get state findings)
+        (lint-findings-add
+          (cond
+            [(= kind 0) (lint-global-name-case-finding name span)]
+            [(= kind 1) (lint-function-name-case-finding name span)]
+            [else (lint-type-name-case-finding name span)])
+          (struct-get state findings)))]
+    (LintNameCaseDeclState
+      (struct-get state source)
+      (struct-get found next-index)
+      next)))
+
+(define (lint-name-case-decl-state-after-body
+  [state : LintNameCaseDeclState]
+  [body : i64]) : LintNameCaseDeclState
+  (let
+    [end : i64
+      (lint-source-span-end-index
+        (struct-get state source)
+        (lint-no-effect-span (ast-node-get body)))]
+    (if (> end (struct-get state cursor))
+      (LintNameCaseDeclState
+        (struct-get state source)
+        end
+        (struct-get state findings))
+      state)))
+
+(define (lint-name-case-in-decl
+  [decl : AstDecl]
+  [state : LintNameCaseDeclState]) : LintNameCaseDeclState
+  (match decl
+    [(AstDecl.Def name _ body)
+      (lint-name-case-decl-state-after-body
+        (lint-name-case-decl-state-add state "define" (intern-str name) false 0)
+        body)]
+    [(AstDecl.DefFn name _ _ body _)
+      (lint-name-case-decl-state-after-body
+        (lint-name-case-decl-state-add state "define" (intern-str name) true 1)
+        body)]
+    [(AstDecl.DefMacro name _ _ body)
+      (lint-name-case-decl-state-after-body
+        (lint-name-case-decl-state-add
+          state
+          "defmacro"
+          (intern-str name)
+          true
+          1)
+        body)]
+    [(AstDecl.DefDispatch name _)
+      (lint-name-case-decl-state-add
+        state
+        "defdispatch"
+        (intern-str name)
+        false
+        1)]
+    [(AstDecl.DefStruct name _ _ _)
+      (lint-name-case-decl-state-add
+        state
+        "defstruct"
+        (intern-str name)
+        false
+        2)]
+    [(AstDecl.DefStructLifetimes name _ _ _ _)
+      (lint-name-case-decl-state-add
+        state
+        "defstruct"
+        (intern-str name)
+        false
+        2)]
+    [(AstDecl.DefEnum name _ _)
+      (lint-name-case-decl-state-add state "defenum" (intern-str name) false 2)]
+    [(AstDecl.DefEnumLifetimes name _ _ _)
+      (lint-name-case-decl-state-add state "defenum" (intern-str name) false 2)]
+    [(AstDecl.ModuleBody _ body)
+      (lint-name-case-in-decl-list (box-get body) state)]
+    [(AstDecl.Unsafe inner) (lint-name-case-in-decl (box-get inner) state)]
+    [(AstDecl.ComptimeDecl _ inner)
+      (lint-name-case-in-decl (box-get inner) state)]
+    [_ state]))
+
+(define (lint-name-case-in-decl-list
+  [decls : AstDeclList]
+  [state : LintNameCaseDeclState]) : LintNameCaseDeclState
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) state]
+    [(AstDeclListStep.Cons decl rest)
+      (lint-name-case-in-decl-list rest (lint-name-case-in-decl decl state))]))
+
+(define (lint-name-case-in-decls
+  [source : String]
+  [decls : AstDeclList]
+  [acc : LintFindings]) : LintFindings
+  (struct-get
+    (lint-name-case-in-decl-list decls (LintNameCaseDeclState source 0 acc))
+    findings))
 
 (defstruct LintRedundantFunctionNameState
   (source String)
@@ -6651,7 +7522,46 @@
   [state : LintUnusedVariableState]
   [frames : LintUnusedVariableFrameList]
   [findings : LintFindings]) : LintUnusedVariableState
-  (LintUnusedVariableState (struct-get state source) frames findings))
+  (LintUnusedVariableState
+    (struct-get state source)
+    frames
+    findings
+    (struct-get state name-case)
+    (struct-get state report-unused)))
+
+(define (lint-name-case-source-span? [span : AstSourceSpan]) : bool
+  (and
+    (> (ast-source-span-start-line span) 0)
+    (> (ast-source-span-start-col span) 0)))
+
+(define (lint-unused-variable-add-local-name-case
+  [state : LintUnusedVariableState]
+  [name : String]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (if (and
+    (struct-get state name-case)
+    (lint-name-case-source-span? span)
+    (not (lint-name-case-local-kebab? name)))
+    (lint-unused-variable-state-with
+      state
+      (struct-get state frames)
+      (lint-findings-add
+        (lint-local-name-case-finding name span)
+        (struct-get state findings)))
+    state))
+
+(define (lint-unused-variable-add-binding-name-cases
+  [state : LintUnusedVariableState]
+  [bindings : LintUnusedVariableBindingList]) : LintUnusedVariableState
+  (match bindings
+    [(LintUnusedVariableBindingList.Nil) state]
+    [(LintUnusedVariableBindingList.Cons binding rest)
+      (lint-unused-variable-add-binding-name-cases
+        (lint-unused-variable-add-local-name-case
+          state
+          (struct-get binding name)
+          (struct-get binding span))
+        (box-get rest))]))
 
 (define (lint-unused-variable-binding-mark-used
   [binding : LintUnusedVariableBinding]) : LintUnusedVariableBinding
@@ -6812,8 +7722,10 @@
       (lint-unused-variable-state-with
         state
         (box-get rest)
-        (lint-unused-variable-report-bindings
-          bindings
+        (if (struct-get state report-unused)
+          (lint-unused-variable-report-bindings
+            bindings
+            (struct-get state findings))
           (struct-get state findings)))]))
 
 (define (lint-unused-variable-param-bindings
@@ -7436,9 +8348,14 @@
               text
               cursor
               (lint-no-effect-span (ast-node-get init)))]
+          [with-case : LintUnusedVariableState
+            (lint-unused-variable-add-local-name-case
+              after-init
+              text
+              (struct-get found span))]
           [with-binding : LintUnusedVariableState
             (lint-unused-variable-add-to-current-frame
-              after-init
+              with-case
               (lint-unused-variable-binding text (struct-get found span) true))]
           (lint-unused-variable-let-bindings-at
             bindings
@@ -7469,12 +8386,22 @@
 
 (define (lint-unused-variable-resource-bindings
   [bindings : AstResourceBindingList]
-  [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (lint-unused-variable-resource-bindings-at (& bindings) state 0))
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    (lint-unused-variable-resource-bindings-at
+      (& bindings)
+      state
+      (if (< start 0)
+        0
+        start)
+      0)))
 
 (define (lint-unused-variable-resource-bindings-at
   [bindings : (& bindings AstResourceBindingList)]
   [state : LintUnusedVariableState]
+  [cursor : i64]
   [index : i64]) : LintUnusedVariableState
   (if (>= index (ast-resource-binding-list-len bindings))
     state
@@ -7483,50 +8410,106 @@
       index
       (ast-resource-binding-fallback))
       [(AstResourceBinding.Binding name init cleanup)
-        (lint-unused-variable-resource-bindings-at
-          bindings
-          (lint-unused-variable-add-to-current-frame
+        (let
+          [text : String (intern-str name)]
+          [init-expr : AstExpr (ast-node-get init)]
+          [cleanup-expr : AstExpr (ast-node-get cleanup)]
+          [init-span : AstSourceSpan (lint-no-effect-span init-expr)]
+          [cleanup-span : AstSourceSpan (lint-no-effect-span cleanup-expr)]
+          [init-start : i64
+            (lint-source-span-start-index (struct-get state source) init-span)]
+          [found : LintSourceNameSpan
+            (lint-source-name-span-between
+              (struct-get state source)
+              text
+              cursor
+              (if (< init-start 0)
+                (string.string-length (struct-get state source))
+                init-start))]
+          [with-case : LintUnusedVariableState
+            (lint-unused-variable-add-local-name-case
+              state
+              text
+              (struct-get found span))]
+          [after-exprs : LintUnusedVariableState
             (lint-unused-variable-expr
-              (ast-node-get cleanup)
-              (lint-unused-variable-expr
-                (ast-node-get init)
-                state
-                (lint-no-effect-span (ast-node-get init)))
-              (lint-no-effect-span (ast-node-get cleanup)))
-            (lint-unused-variable-binding
-              (intern-str name)
-              (lint-no-span)
-              false))
-          (+ index 1))])))
+              cleanup-expr
+              (lint-unused-variable-expr init-expr with-case init-span)
+              cleanup-span)]
+          [with-binding : LintUnusedVariableState
+            (lint-unused-variable-add-to-current-frame
+              after-exprs
+              (lint-unused-variable-binding text (struct-get found span) false))]
+          [cleanup-end : i64
+            (lint-source-span-end-index (struct-get state source) cleanup-span)]
+          (lint-unused-variable-resource-bindings-at
+            bindings
+            with-binding
+            (if (< cleanup-end 0)
+              (struct-get found next-index)
+              cleanup-end)
+            (+ index 1)))])))
 
 (define (lint-unused-variable-match-arms
   [arms : AstMatchArmList]
-  [state : LintUnusedVariableState]) : LintUnusedVariableState
-  (lint-unused-variable-match-arms-at (& arms) state 0))
+  [state : LintUnusedVariableState]
+  [span : AstSourceSpan]) : LintUnusedVariableState
+  (let
+    [start : i64 (lint-source-span-start-index (struct-get state source) span)]
+    (lint-unused-variable-match-arms-at
+      (& arms)
+      state
+      (if (< start 0)
+        0
+        start)
+      0)))
 
 (define (lint-unused-variable-match-arms-at
   [arms : (& arms AstMatchArmList)]
   [state : LintUnusedVariableState]
+  [cursor : i64]
   [index : i64]) : LintUnusedVariableState
   (if (>= index (struct-get arms len))
     state
     (match (ast-match-arm-list-get arms index (ast-match-arm-fallback))
       [(AstMatchArm.Arm pattern body)
         (let
+          [body-expr : AstExpr (ast-node-get body)]
+          [body-span : AstSourceSpan (lint-no-effect-span body-expr)]
+          [body-start : i64
+            (lint-source-span-start-index (struct-get state source) body-span)]
+          [scanned : LintNameCasePatternScan
+            (if (struct-get state name-case)
+              (lint-name-case-match-pattern
+                pattern
+                (struct-get state source)
+                cursor
+                (if (< body-start 0)
+                  (string.string-length (struct-get state source))
+                  body-start)
+                (struct-get state findings))
+              (LintNameCasePatternScan (struct-get state findings) cursor))]
+          [with-case-findings : LintUnusedVariableState
+            (lint-unused-variable-state-with
+              state
+              (struct-get state frames)
+              (struct-get scanned findings))]
           [with-frame : LintUnusedVariableState
             (lint-unused-variable-push-frame
-              state
+              with-case-findings
               LintUnusedVariableBindingList.Nil)]
           [with-pattern : LintUnusedVariableState
             (lint-unused-variable-pattern-bindings pattern with-frame)]
           [with-body : LintUnusedVariableState
-            (lint-unused-variable-expr
-              (ast-node-get body)
-              with-pattern
-              (lint-no-effect-span (ast-node-get body)))]
+            (lint-unused-variable-expr body-expr with-pattern body-span)]
+          [body-end : i64
+            (lint-source-span-end-index (struct-get state source) body-span)]
           (lint-unused-variable-match-arms-at
             arms
             (lint-unused-variable-pop-frame with-body)
+            (if (< body-end 0)
+              (struct-get scanned next-index)
+              body-end)
             (+ index 1)))])))
 
 (define (lint-unused-variable-lambda
@@ -7548,8 +8531,12 @@
         cursor
         span
         true)]
+    [with-cases : LintUnusedVariableState
+      (lint-unused-variable-add-binding-name-cases
+        state
+        (struct-get built bindings))]
     [with-frame : LintUnusedVariableState
-      (lint-unused-variable-push-frame state (struct-get built bindings))]
+      (lint-unused-variable-push-frame with-cases (struct-get built bindings))]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-maybe-type
         ret
@@ -7702,36 +8689,61 @@
         [(AstMatch.Match scrutinee arms)
           (lint-unused-variable-match-arms
             arms
-            (lint-unused-variable-expr (ast-node-get scrutinee) state span))])]
+            (lint-unused-variable-expr (ast-node-get scrutinee) state span)
+            span)])]
     [(AstExpr.Foreach fe-box)
       (match (box-get fe-box)
         [(AstForeach.Foreach index index-ty start end body)
-          (lint-unused-variable-index-scope
-            index
-            (ast-node-get body)
-            (lint-unused-variable-type
-              index-ty
-              (lint-unused-variable-expr
-                (ast-node-get end)
-                (lint-unused-variable-expr (ast-node-get start) state span)
-                span))
-            span)])]
+          (let
+            [scanned : LintNameCaseLocalScan
+              (if (struct-get state name-case)
+                (lint-unused-variable-scan-form-local-name
+                  state
+                  (intern-str index)
+                  span
+                  "(foreach")
+                (LintNameCaseLocalScan state 0))]
+            (lint-unused-variable-index-scope
+              index
+              (ast-node-get body)
+              (lint-unused-variable-type
+                index-ty
+                (lint-unused-variable-expr
+                  (ast-node-get end)
+                  (lint-unused-variable-expr
+                    (ast-node-get start)
+                    (struct-get scanned state)
+                    span)
+                  span))
+              span))])]
     [(AstExpr.SpmdReduce reduce-box)
       (match (box-get reduce-box)
         [(AstSpmdReduce.Reduce _ index index-ty start end init value)
-          (lint-unused-variable-index-scope
-            index
-            (ast-node-get value)
-            (lint-unused-variable-type
-              index-ty
-              (lint-unused-variable-expr
-                (ast-node-get init)
+          (let
+            [scanned : LintNameCaseLocalScan
+              (if (struct-get state name-case)
+                (lint-unused-variable-scan-form-local-name
+                  state
+                  (intern-str index)
+                  span
+                  "(spmd-reduce")
+                (LintNameCaseLocalScan state 0))]
+            (lint-unused-variable-index-scope
+              index
+              (ast-node-get value)
+              (lint-unused-variable-type
+                index-ty
                 (lint-unused-variable-expr
-                  (ast-node-get end)
-                  (lint-unused-variable-expr (ast-node-get start) state span)
-                  span)
-                span))
-            span)])]
+                  (ast-node-get init)
+                  (lint-unused-variable-expr
+                    (ast-node-get end)
+                    (lint-unused-variable-expr
+                      (ast-node-get start)
+                      (struct-get scanned state)
+                      span)
+                    span)
+                  span))
+              span))])]
     [(AstExpr.SpmdScan scan-box)
       (match (box-get scan-box)
         [(AstSpmdScan.Scan
@@ -7746,6 +8758,27 @@
             value
             body)
           (let
+            [index-scan : LintNameCaseLocalScan
+              (if (struct-get state name-case)
+                (lint-unused-variable-scan-form-local-name
+                  state
+                  (intern-str index)
+                  span
+                  "(spmd-scan")
+                (LintNameCaseLocalScan state 0))]
+            [prefix-scan : LintNameCaseLocalScan
+              (if (struct-get state name-case)
+                (let
+                  [limit : i64
+                    (lint-source-span-end-index (struct-get state source) span)]
+                  (lint-unused-variable-scan-local-name
+                    (struct-get index-scan state)
+                    (intern-str prefix)
+                    (struct-get index-scan next-index)
+                    (if (< limit 0)
+                      (string.string-length (struct-get state source))
+                      limit)))
+                (LintNameCaseLocalScan (struct-get index-scan state) 0))]
             [base-state : LintUnusedVariableState
               (lint-unused-variable-type
                 prefix-ty
@@ -7757,7 +8790,7 @@
                       (ast-node-get end)
                       (lint-unused-variable-expr
                         (ast-node-get start)
-                        state
+                        (struct-get prefix-scan state)
                         span)
                       span)
                     span)))]
@@ -7809,7 +8842,7 @@
                 state
                 LintUnusedVariableBindingList.Nil)]
             [with-bindings : LintUnusedVariableState
-              (lint-unused-variable-resource-bindings bindings with-frame)]
+              (lint-unused-variable-resource-bindings bindings with-frame span)]
             [with-body : LintUnusedVariableState
               (lint-unused-variable-expr-list body with-bindings)]
             (lint-unused-variable-pop-frame with-body))])]
@@ -7944,7 +8977,9 @@
   [params : AstParamList]
   [ret : AstType]
   [body : i64]
-  [acc : LintFindings]) : LintFindings
+  [acc : LintFindings]
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (let
     [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
     [cursor : i64
@@ -7955,10 +8990,19 @@
         body-span)]
     [built : LintUnusedVariableBindingBuild
       (lint-unused-variable-param-bindings params source cursor body-span true)]
-    [state : LintUnusedVariableState
-      (lint-unused-variable-push-frame
-        (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc)
+    [base-state : LintUnusedVariableState
+      (LintUnusedVariableState
+        source
+        LintUnusedVariableFrameList.Nil
+        acc
+        name-case
+        report-unused)]
+    [with-cases : LintUnusedVariableState
+      (lint-unused-variable-add-binding-name-cases
+        base-state
         (struct-get built bindings))]
+    [state : LintUnusedVariableState
+      (lint-unused-variable-push-frame with-cases (struct-get built bindings))]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
         ret
@@ -7974,7 +9018,9 @@
   [params : AstMacroParamList]
   [ret : AstType]
   [body : i64]
-  [acc : LintFindings]) : LintFindings
+  [acc : LintFindings]
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (let
     [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
     [cursor : i64
@@ -7990,10 +9036,19 @@
         cursor
         body-span
         true)]
-    [state : LintUnusedVariableState
-      (lint-unused-variable-push-frame
-        (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc)
+    [base-state : LintUnusedVariableState
+      (LintUnusedVariableState
+        source
+        LintUnusedVariableFrameList.Nil
+        acc
+        name-case
+        report-unused)]
+    [with-cases : LintUnusedVariableState
+      (lint-unused-variable-add-binding-name-cases
+        base-state
         (struct-get built bindings))]
+    [state : LintUnusedVariableState
+      (lint-unused-variable-push-frame with-cases (struct-get built bindings))]
     [with-param-types : LintUnusedVariableState
       (lint-unused-variable-type
         ret
@@ -8005,7 +9060,9 @@
 (define (lint-unused-variables-in-decl
   [source : String]
   [decl : AstDecl]
-  [acc : LintFindings]) : LintFindings
+  [acc : LintFindings]
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (match decl
     [(AstDecl.Def _ maybe-ty body)
       (struct-get
@@ -8013,7 +9070,12 @@
           (ast-node-get body)
           (lint-unused-variable-maybe-type
             maybe-ty
-            (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc))
+            (LintUnusedVariableState
+              source
+              LintUnusedVariableFrameList.Nil
+              acc
+              name-case
+              report-unused))
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDecl.DefFn name params ret body _)
@@ -8024,7 +9086,9 @@
         params
         ret
         body
-        acc)]
+        acc
+        name-case
+        report-unused)]
     [(AstDecl.DefMacro name params ret body)
       (lint-unused-variable-decl-with-macro-param-frame
         source
@@ -8033,31 +9097,61 @@
         params
         ret
         body
-        acc)]
+        acc
+        name-case
+        report-unused)]
     [(AstDecl.Test _ body _)
       (struct-get
         (lint-unused-variable-expr
           (ast-node-get body)
-          (LintUnusedVariableState source LintUnusedVariableFrameList.Nil acc)
+          (LintUnusedVariableState
+            source
+            LintUnusedVariableFrameList.Nil
+            acc
+            name-case
+            report-unused)
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDecl.Unsafe inner)
-      (lint-unused-variables-in-decl source (box-get inner) acc)]
+      (lint-unused-variables-in-decl
+        source
+        (box-get inner)
+        acc
+        name-case
+        report-unused)]
     [(AstDecl.ComptimeDecl _ inner)
-      (lint-unused-variables-in-decl source (box-get inner) acc)]
+      (lint-unused-variables-in-decl
+        source
+        (box-get inner)
+        acc
+        name-case
+        report-unused)]
+    [(AstDecl.ModuleBody _ body)
+      (if name-case
+        (lint-unused-variables-in-decl-list
+          source
+          (box-get body)
+          acc
+          true
+          false)
+        acc)]
     [_ acc]))
 
 (define (lint-unused-variables-in-decl-list
   [source : String]
   [decls : AstDeclList]
-  [acc : LintFindings]) : LintFindings
+  [acc : LintFindings]
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (lint-unused-variables-in-decl-list
         source
         rest
-        (lint-unused-variables-in-decl source decl acc))]))
+        (lint-unused-variables-in-decl source decl acc name-case report-unused)
+        name-case
+        report-unused)]))
 
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
@@ -9302,10 +10396,12 @@
         [rest : AstDeclList rest]
         (lint-walk-decl-list rest threshold (lint-walk-decl decl threshold acc)))]))
 
-(define (lint-program-with-source
+(define (lint-program-with-source-options
   [source : String]
   [program : AstProgram]
-  [threshold : i64]) : LintFindings
+  [threshold : i64]
+  [deprecated-string-concat : bool]
+  [name-case : bool]) : LintFindings
   (match program
     [(AstProgram.Program decls-box)
       (let
@@ -9331,7 +10427,26 @@
             decls
             decls
             single-element-array-cells)]
-        (lint-unused-variables-in-decl-list source decls unused-imports))]))
+        [with-locals : LintFindings
+          (lint-unused-variables-in-decl-list
+            source
+            decls
+            unused-imports
+            name-case
+            true)]
+        [with-decls : LintFindings
+          (if name-case
+            (lint-name-case-in-decls source decls with-locals)
+            with-locals)]
+        (if deprecated-string-concat
+          (lint-deprecated-string-concat-scan source with-decls)
+          with-decls))]))
+
+(define (lint-program-with-source
+  [source : String]
+  [program : AstProgram]
+  [threshold : i64]) : LintFindings
+  (lint-program-with-source-options source program threshold false false))
 
 ;: Run all lint rules over `program`, returning the collected findings.
 (define (lint-program [program : AstProgram] [threshold : i64]) : LintFindings
@@ -9341,34 +10456,7 @@
   [source : String]
   [program : AstProgram]
   [threshold : i64]) : LintFindings
-  (match program
-    [(AstProgram.Program decls-box)
-      (let
-        [decls : AstDeclList (box-get decls-box)]
-        [copy-on-update-shapes : LintCopyOnUpdateStructList
-          (lint-copy-on-update-collect-structs
-            decls
-            LintCopyOnUpdateStructList.Nil)]
-        [walked : LintFindings
-          (lint-walk-decl-list decls threshold (lint-findings-empty))]
-        [unused-assignments : LintFindings
-          (lint-unused-assignments-in-decl-list decls walked)]
-        [copy-on-update : LintFindings
-          (lint-copy-on-update-structs-in-decl-list
-            decls
-            copy-on-update-shapes
-            unused-assignments)]
-        [single-element-array-cells : LintFindings
-          (lint-single-element-array-cells-in-decl-list decls copy-on-update)]
-        [unused-imports : LintFindings
-          (lint-unused-imports-in-decl-list
-            source
-            decls
-            decls
-            single-element-array-cells)]
-        (lint-deprecated-string-concat-scan
-          source
-          (lint-unused-variables-in-decl-list source decls unused-imports)))]))
+  (lint-program-with-source-options source program threshold true false))
 
 ;: Self-test: the nested-`if`-ladder rule and the AST walk.
 ;: Flat-AST test helpers: the self-test builds exprs with i64-returning

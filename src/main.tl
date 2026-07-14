@@ -196,7 +196,7 @@ Options:
 
 (define (cli-lint-help-text) : String
   "Usage:
-    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
+    typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]
 
 Summary:
     Lint source files or every source in a package.
@@ -206,6 +206,7 @@ Options:
     --deprecated-string-concat     Enable staged string concat deprecation lint
     --redundant-function-name      Enable staged redundant module-prefix lint
     --prefer-dotted-field          Enable staged simple struct-get dotted field lint
+    --name-case                    Enable staged declaration/binder casing lints
     --manifest-path <file>         Defaults to nearest typelisp.pkg upward
     --stdlib-root <dir>            Search root for stdlib/... imports
 ")

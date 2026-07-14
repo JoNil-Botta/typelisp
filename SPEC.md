@@ -6457,7 +6457,7 @@ Selected Command Forms:
   typelisp run <file.tl> [--cfg <name>...] [-- <args>...]
   typelisp run [--manifest-path <typelisp.pkg>] [--profile dev|release] [--locked|--update-lock] [-- <args>...]
   typelisp fmt [<file.tl>...] [--check]
-  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field]
+  typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case]
   typelisp test [<file.tl>] [--check]
   typelisp inspect <file.tlci>
 ```
@@ -6501,6 +6501,15 @@ unreachable binary-package declarations from entry/test/generated roots.
 Opt-in rules: `--deprecated-string-concat` (deprecated concat primitives),
 `--redundant-function-name` (redundant module-prefix names), and
 `--prefer-dotted-field` (simple `struct-get` dotted-field syntax).
+`--name-case` enables four independently suppressible rules:
+`global-name-case` for SCREAMING-KEBAB-CASE top-level values,
+`function-name-case` for kebab-case functions, dispatch functions, and macros,
+`local-name-case` for kebab-case parameters and local binders, and
+`type-name-case` for UpperCamelCase struct/enum declarations. Terminal `?`/`!`
+and `->` conversion spellings are valid kebab syntax; one leading `_` is
+accepted for intentionally unused locals. Symbolic names without ASCII letters
+are exempt. Externs, imports/aliases, fields, variants, lifetimes, tests, and
+labels are outside this staged rule.
 
 `test` runs inline `(test ...)` declarations. `test --check` type-checks the
 generated inline test harnesses without assembling or running them, and

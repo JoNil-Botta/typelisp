@@ -267,6 +267,22 @@ run_capture compile "$COMPILER" compile "$SRC" -o "$ASM"
 }
 assert_contains "$WORKDIR/compile.stdout" "Wrote $ASM"
 
+# A source without `main` takes the compiler-synthesis path that creates the
+# fallback entry AST after parsing. Its generated names are intentionally not
+# required to have parser-token provenance.
+SYNTH_SRC="$WORKDIR/synthesized-entry.tl"
+SYNTH_ASM="$WORKDIR/synthesized-entry.s"
+cat > "$SYNTH_SRC" <<'EOF'
+(define SYNTHETIC-VALUE : i64 7)
+EOF
+run_capture compile-synthesized-entry \
+    "$COMPILER" compile "$SYNTH_SRC" -o "$SYNTH_ASM"
+[ -f "$SYNTH_ASM" ] || {
+    echo "synthesized-entry compile did not write $SYNTH_ASM" >&2
+    exit 1
+}
+assert_contains "$WORKDIR/compile-synthesized-entry.stdout" "Wrote $SYNTH_ASM"
+
 CFG_SRC="$WORKDIR/cfg-feature.tl"
 CFG_ASM="$WORKDIR/cfg-feature.s"
 cat > "$CFG_SRC" <<'EOF'
@@ -1175,7 +1191,7 @@ echo "[host-action-cli] lint"
 run_capture lint-help "$COMPILER" lint --help
 assert_empty "$WORKDIR/lint-help.stdout"
 assert_contains "$WORKDIR/lint-help.stderr" "Usage:"
-assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
+assert_contains "$WORKDIR/lint-help.stderr" "typelisp lint [<file.tl>...] [--check] [--deprecated-string-concat] [--redundant-function-name] [--prefer-dotted-field] [--name-case] [--manifest-path <typelisp.pkg>] [--stdlib-root <dir>...]"
 assert_contains "$WORKDIR/lint-help.stderr" "Summary:"
 
 LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-lint-nopkg.XXXXXX")

@@ -18,6 +18,28 @@
 (import stdlib.hash)
 (import stdlib.string)
 
+;; Name-bearing AST fields fall into three construction categories:
+;;
+;; - The parser builds id-carrying variants directly from `intern-slice` ids.
+;; - Compiler synthesis should prefer the `*-id` helpers when it already owns an
+;;   id in the active intern state.
+;; - String-taking helpers remain compatibility boundaries for parser helpers,
+;;   tests, and synthesis that still starts from a spelling. They deliberately
+;;   call `ci.intern`, including for an empty spelling; they are not parser-only
+;;   assertions and must not panic merely because a token did not pre-intern it.
+;;
+;; Lifetimes/regions, diagnostics, import metadata, include payloads, and some
+;; compatibility records intentionally remain Strings. Fallback payload ids and
+;; structural nominal keys are sentinels, not intern ids. Raw AST ids inherit
+;; compiler_intern's table/generation provenance contract and may be rendered
+;; only while their owner state is installed.
+;; Safe current-state diagnostic rendering for a nominal id. Structural and
+;; sentinel values are intentionally not passed to `ci.intern-str`.
+(define (ast-nominal-name-display [name-id : i64]) : String
+  (if (and (>= name-id 0) (< name-id (ci.intern-pool-len)))
+    (ci.intern-str name-id)
+    "<structural-nominal>"))
+
 (defstruct AstSourceSpan
   (start-line i32)
   (start-col i32)
@@ -2427,6 +2449,8 @@
       (ast-lifetime-list-append-from (&mut out) (& rest) 0)
       out)))
 
+;; Compatibility spelling boundary. ID-first synthesis uses
+;; `ast-param-id-with-consume` below.
 (define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
   (AstParam.Param (ci.intern name) ty is-comptime false))
 
@@ -4662,6 +4686,9 @@
 (define (ast-decl-cons-boxed [head : AstDecl] [rest : (Box AstDeclList)]) : AstDeclList
   (ast-decl-cons head (box-get rest)))
 
+;; The String-taking declaration constructors below are compatibility spelling
+;; boundaries. Parser/id-owning synthesis uses the adjacent `*-id` forms where
+;; available; not every synthetic caller has migrated yet.
 (define (ast-decl-module [name : String]) : AstDecl
   (AstDecl.Module (ci.intern name)))
 

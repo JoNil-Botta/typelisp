@@ -1,8 +1,9 @@
 ;; compiler_intern.tl - process-global string interning table for identifiers.
 ;;
-;; SELF-CONTAINED (no imports): every programmer-written identifier is interned
-;; to a stable i64 id, so name comparisons become i64 `=`, id-keyed lookups
-;; replace string hashing, and the AST stores ids instead of copied Strings.
+;; SELF-CONTAINED (no imports): source identifiers and compiler-synthesized
+;; identifier spellings are interned to compact i64 ids, so name comparisons
+;; become i64 `=`, id-keyed lookups replace string hashing, and the AST stores
+;; ids instead of copied Strings.
 ;; Being import-free is deliberate -- this module is reached from the core
 ;; compiler_ast_types.tl (and from sym_i64_env.tl), which are imported by tiny
 ;; integration cases; pulling stdlib/hashmap here would ripple new transitive
@@ -15,9 +16,29 @@
 ;; plus a fixed open-addressing dedup table, all PRE-SIZED so neither ever grows
 ;; (a grow! reassigns a global in the inlined hot path -> opt2 miscompile).
 ;;
-;; IDs are assigned in INSERTION (parse) order, independent of the hash function,
-;; so the emitted output is identical regardless of the probe's hash -- the hash
-;; only affects bucket placement, never the id a string gets.
+;; ID provenance contract:
+;;
+;; - Parsed token names and synthesized names use the same owning table. Parser
+;;   slices normally enter through `intern-slice`; generated, hygiene,
+;;   module-qualified, and fixed/builtin spellings enter through `intern`.
+;; - Empty names are ordinary interned spellings when a compatibility constructor
+;;   intentionally creates one. Negative/sentinel and structural composite ids
+;;   are not intern ids and must use their owning subsystem's renderer.
+;; - A raw id is meaningful only with the table that assigned it. Installing a
+;;   different `InternCompatState` can give the same integer another spelling.
+;; - Full reset invalidates every previously retained id. Reset-to-mark preserves
+;;   the numeric prefix below the mark, but bumps the generation: long-lived
+;;   consumers must recapture provenance before using even a preserved prefix.
+;; - `intern-str` is the same-state compatibility fast path. Anything retaining
+;;   an id across reset/install boundaries must carry `InternIdProvenance` and use
+;;   `intern-id-render`, which rejects wrong-owner, stale, and out-of-range ids.
+;; - String data-pointer equality is only a live-operand comparison shortcut.
+;;   Intern tables own/canonicalize persistent spellings; no pointer/length -> id
+;;   identity survives a scratch reset, state replacement, or table reset.
+;;
+;; IDs are assigned in INSERTION order, independent of the hash function, so the
+;; emitted output is identical regardless of the probe's hash -- the hash only
+;; affects bucket placement, never the id a string gets.
 ;: Local arena hooks keep this module import-free while letting persistent
 ;: intern entries survive scoped compile arenas.
 (extern (tl_arena_make) : i64)
@@ -215,6 +236,30 @@
   0)
 (define intern-persistent-storage-enabled : bool
   false)
+
+;; A compact capability for rendering an id retained across a state boundary.
+;; It adds no per-name storage and is captured only by consumers that need it.
+(defstruct InternIdProvenance
+  (pool-data-addr i64)
+  (generation i64))
+
+(defenum InternIdRender
+  (Ok String)
+  (WrongOwner)
+  (StaleGeneration)
+  (InvalidId))
+
+(define (intern-id-provenance-capture) : InternIdProvenance
+  (InternIdProvenance (intern-active-pool-data-addr) intern-reset-generation))
+
+(define (intern-id-render [owner : InternIdProvenance] [id : i64]) : InternIdRender
+  (cond
+    [(not (= (struct-get owner pool-data-addr) (intern-active-pool-data-addr)))
+      (InternIdRender.WrongOwner)]
+    [(not (= (struct-get owner generation) intern-reset-generation))
+      (InternIdRender.StaleGeneration)]
+    [(or (< id 0) (>= id intern-pool-count)) (InternIdRender.InvalidId)]
+    [else (InternIdRender.Ok (array-ref intern-pool-slots id))]))
 
 (defstruct InternCompatState
   (pool-slots (Array String))
@@ -1065,7 +1110,8 @@
           out)))
     (InternLookupMissing)))
 
-;: Recover the original String for an interned id.
+;: Recover the original String for an id known to belong to the currently
+;: installed table and generation. Retained ids must use `intern-id-render`.
 (define (intern-str [id : i64]) : String
   (array-ref intern-pool-slots id))
 

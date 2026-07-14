@@ -360,6 +360,7 @@ else
         scripts/check-opt2-cli-regression.sh
 fi
 run_with_compiler "$STAGE2_BIN" "stage2 SPMD runtime dispatch" scripts/verify-spmd-runtime-dispatch.sh
+run_with_compiler "$STAGE2_BIN" "ISPC perfbench loads corpus contract" scripts/verify-ispc-perfbench-loads.sh
 run_with_compiler "$STAGE2_BIN" "stage2 repository doctests" scripts/verify-doc-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 inline TypeLisp tests" scripts/verify-inline-tests.sh
 run_with_compiler "$STAGE2_BIN" "stage2 compile-profile verifier" scripts/verify-compile-profile.sh

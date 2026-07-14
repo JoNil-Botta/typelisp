@@ -372,6 +372,19 @@ ordered messages, message-owned JSON-RPC ids, and document/compiler cache A/B
 isolation. Public transcript-corpus discovery and process-count measurement
 remain owned by the public-tool verifier rather than this substrate.
 
+`tests/public-tools/run-corpus.sh lsp fresh` retains the original
+one-process-per-fixture LSP oracle. `lsp batch` materializes a versioned,
+tab-separated manifest whose rows name one case ID, exact raw/framed input,
+and separate stdout, stderr, and status files, then runs every logical session
+serially through one `typelisp lsp --transcript-batch` process. The TypeLisp
+runner validates the complete manifest before executing it, resets state on
+both sides of every session, and destroys the session and transport arenas.
+Linux defaults to `lsp differential`: all fresh processes plus one batch
+process, followed by normalized per-case byte/status comparison before the
+existing fixture specs. Windows defaults to `lsp batch`. Use
+`scripts/verify-lsp-transcript-batch.sh` for the fast manifest/parser mutation
+coverage, including raw malformed-frame input and incomplete result sets.
+
 `scripts/measure-unused-import-cost.sh` is the paired #3803 diagnostic harness
 for the unused legacy-string import experiment. It copies `src/*.tl` into two
 same-length scratch source trees under `target/`, injects only the

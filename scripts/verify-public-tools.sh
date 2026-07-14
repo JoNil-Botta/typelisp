@@ -2945,6 +2945,8 @@ fi
 # keeps its independent initialize/shutdown command-surface assertion.
 echo "[public-tools] LSP corpus via run-corpus.sh"
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
+    echo "[public-tools] LSP transcript batch manifest contract"
+    TYPELISP_BIN="$COMPILER" sh "$ROOT/scripts/verify-lsp-transcript-batch.sh"
     TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
 else
     fail "LSP corpus requires the public lsp command"

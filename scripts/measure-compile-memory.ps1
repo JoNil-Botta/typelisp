@@ -14,6 +14,19 @@ function Fail([string]$Message) {
     throw "[compile-memory] $Message"
 }
 
+function ConvertTo-NativeArgument([string]$Argument) {
+    if ($Argument.Length -gt 0 -and $Argument -notmatch '[\s"]') {
+        return $Argument
+    }
+
+    # CommandLineToArgvW quoting: double backslashes before quotes and before
+    # the closing quote. This fallback keeps the sampler usable from Windows
+    # PowerShell 5.1, whose ProcessStartInfo has no ArgumentList collection.
+    $escaped = [regex]::Replace($Argument, '(\\*)"', '$1$1\"')
+    $escaped = [regex]::Replace($escaped, '(\\+)$', '$1$1')
+    return '"' + $escaped + '"'
+}
+
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Fail "Windows process working-set/private-memory counters are required"
 }
@@ -36,7 +49,7 @@ $startInfo.UseShellExecute = $false
 $startInfo.CreateNoWindow = $true
 $startInfo.RedirectStandardOutput = $true
 $startInfo.RedirectStandardError = $true
-foreach ($argument in @(
+$compilerArguments = @(
     "compile",
     $inputPath,
     "-o",
@@ -46,12 +59,18 @@ foreach ($argument in @(
     "--opt-level",
     "$OptLevel",
     "--profile-allocations"
-)) {
-    $startInfo.ArgumentList.Add($argument)
-}
+)
 foreach ($root in $StdlibRoot) {
-    $startInfo.ArgumentList.Add("--stdlib-root")
-    $startInfo.ArgumentList.Add([System.IO.Path]::GetFullPath($root))
+    $compilerArguments += "--stdlib-root"
+    $compilerArguments += [System.IO.Path]::GetFullPath($root)
+}
+if ($null -ne $startInfo.ArgumentList) {
+    foreach ($argument in $compilerArguments) {
+        $startInfo.ArgumentList.Add($argument)
+    }
+} else {
+    $startInfo.Arguments = ($compilerArguments |
+        ForEach-Object { ConvertTo-NativeArgument $_ }) -join " "
 }
 
 $process = [System.Diagnostics.Process]::new()

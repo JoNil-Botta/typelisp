@@ -44889,10 +44889,10 @@
         referenced-functions
         buf)]))
 
-;; The out-of-memory message lives in the runtime prelude (stdlib/runtime.tl as
-;; `oom-abort`, exported `tl_oom_abort`); the allocator's
-;; abort paths `jmp tl_oom_abort` instead of writing backend rodata, so the
-;; allocator contributes no runtime data.
+;; Allocation-failure messages live in the runtime prelude (stdlib/runtime.tl):
+;; generic overflow/non-OS paths use `oom-abort`/`tl_oom_abort`, while Windows
+;; VirtualAlloc failures pass captured provenance to
+;; `tl_windows_allocation_abort`. The allocator contributes no runtime data.
 (define (compiler-backend-runtime-alloc-data-for-target
   [_target : CompilerBackendTarget]) : String
   "")
@@ -45559,8 +45559,8 @@ tl_region_mark:
 ;; GetCommandLineA, `_tl_start` is the entry thunk). There are no `_errno`,
 ;; `strlen`/`getenv`/`fflush` shims or `.L_tl_win_write_abort` OOM helper
 ;; (stdlib owns errno, env.tl walks GetEnvironmentStringsA itself;
-;; tl_setup_argv inlines its NUL scan; the OOM abort is the
-;; `tl_oom_abort` prelude handler).
+;; tl_setup_argv inlines its NUL scan; OOM reporting uses the `tl_oom_abort`
+;; and `tl_windows_allocation_abort` prelude handlers).
 (define (compiler-backend-runtime-windows-libc-shim-functions) : String
   "    .globl __chkstk
 __chkstk:
@@ -46006,14 +46006,14 @@ tl_arena_make:
     mov %rsp, %rbp
     push %rbx
     push %rsi
-    sub $32, %rsp
+    sub $48, %rsp
     xorq %rcx, %rcx
     movq $0x4000000, %rdx
     movq $0x2000, %r8
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_arena_make_win_abort
+    jz .L_tl_arena_make_win_reserve_os_fail
     movq %rax, %rbx
     movq %rbx, %rcx
     movq $0x400000, %rdx
@@ -46021,7 +46021,7 @@ tl_arena_make:
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_arena_make_win_abort
+    jz .L_tl_arena_make_win_initial_commit_os_fail
     movq $0, 0(%rbx)
     movq $0, 32(%rbx)
     movq %rbx, 40(%rbx)
@@ -46037,13 +46037,37 @@ tl_arena_make:
     addq $0x4000000, %rcx
     movq %rcx, 24(%rbx)
     movq %rbx, %rax
-    add $32, %rsp
+    add $48, %rsp
     popq %rsi
     popq %rbx
     popq %rbp
     ret
-.L_tl_arena_make_win_abort:
-    ud2
+.L_tl_arena_make_win_reserve_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    xorq %rcx, %rcx
+    xorq %rdx, %rdx
+    movq $0x4000000, %r8
+    xorq %r9, %r9
+    call tl_windows_allocation_abort
+    call tl_oom_abort
+.L_tl_arena_make_win_initial_commit_os_fail:
+    call GetLastError
+    movl %eax, %esi
+    movq %rbx, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq %rsi, 40(%rsp)
+    movq $0, 32(%rsp)
+    xorq %rcx, %rcx
+    movq $1, %rdx
+    movq $0x400000, %r8
+    movq $0x4000000, %r9
+    call tl_windows_allocation_abort
+    call tl_oom_abort
 
     .globl tl_arena_make_atomic
 tl_arena_make_atomic:
@@ -46051,14 +46075,14 @@ tl_arena_make_atomic:
     mov %rsp, %rbp
     push %rbx
     push %rsi
-    sub $32, %rsp
+    sub $48, %rsp
     xorq %rcx, %rcx
     movq $0x4000000, %rdx
     movq $0x2000, %r8
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_arena_make_atomic_win_abort
+    jz .L_tl_arena_make_atomic_win_reserve_os_fail
     movq %rax, %rbx
     movq %rbx, %rcx
     movq $0x400000, %rdx
@@ -46066,7 +46090,7 @@ tl_arena_make_atomic:
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_arena_make_atomic_win_abort
+    jz .L_tl_arena_make_atomic_win_initial_commit_os_fail
     movq $0, 0(%rbx)
     movq $0, 32(%rbx)
     movq %rbx, 40(%rbx)
@@ -46082,13 +46106,37 @@ tl_arena_make_atomic:
     addq $0x4000000, %rcx
     movq %rcx, 24(%rbx)
     movq %rbx, %rax
-    add $32, %rsp
+    add $48, %rsp
     popq %rsi
     popq %rbx
     popq %rbp
     ret
-.L_tl_arena_make_atomic_win_abort:
-    ud2
+.L_tl_arena_make_atomic_win_reserve_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    movq $1, %rcx
+    xorq %rdx, %rdx
+    movq $0x4000000, %r8
+    xorq %r9, %r9
+    call tl_windows_allocation_abort
+    call tl_oom_abort
+.L_tl_arena_make_atomic_win_initial_commit_os_fail:
+    call GetLastError
+    movl %eax, %esi
+    movq %rbx, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq %rsi, 40(%rsp)
+    movq $0, 32(%rsp)
+    movq $1, %rcx
+    movq $1, %rdx
+    movq $0x400000, %r8
+    movq $0x4000000, %r9
+    call tl_windows_allocation_abort
+    call tl_oom_abort
 
     .globl tl_arena_destroy
 tl_arena_destroy:
@@ -46337,7 +46385,7 @@ tl_region_reset:
     mov %rsp, %rbp
     push %rbx
     push %rsi
-    sub $32, %rsp
+    sub $48, %rsp
     movq %rcx, %rbx
     movq %rdx, %rsi
     subq %rbx, %rsi
@@ -46359,15 +46407,30 @@ tl_region_reset:
     movq $0x4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_alloc_win_commit_fail
+    jz .L_tl_alloc_win_commit_os_fail
     movq %rsi, 64(%rbx)
 .L_tl_alloc_win_commit_done:
     movq $1, %rax
     jmp .L_tl_alloc_win_commit_return
+.L_tl_alloc_win_commit_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq 64(%rbx), %rax
+    subq %rbx, %rax
+    movq %rax, 32(%rsp)
+    movq %rsi, %r8
+    subq 64(%rbx), %r8
+    movq 24(%rbx), %r9
+    subq %rbx, %r9
+    movq 48(%rbx), %rcx
+    andq $1, %rcx
+    movq $2, %rdx
+    call tl_windows_allocation_abort
 .L_tl_alloc_win_commit_fail:
     xorq %rax, %rax
 .L_tl_alloc_win_commit_return:
-    add $32, %rsp
+    add $48, %rsp
     popq %rsi
     popq %rbx
     popq %rbp
@@ -46512,7 +46575,7 @@ tl_alloc:
     movq $4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_alloc_atomic_commit_failed
+    jz .L_tl_alloc_atomic_reserve_os_fail
     movq %rax, -32(%rbp)
     movq -8(%rbp), %r11
     movq %r11, %rdx
@@ -46532,7 +46595,7 @@ tl_alloc:
     movq $4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_alloc_atomic_commit_failed
+    jz .L_tl_alloc_atomic_initial_commit_os_fail
     movq -24(%rbp), %r9
     movq -32(%rbp), %rax
     movq -16(%rbp), %rdx
@@ -46566,6 +46629,38 @@ tl_alloc:
       "    mov %rbp, %rsp
     pop %rbp
     ret
+.L_tl_alloc_atomic_reserve_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    movq -24(%rbp), %rax
+    movq $1, 48(%rax)
+    movq $1, %rcx
+    xorq %rdx, %rdx
+    movq -16(%rbp), %r8
+    xorq %r9, %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_abort
+.L_tl_alloc_atomic_initial_commit_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, -48(%rbp)
+    movq -32(%rbp), %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq -48(%rbp), %rax
+    movq -40(%rbp), %r8
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    movq -24(%rbp), %rax
+    movq $1, 48(%rax)
+    movq $1, %rcx
+    movq $1, %rdx
+    movq -16(%rbp), %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_abort
 .L_tl_alloc_new_arena:
     movq %r11, -8(%rbp)
     movq $0x4000000, %rdx
@@ -46582,7 +46677,7 @@ tl_alloc:
     movq $4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_alloc_abort
+    jz .L_tl_alloc_reserve_os_fail
     movq %rax, -32(%rbp)
     movq -8(%rbp), %r11
     movq %r11, %rdx
@@ -46602,7 +46697,7 @@ tl_alloc:
     movq $4, %r9
     call VirtualAlloc
     testq %rax, %rax
-    jz .L_tl_alloc_abort
+    jz .L_tl_alloc_initial_commit_os_fail
     movq -32(%rbp), %rax
     movq -16(%rbp), %rdx
     movq -8(%rbp), %r11
@@ -46645,6 +46740,34 @@ tl_alloc:
     mov %rbp, %rsp
     pop %rbp
     ret
+.L_tl_alloc_reserve_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    xorq %rcx, %rcx
+    xorq %rdx, %rdx
+    movq -16(%rbp), %r8
+    xorq %r9, %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_abort
+.L_tl_alloc_initial_commit_os_fail:
+    call GetLastError
+    movl %eax, %eax
+    movq %rax, -48(%rbp)
+    movq -32(%rbp), %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    call VirtualFree
+    movq -48(%rbp), %rax
+    movq -40(%rbp), %r8
+    movq %rax, 40(%rsp)
+    movq $0, 32(%rsp)
+    xorq %rcx, %rcx
+    movq $1, %rdx
+    movq -16(%rbp), %r9
+    call tl_windows_allocation_abort
+    jmp .L_tl_alloc_abort
 .L_tl_alloc_abort:
     sub $32, %rsp
     call tl_oom_abort
@@ -47560,6 +47683,7 @@ tl_tlci_call_macro_entry:
       (str_cat.str-cat
         "    .extern VirtualAlloc
     .extern VirtualFree
+    .extern GetLastError
     .extern ExitProcess
 "
         (if needs-write-exit

@@ -969,9 +969,6 @@
     (AstType.I64)
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
-(define (tltest-empty-main-decl) : AstDecl
-  (tltest-main-decl (make-array InlineTest 0)))
-
 (define (tltest-reach-mark-name [names : tltest_name_map.Map] [name : String]) : tltest_name_map.Map
   (let
     [result : tltest_name_map.Map names]
@@ -3531,18 +3528,15 @@
 (define (tltest-no-tests-run
   [source : String]
   [target : String]
-  [_mode : String]
+  [program : AstProgram]
+  [paths : AstDeclPathList]
   [roots : cli_svec.Vec]
   [opt-level : i64]) : i64
-  ;; With no inline tests there is no source harness to validate here. `test
-  ;; --check` owns source typechecking; run mode only needs the zero-test runner.
-  (tltest-run-direct
-    source
-    (ast-program (ast-decl-cons (tltest-empty-main-decl) (ast-decl-list-new)))
-    (ast-decl-path-cons source (ast-decl-path-list-new))
-    roots
-    target
-    opt-level))
+  ;; `test --check` owns source typechecking. Run the zero-test harness built
+  ;; from the pruned runtime declarations so backend-emitted allocator calls
+  ;; still have their exported abort handlers; the harness replaces the source
+  ;; `main` with the generated zero-test runner.
+  (tltest-run-direct source program paths roots target opt-level))
 
 (define (tltest-source-prefix-space? [c : char]) : bool
   (or (= c ' ') (= c '\t')))
@@ -4356,7 +4350,13 @@
         (let
           [status : i64
             (if (= count 0)
-              (tltest-no-tests-run source target "scalar" roots opt-level)
+              (tltest-no-tests-run
+                source
+                target
+                program
+                harness-paths
+                roots
+                opt-level)
               (tltest-run-direct
                 source
                 program
@@ -4606,7 +4606,13 @@
                       [(TestMode.Check)
                         (tltest-no-tests-check decls paths roots backend-target)]
                       [(TestMode.Run)
-                        (tltest-no-tests-run source target mode roots opt-level)])
+                        (tltest-no-tests-run
+                          source
+                          target
+                          program
+                          harness-paths
+                          roots
+                          opt-level)])
                     (match test-mode
                       [(TestMode.Check)
                         (tltest-check-only

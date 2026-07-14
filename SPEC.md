@@ -5683,6 +5683,13 @@ explicit low-level exception and carry no safety guarantees.
 - Non-escaping aggregate fat/inline storage is usually kept in the current
   stack frame.
 - Allocation goes through `tl_alloc`, a backend-emitted bump allocator.
+- Fatal page-allocation failures terminate with status 134 without allocating
+  while reporting the failure. On Windows, `VirtualAlloc` failures include the
+  ordinary/atomic arena kind, reserve/initial-commit/growth-commit operation,
+  unsigned-decimal attempted/reserved/committed byte counts, and the
+  immediately captured numeric `GetLastError` value. Arithmetic overflow
+  guards retain the generic allocation-failure diagnostic because no OS
+  allocation was attempted.
 - There is **no garbage collector** and no general `free`.
 - Each thread has its own default arena. Default-arena allocations remain
   live until the program exits unless an explicit same-thread region reset

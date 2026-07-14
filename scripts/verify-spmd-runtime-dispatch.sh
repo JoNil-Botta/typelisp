@@ -5,7 +5,8 @@ set -eu
 #
 # Builds one defdispatch program without --backend-mode, runs it once, and
 # checks that the selected variant is the best runnable ISA on this host:
-# avx512 when avx512bw is runnable, else avx2 when avx2 is runnable, else scalar.
+# avx512 when the F+BW+DQ backend contract is runnable, else avx2 when avx2 is
+# runnable, else scalar.
 # The fixture encodes both the selected variant and the shared SPMD checksum in
 # its exit code, so a wrong selection or wrong SIMD result fails the harness.
 
@@ -60,7 +61,7 @@ isa_available() {
 
 expected_variant=scalar
 expected_code=42
-if isa_available avx512bw; then
+if isa_available avx512; then
     expected_variant=avx512
     expected_code=170
 elif isa_available avx2; then
@@ -99,6 +100,8 @@ assert_asm_contains "__tl_dispatch_variant_avx512_"
 assert_asm_contains "dispatch_avx512"
 assert_asm_contains "cpuid"
 assert_asm_contains "xgetbv"
+# CPUID.7.0:EBX AVX512F (bit 16), DQ (17), and BW (30).
+assert_asm_contains "1073938432"
 assert_asm_contains "call *"
 
 RUN_OUT="$WORKDIR/run.out"

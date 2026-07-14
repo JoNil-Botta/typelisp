@@ -138,7 +138,7 @@ run_typelisp_mode() {
 
 run_typelisp_mode scalar 42 1
 if isa_available avx2; then run_typelisp_mode avx2 49 1; else run_typelisp_mode avx2 49 0; fi
-if isa_available avx512bw; then run_typelisp_mode avx512 57 1; else run_typelisp_mode avx512 57 0; fi
+if isa_available avx512; then run_typelisp_mode avx512 57 1; else run_typelisp_mode avx512 57 0; fi
 
 CC=${CC:-clang}
 command -v "$CC" >/dev/null 2>&1 || {
@@ -210,10 +210,10 @@ else
     echo "perfbench_stores optional ISPC AVX2 run skipped (host lacks AVX2)"
 fi
 if [ "${ISPC_PERFBENCH_STORES_AVX512:-0}" = 1 ]; then
-    if isa_available avx512bw; then
+    if isa_available avx512; then
         run_ispc_target avx512 avx512skx-x16 16 57
     else
-        echo "perfbench_stores: AVX-512 requested but host lacks AVX-512BW" >&2
+        echo "perfbench_stores: AVX-512 requested but host lacks runnable F+BW+DQ" >&2
         exit 1
     fi
 fi

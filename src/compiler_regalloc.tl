@@ -19,6 +19,12 @@
   (Nil)
   (Cons String (Box CompilerRegStringList)))
 
+;; Width is an instruction property, not a physical-register identity.  Keep
+;; the allocator-facing scalar/vector spellings below (they still carry the
+;; register class needed by emission), but collapse every XMM-family spelling
+;; to one canonical ownership key before comparing homes.  In particular %xmmN,
+;; %ymmN, %zmmN, and the width-neutral %vecN home all own the same hardware
+;; register N.
 (defenum CompilerRegLocation
   (Register String)
   ;; A 2-word register-group value lives in two GP registers (word0,
@@ -637,6 +643,58 @@
               (compiler-reg-string-cons
                 "%vec12"
                 (compiler-reg-string-cons "%vec13" CompilerRegStringList.Nil)))))))))
+
+;; Return the canonical physical XMM-family index, or -1 for a register in a
+;; different bank.  This parser is on hot conflict/scavenging paths, so it reads
+;; the four-byte prefix and decimal suffix in place without allocating a
+;; substring.  Malformed suffixes, leading-zero aliases, and non-x86 indices are
+;; rejected rather than silently assigned an ownership key.
+(define (compiler-reg-xmm-family-index [reg : String]) : i64
+  (let
+    [n : i64 (string.string-length reg)]
+    [family-prefix : bool
+      (and
+        (> n 4)
+        (= (string.string-ref reg 0) '%')
+        (or
+          (and
+            (or
+              (= (string.string-ref reg 1) 'x')
+              (= (string.string-ref reg 1) 'y')
+              (= (string.string-ref reg 1) 'z'))
+            (= (string.string-ref reg 2) 'm')
+            (= (string.string-ref reg 3) 'm'))
+          (and
+            (= (string.string-ref reg 1) 'v')
+            (= (string.string-ref reg 2) 'e')
+            (= (string.string-ref reg 3) 'c'))))]
+    (if (or (not family-prefix) (and (> n 5) (= (string.string-ref reg 4) '0')))
+      -1
+      (let
+        [i : i64 4]
+        [index : i64 0]
+        [valid : bool true]
+        (begin
+          (while (and valid (< i n))
+            (let
+              [digit : i64 (cast (string.string-ref reg i) : i64)]
+              (if (and (>= digit 48) (<= digit 57))
+                (begin
+                  (set! index (+ (* index 10) (- digit 48)))
+                  (set! i (+ i 1)))
+                (set! valid false))))
+          (if (and valid (<= index 31))
+            index
+            -1))))))
+
+(define (compiler-reg-registers-overlap? [left : String] [right : String]) : bool
+  (if (string.eq left right)
+    true
+    (let
+      [left-index : i64 (compiler-reg-xmm-family-index left)]
+      (and
+        (>= left-index 0)
+        (= left-index (compiler-reg-xmm-family-index right))))))
 
 (define (compiler-reg-mask-registers) : CompilerRegStringList
   (compiler-reg-string-cons
@@ -4431,7 +4489,7 @@
     [(CompilerRegActiveList.Cons item rest)
       (match item
         [(CompilerRegActive.Active _ _ active-reg)
-          (if (string.eq reg active-reg)
+          (if (compiler-reg-registers-overlap? reg active-reg)
             true
             (compiler-reg-active-contains-register? (box-get rest) reg))])]))
 
@@ -4444,7 +4502,9 @@
     [(CompilerRegActiveList.Cons item rest)
       (match item
         [(CompilerRegActive.Active active-var _ active-reg)
-          (if (and (string.eq reg active-reg) (not (= active-var except-var)))
+          (if (and
+            (compiler-reg-registers-overlap? reg active-reg)
+            (not (= active-var except-var)))
             true
             (compiler-reg-active-register-conflicts-except?
               (box-get rest)
@@ -4523,7 +4583,7 @@
     [(CompilerRegActiveList.Cons item rest)
       (match item
         [(CompilerRegActive.Active aid _ areg)
-          (if (string.eq reg areg)
+          (if (compiler-reg-registers-overlap? reg areg)
             (if (not
               (compiler-reg-vars-interfere-segmented-index? index var aid))
               (compiler-reg-active-register-conflicts?
@@ -4685,13 +4745,52 @@
     ;; equal ones as different only forgoes a copy elision (never unsound).
     [(CompilerRegLocation.Remat _) false]))
 
+;; Physical ownership overlap is deliberately separate from logical location
+;; equality.  A %vec6 vector home and a %xmm6 scalar home are different
+;; allocator-class spellings, but they cannot hold interfering values.  Spill
+;; slots retain their existing exact-offset alias rule.
+(define (compiler-reg-location-overlaps?
+  [left : CompilerRegLocation]
+  [right : CompilerRegLocation]) : bool
+  (match left
+    [(CompilerRegLocation.Register left-reg)
+      (match right
+        [(CompilerRegLocation.Register right-reg)
+          (compiler-reg-registers-overlap? left-reg right-reg)]
+        [(CompilerRegLocation.RegisterPair right-a right-b)
+          (or
+            (compiler-reg-registers-overlap? left-reg right-a)
+            (compiler-reg-registers-overlap? left-reg right-b))]
+        [_ false])]
+    [(CompilerRegLocation.RegisterPair left-a left-b)
+      (match right
+        [(CompilerRegLocation.Register right-reg)
+          (or
+            (compiler-reg-registers-overlap? left-a right-reg)
+            (compiler-reg-registers-overlap? left-b right-reg))]
+        [(CompilerRegLocation.RegisterPair right-a right-b)
+          (or
+            (compiler-reg-registers-overlap? left-a right-a)
+            (compiler-reg-registers-overlap? left-a right-b)
+            (compiler-reg-registers-overlap? left-b right-a)
+            (compiler-reg-registers-overlap? left-b right-b))]
+        [_ false])]
+    [(CompilerRegLocation.Spill left-offset)
+      (match right
+        [(CompilerRegLocation.Spill right-offset) (= left-offset right-offset)]
+        [_ false])]
+    [(CompilerRegLocation.Remat _) false]))
+
 (define (compiler-reg-location-uses-register?
   [location : CompilerRegLocation]
   [reg : String]) : bool
   (match location
-    [(CompilerRegLocation.Register found) (string.eq found reg)]
+    [(CompilerRegLocation.Register found)
+      (compiler-reg-registers-overlap? found reg)]
     [(CompilerRegLocation.RegisterPair a b)
-      (or (string.eq a reg) (string.eq b reg))]
+      (or
+        (compiler-reg-registers-overlap? a reg)
+        (compiler-reg-registers-overlap? b reg))]
     [(CompilerRegLocation.Spill _) false]
     [(CompilerRegLocation.Remat _) false]))
 
@@ -4988,7 +5087,7 @@
               ignore-var
               location)
             (if (and
-              (compiler-reg-location-eq? assigned-location location)
+              (compiler-reg-location-overlaps? assigned-location location)
               (compiler-reg-vars-interfere-index? intervals var assigned-var))
               true
               (compiler-reg-location-conflicts?
@@ -5027,7 +5126,7 @@
           location
           (+ index 1))]
       [(and
-          (compiler-reg-location-eq? (array-ref items index) location)
+          (compiler-reg-location-overlaps? (array-ref items index) location)
           (compiler-reg-vars-interfere-index? intervals var index))
         true]
       [else
@@ -5082,7 +5181,7 @@
           location
           (+ index 1))]
       [(and
-          (compiler-reg-location-eq? (array-ref items index) location)
+          (compiler-reg-location-overlaps? (array-ref items index) location)
           (compiler-reg-vars-interfere-segmented-index? intervals var index))
         true]
       [else
@@ -6667,6 +6766,7 @@
 (define (compiler-reg-fixed-preferred-register
   [assignments : CompilerRegAssignmentTable]
   [active : CompilerRegActiveList]
+  [regs : CompilerRegStringList]
   [preferences : (Array i64)]
   [interval-index : CompilerRegIntervalIndex]
   [var : i64]
@@ -6685,16 +6785,94 @@
           [(CompilerRegMaybeLocation.Some location)
             (match location
               [(CompilerRegLocation.Register reg)
-                (if (compiler-reg-active-register-conflicts-except?
-                  active
-                  reg
-                  preferred)
+                (if (or
+                  (not (compiler-reg-string-list-contains-physical? regs reg))
+                  (compiler-reg-active-register-conflicts?
+                    active
+                    reg
+                    interval-index
+                    var
+                    (compiler-live-set-empty)))
                   (CompilerRegMaybeString.No)
                   (CompilerRegMaybeString.Some reg))]
               [_ (CompilerRegMaybeString.No)])]
           [(CompilerRegMaybeLocation.No) (CompilerRegMaybeString.No)])))))
 
-(define (compiler-reg-assign-fixed-candidates
+(define (compiler-reg-string-list-contains-physical?
+  [regs : CompilerRegStringList]
+  [reg : String]) : bool
+  (match regs
+    [(CompilerRegStringList.Nil) false]
+    [(CompilerRegStringList.Cons candidate rest)
+      (if (compiler-reg-registers-overlap? candidate reg)
+        true
+        (compiler-reg-string-list-contains-physical? (box-get rest) reg))]))
+
+(define (compiler-reg-assignment-table-physical-active-from
+  [assignments : CompilerRegAssignmentTable]
+  [interval-index : CompilerRegIntervalIndex]
+  [regs : CompilerRegStringList]
+  [index : i64]
+  [active : CompilerRegActiveList]) : CompilerRegActiveList
+  (let
+    [present : (Array i64) (struct-get assignments present)]
+    [items : (Array CompilerRegLocation) (struct-get assignments items)]
+    (if (>= index (array-length present))
+      active
+      (let
+        [next : CompilerRegActiveList
+          (if (= (array-ref present index) 0)
+            active
+            (match (array-ref items index)
+              [(CompilerRegLocation.Register reg)
+                (if (compiler-reg-string-list-contains-physical? regs reg)
+                  (match (compiler-reg-interval-index-lookup
+                    interval-index
+                    index)
+                    [(CompilerRegMaybeInterval.Some interval)
+                      (match interval
+                        [(CompilerRegInterval.Interval _ _ end)
+                          (compiler-reg-active-insert
+                            active
+                            (CompilerRegActive.Active index end reg))])]
+                    [(CompilerRegMaybeInterval.No) active])
+                  active)]
+              [_ active]))]
+        (compiler-reg-assignment-table-physical-active-from
+          assignments
+          interval-index
+          regs
+          (+ index 1)
+          next)))))
+
+;; Fixed-candidate allocation follows scalar allocation. Seed its active set
+;; once with every already-assigned owner of the candidate physical bank; the
+;; normal segment-aware interference query then prevents a future scalar
+;; %xmm6 and an overlapping %vec6 from being accepted as independent homes.
+;; This keeps candidate selection O(assignments + candidates * pool) rather
+;; than rescanning the full scalar table for every register choice.
+(define (compiler-reg-first-free-fixed-register
+  [regs : CompilerRegStringList]
+  [active : CompilerRegActiveList]
+  [interval-index : CompilerRegIntervalIndex]
+  [var : i64]) : CompilerRegMaybeString
+  (match regs
+    [(CompilerRegStringList.Nil) (CompilerRegMaybeString.No)]
+    [(CompilerRegStringList.Cons reg rest)
+      (if (compiler-reg-active-register-conflicts?
+        active
+        reg
+        interval-index
+        var
+        (compiler-live-set-empty))
+        (compiler-reg-first-free-fixed-register
+          (box-get rest)
+          active
+          interval-index
+          var)
+        (CompilerRegMaybeString.Some reg))]))
+
+(define (compiler-reg-assign-fixed-candidates-from
   [candidates : CompilerRegIntervalList]
   [regs : CompilerRegStringList]
   [active : CompilerRegActiveList]
@@ -6714,13 +6892,14 @@
               (compiler-reg-fixed-preferred-register
                 assignments
                 expired
+                regs
                 preferences
                 interval-index
                 var
                 start)]
             (match preferred
               [(CompilerRegMaybeString.Some reg)
-                (compiler-reg-assign-fixed-candidates
+                (compiler-reg-assign-fixed-candidates-from
                   (box-get rest)
                   regs
                   (compiler-reg-active-insert
@@ -6733,20 +6912,21 @@
                   preferences
                   interval-index)]
               [(CompilerRegMaybeString.No)
-                (if (=
-                  (compiler-reg-active-count expired)
-                  (compiler-reg-string-list-count regs))
-                  (compiler-reg-assign-fixed-candidates
-                    (box-get rest)
-                    regs
-                    expired
-                    assignments
-                    preferences
-                    interval-index)
-                  (let
-                    [reg : String
-                      (compiler-reg-first-free-register regs expired)]
-                    (compiler-reg-assign-fixed-candidates
+                (match (compiler-reg-first-free-fixed-register
+                  regs
+                  expired
+                  interval-index
+                  var)
+                  [(CompilerRegMaybeString.No)
+                    (compiler-reg-assign-fixed-candidates-from
+                      (box-get rest)
+                      regs
+                      expired
+                      assignments
+                      preferences
+                      interval-index)]
+                  [(CompilerRegMaybeString.Some reg)
+                    (compiler-reg-assign-fixed-candidates-from
                       (box-get rest)
                       regs
                       (compiler-reg-active-insert
@@ -6757,7 +6937,27 @@
                         var
                         (CompilerRegLocation.Register reg))
                       preferences
-                      interval-index)))]))])]))
+                      interval-index)])]))])]))
+
+(define (compiler-reg-assign-fixed-candidates
+  [candidates : CompilerRegIntervalList]
+  [regs : CompilerRegStringList]
+  [active : CompilerRegActiveList]
+  [assignments : CompilerRegAssignmentTable]
+  [preferences : (Array i64)]
+  [interval-index : CompilerRegIntervalIndex]) : CompilerRegAssignState
+  (compiler-reg-assign-fixed-candidates-from
+    candidates
+    regs
+    (compiler-reg-assignment-table-physical-active-from
+      assignments
+      interval-index
+      regs
+      0
+      active)
+    assignments
+    preferences
+    interval-index))
 
 ;; Call points (#perf/correctness): the primary integer pool admits only
 ;; callee-saved registers, so a value live across a call keeps its home safely.
@@ -9430,7 +9630,7 @@
         [(CompilerRegAssignment.Assignment assigned-var assigned-location)
           (if (or
             (= assigned-var ignore-var)
-            (not (compiler-reg-location-eq? assigned-location location)))
+            (not (compiler-reg-location-overlaps? assigned-location location)))
             (compiler-reg-loop-split-location-conflicts-region?
               (box-get rest)
               intervals
@@ -9491,7 +9691,7 @@
           (if (or
             (= acc (- 0 1))
             (= assigned-var ignore-var)
-            (not (compiler-reg-location-eq? assigned-location location)))
+            (not (compiler-reg-location-overlaps? assigned-location location)))
             (compiler-reg-loop-split-region-occupant
               (box-get rest)
               intervals
@@ -13888,7 +14088,7 @@
     (begin
       (while (and (< i rcount) (< found 0))
         (begin
-          (if (string.eq (array-ref reg-arr i) reg)
+          (if (compiler-reg-registers-overlap? (array-ref reg-arr i) reg)
             (set! found i)
             unit)
           (set! i (+ i 1))))
@@ -21839,7 +22039,7 @@
       (match item
         [(CompilerRegAssignment.Assignment var assigned-location)
           (if (and
-            (compiler-reg-location-eq? assigned-location location)
+            (compiler-reg-location-overlaps? assigned-location location)
             (compiler-reg-remat-interval-active-at? intervals var point))
             true
             (compiler-reg-remat-location-conflicts-at?
@@ -28491,6 +28691,174 @@
                         (compiler-reg-same-value-clobber-census-ok?)
                         (compiler-reg-sv-multi-ok?))])])])])]))
 
+(cfg
+  test
+  (define (compiler-reg-xmm-ownership-fixed-home
+    [preassigned-reg : String]
+    [intervals : CompilerRegIntervalList]
+    [candidate-start : i64]
+    [candidate-end : i64]
+    [regs : CompilerRegStringList]) : String
+    (let
+      [index : CompilerRegIntervalIndex
+        (compiler-reg-interval-index-build intervals 2)]
+      [assignments : CompilerRegAssignmentTable
+        (compiler-reg-assignment-table-insert
+          (compiler-reg-assignment-table-make 2)
+          0
+          (CompilerRegLocation.Register preassigned-reg))]
+      [candidates : CompilerRegIntervalList
+        (compiler-reg-interval-cons
+          (CompilerRegInterval.Interval 1 candidate-start candidate-end)
+          CompilerRegIntervalList.Nil)]
+      (match (compiler-reg-assign-fixed-candidates
+        candidates
+        regs
+        CompilerRegActiveList.Nil
+        assignments
+        (array.make-array i64 0)
+        index)
+        [(CompilerRegAssignState.State _ out)
+          (match (compiler-reg-assignment-table-lookup out 1)
+            [(CompilerRegMaybeLocation.Some location)
+              (compiler-reg-location-primary-register location)]
+            [(CompilerRegMaybeLocation.No) ""])]))))
+
+(cfg
+  test
+  (define (compiler-reg-xmm-ownership-intervals
+    [pre-start : i64]
+    [pre-end : i64]
+    [candidate-start : i64]
+    [candidate-end : i64]) : CompilerRegIntervalList
+    (compiler-reg-interval-cons
+      (CompilerRegInterval.Interval 0 pre-start pre-end)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 1 candidate-start candidate-end)
+        CompilerRegIntervalList.Nil))))
+
+(cfg
+  test
+  (define (compiler-reg-xmm-ownership-segment-hole-intervals) : CompilerRegIntervalList
+    (compiler-reg-interval-cons
+      (CompilerRegInterval.Interval 0 0 2)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 1 3 5)
+        (compiler-reg-interval-cons
+          (CompilerRegInterval.Interval 0 6 8)
+          CompilerRegIntervalList.Nil)))))
+
+(cfg
+  test
+  (define (compiler-reg-xmm-physical-ownership-ok?) : bool
+    (let
+      [vector-pool : CompilerRegStringList
+        (compiler-reg-string-cons
+          "%vec6"
+          (compiler-reg-string-cons "%vec7" CompilerRegStringList.Nil))]
+      [scalar-spelled-pool : CompilerRegStringList
+        (compiler-reg-string-cons
+          "%xmm6"
+          (compiler-reg-string-cons "%xmm7" CompilerRegStringList.Nil))]
+      [overlap : CompilerRegIntervalList
+        (compiler-reg-xmm-ownership-intervals 0 8 2 6)]
+      [boundary-reuse : CompilerRegIntervalList
+        (compiler-reg-xmm-ownership-intervals 0 2 2 6)]
+      (and
+        ;; AVX2/AVX-512 spellings and the width-neutral allocator home all own
+        ;; the same physical register as an f32/f64 scalar XMM spelling.
+        (compiler-reg-registers-overlap? "%xmm6" "%vec6")
+        (compiler-reg-registers-overlap? "%xmm6" "%ymm6")
+        (compiler-reg-registers-overlap? "%xmm6" "%zmm6")
+        (not (compiler-reg-registers-overlap? "%xmm6" "%vec7"))
+        (not (compiler-reg-registers-overlap? "%xmm6" "%k6"))
+        (= (compiler-reg-xmm-family-index "%xmm13") 13)
+        (= (compiler-reg-xmm-family-index "%ymm13") 13)
+        (= (compiler-reg-xmm-family-index "%zmm13") 13)
+        (= (compiler-reg-xmm-family-index "%vec13") 13)
+        (= (compiler-reg-xmm-family-index "%xmm06") -1)
+        ;; Deliberate f32/f64-vs-vector collisions reject physical index 6 at
+        ;; every emitted width and select the next vector home.
+        (string.eq
+          (compiler-reg-xmm-ownership-fixed-home
+            "%xmm6"
+            overlap
+            2
+            6
+            vector-pool)
+          "%vec7")
+        (string.eq
+          (compiler-reg-xmm-ownership-fixed-home
+            "%ymm6"
+            overlap
+            2
+            6
+            vector-pool)
+          "%vec7")
+        (string.eq
+          (compiler-reg-xmm-ownership-fixed-home
+            "%zmm6"
+            overlap
+            2
+            6
+            vector-pool)
+          "%vec7")
+        ;; Mask-on-vector allocation uses the same ownership query even when
+        ;; the preassignment and candidate pools use opposite class spellings.
+        (string.eq
+          (compiler-reg-xmm-ownership-fixed-home
+            "%vec6"
+            overlap
+            2
+            6
+            scalar-spelled-pool)
+          "%xmm7")
+        ;; Touching ranges and a segmented phi/liveness hole may safely reuse
+        ;; the physical register; real segment overlap still rejects it.
+        (string.eq
+          (compiler-reg-xmm-ownership-fixed-home
+            "%xmm6"
+            boundary-reuse
+            2
+            6
+            vector-pool)
+          "%vec6")
+        (string.eq
+          (compiler-reg-xmm-ownership-fixed-home
+            "%xmm6"
+            (compiler-reg-xmm-ownership-segment-hole-intervals)
+            3
+            5
+            vector-pool)
+          "%vec6")))))
+
+(cfg
+  test
+  (define (compiler-reg-dense-mask-on-vector-homes-ok?) : bool
+    (let
+      [list-func : CompilerIrFunction (compiler-reg-mask-home-function)]
+      [dense-func : CompilerIrFunction
+        (compiler-ir-function-compact-blocks list-func)]
+      [list-assignments : CompilerRegAssignmentList
+        (compiler-reg-plan-assignments
+          (compiler-reg-plan-function-avx2 list-func))]
+      [dense-assignments : CompilerRegAssignmentList
+        (compiler-reg-plan-assignments
+          (compiler-reg-plan-function-avx2 dense-func))]
+      (and
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup list-assignments 0)
+          "%vec6")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup list-assignments 1)
+          "%vec7")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup dense-assignments 0)
+          "%vec6")
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup dense-assignments 1)
+          "%vec7")))))
+
 (define (compiler-reg-vector-mask-homes-ok?) : bool
   (match (compiler-reg-plan-function (compiler-reg-vector-home-function))
     [(CompilerRegPlan.Plan vector-assignments _ _ _ _ _)
@@ -29341,6 +29709,8 @@
     (compiler-reg-xmm-clobbers-ok?)
     (compiler-reg-coalesce-ok?)
     (cfg test (compiler-reg-liveness-handle-ok?) true)
+    (cfg test (compiler-reg-xmm-physical-ownership-ok?) true)
+    (cfg test (compiler-reg-dense-mask-on-vector-homes-ok?) true)
     (compiler-reg-vector-mask-homes-ok?)
     (compiler-reg-segmented-interference-ok?)
     (compiler-reg-hole-aware-register-reuse-ok?)))
@@ -29420,6 +29790,22 @@
     (compiler-regalloc-storage-self-test?))
     42
     (io.panic "regalloc: smoke mismatch")))
+
+(cfg
+  test
+  (test
+    regalloc-xmm-physical-ownership
+    (test.assert-true
+      (compiler-reg-xmm-physical-ownership-ok?)
+      "XMM-family physical ownership rejects overlap and permits liveness holes")))
+
+(cfg
+  test
+  (test
+    regalloc-xmm-dense-mask-on-vector
+    (test.assert-true
+      (compiler-reg-dense-mask-on-vector-homes-ok?)
+      "dense/list mask-on-vector allocation keeps canonical XMM ownership")))
 
 (cfg
   test

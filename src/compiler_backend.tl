@@ -1387,49 +1387,133 @@
           " x "
           (compiler-ir-type-name elem-ty))))))
 
+(define compiler-backend-xmm-family-xmm : (Array String)
+  (make-array
+    "%xmm0"
+    "%xmm1"
+    "%xmm2"
+    "%xmm3"
+    "%xmm4"
+    "%xmm5"
+    "%xmm6"
+    "%xmm7"
+    "%xmm8"
+    "%xmm9"
+    "%xmm10"
+    "%xmm11"
+    "%xmm12"
+    "%xmm13"
+    "%xmm14"
+    "%xmm15"
+    "%xmm16"
+    "%xmm17"
+    "%xmm18"
+    "%xmm19"
+    "%xmm20"
+    "%xmm21"
+    "%xmm22"
+    "%xmm23"
+    "%xmm24"
+    "%xmm25"
+    "%xmm26"
+    "%xmm27"
+    "%xmm28"
+    "%xmm29"
+    "%xmm30"
+    "%xmm31"))
+(define compiler-backend-xmm-family-ymm : (Array String)
+  (make-array
+    "%ymm0"
+    "%ymm1"
+    "%ymm2"
+    "%ymm3"
+    "%ymm4"
+    "%ymm5"
+    "%ymm6"
+    "%ymm7"
+    "%ymm8"
+    "%ymm9"
+    "%ymm10"
+    "%ymm11"
+    "%ymm12"
+    "%ymm13"
+    "%ymm14"
+    "%ymm15"
+    "%ymm16"
+    "%ymm17"
+    "%ymm18"
+    "%ymm19"
+    "%ymm20"
+    "%ymm21"
+    "%ymm22"
+    "%ymm23"
+    "%ymm24"
+    "%ymm25"
+    "%ymm26"
+    "%ymm27"
+    "%ymm28"
+    "%ymm29"
+    "%ymm30"
+    "%ymm31"))
+(define compiler-backend-xmm-family-zmm : (Array String)
+  (make-array
+    "%zmm0"
+    "%zmm1"
+    "%zmm2"
+    "%zmm3"
+    "%zmm4"
+    "%zmm5"
+    "%zmm6"
+    "%zmm7"
+    "%zmm8"
+    "%zmm9"
+    "%zmm10"
+    "%zmm11"
+    "%zmm12"
+    "%zmm13"
+    "%zmm14"
+    "%zmm15"
+    "%zmm16"
+    "%zmm17"
+    "%zmm18"
+    "%zmm19"
+    "%zmm20"
+    "%zmm21"
+    "%zmm22"
+    "%zmm23"
+    "%zmm24"
+    "%zmm25"
+    "%zmm26"
+    "%zmm27"
+    "%zmm28"
+    "%zmm29"
+    "%zmm30"
+    "%zmm31"))
+
+(define (compiler-backend-xmm-family-register [home : String] [width : String]) : String
+  (let
+    [index : i64 (compiler-reg-xmm-family-index home)]
+    (cond
+      [(or (< index 0) (>= index 32)) ""]
+      [(string.eq width "xmm")
+        (array-ref compiler-backend-xmm-family-xmm index)]
+      [(string.eq width "zmm")
+        (array-ref compiler-backend-xmm-family-zmm index)]
+      [(string.eq width "ymm")
+        (array-ref compiler-backend-xmm-family-ymm index)]
+      [else ""])))
+
 (define (compiler-backend-vector-home-to-ymm [home : String]) : String
-  (cond
-    [(string.eq home "%vec6") "%ymm6"]
-    [(string.eq home "%vec7") "%ymm7"]
-    [(string.eq home "%vec8") "%ymm8"]
-    [(string.eq home "%vec9") "%ymm9"]
-    [(string.eq home "%vec10") "%ymm10"]
-    [(string.eq home "%vec11") "%ymm11"]
-    [(string.eq home "%vec12") "%ymm12"]
-    [(string.eq home "%vec13") "%ymm13"]
-    [else ""]))
+  (compiler-backend-xmm-family-register home "ymm"))
 
 (define (compiler-backend-vector-home-to-xmm [home : String]) : String
-  (cond
-    [(string.eq home "%vec6") "%xmm6"]
-    [(string.eq home "%vec7") "%xmm7"]
-    [(string.eq home "%vec8") "%xmm8"]
-    [(string.eq home "%vec9") "%xmm9"]
-    [(string.eq home "%vec10") "%xmm10"]
-    [(string.eq home "%vec11") "%xmm11"]
-    [(string.eq home "%vec12") "%xmm12"]
-    [(string.eq home "%vec13") "%xmm13"]
-    [else ""]))
+  (compiler-backend-xmm-family-register home "xmm"))
 
 (define (compiler-backend-xmm-to-ymm [reg : String]) : String
-  (cond
-    [(string.eq reg "%xmm2") "%ymm2"]
-    [(string.eq reg "%xmm3") "%ymm3"]
-    [(string.eq reg "%xmm4") "%ymm4"]
-    [(string.eq reg "%xmm5") "%ymm5"]
-    [else ""]))
+  (compiler-backend-xmm-family-register reg "ymm"))
 
 (define (compiler-backend-vector-home-to-zmm [home : String]) : String
-  (cond
-    [(string.eq home "%vec6") "%zmm6"]
-    [(string.eq home "%vec7") "%zmm7"]
-    [(string.eq home "%vec8") "%zmm8"]
-    [(string.eq home "%vec9") "%zmm9"]
-    [(string.eq home "%vec10") "%zmm10"]
-    [(string.eq home "%vec11") "%zmm11"]
-    [(string.eq home "%vec12") "%zmm12"]
-    [(string.eq home "%vec13") "%zmm13"]
-    [else ""]))
+  (compiler-backend-xmm-family-register home "zmm"))
 
 (define (compiler-backend-vector-temp-candidates) : (Array String)
   (make-array
@@ -1529,7 +1613,9 @@
       (compiler-backend-vector-home-to-ymm home))))
 
 (define (compiler-backend-vector-home-valid? [home : String]) : bool
-  (> (string.string-length (compiler-backend-vector-home-to-ymm home)) 0))
+  (let
+    [index : i64 (compiler-reg-xmm-family-index home)]
+    (and (>= index 6) (<= index 13))))
 
 (define (compiler-backend-vector-var-home
   [assignments : CompilerRegAssignmentList]
@@ -2665,52 +2751,10 @@
       "%ymm15")))
 
 (define (compiler-backend-vector-reg-lower-ymm [reg : String]) : String
-  (cond
-    [(string.eq reg "%zmm6") "%ymm6"]
-    [(string.eq reg "%zmm7") "%ymm7"]
-    [(string.eq reg "%zmm8") "%ymm8"]
-    [(string.eq reg "%zmm9") "%ymm9"]
-    [(string.eq reg "%zmm10") "%ymm10"]
-    [(string.eq reg "%zmm11") "%ymm11"]
-    [(string.eq reg "%zmm12") "%ymm12"]
-    [(string.eq reg "%zmm13") "%ymm13"]
-    [(string.eq reg "%zmm14") "%ymm14"]
-    [(string.eq reg "%zmm15") "%ymm15"]
-    [(string.eq reg "%ymm6") "%ymm6"]
-    [(string.eq reg "%ymm7") "%ymm7"]
-    [(string.eq reg "%ymm8") "%ymm8"]
-    [(string.eq reg "%ymm9") "%ymm9"]
-    [(string.eq reg "%ymm10") "%ymm10"]
-    [(string.eq reg "%ymm11") "%ymm11"]
-    [(string.eq reg "%ymm12") "%ymm12"]
-    [(string.eq reg "%ymm13") "%ymm13"]
-    [(string.eq reg "%ymm14") "%ymm14"]
-    [(string.eq reg "%ymm15") "%ymm15"]
-    [else ""]))
+  (compiler-backend-xmm-family-register reg "ymm"))
 
 (define (compiler-backend-vector-reg-lower-xmm [reg : String]) : String
-  (cond
-    [(string.eq reg "%zmm6") "%xmm6"]
-    [(string.eq reg "%zmm7") "%xmm7"]
-    [(string.eq reg "%zmm8") "%xmm8"]
-    [(string.eq reg "%zmm9") "%xmm9"]
-    [(string.eq reg "%zmm10") "%xmm10"]
-    [(string.eq reg "%zmm11") "%xmm11"]
-    [(string.eq reg "%zmm12") "%xmm12"]
-    [(string.eq reg "%zmm13") "%xmm13"]
-    [(string.eq reg "%zmm14") "%xmm14"]
-    [(string.eq reg "%zmm15") "%xmm15"]
-    [(string.eq reg "%ymm6") "%xmm6"]
-    [(string.eq reg "%ymm7") "%xmm7"]
-    [(string.eq reg "%ymm8") "%xmm8"]
-    [(string.eq reg "%ymm9") "%xmm9"]
-    [(string.eq reg "%ymm10") "%xmm10"]
-    [(string.eq reg "%ymm11") "%xmm11"]
-    [(string.eq reg "%ymm12") "%xmm12"]
-    [(string.eq reg "%ymm13") "%xmm13"]
-    [(string.eq reg "%ymm14") "%xmm14"]
-    [(string.eq reg "%ymm15") "%xmm15"]
-    [else ""]))
+  (compiler-backend-xmm-family-register reg "xmm"))
 
 (define (compiler-backend-vector-unsupported-message
   [width : String]

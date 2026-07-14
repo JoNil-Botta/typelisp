@@ -46,32 +46,30 @@
 (defenum OptAggregatePointer
   (Pointer i64 i64))
 
-(defstruct OptAggregatePointerList
-  (slots (Array OptAggregatePointer))
-  (len i64))
+(import (vector.vector OptAggregatePointer core) as opt_aggregate_pointer_vec)
 
 (defenum OptAggregateAccess
   (Store i64 AstType)
   (Load i64 i64 AstType))
 
-(vector.family
-  OptAggregateAccess
-  OptAggregateAccessList
-  opt-aggregate-access-vec)
+(import (vector.vector OptAggregateAccess core) as opt_aggregate_access_vec)
 
 (defenum OptAggregateAllocCandidate
-  (Candidate i64 AstType i64 OptAggregatePointerList OptAggregateAccessList))
+  (Candidate
+    i64
+    AstType
+    i64
+    opt_aggregate_pointer_vec.Vec
+    opt_aggregate_access_vec.Vec))
 
-(defstruct OptAggregateAllocCandidateList
-  (slots (Array OptAggregateAllocCandidate))
-  (len i64))
+(import (vector.vector OptAggregateAllocCandidate core) as opt_aggregate_candidate_vec)
 
 (defenum OptMaybeAggregateAlloc
   (No)
   (Some i64 AstType i64))
 
 (defenum OptAggregateScanResult
-  (Ok OptAggregatePointerList OptAggregateAccessList)
+  (Ok opt_aggregate_pointer_vec.Vec opt_aggregate_access_vec.Vec)
   (Reject))
 
 ;; Aggregate field-load SROA supporting types.
@@ -93,12 +91,10 @@
 (defenum OptAggregatePromoteSlot
   (Slot i64 i64))
 
-(defstruct OptAggregatePromoteSlotList
-  (slots (Array OptAggregatePromoteSlot))
-  (len i64))
+(import (vector.vector OptAggregatePromoteSlot core) as opt_aggregate_promote_slot_vec)
 
 (defenum OptAggregatePromoteBuild
-  (Build OptAggregatePromoteSlotList i64))
+  (Build opt_aggregate_promote_slot_vec.Vec i64))
 
 (define opt-aggregate-list-initial-capacity : i64
   4)
@@ -2592,137 +2588,32 @@
         (OptMaybeAggregateAlloc.No))]
     [_ (OptMaybeAggregateAlloc.No)]))
 
-(define (opt-aggregate-pointer-list-with-capacity [capacity : i64]) : OptAggregatePointerList
-  (OptAggregatePointerList (array.make-array OptAggregatePointer capacity) 0))
-
-(define (opt-aggregate-list-next-capacity [capacity : i64]) : i64
-  (if (< capacity opt-aggregate-list-initial-capacity)
-    opt-aggregate-list-initial-capacity
-    (* capacity 2)))
-
-(define (opt-aggregate-pointer-list-grow [ptrs : OptAggregatePointerList]) : OptAggregatePointerList
-  (let
-    [old-slots : (Array OptAggregatePointer) (struct-get ptrs slots)]
-    [len : i64 (struct-get ptrs len)]
-    [new-slots : (Array OptAggregatePointer)
-      (array.make-array
-        OptAggregatePointer
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (OptAggregatePointerList new-slots len))))
-
-(define (opt-aggregate-pointer-list-push
-  [ptrs : OptAggregatePointerList]
-  [ptr : OptAggregatePointer]) : OptAggregatePointerList
-  (let
-    [slots : (Array OptAggregatePointer) (struct-get ptrs slots)]
-    [len : i64 (struct-get ptrs len)]
-    (if (>= len (array-length slots))
-      (opt-aggregate-pointer-list-push
-        (opt-aggregate-pointer-list-grow ptrs)
-        ptr)
-      (begin
-        (array-set! slots len ptr)
-        (OptAggregatePointerList slots (+ len 1))))))
-
-(define (opt-aggregate-candidate-list-with-capacity [capacity : i64]) : OptAggregateAllocCandidateList
-  (OptAggregateAllocCandidateList
-    (array.make-array OptAggregateAllocCandidate capacity)
-    0))
-
-(define (opt-aggregate-candidate-list-grow
-  [candidates : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
-  (let
-    [old-slots : (Array OptAggregateAllocCandidate)
-      (struct-get candidates slots)]
-    [len : i64 (struct-get candidates len)]
-    [new-slots : (Array OptAggregateAllocCandidate)
-      (array.make-array
-        OptAggregateAllocCandidate
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (OptAggregateAllocCandidateList new-slots len))))
-
-(define (opt-aggregate-candidate-list-push
-  [candidates : OptAggregateAllocCandidateList]
-  [candidate : OptAggregateAllocCandidate]) : OptAggregateAllocCandidateList
-  (let
-    [slots : (Array OptAggregateAllocCandidate) (struct-get candidates slots)]
-    [len : i64 (struct-get candidates len)]
-    (if (>= len (array-length slots))
-      (opt-aggregate-candidate-list-push
-        (opt-aggregate-candidate-list-grow candidates)
-        candidate)
-      (begin
-        (array-set! slots len candidate)
-        (OptAggregateAllocCandidateList slots (+ len 1))))))
-
-(define (opt-aggregate-promote-slot-list-with-capacity [capacity : i64]) : OptAggregatePromoteSlotList
-  (OptAggregatePromoteSlotList
-    (array.make-array OptAggregatePromoteSlot capacity)
-    0))
-
-(define (opt-aggregate-promote-slot-list-grow
-  [slots-list : OptAggregatePromoteSlotList]) : OptAggregatePromoteSlotList
-  (let
-    [old-slots : (Array OptAggregatePromoteSlot) (struct-get slots-list slots)]
-    [len : i64 (struct-get slots-list len)]
-    [new-slots : (Array OptAggregatePromoteSlot)
-      (array.make-array
-        OptAggregatePromoteSlot
-        (opt-aggregate-list-next-capacity (array-length old-slots)))]
-    [i : i64 0]
-    (begin
-      (while (< i len)
-        (begin
-          (array-set! new-slots i (array-ref old-slots i))
-          (set! i (+ i 1))))
-      (OptAggregatePromoteSlotList new-slots len))))
-
-(define (opt-aggregate-promote-slot-list-push
-  [slots-list : OptAggregatePromoteSlotList]
-  [slot : OptAggregatePromoteSlot]) : OptAggregatePromoteSlotList
-  (let
-    [slots : (Array OptAggregatePromoteSlot) (struct-get slots-list slots)]
-    [len : i64 (struct-get slots-list len)]
-    (if (>= len (array-length slots))
-      (opt-aggregate-promote-slot-list-push
-        (opt-aggregate-promote-slot-list-grow slots-list)
-        slot)
-      (begin
-        (array-set! slots len slot)
-        (OptAggregatePromoteSlotList slots (+ len 1))))))
-
 (define (opt-aggregate-pointer-list-lookup-from
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [var : i64]
   [index : i64]) : option_i64.Option
   (if (< index 0)
     (option_i64.None)
-    (match (array-ref (struct-get ptrs slots) index)
+    (match (opt_aggregate_pointer_vec.get
+      (& ptrs)
+      index
+      (OptAggregatePointer.Pointer 0 0))
       [(OptAggregatePointer.Pointer ptr-var offset)
         (if (= ptr-var var)
           (option_i64.Some offset)
           (opt-aggregate-pointer-list-lookup-from ptrs var (- index 1)))])))
 
 (define (opt-aggregate-pointer-list-lookup
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [var : i64]) : option_i64.Option
-  (opt-aggregate-pointer-list-lookup-from ptrs var (- (struct-get ptrs len) 1)))
+  (opt-aggregate-pointer-list-lookup-from
+    ptrs
+    var
+    (- (opt_aggregate_pointer_vec.len (& ptrs)) 1)))
 
 (define (opt-aggregate-value-offset
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [value : CompilerIrValue]) : option_i64.Option
   (match value
     [(CompilerIrValue.Var var)
@@ -2733,7 +2624,7 @@
 
 (define (opt-aggregate-value-has-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [value : CompilerIrValue]) : bool
   (match (opt-aggregate-value-offset base ptrs value)
     [(option_i64.Some _) true]
@@ -2741,7 +2632,7 @@
 
 (define (opt-aggregate-call-args-array-has-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [values : (Array CompilerIrValue)]
   [index : i64]) : bool
   (if (>= index (array-length values))
@@ -2752,7 +2643,7 @@
 
 (define (opt-aggregate-call-args-has-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [args : CompilerIrCallArgs]) : bool
   (match args
     [(CompilerIrCallArgs.Nil) false]
@@ -2767,7 +2658,7 @@
 
 (define (opt-aggregate-spmd-call-args-has-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [args : CompilerIrSpmdCallArgList]) : bool
   (match args
     [(CompilerIrSpmdCallArgList.Nil) false]
@@ -2796,7 +2687,7 @@
 
 (define (opt-aggregate-maybe-value-has-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [maybe : CompilerIrMaybeValue]) : bool
   (match maybe
     [(CompilerIrMaybeValue.No) false]
@@ -2805,7 +2696,7 @@
 
 (define (opt-aggregate-phi-inputs-have-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [inputs : CompilerIrPhiInputList]) : bool
   (match (compiler-ir-phi-input-list-force-cons inputs)
     [(CompilerIrPhiInputList.Nil) false]
@@ -2821,7 +2712,7 @@
 
 (define (opt-aggregate-raw-var-is-pointer?
   [base : i64]
-  [ptrs : OptAggregatePointerList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
   [var : i64]) : bool
   (or
     (= var base)
@@ -2832,7 +2723,7 @@
 (define (opt-aggregate-instr-has-pointer?
   [instr : CompilerIrInstr]
   [base : i64]
-  [ptrs : OptAggregatePointerList]) : bool
+  [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
   (match instr
     [(CompilerIrInstr.Mov _ src _)
       (opt-aggregate-value-has-pointer? base ptrs src)]
@@ -2994,7 +2885,7 @@
 (define (opt-aggregate-instrs-touch-candidate?
   [instrs : CompilerIrInstrList]
   [base : i64]
-  [ptrs : OptAggregatePointerList]) : bool
+  [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
   (match instrs
     [(CompilerIrInstrList.Nil) false]
     [(CompilerIrInstrList.Cons instr rest)
@@ -3005,7 +2896,7 @@
 (define (opt-aggregate-instr-known-safe?
   [instr : CompilerIrInstr]
   [base : i64]
-  [ptrs : OptAggregatePointerList]) : bool
+  [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
   (match instr
     [(CompilerIrInstr.Call dst name _ _)
       (and (= dst base) (string.eq name "tl_alloc"))]
@@ -3028,7 +2919,7 @@
 (define (opt-aggregate-instr-crosses-unknown-effect?
   [instr : CompilerIrInstr]
   [base : i64]
-  [ptrs : OptAggregatePointerList]) : bool
+  [ptrs : opt_aggregate_pointer_vec.Vec]) : bool
   (if (opt-aggregate-instr-known-safe? instr base ptrs)
     false
     (compiler-ir-effect-invalidates-cse? (compiler-ir-instr-effect instr))))
@@ -3038,8 +2929,8 @@
   [ty : AstType]
   [size : i64]
   [instrs : CompilerIrInstrList]
-  [ptrs : OptAggregatePointerList]
-  [accesses : OptAggregateAccessList]
+  [ptrs : opt_aggregate_pointer_vec.Vec]
+  [accesses : opt_aggregate_access_vec.Vec]
   [seen-alloc : bool]) : OptAggregateScanResult
   (match instrs
     [(CompilerIrInstrList.Nil)
@@ -3082,18 +2973,20 @@
               [(option_i64.Some base-offset)
                 (match offset
                   [(CompilerIrValue.I64 field-offset)
-                    (opt-aggregate-scan-instrs
-                      base
-                      ty
-                      size
-                      (box-get rest)
-                      (opt-aggregate-pointer-list-push
-                        ptrs
+                    (begin
+                      (opt_aggregate_pointer_vec.push
+                        (&mut ptrs)
                         (OptAggregatePointer.Pointer
                           dst
                           (+ base-offset field-offset)))
-                      accesses
-                      true)]
+                      (opt-aggregate-scan-instrs
+                        base
+                        ty
+                        size
+                        (box-get rest)
+                        ptrs
+                        accesses
+                        true))]
                   [_ (OptAggregateScanResult.Reject)])]
               [(option_i64.None)
                 (if (opt-aggregate-value-has-pointer? base ptrs offset)
@@ -3110,7 +3003,7 @@
             (match (opt-aggregate-value-offset base ptrs src)
               [(option_i64.Some offset)
                 (begin
-                  (opt-aggregate-access-vec-push
+                  (opt_aggregate_access_vec.push
                     (&mut accesses)
                     (OptAggregateAccess.Load dst offset load-ty))
                   (opt-aggregate-scan-instrs
@@ -3141,7 +3034,7 @@
                 (if (opt-aggregate-value-has-pointer? base ptrs value)
                   (OptAggregateScanResult.Reject)
                   (begin
-                    (opt-aggregate-access-vec-push
+                    (opt_aggregate_access_vec.push
                       (&mut accesses)
                       (OptAggregateAccess.Store offset store-ty))
                     (opt-aggregate-scan-instrs
@@ -3197,14 +3090,14 @@
     ty
     size
     instrs
-    (opt-aggregate-pointer-list-with-capacity
+    (opt_aggregate_pointer_vec.with-capacity
       opt-aggregate-list-initial-capacity)
-    (opt-aggregate-access-vec-with-capacity opt-aggregate-list-initial-capacity)
+    (opt_aggregate_access_vec.with-capacity opt-aggregate-list-initial-capacity)
     false))
 
 (define (opt-aggregate-candidates-from-instrs
   [scan : CompilerIrInstrList]
-  [candidates : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
+  [candidates : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
   (match scan
     [(CompilerIrInstrList.Nil) candidates]
     [(CompilerIrInstrList.Cons instr rest)
@@ -3212,16 +3105,16 @@
         [(OptMaybeAggregateAlloc.Some base ty size)
           (match (opt-aggregate-classify-one base ty size scan)
             [(OptAggregateScanResult.Ok ptrs accesses)
-              (opt-aggregate-candidates-from-instrs
-                (box-get rest)
-                (opt-aggregate-candidate-list-push
-                  candidates
+              (begin
+                (opt_aggregate_candidate_vec.push
+                  (&mut candidates)
                   (OptAggregateAllocCandidate.Candidate
                     base
                     ty
                     size
                     ptrs
-                    accesses)))]
+                    accesses))
+                (opt-aggregate-candidates-from-instrs (box-get rest) candidates))]
             [(OptAggregateScanResult.Reject)
               (opt-aggregate-candidates-from-instrs (box-get rest) candidates)])]
         [(OptMaybeAggregateAlloc.No)
@@ -3261,48 +3154,35 @@
       (opt-aggregate-flatten-blocks (compiler-ir-block-seq-to-list seq))]))
 
 (define (opt-aggregate-allocation-candidates-function
-  [func : CompilerIrFunction]) : OptAggregateAllocCandidateList
+  [func : CompilerIrFunction]) : opt_aggregate_candidate_vec.Vec
   (match func
     [(CompilerIrFunction.Function _ _ _ _ blocks)
       (let
         [instrs : CompilerIrInstrList (opt-aggregate-flatten-blocks blocks)]
         (opt-aggregate-candidates-from-instrs
           instrs
-          (opt-aggregate-candidate-list-with-capacity
+          (opt_aggregate_candidate_vec.with-capacity
             opt-aggregate-list-initial-capacity)))]))
 
 (define (opt-aggregate-candidate-list-append
-  [left : OptAggregateAllocCandidateList]
-  [right : OptAggregateAllocCandidateList]) : OptAggregateAllocCandidateList
+  [left : opt_aggregate_candidate_vec.Vec]
+  [right : opt_aggregate_candidate_vec.Vec]) : opt_aggregate_candidate_vec.Vec
   (let
-    [left-count : i64 (struct-get left len)]
-    [right-count : i64 (struct-get right len)]
-    [total : i64 (+ left-count right-count)]
-    [slots : (Array OptAggregateAllocCandidate)
-      (array.make-array OptAggregateAllocCandidate total)]
+    [right-count : i64 (opt_aggregate_candidate_vec.len (& right))]
     [i : i64 0]
     (begin
-      (while (< i left-count)
+      (while (< i right-count)
         (begin
-          (array-set! slots i (array-ref (struct-get left slots) i))
+          (opt_aggregate_candidate_vec.push
+            (&mut left)
+            (array-ref (opt_aggregate_candidate_vec.slots (& right)) i))
           (set! i (+ i 1))))
-      (let
-        [j : i64 0]
-        (begin
-          (while (< j right-count)
-            (begin
-              (array-set!
-                slots
-                (+ left-count j)
-                (array-ref (struct-get right slots) j))
-              (set! j (+ j 1))))
-          (OptAggregateAllocCandidateList slots total))))))
+      left)))
 
 (define (opt-aggregate-allocation-candidates-functions
-  [functions : CompilerIrFunctionList]) : OptAggregateAllocCandidateList
+  [functions : CompilerIrFunctionList]) : opt_aggregate_candidate_vec.Vec
   (match functions
-    [(CompilerIrFunctionList.Nil)
-      (opt-aggregate-candidate-list-with-capacity 0)]
+    [(CompilerIrFunctionList.Nil) (opt_aggregate_candidate_vec.with-capacity 0)]
     [(CompilerIrFunctionList.Cons func rest)
       (opt-aggregate-candidate-list-append
         (opt-aggregate-allocation-candidates-function func)
@@ -3311,25 +3191,26 @@
       (opt-aggregate-allocation-candidates-functions
         (compiler-ir-function-seq-to-list seq))]))
 
-(define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : OptAggregateAllocCandidateList
+(define (opt-aggregate-allocation-candidates [program : CompilerIrProgram]) : opt_aggregate_candidate_vec.Vec
   (match program
     [(CompilerIrProgram.Program _ functions _)
       (opt-aggregate-allocation-candidates-functions functions)]))
 
 (define (opt-aggregate-candidate-list-count
-  [candidates : OptAggregateAllocCandidateList]) : i64
-  (struct-get candidates len))
+  [candidates : opt_aggregate_candidate_vec.Vec]) : i64
+  (opt_aggregate_candidate_vec.len (& candidates)))
 
-(define (opt-aggregate-pointer-list-count [ptrs : OptAggregatePointerList]) : i64
-  (struct-get ptrs len))
+(define (opt-aggregate-pointer-list-count
+  [ptrs : opt_aggregate_pointer_vec.Vec]) : i64
+  (opt_aggregate_pointer_vec.len (& ptrs)))
 
 (define (opt-aggregate-access-list-load-count-from
-  [accesses : OptAggregateAccessList]
+  [accesses : opt_aggregate_access_vec.Vec]
   [index : i64]) : i64
-  (if (>= index (opt-aggregate-access-vec-len (& accesses)))
+  (if (>= index (opt_aggregate_access_vec.len (& accesses)))
     0
     (+
-      (match (opt-aggregate-access-vec-get
+      (match (opt_aggregate_access_vec.get
         (& accesses)
         index
         (OptAggregateAccess.Store 0 (AstType.Unit)))
@@ -3338,16 +3219,16 @@
       (opt-aggregate-access-list-load-count-from accesses (+ index 1)))))
 
 (define (opt-aggregate-access-list-load-count
-  [accesses : OptAggregateAccessList]) : i64
+  [accesses : opt_aggregate_access_vec.Vec]) : i64
   (opt-aggregate-access-list-load-count-from accesses 0))
 
 (define (opt-aggregate-access-list-store-count-from
-  [accesses : OptAggregateAccessList]
+  [accesses : opt_aggregate_access_vec.Vec]
   [index : i64]) : i64
-  (if (>= index (opt-aggregate-access-vec-len (& accesses)))
+  (if (>= index (opt_aggregate_access_vec.len (& accesses)))
     0
     (+
-      (match (opt-aggregate-access-vec-get
+      (match (opt_aggregate_access_vec.get
         (& accesses)
         index
         (OptAggregateAccess.Store 0 (AstType.Unit)))
@@ -3356,7 +3237,7 @@
       (opt-aggregate-access-list-store-count-from accesses (+ index 1)))))
 
 (define (opt-aggregate-access-list-store-count
-  [accesses : OptAggregateAccessList]) : i64
+  [accesses : opt_aggregate_access_vec.Vec]) : i64
   (opt-aggregate-access-list-store-count-from accesses 0))
 
 ;; --- aggregate stack promotion ----------------------------------------------
@@ -3423,14 +3304,14 @@
   (/ (+ size 7) 8))
 
 (define (opt-aggregate-promote-build
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [next-frame : i64]) : OptAggregatePromoteBuild
   (let
-    [candidate-slots : (Array OptAggregateAllocCandidate)
-      (struct-get candidates slots)]
-    [candidate-count : i64 (struct-get candidates len)]
-    [promote-slots : OptAggregatePromoteSlotList
-      (opt-aggregate-promote-slot-list-with-capacity
+    [candidate-slots : (& candidates (Array OptAggregateAllocCandidate))
+      (opt_aggregate_candidate_vec.slots (& candidates))]
+    [candidate-count : i64 (opt_aggregate_candidate_vec.len (& candidates))]
+    [promote-slots : opt_aggregate_promote_slot_vec.Vec
+      (opt_aggregate_promote_slot_vec.with-capacity
         opt-aggregate-list-initial-capacity)]
     [frame : i64 next-frame]
     [index : i64 0]
@@ -3444,35 +3325,36 @@
                   [slot-count : i64 (opt-aggregate-stack-slot-count size)]
                   [storage : i64 (+ frame (- slot-count 1))]
                   (begin
-                    (set!
-                      promote-slots
-                      (opt-aggregate-promote-slot-list-push
-                        promote-slots
-                        (OptAggregatePromoteSlot.Slot base storage)))
+                    (opt_aggregate_promote_slot_vec.push
+                      (&mut promote-slots)
+                      (OptAggregatePromoteSlot.Slot base storage))
                     (set! frame (+ frame slot-count))))
                 unit)])
           (set! index (+ index 1))))
       (OptAggregatePromoteBuild.Build promote-slots frame))))
 
 (define (opt-aggregate-promote-lookup-from
-  [slot-list : OptAggregatePromoteSlotList]
+  [slot-list : opt_aggregate_promote_slot_vec.Vec]
   [base : i64]
   [index : i64]) : option_i64.Option
-  (if (>= index (struct-get slot-list len))
+  (if (>= index (opt_aggregate_promote_slot_vec.len (& slot-list)))
     (option_i64.None)
-    (match (array-ref (struct-get slot-list slots) index)
+    (match (opt_aggregate_promote_slot_vec.get
+      (& slot-list)
+      index
+      (OptAggregatePromoteSlot.Slot 0 0))
       [(OptAggregatePromoteSlot.Slot found storage)
         (if (= found base)
           (option_i64.Some storage)
           (opt-aggregate-promote-lookup-from slot-list base (+ index 1)))])))
 
 (define (opt-aggregate-promote-lookup
-  [slots : OptAggregatePromoteSlotList]
+  [slots : opt_aggregate_promote_slot_vec.Vec]
   [base : i64]) : option_i64.Option
   (opt-aggregate-promote-lookup-from slots base 0))
 
 (define (opt-aggregate-promote-rewrite-instr
-  [slots : OptAggregatePromoteSlotList]
+  [slots : opt_aggregate_promote_slot_vec.Vec]
   [instr : CompilerIrInstr]) : CompilerIrInstrList
   (match (opt-aggregate-direct-alloc instr)
     [(OptMaybeAggregateAlloc.Some base ty _)
@@ -3489,7 +3371,7 @@
       (compiler-ir-instr-cons instr CompilerIrInstrList.Nil)]))
 
 (define (opt-aggregate-promote-instr-seq-from
-  [slots : OptAggregatePromoteSlotList]
+  [slots : opt_aggregate_promote_slot_vec.Vec]
   [instrs : CompilerIrInstrSeq]
   [index : i64]
   [acc : CompilerIrInstrList]) : CompilerIrInstrList
@@ -3506,7 +3388,7 @@
         acc))))
 
 (define (opt-aggregate-promote-instr-seq
-  [slots : OptAggregatePromoteSlotList]
+  [slots : opt_aggregate_promote_slot_vec.Vec]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-aggregate-promote-instr-seq-from
     slots
@@ -3515,14 +3397,14 @@
     CompilerIrInstrList.Nil))
 
 (define (opt-aggregate-promote-block
-  [slots : OptAggregatePromoteSlotList]
+  [slots : opt_aggregate_promote_slot_vec.Vec]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (compiler-ir-block label (opt-aggregate-promote-instr-seq slots instrs))]))
 
 (define (opt-aggregate-promote-blocks
-  [slots : OptAggregatePromoteSlotList]
+  [slots : opt_aggregate_promote_slot_vec.Vec]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -3541,7 +3423,7 @@
           (opt-aggregate-allocation-candidates-function func)
           frame)
           [(OptAggregatePromoteBuild.Build slots promoted-frame)
-            (if (= (struct-get slots len) 0)
+            (if (= (opt_aggregate_promote_slot_vec.len (& slots)) 0)
               func
               (CompilerIrFunction.Function
                 name
@@ -3573,13 +3455,13 @@
         [(option_i64.None) (OptAggregateLocation.No)])]))
 
 (define (opt-aggregate-location-for-value-from
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [value : CompilerIrValue]
   [index : i64]) : OptAggregateLocation
-  (if (>= index (struct-get candidates len))
+  (if (>= index (opt_aggregate_candidate_vec.len (& candidates)))
     (OptAggregateLocation.No)
     (match (opt-aggregate-candidate-location
-      (array-ref (struct-get candidates slots) index)
+      (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) index)
       value)
       [(OptAggregateLocation.Some base offset)
         (OptAggregateLocation.Some base offset)]
@@ -3587,12 +3469,12 @@
         (opt-aggregate-location-for-value-from candidates value (+ index 1))])))
 
 (define (opt-aggregate-location-for-value
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [value : CompilerIrValue]) : OptAggregateLocation
   (opt-aggregate-location-for-value-from candidates value 0))
 
 (define (opt-aggregate-value-is-candidate-pointer?
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [value : CompilerIrValue]) : bool
   (match (opt-aggregate-location-for-value candidates value)
     [(OptAggregateLocation.Some _ _) true]
@@ -3753,7 +3635,7 @@
     [_ facts]))
 
 (define (opt-aggregate-sroa-store
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [ptr : CompilerIrValue]
   [value : CompilerIrValue]
@@ -3775,7 +3657,7 @@
       (OptAggregateSroaResult.Result (OptAggregateFieldFacts.Nil) instr)]))
 
 (define (opt-aggregate-sroa-load
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [dst : i64]
   [src : CompilerIrValue]
@@ -3797,7 +3679,7 @@
         (OptAggregateSroaResult.Result next-facts instr)])))
 
 (define (opt-aggregate-sroa-instr
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [instr : CompilerIrInstr]) : OptAggregateSroaResult
   (match instr
@@ -3815,7 +3697,7 @@
           (OptAggregateSroaResult.Result def-facts instr)))]))
 
 (define (opt-aggregate-sroa-instr-seq-from
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [facts : OptAggregateFieldFacts]
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : CompilerIrInstrList
@@ -3835,7 +3717,7 @@
             (+ index 1)))])))
 
 (define (opt-aggregate-sroa-instr-seq
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [instrs : CompilerIrInstrSeq]) : CompilerIrInstrList
   (opt-aggregate-sroa-instr-seq-from
     candidates
@@ -3844,14 +3726,14 @@
     0))
 
 (define (opt-aggregate-sroa-block
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [block : CompilerIrBlock]) : CompilerIrBlock
   (match block
     [(CompilerIrBlock.Block label instrs)
       (compiler-ir-block label (opt-aggregate-sroa-instr-seq candidates instrs))]))
 
 (define (opt-aggregate-sroa-blocks
-  [candidates : OptAggregateAllocCandidateList]
+  [candidates : opt_aggregate_candidate_vec.Vec]
   [blocks : CompilerIrBlockList]) : CompilerIrBlockList
   (match blocks
     [(CompilerIrBlockList.Nil) (CompilerIrBlockList.Nil)]
@@ -3866,7 +3748,7 @@
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
-        [candidates : OptAggregateAllocCandidateList
+        [candidates : opt_aggregate_candidate_vec.Vec
           (opt-aggregate-allocation-candidates-function func)]
         (CompilerIrFunction.Function
           name
@@ -34897,21 +34779,21 @@
   (let
     [instrs : CompilerIrInstrList (opt-aggregate-positive-instrs)]
     [instr-count : i64 (compiler-ir-instr-list-count instrs)]
-    [candidates : OptAggregateAllocCandidateList
+    [candidates : opt_aggregate_candidate_vec.Vec
       (opt-aggregate-allocation-candidates (opt-spans-program instrs))]
     (if (= (opt-aggregate-candidate-list-count candidates) 1)
-      (match (array-ref (struct-get candidates slots) 0)
+      (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 0)
         [(OptAggregateAllocCandidate.Candidate base ty size ptrs accesses)
           (and
             (= base 1)
             (= size 16)
             (opt-type-eq ty (AstType.Struct (intern "Pair")))
             (= (opt-aggregate-pointer-list-count ptrs) 3)
-            (= (opt-aggregate-access-vec-len (& accesses)) 3)
+            (= (opt_aggregate_access_vec.len (& accesses)) 3)
             (= (opt-aggregate-access-list-store-count accesses) 2)
             (= (opt-aggregate-access-list-load-count accesses) 1)
-            (< (array-length (struct-get ptrs slots)) instr-count)
-            (< (opt-aggregate-access-vec-capacity (& accesses)) instr-count))])
+            (< (opt_aggregate_pointer_vec.capacity (& ptrs)) instr-count)
+            (< (opt_aggregate_access_vec.capacity (& accesses)) instr-count))])
       false)))
 
 ;; Grow the append-ordered classifier scratch vector past its initial capacity.
@@ -34920,64 +34802,124 @@
 ;; access entry.
 (define (opt-aggregate-access-vector-growth-ok?) : bool
   (let
-    [accesses : OptAggregateAccessList
-      (opt-aggregate-access-vec-with-capacity 1)]
+    [accesses : opt_aggregate_access_vec.Vec
+      (opt_aggregate_access_vec.with-capacity 1)]
     (begin
-      (opt-aggregate-access-vec-push
+      (opt_aggregate_access_vec.push
         (&mut accesses)
         (OptAggregateAccess.Store 0 (AstType.I64)))
-      (opt-aggregate-access-vec-push
+      (opt_aggregate_access_vec.push
         (&mut accesses)
         (OptAggregateAccess.Load 11 0 (AstType.I64)))
-      (opt-aggregate-access-vec-push
+      (opt_aggregate_access_vec.push
         (&mut accesses)
         (OptAggregateAccess.Store 8 (AstType.Bool)))
-      (opt-aggregate-access-vec-push
+      (opt_aggregate_access_vec.push
         (&mut accesses)
         (OptAggregateAccess.Load 12 8 (AstType.Bool)))
-      (opt-aggregate-access-vec-push
+      (opt_aggregate_access_vec.push
         (&mut accesses)
         (OptAggregateAccess.Store 16 (AstType.U64)))
       (and
-        (= (opt-aggregate-access-vec-len (& accesses)) 5)
-        (>= (opt-aggregate-access-vec-capacity (& accesses)) 5)
+        (= (opt_aggregate_access_vec.len (& accesses)) 5)
+        (>= (opt_aggregate_access_vec.capacity (& accesses)) 5)
         (= (opt-aggregate-access-list-store-count accesses) 3)
         (= (opt-aggregate-access-list-load-count accesses) 2)
-        (match (opt-aggregate-access-vec-get
+        (match (opt_aggregate_access_vec.get
           (& accesses)
           0
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Store offset ty)
             (and (= offset 0) (opt-type-eq ty (AstType.I64)))]
           [_ false])
-        (match (opt-aggregate-access-vec-get
+        (match (opt_aggregate_access_vec.get
           (& accesses)
           1
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Load dst offset ty)
             (and (= dst 11) (= offset 0) (opt-type-eq ty (AstType.I64)))]
           [_ false])
-        (match (opt-aggregate-access-vec-get
+        (match (opt_aggregate_access_vec.get
           (& accesses)
           2
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Store offset ty)
             (and (= offset 8) (opt-type-eq ty (AstType.Bool)))]
           [_ false])
-        (match (opt-aggregate-access-vec-get
+        (match (opt_aggregate_access_vec.get
           (& accesses)
           3
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Load dst offset ty)
             (and (= dst 12) (= offset 8) (opt-type-eq ty (AstType.Bool)))]
           [_ false])
-        (match (opt-aggregate-access-vec-get
+        (match (opt_aggregate_access_vec.get
           (& accesses)
           4
           (OptAggregateAccess.Store -1 (AstType.Unit)))
           [(OptAggregateAccess.Store offset ty)
             (and (= offset 16) (opt-type-eq ty (AstType.U64)))]
           [_ false])))))
+
+;; Exercise the three former hand-written scratch wrappers past their initial
+;; capacity. Pointer facts must retain append order and newest-match lookup;
+;; candidates and promotion slots must keep the same selection order.
+(define (opt-aggregate-core-vector-growth-ok?) : bool
+  (let
+    [ptrs : opt_aggregate_pointer_vec.Vec
+      (opt_aggregate_pointer_vec.with-capacity 1)]
+    [candidates : opt_aggregate_candidate_vec.Vec
+      (opt_aggregate_candidate_vec.with-capacity 1)]
+    [promote-slots : opt_aggregate_promote_slot_vec.Vec
+      (opt_aggregate_promote_slot_vec.with-capacity 1)]
+    [index : i64 0]
+    (begin
+      (while (< index 5)
+        (begin
+          (opt_aggregate_pointer_vec.push
+            (&mut ptrs)
+            (OptAggregatePointer.Pointer
+              (if (or (= index 0) (= index 4))
+                10
+                (+ 10 index))
+              (* index 8)))
+          (opt_aggregate_candidate_vec.push
+            (&mut candidates)
+            (OptAggregateAllocCandidate.Candidate
+              index
+              (AstType.Unit)
+              (+ index 1)
+              (opt_aggregate_pointer_vec.new)
+              (opt_aggregate_access_vec.new)))
+          (opt_aggregate_promote_slot_vec.push
+            (&mut promote-slots)
+            (OptAggregatePromoteSlot.Slot index (+ 100 index)))
+          (set! index (+ index 1))))
+      (and
+        (= (opt_aggregate_pointer_vec.len (& ptrs)) 5)
+        (>= (opt_aggregate_pointer_vec.capacity (& ptrs)) 5)
+        (= (opt_aggregate_candidate_vec.len (& candidates)) 5)
+        (>= (opt_aggregate_candidate_vec.capacity (& candidates)) 5)
+        (= (opt_aggregate_promote_slot_vec.len (& promote-slots)) 5)
+        (>= (opt_aggregate_promote_slot_vec.capacity (& promote-slots)) 5)
+        (match (opt_aggregate_pointer_vec.get
+          (& ptrs)
+          0
+          (OptAggregatePointer.Pointer -1 -1))
+          [(OptAggregatePointer.Pointer var offset)
+            (and (= var 10) (= offset 0))])
+        (match (opt-aggregate-pointer-list-lookup ptrs 10)
+          [(option_i64.Some offset) (= offset 32)]
+          [(option_i64.None) false])
+        (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 0)
+          [(OptAggregateAllocCandidate.Candidate base _ size _ _)
+            (and (= base 0) (= size 1))])
+        (match (array-ref (opt_aggregate_candidate_vec.slots (& candidates)) 4)
+          [(OptAggregateAllocCandidate.Candidate base _ size _ _)
+            (and (= base 4) (= size 5))])
+        (match (opt-aggregate-promote-lookup promote-slots 4)
+          [(option_i64.Some storage) (= storage 104)]
+          [(option_i64.None) false])))))
 
 (define (compiler-optimize-aggregate-candidate-self-test) : i64
   (cond
@@ -34998,6 +34940,7 @@
         (opt-aggregate-no-candidates? (opt-aggregate-predicated-memory-instrs)))
       9]
     [(not (opt-aggregate-access-vector-growth-ok?)) 10]
+    [(not (opt-aggregate-core-vector-growth-ok?)) 11]
     [else 42]))
 
 (define (opt-aggregate-array-local-instrs) : CompilerIrInstrList

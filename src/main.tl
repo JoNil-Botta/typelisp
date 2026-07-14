@@ -290,6 +290,7 @@ REPL Commands:
 (define (cli-lsp-help-text) : String
   "Usage:
     typelisp lsp [--stdlib-root <dir>...] [--prefix-cache-stats]
+    typelisp lsp --transcript-batch <manifest> [--stdlib-root <dir>...] [--prefix-cache-stats]
 
 Summary:
     Start the stdio LSP diagnostics server.
@@ -297,6 +298,7 @@ Summary:
 Options:
     --stdlib-root <dir>            Search root for stdlib/... imports
     --prefix-cache-stats           Print typecheck prefix-cache stats on stderr when the server exits
+    --transcript-batch <file>      Run file-bounded transcript sessions serially (test tooling)
 ")
 
 (define (cli-new-help-text) : String

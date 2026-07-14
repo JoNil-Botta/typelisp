@@ -8607,7 +8607,7 @@
           (lower-reach-add-runtime-prelude-string-helper
             all-functions
             state
-            (ast-extern-metadata-symbol metadata))]
+            (ast-extern-metadata-symbol (box-get metadata)))]
         [(AstExternKind.Value) state])]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -14282,7 +14282,8 @@
             (match kind
               [(AstExternKind.Function)
                 (let
-                  [symbol : String (ast-extern-metadata-symbol metadata)]
+                  [symbol : String
+                    (ast-extern-metadata-symbol (box-get metadata))]
                   (if (lower-atomic-public-symbol? symbol)
                     symbol
                     ""))]
@@ -47181,9 +47182,10 @@
                             (CompilerIrExtern.Extern
                               (intern-str name)
                               (tc-type-without-regions resolved-ty)
-                              (ast-extern-metadata-abi metadata)
-                              (ast-extern-metadata-symbol metadata)
-                              (ast-extern-metadata-link-inputs metadata)
+                              (ast-extern-metadata-abi (box-get metadata))
+                              (ast-extern-metadata-symbol (box-get metadata))
+                              (ast-extern-metadata-link-inputs
+                                (box-get metadata))
                               false)
                             cur-externs))
                         (set! cur-decls rest))))]

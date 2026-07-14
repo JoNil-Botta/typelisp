@@ -2453,7 +2453,7 @@
         [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Extern _ _ metadata _)
-            (if (string.eq (ast-extern-metadata-symbol metadata) want)
+            (if (string.eq (ast-extern-metadata-symbol (box-get metadata)) want)
               true
               (compiler-load-decl-list-has-extern-symbol? rest want))]
           [_ (compiler-load-decl-list-has-extern-symbol? rest want)]))]))
@@ -4991,7 +4991,7 @@
           (CompilerLoadSurfaceExtern)
           (intern-str name)
           module-id
-          (CompilerLoadSurfaceExternSignature kind meta ty)
+          (CompilerLoadSurfaceExternSignature kind (box-get meta) ty)
           (CompilerLoadSurfaceMacroOther)
           false
           false
@@ -7407,11 +7407,12 @@
     (AstDecl.Extern
       name
       (AstExternKind.Function)
-      (AstExternMetadata.Metadata
-        (AstExternAbi.C)
-        (compiler-load-package-user-symbol logical)
-        (ast-extern-link-input-list-new)
-        false)
+      (box
+        (AstExternMetadata.Metadata
+          (AstExternAbi.C)
+          (compiler-load-package-user-symbol logical)
+          (ast-extern-link-input-list-new)
+          false))
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
@@ -12274,7 +12275,7 @@
     (match decl
       [(AstDecl.Extern _ _ metadata _)
         (string.eq
-          (ast-extern-metadata-symbol metadata)
+          (ast-extern-metadata-symbol (box-get metadata))
           "_tl_dep_src_lib_helper")]
       [_ false])))
 

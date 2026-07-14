@@ -22193,7 +22193,8 @@
               [(AstDecl.Extern _ kind metadata _)
                 (match kind
                   [(AstExternKind.Function)
-                    (TcMaybeExternAbi.Some (ast-extern-metadata-abi metadata))]
+                    (TcMaybeExternAbi.Some
+                      (ast-extern-metadata-abi (box-get metadata)))]
                   [(AstExternKind.Value) (TcMaybeExternAbi.No)])]
               [_ (TcMaybeExternAbi.No)])]
           [(ResultAstDecl.Err _) (TcMaybeExternAbi.No)])
@@ -26825,7 +26826,8 @@
             (match kind
               [(AstExternKind.Function)
                 (let
-                  [symbol : String (ast-extern-metadata-symbol metadata)]
+                  [symbol : String
+                    (ast-extern-metadata-symbol (box-get metadata))]
                   (if (tc-spmd-atomic-public-symbol? symbol)
                     (TcMaybeString.Some symbol)
                     (TcMaybeString.No)))]
@@ -62438,7 +62440,7 @@
           [body : AstExpr (ast-node-get body-box)]
           (tc-check-defmacro name ctx top-env params ret body))]
       [(AstDecl.Extern _ kind metadata ty)
-        (tc-check-extern-decl ctx kind metadata ty)]
+        (tc-check-extern-decl ctx kind (box-get metadata) ty)]
       [(AstDecl.DefDispatch name variants)
         (match (tc-dispatch-decl-type ctx (intern-str name) variants)
           [(ResultTcType.Ok _) ResultTcUnit.Ok]

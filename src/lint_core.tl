@@ -2836,7 +2836,7 @@
           true
           (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
     [(AstDecl.Extern _ _ meta ty)
-      (if (lint-extern-metadata-uses-import? meta alias module-name)
+      (if (lint-extern-metadata-uses-import? (box-get meta) alias module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
     [(AstDecl.DefEnum _ cleanup variants)

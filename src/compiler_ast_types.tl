@@ -2091,13 +2091,18 @@
   (No)
   (Some String String AstExprList String))
 
+;; `AstExternMetadata` is 72 B while the other `AstDecl.Extern` fields total
+;; 40 B. Keeping it inline made Extern the 120 B layout ceiling for every
+;; declaration slot, including the whole-program vectors rebuilt around macro
+;; splices. Extern declarations are rare, so box their metadata and keep the
+;; common declaration vectors compact.
 (defenum AstDecl
   (Module i64)
   (ModuleBody i64 (Box AstDeclList))
   (Def i64 AstMaybeType i64)
   (DefFn i64 AstParamList AstType i64 AstFnExport)
   (DefMacro i64 AstMacroParamList AstType i64)
-  (Extern i64 AstExternKind AstExternMetadata AstType)
+  (Extern i64 AstExternKind (Box AstExternMetadata) AstType)
   (DefEnum i64 AstEnumCleanup AstVariantDefList)
   (DefEnumLifetimes i64 AstLifetimeList AstEnumCleanup AstVariantDefList)
   (DefStruct i64 AstStructRepr AstStructCleanup AstFieldDefList)
@@ -4748,7 +4753,7 @@
   [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : AstDecl
-  (AstDecl.Extern (ci.intern name) kind metadata ty))
+  (AstDecl.Extern (ci.intern name) kind (box metadata) ty))
 
 (define (ast-decl-def-enum
   [name : String]
@@ -6149,7 +6154,7 @@
       (AstDecl.Extern
         name
         kind
-        (ast-compaction-remap-extern-metadata remap metadata)
+        (box (ast-compaction-remap-extern-metadata remap (box-get metadata)))
         (ast-compaction-remap-type remap ty))]
     [(AstDecl.DefEnum name cleanup variants)
       (AstDecl.DefEnum

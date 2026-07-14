@@ -395,6 +395,13 @@
     (with ([BadResource 1 cleanup]) BadResource)
     0))")
 
+(define (lint-driver-smoke-name-case-module-source) : String
+  "(module nested
+  ;; (define badGlobal : i64 0)
+  (define badGlobal : i64 1)
+  (define (BadFunction [BadParam : i64] [unused-name : i64]) : i64
+    BadParam))")
+
 (define (lint-driver-smoke-name-case-suppressed-source) : String
   ";; lint-allow: global-name-case
 (define bad-global : i64 1)
@@ -407,15 +414,17 @@
   [BadParam : i64]) : i64 BadParam)")
 
 (define (lint-driver-smoke-name-case-out-of-scope-source) : String
-  "(defstruct GoodType (bad_Field i64))
+  (string.append
+    "(defstruct GoodType (bad_Field i64))
 (defenum GoodEnum (bad-variant))
 (extern BadExtern : i64)
 (import pkg.data as BadAlias)
-(test BadTest unit)
+("
+    "test BadTest unit)
 (defmacro (builder [t : type]) : Module
   `(begin
     (module generated.Bad)
-    (define BadGenerated : i64 1)))")
+    (define BadGenerated : i64 1)))"))
 
 (define (lint-driver-smoke-source-finding-count-with-deprecated-string-concat
   [source : String]) : i64
@@ -503,6 +512,23 @@
 
 (define (lint-driver-smoke-name-case-spans-positive? [findings : LintFindings]) : bool
   (lint-driver-smoke-name-case-spans-positive-from findings 0))
+
+(define (lint-driver-smoke-name-case-rule-at-line?
+  [findings : LintFindings]
+  [rule-id : String]
+  [line : i64]
+  [index : i64]) : bool
+  (if (>= index (lint-findings-count findings))
+    false
+    (let
+      [finding : LintFinding (lint-findings-ref findings index)]
+      (if (string.eq (struct-get finding rule-id) rule-id)
+        (= (ast-source-span-start-line (struct-get finding span)) line)
+        (lint-driver-smoke-name-case-rule-at-line?
+          findings
+          rule-id
+          line
+          (+ index 1))))))
 
 (define (lint-driver-smoke-source-rule-count-with-redundant-function-name
   [source : String]
@@ -1110,6 +1136,9 @@
     [binder-findings : LintFindings
       (lint-driver-smoke-source-findings-with-name-case
         (lint-driver-smoke-name-case-binders-source))]
+    [module-findings : LintFindings
+      (lint-driver-smoke-source-findings-with-name-case
+        (lint-driver-smoke-name-case-module-source))]
     [default-findings : LintFindings
       (selfhost-lint-source-with-roots
         "lint_driver_smoke_test.tl"
@@ -1243,6 +1272,21 @@
                 (lint-rule-suggestion (lint-rule-type-name-case-id))
                 ""))))
         95]
+      [(not (= (lint-driver-smoke-name-case-rule-count module-findings) 3)) 96]
+      [(not
+          (=
+            (selfhost-lint-findings-rule-count
+              module-findings
+              (lint-rule-unused-variable-id))
+            0))
+        97]
+      [(not
+          (lint-driver-smoke-name-case-rule-at-line?
+            module-findings
+            (lint-rule-global-name-case-id)
+            3
+            0))
+        98]
       [else 42])))
 
 (define (main) : i64

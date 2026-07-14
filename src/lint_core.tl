@@ -6591,7 +6591,8 @@
   (source String)
   (frames LintUnusedVariableFrameList)
   (findings LintFindings)
-  (name-case bool))
+  (name-case bool)
+  (report-unused bool))
 
 (define (lint-source-prefix-at?
   [source : String]
@@ -6944,6 +6945,59 @@
             unit)))
       index)))
 
+(define (lint-name-case-skip-line [source : String] [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 start]
+    (begin
+      (while (and (< index n) (not (= (string.string-ref source index) '\n')))
+        (set! index (+ index 1)))
+      index)))
+
+(define (lint-name-case-skip-quoted
+  [source : String]
+  [start : i64]
+  [delimiter : char]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 (+ start 1)]
+    [done : bool false]
+    (begin
+      (while (and (< index n) (not done))
+        (let
+          [c : char (string.string-ref source index)]
+          (cond
+            [(= c '\\') (set! index (+ index 2))]
+            [(= c delimiter)
+              (begin
+                (set! index (+ index 1))
+                (set! done true))]
+            [else (set! index (+ index 1))])))
+      index)))
+
+;; Find a form head in source code, excluding text in comments and literals.
+(define (lint-name-case-find-code-prefix-from
+  [source : String]
+  [needle : String]
+  [start : i64]) : i64
+  (let
+    [n : i64 (string.string-length source)]
+    [index : i64 start]
+    [found : i64 (- 0 1)]
+    (begin
+      (while (and (< found 0) (< index n))
+        (let
+          [c : char (string.string-ref source index)]
+          (cond
+            [(= c ';') (set! index (lint-name-case-skip-line source index))]
+            [(= c '"')
+              (set! index (lint-name-case-skip-quoted source index '"'))]
+            [(= c '\'')
+              (set! index (lint-name-case-skip-quoted source index '\''))]
+            [(lint-source-prefix-at? source index needle) (set! found index)]
+            [else (set! index (+ index 1))])))
+      found)))
+
 (define (lint-name-case-find-decl-name-from
   [source : String]
   [cursor : i64]
@@ -6958,7 +7012,8 @@
     (begin
       (while (and (< found 0) (< search n))
         (let
-          [form-index : i64 (lint-source-find-prefix-from source needle search)]
+          [form-index : i64
+            (lint-name-case-find-code-prefix-from source needle search)]
           (if (< form-index 0)
             (set! search n)
             (let
@@ -7471,7 +7526,8 @@
     (struct-get state source)
     frames
     findings
-    (struct-get state name-case)))
+    (struct-get state name-case)
+    (struct-get state report-unused)))
 
 (define (lint-name-case-source-span? [span : AstSourceSpan]) : bool
   (and
@@ -7666,8 +7722,10 @@
       (lint-unused-variable-state-with
         state
         (box-get rest)
-        (lint-unused-variable-report-bindings
-          bindings
+        (if (struct-get state report-unused)
+          (lint-unused-variable-report-bindings
+            bindings
+            (struct-get state findings))
           (struct-get state findings)))]))
 
 (define (lint-unused-variable-param-bindings
@@ -8920,7 +8978,8 @@
   [ret : AstType]
   [body : i64]
   [acc : LintFindings]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (let
     [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
     [cursor : i64
@@ -8936,7 +8995,8 @@
         source
         LintUnusedVariableFrameList.Nil
         acc
-        name-case)]
+        name-case
+        report-unused)]
     [with-cases : LintUnusedVariableState
       (lint-unused-variable-add-binding-name-cases
         base-state
@@ -8959,7 +9019,8 @@
   [ret : AstType]
   [body : i64]
   [acc : LintFindings]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (let
     [body-span : AstSourceSpan (lint-no-effect-span (ast-node-get body))]
     [cursor : i64
@@ -8980,7 +9041,8 @@
         source
         LintUnusedVariableFrameList.Nil
         acc
-        name-case)]
+        name-case
+        report-unused)]
     [with-cases : LintUnusedVariableState
       (lint-unused-variable-add-binding-name-cases
         base-state
@@ -8999,7 +9061,8 @@
   [source : String]
   [decl : AstDecl]
   [acc : LintFindings]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (match decl
     [(AstDecl.Def _ maybe-ty body)
       (struct-get
@@ -9011,7 +9074,8 @@
               source
               LintUnusedVariableFrameList.Nil
               acc
-              name-case))
+              name-case
+              report-unused))
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDecl.DefFn name params ret body _)
@@ -9023,7 +9087,8 @@
         ret
         body
         acc
-        name-case)]
+        name-case
+        report-unused)]
     [(AstDecl.DefMacro name params ret body)
       (lint-unused-variable-decl-with-macro-param-frame
         source
@@ -9033,7 +9098,8 @@
         ret
         body
         acc
-        name-case)]
+        name-case
+        report-unused)]
     [(AstDecl.Test _ body _)
       (struct-get
         (lint-unused-variable-expr
@@ -9042,16 +9108,32 @@
             source
             LintUnusedVariableFrameList.Nil
             acc
-            name-case)
+            name-case
+            report-unused)
           (lint-no-effect-span (ast-node-get body)))
         findings)]
     [(AstDecl.Unsafe inner)
-      (lint-unused-variables-in-decl source (box-get inner) acc name-case)]
+      (lint-unused-variables-in-decl
+        source
+        (box-get inner)
+        acc
+        name-case
+        report-unused)]
     [(AstDecl.ComptimeDecl _ inner)
-      (lint-unused-variables-in-decl source (box-get inner) acc name-case)]
+      (lint-unused-variables-in-decl
+        source
+        (box-get inner)
+        acc
+        name-case
+        report-unused)]
     [(AstDecl.ModuleBody _ body)
       (if name-case
-        (lint-unused-variables-in-decl-list source (box-get body) acc true)
+        (lint-unused-variables-in-decl-list
+          source
+          (box-get body)
+          acc
+          true
+          false)
         acc)]
     [_ acc]))
 
@@ -9059,15 +9141,17 @@
   [source : String]
   [decls : AstDeclList]
   [acc : LintFindings]
-  [name-case : bool]) : LintFindings
+  [name-case : bool]
+  [report-unused : bool]) : LintFindings
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) acc]
     [(AstDeclListStep.Cons decl rest)
       (lint-unused-variables-in-decl-list
         source
         rest
-        (lint-unused-variables-in-decl source decl acc name-case)
-        name-case)]))
+        (lint-unused-variables-in-decl source decl acc name-case report-unused)
+        name-case
+        report-unused)]))
 
 ;: Walk every expression in `exprs`, accumulating findings.
 (define (lint-walk-expr-list
@@ -10348,7 +10432,8 @@
             source
             decls
             unused-imports
-            name-case)]
+            name-case
+            true)]
         [with-decls : LintFindings
           (if name-case
             (lint-name-case-in-decls source decls with-locals)

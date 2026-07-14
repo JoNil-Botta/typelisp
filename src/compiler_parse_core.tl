@@ -8308,6 +8308,20 @@
         [(ResultAstDeclList.Ok decls) (ResultAstProgram.Ok (ast-program decls))]
         [(ResultAstDeclList.Err message) (ResultAstProgram.Err message)]))))
 
+(define (parse-ast-program-with-cfg
+  [toks : (Array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgram
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultAstProgram
+      (parse-ast-program-with-cfg-and-pools toks cfgs pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
+
+(define (parse-ast-program [toks : (Array token.SpannedToken)]) : ResultAstProgram
+  (parse-ast-program-with-cfg toks (compiler-cfg-empty)))
+
 (define (parse-ast-source [src : String]) : ResultAstProgram
   (parse-ast-source-with-cfg src (compiler-cfg-empty)))
 
@@ -8542,6 +8556,18 @@
           (ResultAstProgramDiagnostic.Ok (ast-program decls))]
         [(ResultAstDeclListDiagnostic.Err diag)
           (ResultAstProgramDiagnostic.Err diag)]))))
+
+(define (parse-ast-program-diagnostic-with-cfg
+  [path : String]
+  [toks : (Array token.SpannedToken)]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultAstProgramDiagnostic
+      (parse-ast-program-diagnostic-with-cfg-and-pools path toks cfgs pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
 
 (define (parse-ast-source-diagnostic [path : String] [src : String]) : ResultAstProgramDiagnostic
   (parse-ast-source-diagnostic-with-cfg path src (compiler-cfg-empty)))

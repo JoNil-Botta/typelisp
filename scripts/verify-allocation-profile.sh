@@ -35,6 +35,24 @@ NORMAL_STDOUT="$WORKDIR/normal.stdout"
 NORMAL_STDERR="$WORKDIR/normal.stderr"
 PROFILE_STDOUT="$WORKDIR/profile.stdout"
 PROFILE_STDERR="$WORKDIR/profile.stderr"
+BATCH_NORMAL_LIST="$WORKDIR/batch-normal.txt"
+BATCH_PROFILE_LIST="$WORKDIR/batch-profile.txt"
+BATCH_NORMAL_ARITH="$WORKDIR/batch-normal-arithmetic.s"
+BATCH_NORMAL_FUNCTIONS="$WORKDIR/batch-normal-functions.s"
+BATCH_PROFILE_ARITH="$WORKDIR/batch-profile-arithmetic.s"
+BATCH_PROFILE_FUNCTIONS="$WORKDIR/batch-profile-functions.s"
+BATCH_NORMAL_STDOUT="$WORKDIR/batch-normal.stdout"
+BATCH_NORMAL_STDERR="$WORKDIR/batch-normal.stderr"
+BATCH_PROFILE_STDOUT="$WORKDIR/batch-profile.stdout"
+BATCH_PROFILE_STDERR="$WORKDIR/batch-profile.stderr"
+
+batch_path() {
+    if [ "$NL_HOST_OS" = windows ] && command -v cygpath >/dev/null 2>&1; then
+        cygpath -m "$1"
+    else
+        printf '%s\n' "$1"
+    fi
+}
 
 compile_case() {
     output=$1
@@ -70,9 +88,13 @@ cmp "$NORMAL_ASM" "$PROFILE_ASM" >/dev/null || {
     exit 1
 }
 
-awk -F'|' '
+validate_profile() {
+    profile_file=$1
+    expected_entries=$2
+    awk -F'|' -v expected_entries="$expected_entries" '
     BEGIN {
         required["start/active"] = 0
+        required["load/active"] = 0
         required["load/source-pools"] = 0
         required["lower/lower-scratch"] = 0
         required["optimize/optimizer-scratch"] = 0
@@ -118,7 +140,61 @@ awk -F'|' '
                 exit 1
             }
         }
+        if (required["start/active"] != 1 ||
+            required["load/active"] != expected_entries ||
+            required["write/active"] != expected_entries ||
+            required["complete/active"] != 1) {
+            print "unexpected allocation-profile entry phase counts" > "/dev/stderr"
+            exit 1
+        }
     }
-' "$PROFILE_STDERR"
+' "$profile_file"
+}
+
+validate_profile "$PROFILE_STDERR" 1
+
+printf '%s|%s\n%s|%s\n' \
+    "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" \
+    "$(batch_path "$BATCH_NORMAL_ARITH")" \
+    "$(batch_path "$ROOT/tests/integration/functions.tl")" \
+    "$(batch_path "$BATCH_NORMAL_FUNCTIONS")" > "$BATCH_NORMAL_LIST"
+printf '%s|%s\n%s|%s\n' \
+    "$(batch_path "$ROOT/tests/integration/arithmetic.tl")" \
+    "$(batch_path "$BATCH_PROFILE_ARITH")" \
+    "$(batch_path "$ROOT/tests/integration/functions.tl")" \
+    "$(batch_path "$BATCH_PROFILE_FUNCTIONS")" > "$BATCH_PROFILE_LIST"
+
+echo "[allocation-profile] compile batch normal control"
+"$COMPILER" compile --batch "$BATCH_NORMAL_LIST" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --opt-level 1 \
+    >"$BATCH_NORMAL_STDOUT" 2>"$BATCH_NORMAL_STDERR"
+if grep '^compile-allocation-profile|' "$BATCH_NORMAL_STDERR" >/dev/null 2>&1; then
+    echo "normal batch compile unexpectedly emitted allocation profile rows" >&2
+    exit 1
+fi
+
+echo "[allocation-profile] compile batch profiled case"
+"$COMPILER" compile --batch "$BATCH_PROFILE_LIST" \
+    --target "$NL_BOOTSTRAP_TARGET" \
+    $(native_target_cfg_args) \
+    --stdlib-root stdlib \
+    --stdlib-root src \
+    --opt-level 1 \
+    --profile-allocations \
+    >"$BATCH_PROFILE_STDOUT" 2>"$BATCH_PROFILE_STDERR"
+
+cmp "$BATCH_NORMAL_ARITH" "$BATCH_PROFILE_ARITH" >/dev/null || {
+    echo "--profile-allocations changed batch arithmetic assembly" >&2
+    exit 1
+}
+cmp "$BATCH_NORMAL_FUNCTIONS" "$BATCH_PROFILE_FUNCTIONS" >/dev/null || {
+    echo "--profile-allocations changed batch functions assembly" >&2
+    exit 1
+}
+validate_profile "$BATCH_PROFILE_STDERR" 2
 
 echo "[allocation-profile] output invariant and owner schema passed"

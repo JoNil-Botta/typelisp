@@ -50768,13 +50768,9 @@
 (define (macro-stdlib-private-dynamic-buffer-macro?
   [macro-name : String]
   [definition-module : String]) : bool
-  (or
-    (and
-      (string.eq definition-module "stdlib.vector")
-      (string.eq macro-name "stdlib.vector/vector"))
-    (and
-      (string.eq definition-module "stdlib.vector")
-      (string.eq macro-name "stdlib.vector/vector-family"))))
+  (and
+    (string.eq definition-module "stdlib.vector")
+    (string.eq macro-name "stdlib.vector/vector")))
 
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]

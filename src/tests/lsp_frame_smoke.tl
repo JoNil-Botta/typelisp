@@ -1,6 +1,7 @@
 ;; lsp_frame_smoke.tl - Runnable smoke for LSP diagnostic metadata adapters.
 (import stdlib.fs)
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.json)
 (import stdlib.string)
 (import stdlib.vector)
@@ -51,6 +52,165 @@
           (set! found i)
           (set! i (+ i 1))))
       found)))
+
+(define (lsp-transcript-frame [body : String]) : String
+  (lsp-str5
+    "Content-Length: "
+    (string.int->string (string.string-length body))
+    "\r\n\r\n"
+    body
+    ""))
+
+(define (lsp-transcript-run [input : String]) : LspTranscriptResult
+  (lsp-frame-run-transcript (& input) (lsp_svec.new) false))
+
+(define (lsp-transcript-result-contains?
+  [result : LspTranscriptResult]
+  [needle : String]) : bool
+  (string.contains (& (struct-get result stdout)) (& needle)))
+
+(define (lsp-transcript-framing-smoke-ok?) : bool
+  (let
+    [clean : LspTranscriptResult (lsp-transcript-run "")]
+    [unterminated : LspTranscriptResult
+      (lsp-transcript-run "Content-Length: 2")]
+    [missing : LspTranscriptResult (lsp-transcript-run "\r\n")]
+    [invalid : LspTranscriptResult
+      (lsp-transcript-run "Content-Length: nope\r\n\r\n")]
+    [truncated : LspTranscriptResult
+      (lsp-transcript-run "Content-Length: 5\r\n\r\n{}")]
+    [malformed : LspTranscriptResult
+      (lsp-transcript-run (lsp-transcript-frame "{]"))]
+    [parse-code : String "\"code\":-32700"]
+    (and
+      (= (struct-get clean status) 0)
+      (string.eq (struct-get clean stdout) "")
+      (string.eq (struct-get clean stderr) "")
+      (= (struct-get unterminated status) 1)
+      (string.eq
+        (struct-get unterminated stderr)
+        "lsp: EOF before header terminator")
+      (lsp-transcript-result-contains? unterminated parse-code)
+      (= (struct-get missing status) 1)
+      (string.eq (struct-get missing stderr) "lsp: missing Content-Length")
+      (lsp-transcript-result-contains? missing parse-code)
+      (= (struct-get invalid status) 1)
+      (string.eq (struct-get invalid stderr) "lsp: invalid Content-Length")
+      (lsp-transcript-result-contains? invalid parse-code)
+      (= (struct-get truncated status) 1)
+      (string.eq (struct-get truncated stderr) "lsp: truncated payload")
+      (lsp-transcript-result-contains? truncated parse-code)
+      (= (struct-get malformed status) 0)
+      (string.eq (struct-get malformed stderr) "")
+      (lsp-transcript-result-contains? malformed parse-code))))
+
+(define (lsp-transcript-order-and-id-smoke-ok?) : bool
+  (let
+    [initialize : String
+      "{\"jsonrpc\":\"2.0\",\"id\":41,\"method\":\"initialize\",\"params\":{}}"]
+    [shutdown : String
+      "{\"jsonrpc\":\"2.0\",\"id\":42,\"method\":\"shutdown\"}"]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (string.append
+        (lsp-transcript-frame initialize)
+        (string.append
+          (lsp-transcript-frame shutdown)
+          (lsp-transcript-frame exit)))]
+    [ordered : LspTranscriptResult (lsp-transcript-run input)]
+    [out : String (struct-get ordered stdout)]
+    [first-id : String "\"id\":41"]
+    [second-id : String "\"id\":42"]
+    [first-pos : i64 (lsp-smoke-index-of out first-id)]
+    [second-pos : i64 (lsp-smoke-index-of out second-id)]
+    [next-initialize : String
+      "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"initialize\",\"params\":{}}"]
+    [next-input : String
+      (string.append
+        (lsp-transcript-frame next-initialize)
+        (lsp-transcript-frame exit))]
+    [next : LspTranscriptResult (lsp-transcript-run next-input)]
+    [old-id : String "\"id\":41"]
+    [new-id : String "\"id\":3"]
+    (and
+      (= (struct-get ordered status) 0)
+      (string.eq (struct-get ordered stderr) "")
+      (>= first-pos 0)
+      (> second-pos first-pos)
+      (= (struct-get next status) 0)
+      (lsp-transcript-result-contains? next new-id)
+      (not (lsp-transcript-result-contains? next old-id)))))
+
+(define (lsp-transcript-did-open [uri : String] [text : String]) : String
+  (lsp-str7
+    "{\"jsonrpc\":\"2.0\",\"method\":\"textDocument/didOpen\",\"params\":{\"textDocument\":{\"uri\":\""
+    uri
+    "\",\"languageId\":\"typelisp\",\"version\":1,\"text\":\""
+    text
+    "\"}}}"
+    ""
+    ""))
+
+(define (lsp-transcript-check [uri : String] [id : i64]) : String
+  (lsp-str5
+    "{\"jsonrpc\":\"2.0\",\"id\":"
+    (string.int->string id)
+    ",\"method\":\"tl/check\",\"params\":{\"uri\":\""
+    uri
+    "\"}}"))
+
+(define (lsp-transcript-check-session [uri : String] [text : String] [id : i64]) : LspTranscriptResult
+  (let
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [input : String
+      (string.append
+        (lsp-transcript-frame (lsp-transcript-did-open uri text))
+        (string.append
+          (lsp-transcript-frame (lsp-transcript-check uri id))
+          (lsp-transcript-frame exit)))]
+    (lsp-transcript-run input)))
+
+(define (lsp-transcript-reset-leakage-smoke-ok?) : bool
+  (let
+    [path : String "target/lsp_transcript_reset_missing.tl"]
+    [uri : String (lsp-resolved-path-to-file-uri path)]
+    [valid-source : String "(define (same) : i64 1)"]
+    [invalid-source : String "(define (same) : i64 true)"]
+    [first : LspTranscriptResult
+      (lsp-transcript-check-session uri valid-source 71)]
+    [second : LspTranscriptResult
+      (lsp-transcript-check-session uri invalid-source 72)]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [missing-input : String
+      (string.append
+        (lsp-transcript-frame (lsp-transcript-check uri 73))
+        (lsp-transcript-frame exit))]
+    [missing : LspTranscriptResult (lsp-transcript-run missing-input)]
+    [success : String "\"success\":true"]
+    [failure : String "\"success\":false"]
+    [unreadable : String "Could not read document"]
+    (and
+      (= (struct-get first status) 0)
+      (lsp-transcript-result-contains? first success)
+      (= (struct-get second status) 0)
+      (lsp-transcript-result-contains? second failure)
+      (= (struct-get missing status) 0)
+      (lsp-transcript-result-contains? missing unreadable)
+      (not lsp-frame-memory-active)
+      (= lsp-document-cache-arena 0))))
+
+(define (lsp-transcript-arena-escape-smoke-ok?) : bool
+  (let
+    [home : i64 (arena.tl_arena_current)]
+    [exit : String "{\"jsonrpc\":\"2.0\",\"method\":\"exit\"}"]
+    [result : LspTranscriptResult
+      (lsp-transcript-run (lsp-transcript-frame exit))]
+    (and
+      (= (arena.tl_arena_current) home)
+      (= (struct-get result status) 0)
+      (string.eq (struct-get result stdout) "")
+      (string.eq (struct-get result stderr) "")
+      (not lsp-frame-memory-active))))
 
 (define (lsp-inlay-smoke-ok?) : bool
   (let
@@ -360,4 +520,8 @@
         (unless (lsp-edit-save-doc-smoke-ok?) (return 16))
         (unless (lsp-scan-decls-cache-local-smoke-ok?) (return 13))
         (unless (lsp-document-symbol-smoke-ok?) (return 17))
+        (unless (lsp-transcript-framing-smoke-ok?) (return 18))
+        (unless (lsp-transcript-order-and-id-smoke-ok?) (return 19))
+        (unless (lsp-transcript-reset-leakage-smoke-ok?) (return 20))
+        (unless (lsp-transcript-arena-escape-smoke-ok?) (return 21))
         42))))

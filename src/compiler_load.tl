@@ -748,6 +748,21 @@
     (compiler-load-runtime-prelude-cache-clear!)
     (intern-persistent-storage-disable!)))
 
+;; Retire every cache and floor owned by the active serial compiler session.
+;; The replacement state is installed before the global pool/intern reset so
+;; those resets cannot preserve the old session's floors. Callers must invoke
+;; this while allocating in the arena that will outlive the retired session.
+(define (compiler-load-session-fresh-reset!) : unit
+  (begin
+    (set! compiler-load-active-session-state (compiler-load-session-state-new))
+    (compiler-load-session-reset-pools!)
+    (compiler-load-session-reset-interns!)
+    (intern-persistent-arena-reset!)
+    (compiler-load-session-floors-set! 0 0 0)
+    (compiler-load-program-cache-clear!)
+    (compiler-load-runtime-prelude-cache-clear!)
+    (intern-persistent-storage-disable!)))
+
 (define (compiler-load-session-cache-enabled?) : bool
   (array-ref (struct-get compiler-load-active-session-state cache-enabled) 0))
 

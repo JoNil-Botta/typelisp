@@ -32,6 +32,7 @@ src/compiler_backend.tl	compiler-backend-emit-windows-seh-proc	object-format	com
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-push-rbp	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH saved-register directives.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-set-rbp	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH frame directives.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-stackalloc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH stack allocation directives.
+src/compiler_backend.tl	compiler-backend-emit-save-win64-xmm-callee-regs-at	abi	compiler-backend-target-windows[?]	1	Win64 preserves XMM6-XMM15 and records their stack saves in SEH unwind metadata.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endprologue	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH prologue terminators.
 src/compiler_backend.tl	compiler-backend-emit-windows-seh-endproc	object-format	compiler-backend-target-windows[?]	1	Windows assembly needs SEH procedure terminators.
 src/compiler_backend.tl	compiler-backend-call-arg-space-from	abi	CompilerBackendTarget[.](Linux|Windows)	2	Per-call stack adjustment is explicitly zero for both pre-reserved target frames.

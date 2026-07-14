@@ -10,6 +10,33 @@ The broader work is tracked by the parity umbrella
 suite gate [#520](https://github.com/JoNil-Botta/typelisp/issues/520), and the
 bootstrap/fixpoint gate [#47](https://github.com/JoNil-Botta/typelisp/issues/47).
 
+## Intern-ID provenance
+
+Name ids in `AstDecl`, `AstExpr`, patterns, parameters, fields, and nominal
+`AstType` nodes are owned by one `InternCompatState` table. Parsed token slices,
+compiler-generated module/hygiene/builtin names, and String-taking compatibility
+constructors all enter that same active table. Empty spellings are valid
+interned names when synthesis needs them. AST fallback payloads, negative
+sentinels, and structural composite keys are not intern ids; use the owning
+subsystem's renderer rather than `intern-str` for those values. Lifetime/region
+names, diagnostics, import metadata, and compatibility records may legitimately
+remain `String` values.
+
+Within an installed state, insertion order makes ids deterministic. Installing
+another driver state changes the owner even when its generation counter and
+numeric ids happen to match. A full reset invalidates all retained ids.
+Reset-to-mark preserves the numeric prefix below the mark but still advances the
+generation, so long-lived consumers must recapture provenance before reuse.
+State-owned reset/capture/install operations affect only that driver job.
+
+`intern-str` is the short-lived, same-state compatibility path. Tests and code
+that retain an id across reset or install boundaries must capture
+`InternIdProvenance` and use `intern-id-render`; wrong-owner, stale-generation,
+and out-of-range values are rejected explicitly. Do not cache String data
+pointer/length pairs as name identity across scratch/region reset: address
+equality is only a fast path while both live operands are in scope. Interning
+must own/canonicalize any spelling that survives its source arena.
+
 ## Coverage layers
 
 ### Module-local self-tests

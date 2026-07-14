@@ -56,14 +56,12 @@ src/compiler_backend.tl	compiler-backend-entry-for-target-with-crt	entry	Compile
 src/compiler_backend.tl	compiler-backend-emit-runtime-global	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime globals are emitted in target-specific assembly form.
 src/compiler_backend.tl	compiler-backend-current-arena-load	runtime	compiler-backend-target-windows[?]	1	Current-arena TLS load uses target runtime storage conventions.
 src/compiler_backend.tl	compiler-backend-current-arena-store	runtime	compiler-backend-target-windows[?]	1	Current-arena TLS store uses target runtime storage conventions.
-src/compiler_backend.tl	compiler-backend-current-arena-clear	runtime	compiler-backend-target-windows[?]	1	Current-arena TLS clear uses target runtime storage conventions.
 src/compiler_backend.tl	compiler-backend-runtime-arena-data-for-target	runtime	CompilerBackendTarget[.](Linux|Windows)	2	Runtime arena storage differs between Linux and Windows.
 src/compiler_backend.tl	compiler-backend-runtime-fast-alloc-function	runtime	CompilerBackendTarget[.]Windows	1	Windows fast allocators stop at the committed arena end while Linux mappings are fully usable through the reserved end.
 src/compiler_backend.tl	compiler-backend-runtime-linux-alloc-functions	runtime	CompilerBackendTarget[.]Linux	1	Linux allocation runtime helper explicitly emits System V runtime assembly.
 src/compiler_backend.tl	compiler-backend-runtime-linux-arena-functions	runtime	CompilerBackendTarget[.]Linux	2	Linux arena runtime helper explicitly emits System V TLS arena assembly.
 src/compiler_backend.tl	compiler-backend-runtime-windows-alloc-functions	runtime	CompilerBackendTarget[.]Windows	1	Windows allocation runtime is emitted by an explicit target helper.
 src/compiler_backend.tl	compiler-backend-runtime-windows-arena-functions	runtime	CompilerBackendTarget[.]Windows	2	Windows arena runtime is emitted by explicit target helpers.
-src/compiler_backend.tl	compiler-backend-runtime-linux-only	runtime	compiler-backend-target-windows[?]	1	Linux-only runtime helpers must be rejected on Windows.
 src/compiler_backend.tl	compiler-backend-runtime-externs-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime extern declarations differ for Windows imports.
 src/compiler_backend.tl	compiler-backend-runtime-fs-functions-for-target	runtime	compiler-backend-target-windows[?]	1	Runtime filesystem helpers differ between Windows and Linux.
 src/compiler_backend.tl	compiler-backend-runtime-memcpy-functions	runtime	compiler-backend-target-windows[?]	1	Runtime memcpy helper differs between Windows and Linux.
@@ -73,7 +71,6 @@ src/compiler_backend.tl	compiler-backend-runtime-tlci-macro-entry-functions	runt
 src/compiler_backend.tl	compiler-backend-runtime-functions-for-target	runtime	compiler-backend-target-windows[?]	13	Runtime helper assembly selects Windows imports and implementations by target.
 src/compiler_backend.tl	compiler-backend-emit-program-linux	entry	CompilerBackendTarget[.]Linux	1	Linux-named assembly emitter explicitly selects the Linux entry/runtime target.
 src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans	entry	CompilerBackendTarget[.]Linux	1	Linux-named span-aware emitter explicitly selects the Linux entry/runtime target.
-src/compiler_backend.tl	compiler-backend-emit-program-linux-with-spans-and-entry	entry	CompilerBackendTarget[.]Linux	1	Linux-named entry-aware emitter explicitly selects the Linux target.
 src/compiler_backend.tl	compiler-backend-object-tlci-entry-bytes	object-format	compiler-backend-target-windows[?]	1	Direct-object tlci entry-call bridge bytes follow the target C ABI.
 src/compiler_backend.tl	compiler-backend-object-tlci-macro-entry-bytes	object-format	compiler-backend-target-windows[?]	1	Direct-object tlci macro-entry bridge bytes follow the target C ABI.
 src/compiler_backend.tl	compiler-backend-object-entry-symbols	object-format	CompilerBackendTarget[.](Linux|Windows)	2	Native object entry symbols differ for ELF and COFF/PE.

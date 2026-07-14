@@ -4930,6 +4930,55 @@
       [(string.eq base "tl_atomic_i32_cas_ptr") "atomic-i32-cas-ptr!"]
       [else ""])))
 
+(define (lower-atomic-runtime-symbol-for-source [source-name : String]) : String
+  (let
+    [base : String
+      (tc-qualified-name-base (lower-hygiene-source-name source-name))]
+    (if (not (lower-string-prefix-at? base "atomic-" 0))
+      ""
+      (cond
+        [(or
+            (string.eq base "atomic-i64-load-ptr")
+            (string.eq base "atomic-i64-load"))
+          "tl_atomic_i64_load_ptr"]
+        [(or
+            (string.eq base "atomic-i64-store-ptr!")
+            (string.eq base "atomic-i64-store!"))
+          "tl_atomic_i64_store_ptr"]
+        [(or
+            (string.eq base "atomic-i64-add-ptr!")
+            (string.eq base "atomic-i64-add!"))
+          "tl_atomic_i64_add_ptr"]
+        [(or
+            (string.eq base "atomic-i64-fetch-add-ptr!")
+            (string.eq base "atomic-i64-fetch-add!"))
+          "tl_atomic_i64_fetch_add_ptr"]
+        [(or
+            (string.eq base "atomic-i64-cas-ptr!")
+            (string.eq base "atomic-i64-cas!"))
+          "tl_atomic_i64_cas_ptr"]
+        [(or
+            (string.eq base "atomic-i32-load-ptr")
+            (string.eq base "atomic-i32-load"))
+          "tl_atomic_i32_load_ptr"]
+        [(or
+            (string.eq base "atomic-i32-store-ptr!")
+            (string.eq base "atomic-i32-store!"))
+          "tl_atomic_i32_store_ptr"]
+        [(or
+            (string.eq base "atomic-i32-add-ptr!")
+            (string.eq base "atomic-i32-add!"))
+          "tl_atomic_i32_add_ptr"]
+        [(or
+            (string.eq base "atomic-i32-fetch-add-ptr!")
+            (string.eq base "atomic-i32-fetch-add!"))
+          "tl_atomic_i32_fetch_add_ptr"]
+        [(or
+            (string.eq base "atomic-i32-cas-ptr!")
+            (string.eq base "atomic-i32-cas!"))
+          "tl_atomic_i32_cas_ptr"]
+        [else ""]))))
+
 (define (lower-runtime-prelude-selective-export?
   [module : String]
   [symbol : String]) : bool
@@ -4961,6 +5010,24 @@
               (string.append "stdlib\\runtime.tl::" helper))
             (string.append "stdlib/runtime.tl::" module-helper))
           (string.append "stdlib\\runtime.tl::" module-helper))))))
+
+(define (lower-reach-add-atomic-source-runtime-helper
+  [all-functions : lower_string_i64_map.Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [source-name : String]) : LowerReachState
+  ;; Public array atomics and the sync pointer wrappers lower to a raw ABI call
+  ;; only after source reachability. Resolve the matching runtime export through
+  ;; the loader's name cache so absolute and relative declaration paths agree.
+  (let
+    [symbol : String (lower-atomic-runtime-symbol-for-source source-name)]
+    (if (string.eq symbol "")
+      state
+      (lower-reach-add-runtime-prelude-string-helper-resolved
+        all-functions
+        names
+        state
+        symbol))))
 
 (define (lower-reach-add-string-snapshot-runtime
   [all-functions : lower_string_i64_map.Map]
@@ -4995,11 +5062,16 @@
             source-name)]
         [module-source : String
           (compiler-symbol-module-key "stdlib.runtime" helper)]
-        (lower-reach-add-source
+        ;; Resolve the helper identities directly. Calling lower-reach-add-source
+        ;; here would feed an atomic helper's own source spelling back through
+        ;; post-reachability helper discovery and recurse indefinitely.
+        (lower-reach-add-logical
           all-functions
-          names
-          (lower-reach-add-source all-functions names seeded module-source)
-          helper)))))
+          (lower-reach-add-logical
+            all-functions
+            seeded
+            (lower-name-cache-resolve-hygiene names module-source))
+          (lower-name-cache-resolve-hygiene names helper))))))
 
 ;; `lower-string-concat` emits one of these fixed ABI calls after source
 ;; reachability has already completed. Root their TypeLisp runtime exports from
@@ -5127,6 +5199,12 @@
   ;; from a macro expansion is pruned, then fails to resolve during lowering.
   (let
     [logical-name : String (lower-name-cache-resolve-hygiene names source-name)]
+    [atomic-state : LowerReachState
+      (lower-reach-add-atomic-source-runtime-helper
+        all-functions
+        names
+        state
+        logical-name)]
     (lower-reach-add-runtime-prelude-string-helper-resolved
       all-functions
       names
@@ -5135,7 +5213,7 @@
         names
         (lower-reach-add-runtime-prelude-string-helper
           all-functions
-          (lower-reach-add-logical all-functions state logical-name)
+          (lower-reach-add-logical all-functions atomic-state logical-name)
           source-name)
         source-name)
       logical-name)))
@@ -56392,6 +56470,29 @@
     [s : String \"hello\"]
     ((lambda () : String s))))"))
 
+(define (compiler-lower-runtime-atomic-reachable-source) : String
+  "(define (atomic-i64-fetch-add-ptr!
+  [ptr : (MutPtr i64)]
+  [delta : i64]) : i64
+  (unsafe (atomic-fetch-add! ptr delta)))
+(define (atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
+  (unsafe (atomic-load ptr)))
+(extern (atomic-i64-fetch-add!
+  [items : (Array i64)]
+  [index : i64]
+  [delta : i64]) : i64 (:symbol \"tl_atomic_i64_fetch_add\"))
+(define (main [items : (Array i64)]) : i64
+  (atomic-i64-fetch-add! items 0 1))")
+
+(define (compiler-lower-runtime-atomic-reachable-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/runtime.tl"
+    (ast-decl-path-cons
+      "stdlib/runtime.tl"
+      (ast-decl-path-cons
+        "stdlib/atomic.tl"
+        (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))))
+
 (define (compiler-lower-with-scratch-owning-source) : String
   (compiler-lower-with-arena-source
     "(defstruct ScratchPayload
@@ -56540,6 +56641,33 @@
                     functions
                     "main"
                     "tl_substring")
+                  0))])]
+        [(ResultCompilerLower.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-lower-runtime-atomic-reachable-ok?) : bool
+  (match (parse-ast-source (compiler-lower-runtime-atomic-reachable-source))
+    [(ResultAstProgram.Ok program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-runtime-atomic-reachable-paths))
+        [(ResultCompilerLower.Ok lowered _)
+          (match lowered
+            [(CompilerIrProgram.Program _ functions _)
+              (and
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/runtime.tl::atomic-i64-fetch-add-ptr!")
+                (not
+                  (lower-test-function-defined?
+                    functions
+                    "stdlib/runtime.tl::atomic-i64-load-ptr"))
+                (>
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "tl_atomic_i64_fetch_add_ptr")
                   0))])]
         [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
@@ -59893,6 +60021,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-runtime-atomic-reachable-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-in-arena-shape-ok?)

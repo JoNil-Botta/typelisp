@@ -4944,7 +4944,7 @@
           (compiler-load-surface-module-maybe module-name)
           (compiler-load-surface-alias-maybe alias)
           (compiler-load-surface-import-default-alias kind import-path)
-          span)
+          (box-get span))
         (compiler-load-surface-import-decl-emitting? kind))]
     [(AstDecl.Def name maybe-ty _)
       (compiler-load-surface-build-add-decl
@@ -5348,7 +5348,7 @@
             import-path
             expected-module
             alias
-            (ast-source-span 0 0 0 0)))
+            (box (ast-source-span 0 0 0 0))))
         rest)]
     [(AstMaybeImportAlias.No) rest]))
 

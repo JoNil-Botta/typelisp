@@ -5446,7 +5446,7 @@
         ""
         AstMaybeModuleName.No
         AstMaybeImportAlias.No
-        (ast-decl-span-fallback)))))
+        (box (ast-decl-span-fallback))))))
 
 (define (lower-clone-handoff-generated-origin-count-in-module
   [decls : AstDeclList]

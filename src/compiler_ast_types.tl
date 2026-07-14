@@ -2073,7 +2073,7 @@
     String
     AstMaybeModuleName
     AstMaybeImportAlias
-    AstSourceSpan))
+    (Box AstSourceSpan)))
 
 (defenum AstDispatchIsa
   (Scalar)
@@ -5559,7 +5559,7 @@
         (ast-compaction-copy-string path)
         (ast-compaction-remap-maybe-module-name module-name)
         (ast-compaction-remap-maybe-import-alias alias)
-        span)]))
+        (box (box-get span)))]))
 
 (define (ast-compaction-remap-dispatch-variant [variant : AstDispatchVariant]) : AstDispatchVariant
   (match variant

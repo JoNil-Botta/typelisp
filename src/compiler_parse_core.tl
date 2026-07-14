@@ -7476,7 +7476,7 @@
   [alias : AstMaybeImportAlias]
   [span : AstSourceSpan]) : ResultAstDecl
   (ResultAstDecl.Ok
-    (AstDecl.Import (AstImportSpec.Spec kind path module-name alias span))))
+    (AstDecl.Import (AstImportSpec.Spec kind path module-name alias (box span)))))
 
 (define (parse-ast-import-alias
   [kind : AstImportKind]

@@ -673,7 +673,7 @@
                   "pkg/path"
                   (ast.AstMaybeModuleName.Some "pkg.module")
                   (ast.AstMaybeImportAlias.Some "pkg")
-                  (ast.ast-source-span 1 1 1 1)))
+                  (box (ast.ast-source-span 1 1 1 1))))
               (ast.ast-decl-cons
                 (ast.ast-decl-extern
                   "native"

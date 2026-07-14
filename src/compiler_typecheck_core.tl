@@ -56913,7 +56913,7 @@
           target-module
           (AstMaybeModuleName.Some target-module)
           binding-alias
-          span))
+          (box span)))
       (ast-decl-list-new))))
 
 (define (macro-module-import-marker-decl? [decl : AstDecl]) : bool
@@ -57150,7 +57150,7 @@
                       module
                       target-module
                       alias
-                      span
+                      (box-get span)
                       decl-path)]
                   [(CompilerNoString)
                     (macro-single-decl-expansion decl decl-path)])]
@@ -57172,7 +57172,7 @@
                 module
                 target-module
                 alias
-                span
+                (box-get span)
                 decl-path)]
             [(CompilerNoString) (macro-single-decl-expansion decl decl-path)])]
         [_ (macro-single-decl-expansion decl decl-path)])]
@@ -59204,7 +59204,7 @@
                     call-id
                     context
                     alias
-                    span
+                    (box-get span)
                     decl-path)]
                 [(AstImportKind.MacroDecls call-id context)
                   (macro-expand-decls-splice
@@ -59249,7 +59249,7 @@
             call-id
             context
             alias
-            span
+            (box-get span)
             decl-path)]
         [(AstImportKind.MacroDecls call-id context)
           (macro-expand-decls-splice
@@ -61480,7 +61480,7 @@
                     import-path
                     expected
                     alias
-                    span
+                    (box-get span)
                     template))]
               [_ (MacroMaybeGeneratedNormalImport.No)])]
           [(AstGeneratedDeclMeta.No) (macro-generated-normal-import template)]))]

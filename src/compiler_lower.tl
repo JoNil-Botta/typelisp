@@ -227,6 +227,9 @@
 
 (defenum LowerVectorMapValue
   (Array i64)
+  ;; A dynamic array indexed by `(program-index)`. Unlike `Array`, this source
+  ;; repeats the same lane vector for every foreach gang.
+  (LaneArray i64)
   (Uniform CompilerIrValue)
   (BroadcastArray i64 CompilerIrValue)
   (LaneIndex)
@@ -4930,6 +4933,55 @@
       [(string.eq base "tl_atomic_i32_cas_ptr") "atomic-i32-cas-ptr!"]
       [else ""])))
 
+(define (lower-atomic-runtime-symbol-for-source [source-name : String]) : String
+  (let
+    [base : String
+      (tc-qualified-name-base (lower-hygiene-source-name source-name))]
+    (if (not (lower-string-prefix-at? base "atomic-" 0))
+      ""
+      (cond
+        [(or
+            (string.eq base "atomic-i64-load-ptr")
+            (string.eq base "atomic-i64-load"))
+          "tl_atomic_i64_load_ptr"]
+        [(or
+            (string.eq base "atomic-i64-store-ptr!")
+            (string.eq base "atomic-i64-store!"))
+          "tl_atomic_i64_store_ptr"]
+        [(or
+            (string.eq base "atomic-i64-add-ptr!")
+            (string.eq base "atomic-i64-add!"))
+          "tl_atomic_i64_add_ptr"]
+        [(or
+            (string.eq base "atomic-i64-fetch-add-ptr!")
+            (string.eq base "atomic-i64-fetch-add!"))
+          "tl_atomic_i64_fetch_add_ptr"]
+        [(or
+            (string.eq base "atomic-i64-cas-ptr!")
+            (string.eq base "atomic-i64-cas!"))
+          "tl_atomic_i64_cas_ptr"]
+        [(or
+            (string.eq base "atomic-i32-load-ptr")
+            (string.eq base "atomic-i32-load"))
+          "tl_atomic_i32_load_ptr"]
+        [(or
+            (string.eq base "atomic-i32-store-ptr!")
+            (string.eq base "atomic-i32-store!"))
+          "tl_atomic_i32_store_ptr"]
+        [(or
+            (string.eq base "atomic-i32-add-ptr!")
+            (string.eq base "atomic-i32-add!"))
+          "tl_atomic_i32_add_ptr"]
+        [(or
+            (string.eq base "atomic-i32-fetch-add-ptr!")
+            (string.eq base "atomic-i32-fetch-add!"))
+          "tl_atomic_i32_fetch_add_ptr"]
+        [(or
+            (string.eq base "atomic-i32-cas-ptr!")
+            (string.eq base "atomic-i32-cas!"))
+          "tl_atomic_i32_cas_ptr"]
+        [else ""]))))
+
 (define (lower-runtime-prelude-selective-export?
   [module : String]
   [symbol : String]) : bool
@@ -4961,6 +5013,24 @@
               (string.append "stdlib\\runtime.tl::" helper))
             (string.append "stdlib/runtime.tl::" module-helper))
           (string.append "stdlib\\runtime.tl::" module-helper))))))
+
+(define (lower-reach-add-atomic-source-runtime-helper
+  [all-functions : lower_string_i64_map.Map]
+  [names : LowerNameCache]
+  [state : LowerReachState]
+  [source-name : String]) : LowerReachState
+  ;; Public array atomics and the sync pointer wrappers lower to a raw ABI call
+  ;; only after source reachability. Resolve the matching runtime export through
+  ;; the loader's name cache so absolute and relative declaration paths agree.
+  (let
+    [symbol : String (lower-atomic-runtime-symbol-for-source source-name)]
+    (if (string.eq symbol "")
+      state
+      (lower-reach-add-runtime-prelude-string-helper-resolved
+        all-functions
+        names
+        state
+        symbol))))
 
 (define (lower-reach-add-string-snapshot-runtime
   [all-functions : lower_string_i64_map.Map]
@@ -4995,11 +5065,16 @@
             source-name)]
         [module-source : String
           (compiler-symbol-module-key "stdlib.runtime" helper)]
-        (lower-reach-add-source
+        ;; Resolve the helper identities directly. Calling lower-reach-add-source
+        ;; here would feed an atomic helper's own source spelling back through
+        ;; post-reachability helper discovery and recurse indefinitely.
+        (lower-reach-add-logical
           all-functions
-          names
-          (lower-reach-add-source all-functions names seeded module-source)
-          helper)))))
+          (lower-reach-add-logical
+            all-functions
+            seeded
+            (lower-name-cache-resolve-hygiene names module-source))
+          (lower-name-cache-resolve-hygiene names helper))))))
 
 ;; `lower-string-concat` emits one of these fixed ABI calls after source
 ;; reachability has already completed. Root their TypeLisp runtime exports from
@@ -5127,6 +5202,12 @@
   ;; from a macro expansion is pruned, then fails to resolve during lowering.
   (let
     [logical-name : String (lower-name-cache-resolve-hygiene names source-name)]
+    [atomic-state : LowerReachState
+      (lower-reach-add-atomic-source-runtime-helper
+        all-functions
+        names
+        state
+        logical-name)]
     (lower-reach-add-runtime-prelude-string-helper-resolved
       all-functions
       names
@@ -5135,7 +5216,7 @@
         names
         (lower-reach-add-runtime-prelude-string-helper
           all-functions
-          (lower-reach-add-logical all-functions state logical-name)
+          (lower-reach-add-logical all-functions atomic-state logical-name)
           source-name)
         source-name)
       logical-name)))
@@ -31351,6 +31432,15 @@
     [(AstExpr.Var found) (string.eq (intern-str found) name)]
     [_ false]))
 
+(define (lower-expr-is-program-index? [ctx : TcContext] [expr : AstExpr]) : bool
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-expr-is-program-index? ctx (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.Ann inner-box _)
+      (lower-expr-is-program-index? ctx (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.SpmdProgramIndex) true]
+    [_ false]))
+
 (define (lower-dynamic-array-var
   [ctx : TcContext]
   [env : sym_i64_env.SymI64Env]
@@ -31419,6 +31509,27 @@
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
         [idx : AstExpr (lower-context-expr-get ctx idx-box)]
         (if (lower-expr-is-var? ctx idx index)
+          (lower-dynamic-array-var ctx env type-env arr)
+          (LowerMaybeArrayVar.No)))]
+    [_ (LowerMaybeArrayVar.No)]))
+
+(define (lower-array-ref-var-for-program-index
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [expr : AstExpr]) : LowerMaybeArrayVar
+  (match expr
+    [(AstExpr.Spanned inner-box _)
+      (lower-array-ref-var-for-program-index
+        ctx
+        env
+        type-env
+        (lower-context-expr-get ctx inner-box))]
+    [(AstExpr.ArrayRef arr-box idx-box)
+      (let
+        [arr : AstExpr (lower-context-expr-get ctx arr-box)]
+        [idx : AstExpr (lower-context-expr-get ctx idx-box)]
+        (if (lower-expr-is-program-index? ctx idx)
           (lower-dynamic-array-var ctx env type-env arr)
           (LowerMaybeArrayVar.No)))]
     [_ (LowerMaybeArrayVar.No)]))
@@ -35550,7 +35661,14 @@
             (LowerMaybeVectorMapValue.Some
               (LowerVectorMapValue.Array array-var))
             (LowerMaybeVectorMapValue.No))]
-        [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])]
+        [(LowerMaybeArrayVar.No)
+          (match (lower-array-ref-var-for-program-index ctx env type-env value)
+            [(LowerMaybeArrayVar.Some array-var array-elem)
+              (if (tc-type-eq array-elem dst-elem)
+                (LowerMaybeVectorMapValue.Some
+                  (LowerVectorMapValue.LaneArray array-var))
+                (LowerMaybeVectorMapValue.No))]
+            [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [source : AstExpr (lower-context-expr-get ctx value-box)]
@@ -35667,6 +35785,7 @@
   (match plan
     [(LowerVectorMapValue.Array array-var)
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
+    [(LowerVectorMapValue.LaneArray _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.Uniform _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.BroadcastArray array-var _)
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
@@ -35725,6 +35844,7 @@
       (match elem
         [(AstType.I64) true]
         [(AstType.I32) true]
+        [(AstType.F32) true]
         [(AstType.F64) true]
         [_ false])]
     [(AstReduceOp.Min)
@@ -36986,6 +37106,18 @@
         (CompilerIrValue.Var index-var)
         lanes
         elem-ty)]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-array-len-value state (CompilerIrValue.Var array-var))
+        [(LowerExpr.Expr len-state array-len _)
+          (lower-emit-vector-load
+            (lower-emit-bounds-check
+              len-state
+              (CompilerIrValue.I64 (- lanes 1))
+              array-len)
+            (CompilerIrValue.Var array-var)
+            (CompilerIrValue.I64 0)
+            lanes
+            elem-ty)])]
     [(LowerVectorMapValue.Uniform value)
       (lower-emit-splat state value lanes elem-ty)]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
@@ -37044,6 +37176,32 @@
         mask
         lanes
         elem-ty)]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-emit-binop
+        state
+        CompilerIrBinOp.Sub
+        end-value
+        (CompilerIrValue.Var index-var)
+        (AstType.I64))
+        [(LowerExpr.Expr count-state active-lanes _)
+          (match (lower-emit-binop
+            count-state
+            CompilerIrBinOp.Sub
+            active-lanes
+            (CompilerIrValue.I64 1)
+            (AstType.I64))
+            [(LowerExpr.Expr last-state last-lane _)
+              (match (lower-array-len-value
+                last-state
+                (CompilerIrValue.Var array-var))
+                [(LowerExpr.Expr len-state array-len _)
+                  (lower-emit-predicated-load
+                    (lower-emit-bounds-check len-state last-lane array-len)
+                    (CompilerIrValue.Var array-var)
+                    (CompilerIrValue.I64 0)
+                    mask
+                    lanes
+                    elem-ty)])])])]
     [(LowerVectorMapValue.Uniform value)
       (lower-emit-splat state value lanes elem-ty)]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
@@ -37107,6 +37265,7 @@
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(LowerVectorMapValue.BroadcastArray _ _) true]
+    [(LowerVectorMapValue.LaneArray _) true]
     [(LowerVectorMapValue.LaneIndex) true]
     [(LowerVectorMapValue.LaneCount) true]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
@@ -37141,6 +37300,23 @@
         elem-ty)
         [(LowerExpr.Expr addr-state elem-ptr _)
           (lower-emit-load addr-state elem-ptr elem-ty)])]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-emit-binop
+        state
+        CompilerIrBinOp.Sub
+        (CompilerIrValue.Var current-index-var)
+        (CompilerIrValue.Var base-index-var)
+        (AstType.I64))
+        [(LowerExpr.Expr lane-state lane-index _)
+          (match (lower-array-element-addr
+            ctx
+            lane-state
+            (CompilerIrValue.Var array-var)
+            lane-index
+            (AstType.I64)
+            elem-ty)
+            [(LowerExpr.Expr addr-state elem-ptr _)
+              (lower-emit-load addr-state elem-ptr elem-ty)])])]
     [(LowerVectorMapValue.Uniform value) (LowerExpr.Expr state value elem-ty)]
     [(LowerVectorMapValue.BroadcastArray array-var lane)
       (match (lower-emit-binop
@@ -56392,6 +56568,29 @@
     [s : String \"hello\"]
     ((lambda () : String s))))"))
 
+(define (compiler-lower-runtime-atomic-reachable-source) : String
+  "(define (atomic-i64-fetch-add-ptr!
+  [ptr : (MutPtr i64)]
+  [delta : i64]) : i64
+  (unsafe (atomic-fetch-add! ptr delta)))
+(define (atomic-i64-load-ptr [ptr : (Ptr i64)]) : i64
+  (unsafe (atomic-load ptr)))
+(extern (atomic-i64-fetch-add!
+  [items : (Array i64)]
+  [index : i64]
+  [delta : i64]) : i64 (:symbol \"tl_atomic_i64_fetch_add\"))
+(define (main [items : (Array i64)]) : i64
+  (atomic-i64-fetch-add! items 0 1))")
+
+(define (compiler-lower-runtime-atomic-reachable-paths) : AstDeclPathList
+  (ast-decl-path-cons
+    "stdlib/runtime.tl"
+    (ast-decl-path-cons
+      "stdlib/runtime.tl"
+      (ast-decl-path-cons
+        "stdlib/atomic.tl"
+        (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))))
+
 (define (compiler-lower-with-scratch-owning-source) : String
   (compiler-lower-with-arena-source
     "(defstruct ScratchPayload
@@ -56540,6 +56739,33 @@
                     functions
                     "main"
                     "tl_substring")
+                  0))])]
+        [(ResultCompilerLower.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
+
+(define (compiler-lower-runtime-atomic-reachable-ok?) : bool
+  (match (parse-ast-source (compiler-lower-runtime-atomic-reachable-source))
+    [(ResultAstProgram.Ok program)
+      (match (lower-compiler-program-with-decl-paths
+        "app.tl"
+        program
+        (compiler-lower-runtime-atomic-reachable-paths))
+        [(ResultCompilerLower.Ok lowered _)
+          (match lowered
+            [(CompilerIrProgram.Program _ functions _)
+              (and
+                (lower-test-function-defined?
+                  functions
+                  "stdlib/runtime.tl::atomic-i64-fetch-add-ptr!")
+                (not
+                  (lower-test-function-defined?
+                    functions
+                    "stdlib/runtime.tl::atomic-i64-load-ptr"))
+                (>
+                  (lower-test-function-call-count
+                    functions
+                    "main"
+                    "tl_atomic_i64_fetch_add_ptr")
                   0))])]
         [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
@@ -57608,6 +57834,36 @@
           (= (lower-test-function-vector-load-count functions "fill") 0)])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-spmd-lane-array-source) : String
+  "(define (fill [zeros : (Array f32)] [out : (Array f32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (array-set! out i (array-ref zeros (program-index)))))")
+
+(define (compiler-lower-spmd-lane-array-shape-ok?
+  [mode : CompilerLowerMode]
+  [predicated? : bool]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-spmd-lane-array-source)
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (> (lower-test-function-vector-load-count functions "fill") 0)
+            (> (lower-test-function-vector-store-count functions "fill") 0)
+            (> (lower-test-function-bounds-count functions "fill") 0)
+            (if predicated?
+              (and
+                (>
+                  (lower-test-function-predicated-load-count functions "fill")
+                  0)
+                (>
+                  (lower-test-function-predicated-store-count functions "fill")
+                  0))
+              true))])]
+    [(ResultCompilerLower.Err _) false]))
+
 (define (compiler-lower-simd-foreach-fallback-diagnostic-ok?) : bool
   (and
     (compiler-lower-mode-error-ok?
@@ -57801,6 +58057,8 @@
       (compiler-lower-avx512-foreach-map-shape-ok?)
       (compiler-lower-avx2-foreach-uniform-shape-ok?))
     (compiler-lower-avx512-foreach-uniform-shape-ok?)
+    (compiler-lower-spmd-lane-array-shape-ok? (CompilerLowerMode.Avx2) false)
+    (compiler-lower-spmd-lane-array-shape-ok? (CompilerLowerMode.Avx512) true)
     (compiler-lower-spmd-broadcast-avx2-shape-ok?)
     (compiler-lower-spmd-broadcast-avx512-shape-ok?)
     (compiler-lower-scalar-foreach-stays-scalar-ok?)
@@ -57920,7 +58178,10 @@
         (CompilerLowerMode.Avx2)
         4)
       true)
-    true))
+    (compiler-lower-avx2-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      (AstType.F32)
+      8)))
 
 (define (compiler-lower-avx512-spmd-reduce-tests-ok?) : bool
   (compiler-lower-and8
@@ -57951,9 +58212,12 @@
     (compiler-lower-spmd-reduce-lane-identity-shape-ok?
       (CompilerLowerMode.Avx512)
       8)
-    true))
+    (compiler-lower-avx512-spmd-reduce-shape-ok?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))"
+      (AstType.F32)
+      16)))
 
-;; `spmd-reduce` lowering: integer and f64 sum reductions lower (to
+;; `spmd-reduce` lowering: integer, f32, and f64 sum reductions lower (to
 ;; an accumulator loop, so `main` holds the guard branch + fold/increment
 ;; binops), and the min/max/all/any reduction ops lower as well.
 (define (compiler-lower-spmd-reduce-tests-ok?) : bool
@@ -57962,6 +58226,8 @@
       "(define (f [xs : (Array i64)] [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 (array-ref xs i)))")
     (compiler-lower-ok?
       "(define (f [xs : (Array f64)] [n : i64]) : f64 (spmd-reduce sum ([i : i64 0 n]) 0.0 (array-ref xs i)))")
+    (compiler-lower-ok?
+      "(define (f [xs : (Array f32)] [n : i64]) : f32 (spmd-reduce sum ([i : i64 0 n]) (cast 0.0 : f32) (array-ref xs i)))")
     (compiler-lower-foreach-shape-ok?
       "(define (main [n : i64]) : i64 (spmd-reduce sum ([i : i64 0 n]) 0 i))")
     (compiler-lower-ok?
@@ -59893,6 +60159,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-runtime-substring-capturing-lambda-reachable-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-runtime-atomic-reachable-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-in-arena-shape-ok?)

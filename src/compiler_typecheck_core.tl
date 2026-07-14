@@ -35101,14 +35101,15 @@
       [(ResultTcUnit.Err message) (ResultTcType.Err message)])))
 
 ;; spmd-reduce operator/type rules (SPEC 5.15): the init/value/result type
-;; must be in the operator's supported set -- `sum` over i32/i64/f64, `min`/`max`
-;; over i32/i64, `all`/`any` over bool.
+;; must be in the operator's supported set -- `sum` over i32/i64/f32/f64,
+;; `min`/`max` over i32/i64, `all`/`any` over bool.
 (define (tc-reduce-op-type-ok? [op : AstReduceOp] [ty : AstType]) : bool
   (match op
     [(AstReduceOp.Sum)
       (match ty
         [(AstType.I32) true]
         [(AstType.I64) true]
+        [(AstType.F32) true]
         [(AstType.F64) true]
         [_ false])]
     [(AstReduceOp.Min)
@@ -35133,7 +35134,7 @@
 (define (tc-reduce-op-type-msg [op : AstReduceOp]) : String
   (match op
     [(AstReduceOp.Sum)
-      "typecheck: spmd-reduce sum requires an i32, i64, or f64 type"]
+      "typecheck: spmd-reduce sum requires an i32, i64, f32, or f64 type"]
     [(AstReduceOp.Min) "typecheck: spmd-reduce min requires an i32 or i64 type"]
     [(AstReduceOp.Max) "typecheck: spmd-reduce max requires an i32 or i64 type"]
     [(AstReduceOp.All) "typecheck: spmd-reduce all requires a bool type"]
@@ -50767,13 +50768,9 @@
 (define (macro-stdlib-private-dynamic-buffer-macro?
   [macro-name : String]
   [definition-module : String]) : bool
-  (or
-    (and
-      (string.eq definition-module "stdlib.vector")
-      (string.eq macro-name "stdlib.vector/vector"))
-    (and
-      (string.eq definition-module "stdlib.vector")
-      (string.eq macro-name "stdlib.vector/vector-family"))))
+  (and
+    (string.eq definition-module "stdlib.vector")
+    (string.eq macro-name "stdlib.vector/vector")))
 
 (define (macro-parse-dispatch-for-macro
   [macro-name : String]

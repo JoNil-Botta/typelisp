@@ -31,6 +31,7 @@
 (module read)
 
 (import stdlib.io)
+(import stdlib.arena)
 (import stdlib.string)
 (import token)
 
@@ -87,18 +88,35 @@
 ;; so the pool is reset per program parse (see compiler_parse_core.tl).
 (define sp-node-pool-slots : (Array SpannedSexpr)
   (make-array SpannedSexpr 262144))
+
+;; The backing array is process-global. Capture its arena after the initial
+;; allocation so a safety-net grow cannot accidentally move it into a
+;; short-lived parser/test arena and leave this global dangling when that arena
+;; is destroyed.
+(define sp-node-pool-base-arena : i64
+  (arena.tl_arena_current))
 (define sp-node-pool-count : i64
   0)
+
+(define (sp-node-pool-restore-arena-after-base-alloc!
+  [previous-arena : i64]
+  [base-arena : i64]
+  [head-arena : i64]) : unit
+  (unsafe
+    (arena.tl_arena_set
+      (if (= previous-arena base-arena)
+        head-arena
+        previous-arena))))
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
 
-;; Grow is a safety net only. The spanned pool is reset per program parse AND
-;; truncated per top-level form (compiler_parse_core.tl), so live size stays
-;; well under the initial capacity and grow! never fires on real inputs. That
-;; matters because growing reassigns the global mid-push and the opt2 optimizer
-;; can cache the pre-grow array across the grow! call (the same CSE-across-call
-;; hazard the AST pool sidesteps by pre-sizing). Keeping grow dead avoids it.
+;; Grow is a safety net. The spanned pool is reset per program parse and
+;; truncated per top-level form (compiler_parse_core.tl), so ordinary inputs
+;; stay under the initial capacity. Large generated/selfhost closures can still
+;; reach it. Growing reassigns the global mid-push, so allocate in the
+;; persistent base arena just like the AST/type node pools do; otherwise a grow
+;; from a transient file/test arena leaves the global dangling at teardown.
 (define (sp-node-pool-grow!) : unit
   (let
     [old-slots : (Array SpannedSexpr) sp-node-pool-slots]
@@ -107,7 +125,18 @@
       (if (< old-cap 1)
         1024
         (* old-cap 2))]
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [base-arena : i64 sp-node-pool-base-arena]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set base-arena))]
     [new-slots : (Array SpannedSexpr) (make-array SpannedSexpr new-cap)]
+    [head-arena : i64 (arena.tl_arena_current)]
+    [_restore-arena : unit
+      (sp-node-pool-restore-arena-after-base-alloc!
+        previous-arena
+        base-arena
+        head-arena)]
     [len : i64 sp-node-pool-count]
     [i : i64 0]
     (begin
@@ -115,6 +144,7 @@
         (begin
           (array-set! new-slots i (array-ref old-slots i))
           (set! i (+ i 1))))
+      (set! sp-node-pool-base-arena head-arena)
       (set! sp-node-pool-slots new-slots))))
 
 (define (sp-node-push [node : SpannedSexpr]) : i64
@@ -137,6 +167,28 @@
 
 (define (sp-node-pool-reset!) : unit
   (sp-node-pool-truncate! 0))
+
+(define (sp-node-pool-arena-ownership-self-test) : i64
+  (let
+    [home : arena.Arena (arena.current)]
+    [scratch : arena.Arena (arena.make)]
+    (begin
+      (unsafe
+        (arena.set! scratch))
+      (sp-node-pool-grow!)
+      (unsafe
+        (begin
+          (arena.set! home)
+          (arena.destroy scratch)))
+      (sp-node-pool-reset!)
+      (let
+        [id : i64 (sp-node-push (SpannedSexpr.Nil (token.SourceSpan 1 1 1 1)))]
+        (match (sp-node-get id)
+          [(SpannedSexpr.Nil span)
+            (if (and (= id 0) (= (struct-get span start-line) 1))
+              42
+              1)]
+          [_ 2])))))
 
 (define (sexpr-cons [head : Sexpr] [tail : Sexpr]) : Sexpr
   (Sexpr.Cons (box head) (box tail)))

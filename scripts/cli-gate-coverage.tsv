@@ -1,0 +1,4 @@
+# cli-gate-coverage-schema	1
+# Register annotated source files with: # source<TAB>repository/relative/path.sh
+schema	case_id	gate	source	kind	host	compiler	argv	fixture	stdin	cwd	process	environment	expected_status	stdout	stderr	effects	canonical_owner	duplicate_reason
+# example	1	public-help	public-tools	scripts/verify-public-tools.sh	wrapper	all	stage3/run_cmd	typelisp --help	-	none	repository	one-process	none	0	usage	ignore	none	public-help	-

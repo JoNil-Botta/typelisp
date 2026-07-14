@@ -51,8 +51,6 @@ BUILD_STDOUT="$WORKDIR/profile-build.stdout"
 BUILD_STDERR="$WORKDIR/profile-build.stderr"
 CHECK_STDOUT="$WORKDIR/profile-check.stdout"
 CHECK_STDERR="$WORKDIR/profile-check.stderr"
-VECTOR_STDOUT="$WORKDIR/profile-vector.stdout"
-VECTOR_STDERR="$WORKDIR/profile-vector.stderr"
 VECTOR_CORE_STDOUT="$WORKDIR/profile-vector-core.stdout"
 VECTOR_CORE_STDERR="$WORKDIR/profile-vector-core.stderr"
 VECTOR_FULL_STDOUT="$WORKDIR/profile-vector-full.stdout"
@@ -670,35 +668,6 @@ assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_f
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.move.call_func.misses|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.hits|"
 assert_contains "$CHECK_STDERR" "compile-profile|typecheck.body_fact.borrow.call_func.misses|"
-
-echo "[compile-profile] check named vector Decls macro fixture"
-if ! "$PROFILE_BIN" check tests/integration/compile_profile_named_vector_decls.tl \
-    --stdlib-root . \
-    --stdlib-root stdlib \
-    > "$VECTOR_STDOUT" 2> "$VECTOR_STDERR"; then
-    show_failure_logs "$VECTOR_STDOUT" "$VECTOR_STDERR"
-    fail "profiled vector fixture check failed"
-fi
-
-assert_contains_in \
-    "$VECTOR_STDERR" \
-    "compile-profile-detail|typecheck.macro_expand|" \
-    "$VECTOR_STDOUT" \
-    "$VECTOR_STDERR"
-# Single demand-driven pass: all five family instantiations expand in one walk,
-# so a single macro-walk profile block reports calls=5 (a re-expansion would
-# inflate the count or add blocks).
-assert_line_count_in \
-    "$VECTOR_STDERR" \
-    "stdlib.vector/family arity=3 calls=5" \
-    1 \
-    "$VECTOR_STDOUT" \
-    "$VECTOR_STDERR"
-assert_not_contains_in \
-    "$VECTOR_STDERR" \
-    "typecheck.macro.vector_family_fast_expansions" \
-    "$VECTOR_STDOUT" \
-    "$VECTOR_STDERR"
 
 echo "[compile-profile] compare compact and full canonical vector modules"
 if ! "$PROFILE_BIN" check tests/integration/compile_profile_vector_core.tl \

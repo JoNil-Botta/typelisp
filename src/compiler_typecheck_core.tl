@@ -47881,12 +47881,15 @@
           node-pool-base-arena
           current)]
       (begin
-        (cfg compile-profile (compiler-tc-profile-start))
         (unsafe
           (arena.tl_arena_set home))
         (set! macro-expand-scratch-enabled false)
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
+        ;; Cache clearing can release independently owned arenas. Start the
+        ;; scratch counter after that work so this phase attributes only the
+        ;; arena named by macro_scratch_release.
+        (cfg compile-profile (compiler-tc-profile-start))
         (unsafe
           (arena.tl_arena_destroy scratch))
         (cfg

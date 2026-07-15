@@ -10804,6 +10804,14 @@
 (define (compiler-load-symbol-text [name-id : i64]) : String
   (reader.read-symbol-text-for-id name-id))
 
+;; Manifest values outlive the reader's persistent intern arena because package
+;; builds reset compiler state between inline-test phases. Materialize stored
+;; values in the caller's arena without creating another intern entry.
+(define (compiler-load-manifest-owned-intern-text [text-id : i64]) : String
+  (let
+    [text : String (intern-str text-id)]
+    (string.copy (& text))))
+
 ;: Extract a single `"value"` from a field tail `("value")`.
 (define (compiler-load-manifest-string-value
   [ftail : reader.Sexpr]
@@ -10813,7 +10821,9 @@
       (match (box-get vhead)
         [(reader.Sexpr.Str val-id)
           (match (box-get vrest)
-            [(reader.Sexpr.Nil) (ResultPkgString.Ok (intern-str val-id))]
+            [(reader.Sexpr.Nil)
+              (ResultPkgString.Ok
+                (compiler-load-manifest-owned-intern-text val-id))]
             [_
               (ResultPkgString.Err
                 (string.append
@@ -10955,7 +10965,8 @@
         [(reader.Sexpr.Nil)
           (match (box-get vhead)
             [(reader.Sexpr.Str path-id)
-              (ResultPkgString.Ok (intern-str path-id))]
+              (ResultPkgString.Ok
+                (compiler-load-manifest-owned-intern-text path-id))]
             [(reader.Sexpr.Cons source-kind-node source-tail)
               (match (box-get source-kind-node)
                 [(reader.Sexpr.Sym source-kind)
@@ -11063,15 +11074,18 @@
         [(reader.Sexpr.Cons ehead etail)
           (match (box-get ehead)
             [(reader.Sexpr.Sym alias)
-              (match (compiler-load-manifest-dependency-value
-                (box-get etail)
-                (compiler-load-symbol-text alias))
-                [(ResultPkgString.Err m) (ResultCompilerPkgDeps.Err m)]
-                [(ResultPkgString.Ok path)
-                  (compiler-load-manifest-cons-dep
-                    (compiler-load-symbol-text alias)
-                    path
-                    (box-get rest))])]
+              (let
+                [alias-text : String
+                  (compiler-load-manifest-owned-intern-text alias)]
+                (match (compiler-load-manifest-dependency-value
+                  (box-get etail)
+                  alias-text)
+                  [(ResultPkgString.Err m) (ResultCompilerPkgDeps.Err m)]
+                  [(ResultPkgString.Ok path)
+                    (compiler-load-manifest-cons-dep
+                      alias-text
+                      path
+                      (box-get rest))]))]
             [_
               (ResultCompilerPkgDeps.Err
                 "dependency entries must start with an alias name")])]
@@ -11214,7 +11228,9 @@
               (let
                 [out : fs.FsStringVector acc]
                 (begin
-                  (fs.string-vector-push! (&mut out) val)
+                  (fs.string-vector-push!
+                    (&mut out)
+                    (compiler-load-manifest-owned-intern-text val-id))
                   (compiler-load-manifest-link-values (box-get vrest) fname out)))))]
         [_
           (ResultPkgStrVec.Err

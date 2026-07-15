@@ -14649,7 +14649,10 @@
 ;; Macro-generated modules already have an identity, but their dotted display
 ;; names are intentionally absent from the source interner. Resolve
 ;; `current.module.Type` from the context's module id and the parsed base id.
-(define (tc-current-module-dotted-name-id [ctx : TcContext] [name : String]) : i64
+(define (tc-current-module-dotted-name-id
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : i64
   (let
     [module : String (tc-context-module ctx)]
     [module-id : i64 (tc-context-module-id ctx)]
@@ -14662,9 +14665,7 @@
       (string.eq (string.substring name 0 module-len) module)
       (string.char-eq (string.string-ref name module-len) '.'))
       (let
-        [base : String
-          (string.substring name base-start (- name-len base-start))]
-        [base-id : i64 (tc-source-spelling-id base)]
+        [base-id : i64 (intern-dotted-final-id name-id)]
         (if (< base-id 0)
           -1
           (tc-qualified-name-key-id module-id base-id)))
@@ -14774,7 +14775,8 @@
   (match ctx
     [(TcContext _ symbols _ module module-id _)
       (let
-        [current-dotted-id : i64 (tc-current-module-dotted-name-id ctx name)]
+        [current-dotted-id : i64
+          (tc-current-module-dotted-name-id ctx name name-id)]
         [direct-source-key : option_i64.Option
           (if (>= current-dotted-id 0)
             option_i64.None
@@ -14932,7 +14934,8 @@
   (match ctx
     [(TcContext _ symbols _ module module-id _)
       (let
-        [current-dotted-id : i64 (tc-current-module-dotted-name-id ctx name)]
+        [current-dotted-id : i64
+          (tc-current-module-dotted-name-id ctx name name-id)]
         [direct-source-key : option_i64.Option
           (if (>= current-dotted-id 0)
             option_i64.None
@@ -37317,85 +37320,63 @@
 (define (tc-dotted-alias-flat-variant-key-id
   [ctx : TcContext]
   [env : TcTypeEnv]
-  [name : String]
+  [_name : String]
   [name-id : i64]) : option_i64.Option
   (let
-    [first-dot : i64 (tc-name-first-dot-id name-id)]
-    [n : i64 (string.string-length name)]
-    [last-dot : i64 first-dot]
-    [i : i64 (+ first-dot 1)]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '.')
-            (set! last-dot i)
-            unit)
-          (set! i (+ i 1))))
-      (if (or (<= first-dot 0) (<= last-dot first-dot) (>= last-dot (- n 1)))
-        option_i64.None
-        (let
-          [alias-id : i64 (intern-leading-dot-id name-id)]
-          [enum-name-id : i64
-            (tc-source-spelling-id
-              (string.substring
-                name
-                (+ first-dot 1)
-                (- last-dot (+ first-dot 1))))]
-          [variant-id : i64
-            (tc-source-spelling-id
-              (string.substring name (+ last-dot 1) (- n (+ last-dot 1))))]
-          (if (or (< alias-id 0) (< enum-name-id 0) (< variant-id 0))
-            option_i64.None
-            (let
-              [target-module-id : i64
-                (match (tc-context-program ctx)
-                  [(AstProgram.Program decls-box)
-                    (match (tc-source-dotted-alias-target-id
-                      (box-get decls-box)
-                      (tc-context-module-id ctx)
-                      alias-id)
-                      [(TcMaybeNameId.Some target-id) target-id]
-                      [(TcMaybeNameId.No) -1])])]
-              [target-qualified-key-id : i64
-                (compiler-symbol-module-key-id-by-id
-                  target-module-id
-                  (compiler-enum-qualified-variant-name-id
-                    enum-name-id
-                    variant-id))]
-              [target-flat-key-id : i64
-                (compiler-symbol-module-key-id-by-id
-                  target-module-id
-                  variant-id)]
-              [alias-qualified-key-id : i64
-                (compiler-symbol-module-key-id-by-id
-                  alias-id
-                  (compiler-enum-qualified-variant-name-id
-                    enum-name-id
-                    variant-id))]
-              [alias-flat-key-id : i64
-                (compiler-symbol-module-key-id-by-id alias-id variant-id)]
-              [enum-qualified-key-id : i64
-                (compiler-enum-qualified-variant-name-id
-                  enum-name-id
-                  variant-id)]
-              (cond
-                [(and
-                    (>= target-module-id 0)
-                    (tc-source-name-bound-exact-id? env target-qualified-key-id))
-                  (option_i64.Some target-qualified-key-id)]
-                [(and
-                    (>= target-module-id 0)
-                    (tc-source-name-bound-exact-id? env target-flat-key-id))
-                  (option_i64.Some target-flat-key-id)]
-                [(tc-source-name-bound-exact-id? env alias-qualified-key-id)
-                  (option_i64.Some alias-qualified-key-id)]
-                [(tc-source-name-bound-exact-id? env alias-flat-key-id)
-                  (option_i64.Some alias-flat-key-id)]
-                [(tc-source-name-bound-exact-id? env enum-qualified-key-id)
-                  (option_i64.Some enum-qualified-key-id)]
-                [(tc-source-name-bound-exact-id? env variant-id)
-                  (option_i64.Some variant-id)]
-                [else option_i64.None]))))))))
+    [alias-id : i64 (intern-leading-dot-id name-id)]
+    [tail-id : i64 (intern-dotted-tail-id name-id)]
+    [enum-name-id : i64
+      (if (>= tail-id 0)
+        (intern-leading-dot-id tail-id)
+        -1)]
+    [variant-id : i64
+      (if (>= tail-id 0)
+        (intern-dotted-tail-id tail-id)
+        -1)]
+    (if (or (< alias-id 0) (< enum-name-id 0) (< variant-id 0))
+      option_i64.None
+      (let
+        [target-module-id : i64
+          (match (tc-context-program ctx)
+            [(AstProgram.Program decls-box)
+              (match (tc-source-dotted-alias-target-id
+                (box-get decls-box)
+                (tc-context-module-id ctx)
+                alias-id)
+                [(TcMaybeNameId.Some target-id) target-id]
+                [(TcMaybeNameId.No) -1])])]
+        [target-qualified-key-id : i64
+          (compiler-symbol-module-key-id-by-id
+            target-module-id
+            (compiler-enum-qualified-variant-name-id enum-name-id variant-id))]
+        [target-flat-key-id : i64
+          (compiler-symbol-module-key-id-by-id target-module-id variant-id)]
+        [alias-qualified-key-id : i64
+          (compiler-symbol-module-key-id-by-id
+            alias-id
+            (compiler-enum-qualified-variant-name-id enum-name-id variant-id))]
+        [alias-flat-key-id : i64
+          (compiler-symbol-module-key-id-by-id alias-id variant-id)]
+        [enum-qualified-key-id : i64
+          (compiler-enum-qualified-variant-name-id enum-name-id variant-id)]
+        (cond
+          [(and
+              (>= target-module-id 0)
+              (tc-source-name-bound-exact-id? env target-qualified-key-id))
+            (option_i64.Some target-qualified-key-id)]
+          [(and
+              (>= target-module-id 0)
+              (tc-source-name-bound-exact-id? env target-flat-key-id))
+            (option_i64.Some target-flat-key-id)]
+          [(tc-source-name-bound-exact-id? env alias-qualified-key-id)
+            (option_i64.Some alias-qualified-key-id)]
+          [(tc-source-name-bound-exact-id? env alias-flat-key-id)
+            (option_i64.Some alias-flat-key-id)]
+          [(tc-source-name-bound-exact-id? env enum-qualified-key-id)
+            (option_i64.Some enum-qualified-key-id)]
+          [(tc-source-name-bound-exact-id? env variant-id)
+            (option_i64.Some variant-id)]
+          [else option_i64.None])))))
 
 (define (tc-dotted-alias-variant-key-id
   [ctx : TcContext]
@@ -37462,67 +37443,46 @@
 
 (define (tc-dotted-alias-variant-handle
   [ctx : TcContext]
-  [variant-name : String]
+  [_variant-name : String]
   [variant-name-id : i64]) : option_i64.Option
-  (match (tc-dotted-alias-variant-key-id ctx variant-name variant-name-id)
+  (match (tc-dotted-alias-variant-key-id ctx "" variant-name-id)
     [(option_i64.Some key-id)
       (compiler-registries-lookup-variant-key-id
         (tc-context-registries ctx)
         key-id)]
     [(option_i64.None)
       (let
-        [n : i64 (string.string-length variant-name)]
-        [first-dot : i64 -1]
-        [last-dot : i64 -1]
-        [i : i64 0]
-        (begin
-          (while (< i n)
-            (begin
-              (if (string.char-eq (string.string-ref variant-name i) '.')
-                (begin
-                  (if (< first-dot 0)
-                    (set! first-dot i)
-                    unit)
-                  (set! last-dot i))
-                unit)
-              (set! i (+ i 1))))
-          (if (or (< first-dot 0) (<= last-dot first-dot) (>= last-dot (- n 1)))
-            option_i64.None
-            (let
-              [enum-id : i64
-                (tc-source-spelling-id
-                  (string.substring
-                    variant-name
-                    (+ first-dot 1)
-                    (- last-dot (+ first-dot 1))))]
-              [base-id : i64
-                (tc-source-spelling-id
-                  (string.substring
-                    variant-name
-                    (+ last-dot 1)
-                    (- n (+ last-dot 1))))]
-              (if (or (< enum-id 0) (< base-id 0))
-                option_i64.None
-                (match (compiler-registries-lookup-variant-id
-                  (tc-context-registries ctx)
-                  base-id)
-                  [(option_i64.Some handle)
-                    (if (=
-                      (tc-qualified-name-base-id
-                        (tc-variant-owner-id-or ctx handle -1))
-                      enum-id)
-                      (option_i64.Some handle)
-                      (tc-dotted-alias-variant-handle-for-enum-id
-                        ctx
-                        variant-name-id
-                        enum-id
-                        base-id))]
-                  [(option_i64.None)
-                    (tc-dotted-alias-variant-handle-for-enum-id
-                      ctx
-                      variant-name-id
-                      enum-id
-                      base-id)]))))))]))
+        [tail-id : i64 (intern-dotted-tail-id variant-name-id)]
+        [enum-id : i64
+          (if (>= tail-id 0)
+            (intern-leading-dot-id tail-id)
+            -1)]
+        [base-id : i64
+          (if (>= tail-id 0)
+            (intern-dotted-tail-id tail-id)
+            -1)]
+        (if (or (< enum-id 0) (< base-id 0))
+          option_i64.None
+          (match (compiler-registries-lookup-variant-id
+            (tc-context-registries ctx)
+            base-id)
+            [(option_i64.Some handle)
+              (if (=
+                (tc-qualified-name-base-id
+                  (tc-variant-owner-id-or ctx handle -1))
+                enum-id)
+                (option_i64.Some handle)
+                (tc-dotted-alias-variant-handle-for-enum-id
+                  ctx
+                  variant-name-id
+                  enum-id
+                  base-id))]
+            [(option_i64.None)
+              (tc-dotted-alias-variant-handle-for-enum-id
+                ctx
+                variant-name-id
+                enum-id
+                base-id)])))]))
 
 (define (tc-dotted-alias-variant-handle-for-enum-id
   [ctx : TcContext]
@@ -55954,14 +55914,11 @@
 
 (define (macro-collect-expr-type-macro-names-in
   [decls : AstDeclList]
-  [module : String]
+  [module-id : i64]
   [acc : TcStringList]) : TcStringList
   (let
     [cur : AstDeclList decls]
-    [cur-module-id : i64
-      (if (string.eq module "")
-        cbi.compiler-builtin-id-fix-empty
-        (tc-existing-name-id module))]
+    [cur-module-id : i64 module-id]
     [out : TcStringList acc]
     (begin
       (while (not (ast-decl-list-empty? (& cur)))
@@ -55982,7 +55939,10 @@
       out)))
 
 (define (macro-collect-expr-type-macro-names [decls : AstDeclList]) : TcStringList
-  (macro-collect-expr-type-macro-names-in decls "" TcStringList.Nil))
+  (macro-collect-expr-type-macro-names-in
+    decls
+    cbi.compiler-builtin-id-fix-empty
+    TcStringList.Nil))
 
 (define (macro-hygiene-structural-base) : i64
   (ci.intern-macro-global-structural-base))

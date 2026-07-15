@@ -6170,7 +6170,28 @@ and not a general manual memory management feature.
   buffers, and named structs/enums whose elements, fields, or payloads are
   cloneable. Scalars return the same value; aggregate clones allocate fresh
   storage in the current active arena and recursively clone nested cloneable
-  elements. Named structs/enums use compiler-generated `clone$Type` helpers.
+  elements. Named structs/enums use `clone$Type` helpers. `clone` and
+  `with-escape` remain compiler-checked semantic forms: the compiler owns
+  cloneability, reachable-root discovery, diagnostics, and active-arena
+  behavior. After the clone-generator migration, helper declarations are
+  owned by a declared stdlib `: Decls` macro rather than by a second language
+  semantic form.
+- The staged v1 clone handoff runs only after typechecking has resolved and
+  deduplicated reachable named-aggregate roots. When `stdlib.clone` is loaded,
+  its first proof surface routes reachable one-field structs through
+  `stdlib.clone/synthesize-one-field-struct`; other shapes retain the
+  compatibility compiler producer until the broader generator port lands, and
+  programs that do not load the module retain compatibility synthesis.
+  A routed root has exactly one producer: the stdlib result is typechecked,
+  lowered, and retained, and that root is omitted from compatibility
+  synthesis. An existing or conflicting `clone$Type` declaration is an error.
+  The helper name is `clone$<unqualified-nominal-name>` in the nominal type's
+  canonical module. The deterministic request/generated-origin key is
+  `decls:stdlib.clone:stdlib.clone/synthesize-one-field-struct(<canonical-type-key>)`;
+  repeated identical roots/import paths reuse that identity and may not emit a
+  second helper. Diagnostics from a generated helper use its generated-decl
+  origin and the compiler handoff request location; producer conflicts name
+  the conflicting helper explicitly.
 - `clone` rejects unsupported ownership/lifetime forms rather than silently
   bit-copying them. Unsupported clone operands include function values,
   references including borrowed `str`, raw pointers, boxes,

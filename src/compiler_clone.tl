@@ -1047,6 +1047,7 @@
   [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
+  [skip : CloneNameList]
   [acc : AstDeclList]
   [module : String]) : AstDeclList
   (let
@@ -1072,7 +1073,9 @@
                         current-module
                         (intern-str name))]
                     (begin
-                      (if (clone-name-set-contains? able name-str)
+                      (if (and
+                        (clone-name-set-contains? able name-str)
+                        (not (clone-name-list-contains? skip name-str)))
                         (set!
                           out
                           (clone-prepend-generated-decls-in-module
@@ -1092,7 +1095,9 @@
                         current-module
                         (intern-str name))]
                     (begin
-                      (if (clone-name-set-contains? able name-str)
+                      (if (and
+                        (clone-name-set-contains? able name-str)
+                        (not (clone-name-list-contains? skip name-str)))
                         (set!
                           out
                           (clone-prepend-generated-decls-in-module
@@ -1116,7 +1121,15 @@
   [decls : AstDeclList]
   [able : CloneNameSet]
   [acc : AstDeclList]) : AstDeclList
-  (clone-generate-decls-in-module pools decls able acc ""))
+  (clone-generate-decls-in-module pools decls able CloneNameList.Nil acc ""))
+
+(define (clone-generate-decls-skipping
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [skip : CloneNameList]
+  [acc : AstDeclList]) : AstDeclList
+  (clone-generate-decls-in-module pools decls able skip acc ""))
 
 (define (clone-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (let
@@ -1416,6 +1429,104 @@
                 (set! cur (box-get rest))))]))
       out)))
 
+;; The v1 stdlib handoff intentionally proves one narrow shape. Root
+;; discovery and cloneability stay compiler-owned; this predicate only chooses
+;; which already-resolved roots may use the stdlib declaration producer.
+(define (clone-one-field-struct-root-in-module?
+  [decls : AstDeclList]
+  [root : String]
+  [module : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (match (ast-decl-unwrapped decl)
+        [(AstDecl.Module next-module)
+          (clone-one-field-struct-root-in-module?
+            rest
+            root
+            (intern-str next-module))]
+        [(AstDecl.DefStruct name _ _ fields)
+          (if (and
+            (string.eq
+              (clone-type-name-canonical module (intern-str name))
+              root)
+            (= (ast-field-def-list-len (& fields)) 1))
+            true
+            (clone-one-field-struct-root-in-module? rest root module))]
+        [_ (clone-one-field-struct-root-in-module? rest root module)])]))
+
+(define (clone-one-field-struct-root? [decls : AstDeclList] [root : String]) : bool
+  (clone-one-field-struct-root-in-module? decls root ""))
+
+(define (clone-stdlib-handoff-macro-present-in-module?
+  [decls : AstDeclList]
+  [module : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) false]
+    [(AstDeclListStep.Cons decl rest)
+      (match (ast-decl-unwrapped decl)
+        [(AstDecl.Module next-module)
+          (clone-stdlib-handoff-macro-present-in-module?
+            rest
+            (intern-str next-module))]
+        [(AstDecl.DefMacro name _ _ _)
+          (if (and
+            (string.eq module "stdlib.clone")
+            (string.eq (intern-str name) "synthesize-one-field-struct"))
+            true
+            (clone-stdlib-handoff-macro-present-in-module? rest module))]
+        [_ (clone-stdlib-handoff-macro-present-in-module? rest module)])]))
+
+(define (clone-stdlib-handoff-macro-present? [decls : AstDeclList]) : bool
+  (clone-stdlib-handoff-macro-present-in-module? decls ""))
+
+(define (clone-stdlib-handoff-roots-from-expanded
+  [decls : AstDeclList]
+  [expanded : CloneNameList]) : CloneNameList
+  (match expanded
+    [(CloneNameList.Nil) CloneNameList.Nil]
+    [(CloneNameList.Cons root rest)
+      (let
+        [tail : CloneNameList
+          (clone-stdlib-handoff-roots-from-expanded decls (box-get rest))]
+        (if (clone-one-field-struct-root? decls root)
+          (CloneNameList.Cons root (box tail))
+          tail))]))
+
+(define (clone-stdlib-handoff-roots
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]) : CloneNameList
+  (if (clone-stdlib-handoff-macro-present? decls)
+    (clone-stdlib-handoff-roots-from-expanded
+      decls
+      (clone-root-expand pools decls able roots roots))
+    CloneNameList.Nil))
+
+(define (clone-helper-decl-count-in-module
+  [decls : AstDeclList]
+  [root : String]
+  [module : String]) : i64
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Nil) 0]
+    [(AstDeclListStep.Cons decl rest)
+      (match (ast-decl-unwrapped decl)
+        [(AstDecl.Module next-module)
+          (clone-helper-decl-count-in-module rest root (intern-str next-module))]
+        [(AstDecl.DefFn name _ _ _ _)
+          (+
+            (if (and
+              (string.eq module (clone-type-name-module root))
+              (string.eq (intern-str name) (clone-local-helper-name root)))
+              1
+              0)
+            (clone-helper-decl-count-in-module rest root module))]
+        [_ (clone-helper-decl-count-in-module rest root module)])]))
+
+(define (clone-helper-decl-count [decls : AstDeclList] [root : String]) : i64
+  (clone-helper-decl-count-in-module decls root ""))
+
 (define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
   (let
     [cur : CloneNameList names]
@@ -1431,6 +1542,21 @@
               (set! out (clone-name-set-insert out name))
               (set! cur (box-get rest)))]))
       out)))
+
+(define (clone-generated-decls-with-roots-and-able-skipping
+  [pools : AstNodePoolContext]
+  [decls : AstDeclList]
+  [able : CloneNameSet]
+  [roots : CloneNameList]
+  [skip : CloneNameList]) : AstDeclList
+  (let
+    [expanded : CloneNameList (clone-root-expand pools decls able roots roots)]
+    (clone-generate-decls-skipping
+      pools
+      decls
+      (clone-name-list-to-set expanded (clone-name-set-empty))
+      skip
+      (ast-decl-list-new))))
 
 ;; Append the generated clone$ helpers AFTER the program's decls, so the real
 ;; declarations keep their source paths (the generated helpers, being last, get

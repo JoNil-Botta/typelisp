@@ -27,6 +27,13 @@ falling back to scalar code.
 - `uniform_zip_i64.tl` - `foreach` zip over `n = 13` i64 lanes with
   `a[i] * b[i] + c[i] + r`: exercises vector multiply, a third array operand,
   uniform scalar broadcast, and tail handling.
+- `multi_output_i64.tl` - one straight-line `foreach` writes two distinct i64
+  destinations while sharing `a[i] * 2`; covers empty, sub-gang, exact AVX2 and
+  AVX-512 gangs, tails, ordered stores, common-subexpression reuse, and output
+  sentinels. Exit 42.
+- `multi_output_bounds_trap.tl` - a fused two-output map whose second
+  destination is too short. The harness requires the ordinary bounds trap in
+  scalar and every runnable SIMD mode, pinning all-destination safety checks.
 - `vector_slice_surface_i64.tl` - `foreach` maps whose public functions take
   generated vectors and generated full slices, then borrow backing storage
   before the SPMD body. This pins the array-surface migration away from public

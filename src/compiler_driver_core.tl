@@ -1406,27 +1406,67 @@
 
 (define (compiler-driver-prepare-lowered-source-retirement!) : bool
   (let
-    [persistent-before : bool (ci.intern-persistent-storage-on?)]
-    (if (= compiler-driver-pending-retired-source-arena 0)
-      persistent-before
+    [early-prepared? : bool (compiler-lower-checked-frontend-interns-prepared?)]
+    [persistent-before : bool
+      (if early-prepared?
+        (compiler-lower-checked-frontend-intern-persistence-before?)
+        (ci.intern-persistent-storage-on?))]
+    (if early-prepared?
       (let
+        [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
         [intern-count : i64 (ci.intern-pool-len)]
         (begin
-          ;; Do this before optimizer/backend reset any producer-owned scratch
-          ;; arenas. The dedup map stores each interned String value directly.
-          (ci.intern-persist-range! 0 intern-count)
+          ;; Macro compaction already relocated the prefix needed to retire the
+          ;; frontend. Promote only names added by typecheck/lower, then rebuild
+          ;; direct String entries in the dedup map before checked storage dies.
+          (ci.intern-persist-range! persisted-count intern-count)
           (ci.intern-reset-to! intern-count)
-          ;; Batch state owns the arrays updated above but snapshots scalar
-          ;; count/generation/map flags separately. Refresh those scalars while
-          ;; the original persistence policy is still active.
           (if (> (array-length compiler-driver-pending-intern-state) 0)
             (ci.intern-compat-state-capture-from-globals!
               (array-ref compiler-driver-pending-intern-state 0))
             unit)
-          ;; Names first discovered after this boundary must also survive an
-          ;; early checked-arena release.
+          ;; Optimizer/backend names are discovered after checked storage is
+          ;; retired, so preserve the established persistent tail policy here.
           (ci.intern-persistent-storage-enable!)
-          persistent-before)))))
+          (compiler-lower-checked-frontend-intern-preparation-clear!)
+          persistent-before))
+      (if (= compiler-driver-pending-retired-source-arena 0)
+        persistent-before
+        (let
+          [intern-count : i64 (ci.intern-pool-len)]
+          (begin
+            ;; Do this before optimizer/backend reset any producer-owned scratch
+            ;; arenas. The dedup map stores each interned String value directly.
+            (ci.intern-persist-range! 0 intern-count)
+            (ci.intern-reset-to! intern-count)
+            ;; Batch state owns the arrays updated above but snapshots scalar
+            ;; count/generation/map flags separately. Refresh those scalars while
+            ;; the original persistence policy is still active.
+            (if (> (array-length compiler-driver-pending-intern-state) 0)
+              (ci.intern-compat-state-capture-from-globals!
+                (array-ref compiler-driver-pending-intern-state 0))
+              unit)
+            ;; Names first discovered after this boundary must also survive an
+            ;; early checked-arena release.
+            (ci.intern-persistent-storage-enable!)
+            persistent-before))))))
+
+(define (compiler-driver-abort-early-intern-preparation!) : unit
+  (if (compiler-lower-checked-frontend-interns-prepared?)
+    (let
+      [persistent-before : bool
+        (compiler-lower-checked-frontend-intern-persistence-before?)]
+      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
+      [intern-count : i64 (ci.intern-pool-len)]
+      (begin
+        ;; Diagnostics and the process-global dedup map can retain names added
+        ;; after macro compaction even when lowering fails. Promote that tail
+        ;; before the error adapter releases checked storage.
+        (ci.intern-persist-range! persisted-count intern-count)
+        (ci.intern-reset-to! intern-count)
+        (compiler-driver-restore-intern-persistence! persistent-before)
+        (compiler-lower-checked-frontend-intern-preparation-clear!)))
+    unit))
 
 (define (compiler-driver-restore-intern-persistence! [persistent-before : bool]) : unit
   (if persistent-before
@@ -1550,6 +1590,7 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
+        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 
@@ -1624,6 +1665,7 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
+        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverBuffer.Err diag))]))
 
@@ -1675,6 +1717,7 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
+        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverObject.Err diag))]))
 
@@ -1726,6 +1769,7 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
+        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverPic.Err diag))]))
 
@@ -2282,7 +2326,12 @@
                   dest-pools
                   (if defer-source-destroy?
                     0
-                    source-pools-arena))
+                    source-pools-arena)
+                  (if (and
+                    route-source-allocations?
+                    (not defer-source-destroy?))
+                    frontend-arena
+                    0))
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -2298,6 +2347,8 @@
                 pools)]
             [dest-committed? : bool
               (compiler-lower-checked-dest-pools-committed?)]
+            [frontend-released? : bool
+              (compiler-lower-checked-frontend-released?)]
             [result-pools : AstNodePoolContext
               (if dest-committed?
                 (compiler-lower-checked-dest-pools-current)
@@ -2321,9 +2372,13 @@
               (if release-source-pools?
                 (unsafe
                   (arena.tl_arena_set
-                    (if (and dest-committed? (= entry-arena source-pools-arena))
-                      (ast-node-pool-context-base-arena result-pools)
-                      entry-arena)))
+                    (if frontend-released?
+                      compiler-driver-pending-frontend-return-arena
+                      (if (and
+                        dest-committed?
+                        (= entry-arena source-pools-arena))
+                        (ast-node-pool-context-base-arena result-pools)
+                        entry-arena))))
                 unit)]
             [_clear-release : unit (compiler-lower-checked-dest-pools-clear!)]
             (match lowered
@@ -2340,7 +2395,9 @@
                           input-path)))
                     (if (and dest-committed? retire-after-lower?)
                       (begin
-                        (if route-source-allocations?
+                        (if (and
+                          route-source-allocations?
+                          (not frontend-released?))
                           (begin
                             ;; Keep front-end storage alive until the outer
                             ;; result adapter has cloned program shells/spans
@@ -2445,7 +2502,8 @@
                   dest-pools
                   (if defer-source-destroy?
                     0
-                    source-pools-arena))
+                    source-pools-arena)
+                  0)
                 (compiler-lower-checked-dest-pools-clear!))]
             [lowered : ResultCompilerLower
               (lower-compiler-program-with-decl-paths-mode-cache-and-pools
@@ -3181,6 +3239,7 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
+        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 

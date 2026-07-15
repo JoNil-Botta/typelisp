@@ -4504,6 +4504,19 @@
       (compiler-backend-win64-xmm-full-assignments)]
     [xmm15 : CompilerRegAssignmentList
       (compiler-backend-win64-xmm15-only-assignments)]
+    [planned : CompilerRegAssignmentList
+      (compiler-reg-plan-assignments
+        (compiler-reg-plan-function-scalar-for-abi
+          CompilerRegTargetAbi.Windows
+          (compiler-reg-f64-call-live-function)))]
+    [planned-frame : i64
+      (compiler-backend-frame-size (compiler-backend-frame-slots 3 planned))]
+    [planned-save : String
+      (compiler-backend-emit-save-win64-xmm-callee-regs
+        (CompilerBackendTarget.Windows)
+        planned
+        3
+        planned-frame)]
     [frame : i64
       (compiler-backend-frame-size (compiler-backend-frame-slots 3 sparse))]
     [save : String
@@ -4557,6 +4570,11 @@
         (compiler-backend-callee-save-double-return-blocks))]
     [ok : bool
       (and
+        (compiler-reg-location-register?
+          (compiler-reg-assignment-lookup planned 0)
+          "%xmm6")
+        (compiler-backend-string-contains? planned-save "    movdqu %xmm6, ")
+        (not (compiler-backend-string-contains? planned-save "%xmm7"))
         (compiler-backend-plan-uses-callee-regs? sparse)
         (= frame 240)
         (= (compiler-backend-frame-slots 3 sparse) 30)
@@ -10673,10 +10691,12 @@
     (string.eq (compiler-backend-vector-reg-lower-xmm "%zmm14") "%xmm14")
     (string.eq (compiler-backend-vector-reg-lower-ymm "%zmm15") "%ymm15")
     (string.eq (compiler-backend-xmm-to-ymm "%xmm3") "%ymm3")
+    (compiler-backend-vector-home-valid? "%xmm2")
     (compiler-backend-vector-home-valid? "%vec6")
     (compiler-backend-vector-home-valid? "%zmm13")
-    (not (compiler-backend-vector-home-valid? "%xmm2"))
-    (not (compiler-backend-vector-home-valid? "%vec14"))
+    (compiler-backend-vector-home-valid? "%vec14")
+    (compiler-backend-vector-home-valid? "%zmm15")
+    (not (compiler-backend-vector-home-valid? "%xmm1"))
     (string.eq (compiler-backend-vector-home-to-reg "%k1" "zmm") "")))
 
 (define (compiler-backend-avx512-select-false-home-asm-ok?) : bool
@@ -11520,13 +11540,17 @@
                     (= (compiler-backend-string-count loop "    movq 0(") 0)
                     (= (compiler-backend-string-count loop "    movq (%") 2)
                     (= (compiler-backend-string-count loop "    vmovdqu (") 1)
-                    (= (compiler-backend-string-count loop "    vpaddq (") 1)
+                    (= (compiler-backend-string-count loop "    vpaddq (") 0)
                     (=
                       (compiler-backend-string-count loop "    vmovdqu %ymm6")
                       1)
                     (compiler-backend-string-contains? body "foreach_avx2_body")
                     (compiler-backend-string-contains? body "foreach_tail")
-                    true)
+                    (=
+                      (compiler-backend-string-count
+                        loop
+                        "    vpaddq %ymm6, %ymm6, %ymm6")
+                      1))
                   (not
                     (compiler-backend-string-contains?
                       loop
@@ -13964,8 +13988,8 @@
       (backend-and4
         (compiler-backend-string-contains? asm "    movq %r9, -512(%rbp)\n")
         (compiler-backend-string-contains? asm "    movq -512(%rbp), %r9\n")
-        (compiler-backend-string-contains? asm "    movq %rcx, -520(%rbp)\n")
-        (compiler-backend-string-contains? asm "    movq -520(%rbp), %rcx\n"))]
+        (compiler-backend-string-contains? asm "    movq %rcx, -576(%rbp)\n")
+        (compiler-backend-string-contains? asm "    movq -576(%rbp), %rcx\n"))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-copy-bytes-direct-home-shape-ok?) : bool
@@ -20038,8 +20062,8 @@
         (backend-and8
           (compiler-backend-string-contains? asm "    movq %r9, -512(%rbp)\n")
           (compiler-backend-string-contains? asm "    movq -512(%rbp), %r9\n")
-          (compiler-backend-string-contains? asm "    movq %rcx, -520(%rbp)\n")
-          (compiler-backend-string-contains? asm "    movq -520(%rbp), %rcx\n")
+          (compiler-backend-string-contains? asm "    movq %rcx, -576(%rbp)\n")
+          (compiler-backend-string-contains? asm "    movq -576(%rbp), %rcx\n")
           (compiler-backend-string-contains?
             asm
             "    movq %fs:tl_current_arena@tpoff, %r9\n")
@@ -20894,9 +20918,77 @@
       (not (= rax rsi))
       (not (= rax rdi))
       (not (= rsi rdi))
+      (=
+        (compiler-backend-scavenge-reg-bit "%xmm2")
+        (compiler-backend-scavenge-reg-bit "%vec2"))
+      (=
+        (compiler-backend-scavenge-reg-bit "%xmm3")
+        (compiler-backend-scavenge-reg-bit "%ymm3"))
+      (=
+        (compiler-backend-scavenge-reg-bit "%xmm4")
+        (compiler-backend-scavenge-reg-bit "%zmm4"))
       (= (compiler-backend-scavenge-reg-bit-by-index 15) rax)
       (= (compiler-backend-scavenge-reg-bit-by-index 16) rsi)
       (= (compiler-backend-scavenge-reg-bit-by-index 17) rdi))))
+
+(define (compiler-backend-emergency-vector-width-ok?) : bool
+  (let
+    [prev-mode : CompilerBackendMode compiler-backend-current-mode]
+    [prev-pending : bool compiler-backend-emergency-pending]
+    [prev-reg : String compiler-backend-emergency-reg]
+    [prev-used : bool compiler-backend-emergency-used]
+    [prev-pending-count : i64 compiler-backend-emergency-pending-count]
+    [prev-used-count : i64 compiler-backend-emergency-used-count]
+    [prev-reg0 : String (array-ref compiler-backend-emergency-regs 0)]
+    [prev-slot : i64 compiler-backend-emergency-slot-offset]
+    [prev-suppressed : bool compiler-backend-emergency-restore-suppressed]
+    [_init : unit
+      (begin
+        (compiler-backend-set-current-mode! (CompilerBackendMode.Avx2))
+        (set! compiler-backend-emergency-pending false)
+        (set! compiler-backend-emergency-used false)
+        (set! compiler-backend-emergency-pending-count 0)
+        (set! compiler-backend-emergency-used-count 0)
+        (set! compiler-backend-emergency-slot-offset -512)
+        (set! compiler-backend-emergency-restore-suppressed false)
+        (compiler-backend-emergency-add! "%xmm2"))]
+    [avx2 : String (compiler-backend-emergency-wrap "    nop\n")]
+    [_avx512-init : unit
+      (begin
+        (compiler-backend-set-current-mode! (CompilerBackendMode.Avx512))
+        (set! compiler-backend-emergency-pending false)
+        (set! compiler-backend-emergency-pending-count 0)
+        (set! compiler-backend-emergency-restore-suppressed false)
+        (compiler-backend-emergency-add! "%xmm3"))]
+    [avx512 : String (compiler-backend-emergency-wrap "    nop\n")]
+    [ok : bool
+      (and
+        (= (compiler-backend-emergency-frame-extra 2) 128)
+        (= (compiler-backend-emergency-reg-offset 1) -576)
+        (compiler-backend-string-contains?
+          avx2
+          "    vmovdqu %ymm2, -512(%rbp)\n")
+        (compiler-backend-string-contains?
+          avx2
+          "    vmovdqu -512(%rbp), %ymm2\n")
+        (compiler-backend-string-contains?
+          avx512
+          "    vmovdqu64 %zmm3, -512(%rbp)\n")
+        (compiler-backend-string-contains?
+          avx512
+          "    vmovdqu64 -512(%rbp), %zmm3\n"))]
+    [_restore : unit
+      (begin
+        (compiler-backend-set-current-mode! prev-mode)
+        (set! compiler-backend-emergency-pending prev-pending)
+        (set! compiler-backend-emergency-reg prev-reg)
+        (set! compiler-backend-emergency-used prev-used)
+        (set! compiler-backend-emergency-pending-count prev-pending-count)
+        (set! compiler-backend-emergency-used-count prev-used-count)
+        (array-set! compiler-backend-emergency-regs 0 prev-reg0)
+        (set! compiler-backend-emergency-slot-offset prev-slot)
+        (set! compiler-backend-emergency-restore-suppressed prev-suppressed))]
+    ok))
 
 (define (compiler-backend-scavenge-widened-pool-picks-rsi-ok?) : bool
   (let
@@ -22246,6 +22338,7 @@
         (compiler-backend-scavenge-operand-excludes-keep-pooled-ok?)
         (compiler-backend-divmod-excludes-keep-scratch-fallbacks-ok?)
         (compiler-backend-scavenge-special-reg-bit-map-ok?)
+        (compiler-backend-emergency-vector-width-ok?)
         (compiler-backend-scavenge-widened-pool-picks-rsi-ok?)
         (compiler-backend-scavenge-win64-rsi-rdi-plan-mask-ok?)
         (compiler-backend-scratch-vreg-call-target-plan-ok?)

@@ -85,6 +85,7 @@ spmd_corpus() {
 tests/spmd/tail_i64_add.tl
 tests/spmd/tail_i32_add.tl
 tests/spmd/uniform_zip_i64.tl
+tests/spmd/multi_output_i64.tl
 tests/spmd/vector_slice_surface_i64.tl
 tests/spmd/inline_helper_i64.tl
 tests/spmd/inline_helper_shadow_i64.tl
@@ -316,6 +317,28 @@ for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
         echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
     else
         echo "[spmd-simd] gather-oob $mode -> bounds abort OK"
+    fi
+done
+
+# Every source and destination participates in the fused safety proof. A short
+# second destination must therefore leave the SIMD path and preserve the scalar
+# bounds trap instead of issuing a masked/full-width out-of-bounds store.
+for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+    mode=${pair%% *}
+    isa=${pair##* }
+    if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+        echo "[spmd-simd]   skip multi-output bounds $mode ($isa not runnable)"
+        continue
+    fi
+    run_spmd_mode tests/spmd/multi_output_bounds_trap.tl "$mode"
+    if [ "$mode_code" != 134 ] ||
+        ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+        echo "[spmd-simd] multi-output bounds $mode did not preserve the trap:" >&2
+        echo "    exit=$mode_code" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/spmd/multi_output_bounds_trap.tl $mode" >> "$FAILURES"
+    else
+        echo "[spmd-simd] multi-output bounds $mode -> expected trap OK"
     fi
 done
 

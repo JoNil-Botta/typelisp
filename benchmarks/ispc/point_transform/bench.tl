@@ -22,12 +22,11 @@
   [cos-theta : f32]
   [strength : f32]
   [count : i64]) : unit
-  ;; The current contiguous SIMD recognizer accepts one destination per map.
-  ;; Preserve the two-output contract as two maps over the same range. The
-  ;; derived ISPC kernel remains fused, so the static report exposes this gap.
-  (begin
-    (foreach
-      ([i : i64 0 count])
+  ;; Keep both destinations in one map, matching the derived ISPC kernel. The
+  ;; SIMD lowering shares the repeated scaled x/y input subexpressions.
+  (foreach
+    ([i : i64 0 count])
+    (begin
       (array-set!
         result-x
         i
@@ -37,9 +36,7 @@
             (*
               (* (* (array-ref points-y i) scale-y) sin-theta)
               (cast -1.0 : f32)))
-          (* translate-x strength))))
-    (foreach
-      ([i : i64 0 count])
+          (* translate-x strength)))
       (array-set!
         result-y
         i

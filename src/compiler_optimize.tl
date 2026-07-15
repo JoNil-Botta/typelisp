@@ -9087,18 +9087,12 @@
     [(CompilerIrBlockList.Array seq)
       (opt-verify-block-uses defs doms (compiler-ir-block-seq-to-list seq))]))
 
-(define (opt-verify-function-with-context
+(define (opt-verify-function-body-with-context
   [func : CompilerIrFunction]
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
     [(CompilerIrFunction.Function _ params _ vars blocks)
       (cond
-        [(not (opt-cfg-block-labels-unique? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate block label")]
-        [(not (opt-cfg-successor-targets-known? blocks))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: unknown successor label")]
         [(not (opt-verify-single-defs? params vars blocks))
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: duplicate var definition")]
@@ -9114,9 +9108,11 @@
               [(ResultCompilerOptimizeVerify.Err message)
                 (ResultCompilerOptimizeVerify.Err message)]))])]))
 
-(define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
+(define (opt-verify-function-with-context
+  [func : CompilerIrFunction]
+  [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
-    [(CompilerIrFunction.Function _ params _ vars blocks)
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
       (cond
         [(not (opt-cfg-block-labels-unique? blocks))
           (ResultCompilerOptimizeVerify.Err
@@ -9124,11 +9120,22 @@
         [(not (opt-cfg-successor-targets-known? blocks))
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: unknown successor label")]
-        [(not (opt-verify-single-defs? params vars blocks))
+        [else (opt-verify-function-body-with-context func context)])]))
+
+(define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (cond
+        [(not (opt-cfg-block-labels-unique? blocks))
           (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: duplicate var definition")]
+            "optimizer verify: duplicate block label")]
+        [(not (opt-cfg-successor-targets-known? blocks))
+          (ResultCompilerOptimizeVerify.Err
+            "optimizer verify: unknown successor label")]
         [else
-          (opt-verify-function-with-context func (opt-cfg-context-build blocks))])]))
+          (opt-verify-function-body-with-context
+            func
+            (opt-cfg-context-build blocks))])]))
 
 ;; --- standalone scalar SSA construction / mem2reg --------------------------
 ;;

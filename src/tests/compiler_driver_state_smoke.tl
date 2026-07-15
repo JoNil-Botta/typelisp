@@ -2580,13 +2580,14 @@
                     (=
                       compiler-driver-pending-frontend-return-arena
                       caller-arena)
-                    (not (= compiler-driver-pending-retired-frontend-arena 0))
+                    (= compiler-driver-pending-retired-frontend-arena 0)
+                    (compiler-lower-checked-frontend-interns-prepared?)
                     (not (= compiler-driver-pending-retired-source-arena 0)))]
                 (begin
                   (unless
                     return-ok?
                     (io.print-error
-                      "checked lower retirement: caller arena not restored"))
+                      "checked lower retirement: early frontend handoff failed"))
                   return-ok?))]
             [(ResultCompilerDriverLowered.Err _)
               (begin
@@ -2609,7 +2610,8 @@
                 (= (arena.tl_arena_current) caller-arena)
                 (= compiler-driver-pending-retired-source-arena 0)
                 (= compiler-driver-pending-retired-frontend-arena 0)
-                (= compiler-driver-pending-frontend-return-arena 0))]
+                (= compiler-driver-pending-frontend-return-arena 0)
+                (not (compiler-lower-checked-frontend-interns-prepared?)))]
             (begin
               (unless
                 restored?

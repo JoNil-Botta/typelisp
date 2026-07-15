@@ -463,13 +463,29 @@
   (ast-node-pool-context-capture-active))
 (define lower-checked-source-release-arena : i64
   0)
+(define lower-checked-frontend-release-arena : i64
+  0)
+(define lower-checked-frontend-released : bool
+  false)
+(define lower-checked-frontend-interns-prepared : bool
+  false)
+(define lower-checked-frontend-intern-persistence-before : bool
+  false)
+(define lower-checked-frontend-intern-count : i64
+  0)
 
 (define (compiler-lower-checked-dest-pools-use!
   [dest-pools : AstNodePoolContext]
-  [source-release-arena : i64]) : unit
+  [source-release-arena : i64]
+  [frontend-release-arena : i64]) : unit
   (begin
     (set! lower-checked-dest-pools-context dest-pools)
     (set! lower-checked-source-release-arena source-release-arena)
+    (set! lower-checked-frontend-release-arena frontend-release-arena)
+    (set! lower-checked-frontend-released false)
+    (set! lower-checked-frontend-interns-prepared false)
+    (set! lower-checked-frontend-intern-persistence-before false)
+    (set! lower-checked-frontend-intern-count 0)
     (set! lower-checked-dest-pools-committed false)
     (set! lower-checked-dest-pools-active true)))
 
@@ -477,13 +493,33 @@
   (begin
     (set! lower-checked-dest-pools-active false)
     (set! lower-checked-dest-pools-committed false)
-    (set! lower-checked-source-release-arena 0)))
+    (set! lower-checked-source-release-arena 0)
+    (set! lower-checked-frontend-release-arena 0)
+    (set! lower-checked-frontend-released false)))
 
 (define (compiler-lower-checked-dest-pools-committed?) : bool
   lower-checked-dest-pools-committed)
 
 (define (compiler-lower-checked-dest-pools-current) : AstNodePoolContext
   lower-checked-dest-pools-context)
+
+(define (compiler-lower-checked-frontend-released?) : bool
+  lower-checked-frontend-released)
+
+(define (compiler-lower-checked-frontend-interns-prepared?) : bool
+  lower-checked-frontend-interns-prepared)
+
+(define (compiler-lower-checked-frontend-intern-persistence-before?) : bool
+  lower-checked-frontend-intern-persistence-before)
+
+(define (compiler-lower-checked-frontend-intern-count) : i64
+  lower-checked-frontend-intern-count)
+
+(define (compiler-lower-checked-frontend-intern-preparation-clear!) : unit
+  (begin
+    (set! lower-checked-frontend-interns-prepared false)
+    (set! lower-checked-frontend-intern-persistence-before false)
+    (set! lower-checked-frontend-intern-count 0)))
 
 (define (lower-checked-dest-pools-deactivate-after-commit!) : unit
   (if lower-checked-dest-pools-committed
@@ -574,21 +610,59 @@
   (if lower-checked-dest-pools-active
     (let
       [old-arena : i64 lower-checked-source-release-arena]
+      [old-frontend-arena : i64 lower-checked-frontend-release-arena]
       [dest-arena : i64 (ast-node-pool-context-base-arena pools)]
+      [final-expr-state : AstExprNodePoolState
+        (array-ref (struct-get pools expr-pool) 0)]
+      [final-type-state : AstTypeNodePoolState
+        (array-ref (struct-get pools type-pool) 0)]
       (begin
-        ;; Keep the driver-owned context cells; a fresh snapshot allocates wrapper
-        ;; cells in the current arena and can leave active readers pointing at
-        ;; freed cells when the source arena is released.
-        (set! lower-checked-dest-pools-context pools)
         (set! lower-checked-dest-pools-committed true)
         (set! lower-checked-source-release-arena 0)
-        (ast-node-pool-context-install! lower-checked-dest-pools-context)
+        (set! lower-checked-frontend-release-arena 0)
         (unsafe
           (arena.tl_arena_set dest-arena))
+        ;; `ast-program-compact-with-pools` and the original destination both
+        ;; carry one-element state arrays allocated in the caller arena. Rebuild
+        ;; the complete context here so its wrapper cells and aggregate shell,
+        ;; not just its large backing pools, survive frontend retirement.
+        (set!
+          lower-checked-dest-pools-context
+          (ast-node-pool-context-new final-expr-state final-type-state))
+        (ast-node-pool-context-install! lower-checked-dest-pools-context)
         (if (= old-arena 0)
           unit
           (unsafe
-            (arena.tl_arena_destroy old-arena)))))
+            (arena.tl_arena_destroy old-arena)))
+        ;; Macro expansion has compacted every surviving AST node, path, and
+        ;; string into `pools`, and the cache reset above removed the remaining
+        ;; source-derived globals. Uncached emit jobs can therefore retire the
+        ;; distinct load/macro arena here, before typecheck and lowering grow
+        ;; the checked pools. Cached sessions pass zero and preserve their
+        ;; program-lifetime storage unchanged.
+        (if (= old-frontend-arena 0)
+          unit
+          (let
+            [intern-count : i64 (intern-pool-len)]
+            [persistent-before : bool (intern-persistent-storage-on?)]
+            (begin
+              ;; Intern pool entries and the dedup map both store String values
+              ;; directly. Relocate the pool, then rebuild the map from those
+              ;; relocated values before the frontend arena is unmapped.
+              (intern-persist-range! 0 intern-count)
+              (intern-reset-to! intern-count)
+              ;; Keep the caller's persistence policy while typecheck/lower add
+              ;; names in the checked destination arena. The outer retirement
+              ;; handoff promotes just that tail before destroying the arena;
+              ;; enabling persistent insertion here penalizes every hot intern.
+              (set!
+                lower-checked-frontend-intern-persistence-before
+                persistent-before)
+              (set! lower-checked-frontend-intern-count intern-count)
+              (set! lower-checked-frontend-interns-prepared true)
+              (unsafe
+                (arena.tl_arena_destroy old-frontend-arena))
+              (set! lower-checked-frontend-released true))))))
     unit))
 
 (defenum LowerFieldInfo
@@ -47333,6 +47407,10 @@
                   (if detach-load-pools?
                     (lower-checked-dest-pools-commit! detached-pools)
                     unit)]
+                [committed-pools : AstNodePoolContext
+                  (if detach-load-pools?
+                    (compiler-lower-checked-dest-pools-current)
+                    detached-pools)]
                 [_disable-late-detach : unit
                   (if detach-load-pools?
                     (lower-checked-dest-pools-deactivate-after-commit!)
@@ -47350,7 +47428,7 @@
                   mode
                   stdlib-roots
                   detached-cache-scope
-                  detached-pools)))]
+                  committed-pools)))]
           [(ResultMacroExpand.Err diag)
             (begin
               (cfg

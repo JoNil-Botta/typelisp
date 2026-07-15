@@ -1520,7 +1520,13 @@
     "%vec10"
     "%vec11"
     "%vec12"
-    "%vec13"))
+    "%vec13"
+    "%vec14"
+    "%vec15"
+    "%vec2"
+    "%vec3"
+    "%vec4"
+    "%vec5"))
 
 (define (compiler-backend-vector-temp-zmm-excluded?
   [reg : String]
@@ -1611,7 +1617,7 @@
 (define (compiler-backend-vector-home-valid? [home : String]) : bool
   (let
     [index : i64 (compiler-reg-xmm-family-index home)]
-    (and (>= index 6) (<= index 13))))
+    (and (>= index 2) (<= index 15))))
 
 (define (compiler-backend-vector-var-home
   [assignments : CompilerRegAssignmentList]
@@ -7225,8 +7231,15 @@
 (define (compiler-backend-emergency-capacity) : i64
   16)
 
+;; One emergency slot must preserve the widest physical register bank the
+;; current backend can expose. GP saves use the first 8 bytes; XMM-family saves
+;; use 16/32/64 bytes in scalar/AVX2/AVX-512 mode respectively.
+(define (compiler-backend-emergency-slot-size) : i64
+  64)
+
 (define (compiler-backend-emergency-frame-extra [count : i64]) : i64
-  (compiler-backend-round-up-16 (* count 8)))
+  (compiler-backend-round-up-16
+    (* count (compiler-backend-emergency-slot-size))))
 
 (define (compiler-backend-cycle-temp-max-slots) : i64
   2)
@@ -7259,7 +7272,9 @@
     (compiler-backend-cycle-temp-slot-offset index)))
 
 (define (compiler-backend-emergency-reg-offset [index : i64]) : i64
-  (- compiler-backend-emergency-slot-offset (* 8 index)))
+  (-
+    compiler-backend-emergency-slot-offset
+    (* (compiler-backend-emergency-slot-size) index)))
 
 (define (compiler-backend-emergency-index [reg : String]) : i64
   (let
@@ -7307,26 +7322,70 @@
               unit))
           (panic "backend: emergency scratch register capacity exceeded"))))))
 
+(define (compiler-backend-emergency-reg-save-asm [reg : String] [offset : i64]) : String
+  (let
+    [slot : String (str-cat (int->string offset) "(%rbp)")]
+    (if (>= (compiler-reg-xmm-family-index reg) 0)
+      (match compiler-backend-current-mode
+        [(CompilerBackendMode.Scalar)
+          (str-cat "    movdqu " reg ", " slot "\n")]
+        [(CompilerBackendMode.Avx2)
+          (str-cat
+            "    vmovdqu "
+            (compiler-backend-vector-home-to-reg reg "ymm")
+            ", "
+            slot
+            "\n")]
+        [(CompilerBackendMode.Avx512)
+          (str-cat
+            "    vmovdqu64 "
+            (compiler-backend-vector-home-to-reg reg "zmm")
+            ", "
+            slot
+            "\n")])
+      (str-cat "    movq " reg ", " slot "\n"))))
+
+(define (compiler-backend-emergency-reg-restore-asm
+  [reg : String]
+  [offset : i64]) : String
+  (let
+    [slot : String (str-cat (int->string offset) "(%rbp)")]
+    (if (>= (compiler-reg-xmm-family-index reg) 0)
+      (match compiler-backend-current-mode
+        [(CompilerBackendMode.Scalar)
+          (str-cat "    movdqu " slot ", " reg "\n")]
+        [(CompilerBackendMode.Avx2)
+          (str-cat
+            "    vmovdqu "
+            slot
+            ", "
+            (compiler-backend-vector-home-to-reg reg "ymm")
+            "\n")]
+        [(CompilerBackendMode.Avx512)
+          (str-cat
+            "    vmovdqu64 "
+            slot
+            ", "
+            (compiler-backend-vector-home-to-reg reg "zmm")
+            "\n")])
+      (str-cat "    movq " slot ", " reg "\n"))))
+
 (define (compiler-backend-emergency-save-asm [index : i64] [count : i64]) : String
   (if (>= index count)
     ""
     (str-cat
-      "    movq "
-      (array-ref compiler-backend-emergency-regs index)
-      ", "
-      (int->string (compiler-backend-emergency-reg-offset index))
-      "(%rbp)\n"
+      (compiler-backend-emergency-reg-save-asm
+        (array-ref compiler-backend-emergency-regs index)
+        (compiler-backend-emergency-reg-offset index))
       (compiler-backend-emergency-save-asm (+ index 1) count))))
 
 (define (compiler-backend-emergency-restore-asm [index : i64]) : String
   (if (< index 0)
     ""
     (str-cat
-      "    movq "
-      (int->string (compiler-backend-emergency-reg-offset index))
-      "(%rbp), "
-      (array-ref compiler-backend-emergency-regs index)
-      "\n"
+      (compiler-backend-emergency-reg-restore-asm
+        (array-ref compiler-backend-emergency-regs index)
+        (compiler-backend-emergency-reg-offset index))
       (compiler-backend-emergency-restore-asm (- index 1)))))
 
 ;; Emit the emergency restore INLINE, right after a branch's flag-setting
@@ -37057,17 +37116,20 @@
               [else 0]))
           0)]
       [else
-        (if (and
-          (= (string.string-ref reg 1) 'x')
-          (= (string.string-ref reg 2) 'm')
-          (= (string.string-ref reg 3) 'm'))
-          (cond
-            [(= (string.string-ref reg 4) '2') 2048]
-            [(= (string.string-ref reg 4) '3') 4096]
-            [(= (string.string-ref reg 4) '4') 8192]
-            [(= (string.string-ref reg 4) '5') 16384]
-            [else 0])
-          0)])))
+        (let
+          [c1 : char (string.string-ref reg 1)]
+          [c2 : char (string.string-ref reg 2)]
+          [c3 : char (string.string-ref reg 3)]
+          (if (or
+            (and (or (= c1 'x') (= c1 'y') (= c1 'z')) (= c2 'm') (= c3 'm'))
+            (and (= c1 'v') (= c2 'e') (= c3 'c')))
+            (cond
+              [(= (string.string-ref reg 4) '2') 2048]
+              [(= (string.string-ref reg 4) '3') 4096]
+              [(= (string.string-ref reg 4) '4') 8192]
+              [(= (string.string-ref reg 4) '5') 16384]
+              [else 0])
+            0))])))
 
 (define (compiler-backend-scavenge-emergency-reg-supported? [reg : String]) : bool
   (or
@@ -40007,18 +40069,22 @@
       (if pm
         (+ (* push-count 8) sub-s)
         (+ frame 8))]
-    ;; Emergency scavenge slots live at rbp offset em-slot-offset - 8*i for
+    ;; Emergency scavenge slots live at rbp offset em-slot-offset - 64*i for
     ;; i in [0, em-used-count); canonical = bias_neg + (negative rbp offset).
     ;; They are read only by their own restores (visible in the text), EXCEPT
     ;; when the function has outgoing stack-arg space: arg slots share the
     ;; frame bottom and are read by callees, so the window stays empty then.
     [em-hi : i64
       (if (and (> em-used-count 0) (= outgoing 0))
-        (+ bias-neg em-slot-offset)
+        (+
+          (+ bias-neg em-slot-offset)
+          (- (compiler-backend-emergency-slot-size) 8))
         0)]
     [em-lo : i64
       (if (and (> em-used-count 0) (= outgoing 0))
-        (- em-hi (* 8 (- em-used-count 1)))
+        (-
+          (+ bias-neg em-slot-offset)
+          (* (compiler-backend-emergency-slot-size) (- em-used-count 1)))
         8)]
     (compiler-backend-sweep-record!
       symbol
@@ -40043,11 +40109,15 @@
   (let
     [em-hi : i64
       (if (and (> em-used-count 0) (= outgoing 0))
-        (+ frame em-slot-offset)
+        (+
+          (+ frame em-slot-offset)
+          (- (compiler-backend-emergency-slot-size) 8))
         0)]
     [em-lo : i64
       (if (and (> em-used-count 0) (= outgoing 0))
-        (- em-hi (* 8 (- em-used-count 1)))
+        (-
+          (+ frame em-slot-offset)
+          (* (compiler-backend-emergency-slot-size) (- em-used-count 1)))
         8)]
     (compiler-backend-sweep-record!
       symbol
@@ -41542,8 +41612,8 @@
               (compiler-reg-plan-function-scalar-for-abi fn-abi walk-func)
               (compiler-reg-plan-function-stack-only walk-func))
             (if (compiler-backend-mode-avx2? mode)
-              (compiler-reg-plan-function-avx2 walk-func)
-              (compiler-reg-plan-function walk-func)))]
+              (compiler-reg-plan-function-avx2-for-abi fn-abi walk-func)
+              (compiler-reg-plan-function-for-abi fn-abi walk-func)))]
         [call-save-enabled : bool
           (if (compiler-backend-mode-scalar? mode)
             compiler-backend-scalar-registers-enabled
@@ -41953,11 +42023,11 @@
                         (-
                           0
                           (+
+                            dynamic-frame-base
                             (+
-                              dynamic-frame-base
                               (compiler-backend-cycle-temp-frame-extra
-                                (compiler-backend-cycle-temp-max-slots)))
-                            8))))]
+                                (compiler-backend-cycle-temp-max-slots))
+                              (compiler-backend-emergency-slot-size))))))]
                   (match (compiler-backend-emit-blocks
                     target
                     label-scope

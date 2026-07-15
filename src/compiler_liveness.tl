@@ -291,26 +291,52 @@
                   (set! probe (+ probe 1)))))
             (if changed
               (let
-                [count : i64 (compiler-live-set-max left-count right-count)]
+                [count : i64
+                  (if (< left-count right-count)
+                    right-count
+                    left-count)]
+                [common-count : i64
+                  (if (< left-count right-count)
+                    left-count
+                    right-count)]
                 [out : (Array i64) (make-array i64 count)]
+                [left-data : (MutPtr i64)
+                  (unsafe
+                    (array-data left-words))]
+                [right-data : (MutPtr i64)
+                  (unsafe
+                    (array-data right-words))]
+                [out-data : (MutPtr i64)
+                  (unsafe
+                    (ptr-cast (array-data out) : (MutPtr i64)))]
                 [index : i64 0]
                 (begin
-                  (while (< index count)
-                    (let
-                      [left-bits : i64
-                        (if (< index left-count)
-                          (unsafe
-                            (ptr-read
-                              (ptr-offset (array-data left-words) index)))
-                          0)]
-                      [right-bits : i64
-                        (if (< index right-count)
-                          (unsafe
-                            (ptr-read
-                              (ptr-offset (array-data right-words) index)))
-                          0)]
+                  ;; The loop bounds prove every raw access. Split the common
+                  ;; prefix from the longer operand's tail so the hot loop has
+                  ;; no per-word length branches or destination bounds checks.
+                  (while (< index common-count)
+                    (begin
+                      (unsafe
+                        (ptr-write!
+                          (ptr-offset out-data index)
+                          (bit-or
+                            (ptr-read (ptr-offset left-data index))
+                            (ptr-read (ptr-offset right-data index)))))
+                      (set! index (+ index 1))))
+                  (if (< left-count right-count)
+                    (while (< index count)
                       (begin
-                        (array-set! out index (bit-or left-bits right-bits))
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset out-data index)
+                            (ptr-read (ptr-offset right-data index))))
+                        (set! index (+ index 1))))
+                    (while (< index count)
+                      (begin
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset out-data index)
+                            (ptr-read (ptr-offset left-data index))))
                         (set! index (+ index 1)))))
                   ;; The longer input's final word is nonzero because every
                   ;; CompilerLiveI64Set is canonical, so union cannot introduce

@@ -28935,7 +28935,7 @@
             (>= cvars np)
             (> (compiler-ir-block-list-count cblocks) 1)
             (> (opt-inline-return-count-blocks cblocks) 0)
-            (opt-inline-structure-ok? cblocks)
+            (opt-inline-structure-ok-reclaiming? cblocks)
             (opt-inline-multiblock-blocks-ok? cblocks np))))]))
 
 (define (opt-inline-callee-ok?
@@ -29165,7 +29165,7 @@
           (<= block-count (opt-inline-tiny-predicate-max-blocks))
           (<= instr-count (opt-inline-tiny-predicate-max-instrs))
           (> (opt-inline-return-count-blocks cblocks) 0)
-          (opt-inline-structure-ok? cblocks)
+          (opt-inline-structure-ok-reclaiming? cblocks)
           (opt-inline-tiny-predicate-acyclic? cblocks)
           (not (opt-inline-param-mutating-blocks? cblocks np))
           (opt-inline-tiny-predicate-blocks-ok? cblocks)))]))

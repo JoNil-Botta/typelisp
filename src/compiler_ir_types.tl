@@ -909,8 +909,10 @@
 ;; so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
 ;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
 ;; garbage; the array macro lowers with the correct element size.
-(define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
-  (array-ref (struct-get instrs slots) index))
+(defmacro (compiler-ir-instr-seq-ref
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstr
+  `(array-ref (struct-get ,instrs slots) ,index))
 
 (define (compiler-ir-instr-loop-dst-or
   [instr : CompilerIrInstr]

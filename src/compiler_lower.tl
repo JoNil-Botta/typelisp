@@ -10914,8 +10914,11 @@
           max-size)
         (+ index 1)))))
 
-(define (lower-enum-storage-size [ctx : TcContext] [enum-name : String]) : i64
-  (match (tc-context-enum-variants ctx enum-name)
+(define (lower-enum-storage-size
+  [ctx : TcContext]
+  [enum-name-id : i64]
+  [enum-name : String]) : i64
+  (match (tc-context-enum-variants-id ctx enum-name-id enum-name)
     [(ResultAstVariantDefList.Ok variants)
       (lower-enum-variants-storage-size ctx variants 8)]
     [(ResultAstVariantDefList.Err _) 8]))
@@ -16001,6 +16004,7 @@
           env
           type-env
           value
+          name
           (tc-nominal-name-id-display name)
           ty))]
     [(AstType.EnumArgs name _)
@@ -16010,6 +16014,7 @@
         env
         type-env
         value
+        name
         (tc-nominal-name-id-display name)
         ty)]
     [_ (ResultLowerExpr.Ok (LowerExpr.Expr state value ty))]))
@@ -16443,15 +16448,16 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [value : CompilerIrValue]
+  [enum-name-id : i64]
   [enum-name : String]
   [result-ty : AstType]) : ResultLowerExpr
   (match ctx
     [(TcContext _ _ _ _ _ _)
-      (match (tc-context-enum-variants ctx enum-name)
+      (match (tc-context-enum-variants-id ctx enum-name-id enum-name)
         [(ResultAstVariantDefList.Ok variants)
           (match (lower-reserve-heap-storage
             state
-            (lower-enum-storage-size ctx enum-name)
+            (lower-enum-storage-size ctx enum-name-id enum-name)
             result-ty)
             [(LowerExpr.Expr dst-state dst _)
               (match (lower-load-at-offset dst-state value 0 (AstType.I64))
@@ -17642,7 +17648,7 @@
         (if (compiler-symbols-handle-found? handle)
           (match (lower-reserve-heap-storage
             state
-            (lower-enum-storage-size ctx enum-name)
+            (lower-enum-storage-size ctx enum-name-id enum-name)
             (AstType.Enum enum-name-id))
             [(LowerExpr.Expr base-state base _)
               (let

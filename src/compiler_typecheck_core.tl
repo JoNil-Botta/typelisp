@@ -13320,26 +13320,6 @@
     [(TcMaybeNameId.No)
       (macro-import-alias-target-cached-id decls current-module-id alias-id)]))
 
-(define (tc-call-builtin-lookup-name
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [source-name : String]) : String
-  (let
-    [source-id : i64 (tc-existing-name-id source-name)]
-    (cond
-      [(< source-id 0) source-name]
-      [(tc-name-qualified-id? source-id) source-name]
-      [(>= (tc-name-first-dot-id source-id) 0)
-        (match (tc-source-name-lookup-key-with-field-check
-          ctx
-          env
-          source-name
-          source-id
-          true)
-          [(ResultTcString.Ok lookup-name) lookup-name]
-          [(ResultTcString.Err _) source-name])]
-      [else source-name])))
-
 (define (tc-call-builtin-lookup-id
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -13676,9 +13656,6 @@
         (TcMaybeNameId.Some call-name-id)
         (TcMaybeNameId.No)))
     (TcMaybeNameId.No)))
-
-(define (tc-dotted-type-name-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
-  (tc-dotted-type-name-lookup-key-from-id ctx name (tc-existing-name-id name)))
 
 ;; Variant taking the already-interned `name-id`; reads the first-dot position
 ;; from id-keyed metadata instead of re-hashing `name`.
@@ -14097,28 +14074,6 @@
         name-id
         check-local-field))))
 
-(define (tc-source-name-lookup-key
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check
-    ctx
-    env
-    name
-    (tc-existing-name-id name)
-    true))
-
-(define (tc-source-name-lookup-key-after-local-field-check
-  [ctx : TcContext]
-  [env : TcTypeEnv]
-  [name : String]) : ResultTcString
-  (tc-source-name-lookup-key-with-field-check
-    ctx
-    env
-    name
-    (tc-existing-name-id name)
-    false))
-
 (define (tc-qualified-access-target-module
   [ctx : TcContext]
   [qualifier : String]) : String
@@ -14139,15 +14094,6 @@
       (AstType.Struct name-id)
       (AstType.Var name-id))))
 
-(define (tc-resolved-nominal-type [name : String] [handle : i64]) : AstType
-  (let
-    [source-id : i64 (tc-source-spelling-id name)]
-    (tc-resolved-nominal-type-id
-      (if (>= source-id 0)
-        source-id
-        (tc-existing-name-id name))
-      handle)))
-
 (define (tc-resolved-nominal-type-with-args-id
   [name-id : i64]
   [handle : i64]
@@ -14159,19 +14105,6 @@
       (compiler-symbol-kind-defstruct))
       (ast-ty-struct-args name-id lifetimes)
       (ast-ty-var-args name-id lifetimes))))
-
-(define (tc-resolved-nominal-type-with-args
-  [name : String]
-  [handle : i64]
-  [lifetimes : AstLifetimeList]) : AstType
-  (let
-    [source-id : i64 (tc-source-spelling-id name)]
-    (tc-resolved-nominal-type-with-args-id
-      (if (>= source-id 0)
-        source-id
-        (tc-existing-name-id name))
-      handle
-      lifetimes)))
 
 (define (tc-nominal-name-id-display [name-id : i64]) : String
   (ast-nominal-name-id-display name-id))
@@ -32815,92 +32748,6 @@
             (ResultAstVariantDefList.Err
               (string.append "typecheck: unknown enum " enum-name))]))]))
 
-(define (tc-program-enum-variants-list
-  [decls : AstDeclList]
-  [enum-name : String]) : ResultAstVariantDefList
-  (tc-program-enum-variants-list-in-module decls enum-name ""))
-
-(define (tc-program-enum-variants-list-in-module
-  [decls : AstDeclList]
-  [enum-name : String]
-  [module : String]) : ResultAstVariantDefList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil)
-      (ResultAstVariantDefList.Err
-        (string.append "typecheck: unknown enum " enum-name))]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Module next-module)
-            (tc-program-enum-variants-list-in-module
-              rest
-              enum-name
-              (intern-str next-module))]
-          [(AstDecl.DefEnum name _ variants)
-            (if (or
-              (string.eq (tc-env-key-name-text name) enum-name)
-              (string.eq
-                (compiler-symbol-module-key module (tc-env-key-name-text name))
-                enum-name))
-              (ResultAstVariantDefList.Ok variants)
-              (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDecl.DefEnumLifetimes name _ _ variants)
-            (if (or
-              (string.eq (tc-env-key-name-text name) enum-name)
-              (string.eq
-                (compiler-symbol-module-key module (tc-env-key-name-text name))
-                enum-name))
-              (ResultAstVariantDefList.Ok variants)
-              (tc-program-enum-variants-list-in-module rest enum-name module))]
-          [(AstDecl.ComptimeDecl _ template-box)
-            (let
-              [template : AstDecl (box-get template-box)]
-              (match template
-                [(AstDecl.DefEnum name _ variants)
-                  (if (or
-                    (string.eq (tc-env-key-name-text name) enum-name)
-                    (string.eq
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name))
-                      enum-name))
-                    (ResultAstVariantDefList.Ok variants)
-                    (tc-program-enum-variants-list-in-module
-                      rest
-                      enum-name
-                      module))]
-                [(AstDecl.DefEnumLifetimes name _ _ variants)
-                  (if (or
-                    (string.eq (tc-env-key-name-text name) enum-name)
-                    (string.eq
-                      (compiler-symbol-module-key
-                        module
-                        (tc-env-key-name-text name))
-                      enum-name))
-                    (ResultAstVariantDefList.Ok variants)
-                    (tc-program-enum-variants-list-in-module
-                      rest
-                      enum-name
-                      module))]
-                [_
-                  (tc-program-enum-variants-list-in-module
-                    rest
-                    enum-name
-                    module)]))]
-          [_ (tc-program-enum-variants-list-in-module rest enum-name module)]))]))
-
-(define (tc-program-enum-variants [program : AstProgram] [enum-name : String]) : ResultAstVariantDefList
-  (let
-    [enum-name-id : i64 (tc-existing-nominal-name-id enum-name)]
-    (if (>= enum-name-id 0)
-      (tc-program-enum-variants-id program enum-name-id enum-name)
-      (match program
-        [(AstProgram.Program decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (tc-program-enum-variants-list decls enum-name))]))))
-
 (define (tc-context-enum-variants-id
   [ctx : TcContext]
   [enum-name-id : i64]
@@ -32934,12 +32781,6 @@
         (tc-context-program ctx)
         enum-name-id
         enum-name))))
-
-(define (tc-context-enum-variants [ctx : TcContext] [enum-name : String]) : ResultAstVariantDefList
-  (tc-context-enum-variants-id
-    ctx
-    (tc-existing-nominal-name-id enum-name)
-    enum-name))
 
 (define (tc-context-enum-variants-at-handle
   [ctx : TcContext]
@@ -33478,9 +33319,6 @@
               "typecheck: unknown struct "
               (tc-nominal-name-id-display struct-name-id)))))]))
 
-(define (tc-struct-decl [ctx : TcContext] [struct-name : String]) : ResultTcStructDecl
-  (tc-struct-decl-id ctx (tc-existing-nominal-name-id struct-name)))
-
 (define (tc-struct-decl-at-handle
   [ctx : TcContext]
   [handle : i64]
@@ -33538,9 +33376,6 @@
             (string.append
               "typecheck: unknown enum "
               (tc-nominal-name-id-display enum-name-id)))))]))
-
-(define (tc-enum-decl [ctx : TcContext] [enum-name : String]) : ResultTcEnumDecl
-  (tc-enum-decl-id ctx (tc-existing-nominal-name-id enum-name)))
 
 (define (tc-inline-aggregate-cycle-stack-render [stack : TcStringList]) : String
   (match stack
@@ -34659,12 +34494,6 @@
         (tc-inline-enum-payloads-all-register-class? variants)
         false)]))
 
-(define (tc-name-register-resident? [ctx : TcContext] [name : String]) : bool
-  (match (tc-inline-aggregate-layout-for ctx name)
-    [(ResultTcInlineAggregateLayout.Ok layout)
-      (tc-inline-aggregate-layout-register-resident? layout)]
-    [(ResultTcInlineAggregateLayout.Err _) false]))
-
 (define (tc-name-register-resident-id? [ctx : TcContext] [name-id : i64]) : bool
   (match (tc-inline-aggregate-layout-for-id ctx name-id)
     [(ResultTcInlineAggregateLayout.Ok layout)
@@ -35512,17 +35341,6 @@
             (tc-variant-constructor-type-for-handle ctx handle)]
           [(option_i64.None) (ResultTcType.Err not-found-message)])])))
 
-(define (tc-variant-constructor-type-for-lookup-or
-  [ctx : TcContext]
-  [lookup-name : String]
-  [_display-name : String]
-  [not-found-message : String]) : ResultTcType
-  (tc-variant-constructor-type-for-lookup-or-id
-    ctx
-    lookup-name
-    (tc-existing-name-id lookup-name)
-    not-found-message))
-
 (define (tc-struct-field-type-id
   [ctx : TcContext]
   [struct-name-id : i64]
@@ -35561,12 +35379,6 @@
     [(ResultTcLifetimeList.Ok params)
       (tc-infer-lifetime-list params TcLifetimeSubst.Nil params args)]
     [(ResultTcLifetimeList.Err message) (ResultTcLifetimeSubst.Err message)]))
-
-(define (tc-lifetime-subst-from-nominal-args
-  [ctx : TcContext]
-  [name : String]
-  [args : AstLifetimeList]) : ResultTcLifetimeSubst
-  (tc-lifetime-subst-from-nominal-args-id ctx (tc-existing-name-id name) args))
 
 (define (tc-struct-field-type-with-args-id
   [ctx : TcContext]
@@ -58363,17 +58175,6 @@
   (compiler-symbol-module-key
     (macro-decl-module-display module-id)
     (intern-str name-id)))
-
-(define (macro-required-existing-module-id [context : String] [module : String]) : i64
-  (let
-    [source-id : i64 (tc-existing-name-id module)]
-    (if (>= source-id 0)
-      source-id
-      (let
-        [generated-id : i64 (ctfe-existing-name-id module)]
-        (if (>= generated-id 0)
-          generated-id
-          (io.panic (string.append context module)))))))
 
 (define (macro-qualified-call-decl-in-module
   [ctx : TcContext]

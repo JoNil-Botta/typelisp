@@ -2587,7 +2587,14 @@
   [env : TcTypeEnv]) : bool
   (begin
     (tc-source-dotted-alias-key-cache-reset!)
-    (match (tc-source-name-lookup-key entry-ctx env "helper.value")
+    (match (tc-source-name-lookup-key-with-field-check
+      entry-ctx
+      env
+      "helper.value"
+      (compiler-typecheck-smoke-required-parsed-id
+        "typecheck smoke: missing dotted lookup id: "
+        "helper.value")
+      true)
       [(ResultTcString.Ok key)
         (let
           [module-id : i64
@@ -2604,7 +2611,12 @@
               (tc-source-dotted-alias-key-cache-get module-id name-id)
               "helper.module"
               "value")
-            (match (tc-source-name-lookup-key entry-ctx env "helper.value")
+            (match (tc-source-name-lookup-key-with-field-check
+              entry-ctx
+              env
+              "helper.value"
+              name-id
+              true)
               [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
               [(ResultTcString.Err _) false])))]
       [(ResultTcString.Err _) false])))
@@ -2614,7 +2626,14 @@
   [env : TcTypeEnv]) : bool
   (begin
     (tc-source-dotted-full-path-key-cache-reset!)
-    (match (tc-source-name-lookup-key full-ctx env "helper.module.value")
+    (match (tc-source-name-lookup-key-with-field-check
+      full-ctx
+      env
+      "helper.module.value"
+      (compiler-typecheck-smoke-required-parsed-id
+        "typecheck smoke: missing full dotted lookup id: "
+        "helper.module.value")
+      true)
       [(ResultTcString.Ok key)
         (let
           [module-id : i64
@@ -2631,10 +2650,12 @@
               (tc-source-dotted-full-path-key-cache-get module-id name-id)
               "helper.module"
               "value")
-            (match (tc-source-name-lookup-key
+            (match (tc-source-name-lookup-key-with-field-check
               full-ctx
               env
-              "helper.module.value")
+              "helper.module.value"
+              name-id
+              true)
               [(ResultTcString.Ok cached-key) (string.eq cached-key key)]
               [(ResultTcString.Err _) false])))]
       [(ResultTcString.Err _) false])))
@@ -3322,9 +3343,12 @@
                     (tc-existing-name-id "helper.Choice.Full"))
                     [(ResultTcType.Ok _) true]
                     [(ResultTcType.Err _) false])
-                  (match (tc-dotted-type-name-lookup-key
+                  (match (tc-dotted-type-name-lookup-key-from-id
                     entry-ctx
-                    "helper.Item")
+                    "helper.Item"
+                    (compiler-typecheck-smoke-required-parsed-id
+                      "typecheck smoke: missing helper.Item id: "
+                      "helper.Item"))
                     [(ResultTcString.Ok key)
                       (string.eq key "helper.module/Item")]
                     [(ResultTcString.Err _) false])

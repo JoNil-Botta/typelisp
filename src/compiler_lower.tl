@@ -712,6 +712,7 @@
     (begin
       (unsafe
         (arena.tl_arena_set base-arena))
+      (compiler-load-dotted-path-cache-reset!)
       (compiler-typecheck-clear-macro-expanded-source-caches!)
       (ast-node-pool-context-sync-base-arena! pools (arena.tl_arena_current))
       (unsafe

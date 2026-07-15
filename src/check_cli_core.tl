@@ -12,6 +12,7 @@
 (import "compiler_load.tl")
 (import "package_source_core.tl")
 (import "test_cli_core.tl")
+(import compiler_builtin_ids as cbi)
 (import stdlib.string)
 
 (defenum SelfhostCheckConfig
@@ -176,6 +177,26 @@
   (compiler-load-normalize-path
     (compiler-load-join-root-path manifest-dir (struct-get manifest entry))))
 
+(define (selfhost-check-package-doctest-paths-snapshot
+  [paths : AstDeclPathList]) : AstDeclPathList
+  (let
+    [count : i64 (ast-decl-path-list-len (& paths))]
+    [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (let
+          [path : String (ast-decl-path-list-get (& paths) index "")]
+          [owned-path : String
+            (string.substring path 0 (string.string-length path))]
+          (begin
+            (ast-decl-path-list-push-with-owner-id
+              (&mut out)
+              owned-path
+              cbi.compiler-builtin-id-fix-empty)
+            (set! index (+ index 1)))))
+      out)))
+
 (define (selfhost-check-package
   [manifest-path : String]
   [has-manifest : bool]
@@ -203,6 +224,11 @@
           emit-entry)
           [(ResultCompilerCheckWithPaths.Ok _ paths)
             (let
+              ;; Doctests run after the compiler and intern arenas are reset.
+              ;; Filesystem paths are values here, so retain owned copies rather
+              ;; than carrying parser identity across that lifetime boundary.
+              [doctest-paths : AstDeclPathList
+                (selfhost-check-package-doctest-paths-snapshot paths)]
               ;; Match standalone package inline-test runs: entry checking can
               ;; leave enough compiler state live to exhaust long package checks.
               [_reset-after-entry : unit
@@ -222,7 +248,7 @@
                 (let
                   [doctest-status : i64
                     (selfhost-check-package-doctests
-                      paths
+                      doctest-paths
                       stdlib-roots
                       manifest-dir
                       (struct-get manifest deps))]

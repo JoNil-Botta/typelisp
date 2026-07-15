@@ -3512,6 +3512,11 @@
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
+    ;; The macro-expansion self-test leaves multiple symbol generations behind.
+    ;; A fresh stdlib Module macro compile must not observe a reclaimed handle.
+    (unless
+      (compiler-typecheck-smoke-lazy-import-stdlib-result-macro-ok?)
+      (io.panic "typecheck: macro symbol generation reset smoke failed"))
     (unless
       (and
         (compiler-typecheck-smoke-registry-member-diagnostic-ok?

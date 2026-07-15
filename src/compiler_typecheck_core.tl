@@ -11,6 +11,7 @@
 (import "compiler_ctfe.tl")
 (import "compiler_specialize.tl")
 (import "compiler_clone.tl")
+(import compiler_allocation_profile as allocation_profile)
 (import (hashmap i64 i64) as tc_i64_i64_map)
 (import (hashmap String i64) as tc_string_i64_map)
 (import "compiler_parse_core.tl")
@@ -47451,6 +47452,32 @@
 (define macro-live-registries-fallback : bool
   true)
 
+;; Whole-program symbol/registry rebuilds replace the previous tables, but the
+;; ordinary compile arena retains every obsolete generation until process exit.
+;; Keep those tables in one independently owned arena so a successful rebuild
+;; can retire its predecessor without putting the longer-lived macro output or
+;; top environments in the same lifetime domain.
+(define macro-live-symbols-arena : i64
+  0)
+(define macro-live-symbols-retired-arena : i64
+  0)
+
+(define (macro-live-symbols-promote-owner-names! [symbols : CompilerSymbols]) : unit
+  (let
+    [owner-names : (Array String) (compiler-symbols-owner-names symbols)]
+    [count : i64 (array-length owner-names)]
+    [index : i64 0]
+    (while (< index count)
+      (let
+        [owner-name : String (array-ref owner-names index)]
+        (begin
+          ;; Resolved nominal AstType values stored in persistent top-env tails
+          ;; retain this spelling after their source symbol table is obsolete.
+          (if (string.contains-char (& owner-name) '/')
+            (array-set! owner-names index (string.copy (& owner-name)))
+            unit)
+          (set! index (+ index 1)))))))
+
 (define (macro-live-symbols-reset!) : unit
   (begin
     (set! macro-live-symbols-ready false)
@@ -47459,13 +47486,29 @@
     (set! macro-live-registries-fallback true)))
 
 (define (macro-live-symbols-clear!) : unit
-  (begin
-    (set! macro-live-symbols-ready false)
-    (set! macro-live-symbols-fallback false)
-    (set! macro-live-registries-ready false)
-    (set! macro-live-registries-fallback true)
-    (set! macro-live-symbols-value (compiler-symbols-empty))
-    (set! macro-live-registries-value (compiler-registries-empty))))
+  (let
+    [current : i64 macro-live-symbols-arena]
+    [retired : i64 macro-live-symbols-retired-arena]
+    (begin
+      (set! macro-live-symbols-ready false)
+      (set! macro-live-symbols-fallback false)
+      (set! macro-live-registries-ready false)
+      (set! macro-live-registries-fallback true)
+      (set! macro-live-symbols-value (compiler-symbols-empty))
+      (set! macro-live-registries-value (compiler-registries-empty))
+      ;; The completed expansion no longer has a consumer for either retained
+      ;; generation. Release both here instead of carrying their raw handles
+      ;; into the next independent typecheck entry.
+      (set! macro-live-symbols-arena 0)
+      (set! macro-live-symbols-retired-arena 0)
+      (if (= current 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy current)))
+      (if (or (= retired 0) (= retired current))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
 
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
@@ -47619,7 +47662,62 @@
 (define (macro-live-symbols-build-fresh
   [program : AstProgram]
   [paths : AstDeclPathList]) : ResultCompilerSymbols
-  (macro-live-symbols-build-fresh-current program paths))
+  (let
+    [enclosing : i64 (arena.tl_arena_current)]
+    [intern-persistent-before : bool (intern-persistent-storage-on?)]
+    [next-arena : i64 (arena.tl_arena_make)]
+    [_switch : unit
+      (unsafe
+        (arena.tl_arena_set next-arena))]
+    [_persist-interns : unit
+      (if intern-persistent-before
+        unit
+        (intern-persistent-storage-enable!))]
+    ;; A reused registry can still point into the previous symbols arena. Keep
+    ;; the generation self-contained so retiring it cannot strand those maps.
+    [_rebuild-registries : unit (set! macro-live-registries-fallback true)]
+    [built : ResultCompilerSymbols
+      (macro-live-symbols-build-fresh-current program paths)]
+    [next-head : i64 (arena.tl_arena_current)]
+    (begin
+      (if intern-persistent-before
+        unit
+        (intern-persistent-storage-disable!))
+      (unsafe
+        (arena.tl_arena_set enclosing))
+      (match built
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [previous : i64 macro-live-symbols-arena]
+            [retired : i64 macro-live-symbols-retired-arena]
+            (begin
+              (macro-live-symbols-promote-owner-names! symbols)
+              (allocation_profile.compiler-allocation-profile-control!
+                2
+                "typecheck.macro"
+                "symbols-current"
+                next-head)
+              (set! macro-live-symbols-arena next-head)
+              (set! macro-live-symbols-retired-arena previous)
+              (if (= retired 0)
+                unit
+                (begin
+                  (allocation_profile.compiler-allocation-profile-control!
+                    2
+                    "typecheck.macro"
+                    "symbols-retired"
+                    retired)
+                  (unsafe
+                    (arena.tl_arena_destroy retired))))
+              (ResultCompilerSymbols.Ok symbols)))]
+        [(ResultCompilerSymbols.Err message)
+          ;; Preserve the public error after releasing the failed generation.
+          (let
+            [stable-message : String (string.copy (& message))]
+            (begin
+              (unsafe
+                (arena.tl_arena_destroy next-head))
+              (ResultCompilerSymbols.Err stable-message)))]))))
 
 (define (macro-live-symbols-build-or-reuse!
   [program : AstProgram]
@@ -47783,12 +47881,15 @@
           node-pool-base-arena
           current)]
       (begin
-        (cfg compile-profile (compiler-tc-profile-start))
         (unsafe
           (arena.tl_arena_set home))
         (set! macro-expand-scratch-enabled false)
         (set! macro-expand-scratch-arena 0)
         (macro-expand-scratch-clear-owned-caches!)
+        ;; Cache clearing can release independently owned arenas. Start the
+        ;; scratch counter after that work so this phase attributes only the
+        ;; arena named by macro_scratch_release.
+        (cfg compile-profile (compiler-tc-profile-start))
         (unsafe
           (arena.tl_arena_destroy scratch))
         (cfg
@@ -55403,505 +55504,521 @@
   [decls : AstDeclList]
   [depth : i64]
   [expr : AstExpr]) : ResultMacroExpr
-  (if (< (macro-expand-depth-limit) depth)
-    (ResultMacroExpr.Err
-      (box
-        (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit")))
-    (match expr
-      [(AstExpr.Spanned inner-box span)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-spanned ninner span))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Call func-box args)
-        (let
-          [func : AstExpr (ast-node-get func-box)]
-          (if (macro-call-callee-maybe-macro? func)
-            (match (macro-call-decl ctx func decls expr)
-              [(ResultMacroCallDecl.Ok maybe-decl)
-                (match maybe-decl
-                  [(MacroMaybeDecl.Some
-                      macro-name
-                      definition-module
-                      params
-                      ret
-                      body)
-                    (macro-expand-call
-                      ctx
-                      env
-                      decls
-                      macro-name
-                      definition-module
-                      params
-                      ret
-                      body
-                      args
-                      depth
-                      expr)]
-                  [(MacroMaybeDecl.No)
-                    (match (macro-expand-compat-call
-                      ctx
-                      env
-                      decls
-                      depth
-                      func
-                      args
-                      expr)
-                      [(ResultMacroCompatCall.Ok expanded)
-                        (ResultMacroExpr.Ok expanded)]
-                      [(ResultMacroCompatCall.No)
-                        (match (macro-expand-expr ctx env decls depth func)
-                          [(ResultMacroExpr.Ok nfunc)
-                            (match (macro-expand-exprs ctx env decls depth args)
-                              [(ResultMacroExprList.Ok nargs)
-                                (ResultMacroExpr.Ok (ast-expr-call nfunc nargs))]
-                              [(ResultMacroExprList.Err diag)
-                                (ResultMacroExpr.Err diag)])]
-                          [(ResultMacroExpr.Err diag)
-                            (ResultMacroExpr.Err diag)])]
-                      [(ResultMacroCompatCall.Err diag)
-                        (ResultMacroExpr.Err diag)])])]
-              [(ResultMacroCallDecl.Err diag) (ResultMacroExpr.Err diag)])
-            (match (macro-expand-expr ctx env decls depth func)
-              [(ResultMacroExpr.Ok nfunc)
-                (match (macro-expand-exprs ctx env decls depth args)
-                  [(ResultMacroExprList.Ok nargs)
-                    (ResultMacroExpr.Ok (ast-expr-call nfunc nargs))]
-                  [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])))]
-      [(AstExpr.BracketClause items)
-        (match (macro-expand-exprs ctx env decls depth items)
-          [(ResultMacroExprList.Ok nitems)
-            (ResultMacroExpr.Ok (ast-expr-bracket-clause nitems))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.Binary op left-box right-box)
-        (let
-          [left : AstExpr (ast-node-get left-box)]
-          [right : AstExpr (ast-node-get right-box)]
-          (match (macro-expand-expr ctx env decls depth left)
-            [(ResultMacroExpr.Ok nleft)
-              (match (macro-expand-expr ctx env decls depth right)
-                [(ResultMacroExpr.Ok nright)
-                  (ResultMacroExpr.Ok (ast-expr-binary op nleft nright))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Unary op inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-unary op ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.If cond-box then-branch-box else-branch-box)
-        (let
-          [cond : AstExpr (ast-node-get cond-box)]
-          [then-branch : AstExpr (ast-node-get then-branch-box)]
-          [else-branch : AstExpr (ast-node-get else-branch-box)]
-          (match (macro-expand-expr ctx env decls depth cond)
-            [(ResultMacroExpr.Ok ncond)
-              (match (macro-expand-expr ctx env decls depth then-branch)
-                [(ResultMacroExpr.Ok nthen)
-                  (match (macro-expand-expr ctx env decls depth else-branch)
-                    [(ResultMacroExpr.Ok nelse)
-                      (ResultMacroExpr.Ok (ast-expr-if ncond nthen nelse))]
-                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Let let-box)
-        (match (box-get let-box)
-          [(AstLet.Let bindings body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (macro-expand-bindings ctx env decls depth bindings)
-                [(ResultMacroLetBindings.Ok nbindings body-env)
-                  (match (macro-expand-expr ctx body-env decls depth body)
-                    [(ResultMacroExpr.Ok nbody)
-                      (ResultMacroExpr.Ok (ast-expr-let nbindings nbody))]
-                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-                [(ResultMacroLetBindings.Err diag) (ResultMacroExpr.Err diag)]))])]
-      [(AstExpr.Begin exprs)
-        (match (macro-expand-exprs ctx env decls depth exprs)
-          [(ResultMacroExprList.Ok nexprs)
-            (ResultMacroExpr.Ok (ast-node-push (AstExpr.Begin nexprs)))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.Unsafe exprs)
-        ;; Expansion typechecks some sub-expressions (e.g. `match` scrutinees) via
-        ;; `tc-expr`; descend with the unsafe marker set so those checks see the
-        ;; enclosing `unsafe` context, matching the real typecheck pass. Without
-        ;; this, an `unsafe`-only primitive under an `(unsafe ...)` reachable here
-        ;; is wrongly rejected once the program defines a macro.
-        (match (macro-expand-exprs ctx (tc-enter-unsafe env) decls depth exprs)
-          [(ResultMacroExprList.Ok nexprs)
-            (ResultMacroExpr.Ok (ast-node-push (AstExpr.Unsafe nexprs)))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.Tuple exprs)
-        (match (macro-expand-exprs ctx env decls depth exprs)
-          [(ResultMacroExprList.Ok nexprs)
-            (ResultMacroExpr.Ok (ast-node-push (AstExpr.Tuple nexprs)))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.Array exprs)
-        (match (macro-expand-exprs ctx env decls depth exprs)
-          [(ResultMacroExprList.Ok nexprs)
-            (ResultMacroExpr.Ok (ast-node-push (AstExpr.Array nexprs)))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.DynArray exprs)
-        (match (macro-expand-exprs ctx env decls depth exprs)
-          [(ResultMacroExprList.Ok nexprs)
-            (ResultMacroExpr.Ok (ast-node-push (AstExpr.DynArray nexprs)))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.Match match-box)
-        (match (box-get match-box)
-          [(AstMatch.Match scrut-box arms)
-            (let
-              [scrut : AstExpr (ast-node-get scrut-box)]
-              (match (macro-expand-expr ctx env decls depth scrut)
-                [(ResultMacroExpr.Ok nscrut)
-                  (match (tc-expr ctx env (ast-node-get nscrut))
-                    [(ResultTcType.Ok scrut-ty)
-                      (match (macro-expand-arms
+  (if (not (macro-expr-might-fire? expr))
+    (ResultMacroExpr.Ok (ast-node-push expr))
+    (if (< (macro-expand-depth-limit) depth)
+      (ResultMacroExpr.Err
+        (box
+          (ctfe-diagnostic-at-expr expr "macro expansion exceeded depth limit")))
+      (match expr
+        [(AstExpr.Spanned inner-box span)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-spanned ninner span))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Call func-box args)
+          (let
+            [func : AstExpr (ast-node-get func-box)]
+            (if (macro-call-callee-maybe-macro? func)
+              (match (macro-call-decl ctx func decls expr)
+                [(ResultMacroCallDecl.Ok maybe-decl)
+                  (match maybe-decl
+                    [(MacroMaybeDecl.Some
+                        macro-name
+                        definition-module
+                        params
+                        ret
+                        body)
+                      (macro-expand-call
+                        ctx
+                        env
+                        decls
+                        macro-name
+                        definition-module
+                        params
+                        ret
+                        body
+                        args
+                        depth
+                        expr)]
+                    [(MacroMaybeDecl.No)
+                      (match (macro-expand-compat-call
                         ctx
                         env
                         decls
                         depth
-                        scrut-ty
-                        arms)
-                        [(ResultMacroArms.Ok narms)
-                          (ResultMacroExpr.Ok (ast-expr-match nscrut narms))]
-                        [(ResultMacroArms.Err diag) (ResultMacroExpr.Err diag)])]
-                    [(ResultTcType.Err message)
-                      (ResultMacroExpr.Err
-                        (box (tc-expr-diag (ast-node-get nscrut) message)))])]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
-      [(AstExpr.While cond-box body-box)
-        (let
-          [cond : AstExpr (ast-node-get cond-box)]
-          [body : AstExpr (ast-node-get body-box)]
-          (match (macro-expand-expr ctx env decls depth cond)
-            [(ResultMacroExpr.Ok ncond)
-              (match (macro-expand-expr ctx env decls depth body)
-                [(ResultMacroExpr.Ok nbody)
-                  (ResultMacroExpr.Ok (ast-expr-while ncond nbody))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Foreach fe-box)
-        (match (box-get fe-box)
-          [(AstForeach.Foreach index index-ty start-box end-box body-box)
-            (let
-              [start : AstExpr (ast-node-get start-box)]
-              [end : AstExpr (ast-node-get end-box)]
-              [body : AstExpr (ast-node-get body-box)]
-              (match (macro-expand-expr ctx env decls depth start)
-                [(ResultMacroExpr.Ok nstart)
-                  (match (macro-expand-expr ctx env decls depth end)
-                    [(ResultMacroExpr.Ok nend)
-                      (match (macro-expand-expr
-                        ctx
-                        (tc-bind-id env index (tc-resolve-type ctx index-ty))
-                        decls
-                        depth
-                        body)
-                        [(ResultMacroExpr.Ok nbody)
-                          (ResultMacroExpr.Ok
-                            (ast-expr-foreach-id
-                              index
-                              index-ty
-                              nstart
-                              nend
-                              nbody))]
-                        [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
-      [(AstExpr.Lambda lambda-box)
-        (match (box-get lambda-box)
-          [(AstLambda.Lambda params maybe-ret body-box)
-            (let
-              [body : AstExpr (ast-node-get body-box)]
-              (match (macro-expand-expr
-                ctx
-                (match maybe-ret
-                  [(AstMaybeType.Some ret)
-                    (tc-bind-return-type
-                      (tc-bind-params ctx env params)
-                      (tc-resolve-type ctx ret))]
-                  [(AstMaybeType.No)
-                    (tc-bind-return-type
-                      (tc-bind-params ctx env params)
-                      (AstType.Never))])
-                decls
-                depth
-                body)
-                [(ResultMacroExpr.Ok nbody)
-                  (ResultMacroExpr.Ok (ast-expr-lambda params maybe-ret nbody))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
-      [(AstExpr.Ann inner-box ty)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-ann ninner ty))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Cast inner-box ty)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-cast ninner ty))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Borrow mutable lifetime place-box)
-        (let
-          [place : AstExpr (ast-node-get place-box)]
-          (match (macro-expand-expr ctx env decls depth place)
-            [(ResultMacroExpr.Ok nplace)
-              (ResultMacroExpr.Ok (ast-expr-borrow mutable lifetime nplace))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.StructGet inner-box field)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-struct-get-id ninner field))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.StructSet inner-box field value-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          [value : AstExpr (ast-node-get value-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (match (macro-expand-expr ctx env decls depth value)
-                [(ResultMacroExpr.Ok nvalue)
-                  (ResultMacroExpr.Ok
-                    (ast-expr-struct-set-id ninner field nvalue))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.WithRegion region body)
-        (match (macro-expand-exprs
-          ctx
-          (tc-push-region env region)
-          decls
-          depth
-          body)
-          [(ResultMacroExprList.Ok nbody)
-            (ResultMacroExpr.Ok
-              (ast-node-push (AstExpr.WithRegion region nbody)))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.WithEscape scratch-box body)
-        (let
-          [scratch : AstExpr (ast-node-get scratch-box)]
-          (match (macro-expand-expr ctx env decls depth scratch)
-            [(ResultMacroExpr.Ok nscratch)
-              (match (macro-expand-exprs ctx env decls depth body)
-                [(ResultMacroExprList.Ok nbody)
-                  (ResultMacroExpr.Ok (ast-expr-with-escape nscratch nbody))]
-                [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.WithScratch body)
-        (match (macro-expand-exprs ctx env decls depth body)
-          [(ResultMacroExprList.Ok nbody)
-            (ResultMacroExpr.Ok (ast-expr-with-scratch nbody))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [(AstExpr.InArena arena-box body)
-        (let
-          [arena : AstExpr (ast-node-get arena-box)]
-          (match (macro-expand-expr ctx env decls depth arena)
-            [(ResultMacroExpr.Ok narena)
-              (match (macro-expand-exprs ctx env decls depth body)
-                [(ResultMacroExprList.Ok nbody)
-                  (ResultMacroExpr.Ok (ast-expr-in-arena narena nbody))]
-                [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.ArrayRef array-box index-box)
-        (let
-          [array : AstExpr (ast-node-get array-box)]
-          [index : AstExpr (ast-node-get index-box)]
-          (match (macro-expand-expr ctx env decls depth array)
-            [(ResultMacroExpr.Ok narray)
-              (match (macro-expand-expr ctx env decls depth index)
-                [(ResultMacroExpr.Ok nindex)
-                  (ResultMacroExpr.Ok (ast-expr-array-ref narray nindex))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.ArraySet array-box index-box value-box)
-        (let
-          [array : AstExpr (ast-node-get array-box)]
-          [index : AstExpr (ast-node-get index-box)]
-          [value : AstExpr (ast-node-get value-box)]
-          (match (macro-expand-expr ctx env decls depth array)
-            [(ResultMacroExpr.Ok narray)
-              (match (macro-expand-expr ctx env decls depth index)
-                [(ResultMacroExpr.Ok nindex)
-                  (match (macro-expand-expr ctx env decls depth value)
-                    [(ResultMacroExpr.Ok nvalue)
-                      (ResultMacroExpr.Ok
-                        (ast-expr-array-set narray nindex nvalue))]
-                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.ArrayTake array-box live-box index-box)
-        (let
-          [array : AstExpr (ast-node-get array-box)]
-          [live : AstExpr (ast-node-get live-box)]
-          [index : AstExpr (ast-node-get index-box)]
-          (match (macro-expand-expr ctx env decls depth array)
-            [(ResultMacroExpr.Ok narray)
-              (match (macro-expand-expr ctx env decls depth live)
-                [(ResultMacroExpr.Ok nlive)
-                  (match (macro-expand-expr ctx env decls depth index)
-                    [(ResultMacroExpr.Ok nindex)
-                      (ResultMacroExpr.Ok
-                        (ast-expr-array-take narray nlive nindex))]
-                    [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Box inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-box ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.BoxGet inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-box-get ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.BoxTake inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-box-take ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.BoxSet inner-box value-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          [value : AstExpr (ast-node-get value-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (match (macro-expand-expr ctx env decls depth value)
-                [(ResultMacroExpr.Ok nvalue)
-                  (ResultMacroExpr.Ok (ast-expr-box-set ninner nvalue))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Comptime inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-comptime ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Return inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-return ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Set name rhs-box)
-        (let
-          [rhs : AstExpr (ast-node-get rhs-box)]
-          (match (macro-expand-expr ctx env decls depth rhs)
-            [(ResultMacroExpr.Ok nrhs)
-              (ResultMacroExpr.Ok (ast-expr-set-id name nrhs))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.StringData inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-string-data ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.StringFromBytes ptr-box len-box)
-        (let
-          [ptr : AstExpr (ast-node-get ptr-box)]
-          [len : AstExpr (ast-node-get len-box)]
-          (match (macro-expand-expr ctx env decls depth ptr)
-            [(ResultMacroExpr.Ok nptr)
-              (match (macro-expand-expr ctx env decls depth len)
-                [(ResultMacroExpr.Ok nlen)
-                  (ResultMacroExpr.Ok (ast-expr-string-from-bytes nptr nlen))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.ArrayData inner-box)
-        (let
-          [inner : AstExpr (ast-node-get inner-box)]
-          (match (macro-expand-expr ctx env decls depth inner)
-            [(ResultMacroExpr.Ok ninner)
-              (ResultMacroExpr.Ok (ast-expr-array-data ninner))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.PtrAddrOf place-box)
-        (let
-          [place : AstExpr (ast-node-get place-box)]
-          (match (macro-expand-expr ctx env decls depth place)
-            [(ResultMacroExpr.Ok nplace)
-              (ResultMacroExpr.Ok (ast-expr-ptr-addr-of-id nplace))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.BinaryData bytes)
-        (ResultMacroExpr.Ok (ast-node-push (AstExpr.BinaryData bytes)))]
-      [(AstExpr.SpmdProgramIndex)
-        (ResultMacroExpr.Ok (ast-expr-spmd-program-index))]
-      [(AstExpr.SpmdProgramCount)
-        (ResultMacroExpr.Ok (ast-expr-spmd-program-count))]
-      [(AstExpr.CpuIdEax leaf-box subleaf-box)
-        (let
-          [leaf : AstExpr (ast-node-get leaf-box)]
-          [subleaf : AstExpr (ast-node-get subleaf-box)]
-          (match (macro-expand-expr ctx env decls depth leaf)
-            [(ResultMacroExpr.Ok nleaf)
-              (match (macro-expand-expr ctx env decls depth subleaf)
-                [(ResultMacroExpr.Ok nsubleaf)
-                  (ResultMacroExpr.Ok (ast-expr-cpuid-eax nleaf nsubleaf))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.CpuIdEbx leaf-box subleaf-box)
-        (let
-          [leaf : AstExpr (ast-node-get leaf-box)]
-          [subleaf : AstExpr (ast-node-get subleaf-box)]
-          (match (macro-expand-expr ctx env decls depth leaf)
-            [(ResultMacroExpr.Ok nleaf)
-              (match (macro-expand-expr ctx env decls depth subleaf)
-                [(ResultMacroExpr.Ok nsubleaf)
-                  (ResultMacroExpr.Ok (ast-expr-cpuid-ebx nleaf nsubleaf))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.CpuIdEcx leaf-box subleaf-box)
-        (let
-          [leaf : AstExpr (ast-node-get leaf-box)]
-          [subleaf : AstExpr (ast-node-get subleaf-box)]
-          (match (macro-expand-expr ctx env decls depth leaf)
-            [(ResultMacroExpr.Ok nleaf)
-              (match (macro-expand-expr ctx env decls depth subleaf)
-                [(ResultMacroExpr.Ok nsubleaf)
-                  (ResultMacroExpr.Ok (ast-expr-cpuid-ecx nleaf nsubleaf))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.CpuIdEdx leaf-box subleaf-box)
-        (let
-          [leaf : AstExpr (ast-node-get leaf-box)]
-          [subleaf : AstExpr (ast-node-get subleaf-box)]
-          (match (macro-expand-expr ctx env decls depth leaf)
-            [(ResultMacroExpr.Ok nleaf)
-              (match (macro-expand-expr ctx env decls depth subleaf)
-                [(ResultMacroExpr.Ok nsubleaf)
-                  (ResultMacroExpr.Ok (ast-expr-cpuid-edx nleaf nsubleaf))]
-                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Xgetbv index-box)
-        (let
-          [index : AstExpr (ast-node-get index-box)]
-          (match (macro-expand-expr ctx env decls depth index)
-            [(ResultMacroExpr.Ok nindex)
-              (ResultMacroExpr.Ok (ast-expr-xgetbv nindex))]
-            [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
-      [(AstExpr.Syscall args)
-        (match (macro-expand-exprs ctx env decls depth args)
-          [(ResultMacroExprList.Ok nargs)
-            (ResultMacroExpr.Ok (ast-expr-syscall nargs))]
-          [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
-      [_ (ResultMacroExpr.Ok (ast-node-push expr))])))
+                        func
+                        args
+                        expr)
+                        [(ResultMacroCompatCall.Ok expanded)
+                          (ResultMacroExpr.Ok expanded)]
+                        [(ResultMacroCompatCall.No)
+                          (match (macro-expand-expr ctx env decls depth func)
+                            [(ResultMacroExpr.Ok nfunc)
+                              (match (macro-expand-exprs
+                                ctx
+                                env
+                                decls
+                                depth
+                                args)
+                                [(ResultMacroExprList.Ok nargs)
+                                  (ResultMacroExpr.Ok
+                                    (ast-expr-call nfunc nargs))]
+                                [(ResultMacroExprList.Err diag)
+                                  (ResultMacroExpr.Err diag)])]
+                            [(ResultMacroExpr.Err diag)
+                              (ResultMacroExpr.Err diag)])]
+                        [(ResultMacroCompatCall.Err diag)
+                          (ResultMacroExpr.Err diag)])])]
+                [(ResultMacroCallDecl.Err diag) (ResultMacroExpr.Err diag)])
+              (match (macro-expand-expr ctx env decls depth func)
+                [(ResultMacroExpr.Ok nfunc)
+                  (match (macro-expand-exprs ctx env decls depth args)
+                    [(ResultMacroExprList.Ok nargs)
+                      (ResultMacroExpr.Ok (ast-expr-call nfunc nargs))]
+                    [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+                [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])))]
+        [(AstExpr.BracketClause items)
+          (match (macro-expand-exprs ctx env decls depth items)
+            [(ResultMacroExprList.Ok nitems)
+              (ResultMacroExpr.Ok (ast-expr-bracket-clause nitems))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.Binary op left-box right-box)
+          (let
+            [left : AstExpr (ast-node-get left-box)]
+            [right : AstExpr (ast-node-get right-box)]
+            (match (macro-expand-expr ctx env decls depth left)
+              [(ResultMacroExpr.Ok nleft)
+                (match (macro-expand-expr ctx env decls depth right)
+                  [(ResultMacroExpr.Ok nright)
+                    (ResultMacroExpr.Ok (ast-expr-binary op nleft nright))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Unary op inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-unary op ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.If cond-box then-branch-box else-branch-box)
+          (let
+            [cond : AstExpr (ast-node-get cond-box)]
+            [then-branch : AstExpr (ast-node-get then-branch-box)]
+            [else-branch : AstExpr (ast-node-get else-branch-box)]
+            (match (macro-expand-expr ctx env decls depth cond)
+              [(ResultMacroExpr.Ok ncond)
+                (match (macro-expand-expr ctx env decls depth then-branch)
+                  [(ResultMacroExpr.Ok nthen)
+                    (match (macro-expand-expr ctx env decls depth else-branch)
+                      [(ResultMacroExpr.Ok nelse)
+                        (ResultMacroExpr.Ok (ast-expr-if ncond nthen nelse))]
+                      [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Let let-box)
+          (match (box-get let-box)
+            [(AstLet.Let bindings body-box)
+              (let
+                [body : AstExpr (ast-node-get body-box)]
+                (match (macro-expand-bindings ctx env decls depth bindings)
+                  [(ResultMacroLetBindings.Ok nbindings body-env)
+                    (match (macro-expand-expr ctx body-env decls depth body)
+                      [(ResultMacroExpr.Ok nbody)
+                        (ResultMacroExpr.Ok (ast-expr-let nbindings nbody))]
+                      [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                  [(ResultMacroLetBindings.Err diag) (ResultMacroExpr.Err diag)]))])]
+        [(AstExpr.Begin exprs)
+          (match (macro-expand-exprs ctx env decls depth exprs)
+            [(ResultMacroExprList.Ok nexprs)
+              (ResultMacroExpr.Ok (ast-node-push (AstExpr.Begin nexprs)))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.Unsafe exprs)
+          ;; Expansion typechecks some sub-expressions (e.g. `match` scrutinees) via
+          ;; `tc-expr`; descend with the unsafe marker set so those checks see the
+          ;; enclosing `unsafe` context, matching the real typecheck pass. Without
+          ;; this, an `unsafe`-only primitive under an `(unsafe ...)` reachable here
+          ;; is wrongly rejected once the program defines a macro.
+          (match (macro-expand-exprs
+            ctx
+            (tc-enter-unsafe env)
+            decls
+            depth
+            exprs)
+            [(ResultMacroExprList.Ok nexprs)
+              (ResultMacroExpr.Ok (ast-node-push (AstExpr.Unsafe nexprs)))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.Tuple exprs)
+          (match (macro-expand-exprs ctx env decls depth exprs)
+            [(ResultMacroExprList.Ok nexprs)
+              (ResultMacroExpr.Ok (ast-node-push (AstExpr.Tuple nexprs)))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.Array exprs)
+          (match (macro-expand-exprs ctx env decls depth exprs)
+            [(ResultMacroExprList.Ok nexprs)
+              (ResultMacroExpr.Ok (ast-node-push (AstExpr.Array nexprs)))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.DynArray exprs)
+          (match (macro-expand-exprs ctx env decls depth exprs)
+            [(ResultMacroExprList.Ok nexprs)
+              (ResultMacroExpr.Ok (ast-node-push (AstExpr.DynArray nexprs)))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.Match match-box)
+          (match (box-get match-box)
+            [(AstMatch.Match scrut-box arms)
+              (let
+                [scrut : AstExpr (ast-node-get scrut-box)]
+                (match (macro-expand-expr ctx env decls depth scrut)
+                  [(ResultMacroExpr.Ok nscrut)
+                    (match (tc-expr ctx env (ast-node-get nscrut))
+                      [(ResultTcType.Ok scrut-ty)
+                        (match (macro-expand-arms
+                          ctx
+                          env
+                          decls
+                          depth
+                          scrut-ty
+                          arms)
+                          [(ResultMacroArms.Ok narms)
+                            (ResultMacroExpr.Ok (ast-expr-match nscrut narms))]
+                          [(ResultMacroArms.Err diag)
+                            (ResultMacroExpr.Err diag)])]
+                      [(ResultTcType.Err message)
+                        (ResultMacroExpr.Err
+                          (box (tc-expr-diag (ast-node-get nscrut) message)))])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
+        [(AstExpr.While cond-box body-box)
+          (let
+            [cond : AstExpr (ast-node-get cond-box)]
+            [body : AstExpr (ast-node-get body-box)]
+            (match (macro-expand-expr ctx env decls depth cond)
+              [(ResultMacroExpr.Ok ncond)
+                (match (macro-expand-expr ctx env decls depth body)
+                  [(ResultMacroExpr.Ok nbody)
+                    (ResultMacroExpr.Ok (ast-expr-while ncond nbody))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Foreach fe-box)
+          (match (box-get fe-box)
+            [(AstForeach.Foreach index index-ty start-box end-box body-box)
+              (let
+                [start : AstExpr (ast-node-get start-box)]
+                [end : AstExpr (ast-node-get end-box)]
+                [body : AstExpr (ast-node-get body-box)]
+                (match (macro-expand-expr ctx env decls depth start)
+                  [(ResultMacroExpr.Ok nstart)
+                    (match (macro-expand-expr ctx env decls depth end)
+                      [(ResultMacroExpr.Ok nend)
+                        (match (macro-expand-expr
+                          ctx
+                          (tc-bind-id env index (tc-resolve-type ctx index-ty))
+                          decls
+                          depth
+                          body)
+                          [(ResultMacroExpr.Ok nbody)
+                            (ResultMacroExpr.Ok
+                              (ast-expr-foreach-id
+                                index
+                                index-ty
+                                nstart
+                                nend
+                                nbody))]
+                          [(ResultMacroExpr.Err diag)
+                            (ResultMacroExpr.Err diag)])]
+                      [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
+        [(AstExpr.Lambda lambda-box)
+          (match (box-get lambda-box)
+            [(AstLambda.Lambda params maybe-ret body-box)
+              (let
+                [body : AstExpr (ast-node-get body-box)]
+                (match (macro-expand-expr
+                  ctx
+                  (match maybe-ret
+                    [(AstMaybeType.Some ret)
+                      (tc-bind-return-type
+                        (tc-bind-params ctx env params)
+                        (tc-resolve-type ctx ret))]
+                    [(AstMaybeType.No)
+                      (tc-bind-return-type
+                        (tc-bind-params ctx env params)
+                        (AstType.Never))])
+                  decls
+                  depth
+                  body)
+                  [(ResultMacroExpr.Ok nbody)
+                    (ResultMacroExpr.Ok
+                      (ast-expr-lambda params maybe-ret nbody))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))])]
+        [(AstExpr.Ann inner-box ty)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-ann ninner ty))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Cast inner-box ty)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-cast ninner ty))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Borrow mutable lifetime place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (match (macro-expand-expr ctx env decls depth place)
+              [(ResultMacroExpr.Ok nplace)
+                (ResultMacroExpr.Ok (ast-expr-borrow mutable lifetime nplace))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.StructGet inner-box field)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-struct-get-id ninner field))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.StructSet inner-box field value-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (match (macro-expand-expr ctx env decls depth value)
+                  [(ResultMacroExpr.Ok nvalue)
+                    (ResultMacroExpr.Ok
+                      (ast-expr-struct-set-id ninner field nvalue))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.WithRegion region body)
+          (match (macro-expand-exprs
+            ctx
+            (tc-push-region env region)
+            decls
+            depth
+            body)
+            [(ResultMacroExprList.Ok nbody)
+              (ResultMacroExpr.Ok
+                (ast-node-push (AstExpr.WithRegion region nbody)))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.WithEscape scratch-box body)
+          (let
+            [scratch : AstExpr (ast-node-get scratch-box)]
+            (match (macro-expand-expr ctx env decls depth scratch)
+              [(ResultMacroExpr.Ok nscratch)
+                (match (macro-expand-exprs ctx env decls depth body)
+                  [(ResultMacroExprList.Ok nbody)
+                    (ResultMacroExpr.Ok (ast-expr-with-escape nscratch nbody))]
+                  [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.WithScratch body)
+          (match (macro-expand-exprs ctx env decls depth body)
+            [(ResultMacroExprList.Ok nbody)
+              (ResultMacroExpr.Ok (ast-expr-with-scratch nbody))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [(AstExpr.InArena arena-box body)
+          (let
+            [arena : AstExpr (ast-node-get arena-box)]
+            (match (macro-expand-expr ctx env decls depth arena)
+              [(ResultMacroExpr.Ok narena)
+                (match (macro-expand-exprs ctx env decls depth body)
+                  [(ResultMacroExprList.Ok nbody)
+                    (ResultMacroExpr.Ok (ast-expr-in-arena narena nbody))]
+                  [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.ArrayRef array-box index-box)
+          (let
+            [array : AstExpr (ast-node-get array-box)]
+            [index : AstExpr (ast-node-get index-box)]
+            (match (macro-expand-expr ctx env decls depth array)
+              [(ResultMacroExpr.Ok narray)
+                (match (macro-expand-expr ctx env decls depth index)
+                  [(ResultMacroExpr.Ok nindex)
+                    (ResultMacroExpr.Ok (ast-expr-array-ref narray nindex))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.ArraySet array-box index-box value-box)
+          (let
+            [array : AstExpr (ast-node-get array-box)]
+            [index : AstExpr (ast-node-get index-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            (match (macro-expand-expr ctx env decls depth array)
+              [(ResultMacroExpr.Ok narray)
+                (match (macro-expand-expr ctx env decls depth index)
+                  [(ResultMacroExpr.Ok nindex)
+                    (match (macro-expand-expr ctx env decls depth value)
+                      [(ResultMacroExpr.Ok nvalue)
+                        (ResultMacroExpr.Ok
+                          (ast-expr-array-set narray nindex nvalue))]
+                      [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.ArrayTake array-box live-box index-box)
+          (let
+            [array : AstExpr (ast-node-get array-box)]
+            [live : AstExpr (ast-node-get live-box)]
+            [index : AstExpr (ast-node-get index-box)]
+            (match (macro-expand-expr ctx env decls depth array)
+              [(ResultMacroExpr.Ok narray)
+                (match (macro-expand-expr ctx env decls depth live)
+                  [(ResultMacroExpr.Ok nlive)
+                    (match (macro-expand-expr ctx env decls depth index)
+                      [(ResultMacroExpr.Ok nindex)
+                        (ResultMacroExpr.Ok
+                          (ast-expr-array-take narray nlive nindex))]
+                      [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Box inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-box ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.BoxGet inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-box-get ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.BoxTake inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-box-take ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.BoxSet inner-box value-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            [value : AstExpr (ast-node-get value-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (match (macro-expand-expr ctx env decls depth value)
+                  [(ResultMacroExpr.Ok nvalue)
+                    (ResultMacroExpr.Ok (ast-expr-box-set ninner nvalue))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Comptime inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-comptime ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Return inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-return ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Set name rhs-box)
+          (let
+            [rhs : AstExpr (ast-node-get rhs-box)]
+            (match (macro-expand-expr ctx env decls depth rhs)
+              [(ResultMacroExpr.Ok nrhs)
+                (ResultMacroExpr.Ok (ast-expr-set-id name nrhs))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.StringData inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-string-data ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.StringFromBytes ptr-box len-box)
+          (let
+            [ptr : AstExpr (ast-node-get ptr-box)]
+            [len : AstExpr (ast-node-get len-box)]
+            (match (macro-expand-expr ctx env decls depth ptr)
+              [(ResultMacroExpr.Ok nptr)
+                (match (macro-expand-expr ctx env decls depth len)
+                  [(ResultMacroExpr.Ok nlen)
+                    (ResultMacroExpr.Ok (ast-expr-string-from-bytes nptr nlen))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.ArrayData inner-box)
+          (let
+            [inner : AstExpr (ast-node-get inner-box)]
+            (match (macro-expand-expr ctx env decls depth inner)
+              [(ResultMacroExpr.Ok ninner)
+                (ResultMacroExpr.Ok (ast-expr-array-data ninner))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.PtrAddrOf place-box)
+          (let
+            [place : AstExpr (ast-node-get place-box)]
+            (match (macro-expand-expr ctx env decls depth place)
+              [(ResultMacroExpr.Ok nplace)
+                (ResultMacroExpr.Ok (ast-expr-ptr-addr-of-id nplace))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.BinaryData bytes)
+          (ResultMacroExpr.Ok (ast-node-push (AstExpr.BinaryData bytes)))]
+        [(AstExpr.SpmdProgramIndex)
+          (ResultMacroExpr.Ok (ast-expr-spmd-program-index))]
+        [(AstExpr.SpmdProgramCount)
+          (ResultMacroExpr.Ok (ast-expr-spmd-program-count))]
+        [(AstExpr.CpuIdEax leaf-box subleaf-box)
+          (let
+            [leaf : AstExpr (ast-node-get leaf-box)]
+            [subleaf : AstExpr (ast-node-get subleaf-box)]
+            (match (macro-expand-expr ctx env decls depth leaf)
+              [(ResultMacroExpr.Ok nleaf)
+                (match (macro-expand-expr ctx env decls depth subleaf)
+                  [(ResultMacroExpr.Ok nsubleaf)
+                    (ResultMacroExpr.Ok (ast-expr-cpuid-eax nleaf nsubleaf))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.CpuIdEbx leaf-box subleaf-box)
+          (let
+            [leaf : AstExpr (ast-node-get leaf-box)]
+            [subleaf : AstExpr (ast-node-get subleaf-box)]
+            (match (macro-expand-expr ctx env decls depth leaf)
+              [(ResultMacroExpr.Ok nleaf)
+                (match (macro-expand-expr ctx env decls depth subleaf)
+                  [(ResultMacroExpr.Ok nsubleaf)
+                    (ResultMacroExpr.Ok (ast-expr-cpuid-ebx nleaf nsubleaf))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.CpuIdEcx leaf-box subleaf-box)
+          (let
+            [leaf : AstExpr (ast-node-get leaf-box)]
+            [subleaf : AstExpr (ast-node-get subleaf-box)]
+            (match (macro-expand-expr ctx env decls depth leaf)
+              [(ResultMacroExpr.Ok nleaf)
+                (match (macro-expand-expr ctx env decls depth subleaf)
+                  [(ResultMacroExpr.Ok nsubleaf)
+                    (ResultMacroExpr.Ok (ast-expr-cpuid-ecx nleaf nsubleaf))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.CpuIdEdx leaf-box subleaf-box)
+          (let
+            [leaf : AstExpr (ast-node-get leaf-box)]
+            [subleaf : AstExpr (ast-node-get subleaf-box)]
+            (match (macro-expand-expr ctx env decls depth leaf)
+              [(ResultMacroExpr.Ok nleaf)
+                (match (macro-expand-expr ctx env decls depth subleaf)
+                  [(ResultMacroExpr.Ok nsubleaf)
+                    (ResultMacroExpr.Ok (ast-expr-cpuid-edx nleaf nsubleaf))]
+                  [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)])]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Xgetbv index-box)
+          (let
+            [index : AstExpr (ast-node-get index-box)]
+            (match (macro-expand-expr ctx env decls depth index)
+              [(ResultMacroExpr.Ok nindex)
+                (ResultMacroExpr.Ok (ast-expr-xgetbv nindex))]
+              [(ResultMacroExpr.Err diag) (ResultMacroExpr.Err diag)]))]
+        [(AstExpr.Syscall args)
+          (match (macro-expand-exprs ctx env decls depth args)
+            [(ResultMacroExprList.Ok nargs)
+              (ResultMacroExpr.Ok (ast-expr-syscall nargs))]
+            [(ResultMacroExprList.Err diag) (ResultMacroExpr.Err diag)])]
+        [_ (ResultMacroExpr.Ok (ast-node-push expr))]))))
 
 (define (macro-expand-module-call-position
   [ctx : TcContext]
@@ -58989,9 +59106,9 @@
 ;; A bare `AstExpr.Var`/`AstExpr.Set` target is never a call -> false (matching
 ;; the gate). `AstExpr.PtrAddrOf` follows its place operand because addressable
 ;; places can now contain macro-expanded field/element forms. This walk covers
-;; expr/compat macros only; the call site additionally gates on
-;; `has-expr-type-macros` being false (type macros expand from type positions the
-;; gate does not see).
+;; every expression position from which a macro can fire. Whether a transformer
+;; asks for an operand's type changes how that call is evaluated, not how the
+;; call is represented, so expr-type macros use the same syntactic call gate.
 (define (macro-expr-list-might-fire? [exprs : AstExprList]) : bool
   (macro-expr-list-might-fire-at? (& exprs) 0))
 
@@ -59384,8 +59501,7 @@
 ;; pushed to the macro-expand output unchanged (shared). Every other decl kind
 ;; returns false so it falls through to the precise `macro-expand-decl-with-path`
 ;; path (which shares or expands import placeholders, splices, defmacro, unsafe,
-;; comptime templates, etc. correctly). Consulted only when the program has no
-;; expr-type macros.
+;; comptime templates, etc. correctly).
 (define (macro-decl-cannot-fire? [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Def _ _ expr-box)
@@ -60074,13 +60190,7 @@
                                           (or
                                             ctfe-needs-metadata
                                             macro-live-prescan-has-defmacro))
-                                        (set!
-                                          cur-can-share
-                                          (and
-                                            cur-can-share
-                                            (match macro-live-prescan-expr-type-names
-                                              [(TcStringList.Nil) true]
-                                              [_ false]))))
+                                        unit)
                                       unit)
                                     (match (macro-expand-rebuild-context-for-splice
                                       cur-ctx
@@ -60219,13 +60329,7 @@
                                   (or
                                     ctfe-needs-metadata
                                     macro-live-prescan-has-defmacro))
-                                (set!
-                                  cur-can-share
-                                  (and
-                                    cur-can-share
-                                    (match macro-live-prescan-expr-type-names
-                                      [(TcStringList.Nil) true]
-                                      [_ false])))
+                                unit
                                 (match (macro-expand-rebuild-context-for-splice
                                   cur-ctx
                                   next-decls
@@ -60538,7 +60642,7 @@
                                     (cfg
                                       compile-profile
                                       (compiler-tc-macro-profile-note-walk-share-gate
-                                        (not has-expr-type-macros)))
+                                        true))
                                     (match (macro-expand-decls
                                       ctx
                                       top-env
@@ -60546,7 +60650,7 @@
                                       decls
                                       paths
                                       ""
-                                      (not has-expr-type-macros)
+                                      true
                                       stdlib-roots
                                       cfgs)
                                       [(ResultMacroDeclsWithPaths.Ok

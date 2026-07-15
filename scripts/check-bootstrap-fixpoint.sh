@@ -15,6 +15,12 @@ set -eu
 # to persist the stage1 / converged compiler paths for callers that reuse the
 # freshly bootstrapped compilers.
 #
+# TYPELISP_BOOTSTRAP_CFG adds one cfg predicate to every compiler generation.
+# TYPELISP_BOOTSTRAP_WORKDIR isolates a second bootstrap in the same job, and
+# TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1 skips the redundant stage1 CLI surface
+# checks for that second run. CI uses these together for the scratch-vreg
+# self-hosting regression gate.
+#
 # refs #47.
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -56,6 +62,29 @@ case "$COMPILER" in
     /* | [A-Za-z]:[\\/]*) ;;
     *) COMPILER="$ROOT/$COMPILER" ;;
 esac
+
+BOOTSTRAP_CFG=${TYPELISP_BOOTSTRAP_CFG:-}
+case "$BOOTSTRAP_CFG" in
+    "") ;;
+    *[!A-Za-z0-9_-]*)
+        echo "invalid TYPELISP_BOOTSTRAP_CFG: $BOOTSTRAP_CFG" >&2
+        exit 2
+        ;;
+esac
+BOOTSTRAP_SKIP_CLI_SMOKE=${TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE:-0}
+case "$BOOTSTRAP_SKIP_CLI_SMOKE" in
+    0 | 1) ;;
+    *)
+        echo "TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE must be 0 or 1" >&2
+        exit 2
+        ;;
+esac
+
+bootstrap_extra_cfg_args() {
+    if [ -n "$BOOTSTRAP_CFG" ]; then
+        printf '%s\n' --cfg "$BOOTSTRAP_CFG"
+    fi
+}
 
 
 assert_contains() {
@@ -120,7 +149,18 @@ run_stage1_cli_capture() {
     fi
 }
 
-WORKDIR="$ROOT/target/bootstrap-fixpoint"
+WORKDIR=${TYPELISP_BOOTSTRAP_WORKDIR:-$ROOT/target/bootstrap-fixpoint}
+case "$WORKDIR" in
+    /* | [A-Za-z]:[\\/]*) ;;
+    *) WORKDIR="$ROOT/$WORKDIR" ;;
+esac
+case "$WORKDIR" in
+    "$ROOT"/target/*) ;;
+    *)
+        echo "TYPELISP_BOOTSTRAP_WORKDIR must stay below $ROOT/target" >&2
+        exit 2
+        ;;
+esac
 rm -rf "$WORKDIR"
 mkdir -p "$WORKDIR"
 configure_toolchain
@@ -302,29 +342,31 @@ if [ -n "$SEED_CTFE_COMPAT_STDLIB" ]; then
     mkdir -p "$SEED_BOOTSTRAP_CWD"
     (
         cd "$SEED_BOOTSTRAP_CWD"
-        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
+        run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$ROOT/$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root "$SEED_CTFE_COMPAT_STDLIB" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" --opt-level 2
     )
 else
-    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage0 -> stage1.s" "$COMPILER" compile "$BOOTSTRAP_SRC" -o "$STAGE1_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 fi
 
 assemble_and_link "stage1" "$STAGE1_ASM" "$STAGE1_OBJ" "$STAGE1_BIN"
 
-check_stage1_compile_cli
+if [ "$BOOTSTRAP_SKIP_CLI_SMOKE" -eq 0 ]; then
+    check_stage1_compile_cli
+fi
 
 echo "[bootstrap] stage1 -> stage2.s"
-run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+run_with_heartbeat "stage1 -> stage2.s" "$STAGE1_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE2_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link_stage2
 
 echo "[bootstrap] stage2 -> stage3.s"
-run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+run_with_heartbeat "stage2 -> stage3.s" "$STAGE2_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE3_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
 
 assemble_and_link "stage3" "$STAGE3_ASM" "$STAGE3_OBJ" "$STAGE3_BIN"
 
 bootstrap_build_stage4() {
     echo "[bootstrap] stage3 -> stage4.s"
-    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
+    run_with_heartbeat "stage3 -> stage4.s" "$STAGE3_BIN" compile "$BOOTSTRAP_SRC" -o "$STAGE4_ASM" --target "$BOOTSTRAP_TARGET" $(native_target_cfg_args) $(bootstrap_extra_cfg_args) --stdlib-root stdlib --stdlib-root src --opt-level 2
     assemble_and_link "stage4" "$STAGE4_ASM" "$STAGE4_OBJ" "$STAGE4_BIN"
 }
 

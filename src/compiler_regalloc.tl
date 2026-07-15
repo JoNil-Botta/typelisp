@@ -1698,35 +1698,65 @@
         (+ offset 1)
         offset))))
 
-;; Live-set and greedy-occupancy words use only their low 32 bits.
+;; Live-set and greedy-occupancy words use only their low 32 bits. Isolate the
+;; lowest set bit and map its 32-bit De Bruijn product to the bit index. This
+;; replaces the five dependent branch-and-shift steps in the hot register-
+;; allocator scans with one multiply and one compact table lookup.
+(define compiler-reg-low-bit-index32-table : (Array i64 32)
+  (array
+    (cast 0 : i64)
+    1
+    28
+    2
+    29
+    14
+    24
+    3
+    30
+    22
+    20
+    15
+    25
+    17
+    4
+    8
+    31
+    27
+    13
+    23
+    21
+    19
+    16
+    7
+    26
+    12
+    18
+    6
+    11
+    5
+    10
+    9))
+
 (define (compiler-reg-low-bit-index32 [bits : i64]) : i64
   (let
-    [value : i64 bits]
-    [offset : i64 0]
-    (begin
-      (if (= (bit-and value 0xffff) 0)
-        (begin
-          (set! value (shr value 16))
-          (set! offset (+ offset 16)))
-        unit)
-      (if (= (bit-and value 0xff) 0)
-        (begin
-          (set! value (shr value 8))
-          (set! offset (+ offset 8)))
-        unit)
-      (if (= (bit-and value 0xf) 0)
-        (begin
-          (set! value (shr value 4))
-          (set! offset (+ offset 4)))
-        unit)
-      (if (= (bit-and value 0x3) 0)
-        (begin
-          (set! value (shr value 2))
-          (set! offset (+ offset 2)))
-        unit)
-      (if (= (bit-and value 0x1) 0)
-        (+ offset 1)
-        offset))))
+    [value : i64 (bit-and bits 0xffffffff)]
+    (if (= value 0)
+      31
+      (let
+        [isolated : i64 (bit-and value (- 0 value))]
+        [slot : i64 (shr (bit-and (* isolated 0x077cb531) 0xffffffff) 27)]
+        (array-ref compiler-reg-low-bit-index32-table slot)))))
+
+(cfg
+  test
+  (define (compiler-reg-low-bit-index32-powers-ok? [bit : i64] [value : i64]) : bool
+    (if (= bit 32)
+      (and
+        (= (compiler-reg-low-bit-index32 0) 31)
+        (= (compiler-reg-low-bit-index32 0x100000000) 31))
+      (and
+        (= (compiler-reg-low-bit-index32 value) bit)
+        (compiler-reg-low-bit-index32-powers-ok? (+ bit 1) (* value 2))))))
 
 (define (compiler-reg-segment-flush-var!
   [segments : (Array CompilerRegIntervalList)]
@@ -29261,6 +29291,7 @@
 
 (define (compiler-regalloc-core-self-test?) : bool
   (and
+    (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true)
     (compiler-reg-reuse-ok?)
     (compiler-reg-f64-reuse-ok?)
     (compiler-reg-overlap-spill-ok?)

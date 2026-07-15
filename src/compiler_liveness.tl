@@ -451,40 +451,79 @@
           (set! index (- index 1))))
       score)))
 
+(define (compiler-live-set-builder-insert! [words : (Array i64)] [value : i64]) : unit
+  (if (< value 0)
+    unit
+    (let
+      [word-index : i64 (compiler-live-set-word-index value)]
+      [old-bits : i64 (array-ref words word-index)]
+      (array-set!
+        words
+        word-index
+        (bit-or old-bits (compiler-live-set-bit-mask value))))))
+
+(define (compiler-live-set-builder [max-value : i64]) : (Array i64)
+  (make-array
+    i64
+    (if (< max-value 0)
+      0
+      (+ (compiler-live-set-word-index max-value) 1))))
+
 (define (compiler-live-set1 [a : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert (compiler-live-set-empty) a))
+  (let
+    [words : (Array i64) (compiler-live-set-builder a)]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert (compiler-live-set-empty) a)
-    b))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder (compiler-live-set-max a b))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert (compiler-live-set-empty) a)
-      b)
-    c))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max (compiler-live-set-max a b) c))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert (compiler-live-set-empty) a)
-        b)
-      c)
-    d))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max a b)
+          (compiler-live-set-max c d)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert
-          (compiler-live-set-insert (compiler-live-set-empty) a)
-          b)
-        c)
-      d)
-    e))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max (compiler-live-set-max a b) c)
+          (compiler-live-set-max d e)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (compiler-live-set-builder-insert! words e)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set6
   [a : i64]
@@ -493,17 +532,20 @@
   [d : i64]
   [e : i64]
   [f : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert
-          (compiler-live-set-insert
-            (compiler-live-set-insert (compiler-live-set-empty) a)
-            b)
-          c)
-        d)
-      e)
-    f))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max (compiler-live-set-max a b) c)
+          (compiler-live-set-max (compiler-live-set-max d e) f)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (compiler-live-set-builder-insert! words e)
+      (compiler-live-set-builder-insert! words f)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set7
   [a : i64]
@@ -513,19 +555,23 @@
   [e : i64]
   [f : i64]
   [g : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert
-          (compiler-live-set-insert
-            (compiler-live-set-insert
-              (compiler-live-set-insert (compiler-live-set-empty) a)
-              b)
-            c)
-          d)
-        e)
-      f)
-    g))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max
+            (compiler-live-set-max (compiler-live-set-max a b) c)
+            (compiler-live-set-max d e))
+          (compiler-live-set-max f g)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (compiler-live-set-builder-insert! words e)
+      (compiler-live-set-builder-insert! words f)
+      (compiler-live-set-builder-insert! words g)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set-ops-ok?) : bool
   (let
@@ -540,6 +586,7 @@
       (compiler-live-set-minus unioned (compiler-live-set2 0 65))]
     [trimmed : CompilerLiveI64Set
       (compiler-live-set-remove (compiler-live-set-remove a 66) 32)]
+    [deduplicated : CompilerLiveI64Set (compiler-live-set4 -1 31 31 66)]
     [ok : bool true]
     (begin
       (set! ok (and ok (compiler-live-set-eq? empty with-negative)))
@@ -562,6 +609,9 @@
         (and ok (compiler-live-set-eq? minus (compiler-live-set3 31 32 66))))
       (set! ok (and ok (= (compiler-live-set-count trimmed) 2)))
       (set! ok (and ok (= (compiler-live-set-word-count trimmed) 1)))
+      (set!
+        ok
+        (and ok (compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
       ok)))
 
 (define (compiler-live-label-set-empty) : CompilerLiveLabelSet

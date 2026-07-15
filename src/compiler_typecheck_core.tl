@@ -4791,6 +4791,10 @@
 (define (tc-type-env-scoped-carrier-sidecar [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedSidecar
   (struct-get carrier sidecar))
 
+(define (tc-type-env-scoped-carrier-persistent
+  [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnv
+  (tc-type-env-scoped-sidecar-persistent (struct-get carrier sidecar)))
+
 (define (tc-type-env-scoped-carrier-marker-cursor
   [carrier : TcTypeEnvScopedCarrier]) : TcTypeEnvScopedMarkerCursor
   (tc-type-env-scoped-sidecar-marker-cursor (struct-get carrier sidecar)))
@@ -5161,35 +5165,39 @@
     [(AstMaybeType.Some _) (tc-active-region (struct-get carrier env))]
     [(AstMaybeType.No) (TcMaybeString.No)]))
 
-;; Fully materialized marker-visible snapshots use direct stack indexes here.
-;; Primary function-body ordinary-owner queries deliberately use TcTypeEnv's
-;; relevance-indexed cache sidecar below: mirroring every ordinary bind into
-;; this stack regressed self-compile work, while the immutable cache preserves
-;; the same lexical positions across scope snapshots.
+;; Fully materialized marker-visible snapshots and the active function-body
+;; runtime use stack indexes here. A miss falls back only to the carrier's
+;; immutable module/top-level tail; inactive passes keep using TcTypeEnv's
+;; relevance-indexed owner cache below.
 (define (tc-type-env-scoped-carrier-cleanup-owner-active?
   [carrier : TcTypeEnvScopedCarrier]
   [name : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
-      [index : i64
-        (tc-type-env-scoped-stack-find-id-index (& stack) (tc-name-id name))]
-      (tc-type-env-scoped-stack-cleanup-owner-before? stack index name))))
+  (let
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get carrier sidecar) stack)]
+    [index : i64
+      (tc-type-env-scoped-stack-find-id-index (& stack) (tc-name-id name))]
+    (if (>= index 0)
+      (tc-type-env-scoped-stack-cleanup-owner-before? stack index name)
+      (tc-cleanup-owner-active-persistent?
+        (tc-type-env-scoped-carrier-persistent carrier)
+        name))))
 
 (define (tc-type-env-scoped-carrier-arena-owner-active?
   [carrier : TcTypeEnvScopedCarrier]
   [name : String]
   [marker-id : i64]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
-      [index : i64
-        (tc-type-env-scoped-stack-find-id-index (& stack) (tc-name-id name))]
-      (tc-type-env-scoped-stack-owner-marker-before? stack index name marker-id))))
+  (let
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get carrier sidecar) stack)]
+    [index : i64
+      (tc-type-env-scoped-stack-find-id-index (& stack) (tc-name-id name))]
+    (if (>= index 0)
+      (tc-type-env-scoped-stack-owner-marker-before? stack index name marker-id)
+      (tc-arena-owner-active-persistent?
+        (tc-type-env-scoped-carrier-persistent carrier)
+        name
+        marker-id))))
 
 (define (tc-type-env-scoped-carrier-ordinary-arena-owner-active?
   [carrier : TcTypeEnvScopedCarrier]
@@ -5251,134 +5259,144 @@
 (define (tc-type-env-scoped-carrier-lifetime-visible?
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
-      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
-      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
-      [lifetime-id : i64 (tc-name-id lifetime)]
-      (if (and
-        tc-type-env-scoped-cache-visible-valid
-        (= tc-type-env-scoped-cache-visible-len slot-count)
-        (= tc-type-env-scoped-cache-visible-generation generation)
-        (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
-        tc-type-env-scoped-cache-visible-result
-        (let
-          [result : bool
-            (>=
-              (tc-type-env-scoped-stack-find-lifetime-index
-                stack
-                lifetime
-                lifetime-id)
-              0)]
-          (begin
-            (set! tc-type-env-scoped-cache-visible-valid true)
-            (set! tc-type-env-scoped-cache-visible-len slot-count)
-            (set! tc-type-env-scoped-cache-visible-generation generation)
-            (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
-            (set! tc-type-env-scoped-cache-visible-result result)
-            result))))))
+  (let
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get carrier sidecar) stack)]
+    [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+    [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+    [lifetime-id : i64 (tc-name-id lifetime)]
+    (if (and
+      tc-type-env-scoped-cache-visible-valid
+      (= tc-type-env-scoped-cache-visible-len slot-count)
+      (= tc-type-env-scoped-cache-visible-generation generation)
+      (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
+      tc-type-env-scoped-cache-visible-result
+      (let
+        [result : bool
+          (if (>=
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              lifetime
+              lifetime-id)
+            0)
+            true
+            (tc-lifetime-visible-persistent?
+              (tc-type-env-scoped-carrier-persistent carrier)
+              lifetime))]
+        (begin
+          (set! tc-type-env-scoped-cache-visible-valid true)
+          (set! tc-type-env-scoped-cache-visible-len slot-count)
+          (set! tc-type-env-scoped-cache-visible-generation generation)
+          (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
+          (set! tc-type-env-scoped-cache-visible-result result)
+          result)))))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-binding?
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime : String]
   [target : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
-      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
-      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
-      [lifetime-id : i64 (tc-name-id lifetime)]
-      [target-id : i64 (tc-name-id target)]
-      (if (and
-        tc-type-env-scoped-cache-outlives-binding-valid
-        (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
-        (= tc-type-env-scoped-cache-outlives-binding-generation generation)
-        (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
-        (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
-        tc-type-env-scoped-cache-outlives-binding-result
-        (let
-          [lifetime-index : i64
-            (tc-type-env-scoped-stack-find-lifetime-index
-              stack
-              lifetime
-              lifetime-id)]
-          [target-index : i64
-            (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
-          [result : bool
-            (and
-              (>= lifetime-index 0)
-              (>= target-index 0)
-              (< lifetime-index target-index))]
-          (begin
-            (set! tc-type-env-scoped-cache-outlives-binding-valid true)
-            (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
-            (set!
-              tc-type-env-scoped-cache-outlives-binding-generation
-              generation)
-            (set!
-              tc-type-env-scoped-cache-outlives-binding-lifetime-id
-              lifetime-id)
-            (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
-            (set! tc-type-env-scoped-cache-outlives-binding-result result)
-            result))))))
+  (let
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get carrier sidecar) stack)]
+    [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+    [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+    [lifetime-id : i64 (tc-name-id lifetime)]
+    [target-id : i64 (tc-name-id target)]
+    (if (and
+      tc-type-env-scoped-cache-outlives-binding-valid
+      (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
+      (= tc-type-env-scoped-cache-outlives-binding-generation generation)
+      (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
+      (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
+      tc-type-env-scoped-cache-outlives-binding-result
+      (let
+        [lifetime-index : i64
+          (tc-type-env-scoped-stack-find-lifetime-index
+            stack
+            lifetime
+            lifetime-id)]
+        [target-index : i64
+          (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
+        [result : bool
+          (cond
+            [(>= lifetime-index 0)
+              (and (>= target-index 0) (< lifetime-index target-index))]
+            [(>= target-index 0)
+              (tc-lifetime-visible-persistent?
+                (tc-type-env-scoped-carrier-persistent carrier)
+                lifetime)]
+            [else
+              (tc-lifetime-outlives-binding-persistent?
+                (tc-type-env-scoped-carrier-persistent carrier)
+                lifetime
+                target)])]
+        (begin
+          (set! tc-type-env-scoped-cache-outlives-binding-valid true)
+          (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
+          (set! tc-type-env-scoped-cache-outlives-binding-generation generation)
+          (set!
+            tc-type-env-scoped-cache-outlives-binding-lifetime-id
+            lifetime-id)
+          (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
+          (set! tc-type-env-scoped-cache-outlives-binding-result result)
+          result)))))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-lifetime?
   [carrier : TcTypeEnvScopedCarrier]
   [value-lifetime : String]
   [target-lifetime : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (if (string.eq value-lifetime target-lifetime)
-      true
-      (let
-        [stack : TcTypeEnvScopedStack
-          (struct-get (struct-get carrier sidecar) stack)]
-        [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
-        [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
-        [value-id : i64 (tc-name-id value-lifetime)]
-        [target-id : i64 (tc-name-id target-lifetime)]
-        (if (and
-          tc-type-env-scoped-cache-outlives-lifetime-valid
-          (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
-          (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
-          (= tc-type-env-scoped-cache-outlives-lifetime-value-id value-id)
-          (= tc-type-env-scoped-cache-outlives-lifetime-target-id target-id))
-          tc-type-env-scoped-cache-outlives-lifetime-result
-          (let
-            [value-index : i64
-              (tc-type-env-scoped-stack-find-lifetime-index
-                stack
-                value-lifetime
-                value-id)]
-            [target-index : i64
-              (tc-type-env-scoped-stack-find-lifetime-index
-                stack
-                target-lifetime
-                target-id)]
-            [result : bool
-              (and
-                (>= value-index 0)
-                (>= target-index 0)
-                (< value-index target-index))]
-            (begin
-              (set! tc-type-env-scoped-cache-outlives-lifetime-valid true)
-              (set! tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
-              (set!
-                tc-type-env-scoped-cache-outlives-lifetime-generation
-                generation)
-              (set!
-                tc-type-env-scoped-cache-outlives-lifetime-value-id
-                value-id)
-              (set!
-                tc-type-env-scoped-cache-outlives-lifetime-target-id
-                target-id)
-              (set! tc-type-env-scoped-cache-outlives-lifetime-result result)
-              result)))))))
+  (if (string.eq value-lifetime target-lifetime)
+    true
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get (struct-get carrier sidecar) stack)]
+      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+      [value-id : i64 (tc-name-id value-lifetime)]
+      [target-id : i64 (tc-name-id target-lifetime)]
+      (if (and
+        tc-type-env-scoped-cache-outlives-lifetime-valid
+        (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
+        (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
+        (= tc-type-env-scoped-cache-outlives-lifetime-value-id value-id)
+        (= tc-type-env-scoped-cache-outlives-lifetime-target-id target-id))
+        tc-type-env-scoped-cache-outlives-lifetime-result
+        (let
+          [value-index : i64
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              value-lifetime
+              value-id)]
+          [target-index : i64
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              target-lifetime
+              target-id)]
+          [result : bool
+            (cond
+              [(>= value-index 0)
+                (and (>= target-index 0) (< value-index target-index))]
+              [(>= target-index 0)
+                (tc-lifetime-visible-persistent?
+                  (tc-type-env-scoped-carrier-persistent carrier)
+                  value-lifetime)]
+              [else
+                (tc-lifetime-outlives-lifetime-persistent?
+                  (tc-type-env-scoped-carrier-persistent carrier)
+                  value-lifetime
+                  target-lifetime)])]
+          (begin
+            (set! tc-type-env-scoped-cache-outlives-lifetime-valid true)
+            (set! tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-generation
+              generation)
+            (set! tc-type-env-scoped-cache-outlives-lifetime-value-id value-id)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-target-id
+              target-id)
+            (set! tc-type-env-scoped-cache-outlives-lifetime-result result)
+            result))))))
 
 (define tc-type-env-scoped-runtime-active : bool
   false)
@@ -5484,6 +5502,7 @@
         (set! tc-type-env-scoped-runtime-active true))]
     [(TcTypeEnvScopedRuntimeSave.Replaced carrier)
       (begin
+        (tc-type-env-scoped-cache-clear!)
         (set! tc-type-env-scoped-runtime-carrier carrier)
         (set! tc-type-env-scoped-runtime-active true))]))
 
@@ -9788,28 +9807,46 @@
           marker-id
           sidecar-flag))]))
 
+(define (tc-cleanup-owner-active-persistent? [env : TcTypeEnv] [name : String]) : bool
+  (tc-owner-active-indexed-id?
+    env
+    (tc-name-id name)
+    (tc-cleanup-owner-marker-id)
+    tc-env-cache-flag-cleanup-owner))
+
 (define (tc-cleanup-owner-active? [env : TcTypeEnv] [name : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-owner-active-indexed-id?
-      env
-      (tc-name-id name)
-      (tc-cleanup-owner-marker-id)
-      tc-env-cache-flag-cleanup-owner)))
+  (if tc-type-env-scoped-runtime-active
+    (tc-type-env-scoped-carrier-cleanup-owner-active?
+      (tc-type-env-scoped-runtime-current)
+      name)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-cleanup-owner-active-persistent? env name))))
+
+(define (tc-arena-owner-active-persistent?
+  [env : TcTypeEnv]
+  [name : String]
+  [marker-id : i64]) : bool
+  (tc-owner-active-indexed-id?
+    env
+    (tc-name-id name)
+    marker-id
+    (if (= marker-id (tc-ordinary-arena-owner-marker-id))
+      tc-env-cache-flag-ordinary-arena-owner
+      tc-env-cache-flag-atomic-arena-owner)))
 
 (define (tc-arena-owner-active?
   [env : TcTypeEnv]
   [name : String]
   [marker-id : i64]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (tc-owner-active-indexed-id?
-      env
-      (tc-name-id name)
-      marker-id
-      (if (= marker-id (tc-ordinary-arena-owner-marker-id))
-        tc-env-cache-flag-ordinary-arena-owner
-        tc-env-cache-flag-atomic-arena-owner))))
+  (if tc-type-env-scoped-runtime-active
+    (tc-type-env-scoped-carrier-arena-owner-active?
+      (tc-type-env-scoped-runtime-current)
+      name
+      marker-id)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-arena-owner-active-persistent? env name marker-id))))
 
 (define (tc-ordinary-arena-owner-active? [env : TcTypeEnv] [name : String]) : bool
   (tc-arena-owner-active? env name (tc-ordinary-arena-owner-marker-id)))
@@ -10095,15 +10132,22 @@
 (define (tc-lifetime-visible-scan? [env : TcTypeEnv] [lifetime : String]) : bool
   (tc-lifetime-visible-scan-id? env lifetime (tc-name-id lifetime)))
 
+(define (tc-lifetime-visible-persistent? [env : TcTypeEnv] [lifetime : String]) : bool
+  (or
+    (>= (tc-ordinary-binding-rank env lifetime) 0)
+    (match env
+      [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
+        (tc-lifetime-visible-scan? (box-get rest) lifetime)]
+      [_ (tc-lifetime-visible-scan? env lifetime)])))
+
 (define (tc-lifetime-visible? [env : TcTypeEnv] [lifetime : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (or
-      (>= (tc-ordinary-binding-rank env lifetime) 0)
-      (match env
-        [(TcTypeEnv.Cache _ _ _ _ _ _ _ rest _)
-          (tc-lifetime-visible-scan? (box-get rest) lifetime)]
-        [_ (tc-lifetime-visible-scan? env lifetime)]))))
+  (if tc-type-env-scoped-runtime-active
+    (tc-type-env-scoped-carrier-lifetime-visible?
+      (tc-type-env-scoped-runtime-current)
+      lifetime)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-lifetime-visible-persistent? env lifetime))))
 
 (define (tc-reference-lifetimes-visible?
   [env : TcTypeEnv]
@@ -10183,18 +10227,29 @@
     (tc-name-id target)
     seen-target))
 
+(define (tc-lifetime-outlives-binding-persistent?
+  [env : TcTypeEnv]
+  [lifetime : String]
+  [target : String]) : bool
+  (let
+    [lifetime-rank : i64 (tc-ordinary-binding-rank env lifetime)]
+    [target-rank : i64 (tc-ordinary-binding-rank env target)]
+    (if (and (>= lifetime-rank 0) (>= target-rank 0))
+      (> lifetime-rank target-rank)
+      (tc-lifetime-outlives-binding-scan env lifetime target false))))
+
 (define (tc-lifetime-outlives-binding?
   [env : TcTypeEnv]
   [lifetime : String]
   [target : String]) : bool
-  (begin
-    (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-    (let
-      [lifetime-rank : i64 (tc-ordinary-binding-rank env lifetime)]
-      [target-rank : i64 (tc-ordinary-binding-rank env target)]
-      (if (and (>= lifetime-rank 0) (>= target-rank 0))
-        (> lifetime-rank target-rank)
-        (tc-lifetime-outlives-binding-scan env lifetime target false)))))
+  (if tc-type-env-scoped-runtime-active
+    (tc-type-env-scoped-carrier-lifetime-outlives-binding?
+      (tc-type-env-scoped-runtime-current)
+      lifetime
+      target)
+    (begin
+      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+      (tc-lifetime-outlives-binding-persistent? env lifetime target))))
 
 (define (tc-reference-lifetimes-outlive-binding?
   [env : TcTypeEnv]
@@ -10287,24 +10342,38 @@
     (tc-name-id target-lifetime)
     seen-target))
 
+(define (tc-lifetime-outlives-lifetime-persistent?
+  [env : TcTypeEnv]
+  [value-lifetime : String]
+  [target-lifetime : String]) : bool
+  (let
+    [value-rank : i64 (tc-ordinary-binding-rank env value-lifetime)]
+    [target-rank : i64 (tc-ordinary-binding-rank env target-lifetime)]
+    (if (and (>= value-rank 0) (>= target-rank 0))
+      (> value-rank target-rank)
+      (tc-lifetime-outlives-lifetime-scan
+        env
+        value-lifetime
+        target-lifetime
+        false))))
+
 (define (tc-lifetime-outlives-lifetime?
   [env : TcTypeEnv]
   [value-lifetime : String]
   [target-lifetime : String]) : bool
   (if (string.eq value-lifetime target-lifetime)
     true
-    (begin
-      (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-      (let
-        [value-rank : i64 (tc-ordinary-binding-rank env value-lifetime)]
-        [target-rank : i64 (tc-ordinary-binding-rank env target-lifetime)]
-        (if (and (>= value-rank 0) (>= target-rank 0))
-          (> value-rank target-rank)
-          (tc-lifetime-outlives-lifetime-scan
-            env
-            value-lifetime
-            target-lifetime
-            false))))))
+    (if tc-type-env-scoped-runtime-active
+      (tc-type-env-scoped-carrier-lifetime-outlives-lifetime?
+        (tc-type-env-scoped-runtime-current)
+        value-lifetime
+        target-lifetime)
+      (begin
+        (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
+        (tc-lifetime-outlives-lifetime-persistent?
+          env
+          value-lifetime
+          target-lifetime)))))
 
 (define (tc-reference-lifetimes-outlive-lifetime?
   [env : TcTypeEnv]

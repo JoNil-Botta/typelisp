@@ -3509,9 +3509,126 @@
         [(ResultCompilerTypecheck.Ok _) false])]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-typecheck-scoped-marker-queries-ok?) : bool
+  (let
+    [was-active : bool (tc-type-env-scoped-runtime-active?)]
+    [tail-value-env : TcTypeEnv
+      (tc-bind (tc-default-env) "runtime-tail" (AstType.String))]
+    [tail-cleanup-env : TcTypeEnv
+      (tc-bind
+        (tc-bind-cleanup-owner tail-value-env "tail-resource")
+        "tail-resource"
+        (AstType.String))]
+    [tail-arena-env : TcTypeEnv
+      (tc-bind
+        (tc-bind-ordinary-arena-owner tail-cleanup-env "tail-arena")
+        "tail-arena"
+        (AstType.I64))]
+    [tail-atomic-env : TcTypeEnv
+      (tc-bind
+        (tc-bind-atomic-arena-owner tail-arena-env "tail-atomic")
+        "tail-atomic"
+        (AstType.I64))]
+    [base-env : TcTypeEnv
+      (tc-push-region (tc-env-with-cache tail-atomic-env) "outer")]
+    [outer-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter!
+        (tc-type-env-scoped-carrier-from-env base-env))]
+    [resource-env : TcTypeEnv
+      (tc-bind
+        (tc-bind-cleanup-owner base-env "resource")
+        "resource"
+        (AstType.String))]
+    [arena-env : TcTypeEnv
+      (tc-bind
+        (tc-bind-ordinary-arena-owner resource-env "arena")
+        "arena"
+        (AstType.I64))]
+    [runtime-env : TcTypeEnv
+      (tc-bind
+        (tc-bind-atomic-arena-owner arena-env "atomic")
+        "atomic"
+        (AstType.I64))]
+    [scope-save : TcTypeEnvScopedRuntimeSave (tc-type-env-scoped-runtime-save)]
+    [before-shadow : bool
+      (and
+        (tc-cleanup-owner-active? runtime-env "resource")
+        (tc-ordinary-arena-owner-active? runtime-env "arena")
+        (not (tc-atomic-arena-owner-active? runtime-env "arena"))
+        (tc-atomic-arena-owner-active? runtime-env "atomic")
+        (not (tc-ordinary-arena-owner-active? runtime-env "atomic"))
+        (tc-cleanup-owner-active? runtime-env "tail-resource")
+        (tc-ordinary-arena-owner-active? runtime-env "tail-arena")
+        (not (tc-atomic-arena-owner-active? runtime-env "tail-arena"))
+        (tc-atomic-arena-owner-active? runtime-env "tail-atomic")
+        (not (tc-ordinary-arena-owner-active? runtime-env "tail-atomic"))
+        (tc-lifetime-visible? runtime-env "outer")
+        (tc-lifetime-visible? runtime-env "resource")
+        (not (tc-lifetime-visible? runtime-env "runtime-tail"))
+        (tc-lifetime-outlives-binding? runtime-env "outer" "resource")
+        (tc-lifetime-outlives-binding? runtime-env "resource" "arena")
+        (not (tc-lifetime-outlives-binding? runtime-env "arena" "resource"))
+        (tc-lifetime-outlives-lifetime? runtime-env "outer" "resource")
+        (tc-lifetime-outlives-lifetime? runtime-env "resource" "arena")
+        (not (tc-lifetime-outlives-lifetime? runtime-env "arena" "resource")))]
+    [shadow-env : TcTypeEnv (tc-bind runtime-env "resource" (AstType.Bool))]
+    [shadowed : bool
+      (and
+        (not (tc-cleanup-owner-active? shadow-env "resource"))
+        (tc-lifetime-visible? shadow-env "resource"))]
+    (begin
+      (tc-type-env-scoped-runtime-restore! scope-save)
+      (let
+        [restored : bool
+          (and
+            (tc-cleanup-owner-active? runtime-env "resource")
+            (tc-ordinary-arena-owner-active? runtime-env "arena")
+            (tc-atomic-arena-owner-active? runtime-env "atomic")
+            (tc-lifetime-outlives-binding? runtime-env "outer" "resource"))]
+        (begin
+          (tc-type-env-scoped-runtime-restore! outer-save)
+          (and
+            (not was-active)
+            (not (tc-type-env-scoped-runtime-active?))
+            before-shadow
+            shadowed
+            restored))))))
+
+(define (compiler-typecheck-scoped-marker-replaced-cache-ok?) : bool
+  (let
+    [outer-env : TcTypeEnv
+      (tc-bind (tc-default-env) "cache-owner" (AstType.I64))]
+    [inactive-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter!
+        (tc-type-env-scoped-carrier-from-env outer-env))]
+    [outer-visible-before : bool (tc-lifetime-visible? outer-env "cache-owner")]
+    [outer-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter!
+        (tc-type-env-scoped-carrier-from-env (tc-default-env)))]
+    [inner-hidden : bool
+      (not (tc-lifetime-visible? (tc-default-env) "cache-owner"))]
+    (begin
+      (tc-type-env-scoped-runtime-restore! outer-save)
+      (let
+        [outer-visible-after : bool
+          (tc-lifetime-visible? outer-env "cache-owner")]
+        (begin
+          (tc-type-env-scoped-runtime-restore! inactive-save)
+          (and
+            outer-visible-before
+            inner-hidden
+            outer-visible-after
+            (not (tc-type-env-scoped-runtime-active?))))))))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
+    (unless
+      (compiler-typecheck-scoped-marker-queries-ok?)
+      (io.panic "typecheck: scoped marker query smoke failed"))
+    (unless
+      (compiler-typecheck-scoped-marker-replaced-cache-ok?)
+      (io.panic "typecheck: replaced scoped marker cache smoke failed"))
     ;; The macro-expansion self-test leaves multiple symbol generations behind.
     ;; A fresh stdlib Module macro compile must not observe a reclaimed handle.
     (unless

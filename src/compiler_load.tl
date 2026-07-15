@@ -1573,31 +1573,31 @@
   (begin
     (cbi.compiler-builtin-initialize-for-parse!)
     (let
-    [private-cfgs : sym_i64_env.SymI64Env
-      (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
-        cfgs
-        (match expected-module
-          [(AstMaybeModuleName.Some module)
-            (if (compiler-load-stdlib-private-module? (intern-str module))
-              (compiler-cfg-enable-private-dynamic-buffer cfgs)
-              cfgs)]
-          [(AstMaybeModuleName.No)
-            (if (compiler-load-stdlib-private-path? path stdlib-roots)
-              (compiler-cfg-enable-private-dynamic-buffer cfgs)
-              cfgs)]))]
-    (match expected-module
+      [private-cfgs : sym_i64_env.SymI64Env
+        (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
+          cfgs
+          (match expected-module
+            [(AstMaybeModuleName.Some module)
+              (if (compiler-load-stdlib-private-module? (intern-str module))
+                (compiler-cfg-enable-private-dynamic-buffer cfgs)
+                cfgs)]
+            [(AstMaybeModuleName.No)
+              (if (compiler-load-stdlib-private-path? path stdlib-roots)
+                (compiler-cfg-enable-private-dynamic-buffer cfgs)
+                cfgs)]))]
+      (match expected-module
         [(AstMaybeModuleName.Some module)
           (if (compiler-load-stdlib-comptime-module? (intern-str module))
-          (compiler-cfg-enable-id
-            private-cfgs
-            cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-          private-cfgs)]
-      [(AstMaybeModuleName.No)
-        (if (compiler-load-stdlib-comptime-path? path stdlib-roots)
-          (compiler-cfg-enable-id
-            private-cfgs
-            cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-          private-cfgs)]))))
+            (compiler-cfg-enable-id
+              private-cfgs
+              cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+            private-cfgs)]
+        [(AstMaybeModuleName.No)
+          (if (compiler-load-stdlib-comptime-path? path stdlib-roots)
+            (compiler-cfg-enable-id
+              private-cfgs
+              cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+            private-cfgs)]))))
 
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
@@ -3110,10 +3110,7 @@
     [(AstMaybeModuleName.No) false]
     [(AstMaybeModuleName.Some expected-id)
       (and
-        (compiler-load-seen-module-contains?
-          seen
-          ""
-          expected-id)
+        (compiler-load-seen-module-contains? seen "" expected-id)
         (match (compiler-load-surface-summary-find-source source-path-id)
           [(CompilerLoadNoSurfaceSummary) false]
           [(CompilerLoadSomeSurfaceSummary summary)
@@ -3145,8 +3142,7 @@
   [resolved : String]
   [expected-module : AstMaybeModuleName]) : i64
   (match expected-module
-    [(AstMaybeModuleName.No)
-      (ci.intern-generated-canonical-name resolved)]
+    [(AstMaybeModuleName.No) (ci.intern-generated-canonical-name resolved)]
     [(AstMaybeModuleName.Some module-id)
       (match (compiler-load-surface-summary-find-module module-id)
         [(CompilerLoadNoSurfaceSummary)
@@ -6881,82 +6877,82 @@
         expected-module
         seen)
       (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
-      (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
-        seen)
-      (let
-        [fallback : String (compiler-load-canonical-module-id-from-path path)]
-        [parse-identity : CompilerLoadParseIdentity
-          (CompilerLoadParseIdentity
-            source-path-id
-            (compiler-load-module-fallback-id-for-parse
-              fallback
-              expected-module))]
-        [parse-cfgs : sym_i64_env.SymI64Env
-          (compiler-load-stdlib-private-cfgs
-            path
-            stdlib-roots
-            expected-module
-            cfgs)]
-        (if (io.file-exists? path)
-          (match (if cache-current
-            (compiler-load-parse-file-diagnostic-session-id
-              path
+        (ResultCompilerLoadWithPaths.Ok
+          (ast-decl-list-new)
+          (ast-decl-path-list-new)
+          (ast-decl-module-list-new)
+          seen)
+        (let
+          [fallback : String (compiler-load-canonical-module-id-from-path path)]
+          [parse-identity : CompilerLoadParseIdentity
+            (CompilerLoadParseIdentity
               source-path-id
+              (compiler-load-module-fallback-id-for-parse
+                fallback
+                expected-module))]
+          [parse-cfgs : sym_i64_env.SymI64Env
+            (compiler-load-stdlib-private-cfgs
+              path
               stdlib-roots
-              parse-cfgs)
-            (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
-            [(ResultAstProgramDiagnostic.Ok program)
-              (compiler-load-bind-path-dedup
-                (compiler-load-program-with-paths-and-roots-expect-cfg-root
-                  path
-                  program
-                  seen
-                  stdlib-roots
-                  expected-module
-                  import-root
-                  parse-cfgs
-                  parse-identity)
-                path-dedup
-                path-key-id)]
-            [(ResultAstProgramDiagnostic.Err diag)
-              (ResultCompilerLoadWithPaths.Err diag)])
-          (match (compiler-load-embedded-stdlib-source-for-path path)
-            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-                source)
-              (match (if cache-current
-                (compiler-load-parse-embedded-source-diagnostic-session-id
-                  path
-                  source-path-id
-                  source
-                  parse-cfgs)
-                (compiler-load-parse-source-diagnostic-escaping
-                  path
-                  source
-                  parse-cfgs))
-                [(ResultAstProgramDiagnostic.Ok program)
-                  (compiler-load-bind-path-dedup
-                    (compiler-load-program-with-paths-and-roots-expect-cfg-root
-                      path
-                      program
-                      seen
-                      stdlib-roots
-                      expected-module
-                      import-root
-                      parse-cfgs
-                      parse-identity)
-                    path-dedup
-                    path-key-id)]
-                [(ResultAstProgramDiagnostic.Err diag)
-                  (ResultCompilerLoadWithPaths.Err diag)])]
-            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-              (ResultCompilerLoadWithPaths.Err
-                (box
-                  (compiler-diagnostic-at-start
+              expected-module
+              cfgs)]
+          (if (io.file-exists? path)
+            (match (if cache-current
+              (compiler-load-parse-file-diagnostic-session-id
+                path
+                source-path-id
+                stdlib-roots
+                parse-cfgs)
+              (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
+              [(ResultAstProgramDiagnostic.Ok program)
+                (compiler-load-bind-path-dedup
+                  (compiler-load-program-with-paths-and-roots-expect-cfg-root
                     path
-                    (string.append "compiler-load: cannot read import " path))))])))))))
+                    program
+                    seen
+                    stdlib-roots
+                    expected-module
+                    import-root
+                    parse-cfgs
+                    parse-identity)
+                  path-dedup
+                  path-key-id)]
+              [(ResultAstProgramDiagnostic.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])
+            (match (compiler-load-embedded-stdlib-source-for-path path)
+              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+                  source)
+                (match (if cache-current
+                  (compiler-load-parse-embedded-source-diagnostic-session-id
+                    path
+                    source-path-id
+                    source
+                    parse-cfgs)
+                  (compiler-load-parse-source-diagnostic-escaping
+                    path
+                    source
+                    parse-cfgs))
+                  [(ResultAstProgramDiagnostic.Ok program)
+                    (compiler-load-bind-path-dedup
+                      (compiler-load-program-with-paths-and-roots-expect-cfg-root
+                        path
+                        program
+                        seen
+                        stdlib-roots
+                        expected-module
+                        import-root
+                        parse-cfgs
+                        parse-identity)
+                      path-dedup
+                      path-key-id)]
+                  [(ResultAstProgramDiagnostic.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+                (ResultCompilerLoadWithPaths.Err
+                  (box
+                    (compiler-diagnostic-at-start
+                      path
+                      (string.append "compiler-load: cannot read import " path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [path : String]
@@ -7012,106 +7008,94 @@
         expected-module
         seen)
       (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
-      (ResultCompilerLoadWithPaths.Ok
-        (ast-decl-list-new)
-        (ast-decl-path-list-new)
-        (ast-decl-module-list-new)
-        seen)
-      (let
-        [parse-identity : CompilerLoadParseIdentity
-          (CompilerLoadParseIdentity
-            source-path-id
-            (compiler-load-module-fallback-id-for-parse
-              module-id-fallback
-              expected-module))]
-        [module-id-fallback-id : i64
-          (struct-get parse-identity module-fallback-id)]
-        [source-module-fallback-id : i64
-          (cond
-            [(>= source-module-fallback-id-hint 0)
-              source-module-fallback-id-hint]
-            [(= (string.string-length source-module-fallback) 0)
-              cbi.compiler-builtin-id-fix-empty]
-            [(string.eq source-module-fallback module-id-fallback)
-              module-id-fallback-id]
-            [else (compiler-load-parse-context-name-id source-module-fallback)])]
-        [parse-cfgs : sym_i64_env.SymI64Env
-          (compiler-load-stdlib-private-cfgs
-            path
-            stdlib-roots
-            expected-module
-            cfgs)]
-        (if (io.file-exists? path)
-          (match (if cache-current
-            (compiler-load-parse-file-diagnostic-session-id-with-pools
-              path
+        (ResultCompilerLoadWithPaths.Ok
+          (ast-decl-list-new)
+          (ast-decl-path-list-new)
+          (ast-decl-module-list-new)
+          seen)
+        (let
+          [parse-identity : CompilerLoadParseIdentity
+            (CompilerLoadParseIdentity
               source-path-id
               stdlib-roots
               parse-cfgs
               pools)
             (compiler-load-parse-file-diagnostic-detached-with-pools
               path
-              parse-cfgs
-              pools))
-            [(ResultAstProgramDiagnostic.Ok program)
-              (compiler-load-bind-path-dedup
-                (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
-                  path
-                  program
-                  seen
-                  stdlib-roots
-                  expected-module
-                  import-root
-                  parse-cfgs
-                  pools
-                  module-id-fallback
-                  parse-identity
-                  source-module-fallback
-                  source-module-fallback-id)
-                path-dedup
-                path-key-id)]
-            [(ResultAstProgramDiagnostic.Err diag)
-              (ResultCompilerLoadWithPaths.Err diag)])
-          (match (compiler-load-embedded-stdlib-source-for-path path)
-            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-                source)
-              (match (if cache-current
-                (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
-                  path
-                  source-path-id
-                  source
-                  parse-cfgs
-                  pools)
-                (compiler-load-parse-source-diagnostic-escaping-with-pools
-                  path
-                  source
-                  parse-cfgs
-                  pools))
-                [(ResultAstProgramDiagnostic.Ok program)
-                  (compiler-load-bind-path-dedup
-                    (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
-                      path
-                      program
-                      seen
-                      stdlib-roots
-                      expected-module
-                      import-root
-                      parse-cfgs
-                      pools
-                      module-id-fallback
-                      parse-identity
-                      source-module-fallback
-                      source-module-fallback-id)
-                    path-dedup
-                    path-key-id)]
-                [(ResultAstProgramDiagnostic.Err diag)
-                  (ResultCompilerLoadWithPaths.Err diag)])]
-            [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-              (ResultCompilerLoadWithPaths.Err
-                (box
-                  (compiler-diagnostic-at-start
+              stdlib-roots
+              expected-module
+              cfgs)]
+          (if (io.file-exists? path)
+            (match (if cache-current
+              (compiler-load-parse-file-diagnostic-session-id-with-pools
+                path
+                source-path-id
+                stdlib-roots
+                parse-cfgs
+                pools)
+              (compiler-load-parse-file-diagnostic-escaping-with-pools
+                path
+                parse-cfgs
+                pools))
+              [(ResultAstProgramDiagnostic.Ok program)
+                (compiler-load-bind-path-dedup
+                  (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
                     path
-                    (string.append "compiler-load: cannot read import " path))))])))))))
+                    program
+                    seen
+                    stdlib-roots
+                    expected-module
+                    import-root
+                    parse-cfgs
+                    pools
+                    module-id-fallback
+                    parse-identity
+                    source-module-fallback
+                    source-module-fallback-id)
+                  path-dedup
+                  path-key-id)]
+              [(ResultAstProgramDiagnostic.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])
+            (match (compiler-load-embedded-stdlib-source-for-path path)
+              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+                  source)
+                (match (if cache-current
+                  (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+                    path
+                    source-path-id
+                    source
+                    parse-cfgs
+                    pools)
+                  (compiler-load-parse-source-diagnostic-escaping-with-pools
+                    path
+                    source
+                    parse-cfgs
+                    pools))
+                  [(ResultAstProgramDiagnostic.Ok program)
+                    (compiler-load-bind-path-dedup
+                      (compiler-load-program-with-paths-and-roots-expect-cfg-root-fallback-with-pools
+                        path
+                        program
+                        seen
+                        stdlib-roots
+                        expected-module
+                        import-root
+                        parse-cfgs
+                        pools
+                        module-id-fallback
+                        parse-identity
+                        source-module-fallback
+                        source-module-fallback-id)
+                      path-dedup
+                      path-key-id)]
+                  [(ResultAstProgramDiagnostic.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+                (ResultCompilerLoadWithPaths.Err
+                  (box
+                    (compiler-diagnostic-at-start
+                      path
+                      (string.append "compiler-load: cannot read import " path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : String]

@@ -18977,13 +18977,15 @@
             1))))))
 
 (define (tc-type-env-scoped-stack-smoke?) : bool
-  (and
-    (tc-type-env-scoped-stack-grow-smoke?)
-    (tc-type-env-scoped-stack-sparse-cache-repair-smoke?)
-    (tc-type-env-scoped-sidecar-smoke?)
-    (tc-type-env-scoped-carrier-smoke?)
-    (tc-type-env-scoped-primary-storage-smoke?)
-    (cfg test (tc-type-env-scoped-runtime-smoke?) true)))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (and
+      (tc-type-env-scoped-stack-grow-smoke?)
+      (tc-type-env-scoped-stack-sparse-cache-repair-smoke?)
+      (tc-type-env-scoped-sidecar-smoke?)
+      (tc-type-env-scoped-carrier-smoke?)
+      (tc-type-env-scoped-primary-storage-smoke?)
+      (cfg test (tc-type-env-scoped-runtime-smoke?) true))))
 
 (test
   tc-type-env-scoped-stack
@@ -26450,9 +26452,10 @@
 (define (tc-clone-root-collection-copy-roots [roots : CloneNameList]) : CloneNameList
   (match roots
     [(CloneNameList.Nil) (CloneNameList.Nil)]
-    [(CloneNameList.ConsId name-id rest)
+    [(CloneNameList.ConsId name-id helper-name-id rest)
       (CloneNameList.ConsId
         name-id
+        helper-name-id
         (box (tc-clone-root-collection-copy-roots (box-get rest))))]))
 
 (define (tc-clone-root-collection-clear-state!) : unit
@@ -42263,10 +42266,21 @@
   (Nil)
   (Cons TcMovedPathFact (Box TcMovedPathFacts)))
 
+(defenum TcMovedPathFactsRemove
+  (Missing)
+  (Removed TcMovedPathFacts))
+
+(defstruct TcMovedExactPathIndex
+  (heads tc_i64_i64_map.Map)
+  (facts (Array TcMovedPathFact))
+  (next (Array i64))
+  (len i64))
+
 (defstruct TcMovedSet
   (roots tc_i64_i64_map.Map)
   (partials tc_i64_i64_map.Map)
   (paths TcMovedPathFacts)
+  (exact-path-index TcMovedExactPathIndex)
   (hidden-atomic-users tc_i64_i64_map.Map))
 
 (defenum TcMoveResult
@@ -42306,6 +42320,11 @@
     (tc_i64_i64_map.with-capacity 8)
     (tc_i64_i64_map.with-capacity 4)
     TcMovedPathFacts.Nil
+    (TcMovedExactPathIndex
+      (tc_i64_i64_map.with-capacity 8)
+      (make-array TcMovedPathFact 8)
+      (make-array i64 8)
+      0)
     (tc_i64_i64_map.with-capacity 2)))
 
 (define (tc-moved-roots [set : TcMovedSet]) : tc_i64_i64_map.Map
@@ -42316,6 +42335,9 @@
 
 (define (tc-moved-paths [set : TcMovedSet]) : TcMovedPathFacts
   (struct-get set paths))
+
+(define (tc-moved-exact-path-index [set : TcMovedSet]) : TcMovedExactPathIndex
+  (struct-get set exact-path-index))
 
 (define (tc-moved-path-facts-len [facts : TcMovedPathFacts]) : i64
   (match facts
@@ -42373,6 +42395,7 @@
       (tc-moved-clone-id-map (& roots))
       (tc-moved-clone-id-map (& partials))
       paths
+      (tc-moved-exact-path-index-from-facts paths)
       (tc-moved-clone-id-map (& hidden)))))
 
 (define (tc-moved-contains? [set : TcMovedSet] [name-id : i64]) : bool
@@ -42392,6 +42415,7 @@
         out
         (tc-moved-partials set)
         (tc-moved-paths set)
+        (tc-moved-exact-path-index set)
         (tc-moved-hidden-atomic-users set)))))
 
 (define (tc-moved-add-value [set : TcMovedSet] [name-id : i64] [value : i64]) : TcMovedSet
@@ -42403,6 +42427,7 @@
         out
         (tc-moved-partials set)
         (tc-moved-paths set)
+        (tc-moved-exact-path-index set)
         (tc-moved-hidden-atomic-users set)))))
 
 (define (tc-moved-add-origin
@@ -42420,6 +42445,7 @@
         out
         (tc-moved-partials set)
         (tc-moved-paths set)
+        (tc-moved-exact-path-index set)
         (tc-moved-hidden-atomic-users set)))))
 
 (define (tc-moved-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
@@ -42572,6 +42598,160 @@
         [(TcMovedPathKind.BorrowLending b-id) (= a-id b-id)]
         [_ false])]))
 
+(define (tc-move-path-hash-combine [seed : i64] [component : i64]) : i64
+  (bit-xor (* seed 2654435761) (+ component 40503)))
+
+(define (tc-move-path-segments-hash [segments : TcMovePathSegments]) : i64
+  (match segments
+    [(TcMovePathSegments.Nil) 17]
+    [(TcMovePathSegments.Field field-id rest)
+      (tc-move-path-hash-combine
+        (tc-move-path-hash-combine 23 field-id)
+        (tc-move-path-segments-hash (box-get rest)))]
+    [(TcMovePathSegments.TupleIndex index rest)
+      (tc-move-path-hash-combine
+        (tc-move-path-hash-combine 29 index)
+        (tc-move-path-segments-hash (box-get rest)))]
+    [(TcMovePathSegments.ArrayIndex index rest)
+      (tc-move-path-hash-combine
+        (tc-move-path-hash-combine 31 index)
+        (tc-move-path-segments-hash (box-get rest)))]))
+
+(define (tc-moved-path-kind-hash [kind : TcMovedPathKind]) : i64
+  (match kind
+    [(TcMovedPathKind.Move) 1]
+    [(TcMovedPathKind.BorrowShared) 2]
+    [(TcMovedPathKind.BorrowMut) 3]
+    [(TcMovedPathKind.BorrowTwoPhaseMut) 4]
+    [(TcMovedPathKind.BorrowLending binding-id)
+      (tc-move-path-hash-combine 5 binding-id)]))
+
+(define (tc-moved-exact-path-hash [path : TcMovePath] [kind : TcMovedPathKind]) : i64
+  (tc-move-path-hash-combine
+    (tc-move-path-hash-combine
+      (struct-get path root)
+      (tc-move-path-segments-hash (struct-get path segments)))
+    (tc-moved-path-kind-hash kind)))
+
+(define (tc-moved-path-fact-new
+  [path : TcMovePath]
+  [kind : TcMovedPathKind]
+  [origin : i64]) : TcMovedPathFact
+  (TcMovedPathFact path kind origin))
+
+(define (tc-moved-path-fact-origin [fact : TcMovedPathFact]) : i64
+  (struct-get fact origin))
+
+(define (tc-moved-exact-path-index-find-from
+  [index : TcMovedExactPathIndex]
+  [path : TcMovePath]
+  [kind : TcMovedPathKind]
+  [entry : i64]) : i64
+  (let
+    [cursor : i64 entry]
+    [facts : (Array TcMovedPathFact) (struct-get index facts)]
+    [next : (Array i64) (struct-get index next)]
+    (begin
+      (while (>= cursor 0)
+        (let
+          [fact : TcMovedPathFact (array-ref facts cursor)]
+          (if (and
+            (tc-move-path-eq? (struct-get fact path) path)
+            (tc-moved-path-kind-eq? (struct-get fact kind) kind))
+            (return cursor)
+            (set! cursor (array-ref next cursor)))))
+      -1)))
+
+(define (tc-moved-exact-path-index-find
+  [index : TcMovedExactPathIndex]
+  [path : TcMovePath]
+  [kind : TcMovedPathKind]) : i64
+  (let
+    [heads : tc_i64_i64_map.Map (struct-get index heads)]
+    [hash : i64 (tc-moved-exact-path-hash path kind)]
+    [head : i64 (tc_i64_i64_map.get-value-or (& heads) hash -1)]
+    (tc-moved-exact-path-index-find-from index path kind head)))
+
+(define (tc-moved-exact-path-index-copy-prefix!
+  [src-facts : (Array TcMovedPathFact)]
+  [src-next : (Array i64)]
+  [dst-facts : (Array TcMovedPathFact)]
+  [dst-next : (Array i64)]
+  [len : i64]) : unit
+  (let
+    [cursor : i64 0]
+    (while (< cursor len)
+      (begin
+        (array-set! dst-facts cursor (array-ref src-facts cursor))
+        (array-set! dst-next cursor (array-ref src-next cursor))
+        (set! cursor (+ cursor 1))))))
+
+(define (tc-moved-exact-path-index-ensure-capacity
+  [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
+  (let
+    [facts : (Array TcMovedPathFact) (struct-get index facts)]
+    [len : i64 (struct-get index len)]
+    (if (< len (array-length facts))
+      index
+      (let
+        [next-capacity : i64 (* (array-length facts) 2)]
+        [next-facts : (Array TcMovedPathFact)
+          (make-array TcMovedPathFact next-capacity)]
+        [next-links : (Array i64) (make-array i64 next-capacity)]
+        (begin
+          (tc-moved-exact-path-index-copy-prefix!
+            facts
+            (struct-get index next)
+            next-facts
+            next-links
+            len)
+          (TcMovedExactPathIndex
+            (struct-get index heads)
+            next-facts
+            next-links
+            len))))))
+
+(define (tc-moved-exact-path-index-insert-new
+  [index : TcMovedExactPathIndex]
+  [fact : TcMovedPathFact]) : TcMovedExactPathIndex
+  (let
+    [ready : TcMovedExactPathIndex
+      (tc-moved-exact-path-index-ensure-capacity index)]
+    [heads : tc_i64_i64_map.Map (struct-get ready heads)]
+    [path : TcMovePath (struct-get fact path)]
+    [kind : TcMovedPathKind (struct-get fact kind)]
+    [hash : i64 (tc-moved-exact-path-hash path kind)]
+    [head : i64 (tc_i64_i64_map.get-value-or (& heads) hash -1)]
+    [slot : i64 (struct-get ready len)]
+    (begin
+      (array-set! (struct-get ready facts) slot fact)
+      (array-set! (struct-get ready next) slot head)
+      (tc_i64_i64_map.insert-ref! (&mut heads) hash slot)
+      (TcMovedExactPathIndex
+        heads
+        (struct-get ready facts)
+        (struct-get ready next)
+        (+ slot 1)))))
+
+(define (tc-moved-exact-path-index-from-facts-at
+  [facts : TcMovedPathFacts]
+  [index : TcMovedExactPathIndex]) : TcMovedExactPathIndex
+  (match facts
+    [(TcMovedPathFacts.Nil) index]
+    [(TcMovedPathFacts.Cons fact rest)
+      (tc-moved-exact-path-index-insert-new
+        (tc-moved-exact-path-index-from-facts-at (box-get rest) index)
+        fact)]))
+
+(define (tc-moved-exact-path-index-from-facts [facts : TcMovedPathFacts]) : TcMovedExactPathIndex
+  (tc-moved-exact-path-index-from-facts-at
+    facts
+    (TcMovedExactPathIndex
+      (tc_i64_i64_map.with-capacity 8)
+      (make-array TcMovedPathFact 8)
+      (make-array i64 8)
+      0)))
+
 (define (tc-moved-base-path-kind? [kind : TcMovedPathKind]) : bool
   (match kind
     [(TcMovedPathKind.Move) true]
@@ -42595,6 +42775,7 @@
         (tc-moved-roots set)
         partials
         (tc-moved-paths set)
+        (tc-moved-exact-path-index set)
         (tc-moved-hidden-atomic-users set)))))
 
 (define (tc-moved-remove-partial [set : TcMovedSet] [name-id : i64]) : TcMovedSet
@@ -42606,6 +42787,7 @@
         (tc-moved-roots set)
         partials
         (tc-moved-paths set)
+        (tc-moved-exact-path-index set)
         (tc-moved-hidden-atomic-users set)))))
 
 (define (tc-moved-partial-conflict [set : TcMovedSet] [name-id : i64]) : TcMoveConflict
@@ -42619,62 +42801,69 @@
 (define (tc-moved-path-facts-remove-exact
   [facts : TcMovedPathFacts]
   [path : TcMovePath]
-  [kind : TcMovedPathKind]) : TcMovedPathFacts
+  [kind : TcMovedPathKind]) : TcMovedPathFactsRemove
   (match facts
-    [(TcMovedPathFacts.Nil) TcMovedPathFacts.Nil]
+    [(TcMovedPathFacts.Nil) (TcMovedPathFactsRemove.Missing)]
     [(TcMovedPathFacts.Cons fact rest)
-      (let
-        [tail : TcMovedPathFacts
-          (tc-moved-path-facts-remove-exact (box-get rest) path kind)]
-        (if (and
-          (tc-move-path-eq? (struct-get fact path) path)
-          (tc-moved-path-kind-eq? (struct-get fact kind) kind))
-          tail
-          (TcMovedPathFacts.Cons fact (box tail))))]))
+      (if (and
+        (tc-move-path-eq? (struct-get fact path) path)
+        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
+        (TcMovedPathFactsRemove.Removed (box-get rest))
+        (match (tc-moved-path-facts-remove-exact (box-get rest) path kind)
+          [(TcMovedPathFactsRemove.Missing) (TcMovedPathFactsRemove.Missing)]
+          [(TcMovedPathFactsRemove.Removed tail)
+            (TcMovedPathFactsRemove.Removed
+              (TcMovedPathFacts.Cons fact (box tail)))]))]))
 
 (define (tc-moved-add-path-fact
   [set : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]
   [origin : i64]) : TcMovedSet
-  (TcMovedSet
-    (tc-moved-roots set)
-    (tc-moved-partials set)
-    (TcMovedPathFacts.Cons
-      (TcMovedPathFact path kind origin)
-      (box (tc-moved-path-facts-remove-exact (tc-moved-paths set) path kind)))
-    (tc-moved-hidden-atomic-users set)))
+  (let
+    [index : TcMovedExactPathIndex (tc-moved-exact-path-index set)]
+    [entry : i64 (tc-moved-exact-path-index-find index path kind)]
+    (if (>= entry 0)
+      set
+      (let
+        [fact : TcMovedPathFact (tc-moved-path-fact-new path kind origin)]
+        [next-index : TcMovedExactPathIndex
+          (tc-moved-exact-path-index-insert-new index fact)]
+        (TcMovedSet
+          (tc-moved-roots set)
+          (tc-moved-partials set)
+          (TcMovedPathFacts.Cons fact (box (tc-moved-paths set)))
+          next-index
+          (tc-moved-hidden-atomic-users set))))))
 
 (define (tc-moved-remove-path-kind
   [set : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMovedSet
-  (TcMovedSet
-    (tc-moved-roots set)
-    (tc-moved-partials set)
-    (tc-moved-path-facts-remove-exact (tc-moved-paths set) path kind)
-    (tc-moved-hidden-atomic-users set)))
-
-(define (tc-moved-path-exact-conflict-kind-at
-  [facts : TcMovedPathFacts]
-  [path : TcMovePath]
-  [kind : TcMovedPathKind]) : TcMoveConflict
-  (match facts
-    [(TcMovedPathFacts.Nil) TcMoveConflict.No]
-    [(TcMovedPathFacts.Cons fact rest)
-      (if (and
-        (tc-move-path-eq? (struct-get fact path) path)
-        (tc-moved-path-kind-eq? (struct-get fact kind) kind))
-        (TcMoveConflict.Some
-          (tc-move-path-render (struct-get fact path))
-          (struct-get fact origin))
-        (tc-moved-path-exact-conflict-kind-at (box-get rest) path kind))]))
+  (match (tc-moved-path-facts-remove-exact (tc-moved-paths set) path kind)
+    [(TcMovedPathFactsRemove.Missing) set]
+    [(TcMovedPathFactsRemove.Removed facts)
+      (TcMovedSet
+        (tc-moved-roots set)
+        (tc-moved-partials set)
+        facts
+        (tc-moved-exact-path-index-from-facts facts)
+        (tc-moved-hidden-atomic-users set))]))
 
 (define (tc-moved-path-exact-conflict-kind
   [set : TcMovedSet]
   [path : TcMovePath]
   [kind : TcMovedPathKind]) : TcMoveConflict
-  (tc-moved-path-exact-conflict-kind-at (tc-moved-paths set) path kind))
+  (let
+    [index : TcMovedExactPathIndex (tc-moved-exact-path-index set)]
+    [entry : i64 (tc-moved-exact-path-index-find index path kind)]
+    (if (< entry 0)
+      TcMoveConflict.No
+      (let
+        [fact : TcMovedPathFact (array-ref (struct-get index facts) entry)]
+        (TcMoveConflict.Some
+          (tc-move-path-render (struct-get fact path))
+          (tc-moved-path-fact-origin fact))))))
 
 (define (tc-moved-path-exact-conflict [set : TcMovedSet] [path : TcMovePath]) : TcMoveConflict
   (match (tc-moved-path-exact-conflict-kind set path (TcMovedPathKind.Move))
@@ -42910,7 +43099,7 @@
         (tc-move-path-conflicts? (struct-get fact path) path))
         (TcMoveConflict.Some
           (tc-move-path-render (struct-get fact path))
-          (struct-get fact origin))
+          (tc-moved-path-fact-origin fact))
         (tc-moved-path-conflict-at (box-get rest) path))]))
 
 (define (tc-moved-path-conflict-kind-at
@@ -42925,7 +43114,7 @@
         (tc-move-path-conflicts? (struct-get fact path) path))
         (TcMoveConflict.Some
           (tc-move-path-render (struct-get fact path))
-          (struct-get fact origin))
+          (tc-moved-path-fact-origin fact))
         (tc-moved-path-conflict-kind-at (box-get rest) path kind))]))
 
 (define (tc-moved-path-conflict-kind
@@ -42959,10 +43148,13 @@
   (let
     [without-root : TcMovedSet
       (tc-moved-remove-partial (tc-moved-remove set name-id) name-id)]
+    [facts : TcMovedPathFacts
+      (tc-moved-path-facts-remove-root (tc-moved-paths without-root) name-id)]
     (TcMovedSet
       (tc-moved-roots without-root)
       (tc-moved-partials without-root)
-      (tc-moved-path-facts-remove-root (tc-moved-paths without-root) name-id)
+      facts
+      (tc-moved-exact-path-index-from-facts facts)
       (tc-moved-hidden-atomic-users without-root))))
 
 (define (tc-moved-any-root-path-at? [facts : TcMovedPathFacts] [root-id : i64]) : bool
@@ -42993,7 +43185,7 @@
         (= (tc-move-path-root-id (struct-get fact path)) root-id))
         (TcMoveConflict.Some
           (tc-move-path-render (struct-get fact path))
-          (struct-get fact origin))
+          (tc-moved-path-fact-origin fact))
         (tc-moved-root-path-conflict-loop (box-get rest) root-id))]))
 
 (define (tc-moved-root-path-conflict [set : TcMovedSet] [root-id : i64]) : TcMoveConflict
@@ -43029,7 +43221,7 @@
           out
           (struct-get fact path)
           (struct-get fact kind)
-          (struct-get fact origin)))]))
+          (tc-moved-path-fact-origin fact)))]))
 
 (define (tc-moved-union-id-loop
   [a : (& a tc_i64_i64_map.Map)]
@@ -43063,8 +43255,16 @@
     [a-hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users a)]
     [b-roots : tc_i64_i64_map.Map (tc-moved-roots b)]
     [b-partials : tc_i64_i64_map.Map (tc-moved-partials b)]
+    [b-paths : TcMovedPathFacts (tc-moved-paths b)]
     [b-hidden : tc_i64_i64_map.Map (tc-moved-hidden-atomic-users b)]
-    [with-paths : TcMovedSet (tc-moved-union-path-loop a-paths b)]
+    [with-a-paths : TcMovedSet
+      (TcMovedSet
+        b-roots
+        b-partials
+        a-paths
+        (tc-moved-exact-path-index-from-facts a-paths)
+        b-hidden)]
+    [with-paths : TcMovedSet (tc-moved-union-path-loop b-paths with-a-paths)]
     (TcMovedSet
       (tc-moved-union-id-loop
         (& a-roots)
@@ -43075,6 +43275,7 @@
         (tc_i64_i64_map.next-occupied (& a-partials) 0)
         b-partials)
       (tc-moved-paths with-paths)
+      (tc-moved-exact-path-index with-paths)
       (tc-moved-union-id-loop
         (& a-hidden)
         (tc_i64_i64_map.next-occupied (& a-hidden) 0)
@@ -44045,6 +44246,7 @@
         (tc-moved-roots set)
         (tc-moved-partials set)
         (tc-moved-paths set)
+        (tc-moved-exact-path-index set)
         hidden))))
 
 (define (tc-moved-hidden-atomic-user? [set : TcMovedSet] [owner-id : i64]) : bool
@@ -46341,12 +46543,15 @@
         without-mut
         path
         (TcMovedPathKind.BorrowTwoPhaseMut))]
+    [facts : TcMovedPathFacts
+      (tc-moved-path-facts-remove-lending
+        (tc-moved-paths without-two-phase)
+        path)]
     (TcMovedSet
       (tc-moved-roots without-two-phase)
       (tc-moved-partials without-two-phase)
-      (tc-moved-path-facts-remove-lending
-        (tc-moved-paths without-two-phase)
-        path)
+      facts
+      (tc-moved-exact-path-index-from-facts facts)
       (tc-moved-hidden-atomic-users without-two-phase))))
 
 (define (tc-borrow-check-two-phase-mut-conflict
@@ -46541,7 +46746,11 @@
               (tc-borrow-check-path-lifetime ctx env path))
             keep-direct
             missing)
-            (tc-moved-add-path-fact out path kind (struct-get fact origin))
+            (tc-moved-add-path-fact
+              out
+              path
+              kind
+              (tc-moved-path-fact-origin fact))
             out)]
         (tc-borrow-check-propagate-return-borrows-at
           ctx
@@ -48637,7 +48846,11 @@
               [(TcMoveConflict.Some _ _) true]
               [TcMoveConflict.No false]))
             out
-            (tc-moved-add-path-fact out path kind (struct-get fact origin)))]
+            (tc-moved-add-path-fact
+              out
+              path
+              kind
+              (tc-moved-path-fact-origin fact)))]
         (tc-borrow-check-loop-protect-carried-facts-loop
           ctx
           loop-env
@@ -48678,7 +48891,11 @@
             (let
               [lifetime : i64 (tc-borrow-check-path-lifetime ctx env path)]
               (if (tc-borrow-check-expr-stores-lifetime? ctx env expr lifetime)
-                (tc-moved-add-path-fact out path kind (struct-get fact origin))
+                (tc-moved-add-path-fact
+                  out
+                  path
+                  kind
+                  (tc-moved-path-fact-origin fact))
                 out)))]
         (tc-borrow-check-loop-protect-stored-facts-loop
           ctx
@@ -56174,6 +56391,137 @@
           [else env]))]
     [_ env]))
 
+(define (macro-hygiene-lifetime-list
+  [lifetimes : AstLifetimeList]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]) : AstLifetimeList
+  (let
+    [count : i64 (ast-lifetime-list-len (& lifetimes))]
+    [out : AstLifetimeList (ast-lifetime-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-lifetime-list-push
+            (&mut out)
+            (macro-hygiene-rename-lifetime-id
+              env
+              macro-name
+              (ast-lifetime-list-get
+                (& lifetimes)
+                index
+                (ast-lifetime-fallback))))
+          (set! index (+ index 1))))
+      out)))
+
+(define (macro-hygiene-rename-lifetime-id
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]
+  [name-id : i64]) : i64
+  (match (macro-hygiene-env-lookup env name-id)
+    [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
+    [(MacroMaybeHygieneName.No)
+      (if (and (>= name-id 0) (< name-id (intern-capacity)))
+        (match (macro-hygiene-env-lookup
+          env
+          (ci.intern-template-source-id name-id))
+          [(MacroMaybeHygieneName.Some renamed-id) renamed-id]
+          [(MacroMaybeHygieneName.No)
+            (macro-hygiene-rename-var-id env macro-name name-id)])
+        (macro-hygiene-rename-var-id env macro-name name-id))]))
+
+(define (macro-hygiene-type-list
+  [types : AstTypeList]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]) : AstTypeList
+  (let
+    [count : i64 (ast-type-list-len (& types))]
+    [out : AstTypeList (ast-type-list-with-capacity count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (ast-type-list-push
+            (&mut out)
+            (ty-node-push
+              (macro-hygiene-type
+                (ty-node-get
+                  (ast-type-list-get (& types) index (ast-type-id-fallback)))
+                env
+                macro-name)))
+          (set! index (+ index 1))))
+      out)))
+
+(define (macro-hygiene-type
+  [ty : AstType]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]) : AstType
+  (match ty
+    [(AstType.Func args ret)
+      (ast-ty-func
+        (macro-hygiene-type-list (box-get args) env macro-name)
+        (macro-hygiene-type (ty-node-get ret) env macro-name))]
+    [(AstType.Tuple elems)
+      (ast-ty-tuple (macro-hygiene-type-list (box-get elems) env macro-name))]
+    [(AstType.Array elem count)
+      (ast-ty-array
+        (macro-hygiene-type (ty-node-get elem) env macro-name)
+        count)]
+    [(AstType.DynArray elem)
+      (ast-ty-dyn-array (macro-hygiene-type (ty-node-get elem) env macro-name))]
+    [(AstType.Box elem)
+      (ast-ty-box (macro-hygiene-type (ty-node-get elem) env macro-name))]
+    [(AstType.Ptr elem)
+      (ast-ty-ptr (macro-hygiene-type (ty-node-get elem) env macro-name))]
+    [(AstType.MutPtr elem)
+      (ast-ty-mut-ptr (macro-hygiene-type (ty-node-get elem) env macro-name))]
+    [(AstType.Ref region inner)
+      (ast-ty-ref
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (ty-node-get inner) env macro-name))]
+    [(AstType.MutRef region inner)
+      (ast-ty-mut-ref
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (ty-node-get inner) env macro-name))]
+    [(AstType.Region region inner)
+      (ast-ty-region
+        (macro-hygiene-rename-lifetime-id env macro-name region)
+        (macro-hygiene-type (ty-node-get inner) env macro-name))]
+    [(AstType.EnumArgs name lifetimes)
+      (ast-ty-enum-args
+        name
+        (macro-hygiene-lifetime-list (box-get lifetimes) env macro-name))]
+    [(AstType.StructArgs name lifetimes)
+      (ast-ty-struct-args
+        name
+        (macro-hygiene-lifetime-list (box-get lifetimes) env macro-name))]
+    [(AstType.VarArgs name lifetimes)
+      (ast-ty-var-args
+        name
+        (macro-hygiene-lifetime-list (box-get lifetimes) env macro-name))]
+    [(AstType.Consume inner)
+      (ast-ty-consume (macro-hygiene-type (ty-node-get inner) env macro-name))]
+    [_ ty]))
+
+(define (macro-hygiene-maybe-type
+  [maybe-ty : AstMaybeType]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]) : AstMaybeType
+  (match maybe-ty
+    [(AstMaybeType.Some ty)
+      (AstMaybeType.Some (macro-hygiene-type ty env macro-name))]
+    [(AstMaybeType.No) AstMaybeType.No]))
+
+(define (macro-hygiene-borrow-lifetime
+  [lifetime : AstBorrowLifetime]
+  [env : MacroHygieneEnv]
+  [macro-name : MacroHygieneContext]) : AstBorrowLifetime
+  (match lifetime
+    [(AstBorrowLifetime.Named name)
+      (AstBorrowLifetime.Named
+        (macro-hygiene-rename-lifetime-id env macro-name name))]
+    [(AstBorrowLifetime.Inferred) AstBorrowLifetime.Inferred]))
+
 (define (macro-hygiene-param-list
   [params : AstParamList]
   [env : MacroHygieneEnv]
@@ -56191,20 +56539,26 @@
     (MacroHygieneParams.Params (ast-param-list-new) env)
     (match (ast-param-list-get params index (ast-param-fallback))
       [(AstParam.Param name ty comptime? consume?)
-        (match (macro-hygiene-bind-name-id env macro-name depth name)
-          [(MacroHygieneName.Name renamed-id next-env)
-            (match (macro-hygiene-param-list-at
-              params
-              (+ index 1)
-              next-env
-              macro-name
-              depth)
-              [(MacroHygieneParams.Params nrest final-env)
-                (MacroHygieneParams.Params
-                  (ast-param-cons
-                    (ast-param-id-with-consume renamed-id ty comptime? consume?)
-                    nrest)
-                  final-env)])])])))
+        (let
+          [nty : AstType (macro-hygiene-type ty env macro-name)]
+          (match (macro-hygiene-bind-name-id env macro-name depth name)
+            [(MacroHygieneName.Name renamed-id next-env)
+              (match (macro-hygiene-param-list-at
+                params
+                (+ index 1)
+                next-env
+                macro-name
+                depth)
+                [(MacroHygieneParams.Params nrest final-env)
+                  (MacroHygieneParams.Params
+                    (ast-param-cons
+                      (ast-param-id-with-consume
+                        renamed-id
+                        nty
+                        comptime?
+                        consume?)
+                      nrest)
+                    final-env)])]))])))
 
 (define (macro-hygiene-pattern-list
   [patterns : AstPatternList]
@@ -56256,11 +56610,14 @@
   [depth : i64]) : MacroHygienePattern
   (match pattern
     [(AstPattern.Var name maybe-ty)
-      (match (macro-hygiene-bind-name-id env macro-name depth name)
-        [(MacroHygieneName.Name renamed-id next-env)
-          (MacroHygienePattern.Pattern
-            (AstPattern.Var renamed-id maybe-ty)
-            next-env)])]
+      (let
+        [nmaybe-ty : AstMaybeType
+          (macro-hygiene-maybe-type maybe-ty env macro-name)]
+        (match (macro-hygiene-bind-name-id env macro-name depth name)
+          [(MacroHygieneName.Name renamed-id next-env)
+            (MacroHygienePattern.Pattern
+              (AstPattern.Var renamed-id nmaybe-ty)
+              next-env)]))]
     [(AstPattern.Tuple patterns-box)
       (let
         [patterns : AstPatternList (box-get patterns-box)]
@@ -56334,12 +56691,14 @@
         (let
           [init : AstExpr (ast-node-get init-box)]
           [ninit : i64 (macro-hygiene-expr init env macro-name depth)]
+          [nmaybe-ty : AstMaybeType
+            (macro-hygiene-maybe-type maybe-ty env macro-name)]
           (match (macro-hygiene-bind-name-id env macro-name depth name)
             [(MacroHygieneName.Name renamed-id next-env)
               (begin
                 (ast-let-binding-list-push
                   out
-                  (ast-let-binding-id renamed-id maybe-ty ninit))
+                  (ast-let-binding-id renamed-id nmaybe-ty ninit))
                 (macro-hygiene-let-bindings-into
                   bindings
                   next-env
@@ -56514,7 +56873,7 @@
               [(MacroHygieneParams.Params nparams body-env)
                 (ast-expr-lambda
                   nparams
-                  maybe-ret
+                  (macro-hygiene-maybe-type maybe-ret body-env macro-name)
                   (macro-hygiene-expr body body-env macro-name depth))]))])]
     [(AstExpr.Tuple exprs)
       (ast-node-push
@@ -56534,7 +56893,9 @@
     [(AstExpr.MakeArray ty len-box)
       (let
         [len : AstExpr (ast-node-get len-box)]
-        (ast-expr-make-array ty (macro-hygiene-expr len env macro-name depth)))]
+        (ast-expr-make-array
+          (macro-hygiene-type ty env macro-name)
+          (macro-hygiene-expr len env macro-name depth)))]
     [(AstExpr.ArrayRef array-box index-box)
       (let
         [array : AstExpr (ast-node-get array-box)]
@@ -56596,17 +56957,21 @@
     [(AstExpr.Ann inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-ann (macro-hygiene-expr inner env macro-name depth) ty))]
+        (ast-expr-ann
+          (macro-hygiene-expr inner env macro-name depth)
+          (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.Cast inner-box ty)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
-        (ast-expr-cast (macro-hygiene-expr inner env macro-name depth) ty))]
+        (ast-expr-cast
+          (macro-hygiene-expr inner env macro-name depth)
+          (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.Borrow mutable lifetime place-box)
       (let
         [place : AstExpr (ast-node-get place-box)]
         (ast-expr-borrow
           mutable
-          lifetime
+          (macro-hygiene-borrow-lifetime lifetime env macro-name)
           (macro-hygiene-expr place env macro-name depth)))]
     [(AstExpr.Match match-box)
       (match (box-get match-box)
@@ -56627,7 +56992,7 @@
               [(MacroHygieneName.Name nindex-id body-env)
                 (ast-expr-foreach-id
                   nindex-id
-                  index-ty
+                  (macro-hygiene-type index-ty env macro-name)
                   (macro-hygiene-expr start env macro-name depth)
                   (macro-hygiene-expr end env macro-name depth)
                   (macro-hygiene-expr body body-env macro-name depth))]))])]
@@ -56651,7 +57016,7 @@
                 (ast-expr-spmd-reduce-id
                   op
                   nindex-id
-                  index-ty
+                  (macro-hygiene-type index-ty env macro-name)
                   (macro-hygiene-expr start env macro-name depth)
                   (macro-hygiene-expr end env macro-name depth)
                   (macro-hygiene-expr init env macro-name depth)
@@ -56686,11 +57051,11 @@
                     (ast-expr-spmd-scan-id
                       op
                       nindex-id
-                      index-ty
+                      (macro-hygiene-type index-ty env macro-name)
                       (macro-hygiene-expr start env macro-name depth)
                       (macro-hygiene-expr end env macro-name depth)
                       nprefix-id
-                      prefix-ty
+                      (macro-hygiene-type prefix-ty value-env macro-name)
                       (macro-hygiene-expr init env macro-name depth)
                       (macro-hygiene-expr value value-env macro-name depth)
                       (macro-hygiene-expr body body-env macro-name depth))])]))])]
@@ -56774,8 +57139,11 @@
         (ast-expr-box-set
           (macro-hygiene-expr inner env macro-name depth)
           (macro-hygiene-expr value env macro-name depth)))]
-    [(AstExpr.TypeLiteral ty) (ast-node-push (AstExpr.TypeLiteral ty))]
-    [(AstExpr.Init maybe-ty) (ast-expr-init-maybe maybe-ty)]
+    [(AstExpr.TypeLiteral ty)
+      (ast-node-push
+        (AstExpr.TypeLiteral (macro-hygiene-type ty env macro-name)))]
+    [(AstExpr.Init maybe-ty)
+      (ast-expr-init-maybe (macro-hygiene-maybe-type maybe-ty env macro-name))]
     [(AstExpr.Comptime inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -56788,7 +57156,8 @@
       (let
         [inner : AstExpr (ast-node-get inner-box)]
         (ast-expr-try (macro-hygiene-expr inner env macro-name depth)))]
-    [(AstExpr.PtrNull ty) (ast-node-push (AstExpr.PtrNull ty))]
+    [(AstExpr.PtrNull ty)
+      (ast-node-push (AstExpr.PtrNull (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.PtrNullCheck ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -56819,7 +57188,9 @@
     [(AstExpr.PtrCast ptr-box ty)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
-        (ast-expr-ptr-cast (macro-hygiene-expr ptr env macro-name depth) ty))]
+        (ast-expr-ptr-cast
+          (macro-hygiene-expr ptr env macro-name depth)
+          (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.PtrToInt ptr-box)
       (let
         [ptr : AstExpr (ast-node-get ptr-box)]
@@ -56827,7 +57198,9 @@
     [(AstExpr.IntToPtr value-box ty)
       (let
         [value : AstExpr (ast-node-get value-box)]
-        (ast-expr-int-to-ptr (macro-hygiene-expr value env macro-name depth) ty))]
+        (ast-expr-int-to-ptr
+          (macro-hygiene-expr value env macro-name depth)
+          (macro-hygiene-type ty env macro-name)))]
     [(AstExpr.StringData inner-box)
       (let
         [inner : AstExpr (ast-node-get inner-box)]

@@ -490,35 +490,59 @@
 (define (spec-collect-templates-with-pools
   [pools : AstNodePoolContext]
   [decls : AstDeclList]) : SpecTemplateList
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) (SpecTemplateList.Nil)]
-    [(AstDeclListStep.Cons decl rest)
-      (let
-        [rest : AstDeclList rest]
-        (match decl
-          [(AstDecl.Unsafe inner-box)
-            (let
-              [inner : AstDecl (box-get inner-box)]
-              (match inner
+  (let
+    [cursor : AstDeclList decls]
+    [reversed : SpecTemplateList (SpecTemplateList.Nil)]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (begin
+              (match decl
+                [(AstDecl.Unsafe inner-box)
+                  (match (box-get inner-box)
+                    [(AstDecl.DefFn name params ret body-box _)
+                      (if (spec-param-list-has-comptime? params)
+                        (set!
+                          reversed
+                          (spec-template-cons
+                            (SpecTemplate.Item
+                              name
+                              params
+                              ret
+                              (ast-node-pool-context-expr-get pools body-box))
+                            reversed))
+                        unit)]
+                    [_ unit])]
                 [(AstDecl.DefFn name params ret body-box _)
-                  (let
-                    [body : AstExpr
-                      (ast-node-pool-context-expr-get pools body-box)]
-                    (if (spec-param-list-has-comptime? params)
+                  (if (spec-param-list-has-comptime? params)
+                    (set!
+                      reversed
                       (spec-template-cons
-                        (SpecTemplate.Item name params ret body)
-                        (spec-collect-templates-with-pools pools rest))
-                      (spec-collect-templates-with-pools pools rest)))]
-                [_ (spec-collect-templates-with-pools pools rest)]))]
-          [(AstDecl.DefFn name params ret body-box _)
-            (let
-              [body : AstExpr (ast-node-pool-context-expr-get pools body-box)]
-              (if (spec-param-list-has-comptime? params)
-                (spec-template-cons
-                  (SpecTemplate.Item name params ret body)
-                  (spec-collect-templates-with-pools pools rest))
-                (spec-collect-templates-with-pools pools rest)))]
-          [_ (spec-collect-templates-with-pools pools rest)]))]))
+                        (SpecTemplate.Item
+                          name
+                          params
+                          ret
+                          (ast-node-pool-context-expr-get pools body-box))
+                        reversed))
+                    unit)]
+                [_ unit])
+              (set! cursor rest))]))
+      (let
+        [remaining : SpecTemplateList reversed]
+        [out : SpecTemplateList (SpecTemplateList.Nil)]
+        [reverse-done : bool false]
+        (begin
+          (while (not reverse-done)
+            (match remaining
+              [(SpecTemplateList.Nil) (set! reverse-done true)]
+              [(SpecTemplateList.Cons item rest-box)
+                (begin
+                  (set! out (spec-template-cons item out))
+                  (set! remaining (box-get rest-box)))]))
+          out)))))
 
 (define (spec-collect-templates [decls : AstDeclList]) : SpecTemplateList
   (spec-collect-templates-with-pools
@@ -1861,12 +1885,21 @@
     [_ false]))
 
 (define (gen-decls-needed? [decls : AstDeclList]) : bool
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) false]
-    [(AstDeclListStep.Cons decl rest)
-      (if (gen-decl-needs-normalize? decl)
-        true
-        (gen-decls-needed? rest))]))
+  (let
+    [cursor : AstDeclList decls]
+    [needed : bool false]
+    [done : bool false]
+    (begin
+      (while (not done)
+        (match (ast-decl-list-step cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons decl rest)
+            (if (gen-decl-needs-normalize? decl)
+              (begin
+                (set! needed true)
+                (set! done true))
+              (set! cursor rest))]))
+      needed)))
 
 (define (spec-value-runtime-type-matches?
   [value : CompilerCtfeValue]

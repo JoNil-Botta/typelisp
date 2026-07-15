@@ -10,7 +10,7 @@
 (import stdlib.arena)
 (import stdlib.process)
 (import stdlib.hashmap)
-(import (hashmap String i64) as tltest_name_map)
+(import (hashmap i64 i64) as tltest_name_map)
 (import stdlib.vector)
 (import (vector.vector String) as cli_svec)
 (import "build_run_core.tl")
@@ -1117,64 +1117,66 @@
     (AstType.I64)
     (ast-node-push (AstExpr.Begin (tltest-main-exprs tests)))))
 
-(define (tltest-reach-mark-name [names : tltest_name_map.Map] [name : String]) : tltest_name_map.Map
+(define (tltest-reach-mark-name-id
+  [names : tltest_name_map.Map]
+  [name-id : i64]) : tltest_name_map.Map
   (let
     [result : tltest_name_map.Map names]
     [_inserted : bool
-      (tltest_name_map.insert-if-absent-ref! (&mut result) name 1)]
+      (tltest_name_map.insert-if-absent-ref!
+        (&mut result)
+        (compiler-symbol-name-id-key name-id)
+        1)]
     result))
 
-;; The leaf of an alias-qualified source name (`io.panic` -> `panic`). Source
-;; calls write the importing module's alias dot-form; the callee function is
-;; declared under its bare leaf name, so reachability must mark the leaf too.
-;; Returns the input unchanged when there is no interior `.`.
-(define (tltest-reach-name-dot-leaf [name : String]) : String
+;; Source calls may carry module qualification or an import-alias dot path.
+;; Runtime declarations use the bare source ID, so retain that parsed leaf ID
+;; alongside the full structural identity without reconstructing any spelling.
+(define (tltest-reach-name-dot-leaf-id [name-id : i64]) : i64
   (let
-    [i : i64 0]
-    [last-dot : i64 -1]
-    [n : i64 (string.string-length name)]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '.')
-            (set! last-dot i)
-            unit)
-          (set! i (+ i 1))))
-      (if (and (>= last-dot 0) (< last-dot (- n 1)))
-        (string.substring name (+ last-dot 1) (- n (+ last-dot 1)))
-        name))))
+    [source-id : i64 (macro-hygiene-global-source-name-id-or name-id name-id)]
+    [base-id : i64 (tc-qualified-name-base-id source-id)]
+    (if (and
+      (>= base-id 0)
+      (< base-id (intern-capacity))
+      (intern-dotted? base-id))
+      (intern-dotted-final-id base-id)
+      base-id)))
 
 (define (tltest-reach-mark-source-name
   [names : tltest_name_map.Map]
-  [name : String]) : tltest_name_map.Map
+  [name-id : i64]) : tltest_name_map.Map
   (let
-    [marked : tltest_name_map.Map (tltest-reach-mark-name names name)]
+    [marked : tltest_name_map.Map (tltest-reach-mark-name-id names name-id)]
+    [base-id : i64 (tc-qualified-name-base-id name-id)]
     [with-slash-base : tltest_name_map.Map
-      (if (tc-name-qualified? name)
-        (tltest-reach-mark-name marked (tc-qualified-name-base name))
+      (if (tc-name-qualified-id? name-id)
+        (tltest-reach-mark-name-id marked base-id)
         marked)]
-    ;; Alias-qualified source calls (`io.panic`) are not slash-qualified, so the
-    ;; base extraction above leaves them whole. Mark the dot-leaf so the callee
-    ;; (`panic`) survives runtime-decl pruning (everything is exported by
-    ;; default: there is no longer an export list to seed it as a root).
-    [leaf : String (tltest-reach-name-dot-leaf name)]
-    (if (string.eq leaf name)
+    [leaf-id : i64 (tltest-reach-name-dot-leaf-id name-id)]
+    (if (= leaf-id base-id)
       with-slash-base
-      (tltest-reach-mark-name with-slash-base leaf))))
+      (tltest-reach-mark-name-id with-slash-base leaf-id))))
 
 (define (tltest-reachable-name-marked?
   [names : tltest_name_map.Map]
-  [name : String]) : bool
-  (or
-    (tltest_name_map.contains? (& names) name)
-    (if (tc-name-qualified? name)
-      (tltest_name_map.contains? (& names) (tc-qualified-name-base name))
-      false)
-    (let
-      [leaf : String (tltest-reach-name-dot-leaf name)]
-      (if (string.eq leaf name)
-        false
-        (tltest_name_map.contains? (& names) leaf)))))
+  [name-id : i64]) : bool
+  (let
+    [key-id : i64 (compiler-symbol-name-id-key name-id)]
+    [base-id : i64 (tc-qualified-name-base-id name-id)]
+    [leaf-id : i64 (tltest-reach-name-dot-leaf-id name-id)]
+    (or
+      (tltest_name_map.contains? (& names) key-id)
+      (and
+        (tc-name-qualified-id? name-id)
+        (tltest_name_map.contains?
+          (& names)
+          (compiler-symbol-name-id-key base-id)))
+      (and
+        (not (= leaf-id base-id))
+        (tltest_name_map.contains?
+          (& names)
+          (compiler-symbol-name-id-key leaf-id))))))
 
 (define (tltest-generated-comptime-decl? [decl : AstDecl]) : bool
   (match decl
@@ -1192,18 +1194,7 @@
   ;; Harness pruning runs before lowering emits raw `tl_substring` helper calls,
   ;; so keep the TypeLisp runtime body whenever a reachable test path may
   ;; synthesize a String snapshot or source substring call.
-  (tltest-reach-mark-name names "substring"))
-
-(define (tltest-reach-mark-str-view-runtime [names : tltest_name_map.Map]) : tltest_name_map.Map
-  (tltest-reach-mark-name names "str-view"))
-
-(define (tltest-bytes-view-from-parts-name? [name : String]) : bool
-  (or
-    (string.eq name "tl_bytes_view_from_str_parts")
-    (string.eq name "tl_bytes_view_from_buf_parts")
-    (string.eq name "tl_bytes_mut_view_from_buf_parts")
-    (string.eq name "tl_bytes_view_from_bytes_parts")
-    (string.eq name "tl_bytes_mut_view_from_bytes_parts")))
+  (tltest-reach-mark-name-id names cbi.compiler-builtin-id-runtime-substring))
 
 (define (tltest-reach-mark-atomic-runtime-for-call
   [name-id : i64]
@@ -1214,24 +1205,22 @@
     [helper-id : i64 (lower-runtime-prelude-string-helper-id name-id)]
     (if (< helper-id 0)
       names
-      (tltest-reach-mark-name names (intern-str helper-id)))))
+      (tltest-reach-mark-name-id names helper-id))))
 
 (define (tltest-reach-mark-lowered-runtime-for-call
   [name-id : i64]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (let
-    [name : String (intern-str name-id)]
+    [base-id : i64 (tc-qualified-name-base-id name-id)]
+    [runtime-names : tltest_name_map.Map
+      (tltest-reach-mark-atomic-runtime-for-call name-id names)]
     (cond
       [(or
-          (string.eq name "clone")
-          (string.eq name "substring")
-          (string.eq name "string-slice"))
-        (tltest-reach-mark-string-snapshot-runtime names)]
-      [(or
-          (string.eq name "tl_str_view")
-          (tltest-bytes-view-from-parts-name? name))
-        (tltest-reach-mark-str-view-runtime names)]
-      [else (tltest-reach-mark-atomic-runtime-for-call name-id names)])))
+          (= base-id cbi.compiler-builtin-id-clone)
+          (= base-id cbi.compiler-builtin-id-runtime-substring)
+          (= base-id (cbi.compiler-builtin-ctfe-ref 93)))
+        (tltest-reach-mark-string-snapshot-runtime runtime-names)]
+      [else runtime-names])))
 
 (define (tltest-reach-mark-expr-list
   [exprs : AstExprList]
@@ -1322,7 +1311,7 @@
         [inner : AstExpr (ast-node-get inner-box)]
         (tltest-reach-mark-expr inner names))]
     [(AstExpr.Literal _) names]
-    [(AstExpr.Var name) (tltest-reach-mark-source-name names (intern-str name))]
+    [(AstExpr.Var name) (tltest-reach-mark-source-name names name)]
     [(AstExpr.Binary _ left-box right-box)
       (let
         [left : AstExpr (ast-node-get left-box)]
@@ -1422,7 +1411,7 @@
         [value : AstExpr (ast-node-get value-box)]
         (tltest-reach-mark-expr
           value
-          (tltest-reach-mark-source-name names (intern-str name))))]
+          (tltest-reach-mark-source-name names name)))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (ast-node-get inner-box)]
@@ -1692,27 +1681,25 @@
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (tltest-reach-mark-tests-from tests (- (array-length tests) 1) names))
 
-(define (tltest-runtime-string-helper-impl-name? [name : String]) : bool
+(define (tltest-runtime-string-helper-impl-name-id? [name-id : i64]) : bool
   (or
-    (string.eq name "int-to-string")
-    (string.eq name "substring")
-    (string.eq name "str-view")
-    (string.eq name "string-concat")
-    (string.eq name "string-concat3")
-    (string.eq name "string-concat4")
-    (string.eq name "string-concat5")
-    (string.eq name "eq")))
+    (= name-id cbi.compiler-builtin-id-runtime-int-to-string)
+    (= name-id cbi.compiler-builtin-id-runtime-substring)
+    (= name-id cbi.compiler-builtin-id-runtime-str-view)
+    (= name-id cbi.compiler-builtin-id-string-concat)
+    (= name-id cbi.compiler-builtin-id-runtime-string-concat3)
+    (= name-id cbi.compiler-builtin-id-runtime-string-concat4)
+    (= name-id cbi.compiler-builtin-id-runtime-string-concat5)
+    (= name-id cbi.compiler-builtin-id-eq)))
 
 (define (tltest-reach-mark-runtime-helper-root
   [decl : AstDecl]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match decl
     [(AstDecl.DefFn name _ _ _ _)
-      (let
-        [name-str : String (intern-str name)]
-        (if (tltest-runtime-string-helper-impl-name? name-str)
-          (tltest-reach-mark-name names name-str)
-          names))]
+      (if (tltest-runtime-string-helper-impl-name-id? name)
+        (tltest-reach-mark-name-id names name)
+        names)]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -1744,22 +1731,21 @@
   [cleanup : AstStructCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(AstStructCleanup.Fn name)
-      (tltest-reach-mark-name names (intern-str name))]
+    [(AstStructCleanup.Fn name) (tltest-reach-mark-name-id names name)]
     [(AstStructCleanup.No) names]))
 
 (define (tltest-reach-mark-enum-cleanup
   [cleanup : AstEnumCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(AstEnumCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstEnumCleanup.Fn name) (tltest-reach-mark-name-id names name)]
     [(AstEnumCleanup.No) names]))
 
 (define (tltest-reach-mark-field-cleanup
   [cleanup : AstFieldCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(AstFieldCleanup.Fn name) (tltest-reach-mark-name names (intern-str name))]
+    [(AstFieldCleanup.Fn name) (tltest-reach-mark-name-id names name)]
     [_ names]))
 
 (define (tltest-reach-mark-field-cleanups
@@ -1784,8 +1770,7 @@
   [cleanup : AstVariantPayloadCleanup]
   [names : tltest_name_map.Map]) : tltest_name_map.Map
   (match cleanup
-    [(AstVariantPayloadCleanup.Fn name)
-      (tltest-reach-mark-name names (intern-str name))]
+    [(AstVariantPayloadCleanup.Fn name) (tltest-reach-mark-name-id names name)]
     [_ names]))
 
 (define (tltest-reach-mark-variant-payload-cleanups
@@ -1832,7 +1817,7 @@
     [(AstDecl.Def name _ expr-box)
       (let
         [expr : AstExpr (ast-node-get expr-box)]
-        (if (tltest-reachable-name-marked? names (intern-str name))
+        (if (tltest-reachable-name-marked? names name)
           (tltest-reach-mark-expr expr names)
           names))]
     [(AstDecl.DefFn name _ _ body-box export)
@@ -1840,11 +1825,9 @@
         [body : AstExpr (ast-node-get body-box)]
         (match export
           [(AstFnExport.Export _)
-            (tltest-reach-mark-expr
-              body
-              (tltest-reach-mark-name names (intern-str name)))]
+            (tltest-reach-mark-expr body (tltest-reach-mark-name-id names name))]
           [(AstFnExport.No)
-            (if (tltest-reachable-name-marked? names (intern-str name))
+            (if (tltest-reachable-name-marked? names name)
               (tltest-reach-mark-expr body names)
               names)]))]
     [(AstDecl.DefMacro _ _ _ body-box)
@@ -1934,23 +1917,14 @@
   [decl : AstDecl]
   [names : tltest_name_map.Map]) : bool
   (match decl
-    [(AstDecl.Def name _ _)
-      (let
-        [name-str : String (intern-str name)]
-        [marked : bool (tltest-reachable-name-marked? names name-str)]
-        marked)]
+    [(AstDecl.Def name _ _) (tltest-reachable-name-marked? names name)]
     [(AstDecl.DefFn name _ _ _ export)
       (let
-        [name-str : String (intern-str name)]
-        [marked : bool (tltest-reachable-name-marked? names name-str)]
+        [marked : bool (tltest-reachable-name-marked? names name)]
         (match export
           [(AstFnExport.Export _) true]
           [(AstFnExport.No) marked]))]
-    [(AstDecl.Extern name _ _ _)
-      (let
-        [name-str : String (intern-str name)]
-        [marked : bool (tltest-reachable-name-marked? names name-str)]
-        marked)]
+    [(AstDecl.Extern name _ _ _) (tltest-reachable-name-marked? names name)]
     [(AstDecl.DefMacro _ _ _ _) true]
     [(AstDecl.Unsafe inner-box)
       (let
@@ -2480,10 +2454,9 @@
 (define (tltest-generated-runtime-reachability-self-test?) : bool
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
-    [substring-id : i64 (ci.intern-generated-name "substring")]
-    [str-view-id : i64 (ci.intern-generated-name "str-view")]
-    [bytes-view-id : i64
-      (ci.intern-generated-name "tl_bytes_view_from_str_parts")]
+    [substring-id : i64 cbi.compiler-builtin-id-runtime-substring]
+    [str-view-id : i64 cbi.compiler-builtin-id-runtime-str-view]
+    [bytes-view-id : i64 cbi.compiler-builtin-id-tl-bytes-view-from-str-parts]
     [helper-id : i64 (ci.intern-generated-name "__tl_generated_runtime_helper")]
     [test-id : i64 (ci.intern-generated-name "keeps-generated-runtime")]
     [substring-decl : AstDecl
@@ -2555,7 +2528,7 @@
 (define (tltest-generated-runtime-lambda-reachability-self-test?) : bool
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
-    [substring-id : i64 (ci.intern-generated-name "substring")]
+    [substring-id : i64 cbi.compiler-builtin-id-runtime-substring]
     [helper-id : i64 (ci.intern-generated-name "__tl_generated_lambda_helper")]
     [test-id : i64 (ci.intern-generated-name "keeps-generated-lambda-runtime")]
     [substring-decl : AstDecl
@@ -2615,7 +2588,7 @@
 (define (tltest-generated-runtime-substring-reachability-self-test?) : bool
   (let
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
-    [substring-id : i64 (ci.intern-generated-name "substring")]
+    [substring-id : i64 cbi.compiler-builtin-id-runtime-substring]
     [helper-id : i64
       (ci.intern-generated-name "__tl_generated_substring_helper")]
     [test-id : i64
@@ -2793,7 +2766,7 @@
     [eq-dep-name : String "__tl_runtime_eq_dep"]
     [eq-name : String "eq"]
     [dep-id : i64 (ci.intern-generated-name dep-name)]
-    [helper-id : i64 (ci.intern-generated-name helper-name)]
+    [helper-id : i64 cbi.compiler-builtin-id-runtime-substring]
     [eq-dep-id : i64 (ci.intern-generated-name eq-dep-name)]
     [eq-id : i64 (tltest-eq-id)]
     [test-id : i64
@@ -2869,14 +2842,15 @@
 
 (define (tltest-runtime-atomic-helper-reachability-self-test?) : bool
   (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [unit-expr : i64 (ast-node-push (AstExpr.Literal (AstLiteral.Unit)))]
     [fetch-name : String "atomic-i64-fetch-add-ptr!"]
     [load-name : String "atomic-i64-load-ptr"]
     [wrapper-name : String "__tl_atomic_runtime_caller"]
-    [fetch-id : i64 (ci.intern-generated-name fetch-name)]
-    [load-id : i64 (ci.intern-generated-name load-name)]
+    [fetch-id : i64 cbi.compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr]
+    [load-id : i64 cbi.compiler-builtin-id-runtime-atomic-i64-load-ptr]
     [wrapper-id : i64 (ci.intern-generated-name wrapper-name)]
-    [fetch-source-id : i64 (ci.intern-generated-name "atomic-i64-fetch-add!")]
+    [fetch-source-id : i64 cbi.compiler-builtin-id-atomic-i64-fetch-add]
     [test-id : i64 (ci.intern-generated-name "keeps-atomic-runtime-helper")]
     [fetch-decl : AstDecl
       (ast-decl-def-fn-id

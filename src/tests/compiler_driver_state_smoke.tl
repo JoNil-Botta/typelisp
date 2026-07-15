@@ -637,9 +637,9 @@
         [dest-decoy-type : i64
           (ast-node-pool-context-type-push dest-pools (AstType.Bool))]
         [roots : CloneNameList
-          (CloneNameList.ConsId
+          (clone-name-list-cons-id
             (clone-name-key-id clone-name-id)
-            (box (CloneNameList.Nil)))]
+            (CloneNameList.Nil))]
         [compacted : AstProgramCompaction
           (clone-augment-program-with-roots-from-pools
             source-pools
@@ -2718,7 +2718,7 @@
                                       (ast-node-pool-context-expr-len pools-b))
                                     (= active-after active-before)
                                     (match roots
-                                      [(CloneNameList.ConsId name-id rest)
+                                      [(CloneNameList.ConsId name-id _ rest)
                                         (and
                                           (string.eq
                                             (clone-name-key-string name-id)

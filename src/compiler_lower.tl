@@ -62,6 +62,7 @@
   (symbol-ids (Array i64))
   (logical-symbols lower_i64_i64_map.Map)
   (module-paths LowerModulePathIndex)
+  (clone-roots CloneNameList)
   (module-id i64)
   (parent LowerNameParent))
 
@@ -75,6 +76,7 @@
     (make-array i64 0)
     (lower_i64_i64_map.with-capacity 8)
     (lower-module-path-index-empty)
+    (CloneNameList.Nil)
     cbi.compiler-builtin-id-fix-empty
     (LowerNameParent.None)))
 
@@ -85,6 +87,7 @@
     (make-array i64 0)
     (lower_i64_i64_map.with-capacity 8)
     (lower-module-path-index-empty)
+    (CloneNameList.Nil)
     cbi.compiler-builtin-id-fix-empty
     (LowerNameParent.None)))
 
@@ -1667,6 +1670,7 @@
                 symbol-ids
                 logical-symbols
                 module-paths
+                (struct-get cache clone-roots)
                 (struct-get cache module-id)
                 (struct-get cache parent))))]))))
 
@@ -1701,6 +1705,7 @@
         (make-array i64 count)
         (lower_i64_i64_map.with-capacity 64)
         (lower-module-path-index-empty)
+        (CloneNameList.Nil)
         cbi.compiler-builtin-id-fix-empty
         (LowerNameParent.None)))))
 
@@ -1718,6 +1723,7 @@
         (make-array i64 count)
         (lower_i64_i64_map.with-capacity 16)
         (lower-module-path-index-empty)
+        (CloneNameList.Nil)
         module-id
         (LowerNameParent.Global)))))
 
@@ -1730,8 +1736,40 @@
     (struct-get cache symbol-ids)
     (struct-get cache logical-symbols)
     (struct-get cache module-paths)
+    (struct-get cache clone-roots)
     module-id
     (struct-get cache parent)))
+
+(define (lower-name-cache-with-clone-roots
+  [cache : LowerNameCache]
+  [roots : CloneNameList]) : LowerNameCache
+  (LowerNameCache
+    (struct-get cache ids)
+    (struct-get cache logical-ids)
+    (struct-get cache symbol-ids)
+    (struct-get cache logical-symbols)
+    (struct-get cache module-paths)
+    roots
+    (struct-get cache module-id)
+    (struct-get cache parent)))
+
+(define (lower-name-cache-clone-helper-id
+  [cache : LowerNameCache]
+  [type-key-id : i64]) : i64
+  (let
+    [helper-id : i64
+      (clone-name-list-helper-id-or
+        (struct-get cache clone-roots)
+        type-key-id
+        -1)]
+    (if (>= helper-id 0)
+      helper-id
+      (match (struct-get cache parent)
+        [(LowerNameParent.None) -1]
+        [(LowerNameParent.Global)
+          (lower-name-cache-clone-helper-id
+            lower-active-global-name-cache
+            type-key-id)]))))
 
 (define (lower-name-cache-lookup-id [cache : LowerNameCache] [source-id : i64]) : TcMaybeString
   (let
@@ -6062,25 +6100,55 @@
         cbi.compiler-builtin-id-runtime-string-concat4]
       [(= base-id cbi.compiler-builtin-id-tl-string-concat5)
         cbi.compiler-builtin-id-runtime-string-concat5]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i64-load-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i64-load-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i64-load)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i64-load-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i64-load-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i64-store-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i64-store-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i64-store)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i64-store-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i64-store-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i64-add-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i64-add-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i64-add)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i64-add-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i64-add-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i64-fetch-add-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i64-fetch-add)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i64-fetch-add-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i64-cas-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i64-cas)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i64-cas-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i64-cas-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i32-load-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i32-load-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i32-load)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i32-load-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i32-load-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i32-store-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i32-store-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i32-store)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i32-store-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i32-store-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i32-add-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i32-add-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i32-add)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i32-add-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i32-add-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i32-fetch-add-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i32-fetch-add)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i32-fetch-add-ptr]
-      [(= base-id cbi.compiler-builtin-id-tl-atomic-i32-cas-ptr)
+      [(or
+          (= base-id cbi.compiler-builtin-id-tl-atomic-i32-cas-ptr)
+          (= base-id cbi.compiler-builtin-id-atomic-i32-cas)
+          (= base-id cbi.compiler-builtin-id-runtime-atomic-i32-cas-ptr))
         cbi.compiler-builtin-id-runtime-atomic-i32-cas-ptr]
       [else -1])))
 
@@ -6536,6 +6604,7 @@
 (define (lower-clone-handoff-generated-origin-count-in-module
   [decls : AstDeclList]
   [root-key-id : i64]
+  [helper-name-id : i64]
   [module-id : i64]) : i64
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) 0]
@@ -6545,6 +6614,7 @@
           (lower-clone-handoff-generated-origin-count-in-module
             rest
             root-key-id
+            helper-name-id
             next-module)]
         [(AstDecl.ComptimeDecl meta template-box)
           (+
@@ -6554,9 +6624,7 @@
                   (string.eq
                     generator
                     "stdlib.clone/synthesize-one-field-struct")
-                  (string.eq
-                    item
-                    (intern-str (clone-helper-name-id-for-key root-key-id)))
+                  (string.eq item (intern-str helper-name-id))
                   (tc-string-prefix?
                     key
                     "decls:stdlib.clone:stdlib.clone/synthesize-one-field-struct(")
@@ -6572,7 +6640,8 @@
                         (ast-decl-cons
                           (box-get template-box)
                           (ast-decl-list-new)))
-                      root-key-id)
+                      root-key-id
+                      helper-name-id)
                     1))
                   1
                   0)]
@@ -6580,19 +6649,23 @@
             (lower-clone-handoff-generated-origin-count-in-module
               rest
               root-key-id
+              helper-name-id
               module-id))]
         [_
           (lower-clone-handoff-generated-origin-count-in-module
             rest
             root-key-id
+            helper-name-id
             module-id)])]))
 
 (define (lower-clone-handoff-generated-origin-count
   [decls : AstDeclList]
-  [root-key-id : i64]) : i64
+  [root-key-id : i64]
+  [helper-name-id : i64]) : i64
   (lower-clone-handoff-generated-origin-count-in-module
     decls
     root-key-id
+    helper-name-id
     cbi.compiler-builtin-id-fix-empty))
 
 (define (lower-clone-handoff-expand-one
@@ -6601,7 +6674,8 @@
   [source-decls : AstDeclList]
   [entry-path : String]
   [pools : AstNodePoolContext]
-  [root-key-id : i64]) : ResultMacroDeclExpansion
+  [root-key-id : i64]
+  [_helper-name-id : i64]) : ResultMacroDeclExpansion
   (let
     [module-id : i64
       (if (clone-name-key-qualified? root-key-id)
@@ -6611,7 +6685,6 @@
       (if (= module-id cbi.compiler-builtin-id-fix-empty)
         ""
         (intern-str module-id))]
-    [_helper-name-id : i64 (clone-helper-name-id-for-key root-key-id)]
     [request : AstDecl (lower-clone-handoff-request-decl pools root-key-id)]
     (match (macro-expand-decl-with-path
       (tc-context-with-module-id ctx module module-id)
@@ -6639,28 +6712,34 @@
   [acc : AstDeclList]) : ResultMacroDecls
   (match roots
     [(CloneNameList.Nil) (ResultMacroDecls.Ok acc)]
-    [(CloneNameList.ConsId root-key-id rest)
-      (if (> (clone-helper-decl-count source-decls root-key-id) 0)
+    [(CloneNameList.ConsId root-key-id helper-name-id rest)
+      (if (>
+        (clone-helper-decl-count source-decls root-key-id helper-name-id)
+        0)
         (ResultMacroDecls.Err
           (box
             (tc-diag-at-start
               (str_cat.str-cat
                 "clone: conflicting helper producer for "
-                (intern-str (clone-helper-name-id-for-key root-key-id))))))
+                (intern-str helper-name-id)))))
         (match (lower-clone-handoff-expand-one
           ctx
           top-env
           source-decls
           entry-path
           pools
-          root-key-id)
+          root-key-id
+          helper-name-id)
           [(ResultMacroDeclExpansion.Ok generated _)
             (if (and
-              (= (clone-helper-decl-count generated root-key-id) 1)
+              (=
+                (clone-helper-decl-count generated root-key-id helper-name-id)
+                1)
               (=
                 (lower-clone-handoff-generated-origin-count
                   generated
-                  root-key-id)
+                  root-key-id
+                  helper-name-id)
                 1))
               (lower-clone-handoff-expand-roots
                 ctx
@@ -6678,12 +6757,16 @@
                       (clone-name-key-string root-key-id)
                       " (helper-count="
                       (string.int->string
-                        (clone-helper-decl-count generated root-key-id))
+                        (clone-helper-decl-count
+                          generated
+                          root-key-id
+                          helper-name-id))
                       ", origin-count="
                       (string.int->string
                         (lower-clone-handoff-generated-origin-count
                           generated
-                          root-key-id))
+                          root-key-id
+                          helper-name-id))
                       ")")))))]
           [(ResultMacroDeclExpansion.Err diag) (ResultMacroDecls.Err diag)]))]))
 
@@ -9809,16 +9892,12 @@
   [state : LowerReachState]) : LowerReachState
   (match roots
     [(CloneNameList.Nil) state]
-    [(CloneNameList.ConsId name rest)
-      (let
-        [helper-name-id : i64 (clone-helper-name-id-for-key-or name -1)]
-        (lower-reach-add-clone-root-helpers
-          all-functions
-          names
-          (box-get rest)
-          (if (< helper-name-id 0)
-            state
-            (lower-reach-add-source-id all-functions names state helper-name-id))))]))
+    [(CloneNameList.ConsId _ helper-name-id rest)
+      (lower-reach-add-clone-root-helpers
+        all-functions
+        names
+        (box-get rest)
+        (lower-reach-add-source-id all-functions names state helper-name-id))]))
 
 ;; Functions with an `(:export-symbol ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦)` declaration publish a fixed
 ;; ABI symbol and may be called only from outside TypeLisp IR (e.g. the
@@ -18131,7 +18210,8 @@
   [ty : AstType]) : ResultLowerExpr
   (let
     [type-key-id : i64 (lower-clone-type-key-id ctx name-id)]
-    [helper-name-id : i64 (clone-helper-name-id-for-key-or type-key-id -1)]
+    [helper-name-id : i64
+      (lower-name-cache-clone-helper-id (lower-state-names state) type-key-id)]
     (if (< helper-name-id 0)
       (ResultLowerExpr.Err
         (box
@@ -49628,9 +49708,13 @@
   [externs : CompilerIrExternList]
   [spans : CompilerSourceSpans]
   [names : LowerNameEnv]
+  [clone-roots : CloneNameList]
   [mode : CompilerLowerMode]) : ResultLowerDecls
   (let
-    [dispatch-name-cache : LowerNameCache (lower-name-cache-from-env names)]
+    [dispatch-name-cache : LowerNameCache
+      (lower-name-cache-with-clone-roots
+        (lower-name-cache-from-env names)
+        clone-roots)]
     [dispatch-variants : lower_i64_i64_map.Map
       (lower-dispatch-variant-set-from-decls
         decls
@@ -50374,6 +50458,7 @@
   [paths : AstDeclPathList]
   [entry-path : String]
   [names : LowerNameEnv]
+  [clone-roots : CloneNameList]
   [mode : CompilerLowerMode]) : ResultCompilerLower
   (begin
     ;; Clone-root discovery and checked typechecking can probe aggregate layout
@@ -50396,6 +50481,7 @@
             CompilerIrExternList.Nil
             (compiler-source-spans-empty)
             names
+            clone-roots
             mode)
             [(ResultLowerDecls.Ok payload)
               (let
@@ -50608,6 +50694,7 @@
                       (lower-decl-keep-plan-apply-paths checked-keep-plan paths)
                       entry-path
                       lower-names
+                      clone-roots
                       mode)
                       [(ResultCompilerLower.Ok ir spans)
                         (begin

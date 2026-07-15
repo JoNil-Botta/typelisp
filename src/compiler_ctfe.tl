@@ -543,6 +543,64 @@
 (define (ctfe-source-string-value [string-id : i64]) : CompilerCtfeValue
   (CompilerCtfeValue.String (intern-str string-id) string-id))
 
+(define (ctfe-generated-dotted-append-member-id
+  [prefix-id : i64]
+  [member-id : i64]) : i64
+  (let
+    [prefix : String (intern-str prefix-id)]
+    [member : String (intern-str member-id)]
+    [tail-id : i64
+      (if (ci.intern-dotted? prefix-id)
+        (ctfe-generated-dotted-append-member-id
+          (ci.intern-dotted-tail-id prefix-id)
+          member-id)
+        member-id)]
+    (ci.intern-generated-canonical-dotted-name
+      (string.append prefix (string.append "." member))
+      (if (ci.intern-dotted? prefix-id)
+        (ci.intern-leading-dot-id prefix-id)
+        prefix-id)
+      prefix-id
+      tail-id)))
+
+(define (ctfe-generated-dotted-append-suffix-id
+  [prefix-id : i64]
+  [suffix-id : i64]) : i64
+  (if (ci.intern-dotted? suffix-id)
+    (ctfe-generated-dotted-append-suffix-id
+      (ctfe-generated-dotted-append-member-id
+        prefix-id
+        (ci.intern-leading-dot-id suffix-id))
+      (ci.intern-dotted-tail-id suffix-id))
+    (ctfe-generated-dotted-append-member-id prefix-id suffix-id)))
+
+(define (ctfe-generated-string-append-value
+  [left : String]
+  [left-id : i64]
+  [right : String]
+  [right-id : i64]) : CompilerCtfeValue
+  (let
+    [text : String (string.append left right)]
+    [right-len : i64 (string.string-length right)]
+    (if (and
+      (> (string.string-length left) 0)
+      (> right-len 1)
+      (= (cast (string.string-ref right 0) : i64) 46)
+      (>= left-id 0)
+      (< left-id (intern-capacity))
+      (not (= (ci.intern-first-dot left-id) 0))
+      (>= right-id 0)
+      (< right-id (intern-capacity))
+      (= (ci.intern-first-dot right-id) 0))
+      (let
+        [suffix-id : i64 (ci.intern-dotted-tail-id right-id)]
+        (if (>= suffix-id 0)
+          (CompilerCtfeValue.String
+            text
+            (ctfe-generated-dotted-append-suffix-id left-id suffix-id))
+          (ctfe-generated-string-value text)))
+      (ctfe-generated-string-value text))))
+
 (define (ctfe-string-syntax-name-id [string-id : i64]) : i64
   string-id)
 
@@ -4480,12 +4538,12 @@
       [right : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg left expr env fuel name)
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok l _ left-fuel)
+        [(ResultCtfeStringArg.Ok l left-id left-fuel)
           (match (ctfe-eval-string-arg right expr env left-fuel name)
             [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeStringArg.Ok r _ right-fuel)
+            [(ResultCtfeStringArg.Ok r right-id right-fuel)
               (ResultCtfe.Ok
-                (ctfe-generated-string-value (string.append l r))
+                (ctfe-generated-string-append-value l left-id r right-id)
                 right-fuel)])]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "string-append expects two strings")))))

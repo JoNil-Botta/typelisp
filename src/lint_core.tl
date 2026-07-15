@@ -3014,7 +3014,9 @@
                       (string.eq
                         (intern-str alias)
                         (lint-module-default-alias module-name))
-                      (lint-import-span-has-explicit-alias? source (box-get span)))
+                      (lint-import-span-has-explicit-alias?
+                        source
+                        (box-get span)))
                       (lint-findings-add
                         (lint-redundant-import-alias-finding (box-get span))
                         acc)

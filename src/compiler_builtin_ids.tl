@@ -52,6 +52,26 @@
   -1)
 (define compiler-builtin-id-tl-atomic-i32-cas-ptr : i64
   -1)
+(define compiler-builtin-id-atomic-i64-load : i64
+  -1)
+(define compiler-builtin-id-atomic-i64-store : i64
+  -1)
+(define compiler-builtin-id-atomic-i64-add : i64
+  -1)
+(define compiler-builtin-id-atomic-i64-fetch-add : i64
+  -1)
+(define compiler-builtin-id-atomic-i64-cas : i64
+  -1)
+(define compiler-builtin-id-atomic-i32-load : i64
+  -1)
+(define compiler-builtin-id-atomic-i32-store : i64
+  -1)
+(define compiler-builtin-id-atomic-i32-add : i64
+  -1)
+(define compiler-builtin-id-atomic-i32-fetch-add : i64
+  -1)
+(define compiler-builtin-id-atomic-i32-cas : i64
+  -1)
 (define compiler-builtin-id-tl-profile-alloc-total : i64
   -1)
 (define compiler-builtin-id-tl-profile-alloc-live : i64
@@ -590,7 +610,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 284)]
+    [ids : (Array i64) (make-array i64 294)]
     [ctfe-ids : (Array i64) (make-array i64 212)]
     [i : i64 0]
     (begin
@@ -1015,17 +1035,42 @@
       compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer)
     (state-set! state 274 compiler-builtin-id-cfg-feature-ptr-addr-of)
     (state-set! state 275 compiler-builtin-id-cfg-feature-str-view)
-    (state-set! state 276 compiler-builtin-id-cfg-feature-runtime-str-view-extern)
-    (state-set! state 277 compiler-builtin-id-cfg-feature-private-string-intrinsics)
+    (state-set!
+      state
+      276
+      compiler-builtin-id-cfg-feature-runtime-str-view-extern)
+    (state-set!
+      state
+      277
+      compiler-builtin-id-cfg-feature-private-string-intrinsics)
     (state-set!
       state
       278
       compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics)
     (state-set! state 279 compiler-builtin-id-cfg-array-helper-intrinsics)
     (state-set! state 280 compiler-builtin-id-cfg-feature-tl-memchr)
-    (state-set! state 281 compiler-builtin-id-cfg-feature-plain-comptime-well-known)
-    (state-set! state 282 compiler-builtin-id-cfg-feature-comptime-public-fields)
-    (state-set! state 283 compiler-builtin-id-cfg-feature-cleanup-owner-reflection)
+    (state-set!
+      state
+      281
+      compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+    (state-set!
+      state
+      282
+      compiler-builtin-id-cfg-feature-comptime-public-fields)
+    (state-set!
+      state
+      283
+      compiler-builtin-id-cfg-feature-cleanup-owner-reflection)
+    (state-set! state 284 compiler-builtin-id-atomic-i64-load)
+    (state-set! state 285 compiler-builtin-id-atomic-i64-store)
+    (state-set! state 286 compiler-builtin-id-atomic-i64-add)
+    (state-set! state 287 compiler-builtin-id-atomic-i64-fetch-add)
+    (state-set! state 288 compiler-builtin-id-atomic-i64-cas)
+    (state-set! state 289 compiler-builtin-id-atomic-i32-load)
+    (state-set! state 290 compiler-builtin-id-atomic-i32-store)
+    (state-set! state 291 compiler-builtin-id-atomic-i32-add)
+    (state-set! state 292 compiler-builtin-id-atomic-i32-fetch-add)
+    (state-set! state 293 compiler-builtin-id-atomic-i32-cas)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1397,6 +1442,16 @@
     (set!
       compiler-builtin-id-cfg-feature-cleanup-owner-reflection
       (state-ref state 283))
+    (set! compiler-builtin-id-atomic-i64-load (state-ref state 284))
+    (set! compiler-builtin-id-atomic-i64-store (state-ref state 285))
+    (set! compiler-builtin-id-atomic-i64-add (state-ref state 286))
+    (set! compiler-builtin-id-atomic-i64-fetch-add (state-ref state 287))
+    (set! compiler-builtin-id-atomic-i64-cas (state-ref state 288))
+    (set! compiler-builtin-id-atomic-i32-load (state-ref state 289))
+    (set! compiler-builtin-id-atomic-i32-store (state-ref state 290))
+    (set! compiler-builtin-id-atomic-i32-add (state-ref state 291))
+    (set! compiler-builtin-id-atomic-i32-fetch-add (state-ref state 292))
+    (set! compiler-builtin-id-atomic-i32-cas (state-ref state 293))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1754,6 +1809,36 @@
     (set!
       compiler-builtin-id-tl-atomic-i32-cas-ptr
       (compiler-builtin-resolve-name insert-missing "tl_atomic_i32_cas_ptr"))
+    (set!
+      compiler-builtin-id-atomic-i64-load
+      (compiler-builtin-resolve-name insert-missing "atomic-i64-load"))
+    (set!
+      compiler-builtin-id-atomic-i64-store
+      (compiler-builtin-resolve-name insert-missing "atomic-i64-store!"))
+    (set!
+      compiler-builtin-id-atomic-i64-add
+      (compiler-builtin-resolve-name insert-missing "atomic-i64-add!"))
+    (set!
+      compiler-builtin-id-atomic-i64-fetch-add
+      (compiler-builtin-resolve-name insert-missing "atomic-i64-fetch-add!"))
+    (set!
+      compiler-builtin-id-atomic-i64-cas
+      (compiler-builtin-resolve-name insert-missing "atomic-i64-cas!"))
+    (set!
+      compiler-builtin-id-atomic-i32-load
+      (compiler-builtin-resolve-name insert-missing "atomic-i32-load"))
+    (set!
+      compiler-builtin-id-atomic-i32-store
+      (compiler-builtin-resolve-name insert-missing "atomic-i32-store!"))
+    (set!
+      compiler-builtin-id-atomic-i32-add
+      (compiler-builtin-resolve-name insert-missing "atomic-i32-add!"))
+    (set!
+      compiler-builtin-id-atomic-i32-fetch-add
+      (compiler-builtin-resolve-name insert-missing "atomic-i32-fetch-add!"))
+    (set!
+      compiler-builtin-id-atomic-i32-cas
+      (compiler-builtin-resolve-name insert-missing "atomic-i32-cas!"))
     (set!
       compiler-builtin-id-tl-profile-alloc-total
       (compiler-builtin-resolve-name insert-missing "tl_profile_alloc_total"))

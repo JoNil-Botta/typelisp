@@ -25,59 +25,15 @@
   (map clone_id_map.Map)
   (aliases clone_id_map.Map))
 
-;; Generated clone helpers are identities derived from their nominal type, not
-;; source tokens. Record that structural relationship while emitting helpers so
-;; lowering never has to recover a helper id from its `clone$...` display name.
-;; The large startup-owned table does not grow for compiler-sized programs, so
-;; entries remain valid across the scratch arenas used by clone discovery.
-(define clone-helper-name-ids : clone_id_map.Map
-  (clone_id_map.with-capacity 16384))
-(define clone-helper-acc-name-ids : clone_id_map.Map
-  (clone_id_map.with-capacity 16384))
-(define clone-helper-rev-name-ids : clone_id_map.Map
-  (clone_id_map.with-capacity 16384))
-
-(define (clone-helper-name-id-bind! [type-key-id : i64] [helper-name-id : i64]) : unit
-  (clone_id_map.insert-ref!
-    (&mut clone-helper-name-ids)
-    type-key-id
-    helper-name-id))
-
-(define (clone-helper-name-id-for-key-or [type-key-id : i64] [fallback : i64]) : i64
-  (match (clone_id_map.get (& clone-helper-name-ids) type-key-id)
-    [(clone_id_map.LookupFound helper-name-id) helper-name-id]
-    [(clone_id_map.LookupMissing) fallback]))
-
-(define (clone-helper-name-id-for-key [type-key-id : i64]) : i64
-  (match (clone_id_map.get (& clone-helper-name-ids) type-key-id)
-    [(clone_id_map.LookupFound helper-name-id) helper-name-id]
-    [(clone_id_map.LookupMissing)
-      (let
-        [helper-name-id : i64
-          (ci.intern-generated-name
-            (clone-local-helper-name
-              (ci.intern-str (clone-name-key-base-id type-key-id))))]
-        (begin
-          (clone-helper-name-id-bind! type-key-id helper-name-id)
-          helper-name-id))]))
-
-(define (clone-helper-acc-name-id-for-key-or
-  [type-key-id : i64]
-  [fallback : i64]) : i64
-  (match (clone_id_map.get (& clone-helper-acc-name-ids) type-key-id)
-    [(clone_id_map.LookupFound helper-name-id) helper-name-id]
-    [(clone_id_map.LookupMissing) fallback]))
-
-(define (clone-helper-rev-name-id-for-key-or
-  [type-key-id : i64]
-  [fallback : i64]) : i64
-  (match (clone_id_map.get (& clone-helper-rev-name-ids) type-key-id)
-    [(clone_id_map.LookupFound helper-name-id) helper-name-id]
-    [(clone_id_map.LookupMissing) fallback]))
-
 (defenum CloneNameList
   (Nil)
-  (ConsId i64 (Box CloneNameList)))
+  ;; Nominal type key and the generated helper identity created for that key.
+  (ConsId i64 i64 (Box CloneNameList)))
+
+(define (clone-helper-name-id-new-for-key [type-key-id : i64]) : i64
+  (ci.intern-generated-name
+    (clone-local-helper-name
+      (ci.intern-str (clone-name-key-base-id type-key-id)))))
 
 (define (clone-root-module-id) : i64
   -1)
@@ -266,9 +222,7 @@
       variant-name-id)))
 
 (define (clone-name-set-empty) : CloneNameSet
-  (CloneNameSet
-    (clone_id_map.with-capacity 8)
-    (clone_id_map.with-capacity 8)))
+  (CloneNameSet (clone_id_map.with-capacity 8) (clone_id_map.with-capacity 8)))
 
 (define (clone-name-set-for-decls [decls : AstDeclList]) : CloneNameSet
   (let
@@ -281,8 +235,7 @@
         (begin
           (match (ast-decl-unwrapped
             (ast-decl-list-get (& decls) index (ast-decl-fallback)))
-            [(AstDecl.Module next-module)
-              (set! current-module-id next-module)]
+            [(AstDecl.Module next-module) (set! current-module-id next-module)]
             [(AstDecl.Import
                 (AstImportSpec.Spec
                   _
@@ -354,7 +307,34 @@
       (clone-name-set-contains-id? names (clone-name-key-id name-id)))))
 
 (define (clone-name-list-cons-id [key-id : i64] [rest : CloneNameList]) : CloneNameList
-  (CloneNameList.ConsId key-id (box rest)))
+  (CloneNameList.ConsId
+    key-id
+    (clone-helper-name-id-new-for-key key-id)
+    (box rest)))
+
+(define (clone-name-list-helper-id-or
+  [names : CloneNameList]
+  [key-id : i64]
+  [fallback : i64]) : i64
+  (let
+    [cur : CloneNameList names]
+    [result : i64 fallback]
+    [done : bool false]
+    (begin
+      (while (and
+        (not done)
+        (match cur
+          [(CloneNameList.Nil) false]
+          [_ true]))
+        (match cur
+          [(CloneNameList.Nil) unit]
+          [(CloneNameList.ConsId head helper-id rest)
+            (if (= head key-id)
+              (begin
+                (set! result helper-id)
+                (set! done true))
+              (set! cur (box-get rest)))]))
+      result)))
 
 (define (clone-name-list-contains-id? [names : CloneNameList] [key-id : i64]) : bool
   (let
@@ -368,7 +348,7 @@
           [_ true]))
         (match cur
           [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId head rest)
+          [(CloneNameList.ConsId head _ rest)
             (if (= head key-id)
               (set! found true)
               (set! cur (box-get rest)))]))
@@ -1082,40 +1062,31 @@
           (clone-list-variant-reference-id type-name-id nil-ctor-id)]
         [qualified-cons-id : i64
           (clone-list-variant-reference-id type-name-id cons-ctor-id)]
-        (begin
-          (clone_id_map.insert-ref!
-            (&mut clone-helper-acc-name-ids)
-            type-key-id
-            acc-name-id)
-          (clone_id_map.insert-ref!
-            (&mut clone-helper-rev-name-ids)
-            type-key-id
-            rev-name-id)
+        (ast-decl-list-prepend-builder
+          (clone-list-entry-decl
+            pools
+            type-name-id
+            helper-name-id
+            acc-name-id
+            rev-name-id
+            qualified-nil-id)
           (ast-decl-list-prepend-builder
-            (clone-list-entry-decl
+            (clone-list-acc-decl
               pools
               type-name-id
-              helper-name-id
               acc-name-id
-              rev-name-id
-              qualified-nil-id)
+              qualified-nil-id
+              qualified-cons-id
+              boxed-tail)
             (ast-decl-list-prepend-builder
-              (clone-list-acc-decl
+              (clone-list-rev-decl
                 pools
                 type-name-id
-                acc-name-id
+                rev-name-id
                 qualified-nil-id
                 qualified-cons-id
                 boxed-tail)
-              (ast-decl-list-prepend-builder
-                (clone-list-rev-decl
-                  pools
-                  type-name-id
-                  rev-name-id
-                  qualified-nil-id
-                  qualified-cons-id
-                  boxed-tail)
-                acc)))))]
+              acc))))]
     [(CloneListShape.NotList)
       (ast-decl-list-prepend-builder
         (clone-make-helper-decl
@@ -1327,6 +1298,7 @@
   [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
+  [helpers : CloneNameList]
   [skip : CloneNameList]
   [acc : AstDeclList]
   [module-id : i64]) : AstDeclList
@@ -1356,8 +1328,16 @@
                         (not (clone-name-list-contains-id? skip name-key-id)))
                         (let
                           [helper-name-id : i64
-                            (clone-helper-name-id-for-key name-key-id)]
+                            (clone-name-list-helper-id-or
+                              helpers
+                              name-key-id
+                              -1)]
                           (begin
+                            (when
+                              (< helper-name-id 0)
+                              (set!
+                                helper-name-id
+                                (clone-helper-name-id-new-for-key name-key-id)))
                             (set!
                               out
                               (clone-prepend-generated-decls-in-module
@@ -1382,8 +1362,16 @@
                         (not (clone-name-list-contains-id? skip name-key-id)))
                         (let
                           [helper-name-id : i64
-                            (clone-helper-name-id-for-key name-key-id)]
+                            (clone-name-list-helper-id-or
+                              helpers
+                              name-key-id
+                              -1)]
                           (begin
+                            (when
+                              (< helper-name-id 0)
+                              (set!
+                                helper-name-id
+                                (clone-helper-name-id-new-for-key name-key-id)))
                             (set!
                               out
                               (clone-prepend-generated-decls-in-module
@@ -1413,6 +1401,7 @@
     decls
     able
     CloneNameList.Nil
+    CloneNameList.Nil
     acc
     (clone-root-module-id)))
 
@@ -1420,12 +1409,14 @@
   [pools : AstNodePoolContext]
   [decls : AstDeclList]
   [able : CloneNameSet]
+  [helpers : CloneNameList]
   [skip : CloneNameList]
   [acc : AstDeclList]) : AstDeclList
   (clone-generate-decls-in-module
     pools
     decls
     able
+    helpers
     skip
     acc
     (clone-root-module-id)))
@@ -1720,7 +1711,7 @@
         [_ true])
         (match cur
           [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId name-key-id rest)
+          [(CloneNameList.ConsId name-key-id _ rest)
             (let
               [with-name : CloneNameList
                 (clone-root-add-name pools decls able out name-key-id)]
@@ -1791,12 +1782,12 @@
   [expanded : CloneNameList]) : CloneNameList
   (match expanded
     [(CloneNameList.Nil) CloneNameList.Nil]
-    [(CloneNameList.ConsId root-key-id rest)
+    [(CloneNameList.ConsId root-key-id helper-name-id rest)
       (let
         [tail : CloneNameList
           (clone-stdlib-handoff-roots-from-expanded decls (box-get rest))]
         (if (clone-one-field-struct-root? decls root-key-id)
-          (CloneNameList.ConsId root-key-id (box tail))
+          (CloneNameList.ConsId root-key-id helper-name-id (box tail))
           tail))]))
 
 (define (clone-stdlib-handoff-roots
@@ -1813,13 +1804,18 @@
 (define (clone-helper-decl-count-in-module
   [decls : AstDeclList]
   [root-key-id : i64]
+  [helper-name-id : i64]
   [module-id : i64]) : i64
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) 0]
     [(AstDeclListStep.Cons decl rest)
       (match (ast-decl-unwrapped decl)
         [(AstDecl.Module next-module)
-          (clone-helper-decl-count-in-module rest root-key-id next-module)]
+          (clone-helper-decl-count-in-module
+            rest
+            root-key-id
+            helper-name-id
+            next-module)]
         [(AstDecl.DefFn name _ _ _ _)
           (+
             (if (and
@@ -1828,16 +1824,29 @@
                 (if (clone-name-key-qualified? root-key-id)
                   (clone-name-key-module-id root-key-id)
                   cbi.compiler-builtin-id-fix-empty))
-              (= name (clone-helper-name-id-for-key root-key-id)))
+              (= name helper-name-id))
               1
               0)
-            (clone-helper-decl-count-in-module rest root-key-id module-id))]
-        [_ (clone-helper-decl-count-in-module rest root-key-id module-id)])]))
+            (clone-helper-decl-count-in-module
+              rest
+              root-key-id
+              helper-name-id
+              module-id))]
+        [_
+          (clone-helper-decl-count-in-module
+            rest
+            root-key-id
+            helper-name-id
+            module-id)])]))
 
-(define (clone-helper-decl-count [decls : AstDeclList] [root-key-id : i64]) : i64
+(define (clone-helper-decl-count
+  [decls : AstDeclList]
+  [root-key-id : i64]
+  [helper-name-id : i64]) : i64
   (clone-helper-decl-count-in-module
     decls
     root-key-id
+    helper-name-id
     cbi.compiler-builtin-id-fix-empty))
 
 (define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
@@ -1850,7 +1859,7 @@
         [_ true])
         (match cur
           [(CloneNameList.Nil) unit]
-          [(CloneNameList.ConsId name-key-id rest)
+          [(CloneNameList.ConsId name-key-id _ rest)
             (begin
               (set! out (clone-name-set-insert-id out name-key-id))
               (set! cur (box-get rest)))]))
@@ -1868,6 +1877,7 @@
       pools
       decls
       (clone-name-list-to-set expanded (clone-name-set-empty))
+      expanded
       skip
       (ast-decl-list-new))))
 

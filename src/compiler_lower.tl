@@ -46107,6 +46107,15 @@
           resolve-label)
         CompilerIrInstrList.Nil))))
 
+(define lower-dispatch-avx512-required-feature-mask : i64
+  ;; CPUID.7.0:EBX AVX512F bit 16, AVX512DQ bit 17, AVX512BW bit 30.
+  1073938432)
+
+(define (lower-dispatch-feature-mask-satisfied?
+  [available : i64]
+  [required : i64]) : bool
+  (= (bit-and available required) required))
+
 (define (lower-dispatch-feature-blocks
   [prefix : String]
   [xcr0-mask : i64]
@@ -46331,7 +46340,7 @@
         (lower-dispatch-feature-blocks
           "check_avx512"
           230
-          1073807360
+          lower-dispatch-avx512-required-feature-mask
           "select_avx512"
           (match maybe-avx2
             [(TcMaybeString.Some _) "check_avx2"]
@@ -53404,6 +53413,20 @@
               ok))])]
     [(ResultCompilerLower.Err _) false]))
 
+(define (compiler-lower-defdispatch-avx512-feature-decision-ok?) : bool
+  (let
+    ;; F+BW without DQ must never select a variant that may contain `vpmullq`.
+    [f-and-bw : i64 1073807360]
+    [f-bw-and-dq : i64 1073938432]
+    (and
+      (not
+        (lower-dispatch-feature-mask-satisfied?
+          f-and-bw
+          lower-dispatch-avx512-required-feature-mask))
+      (lower-dispatch-feature-mask-satisfied?
+        f-bw-and-dq
+        lower-dispatch-avx512-required-feature-mask))))
+
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-defdispatch-shared-helper-source))
@@ -58918,6 +58941,9 @@
         unit
         (set! ok false))
       (if (compiler-lower-defdispatch-thunk-shape-ok?)
+        unit
+        (set! ok false))
+      (if (compiler-lower-defdispatch-avx512-feature-decision-ok?)
         unit
         (set! ok false))
       (if (compiler-lower-defdispatch-shared-helper-ok?)

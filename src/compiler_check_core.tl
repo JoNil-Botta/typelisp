@@ -578,9 +578,42 @@
 (define (compiler-check-inline-layout-name-ok?
   [ctx : TcContext]
   [name : String]) : bool
-  (match (tc-inline-aggregate-layout-finite-ok ctx name)
-    [(ResultTcUnit.Ok) true]
-    [(ResultTcUnit.Err _) false]))
+  (match (tc-context-program ctx)
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [name-id : i64 -1]
+        (begin
+          (while (and (< name-id 0) (< index (struct-get (& decls) len)))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (begin
+                (match decl
+                  [(AstDecl.DefStruct candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefStructLifetimes candidate _ _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnum candidate _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnumLifetimes candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          (if (< name-id 0)
+            false
+            (match (tc-inline-aggregate-layout-finite-ok ctx name name-id)
+              [(ResultTcUnit.Ok) true]
+              [(ResultTcUnit.Err _) false]))))]))
 
 (define (compiler-check-virtual-import-inline-layout-ok?) : bool
   (match (compiler-load-source-with-paths

@@ -18019,6 +18019,31 @@
           (set! i (+ i 1))))
       out)))
 
+(defstruct TcTypeEnvBindManyEndpoints
+  (env TcTypeEnv)
+  (first-id i64)
+  (last-id i64))
+
+(define (tc-type-env-bind-many-endpoints [env : TcTypeEnv] [count : i64]) : TcTypeEnvBindManyEndpoints
+  (let
+    [i : i64 0]
+    [out : TcTypeEnv env]
+    [first-id : i64 -1]
+    [last-id : i64 -1]
+    (begin
+      (while (< i count)
+        (let
+          [name-id : i64
+            (intern (string.append "local" (string.int->string i)))]
+          (begin
+            (if (= i 0)
+              (set! first-id name-id)
+              unit)
+            (set! last-id name-id)
+            (set! out (tc-bind-id out name-id (AstType.I64)))
+            (set! i (+ i 1)))))
+      (TcTypeEnvBindManyEndpoints out first-id last-id))))
+
 (define (tc-type-env-local-cache-behavior-smoke?) : bool
   (let
     [base : TcTypeEnv
@@ -18139,13 +18164,14 @@
 
 (define (tc-type-env-local-cache-depth-cap-smoke?) : bool
   (let
+    [global-id : i64 (intern "global")]
     [base : TcTypeEnv
-      (tc-env-with-cache
-        (tc-bind-id (tc-empty-env) (intern "global") (AstType.String)))]
-    [deep : TcTypeEnv
-      (tc-type-env-bind-many
+      (tc-env-with-cache (tc-bind-id (tc-empty-env) global-id (AstType.String)))]
+    [bound : TcTypeEnvBindManyEndpoints
+      (tc-type-env-bind-many-endpoints
         base
         (* (tc-local-cache-threshold) (+ (tc-local-cache-partial-layer-cap) 1)))]
+    [deep : TcTypeEnv (struct-get bound env)]
     (and
       (tc-type-env-cache-head? deep)
       (tc-type-env-cache-partial-head? deep)
@@ -18156,23 +18182,13 @@
       (match (tc-env-partial-local-base deep)
         [(TcTypeEnv.Cache _ _ _ _ _ scan-through _ _ _) (not scan-through)]
         [_ false])
-      (match (tc-lookup-id deep (tc-existing-name-id "global"))
+      (match (tc-lookup-id deep global-id)
         [(ResultTcType.Ok (AstType.String)) true]
         [_ false])
-      (match (tc-lookup-id deep (tc-existing-name-id "local0"))
+      (match (tc-lookup-id deep (struct-get bound first-id))
         [(ResultTcType.Ok (AstType.I64)) true]
         [_ false])
-      (match (tc-lookup-id
-        deep
-        (tc-existing-name-id
-          (string.append
-            "local"
-            (string.int->string
-              (-
-                (*
-                  (tc-local-cache-threshold)
-                  (+ (tc-local-cache-partial-layer-cap) 1))
-                1)))))
+      (match (tc-lookup-id deep (struct-get bound last-id))
         [(ResultTcType.Ok (AstType.I64)) true]
         [_ false]))))
 
@@ -33133,16 +33149,6 @@
             (box-get rest)
             name-id)))]))
 
-(define (tc-inline-variant-layout-list-size
-  [variants : TcInlineVariantLayoutList]
-  [name : String]) : i64
-  (let
-    [name-id : i64 (tc-existing-name-id name)]
-    [exact : i64 (tc-inline-variant-layout-list-size-exact-id variants name-id)]
-    (if (>= exact 0)
-      exact
-      (tc-inline-variant-layout-list-size-fallback-id variants name-id))))
-
 (define (tc-inline-variant-layout-list-payload-offset-exact-id
   [variants : TcInlineVariantLayoutList]
   [name-id : i64]
@@ -33181,24 +33187,6 @@
             name-id
             index)))]))
 
-(define (tc-inline-variant-layout-list-payload-offset
-  [variants : TcInlineVariantLayoutList]
-  [name : String]
-  [index : i64]) : i64
-  (let
-    [name-id : i64 (tc-existing-name-id name)]
-    [exact : i64
-      (tc-inline-variant-layout-list-payload-offset-exact-id
-        variants
-        name-id
-        index)]
-    (if (>= exact 0)
-      exact
-      (tc-inline-variant-layout-list-payload-offset-fallback-id
-        variants
-        name-id
-        index))))
-
 (define (tc-inline-aggregate-layout-size [layout : TcInlineAggregateLayout]) : i64
   (match layout
     [(TcInlineAggregateLayout.Struct size _ _) size]
@@ -33217,22 +33205,18 @@
       (tc-inline-field-layout-list-offset-id fields name-id)]
     [(TcInlineAggregateLayout.Enum _ _ _) -1]))
 
-(define (tc-inline-aggregate-layout-variant-size
+(define (tc-inline-aggregate-layout-variant-size-id
   [layout : TcInlineAggregateLayout]
-  [name : String]) : i64
+  [name-id : i64]) : i64
   (match layout
     [(TcInlineAggregateLayout.Struct _ _ _) -1]
     [(TcInlineAggregateLayout.Enum _ _ variants)
-      (tc-inline-variant-layout-list-size variants name)]))
-
-(define (tc-inline-aggregate-layout-variant-payload-offset
-  [layout : TcInlineAggregateLayout]
-  [name : String]
-  [index : i64]) : i64
-  (tc-inline-aggregate-layout-variant-payload-offset-id
-    layout
-    (tc-existing-name-id name)
-    index))
+      (let
+        [exact : i64
+          (tc-inline-variant-layout-list-size-exact-id variants name-id)]
+        (if (>= exact 0)
+          exact
+          (tc-inline-variant-layout-list-size-fallback-id variants name-id)))]))
 
 (define (tc-inline-aggregate-layout-variant-payload-offset-id
   [layout : TcInlineAggregateLayout]
@@ -33554,12 +33538,11 @@
 
 ;; Test fixtures select a parsed declaration by expected spelling. This is a
 ;; lookup-only adapter; production compiler paths carry the declaration id.
-(define (tc-inline-aggregate-layout-finite-ok [ctx : TcContext] [name : String]) : ResultTcUnit
-  (tc-inline-aggregate-nominal-finite-ok
-    ctx
-    name
-    (tc-existing-nominal-name-id name)
-    TcStringList.Nil))
+(define (tc-inline-aggregate-layout-finite-ok
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : ResultTcUnit
+  (tc-inline-aggregate-nominal-finite-ok ctx name name-id TcStringList.Nil))
 
 (define (tc-inline-aggregate-layout-info [size : i64] [align : i64]) : TcLayoutInfo
   (TcLayoutInfo size align))
@@ -34229,9 +34212,6 @@
     name-id
     TcStringList.Nil))
 
-(define (tc-inline-aggregate-layout-for [ctx : TcContext] [name : String]) : ResultTcInlineAggregateLayout
-  (tc-inline-aggregate-layout-for-id ctx (tc-existing-nominal-name-id name)))
-
 ;; Compile-time cache: memoize the inline-aggregate SIZE. tc-inline-aggregate-
 ;; layout-for re-walks the whole layout on every lower-type-size query, which is
 ;; ~70% of the -O1 lower phase. The cache must do NO allocation during lowering
@@ -34686,12 +34666,6 @@
     struct-name
     struct-name-id
     TcStringList.Nil))
-
-(define (tc-repr-c-struct-layout [ctx : TcContext] [struct-name : String]) : ResultTcReprCLayout
-  (tc-repr-c-struct-layout-id
-    ctx
-    struct-name
-    (tc-existing-nominal-name-id struct-name)))
 
 (define (tc-ctfe-inline-layout-fields-into
   [fields : TcInlineFieldLayoutList]

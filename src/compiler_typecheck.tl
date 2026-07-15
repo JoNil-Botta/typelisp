@@ -1330,6 +1330,42 @@
     [v : Vec2 (Vec2 1.5 2.5 7)]
     (struct-get v x)))")
 
+(define (compiler-typecheck-fixture-nominal-id
+  [program : AstProgram]
+  [name : String]) : i64
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [name-id : i64 -1]
+        (begin
+          (while (and (< name-id 0) (< index (struct-get (& decls) len)))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (begin
+                (match decl
+                  [(AstDecl.DefStruct candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefStructLifetimes candidate _ _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnum candidate _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [(AstDecl.DefEnumLifetimes candidate _ _ _)
+                    (if (string.eq (tc-env-key-name-text candidate) name)
+                      (set! name-id candidate)
+                      unit)]
+                  [_ unit])
+                (set! index (+ index 1)))))
+          name-id))]))
+
 (define (compiler-typecheck-repr-c-layout-ok?) : bool
   (begin
     (tc-agg-caches-reset!)
@@ -1348,9 +1384,15 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx "Packet")
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    "Packet"
+                    (compiler-typecheck-fixture-nominal-id program "Packet"))
                     [(ResultTcReprCLayout.Ok packet)
-                      (match (tc-repr-c-struct-layout ctx "Outer")
+                      (match (tc-repr-c-struct-layout-id
+                        ctx
+                        "Outer"
+                        (compiler-typecheck-fixture-nominal-id program "Outer"))
                         [(ResultTcReprCLayout.Ok outer)
                           (and
                             (= (tc-repr-c-layout-size packet) 24)
@@ -1406,7 +1448,10 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx "Vec2")
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    "Vec2"
+                    (compiler-typecheck-fixture-nominal-id program "Vec2"))
                     [(ResultTcReprCLayout.Ok layout)
                       (and
                         (= (tc-repr-c-layout-size layout) 16)
@@ -1498,7 +1543,10 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx name)
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    name
+                    (compiler-typecheck-fixture-nominal-id program name))
                     [(ResultTcReprCLayout.Ok _) false]
                     [(ResultTcReprCLayout.Err message) (string.eq message want)]))]
               [(ResultCompilerRegistries.Err _) false])]
@@ -1523,7 +1571,10 @@
                       ""
                       cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
-                  (match (tc-repr-c-struct-layout ctx "Mixed")
+                  (match (tc-repr-c-struct-layout-id
+                    ctx
+                    "Mixed"
+                    (compiler-typecheck-fixture-nominal-id program "Mixed"))
                     [(ResultTcReprCLayout.Ok layout)
                       (and
                         (= (tc-repr-c-layout-size layout) 48)
@@ -1588,7 +1639,10 @@
                     ""
                     cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
-                (tc-inline-aggregate-layout-finite-ok ctx name))]
+                (tc-inline-aggregate-layout-finite-ok
+                  ctx
+                  name
+                  (compiler-typecheck-fixture-nominal-id program name)))]
             [(ResultCompilerRegistries.Err message) (ResultTcUnit.Err message)])]
         [(ResultCompilerSymbols.Err message) (ResultTcUnit.Err message)])]
     [(ResultAstProgram.Err message) (ResultTcUnit.Err message)]))
@@ -1617,7 +1671,9 @@
                     ""
                     cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
-                (match (tc-inline-aggregate-layout-for ctx name)
+                (match (tc-inline-aggregate-layout-for-id
+                  ctx
+                  (compiler-typecheck-fixture-nominal-id program name))
                   [(ResultTcInlineAggregateLayout.Ok layout)
                     (= (tc-inline-aggregate-layout-size layout) want)]
                   [(ResultTcInlineAggregateLayout.Err _) false]))]
@@ -1662,6 +1718,17 @@
           [(TcInlineFieldLayout.Field name-id _ _) name-id])
         (compiler-typecheck-inline-field-id-at (box-get rest) (- index 1)))]))
 
+(define (compiler-typecheck-inline-variant-id-at
+  [variants : TcInlineVariantLayoutList]
+  [index : i64]) : i64
+  (match variants
+    [(TcInlineVariantLayoutList.Nil) -1]
+    [(TcInlineVariantLayoutList.Cons variant rest)
+      (if (= index 0)
+        (match variant
+          [(TcInlineVariantLayout.Variant name-id _ _ _) name-id])
+        (compiler-typecheck-inline-variant-id-at (box-get rest) (- index 1)))]))
+
 (define (compiler-typecheck-inline-layout-query-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-inline-layout-query-source))
     [(ResultAstProgram.Ok program)
@@ -1680,7 +1747,11 @@
                     (ast-node-pool-context-capture-active))]
                 [ok : bool true]
                 (begin
-                  (match (tc-inline-aggregate-layout-for ctx "InlinePacket")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id
+                      program
+                      "InlinePacket"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
                       (let
                         [small-id : i64
@@ -1724,68 +1795,105 @@
                             unit
                             (set! ok false))))]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for ctx "InlineChoice")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id
+                      program
+                      "InlineChoice"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
-                      (begin
-                        (if (= (tc-inline-aggregate-layout-size layout) 24)
-                          unit
-                          (set! ok false))
-                        (if (= (tc-inline-aggregate-layout-align layout) 8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-size
-                            layout
-                            "Empty")
-                          8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-size
-                            layout
-                            "Byte")
-                          16)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-size
-                            layout
-                            "Wide")
-                          24)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-payload-offset
-                            layout
-                            "Wide"
-                            0)
-                          8)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-payload-offset
-                            layout
-                            "Wide"
-                            1)
-                          16)
-                          unit
-                          (set! ok false))
-                        (if (=
-                          (tc-inline-aggregate-layout-variant-payload-offset
-                            layout
-                            "Pair"
-                            0)
-                          8)
-                          unit
-                          (set! ok false)))]
+                      (let
+                        [empty-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                0)]
+                            [_ -1])]
+                        [byte-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                1)]
+                            [_ -1])]
+                        [wide-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                2)]
+                            [_ -1])]
+                        [pair-id : i64
+                          (match layout
+                            [(TcInlineAggregateLayout.Enum _ _ variants)
+                              (compiler-typecheck-inline-variant-id-at
+                                variants
+                                3)]
+                            [_ -1])]
+                        (begin
+                          (if (= (tc-inline-aggregate-layout-size layout) 24)
+                            unit
+                            (set! ok false))
+                          (if (= (tc-inline-aggregate-layout-align layout) 8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-size-id
+                              layout
+                              empty-id)
+                            8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-size-id
+                              layout
+                              byte-id)
+                            16)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-size-id
+                              layout
+                              wide-id)
+                            24)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-payload-offset-id
+                              layout
+                              wide-id
+                              0)
+                            8)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-payload-offset-id
+                              layout
+                              wide-id
+                              1)
+                            16)
+                            unit
+                            (set! ok false))
+                          (if (=
+                            (tc-inline-aggregate-layout-variant-payload-offset-id
+                              layout
+                              pair-id
+                              0)
+                            8)
+                            unit
+                            (set! ok false))))]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for ctx "ListI64")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "ListI64"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
                         unit
                         (set! ok false))]
                     [(ResultTcInlineAggregateLayout.Err _) (set! ok false)])
-                  (match (tc-inline-aggregate-layout-for ctx "Tree")
+                  (match (tc-inline-aggregate-layout-for-id
+                    ctx
+                    (compiler-typecheck-fixture-nominal-id program "Tree"))
                     [(ResultTcInlineAggregateLayout.Ok layout)
                       (if (= (tc-inline-aggregate-layout-size layout) 24)
                         unit

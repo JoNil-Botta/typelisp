@@ -106,6 +106,7 @@ vector_iter_shared_move_live_reject|check-fail|tests/safety/vector_iter_shared_m
 vector_iter_shared_escape_reject|check-fail|tests/safety/vector_iter_shared_escape_reject.tl|-|reference value would escape lexical scope
 vector_core_full_surface_reject|check-fail|tests/safety/vector_core_full_surface_reject.tl|-|typecheck: unbound name compact/pop
 vector_full_noncloneable_pop_reject|check-fail|tests/safety/vector_full_noncloneable_pop_reject.tl|-|typecheck: clone unsupported type VectorFullRawHolder
+clone_imported_nominal_noncloneable_reject|check-fail|tests/safety/clone_imported_nominal_noncloneable_reject.tl|-|typecheck: clone unsupported type LocalRawWrapper
 reborrow_stored_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
 reborrow_stored_mut_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_mut_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`
 reborrow_stored_nested_reference_item_source_live_reject|check-fail|tests/safety/reborrow_stored_nested_reference_item_source_live_reject.tl|-|cannot assign to borrowed place `items.#array.0`

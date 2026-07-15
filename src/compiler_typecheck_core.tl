@@ -25173,7 +25173,7 @@
         (clone-fixpoint
           pools
           decls
-          (clone-all-type-names decls (clone-name-set-empty))))]))
+          (clone-all-type-names decls (clone-name-set-for-decls decls))))]))
 
 (define (tc-clone-able-cache-populate! [ctx : TcContext]) : unit
   (begin

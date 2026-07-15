@@ -106,6 +106,8 @@ arena_poison_clone_survives|tests/integration/arena_poison_clone_survives.tl|42|
 clone_deep_copy|tests/integration/clone_deep_copy.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
 clone_macro_handoff|tests/integration/clone_macro_handoff.tl|42|-|-|stdlib/clone.tl stdlib/comptime.tl stdlib/string.tl
 clone_dynarray_scalar_bulk|tests/integration/clone_dynarray_scalar_bulk.tl|42|-|-|stdlib/arena.tl stdlib/string.tl
+clone_imported_nominal_direct|tests/integration/clone_imported_nominal_direct.tl|41|-|-|clone_imported_nominal_dep.tl stdlib/string.tl
+clone_imported_nominal_wrapper|tests/integration/clone_imported_nominal_wrapper.tl|42|-|-|clone_imported_nominal_dep.tl stdlib/string.tl
 comptime_scalar|tests/integration/comptime_scalar.tl|42|-|-|-
 comptime_type_specialization|tests/integration/comptime_type_specialization.tl|42|-|-|-
 generated_option_result_families|tests/integration/generated_option_result_families.tl|146|-|-|stdlib/string.tl stdlib/option.tl stdlib/result.tl

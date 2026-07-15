@@ -2250,6 +2250,10 @@
                         deps
                         (tltest-cfg-name-list-to-env cfg-names)
                         cache-scope-prefix))))
+                ;; The reset inside `with-scratch` installs a scratch-owned
+                ;; active-session wrapper. Restore it in the enclosing arena
+                ;; before the post-entry cache clear dereferences the wrapper.
+                (compiler-load-default-session-use!)
                 (tltest-inline-clear-load-caches!))
               (set! status 0))
             (if (= status 0)

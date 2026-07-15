@@ -967,6 +967,14 @@
                   (compile-cli-cfg-names-to-env cfgs))
                 "typecheck-prefix-inline-compile-batch")))
           0)]
+      ;; `compiler-load-default-session-use!` copies the active session wrapper
+      ;; into the current arena. The preflight reset therefore leaves that
+      ;; wrapper scratch-owned even though its default session data is stable.
+      ;; Reinstall it after `with-scratch` has restored the enclosing arena.
+      [_restore-default-session : unit
+        (if has-inline-tests
+          (compiler-load-default-session-use!)
+          unit)]
       [_clear-entry : unit
         (if has-inline-tests
           (tltest-inline-clear-load-caches!)

@@ -270,6 +270,7 @@ host_plan_path() {
 }
 
 echo "[public-tools] CLI usage and frontend aliases"
+# cli-gate-case usage wrapper run_cmd
 run_cmd usage "$COMPILER" --help
 assert_success
 assert_stdout_empty
@@ -329,6 +330,7 @@ if grep -q "typelisp inspect" "$USAGE_ERR"; then
 else
     HAS_INSPECT_COMMAND=0
 fi
+# cli-gate-case version wrapper run_cmd
 run_cmd version "$COMPILER" --version
 assert_success
 assert_stderr_empty
@@ -337,6 +339,7 @@ assert_contains "$out" " built "
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     LSP_COMMAND_PROBE="$WORKDIR/lsp-command-probe.in"
     printf 'X-Test: 1\r\n\r\n' > "$LSP_COMMAND_PROBE"
+    # cli-gate-case lsp-command-probe wrapper run_stdin
     run_stdin lsp-command-probe "$LSP_COMMAND_PROBE" "$COMPILER" lsp
     if grep -F "not yet available" "$err" >/dev/null; then
         HAS_LSP_COMMAND=0
@@ -348,6 +351,7 @@ assert_subcommand_help() {
     _command=$2
     _flag=$3
     _usage=$4
+    # cli-gate-expand {command}-{flag} wrapper run_cmd command=build,run,check,fmt,lint,test,doc,compile,inspect,repl,new,init,clean,lsp flag=help,short-help
     run_cmd "$_case" "$COMPILER" "$_command" "$_flag"
     assert_success
     assert_stdout_empty
@@ -399,16 +403,19 @@ if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     assert_subcommand_help_pair lsp "typelisp lsp"
 fi
 
+# cli-gate-case missing-command wrapper run_cmd
 run_cmd missing-command "$COMPILER"
 assert_failure
 assert_stdout_empty
 assert_contains_any "$err" "Usage:" "usage:"
 
+# cli-gate-case check-hello wrapper run_cmd
 run_cmd check-hello "$COMPILER" check examples/hello.tl
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
+# cli-gate-case compile-hello wrapper run_cmd
 run_cmd compile-hello "$COMPILER" compile examples/hello.tl -o "$WORKDIR/hello.s"
 assert_success
 assert_stderr_empty
@@ -425,6 +432,7 @@ cat > "$EMIT_IR_MACRO_SRC" <<'EOF'
     42
     1))
 EOF
+# cli-gate-case compile-emit-ir-core-macro wrapper run_cmd
 run_cmd compile-emit-ir-core-macro "$COMPILER" compile "$EMIT_IR_MACRO_SRC" --emit-ir --target "$HOST_TARGET" --opt-level 2 -o "$EMIT_IR_MACRO_OUT" --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
 assert_success
 assert_stderr_empty
@@ -449,6 +457,7 @@ EOF
 : > "$CLEAN_BASE.obj"
 : > "$CLEAN_BASE"
 : > "$CLEAN_BASE.exe"
+# cli-gate-case clean-source-dry-run wrapper run_cmd
 run_cmd clean-source-dry-run "$COMPILER" clean --dry-run "$CLEAN_SRC"
 assert_success
 assert_stderr_empty
@@ -457,6 +466,7 @@ assert_contains "$out" "main.s"
 [ -f "$CLEAN_SRC" ] || fail "clean dry-run removed source file"
 [ -f "$CLEAN_BASE.s" ] || fail "clean dry-run removed assembly"
 [ -f "$CLEAN_BASE" ] || fail "clean dry-run removed executable"
+# cli-gate-case clean-source wrapper run_cmd
 run_cmd clean-source "$COMPILER" clean "$CLEAN_SRC"
 assert_success
 assert_stderr_empty
@@ -468,12 +478,14 @@ assert_contains "$out" "Removed:"
 [ ! -e "$CLEAN_BASE.obj" ] || fail "clean did not remove $CLEAN_BASE.obj"
 [ ! -e "$CLEAN_BASE" ] || fail "clean did not remove $CLEAN_BASE"
 [ ! -e "$CLEAN_BASE.exe" ] || fail "clean did not remove $CLEAN_BASE.exe"
+# cli-gate-case clean-source-idempotent wrapper run_cmd
 run_cmd clean-source-idempotent "$COMPILER" clean "$CLEAN_SRC"
 assert_success
 assert_stdout_empty
 assert_stderr_empty
 fi
 
+# cli-gate-case bad-target wrapper run_cmd
 run_cmd bad-target "$COMPILER" compile examples/hello.tl --target definitely-not-a-target -o "$WORKDIR/bad-target.s"
 assert_failure
 assert_stdout_empty
@@ -488,6 +500,7 @@ cat > "$CHECK_ROOT/app/main.tl" <<'EOF'
 (import "stdlib/helper.tl")
 (define (main) : i64 (helper))
 EOF
+# cli-gate-case check-stdlib-root wrapper run_cmd
 run_cmd check-stdlib-root "$COMPILER" check "$CHECK_ROOT/app/main.tl" --stdlib-root "$CHECK_ROOT/repo-stdlib"
 assert_success
 assert_stderr_empty
@@ -519,6 +532,7 @@ cat > "$DOCTEST_RUN_ONLY" <<'EOF'
 (define (main) : i64 0)
 EOF
 
+# cli-gate-case normal-doctest-check-bad wrapper run_cmd
 run_cmd normal-doctest-check-bad "$COMPILER" check "$DOCTEST_BAD"
 assert_failure
 assert_stdout_empty
@@ -527,6 +541,7 @@ assert_contains "$err" "$(native_arg_path "$DOCTEST_BAD"):1:"
 assert_contains "$err" "return type mismatch"
 
 DOCTEST_BAD_ASM="$DOCTEST_NORMAL/bad.s"
+# cli-gate-case normal-doctest-compile-bad wrapper run_cmd
 run_cmd normal-doctest-compile-bad "$COMPILER" compile "$DOCTEST_BAD" -o "$DOCTEST_BAD_ASM"
 assert_failure
 assert_stdout_empty
@@ -534,28 +549,33 @@ assert_contains "$err" "doc tests failed"
 [ ! -e "$DOCTEST_BAD_ASM" ] || fail "compile wrote assembly despite failing doctest"
 
 DOCTEST_BAD_EXE="$DOCTEST_NORMAL/bad$HOST_EXE_SUFFIX"
+# cli-gate-case normal-doctest-build-bad wrapper run_cmd
 run_cmd normal-doctest-build-bad "$COMPILER" build "$DOCTEST_BAD" -o "$DOCTEST_BAD_EXE" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "doc tests failed"
 [ ! -e "$DOCTEST_BAD_EXE" ] || fail "build wrote executable despite failing doctest"
 
+# cli-gate-case normal-doctest-run-bad wrapper run_cmd
 run_cmd normal-doctest-run-bad "$COMPILER" run "$DOCTEST_BAD" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "doc tests failed"
 
+# cli-gate-case normal-doctest-build-unexpected-pass wrapper run_cmd
 run_cmd normal-doctest-build-unexpected-pass "$COMPILER" build "$DOCTEST_EXPECT_PASS" -o "$DOCTEST_NORMAL/unexpected-pass$HOST_EXE_SUFFIX" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "was expected to fail"
 
+# cli-gate-case normal-doctest-runnable-check wrapper run_cmd
 run_cmd normal-doctest-runnable-check "$COMPILER" check "$DOCTEST_RUN_ONLY"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
 
 DOCTEST_RUN_ONLY_ASM="$DOCTEST_NORMAL/run-only.s"
+# cli-gate-case normal-doctest-runnable-compile wrapper run_cmd
 run_cmd normal-doctest-runnable-compile "$COMPILER" compile "$DOCTEST_RUN_ONLY" -o "$DOCTEST_RUN_ONLY_ASM"
 assert_success
 assert_stderr_empty
@@ -580,10 +600,12 @@ cat > "$DOCTEST_PKG_ORPHAN/src/lib.tl" <<'EOF'
 ;# ```
 (define (helper) : i64 1)
 EOF
+# cli-gate-case normal-doctest-package-orphan-check wrapper run_cmd
 run_cmd normal-doctest-package-orphan-check "$COMPILER" check --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
+# cli-gate-case normal-doctest-package-orphan-build wrapper run_cmd
 run_cmd normal-doctest-package-orphan-build "$COMPILER" build --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg" --target "$HOST_TARGET"
 assert_success
 assert_stderr_empty
@@ -599,10 +621,12 @@ EOF
     cat "$ROOT/stdlib/core_macros.tl"
 } > "$DOCTEST_BAD_STDLIB/core_macros.tl"
 cp "$ROOT/stdlib/runtime.tl" "$DOCTEST_BAD_STDLIB/runtime.tl"
+# cli-gate-case normal-doctest-package-stdlib-doc-check wrapper run_cmd
 run_cmd normal-doctest-package-stdlib-doc-check "$COMPILER" check --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg" --stdlib-root "$DOCTEST_BAD_STDLIB"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Type checking passed!"
+# cli-gate-case normal-doctest-package-stdlib-doc-build wrapper run_cmd
 run_cmd normal-doctest-package-stdlib-doc-build "$COMPILER" build --manifest-path "$DOCTEST_PKG_ORPHAN/typelisp.pkg" --target "$HOST_TARGET" --stdlib-root "$DOCTEST_BAD_STDLIB"
 assert_success
 assert_stderr_empty
@@ -628,10 +652,12 @@ cat > "$DOCTEST_PKG_REACH/src/lib.tl" <<'EOF'
 (define (helper) : i64 1)
 EOF
 DOCTEST_PKG_LIB_DIAG=$(native_arg_path "$DOCTEST_PKG_REACH/src/lib.tl")
+# cli-gate-case normal-doctest-package-check wrapper run_cmd
 run_cmd normal-doctest-package-check "$COMPILER" check --manifest-path "$DOCTEST_PKG_REACH/typelisp.pkg"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "$DOCTEST_PKG_LIB_DIAG:1:"
+# cli-gate-case normal-doctest-package-build wrapper run_cmd
 run_cmd normal-doctest-package-build "$COMPILER" build --manifest-path "$DOCTEST_PKG_REACH/typelisp.pkg" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
@@ -649,6 +675,7 @@ cat > "$INLINE_BAD" <<'EOF'
 EOF
 INLINE_BAD_DIAG=$(native_arg_path "$INLINE_BAD")
 
+# cli-gate-case normal-inline-check wrapper run_cmd
 run_cmd normal-inline-check "$COMPILER" check "$INLINE_BAD"
 assert_failure
 assert_stdout_empty
@@ -656,6 +683,7 @@ assert_contains "$err" "$INLINE_BAD_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
 
 INLINE_BAD_ASM="$INLINE_NORMAL/bad-inline.s"
+# cli-gate-case normal-inline-compile wrapper run_cmd
 run_cmd normal-inline-compile "$COMPILER" compile "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_ASM"
 assert_failure
 assert_stdout_empty
@@ -668,6 +696,7 @@ INLINE_BAD_BATCH_LIST="$INLINE_NORMAL/bad-inline-batch.txt"
 INLINE_BAD_BATCH_INPUT=$(native_arg_path "$INLINE_BAD")
 INLINE_BAD_BATCH_ASM_ARG=$(native_arg_path "$INLINE_BAD_BATCH_ASM")
 printf '%s|%s\n' "$INLINE_BAD_BATCH_INPUT" "$INLINE_BAD_BATCH_ASM_ARG" > "$INLINE_BAD_BATCH_LIST"
+# cli-gate-case normal-inline-compile-batch wrapper run_cmd
 run_cmd normal-inline-compile-batch "$COMPILER" compile --batch "$INLINE_BAD_BATCH_LIST" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
@@ -677,6 +706,7 @@ assert_contains "$err" "compile: batch source failed: $INLINE_BAD_BATCH_INPUT"
 [ ! -f "$INLINE_BAD_BATCH_ASM" ] || fail "normal-inline-compile-batch wrote assembly despite inline test failure"
 
 INLINE_BAD_EXE="$INLINE_NORMAL/bad-inline$HOST_EXE_SUFFIX"
+# cli-gate-case normal-inline-build wrapper run_cmd
 run_cmd normal-inline-build "$COMPILER" build "$INLINE_BAD" --target "$HOST_TARGET" -o "$INLINE_BAD_EXE"
 assert_failure
 assert_stdout_empty
@@ -684,6 +714,7 @@ assert_contains "$err" "$INLINE_BAD_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
 [ ! -f "$INLINE_BAD_EXE" ] || fail "normal-inline-build wrote an executable despite inline test failure"
 
+# cli-gate-case normal-inline-run wrapper run_cmd
 run_cmd normal-inline-run "$COMPILER" run "$INLINE_BAD" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
@@ -702,6 +733,7 @@ cat > "$INLINE_CFG_PROD" <<'EOF'
   (let [_ : i64 (+ (inline-helper) 1)] unit))
 EOF
 INLINE_CFG_PROD_DIAG=$(native_arg_path "$INLINE_CFG_PROD")
+# cli-gate-case normal-inline-cfg-helper-production-use wrapper run_cmd
 run_cmd normal-inline-cfg-helper-production-use "$COMPILER" check "$INLINE_CFG_PROD"
 assert_failure
 assert_stdout_empty
@@ -733,6 +765,7 @@ while IFS= read -r mode || [ -n "$mode" ]; do
 (test helper-visible
   (let [_ : i64 (+ (inline-helper) 1)] unit))
 EOF
+        # cli-gate-expand normal-inline-codegen-{mode}-opt{opt}-with-tests wrapper run_cmd mode=scalar,avx2,avx512 opt=0,1,2
         run_cmd "$case_base-with-tests" "$COMPILER" compile "$INLINE_SAME" --target "$HOST_TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$with_asm"
         if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$mode" != scalar ]; then
             assert_failure
@@ -755,6 +788,7 @@ EOF
         cat > "$INLINE_SAME" <<'EOF'
 (define (main) : i64 42)
 EOF
+        # cli-gate-expand normal-inline-codegen-{mode}-opt{opt}-without-tests wrapper run_cmd mode=scalar,avx2,avx512 opt=0,1,2
         run_cmd "$case_base-without-tests" "$COMPILER" compile "$INLINE_SAME" --target "$HOST_TARGET" --backend-mode "$mode" --opt-level "$opt" -o "$without_asm"
         assert_success
         assert_stderr_empty
@@ -787,12 +821,14 @@ cat > "$INLINE_PKG/src/orphan.tl" <<'EOF'
 EOF
 INLINE_PKG_ORPHAN_DIAG="inline-owned/src/orphan.tl"
 
+# cli-gate-case normal-inline-package-check wrapper run_cmd
 run_cmd normal-inline-package-check "$COMPILER" check --manifest-path "$INLINE_PKG/typelisp.pkg"
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "$INLINE_PKG_ORPHAN_DIAG:3:"
 assert_contains "$err" "typecheck: integer operator expects matching integer operands"
 
+# cli-gate-case normal-inline-package-build wrapper run_cmd
 run_cmd normal-inline-package-build "$COMPILER" build --manifest-path "$INLINE_PKG/typelisp.pkg" --target "$HOST_TARGET"
 assert_failure
 assert_stdout_empty
@@ -814,6 +850,7 @@ UNSAFE_REACH_TARGET=windows-x86_64
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     UNSAFE_REACH_TARGET=$HOST_TARGET
 fi
+# cli-gate-case unsafe-import-reach-compile wrapper run_cmd
 run_cmd unsafe-import-reach-compile "$COMPILER" compile "$UNSAFE_REACH/main.tl" --target "$UNSAFE_REACH_TARGET" -o "$UNSAFE_REACH/main.s" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
@@ -841,6 +878,7 @@ while IFS= read -r mode || [ -n "$mode" ]; do
     cat > "$mode_dir/main.tl" <<'EOF'
 (define (main) : i64 42)
 EOF
+    # cli-gate-expand compile-backend-{mode} wrapper run_cmd mode=scalar,avx2,avx512
     run_cmd "compile-backend-$mode" "$COMPILER" compile "$mode_dir/main.tl" --backend-mode "$mode" -o "$mode_dir/main.s"
     if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$mode" != scalar ]; then
         assert_failure
@@ -884,6 +922,7 @@ cat > "$simd_shape_dir/main.tl" <<'EOF'
       (fill a b out 17)
       42)))
 EOF
+# cli-gate-case compile-backend-avx512-shape wrapper run_cmd
 run_cmd compile-backend-avx512-shape "$COMPILER" compile "$simd_shape_dir/main.tl" --backend-mode avx512 -o "$simd_shape_dir/main.s"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_failure
@@ -913,6 +952,7 @@ for target_alias in windows-x86_64 windows_x86_64; do
     (print 3)
     42))
 EOF
+    # cli-gate-expand compile-target-{target} wrapper run_cmd target=windows-x86-64,windows-underscore-x86-64
     run_cmd "compile-target-$target_alias" "$COMPILER" compile "$target_dir/main.tl" --target "$target_alias" -o "$target_dir/main.s"
     assert_success
     assert_stderr_empty
@@ -939,11 +979,13 @@ cat > "$CLI_MATRIX/main.tl" <<'EOF'
 (define (main) : i64 42)
 EOF
 
+# cli-gate-case compile-unknown-target wrapper run_cmd
 run_cmd compile-unknown-target "$COMPILER" compile "$CLI_MATRIX/main.tl" --target plan9-x86_64
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "Error: unknown target 'plan9-x86_64'. Expected linux-x86_64 or windows-x86_64"
 
+# cli-gate-case build-unknown-target wrapper run_cmd
 run_cmd build-unknown-target "$COMPILER" build "$CLI_MATRIX/main.tl" --target plan9-x86_64
 assert_failure
 assert_stdout_empty
@@ -953,6 +995,7 @@ else
     assert_contains "$err" "build: unknown target plan9-x86_64"
 fi
 
+# cli-gate-case run-unknown-target wrapper run_cmd
 run_cmd run-unknown-target "$COMPILER" run "$CLI_MATRIX/main.tl" --target plan9-x86_64
 assert_failure
 assert_stdout_empty
@@ -962,11 +1005,13 @@ else
     assert_contains "$err" "run: unknown target plan9-x86_64"
 fi
 
+# cli-gate-case compile-unknown-backend-mode wrapper run_cmd
 run_cmd compile-unknown-backend-mode "$COMPILER" compile "$CLI_MATRIX/main.tl" --backend-mode neon
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "Error: unknown backend mode 'neon'. Expected scalar, avx2, or avx512"
 
+# cli-gate-case build-unknown-backend-mode wrapper run_cmd
 run_cmd build-unknown-backend-mode "$COMPILER" build "$CLI_MATRIX/main.tl" --backend-mode neon
 assert_failure
 assert_stdout_empty
@@ -976,6 +1021,7 @@ else
     assert_contains "$err" "build: unknown backend mode neon"
 fi
 
+# cli-gate-case run-unknown-backend-mode wrapper run_cmd
 run_cmd run-unknown-backend-mode "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode neon
 assert_failure
 assert_stdout_empty
@@ -988,6 +1034,7 @@ fi
 cat > "$CLI_MATRIX/unsupported-type-kind.tl" <<'EOF'
 (define (f [T : type]) : i64 0)
 EOF
+# cli-gate-case check-unsupported-type-kind wrapper run_cmd
 run_cmd check-unsupported-type-kind "$COMPILER" check "$CLI_MATRIX/unsupported-type-kind.tl"
 assert_failure
 assert_stdout_empty
@@ -1003,6 +1050,7 @@ assert_not_contains "$err" "backend:"
 cat > "$CLI_MATRIX/runtime-type-literal.tl" <<'EOF'
 (define (main) : i64 (comptime (type i64)))
 EOF
+# cli-gate-case check-runtime-type-literal wrapper run_cmd
 run_cmd check-runtime-type-literal "$COMPILER" check "$CLI_MATRIX/runtime-type-literal.tl"
 assert_failure
 assert_stdout_empty
@@ -1015,6 +1063,7 @@ cat > "$CLI_MATRIX/region-builtin-escape.tl" <<'EOF'
 (define (main) : String
   (with-arena r (int->string 41)))
 EOF
+# cli-gate-case check-region-builtin-escape wrapper run_cmd
 run_cmd check-region-builtin-escape "$COMPILER" check "$CLI_MATRIX/region-builtin-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
@@ -1034,6 +1083,7 @@ cat > "$CLI_MATRIX/stdlib-region-escape.tl" <<'EOF'
         [s : String "  scoped  "]
         (string.trim (& s))))))
 EOF
+# cli-gate-case check-stdlib-region-escape wrapper run_cmd
 run_cmd check-stdlib-region-escape "$COMPILER" check "$CLI_MATRIX/stdlib-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
@@ -1051,6 +1101,7 @@ cat > "$CLI_MATRIX/text-buf-region-scalar.tl" <<'EOF'
     (with-arena inner
       (string-length (text_buf.render buf)))))
 EOF
+# cli-gate-case check-text-buf-region-scalar wrapper run_cmd
 run_cmd check-text-buf-region-scalar "$COMPILER" check "$CLI_MATRIX/text-buf-region-scalar.tl" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
@@ -1065,6 +1116,7 @@ cat > "$CLI_MATRIX/text-buf-region-escape.tl" <<'EOF'
       (with-arena inner
         (text_buf.render buf)))))
 EOF
+# cli-gate-case check-text-buf-region-escape wrapper run_cmd
 run_cmd check-text-buf-region-escape "$COMPILER" check "$CLI_MATRIX/text-buf-region-escape.tl" --stdlib-root "$ROOT/stdlib"
 assert_failure
 assert_stdout_empty
@@ -1077,6 +1129,7 @@ fi
 cat > "$CLI_MATRIX/numeric-cast-matrix.tl" <<'EOF'
 (define (main) : i64 (cast (cast 42 : f64) : i64))
 EOF
+# cli-gate-case check-numeric-cast-matrix wrapper run_cmd
 run_cmd check-numeric-cast-matrix "$COMPILER" check "$CLI_MATRIX/numeric-cast-matrix.tl"
 if [ "$code" -eq 0 ]; then
     assert_contains "$out" "Type checking passed!"
@@ -1089,6 +1142,7 @@ fi
 cat > "$CLI_MATRIX/unsupported-cast.tl" <<'EOF'
 (define (main) : i64 (cast true : i64))
 EOF
+# cli-gate-case check-unsupported-cast wrapper run_cmd
 run_cmd check-unsupported-cast "$COMPILER" check "$CLI_MATRIX/unsupported-cast.tl"
 assert_failure
 assert_stdout_empty
@@ -1103,6 +1157,7 @@ fi
 cat > "$CLI_MATRIX/inexact-f32-literal.tl" <<'EOF'
 (define (main) : f32 0.1)
 EOF
+# cli-gate-case check-inexact-f32-literal wrapper run_cmd
 run_cmd check-inexact-f32-literal "$COMPILER" check "$CLI_MATRIX/inexact-f32-literal.tl"
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_failure
@@ -1138,6 +1193,7 @@ cat > "$RUN_MATRIX/output_status.tl" <<'EOF'
     (fixture-stdout-write "hello")
     7))
 EOF
+# cli-gate-case run-output-status wrapper run_cmd
 run_cmd run-output-status "$COMPILER" run "$RUN_MATRIX/output_status.tl"
 assert_code 7
 assert_stderr_empty
@@ -1156,6 +1212,7 @@ cat > "$RUN_MATRIX/stdin.tl" <<'EOF'
   (fixture-stdout-write (fixture-read-stdin)))
 EOF
 printf 'hello from stdin\n' > "$RUN_MATRIX/stdin.in"
+# cli-gate-case run-stdin wrapper run_stdin
 run_stdin run-stdin "$RUN_MATRIX/stdin.in" "$COMPILER" run "$RUN_MATRIX/stdin.tl"
 assert_success
 assert_stderr_empty
@@ -1168,6 +1225,7 @@ SIMD_ISAS=$(sh "$ROOT/scripts/detect-simd-isa.sh" 2>/dev/null || true)
 run_backend_mode_exec() {
     # $1 = backend mode (avx2|avx512); $2 = required ISA token (avx2|avx512)
     if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
+        # cli-gate-expand run-backend-{mode}-rejected wrapper run_cmd mode=avx2,avx512
         run_cmd "run-backend-$1-rejected" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_failure
         assert_stdout_empty
@@ -1175,6 +1233,7 @@ run_backend_mode_exec() {
         return
     fi
     if printf '%s\n' "$SIMD_ISAS" | grep -qx "$2"; then
+        # cli-gate-expand run-backend-{mode} wrapper run_cmd mode=avx2,avx512
         run_cmd "run-backend-$1" "$COMPILER" run "$CLI_MATRIX/main.tl" --backend-mode "$1" -- arg
         assert_code 42
         assert_stdout_empty
@@ -1211,6 +1270,7 @@ TLEOF
 run_spmd_exec_mode() {
     # $1 = backend mode; $2 = required ISA token, or "-" to always run
     if [ "$IS_STAGE1_WRAPPER" -eq 1 ] && [ "$1" != scalar ]; then
+        # cli-gate-expand spmd-exec-{mode}-rejected wrapper run_cmd mode=avx2,avx512
         run_cmd "spmd-exec-$1-rejected" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
         assert_failure
         assert_stdout_empty
@@ -1221,6 +1281,7 @@ run_spmd_exec_mode() {
         echo "[public-tools] not applicable: spmd-exec --backend-mode $1 requires $2 on this $HOST_OS host"
         return
     fi
+    # cli-gate-expand spmd-exec-{mode} wrapper run_cmd mode=scalar,avx2,avx512
     run_cmd "spmd-exec-$1" "$COMPILER" run "$SPMD_EXEC/spmd.tl" --backend-mode "$1" -- arg
     assert_code 190
     assert_stdout_empty
@@ -1257,6 +1318,7 @@ cat > "$BUILD_MATRIX/src/main.tl" <<'EOF'
       (fill a b out 17)
       42)))
 EOF
+# cli-gate-case build-package-avx512 wrapper run_cmd
 run_cmd build-package-avx512 "$COMPILER" build --manifest-path "$BUILD_MATRIX/typelisp.pkg" --backend-mode avx512
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
     assert_failure
@@ -1279,17 +1341,20 @@ else
     fi
 fi
 
+# cli-gate-case build-source-missing-output-value wrapper run_cmd
 run_cmd build-source-missing-output-value "$COMPILER" build "$CLI_MATRIX/main.tl" -o
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "build: -o requires a value"
 
+# cli-gate-case build-output-without-source wrapper run_cmd
 run_cmd build-output-without-source "$COMPILER" build -o "$BUILD_MATRIX/app"
 assert_failure
 assert_stdout_empty
 assert_contains_any "$err" "Error: build -o requires a source file argument" "build: -o requires a source file argument"
 
 if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
+    # cli-gate-case build-source-missing-file wrapper run_cmd
     run_cmd build-source-missing-file "$COMPILER" build "$BUILD_MATRIX/missing.tl"
     assert_failure
     assert_stdout_empty
@@ -1317,20 +1382,24 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
     cat > "$PLANNER_SOURCE" <<'EOF'
 (define (main) : i64 23)
 EOF
+    # cli-gate-case selfhost-build-tool wrapper run_cmd
     run_cmd selfhost-build-tool "$COMPILER" build --direct "$PLANNER_SOURCE" -o "$PLANNER_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built $(native_arg_path "$PLANNER_OUTPUT")"
     [ -f "$PLANNER_OUTPUT" ] || fail "selfhost build tool did not write executable"
+    # cli-gate-case selfhost-build-tool-output wrapper run_cmd
     run_cmd selfhost-build-tool-output "$PLANNER_OUTPUT"
     assert_code 23
     assert_stderr_empty
 
+    # cli-gate-case selfhost-build-source-locked wrapper run_cmd
     run_cmd selfhost-build-source-locked "$COMPILER" build --direct "$PLANNER_SOURCE" --locked
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --locked is only valid for package builds"
 
+    # cli-gate-case selfhost-build-source-update-lock wrapper run_cmd
     run_cmd selfhost-build-source-update-lock "$COMPILER" build --direct "$PLANNER_SOURCE" --update-lock
     assert_failure
     assert_stdout_empty
@@ -1347,10 +1416,12 @@ ffi_add7:
     ret
     .section .note.GNU-stack,"",@progbits
 EOF
+    # cli-gate-case link-lib-assemble wrapper run_cmd
     run_cmd link-lib-assemble as "$LINK_LIB_DIR/ffi_add7.s" -o "$LINK_LIB_DIR/ffi_add7.o"
     assert_success
     assert_stdout_empty
     assert_stderr_empty
+    # cli-gate-case link-lib-archive wrapper run_cmd
     run_cmd link-lib-archive ar rcs "$LINK_LIB_DIR/libffi_add7.a" "$LINK_LIB_DIR/ffi_add7.o"
     assert_success
     assert_stdout_empty
@@ -1362,26 +1433,32 @@ EOF
 (extern (ffi_add7 [x : i64]) : i64)
 (define (main) : i64 (ffi_add7 35))
 EOF
+    # cli-gate-case selfhost-build-tool-link-lib wrapper run_cmd
     run_cmd selfhost-build-tool-link-lib "$COMPILER" build --direct "$LINK_SOURCE" -o "$LINK_OUTPUT" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built $LINK_OUTPUT"
+    # cli-gate-case selfhost-build-tool-link-output wrapper run_cmd
     run_cmd selfhost-build-tool-link-output "$LINK_OUTPUT"
     assert_code 42
     assert_stderr_empty
+    # cli-gate-case selfhost-run-tool-link-lib wrapper run_cmd
     run_cmd selfhost-run-tool-link-lib "$COMPILER" run --direct "$LINK_SOURCE" --target linux-x86_64 --backend-mode scalar --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
 
     PUBLIC_LINK_OUTPUT="$SELFHOST_PLANNER_DIR/with space/public link program"
+    # cli-gate-case public-build-link-lib wrapper run_cmd
     run_cmd public-build-link-lib "$COMPILER" build "$LINK_SOURCE" -o "$PUBLIC_LINK_OUTPUT" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built $PUBLIC_LINK_OUTPUT"
+    # cli-gate-case public-build-link-output wrapper run_cmd
     run_cmd public-build-link-output "$PUBLIC_LINK_OUTPUT"
     assert_code 42
     assert_stderr_empty
+    # cli-gate-case public-run-link-lib wrapper run_cmd
     run_cmd public-run-link-lib "$COMPILER" run "$LINK_SOURCE" --target linux-x86_64 --link-search "$LINK_LIB_DIR" --link-lib ffi_add7
     assert_code 42
     assert_stdout_empty
@@ -1398,10 +1475,12 @@ long ffi_ctor_value(void) {
     return ffi_ctor_value_state;
 }
 EOF
+    # cli-gate-case link-lib-ctor-compile wrapper run_cmd
     run_cmd link-lib-ctor-compile cc -c "$LINK_LIB_DIR/ffi_ctor.c" -o "$LINK_LIB_DIR/ffi_ctor.o"
     assert_success
     assert_stdout_empty
     assert_stderr_empty
+    # cli-gate-case link-lib-ctor-archive wrapper run_cmd
     run_cmd link-lib-ctor-archive ar rcs "$LINK_LIB_DIR/libffi_ctor.a" "$LINK_LIB_DIR/ffi_ctor.o"
     assert_success
     assert_stdout_empty
@@ -1417,10 +1496,12 @@ EOF
     (ffi_ctor_value)
     1))
 EOF
+    # cli-gate-case selfhost-run-tool-link-ctor wrapper run_cmd
     run_cmd selfhost-run-tool-link-ctor "$COMPILER" run --direct "$CTOR_SOURCE" --target linux-x86_64 --backend-mode scalar --stdlib-root "$ROOT/stdlib" --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
     assert_stderr_empty
+    # cli-gate-case public-run-link-ctor wrapper run_cmd
     run_cmd public-run-link-ctor "$COMPILER" run "$CTOR_SOURCE" --target linux-x86_64 --stdlib-root "$ROOT/stdlib" --link-search "$LINK_LIB_DIR" --link-lib ffi_ctor
     assert_code 42
     assert_stdout_empty
@@ -1451,12 +1532,14 @@ EOF
 (extern (ffi_add7 [x : i64]) : i64)
 (define (main) : i64 (ffi_add7 35))
 EOF
+    # cli-gate-case pkg-link-build wrapper run_cmd
     run_cmd pkg-link-build "$COMPILER" build --manifest-path "$PKG_LINK_DIR/typelisp.pkg" --target linux-x86_64
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built "
     PKG_LINK_BIN="$PKG_LINK_DIR/target/release/pkg_link_app"
     [ -x "$PKG_LINK_BIN" ] || fail "package link build did not write executable $PKG_LINK_BIN"
+    # cli-gate-case pkg-link-output wrapper run_cmd
     run_cmd pkg-link-output "$PKG_LINK_BIN"
     assert_code 42
     assert_stdout_empty
@@ -1482,12 +1565,14 @@ EOF
 (extern (ffi_add7 [x : i64]) : i64 (:link-lib "ffi_add7"))
 (define (main) : i64 (ffi_add7 35))
 EOF
+    # cli-gate-case pkg-link-metadata-build wrapper run_cmd
     run_cmd pkg-link-metadata-build "$COMPILER" build --manifest-path "$PKG_LINK_META_DIR/typelisp.pkg" --target linux-x86_64
     assert_success
     assert_stderr_empty
     assert_contains "$out" "Built "
     PKG_LINK_META_BIN="$PKG_LINK_META_DIR/target/release/pkg_link_metadata_app"
     [ -x "$PKG_LINK_META_BIN" ] || fail "package link metadata build did not write executable $PKG_LINK_META_BIN"
+    # cli-gate-case pkg-link-metadata-output wrapper run_cmd
     run_cmd pkg-link-metadata-output "$PKG_LINK_META_BIN"
     assert_code 42
     assert_stdout_empty
@@ -1495,6 +1580,7 @@ EOF
     fi
 
     PLANNER_AVX2_OUTPUT="$SELFHOST_PLANNER_DIR/with space/avx2 program$HOST_EXE_SUFFIX"
+    # cli-gate-case selfhost-build-tool-avx2 wrapper run_cmd
     run_cmd selfhost-build-tool-avx2 "$COMPILER" build --direct "$PLANNER_SOURCE" -o "$PLANNER_AVX2_OUTPUT" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2
     assert_success
     assert_stderr_empty
@@ -1539,11 +1625,13 @@ EOF
 EOF
     fi
     if [ "$HOST_OS" = windows ]; then
+        # cli-gate-case selfhost-run-tool-windows wrapper run_cmd
         run_cmd selfhost-run-tool "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
         assert_code 7
         assert_stderr_empty
         assert_contains "$out" "hello"
     else
+    # cli-gate-case selfhost-run-tool-linux wrapper run_cmd
     run_cmd selfhost-run-tool "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
     assert_code 13
     assert_stderr_empty
@@ -1553,21 +1641,25 @@ EOF
     cat > "$PLANNER_RUN_CFG_SOURCE" <<'EOF'
 (define (main) : i64 (cfg feature 11 3))
 EOF
+    # cli-gate-case selfhost-run-tool-cfg wrapper run_cmd
     run_cmd selfhost-run-tool-cfg "$COMPILER" run --direct "$PLANNER_RUN_CFG_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode scalar --cfg feature
     assert_code 11
     assert_stdout_empty
     assert_stderr_empty
+    # cli-gate-case public-run-tool-cfg wrapper run_cmd
     run_cmd public-run-tool-cfg "$COMPILER" run "$PLANNER_RUN_CFG_SOURCE" --target "$SELFHOST_TOOL_TARGET" --cfg feature
     assert_code 11
     assert_stdout_empty
     assert_stderr_empty
 
     if [ "$HOST_OS" = linux ]; then
+        # cli-gate-case selfhost-run-tool-avx512 wrapper run_cmd
         run_cmd selfhost-run-tool-avx512 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx512 --stdlib-root "$ROOT/stdlib" -- "arg with spaces" "colon:arg"
         assert_code 13
         assert_stderr_empty
         assert_contains "$out" "arg with spaces"
     elif printf '%s\n' "$SIMD_ISAS" | grep -qx avx2; then
+        # cli-gate-case selfhost-run-tool-avx2 wrapper run_cmd
         run_cmd selfhost-run-tool-avx2 "$COMPILER" run --direct "$PLANNER_RUN_SOURCE" --target "$SELFHOST_TOOL_TARGET" --backend-mode avx2 --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src"
         assert_code 7
         assert_stderr_empty
@@ -1603,6 +1695,7 @@ EOF
   (entry "src/lib.tl"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_PKG/vendor/math/typelisp.pkg"
+    # cli-gate-case selfhost-build-package wrapper run_cmd
     run_cmd selfhost-build-package "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
@@ -1621,6 +1714,7 @@ EOF
     [ "$selfhost_pkg_status" -eq 42 ] || fail "selfhost package executable expected exit 42, got $selfhost_pkg_status"
 
     rm -rf "$SELFHOST_PKG/target"
+    # cli-gate-case selfhost-build-package-discover wrapper run_cmd_cwd
     run_cmd_cwd selfhost-build-package-discover "$SELFHOST_PKG/src/nested/deeper" "$COMPILER" build
     assert_success
     assert_stderr_empty
@@ -1641,6 +1735,7 @@ EOF
     cat > "$SELFHOST_LIBPKG/src/lib.tl" <<'EOF'
 (define (add-two [x : i64]) : i64 (+ x 2))
 EOF
+    # cli-gate-case selfhost-build-package-lib wrapper run_cmd
     run_cmd selfhost-build-package-lib "$COMPILER" build --direct --manifest-path "$SELFHOST_LIBPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
@@ -1659,6 +1754,7 @@ EOF
   (deps "not-yet"))
 EOF
     maybe_strip_manifest_kind "$SELFHOST_BADPKG/typelisp.pkg"
+    # cli-gate-case selfhost-build-package-parse-error wrapper run_cmd
     run_cmd selfhost-build-package-parse-error "$COMPILER" build --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
@@ -1677,6 +1773,7 @@ EOF
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
 EOF
+    # cli-gate-case selfhost-build-package-missing-alias wrapper run_cmd
     run_cmd selfhost-build-package-missing-alias "$COMPILER" build --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     assert_stdout_empty
@@ -1708,6 +1805,7 @@ EOF
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
 EOF
+    # cli-gate-case selfhost-build-package-missing-dep wrapper run_cmd
     run_cmd selfhost-build-package-missing-dep "$COMPILER" build --direct --manifest-path "$SELFHOST_BADPKG/typelisp.pkg"
     assert_failure
     # The selfhost --direct planner builds the path dependency's archive first
@@ -1717,11 +1815,13 @@ EOF
     assert_contains "$err" "compiler-load: cannot read import"
     assert_contains "$err" "vendor/math/src/missing.tl"
 
+    # cli-gate-case selfhost-build-package-opt-duplicate wrapper run_cmd
     run_cmd selfhost-build-package-opt-duplicate "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 1 --opt-level 2
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level was provided more than once"
 
+    # cli-gate-case selfhost-build-package-opt-invalid wrapper run_cmd
     run_cmd selfhost-build-package-opt-invalid "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --opt-level 3
     assert_failure
     assert_stdout_empty
@@ -1780,6 +1880,7 @@ EOF
     SELFHOST_OPT_WORKER_DEV_ASM="$SELFHOST_OPTWORKER/target/dev/selfhost_opt_worker.s"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-opt-default wrapper run_cmd
     run_cmd selfhost-build-package-opt-default "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg"
     assert_success
     assert_stderr_empty
@@ -1788,6 +1889,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
+    # cli-gate-case selfhost-build-package-worker-opt-default wrapper run_cmd
     run_cmd selfhost-build-package-worker-opt-default "$COMPILER" build --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg"
     assert_success
     assert_stderr_empty
@@ -1796,6 +1898,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_WORKER_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-profile-dev wrapper run_cmd
     run_cmd selfhost-build-package-profile-dev "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev
     assert_success
     assert_stderr_empty
@@ -1804,6 +1907,7 @@ EOF
     assert_not_contains_any "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-opt-zero wrapper run_cmd
     run_cmd selfhost-build-package-opt-zero "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 0
     assert_success
     assert_stderr_empty
@@ -1812,6 +1916,7 @@ EOF
     assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-opt-one wrapper run_cmd
     run_cmd selfhost-build-package-opt-one "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 1
     assert_success
     assert_stderr_empty
@@ -1819,6 +1924,7 @@ EOF
     assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-opt-two wrapper run_cmd
     run_cmd selfhost-build-package-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level 2
     assert_success
     assert_stderr_empty
@@ -1827,6 +1933,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-profile-release-opt-zero wrapper run_cmd
     run_cmd selfhost-build-package-profile-release-opt-zero "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile release --opt-level 0
     assert_success
     assert_stderr_empty
@@ -1835,6 +1942,7 @@ EOF
     assert_not_contains_any "$SELFHOST_OPT_RELEASE_ASM" "$SELFHOST_OPT2_REGALLOC_A" "$SELFHOST_OPT2_REGALLOC_B"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-profile-dev-opt-two wrapper run_cmd
     run_cmd selfhost-build-package-profile-dev-opt-two "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --opt-level 2
     assert_success
     assert_stderr_empty
@@ -1843,6 +1951,7 @@ EOF
     assert_not_contains "$SELFHOST_OPT_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTWORKER/target"
+    # cli-gate-case selfhost-build-package-worker-opt-before-profile wrapper run_cmd
     run_cmd selfhost-build-package-worker-opt-before-profile "$COMPILER" build --package-worker --manifest-path "$SELFHOST_OPTWORKER/typelisp.pkg" --opt-level 2 --profile dev
     assert_success
     assert_stderr_empty
@@ -1851,22 +1960,26 @@ EOF
     assert_not_contains "$SELFHOST_OPT_WORKER_DEV_ASM" "$SELFHOST_OPT0_STACK_MUL"
 
     rm -rf "$SELFHOST_OPTPKG/target"
+    # cli-gate-case selfhost-build-package-profile-invalid wrapper run_cmd
     run_cmd selfhost-build-package-profile-invalid "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile fast
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: unknown profile 'fast'; expected dev or release"
 
+    # cli-gate-case selfhost-build-package-profile-duplicate wrapper run_cmd
     run_cmd selfhost-build-package-profile-duplicate "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --profile dev --release
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: profile was provided more than once"
 
+    # cli-gate-case selfhost-build-package-opt-missing wrapper run_cmd
     run_cmd selfhost-build-package-opt-missing "$COMPILER" build --direct --manifest-path "$SELFHOST_OPTPKG/typelisp.pkg" --opt-level
     assert_failure
     assert_stdout_empty
     assert_contains "$err" "build: --opt-level requires a value"
 
     rm -rf "$SELFHOST_PKG/target"
+    # cli-gate-case selfhost-build-package-mode-staged wrapper run_cmd
     run_cmd selfhost-build-package-mode-staged "$COMPILER" build --direct --manifest-path "$SELFHOST_PKG/typelisp.pkg" --backend-mode avx2
     assert_success
     assert_stderr_empty
@@ -1874,6 +1987,7 @@ EOF
     assert_contains "$out" "Built $(native_arg_path "$SELFHOST_PKG_BIN")"
     assert_contains "$SELFHOST_PKG_ASM" "vzeroupper"
 
+    # cli-gate-case selfhost-run-tool-missing-target wrapper run_cmd
     run_cmd selfhost-run-tool-missing-target "$COMPILER" run --direct "$PLANNER_SOURCE" --target
     assert_failure
     assert_stdout_empty
@@ -1910,6 +2024,7 @@ while IFS='|' read -r diag_name diag_command diag_expect || [ -n "$diag_name" ];
 
     case "$diag_command" in
         compile)
+            # cli-gate-expand backend-{diag} wrapper run_cmd diag=quote-runtime-value
             run_cmd "backend-$diag_name" "$COMPILER" compile "$work_source"
             ;;
         *)
@@ -1942,6 +2057,7 @@ if [ "$HAS_LINT_COMMAND" = 1 ]; then
       [b : i64 (+ a 1)]
       (+ a b))))
 EOF
+    # cli-gate-case lint-nested-let wrapper run_cmd
     run_cmd lint-nested-let "$COMPILER" lint "$WORKDIR/lint_bad.tl"
     assert_success
     assert_stderr_empty
@@ -1950,6 +2066,7 @@ EOF
     assert_contains "$out" "merge bindings"
     assert_contains "$out" "lint: 1 finding(s)"
 
+    # cli-gate-case lint-nested-let-check wrapper run_cmd
     run_cmd lint-nested-let-check "$COMPILER" lint "$WORKDIR/lint_bad.tl" --check
     assert_failure
     assert_stderr_empty
@@ -1963,11 +2080,13 @@ EOF
     10
     0))
 EOF
+    # cli-gate-case lint-clean wrapper run_cmd
     run_cmd lint-clean "$COMPILER" lint "$WORKDIR/lint_clean.tl"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
+    # cli-gate-case lint-clean-check wrapper run_cmd
     run_cmd lint-clean-check "$COMPILER" lint "$WORKDIR/lint_clean.tl" --check
     assert_success
     assert_stderr_empty
@@ -1980,11 +2099,13 @@ EOF
 (define (BadFunction [BadParam : i64]) : i64
   BadParam)
 EOF
+    # cli-gate-case lint-name-case-default wrapper run_cmd
     run_cmd lint-name-case-default "$COMPILER" lint "$WORKDIR/lint_name_case.tl" --check
     assert_success
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
 
+    # cli-gate-case lint-name-case wrapper run_cmd
     run_cmd lint-name-case "$COMPILER" lint "$WORKDIR/lint_name_case.tl" --name-case
     assert_success
     assert_stderr_empty
@@ -1999,11 +2120,13 @@ EOF
     assert_contains "$out" "lint: 4 finding(s)"
     assert_not_contains "$out" ":0:0:"
 
+    # cli-gate-case lint-name-case-check wrapper run_cmd
     run_cmd lint-name-case-check "$COMPILER" lint "$WORKDIR/lint_name_case.tl" --name-case --check
     assert_failure
     assert_stderr_empty
     assert_contains "$out" "lint: 4 finding(s)"
 
+    # cli-gate-case lint-multi wrapper run_cmd
     run_cmd lint-multi "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_bad.tl"
     assert_success
     assert_stderr_empty
@@ -2020,6 +2143,7 @@ EOF
         fail "lint multi-file output did not preserve input path order"
     fi
 
+    # cli-gate-case lint-files-manifest wrapper run_cmd
     run_cmd lint-files-manifest "$COMPILER" lint "$WORKDIR/lint_clean.tl" "$WORKDIR/lint_bad.tl" --manifest-path typelisp.pkg
     assert_failure
     assert_stdout_empty
@@ -2049,6 +2173,7 @@ EOF
 (define (suppressed-bin) : i64
   8)
 EOF
+    # cli-gate-case lint-package-bin wrapper run_cmd
     run_cmd lint-package-bin "$COMPILER" lint --check --manifest-path "$LINT_PKG_BIN/typelisp.pkg"
     assert_failure
     assert_stderr_empty
@@ -2080,12 +2205,14 @@ EOF
 (define bad-global : i64
   1)
 EOF
+    # cli-gate-case lint-package-lib wrapper run_cmd
     run_cmd lint-package-lib "$COMPILER" lint --check --manifest-path "$LINT_PKG_LIB/typelisp.pkg"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "lint: 0 finding(s)"
     assert_not_contains "$out" "dead-lib"
 
+    # cli-gate-case lint-package-lib-name-case wrapper run_cmd
     run_cmd lint-package-lib-name-case "$COMPILER" lint --name-case --check --manifest-path "$LINT_PKG_LIB/typelisp.pkg"
     assert_failure
     assert_stderr_empty
@@ -2094,6 +2221,7 @@ EOF
     assert_contains "$out" "lint: 1 finding(s)"
 
     LINT_NOPKG=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-lint-nopkg.XXXXXX")
+    # cli-gate-case lint-missing wrapper run_cmd_cwd
     run_cmd_cwd lint-missing "$LINT_NOPKG" "$COMPILER" lint
     assert_failure
     assert_stdout_empty
@@ -2106,6 +2234,7 @@ EOF
     rm -rf "$LINT_NOPKG"
 
     printf '(define (' > "$WORKDIR/lint_parse_error.tl"
+    # cli-gate-case lint-parse-error-check wrapper run_cmd
     run_cmd lint-parse-error-check "$COMPILER" lint "$WORKDIR/lint_parse_error.tl" --check
     assert_failure
     assert_stdout_empty
@@ -2150,17 +2279,20 @@ while IFS= read -r fmt_name; do
     cp "tests/format_golden/$fmt_name.tl" "$WORKDIR/$fmt_name.tl"
     strip_expected_trailing_lf "tests/format_golden/$fmt_name.expected" "$WORKDIR/$fmt_name.expected"
 
+    # cli-gate-expand fmt-{format} wrapper run_cmd format=char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
     run_cmd "$case_name" "$COMPILER" fmt "$WORKDIR/$fmt_name.tl"
     assert_success
     assert_stdout_empty
     assert_stderr_empty
     check_file_exact "$WORKDIR/$fmt_name.tl" "$WORKDIR/$fmt_name.expected"
 
+    # cli-gate-expand fmt-{format}-check wrapper run_cmd format=char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
     run_cmd "$case_name-check" "$COMPILER" fmt --check "$WORKDIR/$fmt_name.tl"
     assert_success
     assert_stdout_empty
     assert_stderr_empty
 
+    # cli-gate-expand fmt-{format}-idempotent wrapper run_cmd format=char-literal,comments,decls,flow,let-bindings,negative-int,quote,signature-colon,tail-comment
     run_cmd "$case_name-idempotent" "$COMPILER" fmt "$WORKDIR/$fmt_name.tl"
     assert_success
     assert_stdout_empty
@@ -2181,6 +2313,7 @@ cat > "$WORKDIR/docs.tl" <<'EOF'
 ;: ```
 (define documented : i64 1)
 EOF
+# cli-gate-case doc-test-pass wrapper run_cmd
 run_cmd doc-test-pass "$COMPILER" doc --test "$WORKDIR/docs.tl"
 assert_success
 assert_stderr_empty
@@ -2193,6 +2326,7 @@ cat > "$WORKDIR/docs_expected_error.tl" <<'EOF'
 ;# (define (bad) : i64 true)
 ;# ```
 EOF
+# cli-gate-case doc-test-expected-error wrapper run_cmd
 run_cmd doc-test-expected-error "$COMPILER" doc --test "$WORKDIR/docs_expected_error.tl"
 assert_success
 assert_stderr_empty
@@ -2205,6 +2339,7 @@ cat > "$WORKDIR/docs_malformed.tl" <<'EOF'
 ;# (define (main) : i64 0)
 ;# ```
 EOF
+# cli-gate-case doc-test-malformed wrapper run_cmd
 run_cmd doc-test-malformed "$COMPILER" doc --test "$WORKDIR/docs_malformed.tl"
 assert_failure
 assert_stdout_empty
@@ -2216,6 +2351,7 @@ cat > "$WORKDIR/docs_empty.tl" <<'EOF'
 ;: Item docs without fenced examples.
 (define documented : i64 1)
 EOF
+# cli-gate-case doc-test-empty wrapper run_cmd
 run_cmd doc-test-empty "$COMPILER" doc --test "$WORKDIR/docs_empty.tl"
 assert_success
 assert_stderr_empty
@@ -2228,6 +2364,7 @@ cat > "$WORKDIR/docs_second.tl" <<'EOF'
 ;# (define (main) : i64 42)
 ;# ```
 EOF
+# cli-gate-case doc-test-multiple wrapper run_cmd
 run_cmd doc-test-multiple "$COMPILER" doc --test "$WORKDIR/docs.tl" "$WORKDIR/docs_second.tl"
 assert_success
 assert_stderr_empty
@@ -2250,6 +2387,7 @@ cat > "$WORKDIR/docs_stdlib_root.tl" <<'EOF'
 ;# (define (main) : i64 stdlib-answer)
 ;# ```
 EOF
+# cli-gate-case doc-test-stdlib-root wrapper run_cmd
 run_cmd doc-test-stdlib-root "$COMPILER" doc --test "$WORKDIR/docs_stdlib_root.tl" --stdlib-root "$DOC_STDLIB_ROOT"
 assert_success
 assert_stderr_empty
@@ -2262,6 +2400,7 @@ cat > "$WORKDIR/docs_bad.tl" <<'EOF'
 ;# (define (bad) : i64 true)
 ;# ```
 EOF
+# cli-gate-case doc-test-unexpected-error wrapper run_cmd
 run_cmd doc-test-unexpected-error "$COMPILER" doc --test "$WORKDIR/docs_bad.tl"
 assert_failure
 assert_stdout_empty
@@ -2272,11 +2411,13 @@ if [ "$IS_STAGE1_WRAPPER" -eq 0 ]; then
 fi
 assert_doctest_temp_cleaned "$WORKDIR/docs_bad.tl"
 
+# cli-gate-case doc-test-manifest-input-error wrapper run_cmd
 run_cmd doc-test-manifest-input-error "$COMPILER" doc --test "$WORKDIR/docs.tl" --manifest-path typelisp.pkg
 assert_failure
 assert_stdout_empty
 assert_contains "$err" "doc: cannot combine input paths with --manifest-path"
 
+# cli-gate-case doc-usage-missing wrapper run_cmd
 run_cmd doc-usage-missing "$COMPILER" doc
 assert_failure
 assert_stdout_empty
@@ -2293,8 +2434,10 @@ fi
 
 if [ "$SELFHOST_FRONTEND_DIAGNOSTICS" -eq 1 ]; then
     DOC_NO_PACKAGE_DIR=$(mktemp -d "${TMPDIR:-/tmp}/typelisp-public-doc-nopkg.XXXXXX")
+    # cli-gate-case doc-test-usage-missing-cwd wrapper run_cmd_cwd
     run_cmd_cwd doc-test-usage-missing "$DOC_NO_PACKAGE_DIR" "$COMPILER" doc --test
 else
+    # cli-gate-case doc-test-usage-missing-repository wrapper run_cmd
     run_cmd doc-test-usage-missing "$COMPILER" doc --test
 fi
 assert_failure
@@ -2316,6 +2459,7 @@ if [ "$HOST_ACTION_ENABLED" -eq 1 ]; then
 ;: Item docs.
 (define answer : i64 42)
 EOF
+    # cli-gate-case doc-generate wrapper run_cmd
     run_cmd doc-generate "$COMPILER" doc "$WORKDIR/doc_source.tl" -o "$WORKDIR/doc_source.md"
     assert_success
     assert_stderr_empty
@@ -2323,6 +2467,7 @@ EOF
     assert_contains "$WORKDIR/doc_source.md" "Module docs."
     assert_contains "$WORKDIR/doc_source.md" "answer"
 
+    # cli-gate-case doc-generate-positional wrapper run_cmd
     run_cmd doc-generate-positional "$COMPILER" doc "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source_positional.md"
     assert_success
     assert_stderr_empty
@@ -2337,6 +2482,7 @@ EOF
 ;: Single item.
 (define x : i64 1)
 EOF
+    # cli-gate-case doc-generate-custom wrapper run_cmd
     run_cmd doc-generate-custom "$COMPILER" doc "$WORKDIR/doc_custom_input.tl" -o "$DOC_CUSTOM_OUT"
     assert_success
     assert_stderr_empty
@@ -2372,6 +2518,7 @@ EOF
 ;: Entry docs.
 (define (main) : i64 (+ local-answer stdlib-answer))
 EOF
+    # cli-gate-case doc-generate-module-graph wrapper run_cmd
     run_cmd doc-generate-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" -o "$DOC_GRAPH_OUT" --stdlib-root "$DOC_GRAPH_STDLIB"
     assert_success
     assert_stderr_empty
@@ -2400,6 +2547,7 @@ EOF
         fail "doc module graph did not preserve loader source order"
 
     DOC_GRAPH_EXPLICIT_OUT="$DOC_GRAPH_DIR/explicit.md"
+    # cli-gate-case doc-generate-explicit-module-graph wrapper run_cmd
     run_cmd doc-generate-explicit-module-graph "$COMPILER" doc "$DOC_GRAPH_ENTRY" "$DOC_GRAPH_LOCAL" "$DOC_GRAPH_STDLIB_SOURCE" "$DOC_GRAPH_EXPLICIT_OUT"
     assert_success
     assert_stderr_empty
@@ -2409,6 +2557,7 @@ EOF
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Local module docs."
     assert_contains "$DOC_GRAPH_EXPLICIT_OUT" "Stdlib module docs."
 
+    # cli-gate-case doc-generate-html wrapper run_cmd
     run_cmd doc-generate-html "$COMPILER" doc --html "$WORKDIR/doc_source.tl" "$WORKDIR/doc_source.html"
     assert_success
     assert_contains "$out" "Wrote $(native_arg_path "$WORKDIR/doc_source.html")"
@@ -2449,11 +2598,13 @@ cat > "$WORKDIR/inline_test_pass.tl" <<'EOF'
   (assert-i64-eq (inc 41) 42 "inc result"))
 EOF
 
+# cli-gate-case inline-test-check wrapper run_cmd
 run_cmd inline-test-check "$COMPILER" test --check "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 1 test(s)"
 
+# cli-gate-case inline-test-pass wrapper run_cmd
 run_cmd inline-test-pass "$COMPILER" test "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stdout_empty
@@ -2462,6 +2613,7 @@ assert_contains "$err" "ok inc-basic"
 assert_contains "$err" "TypeLisp tests passed: 1 test(s)"
 [ ! -f "$WORKDIR/inline_test_pass.tl.test.s" ] || fail "typelisp test left scratch assembly behind"
 
+# cli-gate-case inline-test-normal-compile wrapper run_cmd
 run_cmd inline-test-normal-compile "$COMPILER" compile "$WORKDIR/inline_test_pass.tl" --target "$HOST_TARGET" -o "$WORKDIR/inline_test_pass.s" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
@@ -2477,6 +2629,7 @@ cat > "$WORKDIR/inline_test_fail.tl" <<'EOF'
   (assert-i64-eq 1 2 "inline failure message"))
 EOF
 
+    # cli-gate-case inline-test-fail wrapper run_cmd
     run_cmd inline-test-fail "$COMPILER" test "$WORKDIR/inline_test_fail.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
     assert_failure
     assert_stdout_empty
@@ -2488,11 +2641,13 @@ EOF
 cat > "$WORKDIR/inline_test_no_tests.tl" <<'EOF'
 (define (main) : i64 0)
 EOF
+# cli-gate-case inline-test-no-tests-check wrapper run_cmd
 run_cmd inline-test-no-tests-check "$COMPILER" test --check "$WORKDIR/inline_test_no_tests.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test typecheck passed: 0 test(s)"
 
+# cli-gate-case inline-test-no-tests-run wrapper run_cmd
 run_cmd inline-test-no-tests-run "$COMPILER" test "$WORKDIR/inline_test_no_tests.tl" --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stdout_empty
@@ -2548,12 +2703,14 @@ maybe_strip_manifest_kind "$TEST_PKG/tests/vendor/child/typelisp.pkg"
 cat > "$TEST_PKG/tests/vendor/child/src/fail.tl" <<'EOF'
 (define (main) : i64 9)
 EOF
+# cli-gate-case package-test-check wrapper run_cmd_cwd
 run_cmd_cwd package-test-check "$TEST_PKG/src" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "TypeLisp test file:"
 assert_contains "$out" "TypeLisp integration test file:"
 assert_contains "$out" "TypeLisp package test typecheck passed: 3 test(s) in 3 file(s)"
+# cli-gate-case package-test-run wrapper run_cmd_cwd
 run_cmd_cwd package-test-run "$TEST_PKG/src" "$COMPILER" test --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_contains "$out" "TypeLisp integration test file:"
@@ -2574,6 +2731,7 @@ maybe_strip_manifest_kind "$TEST_EMPTY_PKG/typelisp.pkg"
 cat > "$TEST_EMPTY_PKG/src/lib.tl" <<'EOF'
 (define lib-value : i64 42)
 EOF
+# cli-gate-case package-test-empty wrapper run_cmd_cwd
 run_cmd_cwd package-test-empty "$TEST_EMPTY_PKG" "$COMPILER" test --check --target "$HOST_TARGET" --stdlib-root "$ROOT/stdlib"
 assert_success
 assert_stderr_empty
@@ -2597,6 +2755,7 @@ EOF
 cat > "$TEST_FAIL_PKG/tests/fail.tl" <<'EOF'
 (define (main) : i64 7)
 EOF
+# cli-gate-case package-test-fail wrapper run_cmd
 run_cmd package-test-fail "$COMPILER" test --target "$HOST_TARGET" --manifest-path "$TEST_FAIL_PKG/typelisp.pkg"
 if [ "$code" -ne 1 ]; then
     fail "package integration failure exited $code, expected 1"
@@ -2649,6 +2808,7 @@ cat > "$PKG/vendor/math/typelisp.pkg" <<'EOF'
   (entry "src/lib.tl"))
 EOF
 maybe_strip_manifest_kind "$PKG/vendor/math/typelisp.pkg"
+# cli-gate-case package-build wrapper run_cmd
 run_cmd package-build "$COMPILER" build --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
@@ -2660,6 +2820,7 @@ MATH_TLCI="$PKG/vendor/math/target/release/math.tlci"
 if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     [ -s "$PKG_TLCI" ] || fail "package build did not write tlci image"
     [ -s "$MATH_TLCI" ] || fail "package build did not write dependency tlci image"
+    # cli-gate-case package-inspect-tlci wrapper run_cmd
     run_cmd package-inspect-tlci "$COMPILER" inspect "$PKG_TLCI"
     assert_success
     assert_stderr_empty
@@ -2668,6 +2829,7 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     assert_contains "$out" "metadata-version: v1"
     assert_contains "$out" "code: offset="
     assert_not_contains "$out" "code: offset=0 bytes=0"
+    # cli-gate-case package-inspect-dependency-tlci wrapper run_cmd
     run_cmd package-inspect-dependency-tlci "$COMPILER" inspect "$MATH_TLCI"
     assert_success
     assert_stderr_empty
@@ -2678,6 +2840,7 @@ if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
     BAD_TLCI="$WORKDIR/bad.tlci"
     BAD_TLCI_DISPLAY=$(native_arg_path "$BAD_TLCI")
     printf 'bad' > "$BAD_TLCI"
+    # cli-gate-case package-inspect-bad-tlci wrapper run_cmd
     run_cmd package-inspect-bad-tlci "$COMPILER" inspect "$BAD_TLCI"
     assert_failure
     assert_stdout_empty
@@ -2737,6 +2900,7 @@ SPLIT_ROOT_HOST_ARCHIVE="$SPLIT_PKG/target/release/${HOST_STATIC_LIB_PREFIX}spli
 SPLIT_MATH_HOST_ARCHIVE="$SPLIT_PKG/vendor/math/target/release/${HOST_STATIC_LIB_PREFIX}split_math${HOST_STATIC_LIB_SUFFIX}"
 SPLIT_UTIL_HOST_ARCHIVE="$SPLIT_PKG/vendor/util/target/release/${HOST_STATIC_LIB_PREFIX}split_util${HOST_STATIC_LIB_SUFFIX}"
 
+# cli-gate-case package-host-target-split wrapper run_cmd
 run_cmd package-host-target-split "$COMPILER" build --manifest-path "$SPLIT_PKG/typelisp.pkg" --target "$PACKAGE_SPLIT_TARGET"
 assert_success
 assert_stderr_empty
@@ -2762,12 +2926,14 @@ if [ "$SPLIT_UTIL_HOST_ARCHIVE" != "$SPLIT_UTIL_ARCHIVE" ]; then
     [ ! -e "$SPLIT_UTIL_HOST_ARCHIVE" ] || fail "package split build wrote util host runtime archive $SPLIT_UTIL_HOST_ARCHIVE"
 fi
 if [ "$HAS_INSPECT_COMMAND" -eq 1 ]; then
+    # cli-gate-case package-host-target-split-inspect wrapper run_cmd
     run_cmd package-host-target-split-inspect "$COMPILER" inspect "$SPLIT_ROOT_TLCI"
     assert_success
     assert_stderr_empty
     assert_contains "$out" "host-arch: x86_64"
     assert_contains "$out" "package-name: split_pkg"
     assert_contains "$out" "code: offset=0 bytes=0"
+    # cli-gate-case package-host-target-split-dep-inspect wrapper run_cmd
     run_cmd package-host-target-split-dep-inspect "$COMPILER" inspect "$SPLIT_MATH_TLCI"
     assert_success
     assert_stderr_empty
@@ -2781,6 +2947,7 @@ SPLIT_UTIL_DEV_ARCHIVE="$SPLIT_PKG/vendor/util/target/dev/${PACKAGE_SPLIT_STATIC
 SPLIT_ROOT_DEV_TLCI="$SPLIT_PKG/target/dev/split_pkg.tlci"
 SPLIT_MATH_DEV_TLCI="$SPLIT_PKG/vendor/math/target/dev/split_math.tlci"
 SPLIT_UTIL_DEV_TLCI="$SPLIT_PKG/vendor/util/target/dev/split_util.tlci"
+# cli-gate-case package-host-target-split-dev wrapper run_cmd
 run_cmd package-host-target-split-dev "$COMPILER" build --manifest-path "$SPLIT_PKG/typelisp.pkg" --target "$PACKAGE_SPLIT_TARGET" --profile dev
 assert_success
 assert_stderr_empty
@@ -2812,18 +2979,21 @@ else
 fi
 if [ "$HAS_CLEAN_COMMAND" -eq 1 ]; then
 PKG_OUT_DIR="$PKG/target/release"
+# cli-gate-case package-clean-dry-run wrapper run_cmd
 run_cmd package-clean-dry-run "$COMPILER" clean --dry-run --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Would remove:"
 assert_contains "$out" "public_tool_pkg.s"
 [ -f "$PKG_ASM" ] || fail "package clean dry-run removed assembly"
+# cli-gate-case package-clean wrapper run_cmd
 run_cmd package-clean "$COMPILER" clean --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stderr_empty
 assert_contains "$out" "Removed:"
 [ ! -e "$PKG_ASM" ] || fail "package clean did not remove $PKG_ASM"
 [ ! -d "$PKG_OUT_DIR" ] || fail "package clean did not remove $PKG_OUT_DIR"
+# cli-gate-case package-clean-idempotent wrapper run_cmd
 run_cmd package-clean-idempotent "$COMPILER" clean --manifest-path "$PKG/typelisp.pkg"
 assert_success
 assert_stdout_empty
@@ -2841,6 +3011,7 @@ cat > "$BADPKG/typelisp.pkg" <<'EOF'
   (deps "not-yet"))
 EOF
 maybe_strip_manifest_kind "$BADPKG/typelisp.pkg"
+# cli-gate-case package-parse-error wrapper run_cmd
 run_cmd package-parse-error "$COMPILER" build --manifest-path "$BADPKG/typelisp.pkg"
 assert_failure
 assert_stdout_empty
@@ -2858,6 +3029,7 @@ cat > "$BADPKG/src/main.tl" <<'EOF'
 (import "pkg:math/src/lib.tl")
 (define (main) : i64 0)
 EOF
+# cli-gate-case package-missing-alias wrapper run_cmd
 run_cmd package-missing-alias "$COMPILER" build --manifest-path "$BADPKG/typelisp.pkg"
 assert_failure
 assert_stdout_empty
@@ -2881,6 +3053,7 @@ EOF
 cat > "$WALK_PKG/src/math.tl" <<'EOF'
 (define (inc [x : i64]) : i64 (+ x 1))
 EOF
+# cli-gate-case package-discover-upward wrapper run_cmd_cwd
 run_cmd_cwd package-discover-upward "$WALK_PKG/src/nested/deeper" "$COMPILER" build
 assert_success
 assert_stderr_empty
@@ -2925,6 +3098,7 @@ cat > "$MISSING_DEP/src/main.tl" <<'EOF'
 (import "pkg:math/src/missing.tl")
 (define (main) : i64 0)
 EOF
+# cli-gate-case package-missing-dep-file wrapper run_cmd
 run_cmd package-missing-dep-file "$COMPILER" build --manifest-path "$MISSING_DEP/typelisp.pkg"
 assert_failure
 if [ "$IS_STAGE1_WRAPPER" -eq 1 ]; then
@@ -2946,13 +3120,16 @@ fi
 echo "[public-tools] LSP corpus via run-corpus.sh"
 if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     echo "[public-tools] LSP transcript batch manifest contract"
+    # cli-gate-case public-lsp-transcript-batch-contract delegated TYPELISP_BIN="$COMPILER"
     TYPELISP_BIN="$COMPILER" sh "$ROOT/scripts/verify-lsp-transcript-batch.sh"
+    # cli-gate-case public-lsp-corpus delegated TYPELISP_BIN="$COMPILER"
     TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" lsp
 else
     fail "LSP corpus requires the public lsp command"
 fi
 
 echo "[public-tools] REPL corpus via run-corpus.sh"
+# cli-gate-case public-repl-corpus delegated TYPELISP_BIN="$COMPILER"
 TYPELISP_BIN="$COMPILER" sh "$ROOT/tests/public-tools/run-corpus.sh" repl
 if [ "$HOST_OS" = linux ]; then
     :
@@ -2963,6 +3140,7 @@ else
 (+ 1 2) ; trailing comment must not swallow generated wrapper delimiters
 .exit
 EOF
+    # cli-gate-case selfhost-repl-scratch-smoke wrapper run_stdin
     run_stdin selfhost-repl-scratch-smoke "$SELFHOST_REPL_SMOKE" "$COMPILER" repl
     assert_success
     assert_contains "$out" "3"
@@ -2985,6 +3163,7 @@ if [ "$HAS_LSP_COMMAND" -eq 1 ]; then
     : > "$LSP_IN"
     frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"capabilities":{}}}'
     frame_append "$LSP_IN" '{"jsonrpc":"2.0","id":2,"method":"shutdown","params":null}'
+    # cli-gate-case lsp-init-shutdown wrapper run_stdin
     run_stdin lsp-init-shutdown "$LSP_IN" "$COMPILER" lsp
     assert_success
     assert_stderr_empty
@@ -3225,10 +3404,12 @@ while IFS='|' read -r spec_name spec_mode spec_value; do
         ignore)
             ;;
         check)
+            # cli-gate-expand spec-{spec} wrapper run_cmd spec=struct-declaration,scalar-globals,extern-declaration,inline-test-declaration,move-copyable-scalar-reuse,move-copyable-struct-field-projection,move-match-payload-consumes-scrutinee,borrowed-enum-match-non-consuming,spmd-program-index-foreach,spmd-program-index-empty-range,spmd-program-index-tail,spmd-program-index-reduce,spmd-masked-if-scalar-fallback,spmd-masked-if-tail,spmd-masked-if-nested,spmd-reduce-sum-i64,spmd-reduce-any-bool,spmd-reduce-max-seeded,spmd-scan-sum-i64,with-arena-basic,with-arena-example,with-escape-example,with-scratch-example,in-arena-example,arena-phase-safe-example,arena-make-atomic-specified,arena-manual-helpers,arena-poison-enable-extern
             run_cmd "spec-$spec_name" "$COMPILER" check "$SPEC_WORK/$spec_name.tl"
             assert_success
             ;;
         compile)
+            # cli-gate-expand spec-{spec} wrapper run_cmd spec=panic-never-branch,monomorphic-option-result
             run_cmd "spec-$spec_name" "$COMPILER" compile "$SPEC_WORK/$spec_name.tl" -o "$SPEC_WORK/$spec_name.s"
             assert_success
             ;;
@@ -3236,6 +3417,7 @@ while IFS='|' read -r spec_name spec_mode spec_value; do
             if [ "$HOST_ACTION_ENABLED" -eq 0 ]; then
                 fail "SPEC run example $spec_name requires host-action drivers"
             fi
+            # cli-gate-expand spec-{spec} wrapper run_cmd spec=factorial,enum-match,struct-access,fixed-array,string-length,print-string,extern-tl-alloc
             run_cmd "spec-$spec_name" "$COMPILER" run "$SPEC_WORK/$spec_name.tl"
             assert_code "$spec_value"
             check_text_file_exact "$out" "$SPEC_WORK/$spec_name.stdout"

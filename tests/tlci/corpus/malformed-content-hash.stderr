@@ -1,0 +1,1 @@
+inspect: tests/tlci/corpus/malformed-content-hash.tlci: tlci: content hash mismatch

@@ -1,0 +1,1 @@
+inspect: tests/tlci/corpus/malformed-metadata.tlci: tlci: malformed metadata: tlci metadata: expected `(typelisp-tlci-metadata ...)`

@@ -1,0 +1,1 @@
+inspect: tests/tlci/corpus/malformed-truncated-range.tlci: tlci: section `metadata` extends past end

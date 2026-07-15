@@ -935,21 +935,8 @@
   (define compiler-lower-profile-string-concat-runtime-calls : i64
     0))
 
-(define (lower-existing-name-id [value : String]) : i64
-  (match (ci.intern-lookup-content value)
-    [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing)
-      (let
-        [structural-id : i64 (lower-name-cache-source-id-value value)]
-        (if (>= structural-id 0)
-          structural-id
-          (io.panic
-            (string.append "lower: name has no pre-existing symbol id: " value))))]))
-
-(define (lower-existing-name-id-or [value : String] [fallback : i64]) : i64
-  (match (ci.intern-lookup-content value)
-    [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing) fallback]))
+(define (lower-test-generated-name-id [value : String]) : i64
+  (ci.intern-generated-canonical-name value))
 
 (cfg
   compile-profile
@@ -1585,130 +1572,6 @@
   (No)
   (Some i64))
 
-(define (lower-name-cache-source-last-slash [source-name : String]) : i64
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length source-name)]
-    [last : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref source-name i) '/')
-            (set! last i)
-            unit)
-          (set! i (+ i 1))))
-      last)))
-
-(define (lower-name-cache-source-last-dot [source-name : String]) : i64
-  (let
-    [i : i64 0]
-    [n : i64 (string.string-length source-name)]
-    [last : i64 -1]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref source-name i) '.')
-            (set! last i)
-            unit)
-          (set! i (+ i 1))))
-      last)))
-
-(define (lower-name-cache-source-module-key-id
-  [source-name : String]
-  [split : i64]) : LowerNameCacheMaybeId
-  (let
-    [n : i64 (string.string-length source-name)]
-    [base-start : i64 (+ split 1)]
-    [module : String (string.substring source-name 0 split)]
-    [base : String (string.substring source-name base-start (- n base-start))]
-    (match (intern-lookup-content module)
-      [(InternLookupFound module-id)
-        (match (intern-lookup-content base)
-          [(InternLookupFound base-id)
-            (LowerNameCacheMaybeId.Some
-              (compiler-symbol-module-key-id-by-id module-id base-id))]
-          [(InternLookupMissing) (LowerNameCacheMaybeId.No)])]
-      [(InternLookupMissing) (LowerNameCacheMaybeId.No)])))
-
-(define (lower-name-cache-source-id-from-parts [source-name : String]) : LowerNameCacheMaybeId
-  (let
-    [slash : i64 (lower-name-cache-source-last-slash source-name)]
-    [n : i64 (string.string-length source-name)]
-    (if (< slash 0)
-      (let
-        [dot : i64 (lower-name-cache-source-last-dot source-name)]
-        (if (and (> dot 0) (< dot (- n 1)))
-          (lower-name-cache-source-module-key-id source-name dot)
-          (LowerNameCacheMaybeId.No)))
-      (let
-        [base-start : i64 (+ slash 1)]
-        [module : String (string.substring source-name 0 slash)]
-        [base : String
-          (string.substring source-name base-start (- n base-start))]
-        (match (intern-lookup-content module)
-          [(InternLookupFound module-id)
-            (match (intern-lookup-content base)
-              [(InternLookupFound base-id)
-                (LowerNameCacheMaybeId.Some
-                  (compiler-symbol-module-key-id-by-id module-id base-id))]
-              [(InternLookupMissing)
-                (let
-                  [i : i64 0]
-                  [base-len : i64 (string.string-length base)]
-                  [dot : i64 -1]
-                  (begin
-                    (while (and (< i base-len) (< dot 0))
-                      (begin
-                        (if (string.char-eq (string.string-ref base i) '.')
-                          (set! dot i)
-                          unit)
-                        (set! i (+ i 1))))
-                    (if (and (> dot 0) (< dot (- base-len 1)))
-                      (let
-                        [owner : String (string.substring base 0 dot)]
-                        [variant-start : i64 (+ dot 1)]
-                        [variant : String
-                          (string.substring
-                            base
-                            variant-start
-                            (- base-len variant-start))]
-                        (match (intern-lookup-content owner)
-                          [(InternLookupFound owner-id)
-                            (match (intern-lookup-content variant)
-                              [(InternLookupFound variant-id)
-                                (LowerNameCacheMaybeId.Some
-                                  (compiler-composite-triple-key-id
-                                    module-id
-                                    owner-id
-                                    variant-id))]
-                              [(InternLookupMissing) (LowerNameCacheMaybeId.No)])]
-                          [(InternLookupMissing) (LowerNameCacheMaybeId.No)]))
-                      (LowerNameCacheMaybeId.No))))])]
-          [(InternLookupMissing) (LowerNameCacheMaybeId.No)])))))
-
-(define (lower-name-cache-source-id [source-name : String]) : LowerNameCacheMaybeId
-  (let
-    [slash : i64 (lower-name-cache-source-last-slash source-name)]
-    (if (> slash 0)
-      (match (lower-name-cache-source-id-from-parts source-name)
-        [(LowerNameCacheMaybeId.Some key-id)
-          (LowerNameCacheMaybeId.Some key-id)]
-        [(LowerNameCacheMaybeId.No)
-          (match (intern-lookup-content source-name)
-            [(InternLookupFound id)
-              (LowerNameCacheMaybeId.Some (compiler-symbol-name-id-key id))]
-            [(InternLookupMissing) (LowerNameCacheMaybeId.No)])])
-      (match (intern-lookup-content source-name)
-        [(InternLookupFound id)
-          (LowerNameCacheMaybeId.Some (compiler-symbol-name-id-key id))]
-        [(InternLookupMissing)
-          (lower-name-cache-source-id-from-parts source-name)]))))
-
-(define (lower-name-cache-source-id-value [source-name : String]) : i64
-  (match (lower-name-cache-source-id source-name)
-    [(LowerNameCacheMaybeId.Some source-id) source-id]
-    [(LowerNameCacheMaybeId.No) -1]))
-
 (define (lower-name-env-bind-logical-id
   [source-id : i64]
   [logical-name : String]
@@ -1843,7 +1706,7 @@
 
 ;; Build a small overlay name cache from `names` (the module-local names
 ;; only). On a miss it falls through to the shared global cache
-;; `lower-active-global-name-cache` (see lower-name-cache-resolve).
+;; `lower-active-global-name-cache` (see lower-name-cache-resolve-logical-id).
 (define (lower-name-cache-overlay [names : LowerNameEnv] [module-id : i64]) : LowerNameCache
   (let
     [count : i64 (lower-name-env-count names)]
@@ -2054,16 +1917,6 @@
                     fallback))))
             fallback))))))
 
-(define (lower-name-cache-resolve-logical-name-id
-  [cache : (& cache LowerNameCache)]
-  [source-name : String]
-  [fallback : i64]) : i64
-  (let
-    [source-id : i64 (lower-name-cache-source-id-value source-name)]
-    (if (< source-id 0)
-      fallback
-      (lower-name-cache-resolve-logical-id cache source-id fallback))))
-
 (define (lower-name-cache-resolve-symbol-id
   [cache : (& cache LowerNameCache)]
   [source-id : i64]
@@ -2096,67 +1949,6 @@
         (if (< logical-id 0)
           (TcMaybeString.No)
           (lower-name-cache-lookup-id cache logical-id))])))
-
-(define (lower-name-cache-resolve
-  [cache : LowerNameCache]
-  [source-name : String]) : String
-  (match (lower-name-cache-source-id source-name)
-    [(LowerNameCacheMaybeId.Some source-id)
-      (match (lower-name-cache-resolve-id-display cache source-id)
-        [(TcMaybeString.Some logical-name) logical-name]
-        [(TcMaybeString.No) source-name])]
-    [(LowerNameCacheMaybeId.No) source-name]))
-
-(define (lower-name-cache-resolve-dotted
-  [cache : LowerNameCache]
-  [source-name : String]) : String
-  (let
-    [n : i64 (string.string-length source-name)]
-    [i : i64 0]
-    [out : String ""]
-    [done : bool false]
-    (begin
-      (while (if done
-        false
-        (< i n))
-        (begin
-          (if (and
-            (> i 0)
-            (< i (- n 1))
-            (string.char-eq (string.string-ref source-name i) '.'))
-            (let
-              [module : String (string.substring source-name 0 i)]
-              [base-start : i64 (+ i 1)]
-              [base : String
-                (string.substring source-name base-start (- n base-start))]
-              (match (intern-lookup-content module)
-                [(InternLookupFound module-id)
-                  (match (intern-lookup-content base)
-                    [(InternLookupFound base-id)
-                      (match (lower-name-cache-lookup-id
-                        cache
-                        (compiler-symbol-module-key-id-by-id module-id base-id))
-                        [(TcMaybeString.Some resolved)
-                          (begin
-                            (set! out (string.copy resolved))
-                            (set! done true))]
-                        [(TcMaybeString.No) unit])]
-                    [(InternLookupMissing) unit])]
-                [(InternLookupMissing) unit]))
-            unit)
-          (set! i (+ i 1))))
-      (if done
-        out
-        source-name))))
-
-(define (lower-name-cache-resolve-source
-  [cache : LowerNameCache]
-  [source-name : String]) : String
-  (let
-    [resolved : String (lower-name-cache-resolve cache source-name)]
-    (if (string.eq resolved source-name)
-      (lower-name-cache-resolve-dotted cache source-name)
-      (string.copy resolved))))
 
 (define (lower-type-env-count [env : TcTypeEnv]) : i64
   (match (tc-type-env-spine-step env)
@@ -2369,19 +2161,6 @@
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
               [(ResultTcType.Err _) (ResultTcType.Err message)])]
           [(TcMaybeString.No) (ResultTcType.Err message)])])))
-
-(define (lower-name-cache-resolve-hygiene
-  [cache : LowerNameCache]
-  [source-name : String]) : String
-  (let
-    [primary : String (lower-hygiene-source-name source-name)]
-    [resolved : String (lower-name-cache-resolve-source cache primary)]
-    (if (string.eq resolved primary)
-      (match (lower-hygiene-fallback-source-name source-name)
-        [(TcMaybeString.Some fallback)
-          (lower-name-cache-resolve-source cache fallback)]
-        [(TcMaybeString.No) resolved])
-      resolved)))
 
 (define (lower-source-name-lookup-key-id
   [ctx : TcContext]
@@ -2914,9 +2693,6 @@
   (if (>= (string.string-length name) 6)
     (string.eq (string.substring name 0 6) "clone$")
     false))
-
-(define (lower-resolve-name [state : LowerState] [source-name : String]) : String
-  (lower-name-cache-resolve-hygiene (lower-state-names state) source-name))
 
 (define (lower-resolve-name-id [state : LowerState] [source-id : i64]) : String
   (if (and (>= source-id 0) (< source-id (intern-capacity)))
@@ -19278,11 +19054,6 @@
 
 (define (lower-bootstrap-runtime-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-bootstrap-runtime-id? name-id))
-
-(define (lower-bootstrap-runtime-builtin? [name : String]) : bool
-  (let
-    [name-id : i64 (lower-existing-name-id-or name -1)]
-    (and (>= name-id 0) (lower-bootstrap-runtime-builtin-id? name-id))))
 
 (define (lower-args-as
   [ctx : TcContext]
@@ -56655,7 +56426,7 @@
   (let
     [fn : AstDecl
       (ast-decl-def-fn-id
-        (lower-existing-name-id "generated")
+        (lower-test-generated-name-id "generated")
         (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 1))))]
@@ -56835,7 +56606,7 @@
                   _)
                 CompilerIrExternList.Nil)
               (and
-                (= name-id (lower-existing-name-id "ffi-add"))
+                (string.eq (intern-str name-id) "ffi-add")
                 (string.eq name "ffi-add")
                 (string.eq (intern-str symbol-id) "ffi_add")
                 (ast-extern-abi-c? abi)
@@ -61031,40 +60802,19 @@
   (let
     [ok : bool true]
     (begin
-      (when (lower-bootstrap-runtime-builtin? "print") (set! ok false))
       (when
-        (lower-bootstrap-runtime-builtin? "io.print-string")
-        (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "print-str") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "print-newline") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "print-bool") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "print-char") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "print-float") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "io.print-error") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "panic") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "error") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "arg-count") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "arg") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "read-file") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "write-file") (set! ok false))
-      (when
-        (lower-bootstrap-runtime-builtin? "file-open-status")
-        (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "process-id") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "current-dir") (set! ok false))
-      (when
-        (lower-bootstrap-runtime-builtin? "read-stdin-line")
+        (lower-bootstrap-runtime-builtin-id?
+          cbi.compiler-builtin-id-env-path-separator)
         (set! ok false))
       (when
-        (lower-bootstrap-runtime-builtin? "read-stdin-bytes")
+        (not
+          (lower-bootstrap-runtime-builtin-id?
+            cbi.compiler-builtin-id-tl-private-string-eq))
         (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "stdin-eof?") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "flush-stdout") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "var-exists?") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "var-value") (set! ok false))
-      (when (lower-bootstrap-runtime-builtin? "path-separator") (set! ok false))
       (when
-        (lower-bootstrap-runtime-builtin? "string.int->string")
+        (not
+          (lower-bootstrap-runtime-builtin-id?
+            cbi.compiler-builtin-id-tl-private-string-to-int))
         (set! ok false))
       (when (lower-string-runtime-builtin? "substring") (set! ok false))
       (when (lower-string-runtime-builtin? "string-slice") (set! ok false))
@@ -61211,13 +60961,13 @@
   (ast-program
     (ast-decl-cons
       (ast-decl-def-id
-        (lower-existing-name-id "callback")
+        (lower-test-generated-name-id "callback")
         AstMaybeType.No
         (ast-node-push
           (AstExpr.Var cbi.compiler-builtin-id-fix-callback_target)))
       (ast-decl-cons
         (ast-decl-def-fn-id
-          (lower-existing-name-id "main")
+          (lower-test-generated-name-id "main")
           (ast-param-list-new)
           (AstType.I64)
           (ast-expr-call
@@ -61225,19 +60975,19 @@
             (ast-expr-list-new)))
         (ast-decl-cons
           (ast-decl-def-fn-id
-            (lower-existing-name-id "helper")
+            (lower-test-generated-name-id "helper")
             (ast-param-list-new)
             (AstType.I64)
             (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
           (ast-decl-cons
             (ast-decl-def-fn-id
-              (lower-existing-name-id "callback-target")
+              (lower-test-generated-name-id "callback-target")
               (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 11))))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-existing-name-id "dead")
+                (lower-test-generated-name-id "dead")
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
@@ -61292,13 +61042,13 @@
   (ast-program
     (ast-decl-cons
       (ast-decl-def-fn-id
-        (lower-existing-name-id "helper")
+        (lower-test-generated-name-id "helper")
         (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
       (ast-decl-cons
         (ast-decl-def-fn-id
-          (lower-existing-name-id "dead")
+          (lower-test-generated-name-id "dead")
           (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 9))))
@@ -61308,19 +61058,19 @@
   (ast-program
     (ast-decl-cons
       (ast-decl-def-fn-id
-        (lower-existing-name-id "main")
+        (lower-test-generated-name-id "main")
         (ast-param-list-new)
         (AstType.I64)
         (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
       (ast-decl-cons
         (ast-decl-def-fn-id
-          (lower-existing-name-id "macro-only-helper")
+          (lower-test-generated-name-id "macro-only-helper")
           (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
         (ast-decl-cons
           (ast-decl-def-macro-id
-            (lower-existing-name-id "macro-uses-helper")
+            (lower-test-generated-name-id "macro-uses-helper")
             (ast-macro-param-list-new)
             (AstType.Expr)
             (ast-expr-call
@@ -61332,18 +61082,18 @@
 (define (compiler-lower-stdlib-comptime-runtime-dce-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-module-id (lower-existing-name-id "stdlib.comptime"))
+      (ast-decl-module-id (lower-test-generated-name-id "stdlib.comptime"))
       (ast-decl-cons
         (ast-decl-def-fn-id
-          (lower-existing-name-id "ctfe-runtime-helper")
+          (lower-test-generated-name-id "ctfe-runtime-helper")
           (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
         (ast-decl-cons
-          (ast-decl-module-id (lower-existing-name-id "main"))
+          (ast-decl-module-id (lower-test-generated-name-id "main"))
           (ast-decl-cons
             (ast-decl-def-fn-id
-              (lower-existing-name-id "main")
+              (lower-test-generated-name-id "main")
               (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61354,22 +61104,22 @@
     [decls : AstDeclList
       (ast-decl-cons
         (ast-decl-def-fn-id
-          (lower-existing-name-id "ctfe-runtime-helper")
+          (lower-test-generated-name-id "ctfe-runtime-helper")
           (ast-param-list-new)
           (AstType.I64)
           (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
         (ast-decl-cons
           (ast-decl-comptime-decl
             (ast-decl-def-struct-id
-              (lower-existing-name-id "ExprClauseList")
+              (lower-test-generated-name-id "ExprClauseList")
               AstStructRepr.Default
               AstStructCleanup.No
               (ast-field-def-list-new)))
           (ast-decl-cons
-            (ast-decl-module-id (lower-existing-name-id "main"))
+            (ast-decl-module-id (lower-test-generated-name-id "main"))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-existing-name-id "main")
+                (lower-test-generated-name-id "main")
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61386,25 +61136,25 @@
     [program : AstProgram
       (ast-program
         (ast-decl-cons
-          (ast-decl-module-id (lower-existing-name-id "stdlib.comptime"))
+          (ast-decl-module-id (lower-test-generated-name-id "stdlib.comptime"))
           (ast-decl-cons
             (ast-decl-def-fn-id
-              (lower-existing-name-id "ctfe-runtime-helper")
+              (lower-test-generated-name-id "ctfe-runtime-helper")
               (ast-param-list-new)
               (AstType.I64)
               (ast-node-push (AstExpr.Literal (ast-lit-int 7))))
             (ast-decl-cons
               (ast-decl-comptime-decl
                 (ast-decl-def-struct-id
-                  (lower-existing-name-id "ExprClauseList")
+                  (lower-test-generated-name-id "ExprClauseList")
                   AstStructRepr.Default
                   AstStructCleanup.No
                   (ast-field-def-list-new)))
               (ast-decl-cons
-                (ast-decl-module-id (lower-existing-name-id "main"))
+                (ast-decl-module-id (lower-test-generated-name-id "main"))
                 (ast-decl-cons
                   (ast-decl-def-fn-id
-                    (lower-existing-name-id "main")
+                    (lower-test-generated-name-id "main")
                     (ast-param-list-new)
                     (AstType.I64)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61460,49 +61210,49 @@
   (ast-program
     (ast-decl-cons
       (ast-decl-def-enum-id
-        (lower-existing-name-id "UsedEnum")
+        (lower-test-generated-name-id "UsedEnum")
         AstEnumCleanup.No
         (ast-variant-def-cons
           (ast-variant-def-id
-            (lower-existing-name-id "UsedA")
+            (lower-test-generated-name-id "UsedA")
             (ast-type-list-new)
             (ast-variant-payload-cleanup-list-new))
           (ast-variant-def-list-new)))
       (ast-decl-cons
         (ast-decl-def-enum-id
-          (lower-existing-name-id "DeadEnum")
+          (lower-test-generated-name-id "DeadEnum")
           AstEnumCleanup.No
           (ast-variant-def-cons
             (ast-variant-def-id
-              (lower-existing-name-id "DeadA")
+              (lower-test-generated-name-id "DeadA")
               (ast-type-list-new)
               (ast-variant-payload-cleanup-list-new))
             (ast-variant-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-struct-id
-            (lower-existing-name-id "UsedBox")
+            (lower-test-generated-name-id "UsedBox")
             AstStructRepr.Default
             AstStructCleanup.No
             (ast-field-def-cons
               (ast-field-def-id
-                (lower-existing-name-id "value")
+                (lower-test-generated-name-id "value")
                 (AstType.Enum cbi.compiler-builtin-id-fix-UsedEnum)
                 AstFieldCleanup.No)
               (ast-field-def-list-new)))
           (ast-decl-cons
             (ast-decl-def-struct-id
-              (lower-existing-name-id "DeadBox")
+              (lower-test-generated-name-id "DeadBox")
               AstStructRepr.Default
               AstStructCleanup.No
               (ast-field-def-cons
                 (ast-field-def-id
-                  (lower-existing-name-id "value")
+                  (lower-test-generated-name-id "value")
                   (AstType.I64)
                   AstFieldCleanup.No)
                 (ast-field-def-list-new)))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-existing-name-id "main")
+                (lower-test-generated-name-id "main")
                 (ast-param-list-new)
                 (AstType.Struct cbi.compiler-builtin-id-fix-UsedBox)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61523,27 +61273,27 @@
   (ast-program
     (ast-decl-cons
       (ast-decl-def-enum-id
-        (lower-existing-name-id "io.ResultIoString")
+        (lower-test-generated-name-id "io.ResultIoString")
         AstEnumCleanup.No
         (ast-variant-def-cons
           (ast-variant-def-id
-            (lower-existing-name-id "OkIoString")
+            (lower-test-generated-name-id "OkIoString")
             (ast-type-list-new)
             (ast-variant-payload-cleanup-list-new))
           (ast-variant-def-list-new)))
       (ast-decl-cons
         (ast-decl-def-enum-id
-          (lower-existing-name-id "io.DeadResult")
+          (lower-test-generated-name-id "io.DeadResult")
           AstEnumCleanup.No
           (ast-variant-def-cons
             (ast-variant-def-id
-              (lower-existing-name-id "DeadResultA")
+              (lower-test-generated-name-id "DeadResultA")
               (ast-type-list-new)
               (ast-variant-payload-cleanup-list-new))
             (ast-variant-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-fn-id
-            (lower-existing-name-id "main")
+            (lower-test-generated-name-id "main")
             (ast-param-list-new)
             (AstType.Enum cbi.compiler-builtin-id-fix-ResultIoString)
             (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61559,57 +61309,57 @@
 (define (compiler-lower-type-decl-dce-arena-support-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-module-id (lower-existing-name-id "stdlib.arena"))
+      (ast-decl-module-id (lower-test-generated-name-id "stdlib.arena"))
       (ast-decl-cons
         (ast-decl-def-struct-id
-          (lower-existing-name-id "Arena")
+          (lower-test-generated-name-id "Arena")
           AstStructRepr.Default
           AstStructCleanup.No
           (ast-field-def-cons
             (ast-field-def-id
-              (lower-existing-name-id "handle")
+              (lower-test-generated-name-id "handle")
               (AstType.I64)
               AstFieldCleanup.No)
             (ast-field-def-list-new)))
         (ast-decl-cons
           (ast-decl-def-struct-id
-            (lower-existing-name-id "ArenaMark")
+            (lower-test-generated-name-id "ArenaMark")
             AstStructRepr.Default
             AstStructCleanup.No
             (ast-field-def-cons
               (ast-field-def-id
-                (lower-existing-name-id "handle")
+                (lower-test-generated-name-id "handle")
                 (AstType.I64)
                 AstFieldCleanup.No)
               (ast-field-def-list-new)))
           (ast-decl-cons
             (ast-decl-def-struct-id
-              (lower-existing-name-id "DeadArenaPeer")
+              (lower-test-generated-name-id "DeadArenaPeer")
               AstStructRepr.Default
               AstStructCleanup.No
               (ast-field-def-cons
                 (ast-field-def-id
-                  (lower-existing-name-id "handle")
+                  (lower-test-generated-name-id "handle")
                   (AstType.I64)
                   AstFieldCleanup.No)
                 (ast-field-def-list-new)))
             (ast-decl-cons
-              (ast-decl-module-id (lower-existing-name-id "main"))
+              (ast-decl-module-id (lower-test-generated-name-id "main"))
               (ast-decl-cons
                 (ast-decl-def-struct-id
-                  (lower-existing-name-id "ThreadBox")
+                  (lower-test-generated-name-id "ThreadBox")
                   AstStructRepr.Default
                   AstStructCleanup.No
                   (ast-field-def-cons
                     (ast-field-def-id
-                      (lower-existing-name-id "owner")
+                      (lower-test-generated-name-id "owner")
                       (AstType.Struct
                         cbi.compiler-builtin-id-fix-arena_dot_Arena)
                       AstFieldCleanup.No)
                     (ast-field-def-list-new)))
                 (ast-decl-cons
                   (ast-decl-def-fn-id
-                    (lower-existing-name-id "main")
+                    (lower-test-generated-name-id "main")
                     (ast-param-list-new)
                     (AstType.Struct cbi.compiler-builtin-id-fix-ThreadBox)
                     (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61637,7 +61387,7 @@
       (ast-expr-let
         (ast-let-binding-cons
           (ast-let-binding-id
-            (lower-existing-name-id "mark")
+            (lower-test-generated-name-id "mark")
             (AstMaybeType.Some
               (AstType.Struct cbi.compiler-builtin-id-fix-ImportedMark))
             unit-expr)
@@ -61646,24 +61396,24 @@
     (ast-program
       (ast-decl-cons
         (ast-decl-def-struct-id
-          (lower-existing-name-id "ImportedMark")
+          (lower-test-generated-name-id "ImportedMark")
           AstStructRepr.Default
           AstStructCleanup.No
           (ast-field-def-list-new))
         (ast-decl-cons
           (ast-decl-def-struct-id
-            (lower-existing-name-id "DeadMark")
+            (lower-test-generated-name-id "DeadMark")
             AstStructRepr.Default
             AstStructCleanup.No
             (ast-field-def-list-new))
           (ast-decl-cons
             (ast-decl-test-id
-              (lower-existing-name-id "uses-imported-mark-annotation")
+              (lower-test-generated-name-id "uses-imported-mark-annotation")
               test-body
               (ast-source-span 1 1 1 1))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-existing-name-id "main")
+                (lower-test-generated-name-id "main")
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -61681,39 +61431,39 @@
 (define (compiler-lower-type-decl-dce-body-pattern-program) : AstProgram
   (ast-program
     (ast-decl-cons
-      (ast-decl-module-id (lower-existing-name-id "struct.match.geom"))
+      (ast-decl-module-id (lower-test-generated-name-id "struct.match.geom"))
       (ast-decl-cons
         (ast-decl-def-struct-id
-          (lower-existing-name-id "QPoint")
+          (lower-test-generated-name-id "QPoint")
           AstStructRepr.Default
           AstStructCleanup.No
           (ast-field-def-cons
             (ast-field-def-id
-              (lower-existing-name-id "x")
+              (lower-test-generated-name-id "x")
               (AstType.I64)
               AstFieldCleanup.No)
             (ast-field-def-cons
               (ast-field-def-id
-                (lower-existing-name-id "y")
+                (lower-test-generated-name-id "y")
                 (AstType.I64)
                 AstFieldCleanup.No)
               (ast-field-def-list-new))))
         (ast-decl-cons
           (ast-decl-def-struct-id
-            (lower-existing-name-id "DeadGeom")
+            (lower-test-generated-name-id "DeadGeom")
             AstStructRepr.Default
             AstStructCleanup.No
             (ast-field-def-cons
               (ast-field-def-id
-                (lower-existing-name-id "value")
+                (lower-test-generated-name-id "value")
                 (AstType.I64)
                 AstFieldCleanup.No)
               (ast-field-def-list-new)))
           (ast-decl-cons
-            (ast-decl-module-id (lower-existing-name-id "main"))
+            (ast-decl-module-id (lower-test-generated-name-id "main"))
             (ast-decl-cons
               (ast-decl-def-fn-id
-                (lower-existing-name-id "main")
+                (lower-test-generated-name-id "main")
                 (ast-param-list-new)
                 (AstType.I64)
                 (ast-expr-match
@@ -61721,11 +61471,13 @@
                   (ast-match-arm-cons
                     (ast-match-arm
                       (ast-pat-variant-id
-                        (lower-existing-name-id "geom.QPoint")
+                        (lower-test-generated-name-id "geom.QPoint")
                         (ast-pattern-cons
-                          (ast-pat-binding-id (lower-existing-name-id "x"))
+                          (ast-pat-binding-id
+                            (lower-test-generated-name-id "x"))
                           (ast-pattern-cons
-                            (ast-pat-binding-id (lower-existing-name-id "y"))
+                            (ast-pat-binding-id
+                              (lower-test-generated-name-id "y"))
                             (ast-pattern-list-new))))
                       (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
                     (ast-match-arm-list-new))))
@@ -62086,10 +61838,9 @@
 
 (define (compiler-lower-name-cache-intern-id-dotted-ok?) : bool
   (let
-    [source : String (compiler-symbol-module-key "alias" "value")]
-    [source-id : i64 (lower-existing-name-id source)]
     [alias-id : i64 cbi.compiler-builtin-id-fix-alias]
     [value-id : i64 cbi.compiler-builtin-id-fix-value]
+    [source-id : i64 (compiler-symbol-module-key-id-by-id alias-id value-id)]
     [logical : String "logical-value"]
     [split-source : String
       (compiler-symbol-module-key
@@ -62127,20 +61878,12 @@
       (match (intern-lookup split-source)
         [(InternLookupFound _) false]
         [(InternLookupMissing) true])
-      (string.eq (lower-name-cache-resolve cache source) logical)
-      (string.eq (lower-name-cache-resolve-source cache "alias.value") logical)
-      (string.eq (lower-name-cache-resolve cache split-source) split-logical)
-      (string.eq
-        (lower-name-cache-resolve-source
-          cache
-          "name_cache_split_alias_3940.name_cache_split_value_3940")
-        split-logical)
-      (string.eq
-        (lower-name-cache-resolve-source cache "alias.missing")
-        "alias.missing")
-      (string.eq
-        (lower-name-cache-resolve-source cache "unknown.value")
-        "unknown.value"))))
+      (match (lower-name-cache-resolve-id-display cache source-id)
+        [(TcMaybeString.Some resolved) (string.eq resolved logical)]
+        [(TcMaybeString.No) false])
+      (match (lower-name-cache-resolve-id-display cache split-source-id)
+        [(TcMaybeString.Some resolved) (string.eq resolved split-logical)]
+        [(TcMaybeString.No) false]))))
 
 (define (compiler-lower-type-cache-i64-keys-ok?) : bool
   (let

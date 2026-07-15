@@ -45290,7 +45290,7 @@
     (struct-get index calls)
     (struct-get index needs-div-abort)
     (struct-get index needs-shift-abort)
-    (if (string.eq (compiler-ir-symbol-text link-id) "tl_tlci_call_macro_entry")
+    (if (cbi.compiler-builtin-backend-tlci-call-macro-entry-id? link-id)
       call-id
       (struct-get index tlci-macro-entry-call-id))))
 

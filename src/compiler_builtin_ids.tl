@@ -130,6 +130,8 @@
   -1)
 (define compiler-builtin-id-tl-print-f64 : i64
   -1)
+(define compiler-builtin-id-tl-tlci-call-macro-entry : i64
+  -1)
 (define compiler-builtin-id-string-length : i64
   -1)
 (define compiler-builtin-id-length : i64
@@ -610,7 +612,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 294)]
+    [ids : (Array i64) (make-array i64 295)]
     [ctfe-ids : (Array i64) (make-array i64 212)]
     [i : i64 0]
     (begin
@@ -618,7 +620,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 284)
+      (while (< i 295)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -1071,6 +1073,7 @@
     (state-set! state 291 compiler-builtin-id-atomic-i32-add)
     (state-set! state 292 compiler-builtin-id-atomic-i32-fetch-add)
     (state-set! state 293 compiler-builtin-id-atomic-i32-cas)
+    (state-set! state 294 compiler-builtin-id-tl-tlci-call-macro-entry)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1452,6 +1455,7 @@
     (set! compiler-builtin-id-atomic-i32-add (state-ref state 291))
     (set! compiler-builtin-id-atomic-i32-fetch-add (state-ref state 292))
     (set! compiler-builtin-id-atomic-i32-cas (state-ref state 293))
+    (set! compiler-builtin-id-tl-tlci-call-macro-entry (state-ref state 294))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -1928,6 +1932,9 @@
     (set!
       compiler-builtin-id-tl-print-f64
       (compiler-builtin-resolve-name insert-missing "tl_print_f64"))
+    (set!
+      compiler-builtin-id-tl-tlci-call-macro-entry
+      (compiler-builtin-resolve-name insert-missing "tl_tlci_call_macro_entry"))
     (set!
       compiler-builtin-id-string-length
       (compiler-builtin-resolve-name insert-missing "string-length"))
@@ -2946,6 +2953,11 @@
   (begin
     (compiler-builtin-refresh!)
     (= name-id compiler-builtin-id-tl-print-f64)))
+
+(define (compiler-builtin-backend-tlci-call-macro-entry-id? [name-id : i64]) : bool
+  (begin
+    (compiler-builtin-refresh!)
+    (= name-id compiler-builtin-id-tl-tlci-call-macro-entry)))
 
 (define (compiler-builtin-backend-tl-hash-string-id? [name-id : i64]) : bool
   (begin

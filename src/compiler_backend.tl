@@ -2164,16 +2164,23 @@
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
-  [elem-ty : AstType]) : ResultCompilerBackend
+  [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load assignments value elem-ty)
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (let
         [no-exclude : (Array String) (array.make-array String 0)]
-        [gp-reg : String (compiler-backend-scavenge-reg dst no-exclude 0 "%r8")]
+        [gp-reg : String
+          (if (> (string.string-length planned-gp) 0)
+            planned-gp
+            (compiler-backend-scavenge-reg dst no-exclude 0 "%r8"))]
         [gp32 : String (compiler-backend-reg-part gp-reg 4)]
         [xmm-reg : String
-          (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2")]
+          (if (> (string.string-length planned-xmm) 0)
+            planned-xmm
+            (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))]
         (match elem-ty
           [(AstType.F64)
             (match (compiler-backend-emit-load-float-value-with-plan
@@ -2330,6 +2337,8 @@
   [value : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
@@ -2339,7 +2348,13 @@
       "ymm"
       (compiler-backend-vector-spill-scratch "ymm" 0))
       [(ResultBackendReg.Ok dst-reg)
-        (match (compiler-backend-avx2-splat-load assignments dst value elem-ty)
+        (match (compiler-backend-avx2-splat-load
+          assignments
+          dst
+          value
+          elem-ty
+          planned-gp
+          planned-xmm)
           [(ResultCompilerBackend.Ok load-asm)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -2959,16 +2974,23 @@
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [value : CompilerIrValue]
-  [elem-ty : AstType]) : ResultCompilerBackend
+  [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]) : ResultCompilerBackend
   (match (compiler-backend-splat-memory-load assignments value elem-ty)
     [(CompilerBackendMaybeAsm.Some asm) (ResultCompilerBackend.Ok asm)]
     [(CompilerBackendMaybeAsm.No)
       (let
         [no-exclude : (Array String) (array.make-array String 0)]
-        [gp-reg : String (compiler-backend-scavenge-reg dst no-exclude 0 "%r8")]
+        [gp-reg : String
+          (if (> (string.string-length planned-gp) 0)
+            planned-gp
+            (compiler-backend-scavenge-reg dst no-exclude 0 "%r8"))]
         [gp32 : String (compiler-backend-reg-part gp-reg 4)]
         [xmm-reg : String
-          (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2")]
+          (if (> (string.string-length planned-xmm) 0)
+            planned-xmm
+            (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2"))]
         (match elem-ty
           [(AstType.F64)
             (match (compiler-backend-emit-load-float-value-with-plan
@@ -3373,6 +3395,8 @@
   [value : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (match (compiler-backend-vector-dst-reg
@@ -3386,7 +3410,9 @@
           assignments
           dst
           value
-          elem-ty)
+          elem-ty
+          planned-gp
+          planned-xmm)
           [(ResultCompilerBackend.Ok load-asm)
             (ResultCompilerBackend.Ok
               (str_cat.str-cat
@@ -3416,6 +3442,8 @@
   [value : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-gp : String]
+  [planned-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-splat
@@ -3424,6 +3452,8 @@
       value
       lanes
       elem-ty
+      planned-gp
+      planned-xmm
       instr-diag)
     (compiler-backend-emit-avx2-splat
       assignments
@@ -3431,6 +3461,8 @@
       value
       lanes
       elem-ty
+      planned-gp
+      planned-xmm
       instr-diag)))
 
 (define (compiler-backend-emit-avx512-vector-binop
@@ -4640,6 +4672,8 @@
   [src : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-acc-xmm : String]
+  [planned-scratch-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (compiler-backend-emit-avx512-vector-reduce
@@ -4649,6 +4683,8 @@
       src
       lanes
       elem-ty
+      planned-acc-xmm
+      planned-scratch-xmm
       instr-diag)
     (compiler-backend-emit-avx2-vector-reduce
       assignments
@@ -4657,6 +4693,8 @@
       src
       lanes
       elem-ty
+      planned-acc-xmm
+      planned-scratch-xmm
       instr-diag)))
 
 (define (compiler-backend-emit-vector-store
@@ -9683,6 +9721,8 @@
   [src : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-acc-xmm : String]
+  [planned-scratch-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx2-shape-ok? elem-ty lanes)
     (let
@@ -9706,15 +9746,22 @@
               [(CompilerBackendVectorUse.Use src-asm ymm)
                 (let
                   [xmm : String (compiler-backend-vector-reg-lower-xmm ymm)]
-                  [no-exclude : (Array String) (array.make-array String 0)]
                   [acc-xmm : String
-                    (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2")]
+                    (if (> (string.string-length planned-acc-xmm) 0)
+                      planned-acc-xmm
+                      (compiler-backend-scavenge-xmm-reg
+                        dst
+                        (compiler-backend-one-exclude planned-scratch-xmm)
+                        1
+                        "%xmm2"))]
                   [scratch-xmm : String
-                    (compiler-backend-scavenge-xmm-reg
-                      dst
-                      (compiler-backend-one-exclude acc-xmm)
-                      1
-                      "%xmm3")]
+                    (if (> (string.string-length planned-scratch-xmm) 0)
+                      planned-scratch-xmm
+                      (compiler-backend-scavenge-xmm-reg
+                        dst
+                        (compiler-backend-one-exclude acc-xmm)
+                        1
+                        "%xmm3"))]
                   (if (= (string.string-length xmm) 0)
                     (ResultCompilerBackend.Err
                       (box
@@ -9980,6 +10027,8 @@
   [src : CompilerIrValue]
   [lanes : i64]
   [elem-ty : AstType]
+  [planned-acc-xmm : String]
+  [planned-scratch-xmm : String]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
   (if (compiler-backend-avx512-shape-ok? elem-ty lanes)
     (let
@@ -10003,15 +10052,22 @@
               [(CompilerBackendVectorUse.Use src-asm zmm)
                 (let
                   [ymm : String (compiler-backend-vector-reg-lower-ymm zmm)]
-                  [no-exclude : (Array String) (make-array String 0)]
                   [acc-xmm : String
-                    (compiler-backend-scavenge-xmm-reg dst no-exclude 0 "%xmm2")]
+                    (if (> (string.string-length planned-acc-xmm) 0)
+                      planned-acc-xmm
+                      (compiler-backend-scavenge-xmm-reg
+                        dst
+                        (compiler-backend-one-exclude planned-scratch-xmm)
+                        1
+                        "%xmm2"))]
                   [scratch-xmm : String
-                    (compiler-backend-scavenge-xmm-reg
-                      dst
-                      (compiler-backend-one-exclude acc-xmm)
-                      1
-                      "%xmm3")]
+                    (if (> (string.string-length planned-scratch-xmm) 0)
+                      planned-scratch-xmm
+                      (compiler-backend-scavenge-xmm-reg
+                        dst
+                        (compiler-backend-one-exclude acc-xmm)
+                        1
+                        "%xmm3"))]
                   [acc-ymm : String (compiler-backend-xmm-to-ymm acc-xmm)]
                   (if (or
                     (= (string.string-length ymm) 0)
@@ -29466,6 +29522,8 @@
           value
           lanes
           elem-ty
+          planned-scratch0
+          planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.VectorBinOp payload-box)
         (match (box-get payload-box)
@@ -29493,6 +29551,8 @@
           src
           lanes
           elem-ty
+          planned-scratch0
+          planned-scratch1
           instr-diag)]
       [(CompilerIrInstr.VectorCompare payload-box)
         (match (box-get payload-box)

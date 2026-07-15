@@ -19727,7 +19727,11 @@
   (MemoryValue)
   (CopyDst)
   (CopySrc)
-  (CopyValue))
+  (CopyValue)
+  (SplatValueGp)
+  (SplatValueXmm)
+  (VectorReduceAccumulator)
+  (VectorReduceScratch))
 
 (defstruct CompilerRegScratchConstraint
   (register-class CompilerRegScratchClass)
@@ -19921,6 +19925,13 @@
           (not (compiler-reg-scratch-value-direct? _assignments value)))
           1
           0)]
+      ;; A non-memory splat stages integer lanes through GP+XMM and float lanes
+      ;; through XMM. Keep the two fixed ordinals so emission lookup remains
+      ;; stable regardless of the source home and selected element type.
+      [(CompilerIrInstr.Splat _ _ _ _) 2]
+      ;; Horizontal AVX2/AVX-512 reductions need an accumulator plus a sibling
+      ;; XMM temporary at the same instruction point.
+      [(CompilerIrInstr.VectorReduce _ _ _ _ _) 2]
       [_ 0])
     0))
 
@@ -20251,6 +20262,14 @@
         (compiler-reg-scratch-value-registers assignments length))]
     [(CompilerIrInstr.Store _ value _)
       (compiler-reg-scratch-value-registers assignments value)]
+    [(CompilerIrInstr.Splat dst value _ _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments value))]
+    [(CompilerIrInstr.VectorReduce dst _ src _ _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
     [_ CompilerRegStringList.Nil]))
 
 (define (compiler-reg-scratch-memory-constraint
@@ -20258,6 +20277,15 @@
   [instr : CompilerIrInstr]) : CompilerRegScratchConstraint
   (compiler-reg-scratch-gp-constraint-excluding
     (compiler-reg-scratch-instr-registers assignments instr)))
+
+(define (compiler-reg-scratch-xmm-constraint
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]) : CompilerRegScratchConstraint
+  (CompilerRegScratchConstraint
+    (CompilerRegScratchClass.Xmm)
+    CompilerRegStringList.Nil
+    (compiler-reg-scratch-instr-registers assignments instr)
+    ""))
 
 (define (compiler-reg-scratch-aggregate-constraint
   [policy : CompilerRegScratchPolicy]
@@ -20598,6 +20626,30 @@
         ordinal
         (CompilerRegScratchRole.MemoryValue)
         (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Splat _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.SplatValueGp)
+          (CompilerRegScratchRole.SplatValueXmm))
+        (if (= ordinal 0)
+          (compiler-reg-scratch-memory-constraint assignments instr)
+          (compiler-reg-scratch-xmm-constraint assignments instr))
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.VectorReduce _ _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.VectorReduceAccumulator)
+          (CompilerRegScratchRole.VectorReduceScratch))
+        (compiler-reg-scratch-xmm-constraint assignments instr)
         point
         (+ point 1)
         var)]

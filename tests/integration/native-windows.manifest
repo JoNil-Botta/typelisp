@@ -168,6 +168,7 @@ many_args|tests/integration/many_args.tl|36|-|-|-
 maybe_result|tests/integration/maybe_result.tl|65|-|-|stdlib/string.tl
 min_div_neg1_trap|tests/integration/min_div_neg1_trap.tl|135|-|-|-|expected-stderr:tl: integer division or remainder error\n
 modules_main|tests/integration/modules_main.tl|30|-|-|modules_helper.tl
+dotted_nested_variant|tests/integration/dotted_nested_variant_main.tl|0|-|-|dotted_nested_variant_consumer.tl dotted_nested_variant_provider.tl
 narrow_div_mod|tests/integration/narrow_div_mod.tl|30|-|-|-
 nested_eval|tests/integration/nested_eval.tl|7|-|-|stdlib/io.tl stdlib/string.tl
 nullary_variant_call|tests/integration/nullary_variant_call.tl|42|-|-|-

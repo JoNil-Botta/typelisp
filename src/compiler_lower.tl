@@ -12937,6 +12937,7 @@
   (match (tc-type-strip-region ty)
     [(AstType.Enum enum-name) (intern-str enum-name)]
     [(AstType.EnumArgs enum-name _) (intern-str enum-name)]
+    [(AstType.Var enum-name) (intern-str enum-name)]
     [(AstType.VarArgs enum-name _) (intern-str enum-name)]
     [_ ""]))
 
@@ -12947,18 +12948,89 @@
     [(AstType.VarArgs struct-name _) (intern-str struct-name)]
     [_ ""]))
 
-(define (lower-variant-lookup-name-for-scrut
+(define (lower-variant-owner-name-for-enum
+  [ctx : TcContext]
+  [enum-name : String]
+  [variant-name : String]) : String
+  (let
+    [first-dot : i64 (tc-name-first-dot variant-name)]
+    [after-first-dot : String
+      (if (>= first-dot 0)
+        (string.substring
+          variant-name
+          (+ first-dot 1)
+          (- (string.string-length variant-name) (+ first-dot 1)))
+        "")]
+    [module-qualified? : bool
+      (and (>= first-dot 0) (>= (tc-name-first-dot after-first-dot) 0))]
+    [type-handle : i64
+      (compiler-symbols-lookup-type-or
+        (tc-context-symbols ctx)
+        enum-name
+        (compiler-symbols-missing-handle))]
+    (if module-qualified?
+      (compiler-symbol-module-key
+        (tc-qualified-access-target-module
+          ctx
+          (string.substring variant-name 0 first-dot))
+        (lower-member-name-base enum-name))
+      (if (compiler-symbols-handle-found? type-handle)
+        (match (tc-nominal-owner-name ctx type-handle)
+          [(ResultTcString.Ok owner) owner]
+          [(ResultTcString.Err _) enum-name])
+        enum-name))))
+
+(define (lower-variant-handle-for-enum-name-or
+  [ctx : TcContext]
+  [enum-name : String]
+  [variant-name : String]
+  [fallback : i64]) : i64
+  (let
+    [owner-name : String
+      (lower-variant-owner-name-for-enum ctx enum-name variant-name)]
+    (compiler-registries-lookup-variant-or
+      (tc-context-registries ctx)
+      (tc-source-variant-name-for-enum
+        ctx
+        owner-name
+        (lower-member-name-base variant-name))
+      fallback)))
+
+(define (lower-variant-handle-for-scrut-or
   [ctx : TcContext]
   [scrut-ty : AstType]
-  [variant-name : String]) : String
+  [variant-name : String]
+  [fallback : i64]) : i64
   (match (tc-type-strip-region scrut-ty)
     [(AstType.Enum enum-name)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
+      (lower-variant-handle-for-enum-name-or
+        ctx
+        (intern-str enum-name)
+        variant-name
+        fallback)]
     [(AstType.EnumArgs enum-name _)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
+      (lower-variant-handle-for-enum-name-or
+        ctx
+        (intern-str enum-name)
+        variant-name
+        fallback)]
+    [(AstType.Var enum-name)
+      (lower-variant-handle-for-enum-name-or
+        ctx
+        (intern-str enum-name)
+        variant-name
+        fallback)]
     [(AstType.VarArgs enum-name _)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
-    [_ variant-name]))
+      (lower-variant-handle-for-enum-name-or
+        ctx
+        (intern-str enum-name)
+        variant-name
+        fallback)]
+    [_
+      (compiler-registries-lookup-variant-or
+        (tc-context-registries ctx)
+        variant-name
+        fallback)]))
 
 (define (lower-type-debug-kind [ty : AstType]) : String
   (match (tc-type-strip-region ty)
@@ -13319,7 +13391,11 @@
           [rest-types : AstTypeList (ast-type-list-slice types 1)]
           (let
             [ty : AstType (tc-context-type-get ctx ty)]
-            [resolved : AstType (tc-resolve-type ctx ty)]
+            [field-ctx : TcContext
+              (tc-context-with-owner-name-module
+                ctx
+                (lower-variant-owner-name-for-enum ctx enum-name variant-name))]
+            [resolved : AstType (tc-resolve-type field-ctx ty)]
             [default-offset : i64
               (lower-align-up cursor (lower-type-align ctx resolved))]
             [offset : i64
@@ -13502,15 +13578,11 @@
                         (match ctx
                           [(TcContext _ symbols registries _ _)
                             (let
-                              [nested-lookup-name : String
-                                (lower-variant-lookup-name-for-scrut
+                              [handle : i64
+                                (lower-variant-handle-for-scrut-or
                                   ctx
                                   resolved
-                                  nested-name-str)]
-                              [handle : i64
-                                (compiler-registries-lookup-variant-or
-                                  registries
-                                  nested-lookup-name
+                                  nested-name-str
                                   (compiler-symbols-missing-handle))]
                               (if (not (compiler-symbols-handle-found? handle))
                                 (ResultLowerEnv.Err
@@ -13689,7 +13761,11 @@
           [ty-id : i64 (ast-type-list-get (& types) 0 (ast-type-id-fallback))]
           [rest-types : AstTypeList (ast-type-list-slice types 1)]
           [ty : AstType (tc-context-type-get ctx ty-id)]
-          [resolved : AstType (tc-resolve-type ctx ty)]
+          [field-ctx : TcContext
+            (tc-context-with-owner-name-module
+              ctx
+              (lower-variant-owner-name-for-enum ctx enum-name variant-name))]
+          [resolved : AstType (tc-resolve-type field-ctx ty)]
           [default-offset : i64
             (lower-align-up cursor (lower-type-align ctx resolved))]
           [offset : i64
@@ -13815,15 +13891,11 @@
                   (match ctx
                     [(TcContext _ symbols registries _ _)
                       (let
-                        [nested-lookup-name : String
-                          (lower-variant-lookup-name-for-scrut
+                        [handle : i64
+                          (lower-variant-handle-for-scrut-or
                             ctx
                             resolved
-                            nested-name-str)]
-                        [handle : i64
-                          (compiler-registries-lookup-variant-or
-                            registries
-                            nested-lookup-name
+                            nested-name-str
                             (compiler-symbols-missing-handle))]
                         (if (not (compiler-symbols-handle-found? handle))
                           (ResultLowerEnv.Err
@@ -43272,15 +43344,11 @@
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
+        [handle : i64
+          (lower-variant-handle-for-scrut-or
             ctx
             resolved-scrut-ty
-            variant-name)]
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+            variant-name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -43461,15 +43529,11 @@
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
+        [handle : i64
+          (lower-variant-handle-for-scrut-or
             ctx
             resolved-scrut-ty
-            variant-name)]
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+            variant-name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -45431,15 +45495,11 @@
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
+        [handle : i64
+          (lower-variant-handle-for-scrut-or
             ctx
             resolved-scrut-ty
-            variant-name)]
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+            variant-name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)
@@ -45574,15 +45634,11 @@
       (let
         [resolved-scrut-ty : AstType
           (tc-type-strip-region (tc-resolve-type ctx scrut-ty))]
-        [lookup-name : String
-          (lower-variant-lookup-name-for-scrut
+        [handle : i64
+          (lower-variant-handle-for-scrut-or
             ctx
             resolved-scrut-ty
-            variant-name)]
-        [handle : i64
-          (compiler-registries-lookup-variant-or
-            registries
-            lookup-name
+            variant-name
             (compiler-symbols-missing-handle))]
         (if (compiler-symbols-handle-found? handle)
           (match (compiler-registries-variant-fields-indexed symbols handle)

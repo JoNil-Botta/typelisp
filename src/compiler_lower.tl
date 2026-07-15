@@ -2585,20 +2585,20 @@
 
 (define (lower-name-env-add-module-binding-id
   [names : LowerNameEnv]
-  [module : String]
+  [_module : String]
   [module-id : i64]
   [_ : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
   (let
     [logical-id : i64 (lower-module-name-key-id-by-id module-id source-id)]
-    (if (string.eq module "")
+    (if (compiler-symbol-root-module-id? module-id)
       (lower-name-env-bind-logical-id source-id logical-name logical-id names)
       (lower-name-env-bind-logical-id logical-id logical-name logical-id names))))
 
 (define (lower-name-env-add-module-extern-binding-id
   [names : LowerNameEnv]
-  [module : String]
+  [_module : String]
   [module-id : i64]
   [source-name : String]
   [source-id : i64]
@@ -2608,7 +2608,7 @@
     [symbol-id : i64
       (lower-extern-logical-symbol-id logical-id source-name metadata)]
     (LowerNameEnv.Bind
-      (if (string.eq module "")
+      (if (compiler-symbol-root-module-id? module-id)
         source-id
         logical-id)
       logical-id
@@ -3182,6 +3182,15 @@
     source-module-id
     (ast-decl-path-list-owner-id paths index source-module-id)))
 
+(define (lower-decl-owner-module-name
+  [source-module-id : i64]
+  [owner-module-id : i64]) : String
+  (if (and
+    (not (= source-module-id owner-module-id))
+    (intern-generated-id-active? owner-module-id))
+    ""
+    (intern-str owner-module-id)))
+
 (define (lower-entry-main-decl? [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Def name _ _) (= name cbi.compiler-builtin-id-fix-main)]
@@ -3633,7 +3642,9 @@
                       cur-names
                       entry-path
                       decl-path
-                      (intern-str logical-module-id)
+                      (lower-decl-owner-module-name
+                        cur-module-id
+                        logical-module-id)
                       logical-module-id
                       decl)]
                   (set!
@@ -9719,7 +9730,9 @@
                 (lower-decl-kept-by-reach-or-dispatch?
                   entry-path
                   decl-path
-                  (intern-str logical-module-id)
+                  (lower-decl-owner-module-name
+                    source-module-id
+                    logical-module-id)
                   logical-module-id
                   all-functions
                   reachable
@@ -49853,7 +49866,8 @@
                   entry-path
                   decl-path
                   cur-module-id)]
-              [logical-module : String (intern-str logical-module-id)]
+              [logical-module : String
+                (lower-decl-owner-module-name cur-module-id logical-module-id)]
               [decl-name-cache : LowerNameCache
                 (lower-name-cache-with-module-id
                   cur-name-cache

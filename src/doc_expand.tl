@@ -5,7 +5,6 @@
 (import (vector.vector String) as doc_svec)
 (import doc_render)
 (import doc_extract)
-(import read as reader)
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
 
@@ -1317,18 +1316,25 @@
 (import (boxmod i64) as ibox)")
 
 (define (doc-expand-macro-type-kind-constraint-source-smoke?) : bool
-  (string.eq
-    (doc-ast-macro-param-source
-      (ast-macro-param-with-type-kinds
-        (reader.read-stable-symbol-id "T")
-        (AstType.Var (reader.read-stable-symbol-id "type"))
-        false
-        (ast-macro-type-kind-list-cons
-          (reader.read-stable-symbol-id "i64")
-          (ast-macro-type-kind-list-cons
-            (reader.read-stable-symbol-id "struct")
-            (ast-macro-type-kind-list-empty)))))
-    "[T : type (:kind i64 struct)]"))
+  (match (parse-ast-source
+    "(defmacro (catalog [T : type (:kind i64 struct)]) : Module unit)")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons (AstDecl.DefMacro _ params _ _) rest)
+          (and
+            (match (ast-decl-list-step rest)
+              [(AstDeclListStep.Nil) true]
+              [_ false])
+            (= (ast-macro-param-list-len (& params)) 1)
+            (string.eq
+              (doc-ast-macro-param-source
+                (ast-macro-param-list-get
+                  (& params)
+                  0
+                  (ast-macro-param-fallback)))
+              "[T : type (:kind i64 struct)]"))]
+        [_ false])]
+    [(ResultAstProgram.Err _) false]))
 
 (test
   doc-macro-type-kind-constraint-source

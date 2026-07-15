@@ -12305,15 +12305,15 @@
   (match kinds
     [(AstMacroTypeKindList.Cons i64-kind i64-rest)
       (and
-        (= i64-kind (intern "i64"))
+        (string.eq (ci.intern-str i64-kind) "i64")
         (match (box-get i64-rest)
           [(AstMacroTypeKindList.Cons struct-kind struct-rest)
             (and
-              (= struct-kind (intern "struct"))
+              (string.eq (ci.intern-str struct-kind) "struct")
               (match (box-get struct-rest)
                 [(AstMacroTypeKindList.Cons type-var-kind end)
                   (and
-                    (= type-var-kind (intern "type-var"))
+                    (string.eq (ci.intern-str type-var-kind) "type-var")
                     (match (box-get end)
                       [(AstMacroTypeKindList.Nil) true]
                       [_ false]))]
@@ -12328,7 +12328,7 @@
       (match (ast-decl-list-step (box-get decls-box))
         [(AstDeclListStep.Cons (AstDecl.DefMacro name params _ _) rest)
           (and
-            (= name (intern "catalog"))
+            (string.eq (ci.intern-str name) "catalog")
             (match (ast-decl-list-step rest)
               [(AstDeclListStep.Nil) true]
               [_ false])
@@ -12343,8 +12343,8 @@
                   false
                   type-kinds)
                 (and
-                  (= param-name (intern "T"))
-                  (= type-name (intern "type"))
+                  (string.eq (ci.intern-str param-name) "T")
+                  (string.eq (ci.intern-str type-name) "type")
                   (compiler-parse-macro-type-kind-list-shape-ok? type-kinds))]
               [_ false]))]
         [_ false])]

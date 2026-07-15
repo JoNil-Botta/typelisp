@@ -1,5 +1,11 @@
 # Instruction-count baseline
 
+The opt-in pinned TypeLisp/ISPC corpus uses
+`scripts/measure-ispc-spmd.sh`. Its static kernel-symbol reports and geomeans
+are report-only and fingerprint both binaries and flags. They are intentionally
+not mixed into the checked cachegrind or host-keyed AVX-512 tables below; the
+current retired-instruction runners do not accept arbitrary ISPC binaries.
+
 `perf/insn-exec-baseline.tsv` is the committed cachegrind `Ir` baseline for the
 Linux per-PR performance gate. `perf/insn-exec-heavy-baseline.tsv` is the
 separate nightly baseline for benchmark cases that are too slow for every PR.

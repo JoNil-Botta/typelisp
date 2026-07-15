@@ -4308,6 +4308,38 @@
       (CompilerRegAssignment.Assignment 6 (CompilerRegLocation.Register "%rdi"))
       (compiler-backend-callee-save-assignments5))))
 
+(define (compiler-backend-win64-xmm-full-assignments-at [idx : i64]) : CompilerRegAssignmentList
+  (if (>= idx 10)
+    CompilerRegAssignmentList.Nil
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        idx
+        (CompilerRegLocation.Register
+          (string.append "%xmm" (string.int->string (+ idx 6)))))
+      (compiler-backend-win64-xmm-full-assignments-at (+ idx 1)))))
+
+(define (compiler-backend-win64-xmm-full-assignments) : CompilerRegAssignmentList
+  (compiler-backend-win64-xmm-full-assignments-at 0))
+
+(define (compiler-backend-win64-xmm-sparse-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      ;; The canonical ownership lookup must recognize vector-width aliases.
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%vec6"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          2
+          (CompilerRegLocation.Register "%zmm15"))
+        CompilerRegAssignmentList.Nil))))
+
+(define (compiler-backend-win64-xmm15-only-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm15"))
+    CompilerRegAssignmentList.Nil))
+
 (define (compiler-backend-callee-save-double-return-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -4462,6 +4494,136 @@
           "    movq -48(%rbp), %rbx\n"))]
     [_linux : unit (compiler-backend-set-current-fn-linux!)]
     ok))
+
+(define (compiler-backend-win64-xmm-callee-save-homes-ok?) : bool
+  (let
+    [_win : unit (compiler-backend-set-current-fn-win64!)]
+    [sparse : CompilerRegAssignmentList
+      (compiler-backend-win64-xmm-sparse-assignments)]
+    [full : CompilerRegAssignmentList
+      (compiler-backend-win64-xmm-full-assignments)]
+    [xmm15 : CompilerRegAssignmentList
+      (compiler-backend-win64-xmm15-only-assignments)]
+    [frame : i64
+      (compiler-backend-frame-size (compiler-backend-frame-slots 3 sparse))]
+    [save : String
+      (compiler-backend-emit-save-win64-xmm-callee-regs
+        (CompilerBackendTarget.Windows)
+        sparse
+        3
+        frame)]
+    [restore : String (compiler-backend-emit-restore-callee-regs sparse 3)]
+    [entry : String
+      (compiler-backend-emit-function-entry
+        (CompilerBackendTarget.Windows)
+        "_tl_xmm_sparse"
+        frame
+        sparse
+        3)]
+    [large-frame : i64
+      (compiler-backend-frame-size (compiler-backend-frame-slots 600 xmm15))]
+    [large-entry : String
+      (compiler-backend-emit-function-entry
+        (CompilerBackendTarget.Windows)
+        "_tl_xmm_large"
+        large-frame
+        xmm15
+        600)]
+    [full-frame : i64
+      (compiler-backend-frame-size (compiler-backend-frame-slots 1 full))]
+    [full-save : String
+      (compiler-backend-emit-save-win64-xmm-callee-regs
+        (CompilerBackendTarget.Windows)
+        full
+        1
+        full-frame)]
+    [full-restore : String
+      (compiler-backend-emit-restore-win64-xmm-callee-regs full 1)]
+    [empty-entry : String
+      (compiler-backend-emit-function-entry
+        (CompilerBackendTarget.Windows)
+        "_tl_xmm_empty"
+        32
+        CompilerRegAssignmentList.Nil
+        3)]
+    [inline-tail : String (compiler-backend-inline-return-tail sparse 3)]
+    [jump-tail : String
+      (compiler-backend-tail-jump-tail sparse 3 "_tl_xmm_target")]
+    [shared-tail : String
+      (compiler-backend-return-epilogue
+        "xmm_shared"
+        sparse
+        3
+        (compiler-backend-callee-save-double-return-blocks))]
+    [ok : bool
+      (and
+        (compiler-backend-plan-uses-callee-regs? sparse)
+        (= frame 240)
+        (= (compiler-backend-frame-slots 3 sparse) 30)
+        (= (compiler-backend-frame-slots-with-groups 3 sparse true) 36)
+        (= (compiler-backend-frame-slots-emergency-max 3 true) 36)
+        (= (compiler-backend-win64-xmm-callee-slot-offset 3 0) -96)
+        (= (compiler-backend-win64-xmm-callee-slot-offset 3 9) -240)
+        (= (compiler-backend-group-word0-slot 0 3 sparse) -256)
+        (= (compiler-backend-group-word1-slot 0 3 sparse) -248)
+        (string.eq
+          save
+          "    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -240(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+        (string.eq
+          restore
+          "    movdqu -240(%rbp), %xmm15\n    movdqu -96(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
+        (compiler-backend-string-contains? entry "    subq $240, %rsp\n")
+        (compiler-backend-string-contains? entry save)
+        (compiler-backend-string-contains?
+          entry
+          "    .seh_savexmm %xmm15, 0\n    .seh_endprologue\n")
+        (= full-frame 224)
+        (= (compiler-backend-string-count full-save "    movdqu %xmm") 10)
+        (= (compiler-backend-string-count full-save "    .seh_savexmm %xmm") 10)
+        (= (compiler-backend-string-count full-restore "    movdqu ") 10)
+        (= (compiler-backend-frame-slots 3 CompilerRegAssignmentList.Nil) 3)
+        (not (compiler-backend-string-contains? empty-entry "movdqu"))
+        (not (compiler-backend-string-contains? empty-entry ".seh_savexmm"))
+        (= large-frame 5024)
+        (compiler-backend-string-contains? large-entry "    callq __chkstk\n")
+        (compiler-backend-string-contains?
+          large-entry
+          "    movdqu %xmm15, -5024(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+        (=
+          (compiler-backend-string-count
+            inline-tail
+            "movdqu -240(%rbp), %xmm15")
+          1)
+        (compiler-backend-string-contains? inline-tail "    leave\n    ret\n")
+        (=
+          (compiler-backend-string-count jump-tail "movdqu -240(%rbp), %xmm15")
+          1)
+        (compiler-backend-string-contains?
+          jump-tail
+          "    leave\n    jmp _tl_xmm_target\n")
+        (=
+          (compiler-backend-string-count
+            shared-tail
+            "movdqu -240(%rbp), %xmm15")
+          1)
+        (compiler-backend-string-contains?
+          shared-tail
+          ".L_tl_xmm_shared_return:"))]
+    [_linux : unit (compiler-backend-set-current-fn-linux!)]
+    (and
+      ok
+      (= (compiler-backend-win64-xmm-callee-highest sparse) -1)
+      (= (compiler-backend-frame-slots 3 sparse) 7)
+      (string.eq
+        (compiler-backend-emit-save-win64-xmm-callee-regs
+          (CompilerBackendTarget.Linux)
+          sparse
+          3
+          64)
+        "")
+      (string.eq
+        (compiler-backend-emit-restore-callee-regs sparse 3)
+        "    movq -32(%rbp), %r12\n"))))
 
 (define (compiler-backend-peephole-register-moves-ok?) : bool
   (let
@@ -21929,7 +22091,8 @@
         (compiler-backend-shifted-loop-bound-win64-ok?)
         (compiler-backend-callee-save-pop-epilogue-ok?)
         (compiler-backend-callee-save-push-prologue-rebase-ok?)
-        (compiler-backend-win64-callee-save-homes-ok?))
+        (compiler-backend-win64-callee-save-homes-ok?)
+        (compiler-backend-win64-xmm-callee-save-homes-ok?))
       (compiler-backend-peephole-ok?)
       (and
         (pmove.compiler-parallel-move-self-test?)

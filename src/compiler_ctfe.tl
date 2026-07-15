@@ -119,11 +119,6 @@
 (define (ctfe-materialize-generated-name-id [name : String]) : i64
   (ctfe-generated-name-store name))
 
-(define (ctfe-materialize-generated-name-from-source-id
-  [name : String]
-  [source-id : i64]) : i64
-  (intern-generated-canonical-name-from-source name source-id))
-
 (define (ctfe-pat-binding [name : String]) : AstPattern
   (ast-pat-binding-id (ctfe-materialize-generated-name-id name)))
 
@@ -553,10 +548,8 @@
 (define (ctfe-source-string-value [string-id : i64]) : CompilerCtfeValue
   (CompilerCtfeValue.String (intern-str string-id) string-id))
 
-(define (ctfe-string-syntax-name-id [text : String] [string-id : i64]) : i64
-  (if (ci.intern-generated-id-active? string-id)
-    string-id
-    (ctfe-materialize-generated-name-from-source-id text string-id)))
+(define (ctfe-string-syntax-name-id [string-id : i64]) : i64
+  string-id)
 
 (define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
   (match value
@@ -5088,7 +5081,7 @@
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Var (ctfe-string-syntax-name-id name string-id))
+                  (AstExpr.Var (ctfe-string-syntax-name-id string-id))
                   (ctfe-untyped-expr-type))
                 arg-fuel)]
             [(CompilerCtfeValue.Name _ name-id)
@@ -5233,7 +5226,7 @@
                           (ast-expr-struct-get-id-with-pools
                             (ctfe-env-pools env)
                             target-node
-                            (ctfe-string-syntax-name-id field field-id))
+                            (ctfe-string-syntax-name-id field-id))
                           (ctfe-untyped-expr-type))
                         field-fuel)]
                     [(CompilerCtfeValue.Name _ field-id)
@@ -5340,7 +5333,7 @@
                                   (ast-expr-struct-set-id-with-pools
                                     (ctfe-env-pools env)
                                     target-node
-                                    (ctfe-string-syntax-name-id field field-id)
+                                    (ctfe-string-syntax-name-id field-id)
                                     value-node)
                                   (AstType.Unit))
                                 value-fuel)]
@@ -8424,23 +8417,11 @@
 (define (ctfe-internal-resolved-enum-type-marker-id) : i64
   (ctfe-builtin-ref 107))
 
-(define (ctfe-type-syntax-name [name : String] [env : CtfeEnv]) : i64
-  (ctfe-ast-push env (AstExpr.Var (ctfe-materialize-generated-name-id name))))
-
 (define (ctfe-type-syntax-name-id [name : i64] [env : CtfeEnv]) : i64
   (ctfe-ast-push env (AstExpr.Var name)))
 
 (define (ctfe-type-syntax-string [value : String] [env : CtfeEnv]) : i64
   (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string value))))
-
-(define (ctfe-type-syntax-call
-  [name : String]
-  [args : AstExprList]
-  [env : CtfeEnv]) : i64
-  (ast-expr-call-with-pools
-    (ctfe-env-pools env)
-    (ctfe-type-syntax-name name env)
-    args))
 
 (define (ctfe-type-syntax-call-id
   [name-id : i64]
@@ -8516,38 +8497,40 @@
 
 (define (ctfe-type-to-expr [ty : AstType] [env : CtfeEnv]) : i64
   (match ty
-    [(AstType.I64) (ctfe-type-syntax-name "i64" env)]
-    [(AstType.I32) (ctfe-type-syntax-name "i32" env)]
-    [(AstType.I16) (ctfe-type-syntax-name "i16" env)]
-    [(AstType.I8) (ctfe-type-syntax-name "i8" env)]
-    [(AstType.U64) (ctfe-type-syntax-name "u64" env)]
-    [(AstType.U32) (ctfe-type-syntax-name "u32" env)]
-    [(AstType.U16) (ctfe-type-syntax-name "u16" env)]
-    [(AstType.U8) (ctfe-type-syntax-name "u8" env)]
-    [(AstType.F64) (ctfe-type-syntax-name "f64" env)]
-    [(AstType.F32) (ctfe-type-syntax-name "f32" env)]
-    [(AstType.Bool) (ctfe-type-syntax-name "bool" env)]
-    [(AstType.Char) (ctfe-type-syntax-name "char" env)]
-    [(AstType.String) (ctfe-type-syntax-name "String" env)]
-    [(AstType.Str) (ctfe-type-syntax-name "str" env)]
-    [(AstType.Bytes) (ctfe-type-syntax-name "bytes" env)]
-    [(AstType.Unit) (ctfe-type-syntax-name "unit" env)]
-    [(AstType.Never) (ctfe-type-syntax-name "never" env)]
-    [(AstType.Expr) (ctfe-type-syntax-name "Expr" env)]
-    [(AstType.ExprList) (ctfe-type-syntax-name "ExprList" env)]
+    [(AstType.I64) (ctfe-type-syntax-name-id (ctfe-builtin-ref 159) env)]
+    [(AstType.I32) (ctfe-type-syntax-name-id (ctfe-builtin-ref 160) env)]
+    [(AstType.I16) (ctfe-type-syntax-name-id (ctfe-builtin-ref 161) env)]
+    [(AstType.I8) (ctfe-type-syntax-name-id (ctfe-builtin-ref 162) env)]
+    [(AstType.U64) (ctfe-type-syntax-name-id (ctfe-builtin-ref 163) env)]
+    [(AstType.U32) (ctfe-type-syntax-name-id (ctfe-builtin-ref 164) env)]
+    [(AstType.U16) (ctfe-type-syntax-name-id (ctfe-builtin-ref 165) env)]
+    [(AstType.U8) (ctfe-type-syntax-name-id (ctfe-builtin-ref 166) env)]
+    [(AstType.F64) (ctfe-type-syntax-name-id (ctfe-builtin-ref 167) env)]
+    [(AstType.F32) (ctfe-type-syntax-name-id (ctfe-builtin-ref 168) env)]
+    [(AstType.Bool) (ctfe-type-syntax-name-id (ctfe-builtin-ref 169) env)]
+    [(AstType.Char) (ctfe-type-syntax-name-id (ctfe-builtin-ref 170) env)]
+    [(AstType.String) (ctfe-type-syntax-name-id (ctfe-builtin-ref 158) env)]
+    [(AstType.Str) (ctfe-type-syntax-name-id (ctfe-builtin-ref 171) env)]
+    [(AstType.Bytes) (ctfe-type-syntax-name-id (ctfe-builtin-ref 172) env)]
+    [(AstType.Unit) (ctfe-type-syntax-name-id (ctfe-builtin-ref 173) env)]
+    [(AstType.Never) (ctfe-type-syntax-name-id (ctfe-builtin-ref 174) env)]
+    [(AstType.Expr)
+      (ctfe-type-syntax-name-id cbi.compiler-builtin-id-fix-Expr env)]
+    [(AstType.ExprList)
+      (ctfe-type-syntax-name-id cbi.compiler-builtin-id-fix-ExprList env)]
     [(AstType.Func args ret)
-      (ctfe-type-syntax-call
-        "->"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 176)
         (ctfe-func-type-to-expr-list (box-get args) (ctfe-ty-get env ret) env)
         env)]
     [(AstType.Tuple elems)
-      (ctfe-type-syntax-call
-        "Tuple"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 175)
         (ctfe-type-list-to-expr-list (box-get elems) env)
         env)]
     [(AstType.Array elem count)
-      (ctfe-type-syntax-call
-        "Array"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 109)
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast-expr-cons
@@ -8555,36 +8538,36 @@
             (ast-expr-list-new)))
         env)]
     [(AstType.DynArray elem)
-      (ctfe-type-syntax-call
-        "Array"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 109)
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast-expr-list-new))
         env)]
     [(AstType.Box elem)
-      (ctfe-type-syntax-call
-        "Box"
+      (ctfe-type-syntax-call-id
+        cbi.compiler-builtin-id-fix-Box
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast-expr-list-new))
         env)]
     [(AstType.Ptr elem)
-      (ctfe-type-syntax-call
-        "Ptr"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 177)
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast-expr-list-new))
         env)]
     [(AstType.MutPtr elem)
-      (ctfe-type-syntax-call
-        "MutPtr"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 178)
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env elem) env)
           (ast-expr-list-new))
         env)]
     [(AstType.Ref region elem)
-      (ctfe-type-syntax-call
-        "&"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 110)
         (ast-expr-cons
           (ctfe-type-syntax-name-id region env)
           (ast-expr-cons
@@ -8592,8 +8575,8 @@
             (ast-expr-list-new)))
         env)]
     [(AstType.MutRef region elem)
-      (ctfe-type-syntax-call
-        "&mut"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 111)
         (ast-expr-cons
           (ctfe-type-syntax-name-id region env)
           (ast-expr-cons
@@ -8601,8 +8584,8 @@
             (ast-expr-list-new)))
         env)]
     [(AstType.Region region elem)
-      (ctfe-type-syntax-call
-        "in"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 112)
         (ast-expr-cons
           (ctfe-type-syntax-name-id region env)
           (ast-expr-cons
@@ -8633,15 +8616,15 @@
         name
         (box-get lifetimes)
         env)]
-    [(AstType.Var name) (ctfe-type-syntax-name (intern-str name) env)]
+    [(AstType.Var name) (ctfe-type-syntax-name-id name env)]
     [(AstType.VarArgs name lifetimes)
-      (ctfe-type-syntax-call
-        (intern-str name)
+      (ctfe-type-syntax-call-id
+        name
         (ctfe-lifetime-list-to-expr-list (box-get lifetimes) env)
         env)]
     [(AstType.Consume inner)
-      (ctfe-type-syntax-call
-        ":consume"
+      (ctfe-type-syntax-call-id
+        (ctfe-builtin-ref 179)
         (ast-expr-cons
           (ctfe-type-to-expr (ctfe-ty-get env inner) env)
           (ast-expr-list-new))

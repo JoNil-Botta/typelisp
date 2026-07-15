@@ -9129,9 +9129,6 @@
         scoped))
     (tc-lookup-persistent-id env name-id)))
 
-(define (tc-lookup [env : TcTypeEnv] [name : String]) : ResultTcType
-  (tc-lookup-id env (tc-name-id name)))
-
 (define (tc-name-bound-persistent-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (let
     [lookup-id : i64 (tc-env-name-key-id name-id)]
@@ -9282,9 +9279,6 @@
                 (tc-env-key-display name-id)))))
         scoped))
     (tc-lookup-unsafe-persistent-id env name-id)))
-
-(define (tc-lookup-unsafe [env : TcTypeEnv] [name : String]) : ResultTcTypeUnsafe
-  (tc-lookup-unsafe-id env (tc-name-id name)))
 
 (define (tc-name-bound-before-hygiene-global-boundary-id?
   [env : TcTypeEnv]
@@ -28420,45 +28414,34 @@
       [(ResultAstDecl.Err _) (TcMaybeString.No)])
     (TcMaybeString.No)))
 
-(define (tc-spmd-atomic-extern-symbol-lookup
+(define (tc-spmd-atomic-extern-symbol-lookup-id
   [symbols : CompilerSymbols]
-  [lookup-name : String]) : TcMaybeString
+  [lookup-id : i64]) : TcMaybeString
   (let
     [handle : i64
-      (compiler-symbols-lookup-value-or
+      (compiler-symbols-lookup-value-id-or
         symbols
-        lookup-name
+        lookup-id
         (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (tc-spmd-atomic-extern-symbol-from-handle symbols handle)
       (TcMaybeString.No))))
 
-(define (tc-spmd-atomic-extern-symbol-for-name
+(define (tc-spmd-atomic-extern-symbol-for-name-id
   [ctx : TcContext]
-  [name : String]) : TcMaybeString
+  [name : String]
+  [name-id : i64]) : TcMaybeString
   (if (not (tc-spmd-atomic-name-candidate? name))
     (TcMaybeString.No)
     (let
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
       [direct : TcMaybeString
-        (tc-spmd-atomic-extern-symbol-lookup symbols name)]
+        (tc-spmd-atomic-extern-symbol-lookup-id symbols name-id)]
       [source-name : String (tc-hygiene-global-symbol-name name)]
-      [module : String (tc-context-module ctx)]
-      [lookup-name : String
-        (if (and
-          (> (string.string-length module) 0)
-          (not (tc-name-qualified? source-name)))
-          (compiler-symbol-module-key module source-name)
-          source-name)]
       (match direct
         [(TcMaybeString.Some symbol) (TcMaybeString.Some symbol)]
         [(TcMaybeString.No)
-          (match (tc-spmd-atomic-extern-symbol-lookup symbols lookup-name)
-            [(TcMaybeString.Some symbol) (TcMaybeString.Some symbol)]
-            [(TcMaybeString.No)
-              (if (string.eq lookup-name source-name)
-                (tc-spmd-atomic-imported-symbol-for-name ctx source-name)
-                (tc-spmd-atomic-extern-symbol-lookup symbols source-name))])]))))
+          (tc-spmd-atomic-imported-symbol-for-name ctx source-name)]))))
 
 (define (tc-spmd-atomic-call-symbol
   [ctx : TcContext]
@@ -28466,10 +28449,13 @@
   [spmd-env : TcSpmdEnv]
   [func : AstExpr]) : ResultTcString
   (match (tc-spmd-inline-helper-resolve-name ctx env spmd-env func)
-    [(TcNameLookup.Ok lookup-name _)
+    [(TcNameLookup.Ok lookup-name lookup-id)
       (if (string.eq lookup-name "")
         (ResultTcString.Ok "")
-        (match (tc-spmd-atomic-extern-symbol-for-name ctx lookup-name)
+        (match (tc-spmd-atomic-extern-symbol-for-name-id
+          ctx
+          lookup-name
+          lookup-id)
           [(TcMaybeString.Some symbol) (ResultTcString.Ok symbol)]
           [(TcMaybeString.No) (ResultTcString.Ok "")]))]
     [(TcNameLookup.Err message)

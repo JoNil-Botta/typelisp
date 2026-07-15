@@ -2383,26 +2383,6 @@
         [(TcMaybeString.No) resolved])
       resolved)))
 
-(define (lower-symbols-lookup-value-hygiene
-  [symbols : CompilerSymbols]
-  [source-name : String]) : i64
-  (let
-    [primary : String (lower-hygiene-source-name source-name)]
-    [handle : i64
-      (compiler-symbols-lookup-value-or
-        symbols
-        primary
-        (compiler-symbols-missing-handle))]
-    (if (compiler-symbols-handle-found? handle)
-      handle
-      (match (lower-hygiene-fallback-source-name source-name)
-        [(TcMaybeString.Some fallback)
-          (compiler-symbols-lookup-value-or
-            symbols
-            fallback
-            (compiler-symbols-missing-handle))]
-        [(TcMaybeString.No) (compiler-symbols-missing-handle)]))))
-
 (define (lower-source-name-lookup-key-id
   [ctx : TcContext]
   [type-env : TcTypeEnv]
@@ -5308,7 +5288,7 @@
   [_env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [shadowed : LowerIdSet]
-  [func : AstExpr]) : ResultTcString
+  [func : AstExpr]) : TcNameLookup
   (match (ast-expr-unspan-with-pools (tc-context-pools ctx) func)
     [(AstExpr.Var raw-name)
       (let
@@ -5316,26 +5296,38 @@
           (macro-hygiene-global-source-name-id-or raw-name raw-name)]
         [raw-text : String (intern-str source-id)]
         (cond
-          [(lower-id-set-contains? shadowed raw-name) (ResultTcString.Err "")]
+          [(lower-id-set-contains? shadowed raw-name) (TcNameLookup.Err "")]
           [(macro-hygiene-global-id? raw-name)
-            (ResultTcString.Ok
-              (lower-hygiene-source-name-in-context-id ctx type-env raw-name))]
+            (TcNameLookup.Ok
+              (lower-hygiene-source-name-in-context-id ctx type-env raw-name)
+              source-id)]
           [(tc-hygiene-global-name? raw-text)
-            (ResultTcString.Ok (tc-hygiene-global-call-name raw-text))]
-          [else (lower-source-name-lookup-key-id ctx type-env source-id)]))]
-    [_ (ResultTcString.Err "")]))
+            (TcNameLookup.Ok (tc-hygiene-global-call-name raw-text) source-id)]
+          [(tc-source-slash-qualified-id? raw-text source-id)
+            (TcNameLookup.Ok raw-text source-id)]
+          [else
+            (tc-source-name-lookup-key-with-field-check-lookup
+              ctx
+              type-env
+              raw-text
+              source-id
+              true)]))]
+    [_ (TcNameLookup.Err "")]))
 
 (define (lower-spmd-inline-helper-lookup-resolved
   [ctx : TcContext]
   [func : AstExpr]
-  [resolved : ResultTcString]) : ResultLowerSpmdInlineHelper
+  [resolved : TcNameLookup]) : ResultLowerSpmdInlineHelper
   (match resolved
-    [(ResultTcString.Ok name)
+    [(TcNameLookup.Ok name lookup-id)
       (if (string.eq name "")
         (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))
         (let
           [handle : i64
-            (lower-symbols-lookup-value-hygiene (tc-context-symbols ctx) name)]
+            (compiler-symbols-lookup-value-id-or
+              (tc-context-symbols ctx)
+              lookup-id
+              (compiler-symbols-missing-handle))]
           (cond
             [(not (compiler-symbols-handle-found? handle))
               (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))]
@@ -5359,7 +5351,7 @@
                 [(ResultAstDecl.Err message)
                   (ResultLowerSpmdInlineHelper.Err
                     (box (lower-diagnostic message)))])])))]
-    [(ResultTcString.Err message)
+    [(TcNameLookup.Err message)
       (if (string.eq message "")
         (ResultLowerSpmdInlineHelper.Ok (LowerSpmdInlineHelper.No))
         (ResultLowerSpmdInlineHelper.Err
@@ -15871,39 +15863,32 @@
       [(ResultAstDecl.Err _) ""])
     ""))
 
-(define (lower-atomic-extern-symbol-lookup
+(define (lower-atomic-extern-symbol-lookup-id
   [symbols : CompilerSymbols]
-  [lookup-name : String]) : String
+  [lookup-id : i64]) : String
   (let
-    [handle : i64 (lower-symbols-lookup-value-hygiene symbols lookup-name)]
+    [handle : i64
+      (compiler-symbols-lookup-value-id-or
+        symbols
+        lookup-id
+        (compiler-symbols-missing-handle))]
     (if (compiler-symbols-handle-found? handle)
       (lower-atomic-extern-symbol-from-handle symbols handle)
       "")))
 
-(define (lower-atomic-extern-symbol-for-name [ctx : TcContext] [name : String]) : String
+(define (lower-atomic-extern-symbol-for-name-id
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : String
   (if (not (lower-atomic-name-candidate? name))
     ""
     (let
       [symbols : CompilerSymbols (tc-context-symbols ctx)]
-      [direct : String (lower-atomic-extern-symbol-lookup symbols name)]
+      [direct : String (lower-atomic-extern-symbol-lookup-id symbols name-id)]
       [source-name : String (tc-hygiene-global-symbol-name name)]
-      [module : String (tc-context-module ctx)]
-      [lookup-name : String
-        (if (and
-          (> (string.string-length module) 0)
-          (not (tc-name-qualified? source-name)))
-          (compiler-symbol-module-key module source-name)
-          source-name)]
-      [found : String (lower-atomic-extern-symbol-lookup symbols lookup-name)]
       (if (> (string.string-length direct) 0)
         direct
-        (if (or
-          (> (string.string-length found) 0)
-          (string.eq lookup-name source-name))
-          (if (> (string.string-length found) 0)
-            found
-            (lower-atomic-imported-symbol-for-name ctx source-name))
-          (lower-atomic-extern-symbol-lookup symbols source-name))))))
+        (lower-atomic-imported-symbol-for-name ctx source-name)))))
 
 (define (lower-atomic-extern-symbol-for-func
   [ctx : TcContext]
@@ -15915,25 +15900,25 @@
         [source-id : i64
           (macro-hygiene-global-source-name-id-or raw-name raw-name)]
         [raw-text : String (intern-str source-id)]
-        (if (or
+        (match (if (or
           (macro-hygiene-global-id? raw-name)
           (tc-hygiene-global-name? raw-text))
-          (lower-atomic-extern-symbol-for-name
-            ctx
+          (TcNameLookup.Ok
             (if (macro-hygiene-global-id? raw-name)
               (lower-hygiene-source-name-in-context-id ctx type-env raw-name)
-              (tc-hygiene-global-call-name raw-text)))
+              (tc-hygiene-global-call-name raw-text))
+            source-id)
           (if (tc-source-slash-qualified-id? raw-text source-id)
-            (lower-atomic-extern-symbol-for-name ctx raw-text)
-            (match (tc-source-name-lookup-key-with-field-check
+            (TcNameLookup.Ok raw-text source-id)
+            (tc-source-name-lookup-key-with-field-check-lookup
               ctx
               type-env
               raw-text
               source-id
-              true)
-              [(ResultTcString.Ok lookup-name)
-                (lower-atomic-extern-symbol-for-name ctx lookup-name)]
-              [(ResultTcString.Err _) ""]))))]
+              true)))
+          [(TcNameLookup.Ok lookup-name lookup-id)
+            (lower-atomic-extern-symbol-for-name-id ctx lookup-name lookup-id)]
+          [(TcNameLookup.Err _) ""]))]
     [_ ""]))
 
 ;; The symbol table is keyed by the module key (module/name) and the bare source
@@ -27914,7 +27899,10 @@
                       [builtin-available : bool
                         (not (lower-top-level-value-defined-id? ctx name-id))]
                       [atomic-symbol : String
-                        (lower-atomic-extern-symbol-for-name ctx name)]
+                        (lower-atomic-extern-symbol-for-name-id
+                          ctx
+                          name
+                          lookup-name-id)]
                       (cond
                         [(> (string.string-length atomic-symbol) 0)
                           (lower-atomic-call

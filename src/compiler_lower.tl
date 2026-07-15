@@ -32562,10 +32562,10 @@
             inner))
         -1)]
     [(AstExpr.Binary op left-box right-box)
-      (if (lower-masked-vector-binop-supported? op)
-        (let
-          [left : AstExpr (lower-context-expr-get ctx left-box)]
-          [right : AstExpr (lower-context-expr-get ctx right-box)]
+      (let
+        [left : AstExpr (lower-context-expr-get ctx left-box)]
+        [right : AstExpr (lower-context-expr-get ctx right-box)]
+        [operand-lanes : i64
           (lower-masked-vector-lanes-merge
             (lower-masked-vector-expr-lanes-with-locals
               ctx
@@ -32582,8 +32582,20 @@
               type-env
               index
               lane-locals
-              right)))
-        -1)]
+              right))]
+        ;; The masked-lane census records widths, not scalar types. Restrict
+        ;; new arithmetic to the f32/i32-width gang so existing i64 enum-match
+        ;; expressions keep their established lowering path.
+        [lane32-arithmetic : bool
+          (and
+            (= operand-lanes (lower-simd-lanes-for-elem mode (AstType.F32)))
+            (match op
+              [(AstBinOp.Sub) true]
+              [(AstBinOp.Mul) true]
+              [_ false]))]
+        (if (or (lower-masked-vector-binop-supported? op) lane32-arithmetic)
+          operand-lanes
+          -1))]
     [(AstExpr.Call func-box args)
       (lower-spmd-direct-call-result-lanes
         ctx
@@ -38922,6 +38934,86 @@
                         (lower-emit-vector-binop
                           right-state
                           (CompilerIrBinOp.Add)
+                          left-value
+                          right-value
+                          lanes
+                          left-ty))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+    [(AstBinOp.Sub)
+      (match (lower-avx512-masked-expr
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        left)
+        [(ResultLowerExpr.Ok left-lowered)
+          (match left-lowered
+            [(LowerExpr.Expr left-state left-value left-ty)
+              (match (lower-avx512-masked-expr-expected
+                ctx
+                left-state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                right
+                left-ty)
+                [(ResultLowerExpr.Ok right-lowered)
+                  (match right-lowered
+                    [(LowerExpr.Expr right-state right-value _)
+                      (ResultLowerExpr.Ok
+                        (lower-emit-vector-binop
+                          right-state
+                          (CompilerIrBinOp.Sub)
+                          left-value
+                          right-value
+                          lanes
+                          left-ty))])]
+                [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])])]
+        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)])]
+    [(AstBinOp.Mul)
+      (match (lower-avx512-masked-expr
+        ctx
+        state
+        env
+        type-env
+        lane-locals
+        index
+        index-var
+        active-mask
+        lanes
+        left)
+        [(ResultLowerExpr.Ok left-lowered)
+          (match left-lowered
+            [(LowerExpr.Expr left-state left-value left-ty)
+              (match (lower-avx512-masked-expr-expected
+                ctx
+                left-state
+                env
+                type-env
+                lane-locals
+                index
+                index-var
+                active-mask
+                lanes
+                right
+                left-ty)
+                [(ResultLowerExpr.Ok right-lowered)
+                  (match right-lowered
+                    [(LowerExpr.Expr right-state right-value _)
+                      (ResultLowerExpr.Ok
+                        (lower-emit-vector-binop
+                          right-state
+                          (CompilerIrBinOp.Mul)
                           left-value
                           right-value
                           lanes

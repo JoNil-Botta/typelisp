@@ -223,9 +223,9 @@
           ok)))))
 
 (define (compiler-typecheck-prefix-cache-paths [entry-path : String]) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/tc_prefix_shared.tl"
-    (ast-decl-path-cons entry-path (ast-decl-path-list-new))))
+    (ast-decl-root-path-cons entry-path (ast-decl-path-list-new))))
 
 (define (compiler-typecheck-prefix-cache-source-a) : String
   "(define (shared-helper [x : i64]) : i64 (+ x 1))
@@ -9878,11 +9878,11 @@
 (define (main) : i64 0)")
 
 (define (compiler-typecheck-dup-extern-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "src/main.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "src/assets.tl"
-      (ast-decl-path-cons "src/main.tl" (ast-decl-path-list-new)))))
+      (ast-decl-root-path-cons "src/main.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-typecheck-dup-extern-paths-ok?) : bool
   (match (parse-ast-source (compiler-typecheck-dup-extern-source))

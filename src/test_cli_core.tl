@@ -591,17 +591,6 @@
       (- index 1)
       (ast-decl-list-prepend-builder (array-ref items index) out))))
 
-(define (tltest-paths-onto
-  [items : (Array String)]
-  [index : i64]
-  [out : AstDeclPathList]) : AstDeclPathList
-  (if (< index 0)
-    out
-    (tltest-paths-onto
-      items
-      (- index 1)
-      (ast-decl-path-list-prepend-builder (array-ref items index) out))))
-
 (define (tltest-decl-list-count [items : AstDeclList]) : i64
   (let
     [cur : AstDeclList items]
@@ -673,6 +662,8 @@
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons path _) path]
                   [(AstDeclPathListStep.Nil) ""])]
+              [decl-owner-id : i64
+                (ast-decl-path-list-owner-id (& cur-paths) 0 current-module)]
               [rest-paths : AstDeclPathList
                 (match (ast-decl-path-list-step cur-paths)
                   [(AstDeclPathListStep.Cons _ path-rest)
@@ -706,15 +697,17 @@
                     (begin
                       (set! current-module name)
                       (ast-decl-list-push (&mut runtime-decls-out) decl)
-                      (ast-decl-path-list-push
+                      (ast-decl-path-list-push-with-owner-id
                         (&mut runtime-paths-out)
-                        decl-path))]
+                        decl-path
+                        decl-owner-id))]
                   [(AstDecl.Import _)
                     (begin
                       (ast-decl-list-push (&mut runtime-decls-out) decl)
-                      (ast-decl-path-list-push
+                      (ast-decl-path-list-push-with-owner-id
                         (&mut runtime-paths-out)
-                        decl-path))]
+                        decl-path
+                        decl-owner-id))]
                   [(AstDecl.IncludeStr _ _) unit]
                   [(AstDecl.IncludeStrComptime _ _) unit]
                   [(AstDecl.IncludeBin _ _) unit]
@@ -723,9 +716,10 @@
                       unit
                       (begin
                         (ast-decl-list-push (&mut runtime-decls-out) decl)
-                        (ast-decl-path-list-push
+                        (ast-decl-path-list-push-with-owner-id
                           (&mut runtime-paths-out)
-                          decl-path)))])
+                          decl-path
+                          decl-owner-id)))])
                 (set! cur-decls rest-decls)
                 (set! cur-paths rest-paths)))]))
       (InlineCollect.Collect runtime-decls-out runtime-paths-out test-items))))
@@ -1064,9 +1058,13 @@
     (ast-decl-cons (tltest-main-decl tests) (ast-decl-list-new))))
 
 (define (tltest-main-paths [source : String]) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-path-cons-with-owner-id
     source
-    (ast-decl-path-cons source (ast-decl-path-list-new))))
+    cbi.compiler-builtin-id-fix-empty
+    (ast-decl-path-cons-with-owner-id
+      source
+      cbi.compiler-builtin-id-fix-empty
+      (ast-decl-path-list-new))))
 
 (define (tltest-generated-test-decls [tests : (Array InlineTest)]) : AstDeclList
   (tltest-test-decls-onto
@@ -1100,13 +1098,17 @@
     (let
       [test : InlineTest (array-ref tests index)]
       (match test
-        [(InlineTest.Case _ path _ _ _ _ _ _)
+        [(InlineTest.Case _ path module-id _ _ _ _ _)
           (tltest-test-paths-onto
             tests
             (- index 1)
-            (ast-decl-path-list-prepend-builder
+            (ast-decl-path-list-prepend-builder-with-owner-id
               path
-              (ast-decl-path-list-prepend-builder path out)))]))))
+              module-id
+              (ast-decl-path-list-prepend-builder-with-owner-id
+                path
+                module-id
+                out)))]))))
 
 (define (tltest-main-decl [tests : (Array InlineTest)]) : AstDecl
   (ast-decl-def-fn-id
@@ -1984,23 +1986,32 @@
                   (set! cur-decls rest)
                   (set! cur-paths (ast-decl-path-list-new)))]
               [(AstDeclPathListStep.Cons decl-path path-rest)
-                (begin
-                  ;; Keep imported generated helpers: macro-expanded bodies can
-                  ;; reference them in ways the lightweight source reachability walk
-                  ;; cannot always see. Local generated helpers and ordinary imported
-                  ;; functions/values still go through reachability pruning so tiny
-                  ;; inline harnesses stay small.
-                  (if (or
-                    (tltest-reachable-runtime-decl? decl names)
-                    (and
-                      (not (tltest-owned-test-path? target-path decl-path))
-                      (tltest-generated-comptime-decl? decl)))
-                    (begin
-                      (ast-decl-list-push (&mut result-decls) decl)
-                      (ast-decl-path-list-push (&mut result-paths) decl-path))
-                    unit)
-                  (set! cur-decls rest)
-                  (set! cur-paths path-rest))])]))
+                (let
+                  [decl-owner-id : i64
+                    (ast-decl-path-list-owner-id
+                      (& cur-paths)
+                      0
+                      cbi.compiler-builtin-id-fix-empty)]
+                  (begin
+                    ;; Keep imported generated helpers: macro-expanded bodies can
+                    ;; reference them in ways the lightweight source reachability walk
+                    ;; cannot always see. Local generated helpers and ordinary imported
+                    ;; functions/values still go through reachability pruning so tiny
+                    ;; inline harnesses stay small.
+                    (if (or
+                      (tltest-reachable-runtime-decl? decl names)
+                      (and
+                        (not (tltest-owned-test-path? target-path decl-path))
+                        (tltest-generated-comptime-decl? decl)))
+                      (begin
+                        (ast-decl-list-push (&mut result-decls) decl)
+                        (ast-decl-path-list-push-with-owner-id
+                          (&mut result-paths)
+                          decl-path
+                          decl-owner-id))
+                      unit)
+                    (set! cur-decls rest)
+                    (set! cur-paths path-rest)))])]))
       (InlineRuntimeDecls.Decls result-decls result-paths))))
 
 (define (tltest-prune-runtime-decls
@@ -2379,15 +2390,15 @@
                   span)
                 (ast-decl-list-new))))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         dep-path
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           dep-path
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             source
-            (ast-decl-path-cons
+            (ast-decl-root-path-cons
               source
-              (ast-decl-path-cons source (ast-decl-path-list-new))))))]
+              (ast-decl-root-path-cons source (ast-decl-path-list-new))))))]
     (match (tltest-build-harness source decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2428,11 +2439,11 @@
               second-span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program harness-paths count)
         (match program
@@ -2514,13 +2525,13 @@
               (ast-decl-test-id test-id (tltest-call-expr-id helper-id) span)
               (ast-decl-list-new)))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "stdlib/runtime.tl"
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
+            (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2577,11 +2588,11 @@
             (ast-decl-test-id test-id (tltest-call-expr-id helper-id) span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2637,11 +2648,11 @@
             (ast-decl-test-id test-id (tltest-call-expr-id helper-id) span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "driver.tl"
-          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2687,11 +2698,11 @@
               imported-span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "driver.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "driver.tl"
-          (ast-decl-path-cons "imported.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons "imported.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program harness-paths count)
         (match program
@@ -2757,9 +2768,9 @@
             span)
           (ast-decl-list-new)))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "alias.tl"
-        (ast-decl-path-cons "alias.tl" (ast-decl-path-list-new)))]
+        (ast-decl-root-path-cons "alias.tl" (ast-decl-path-list-new)))]
     (match (tltest-build-harness "alias.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2828,15 +2839,15 @@
                   span)
                 (ast-decl-list-new))))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "stdlib/runtime.tl"
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             "stdlib/string.tl"
-            (ast-decl-path-cons
+            (ast-decl-root-path-cons
               "stdlib/string.tl"
-              (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))))]
+              (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new))))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2893,13 +2904,13 @@
               (ast-decl-test-id test-id (tltest-call-expr-id wrapper-id) span)
               (ast-decl-list-new)))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "stdlib/runtime.tl"
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
+            (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -2972,13 +2983,13 @@
               (ast-decl-test-id test-id (tltest-call-expr-id live-id) span)
               (ast-decl-list-new)))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "driver.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "driver.tl"
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             "driver.tl"
-            (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new)))))]
+            (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new)))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -3031,11 +3042,11 @@
               span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "generated.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "generated.tl"
-          (ast-decl-path-cons "driver.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons "driver.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "driver.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program
@@ -3082,11 +3093,11 @@
             (ast-decl-test-id test-id (tltest-call-expr-id macro-id) span)
             (ast-decl-list-new))))]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "macro-deps.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "macro-deps.tl"
-          (ast-decl-path-cons "macro-deps.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons "macro-deps.tl" (ast-decl-path-list-new))))]
     (match (tltest-build-harness "macro-deps.tl" decls paths)
       [(InlineHarness.Harness program _ count)
         (match program

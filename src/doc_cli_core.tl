@@ -180,7 +180,7 @@
   [generated-modules : doc_render.DocModuleList]) : String
   (let
     [modules : doc_render.DocModuleList
-      (doc-modules-from-paths (ast-decl-path-cons input-path paths))]
+      (doc-modules-from-paths (ast-decl-root-path-cons input-path paths))]
     [all-modules : doc_render.DocModuleList
       (doc_render.doc-module-list-append modules generated-modules)]
     (if (> (doc_render.doc-module-list-count all-modules) 1)
@@ -197,7 +197,7 @@
     stdlib-roots)
     [(ResultCompilerLoadWithPaths.Ok decls paths _ _)
       (match (doc-generated-modules-from-source-paths
-        (ast-decl-path-cons input-path paths)
+        (ast-decl-root-path-cons input-path paths)
         stdlib-roots)
         [(ResultDocExpandedModules.Ok source-generated-modules)
           (let

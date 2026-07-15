@@ -12572,11 +12572,13 @@
       (compiler-load-source-path-id "C:/repo/stdlib/runtime.tl")]
     [_main-path-id : i64 (compiler-load-source-path-id "C:/pkg/src/main.tl")]
     [paths : AstDeclPathList
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "C:/repo/stdlib/runtime.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "C:/pkg/src/main.tl"
-          (ast-decl-path-cons "C:/pkg/src/main.tl" (ast-decl-path-list-new))))]
+          (ast-decl-root-path-cons
+            "C:/pkg/src/main.tl"
+            (ast-decl-path-list-new))))]
     [owned : AstDeclPathList
       (compiler-load-package-owned-paths-for-decls
         "app"

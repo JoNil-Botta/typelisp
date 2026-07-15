@@ -1915,9 +1915,9 @@
 (define (compiler-typecheck-smoke-prefix-cache-root-paths
   [root : String]
   [entry-path : String]) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     (compiler-load-join-root-path root "tc_prefix_shared.tl")
-    (ast-decl-path-cons entry-path (ast-decl-path-list-new))))
+    (ast-decl-root-path-cons entry-path (ast-decl-path-list-new))))
 
 (define (compiler-typecheck-smoke-prefix-cache-roots [root : String]) : svec.Vec
   (let
@@ -3769,9 +3769,9 @@
     [(ResultAstProgram.Ok program)
       (match (typecheck-compiler-program-with-paths
         program
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "support.tl"
-          (ast-decl-path-cons path (ast-decl-path-list-new))))
+          (ast-decl-root-path-cons path (ast-decl-path-list-new))))
         [(ResultCompilerTypecheck.Err diag)
           (let
             [value : CompilerDiagnostic (box-get diag)]

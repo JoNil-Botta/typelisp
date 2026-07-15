@@ -900,7 +900,7 @@
             (set!
               decls
               (ast.ast-decl-cons (ast.ast-decl-module-id module-id) decls))
-            (set! paths (ast.ast-decl-path-cons path paths))
+            (set! paths (ast.ast-decl-root-path-cons path paths))
             (set!
               modules
               (ast.ast-decl-module-list-prepend-builder-id module-id modules))

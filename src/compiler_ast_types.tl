@@ -4811,16 +4811,6 @@
         (array-set! (struct-get v owner-ids) index owner-id)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
 
-(define (ast-decl-path-list-push
-  [v : (&mut v AstDeclPathList)]
-  [value : String]) : unit
-  (ast-decl-path-list-push-with-owner-id
-    v
-    value
-    (match (ci.intern-lookup-content value)
-      [(InternLookupFound path-id) path-id]
-      [(InternLookupMissing) cbi.compiler-builtin-id-fix-empty])))
-
 (define (ast-decl-path-list-tail [items : AstDeclPathList]) : AstDeclPathList
   (if (<= (ast-decl-path-list-len (& items)) 0)
     (ast-decl-path-list-new)
@@ -4907,24 +4897,20 @@
           rest-len)
         (AstDeclPathList slots owner-ids new-offset new-len true)))))
 
-(define (ast-decl-path-list-prepend-builder
+(define (ast-decl-path-cons-with-owner-id
   [head : String]
+  [owner-id : i64]
   [rest : AstDeclPathList]) : AstDeclPathList
-  (ast-decl-path-list-prepend-builder-with-owner-id
-    head
-    (match (ci.intern-lookup-content head)
-      [(InternLookupFound path-id) path-id]
-      [(InternLookupMissing) cbi.compiler-builtin-id-fix-empty])
-    rest))
-
-(define (ast-decl-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
   (let
     [out : AstDeclPathList
       (ast-decl-path-list-with-capacity (+ 1 (ast-decl-path-list-len (& rest))))]
     (begin
-      (ast-decl-path-list-push (&mut out) head)
+      (ast-decl-path-list-push-with-owner-id (&mut out) head owner-id)
       (ast-decl-path-list-append-from (&mut out) (& rest) 0)
       out)))
+
+(define (ast-decl-root-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
+  (ast-decl-path-cons-with-owner-id head cbi.compiler-builtin-id-fix-empty rest))
 
 (define (ast-decl-module-list-with-capacity [capacity : i64]) : AstDeclModuleList
   (let
@@ -5012,22 +4998,6 @@
         (array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
 
-(define (ast-existing-module-name-id [name : String]) : i64
-  (if (= (string.string-length name) 0)
-    cbi.compiler-builtin-id-fix-empty
-    (match (ci.intern-lookup-content name)
-      [(InternLookupFound name-id) name-id]
-      [(InternLookupMissing)
-        (io.panic
-          (string.append
-            "AST declaration module has no load-assigned symbol id: "
-            name))])))
-
-(define (ast-decl-module-list-push
-  [v : (&mut v AstDeclModuleList)]
-  [value : String]) : unit
-  (ast-decl-module-list-push-id v (ast-existing-module-name-id value)))
-
 (define (ast-decl-module-list-append-from
   [out : (&mut out AstDeclModuleList)]
   [items : (& items AstDeclModuleList)]
@@ -5076,13 +5046,6 @@
           rest-len)
         (AstDeclModuleList slots new-offset new-len true)))))
 
-(define (ast-decl-module-list-prepend-builder
-  [head : String]
-  [rest : AstDeclModuleList]) : AstDeclModuleList
-  (ast-decl-module-list-prepend-builder-id
-    (ast-existing-module-name-id head)
-    rest))
-
 (define (ast-decl-module-cons-id [head : i64] [rest : AstDeclModuleList]) : AstDeclModuleList
   (let
     [out : AstDeclModuleList
@@ -5092,9 +5055,6 @@
       (ast-decl-module-list-push-id (&mut out) head)
       (ast-decl-module-list-append-from (&mut out) (& rest) 0)
       out)))
-
-(define (ast-decl-module-cons [head : String] [rest : AstDeclModuleList]) : AstDeclModuleList
-  (ast-decl-module-cons-id (ast-existing-module-name-id head) rest))
 
 (define (ast-decl-path-list-with-modules
   [paths : AstDeclPathList]

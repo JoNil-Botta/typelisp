@@ -12,6 +12,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.hashmap)
 (import stdlib.vector)
+(import compiler_builtin_ids as cbi)
 (import (hashmap String i64) as build_string_i64_map)
 (import (vector.vector String) as cli_svec)
 (import "host_plan.tl")
@@ -2700,7 +2701,10 @@
       (build-package-direct-object-test-paths
         (- count 1)
         path
-        (ast-decl-path-list-prepend-builder path out)))))
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          path
+          cbi.compiler-builtin-id-fix-empty
+          out)))))
 
 (cfg
   test
@@ -2718,9 +2722,9 @@
           "pkg.tl"
           (ast-decl-path-list-new))]
       [mixed : AstDeclPathList
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           ""
-          (ast-decl-path-cons "pkg.tl" (ast-decl-path-list-new)))]
+          (ast-decl-root-path-cons "pkg.tl" (ast-decl-path-list-new)))]
       (and
         (= (build-package-direct-object-owned-path-count mixed) 1)
         (build-package-direct-object-within-budget? within)
@@ -3415,14 +3419,23 @@
         (build-package-write-assembly asm-path asm target))]))
 
 (define (build-package-doctest-paths [owner : String] [paths : AstDeclPathList]) : AstDeclPathList
-  (match (ast-decl-path-list-step paths)
-    [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
-    [(AstDeclPathListStep.Cons path rest)
-      (let
-        [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
-        (if (build-package-tlci-stdlib-path? owner path)
-          tail
-          (ast-decl-path-list-prepend-builder path tail)))]))
+  (let
+    [owner-id : i64
+      (ast-decl-path-list-owner-id
+        (& paths)
+        0
+        cbi.compiler-builtin-id-fix-empty)]
+    (match (ast-decl-path-list-step paths)
+      [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)]
+      [(AstDeclPathListStep.Cons path rest)
+        (let
+          [tail : AstDeclPathList (build-package-doctest-paths owner rest)]
+          (if (build-package-tlci-stdlib-path? owner path)
+            tail
+            (ast-decl-path-list-prepend-builder-with-owner-id
+              path
+              owner-id
+              tail)))])))
 
 (define (build-package-closure-doctest-status
   [owner : String]

@@ -23,6 +23,7 @@
 (import stdlib.str_cat_runtime as str_cat)
 (import stdlib.option)
 (import (option i64) as option_i64)
+(import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (defenum DocTestExpectation
@@ -2862,7 +2863,12 @@ typecheck: return type mismatch"))]
           (begin
             (io.write-file path ";; no doctest fence
 ")
-            (set! out (ast-decl-path-list-prepend-builder path out))
+            (set!
+              out
+              (ast-decl-path-list-prepend-builder-with-owner-id
+                path
+                cbi.compiler-builtin-id-fix-empty
+                out))
             (set! i (+ i 1)))))
       out)))
 
@@ -2883,13 +2889,13 @@ typecheck: return type mismatch"))]
           (doc-test-package-walk-write-empty-paths
             root
             128
-            (ast-decl-path-cons
+            (ast-decl-root-path-cons
               example-a
-              (ast-decl-path-cons
+              (ast-decl-root-path-cons
                 example-a
-                (ast-decl-path-cons
+                (ast-decl-root-path-cons
                   example-b
-                  (ast-decl-path-cons example-c (ast-decl-path-list-new))))))]
+                  (ast-decl-root-path-cons example-c (ast-decl-path-list-new))))))]
         [report : DocTestRunReport
           (doc-test-typecheck-package-paths-with-roots
             paths

@@ -52217,19 +52217,19 @@
 (define (main) : i64 (io-len \"abc\"))")
 
 (define (compiler-lower-stdlib-string-wrapper-prune-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/string.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "stdlib/string.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/string.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "stdlib/tl"
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             "stdlib/tl"
-            (ast-decl-path-cons
+            (ast-decl-root-path-cons
               "stdlib/tl"
-              (ast-decl-path-cons "stdlib/tl" (ast-decl-path-list-new)))))))))
+              (ast-decl-root-path-cons "stdlib/tl" (ast-decl-path-list-new)))))))))
 
 (define (compiler-lower-stdlib-string-wrapper-prune-ok?) : bool
   (match (parse-ast-source (compiler-lower-stdlib-string-wrapper-prune-source))
@@ -52353,9 +52353,9 @@
   (+ (hash-string (& key)) 0))")
 
 (define (compiler-lower-stdlib-hash-string-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/hash.tl"
-    (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))
+    (ast-decl-root-path-cons "app.tl" (ast-decl-path-list-new))))
 
 (define (compiler-lower-string-shadow-source) : String
   "(define (string.string-length [s : String]) : i64 40)
@@ -56035,13 +56035,13 @@
 (define (main) : i64 (after 41))")
 
 (define (compiler-lower-generated-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "gen.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "gen.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "lib.tl"
-        (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))))
+        (ast-decl-root-path-cons "app.tl" (ast-decl-path-list-new))))))
 
 (define (compiler-lower-generated-paths-preserved-ok?) : bool
   (match (parse-ast-source (compiler-lower-generated-path-source))
@@ -56071,11 +56071,11 @@
 (define (main) : i64 (inc answer))")
 
 (define (compiler-lower-module-symbol-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "lib.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "lib.tl"
-      (ast-decl-path-cons "app.tl" (ast-decl-path-list-new)))))
+      (ast-decl-root-path-cons "app.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-lower-module-symbols-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-symbol-source))
@@ -56105,11 +56105,11 @@
 (define (main) : i64 (+ (runtime-helper) (app-helper)))")
 
 (define (compiler-lower-package-owned-symbol-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/runtime.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "app/src/main.tl"
-      (ast-decl-path-cons "" (ast-decl-path-list-new)))))
+      (ast-decl-root-path-cons "" (ast-decl-path-list-new)))))
 
 (define (compiler-lower-package-owned-symbols-ok?) : bool
   (match (parse-ast-source (compiler-lower-package-owned-symbol-source))
@@ -56457,9 +56457,9 @@
   (alloc (type i64) 4))")
 
 (define (compiler-lower-module-specialize-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "app.tl"
-    (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))
+    (ast-decl-root-path-cons "app.tl" (ast-decl-path-list-new))))
 
 (define (compiler-lower-module-specialize-ok?) : bool
   (match (parse-ast-source (compiler-lower-module-specialize-source))
@@ -58815,7 +58815,7 @@
     (compiler-lower-with-scratch-string-source)))
 
 (define (compiler-lower-runtime-substring-scratch-paths) : AstDeclPathList
-  (ast-decl-path-cons "stdlib/runtime.tl" (ast-decl-path-list-new)))
+  (ast-decl-root-path-cons "stdlib/runtime.tl" (ast-decl-path-list-new)))
 
 (define (compiler-lower-runtime-substring-call-source) : String
   (string.append
@@ -58854,13 +58854,13 @@
   (atomic-i64-fetch-add! items 0 1))")
 
 (define (compiler-lower-runtime-atomic-reachable-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/runtime.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "stdlib/runtime.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/atomic.tl"
-        (ast-decl-path-cons "app.tl" (ast-decl-path-list-new))))))
+        (ast-decl-root-path-cons "app.tl" (ast-decl-path-list-new))))))
 
 (define (compiler-lower-with-scratch-owning-source) : String
   (compiler-lower-with-arena-source
@@ -61265,15 +61265,15 @@
               (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "types.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "types.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "types.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "types.tl"
-          (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))))
+          (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-program) : AstProgram
   (ast-program
@@ -61306,11 +61306,11 @@
           (ast-decl-list-new))))))
 
 (define (compiler-lower-type-decl-dce-qualified-base-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "types.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "types.tl"
-      (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))
+      (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))
 
 (define (compiler-lower-type-decl-dce-arena-support-program) : AstProgram
   (ast-program
@@ -61372,19 +61372,19 @@
                   (ast-decl-list-new))))))))))
 
 (define (compiler-lower-type-decl-dce-arena-support-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "arena.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "arena.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "arena.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "arena.tl"
-          (ast-decl-path-cons
+          (ast-decl-root-path-cons
             "entry.tl"
-            (ast-decl-path-cons
+            (ast-decl-root-path-cons
               "thread.tl"
-              (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))))))
+              (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-program) : AstProgram
   (let
@@ -61426,13 +61426,13 @@
               (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-test-body-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "types.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "types.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "entry.tl"
-        (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new))))))
+        (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-program) : AstProgram
   (ast-program
@@ -61490,15 +61490,15 @@
               (ast-decl-list-new))))))))
 
 (define (compiler-lower-type-decl-dce-body-pattern-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "geom.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "geom.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "geom.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "entry.tl"
-          (ast-decl-path-cons "entry.tl" (ast-decl-path-list-new)))))))
+          (ast-decl-root-path-cons "entry.tl" (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-ast-dce-ok?) : bool
   (let

@@ -3982,9 +3982,18 @@
       (let
         [paths : AstDeclPathList (ast-decl-path-list-new)]
         (begin
-          (ast-decl-path-list-push (&mut paths) "module.tl")
-          (ast-decl-path-list-push (&mut paths) "first.tl")
-          (ast-decl-path-list-push (&mut paths) "duplicate.tl")
+          (ast-decl-path-list-push-with-owner-id
+            (&mut paths)
+            "module.tl"
+            cbi.compiler-builtin-id-fix-empty)
+          (ast-decl-path-list-push-with-owner-id
+            (&mut paths)
+            "first.tl"
+            cbi.compiler-builtin-id-fix-empty)
+          (ast-decl-path-list-push-with-owner-id
+            (&mut paths)
+            "duplicate.tl"
+            cbi.compiler-builtin-id-fix-empty)
           (match (build-compiler-symbols-with-paths program paths)
             [(ResultCompilerSymbols.Err message)
               (string.eq

@@ -6327,9 +6327,11 @@
     [(ResultAstProgram.Ok program)
       (match (compiler-specialize-program-with-paths
         program
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "generated/first.tl"
-          (ast-decl-path-cons "generated/second.tl" (ast-decl-path-list-new)))
+          (ast-decl-root-path-cons
+            "generated/second.tl"
+            (ast-decl-path-list-new)))
         "generated/fallback.tl")
         [(ResultSpecProgramWithPaths.Ok _ _) false]
         [(ResultSpecProgramWithPaths.Err diag)

@@ -418,15 +418,15 @@
   (substring \"abc\" 0 1))")
 
 (define (compiler-lower-smoke-stdlib-string-public-substring-paths) : AstDeclPathList
-  (ast-decl-path-cons
+  (ast-decl-root-path-cons
     "stdlib/runtime.tl"
-    (ast-decl-path-cons
+    (ast-decl-root-path-cons
       "stdlib/runtime.tl"
-      (ast-decl-path-cons
+      (ast-decl-root-path-cons
         "stdlib/string.tl"
-        (ast-decl-path-cons
+        (ast-decl-root-path-cons
           "stdlib/string.tl"
-          (ast-decl-path-cons "stdlib/string.tl" (ast-decl-path-list-new)))))))
+          (ast-decl-root-path-cons "stdlib/string.tl" (ast-decl-path-list-new)))))))
 
 (define (compiler-lower-smoke-stdlib-runtime-substring-defined?
   [functions : CompilerIrFunctionList]) : bool

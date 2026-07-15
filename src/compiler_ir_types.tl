@@ -958,15 +958,21 @@
 (define (compiler-ir-instr-seq-return?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
-  (compiler-ir-instr-return? (compiler-ir-instr-seq-ref instrs index)))
+  (match (& (array-ref (struct-get instrs slots) index))
+    [(CompilerIrInstr.Return _) true]
+    [_ false]))
 
 (define (compiler-ir-instr-seq-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
-  (compiler-ir-instr-phi? (compiler-ir-instr-seq-ref instrs index)))
+  (match (& (array-ref (struct-get instrs slots) index))
+    [(CompilerIrInstr.Phi _ _ _) true]
+    [_ false]))
 
 (define (compiler-ir-instr-seq-bounds-check?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
-  (compiler-ir-instr-bounds-check? (compiler-ir-instr-seq-ref instrs index)))
+  (match (& (array-ref (struct-get instrs slots) index))
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [_ false]))
 
 (define (compiler-ir-instr-binop-lhs-var-for-dst-or
   [instr : CompilerIrInstr]

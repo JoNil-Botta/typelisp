@@ -1,4 +1,4 @@
-;; AVX-512 varying while with f32 recurrence state and i32 lane counters.
+;; AVX2/AVX-512 varying while with f32 recurrence state and i32 lane counters.
 (import stdlib.array)
 
 (define (fill-recurrence

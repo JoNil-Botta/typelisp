@@ -15,9 +15,9 @@ AVX2-only hosts, and scalar otherwise.
 
 The corpus emphasizes the cases where SIMD bugs hide:
 
-Masked varying `if` fixtures and gather-only reads intentionally compile and
-run in `avx2` and `avx512`. Varying `while`, varying `match`, and standalone
-bool dynamic-array lanes keep explicit staged diagnostics in `avx2` instead of
+Masked varying `if`/`while` fixtures and gather-only reads intentionally compile
+and run in `avx2` and `avx512`. Varying `match` and standalone bool
+dynamic-array lanes keep explicit staged diagnostics in `avx2` instead of
 falling back to scalar code.
 
 - `tail_i64_add.tl` — `foreach` add over `n = 13` (not a multiple of the i64
@@ -165,9 +165,11 @@ Coverage map:
   varying-match coverage lives in `varying_match_enum_payload.tl` through the
   scalar reference path. AVX2 keeps explicit staged diagnostics for these
   shapes.
-- AVX-512 varying `while` coverage lives in `varying_while_i64.tl`,
-  `varying_while_f32_i32.tl`, and `masked_if_varying_while_i64.tl`; AVX2 keeps
-  an explicit staged diagnostic for these shapes.
+- AVX2/AVX-512 varying `while` coverage lives in `varying_while_i64.tl`,
+  `varying_while_f32_i32.tl`, `masked_if_varying_while_i64.tl`, and
+  `varying_while_nested_i64.tl`. The nested fixture covers zero, sub-gang,
+  exact-gang, and tail lengths with exact-sized arrays, so inactive lanes must
+  not perform invalid loads, stores, or bounds checks.
 - Direct inline-helper coverage for varying scalar lane values lives in
   `inline_helper_i64.tl`, `inline_helper_shadow_i64.tl`,
   `inline_helper_f64.tl`, and `inline_helper_masked_if_i64.tl`. The

@@ -27,8 +27,8 @@ after the logical buffer, and a fixed weighted checksum. The width-sized
 scratch arrays make the width-19 case an inactive-tail bounds check as well as
 a value check.
 
-TypeLisp scalar and AVX-512 are required. AVX2 records the exact staged
-varying-while diagnostic owned by #4971. Real ISPC v1.31.0 validation is
+TypeLisp scalar, AVX2, and AVX-512 are required and compare the same complete
+buffers, sentinels, and fixed checksums. Real ISPC v1.31.0 validation is
 optional because ISPC is not a project dependency.
 
 Run the required TypeLisp checks and optional pinned-ISPC comparisons with:

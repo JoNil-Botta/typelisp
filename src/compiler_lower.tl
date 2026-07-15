@@ -34565,8 +34565,7 @@
           out-of-line-call))
       (and
         (lower-mode-avx2? mode)
-        varying-if
-        (not varying-while)
+        (or varying-if varying-while)
         (not varying-match)))
       (let
         [lanes : i64

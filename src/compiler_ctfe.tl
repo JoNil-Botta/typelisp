@@ -114,8 +114,17 @@
 (define (ctfe-materialize-generated-name-id [name : String]) : i64
   (ctfe-generated-name-store name))
 
+(define (ctfe-pat-binding-id [name : String] [name-id : i64]) : AstPattern
+  (ast-pat-binding-id (ctfe-string-syntax-name-id name name-id)))
+
 (define (ctfe-pat-binding [name : String]) : AstPattern
   (ast-pat-binding-id (ctfe-materialize-generated-name-id name)))
+
+(define (ctfe-pat-variant-id
+  [name : String]
+  [name-id : i64]
+  [items : AstPatternList]) : AstPattern
+  (ast-pat-variant-id (ctfe-string-syntax-name-id name name-id) items))
 
 (define (ctfe-pat-variant [name : String] [items : AstPatternList]) : AstPattern
   (ast-pat-variant-id (ctfe-materialize-generated-name-id name) items))
@@ -601,8 +610,12 @@
           (ctfe-generated-string-value text)))
       (ctfe-generated-string-value text))))
 
-(define (ctfe-string-syntax-name-id [string-id : i64]) : i64
-  string-id)
+(define (ctfe-string-syntax-name-id [text : String] [string-id : i64]) : i64
+  (if (ci.intern-generated-id-active? string-id)
+    (match (ci.intern-lookup text)
+      [(ci.InternLookupFound source-id) source-id]
+      [(ci.InternLookupMissing) string-id])
+    string-id))
 
 (define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
   (match value
@@ -5028,7 +5041,7 @@
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Var (ctfe-string-syntax-name-id string-id))
+                  (AstExpr.Var (ctfe-string-syntax-name-id name string-id))
                   (ctfe-untyped-expr-type))
                 arg-fuel)]
             [(CompilerCtfeValue.Name _ name-id)
@@ -5173,7 +5186,7 @@
                           (ast-expr-struct-get-id-with-pools
                             (ctfe-env-pools env)
                             target-node
-                            (ctfe-string-syntax-name-id field-id))
+                            (ctfe-string-syntax-name-id field field-id))
                           (ctfe-untyped-expr-type))
                         field-fuel)]
                     [(CompilerCtfeValue.Name _ field-id)
@@ -5280,7 +5293,7 @@
                                   (ast-expr-struct-set-id-with-pools
                                     (ctfe-env-pools env)
                                     target-node
-                                    (ctfe-string-syntax-name-id field-id)
+                                    (ctfe-string-syntax-name-id field field-id)
                                     value-node)
                                   (AstType.Unit))
                                 value-fuel)]
@@ -6397,9 +6410,9 @@
     (let
       [name-arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg name-arg expr env fuel "pattern-binding")
-        [(ResultCtfeStringArg.Ok name _ next-fuel)
+        [(ResultCtfeStringArg.Ok name name-id next-fuel)
           (ResultCtfe.Ok
-            (CompilerCtfeValue.Pattern (ctfe-pat-binding name))
+            (CompilerCtfeValue.Pattern (ctfe-pat-binding-id name name-id))
             next-fuel)]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
@@ -6416,13 +6429,14 @@
       [name-arg : AstExpr (ctfe-expr-arg args 0 env)]
       [payloads-arg : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg name-arg expr env fuel "pattern-variant")
-        [(ResultCtfeStringArg.Ok name _ name-fuel)
+        [(ResultCtfeStringArg.Ok name name-id name-fuel)
           (match (compiler-ctfe-eval payloads-arg env name-fuel)
             [(ResultCtfe.Ok payloads-val payloads-fuel)
               (match payloads-val
                 [(CompilerCtfeValue.PatternList payloads)
                   (ResultCtfe.Ok
-                    (CompilerCtfeValue.Pattern (ctfe-pat-variant name payloads))
+                    (CompilerCtfeValue.Pattern
+                      (ctfe-pat-variant-id name name-id payloads))
                     payloads-fuel)]
                 [_
                   (ResultCtfe.Err
@@ -6500,7 +6514,11 @@
         (begin
           (ast-pattern-list-push
             (&mut patterns)
-            (ctfe-pat-binding (string.append prefix (string.int->string index))))
+            (let
+              [name : String (string.append prefix (string.int->string index))]
+              (ctfe-pat-binding-id
+                name
+                (ctfe-materialize-generated-name-id name))))
           (set! index (+ index 1))))
       patterns)))
 
@@ -13705,6 +13723,10 @@
     [x-id : i64 (ctfe-materialize-generated-name-id "x")]
     [point-id : i64 (ctfe-materialize-generated-name-id "point")]
     [helper-id : i64 (ctfe-materialize-generated-name-id "counter.push-ref")]
+    [x-syntax-id : i64 (ctfe-string-syntax-name-id "x" x-id)]
+    [point-syntax-id : i64 (ctfe-string-syntax-name-id "point" point-id)]
+    [helper-syntax-id : i64
+      (ctfe-string-syntax-name-id "counter.push-ref" helper-id)]
     [true-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
@@ -13792,29 +13814,29 @@
     [expected-field : i64
       (ast-expr-struct-get-id-with-pools
         (ctfe-env-pools env)
-        (ctfe-ast-push env (AstExpr.Var point-id))
-        x-id)]
+        (ctfe-ast-push env (AstExpr.Var point-syntax-id))
+        x-syntax-id)]
     [expected-tuple-ref : i64
       (ast-expr-tuple-ref-with-pools
         (ctfe-env-pools env)
-        (ctfe-ast-push env (AstExpr.Var point-id))
+        (ctfe-ast-push env (AstExpr.Var point-syntax-id))
         1)]
     [expected-field-set : i64
       (ast-expr-struct-set-id-with-pools
         (ctfe-env-pools env)
-        (ctfe-ast-push env (AstExpr.Var point-id))
-        x-id
+        (ctfe-ast-push env (AstExpr.Var point-syntax-id))
+        x-syntax-id
         true-lit)]
     [expected-mut-borrow : i64
       (ast-expr-borrow-with-pools
         (ctfe-env-pools env)
         true
         AstBorrowLifetime.Inferred
-        (ctfe-ast-push env (AstExpr.Var point-id)))]
+        (ctfe-ast-push env (AstExpr.Var point-syntax-id)))]
     [expected-call : i64
       (ast-expr-call-with-pools
         (ctfe-env-pools env)
-        (ctfe-ast-push env (AstExpr.Var helper-id))
+        (ctfe-ast-push env (AstExpr.Var helper-syntax-id))
         (ast-expr-cons
           expected-mut-borrow
           (ast-expr-cons true-lit (ast-expr-list-new))))]

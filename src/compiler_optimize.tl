@@ -23752,10 +23752,13 @@
   [n : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
-    (if (opt-tailrec-self-call?
-      (compiler-ir-instr-seq-ref instrs index)
-      fname
-      n)
+    (if (match (& (array-ref (struct-get instrs slots) index))
+      [(CompilerIrInstr.TailCall _ _ _)
+        (opt-tailrec-self-call?
+          (compiler-ir-instr-seq-ref instrs index)
+          fname
+          n)]
+      [_ false])
       true
       (opt-tailrec-instr-seq-has-convertible-from? instrs (+ index 1) fname n))))
 

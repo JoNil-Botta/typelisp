@@ -25,6 +25,7 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 | --- | --- | --- | --- |
 | [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
 | [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` | Supported |
+| [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` | Scalar and AVX-512 supported; AVX2 staged by #4971 |
 
 `perfbench_loads` uses only integer-valued binary32 inputs and keeps every
 partial sum within the exactly representable integer range. Its scalar oracle,
@@ -51,4 +52,6 @@ scripts/verify-ispc-perfbench-loads.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-loads.sh
 scripts/verify-ispc-perfbench-stores.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-stores.sh
+scripts/verify-ispc-mandelbrot.sh
+ISPC_BIN=/path/to/ispc scripts/verify-ispc-mandelbrot.sh
 ```

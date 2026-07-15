@@ -2334,7 +2334,7 @@
         (sym_i64_env.sym-i64-empty)
         roots
         cfgs)
-        [(ResultCompilerLoadWithPaths.Ok _ _ _ _)
+        [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
           (begin
             (ctfe-module-macro-export-reset!)
             (let
@@ -2343,9 +2343,17 @@
                   (compiler-load-surface-summaries)
                   (TcNameIdList.Nil))]
               [provider-id : i64
-                (tc-existing-module-name-id "tc.surface.macro.provider")]
-              [hook-id : i64 (tc-existing-name-id "hook")]
-              [missing-id : i64 (tc-existing-name-id "missing")]
+                (compiler-typecheck-smoke-program-parsed-id
+                  (ast-program decls)
+                  "tc.surface.macro.provider")]
+              [hook-id : i64
+                (compiler-typecheck-smoke-program-parsed-id
+                  (ast-program decls)
+                  "hook")]
+              [non-macro-id : i64
+                (compiler-typecheck-smoke-program-parsed-id
+                  (ast-program decls)
+                  "value")]
               (and
                 (tc-name-id-list-contains names hook-id)
                 (macro-surface-macro-in-module?
@@ -2356,7 +2364,7 @@
                     "tc.surface.macro.provider"
                     "missing"))
                 (ctfe-module-macro-export-id? provider-id hook-id)
-                (not (ctfe-module-macro-export-id? provider-id missing-id)))))]
+                (not (ctfe-module-macro-export-id? provider-id non-macro-id)))))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (compiler-typecheck-smoke-record-surface-summary?
@@ -2556,31 +2564,161 @@
 (import helper.module)
 (define (full-score) : i64 helper.module.value)")
 
+(define (compiler-typecheck-smoke-expr-list-parsed-id
+  [exprs : (& exprs AstExprList)]
+  [name : String]) : i64
+  (let
+    [index : i64 0]
+    [found : i64 -1]
+    (begin
+      (while (and (< found 0) (< index (struct-get exprs len)))
+        (begin
+          (set!
+            found
+            (compiler-typecheck-smoke-expr-parsed-id
+              (ast-expr-list-get exprs index 0)
+              name))
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-typecheck-smoke-expr-parsed-id
+  [expr-id : i64]
+  [name : String]) : i64
+  (match (ast-node-get expr-id)
+    [(AstExpr.Spanned inner _)
+      (compiler-typecheck-smoke-expr-parsed-id inner name)]
+    [(AstExpr.Var name-id)
+      (let
+        [leading-id : i64 (intern-leading-dot-id name-id)]
+        (cond
+          [(string.eq (tc-env-key-name-text name-id) name) name-id]
+          [(and
+              (>= leading-id 0)
+              (string.eq (tc-env-key-name-text leading-id) name))
+            leading-id]
+          [else -1]))]
+    [(AstExpr.Binary _ left right)
+      (let
+        [found : i64 (compiler-typecheck-smoke-expr-parsed-id left name)]
+        (if (>= found 0)
+          found
+          (compiler-typecheck-smoke-expr-parsed-id right name)))]
+    [(AstExpr.Unary _ value)
+      (compiler-typecheck-smoke-expr-parsed-id value name)]
+    [(AstExpr.Call func args)
+      (let
+        [found : i64 (compiler-typecheck-smoke-expr-parsed-id func name)]
+        (if (>= found 0)
+          found
+          (compiler-typecheck-smoke-expr-list-parsed-id (& args) name)))]
+    [(AstExpr.If cond then else-expr)
+      (let
+        [found : i64 (compiler-typecheck-smoke-expr-parsed-id cond name)]
+        (if (>= found 0)
+          found
+          (let
+            [found : i64 (compiler-typecheck-smoke-expr-parsed-id then name)]
+            (if (>= found 0)
+              found
+              (compiler-typecheck-smoke-expr-parsed-id else-expr name)))))]
+    [(AstExpr.Tuple items)
+      (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
+    [(AstExpr.Array items)
+      (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
+    [(AstExpr.DynArray items)
+      (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
+    [(AstExpr.Begin items)
+      (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
+    [(AstExpr.Unsafe items)
+      (compiler-typecheck-smoke-expr-list-parsed-id (& items) name)]
+    [(AstExpr.Match match-box)
+      (match (box-get match-box)
+        [(AstMatch.Match scrutinee _)
+          (compiler-typecheck-smoke-expr-parsed-id scrutinee name)])]
+    [(AstExpr.StructGet base _)
+      (compiler-typecheck-smoke-expr-parsed-id base name)]
+    [(AstExpr.Ann value _) (compiler-typecheck-smoke-expr-parsed-id value name)]
+    [(AstExpr.Cast value _)
+      (compiler-typecheck-smoke-expr-parsed-id value name)]
+    [_ -1]))
+
+(define (compiler-typecheck-smoke-program-parsed-id
+  [program : AstProgram]
+  [name : String]) : i64
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [found : i64 -1]
+        (begin
+          (while (and (< found 0) (< index (struct-get (& decls) len)))
+            (let
+              [decl : AstDecl
+                (ast-decl-list-get (& decls) index (ast-decl-fallback))]
+              (begin
+                (set!
+                  found
+                  (match decl
+                    [(AstDecl.Module name-id)
+                      (if (string.eq (tc-env-key-name-text name-id) name)
+                        name-id
+                        -1)]
+                    [(AstDecl.Def name-id _ value)
+                      (if (string.eq (tc-env-key-name-text name-id) name)
+                        name-id
+                        (compiler-typecheck-smoke-expr-parsed-id value name))]
+                    [(AstDecl.DefFn name-id _ _ body _)
+                      (if (string.eq (tc-env-key-name-text name-id) name)
+                        name-id
+                        (compiler-typecheck-smoke-expr-parsed-id body name))]
+                    [(AstDecl.DefMacro name-id _ _ body)
+                      (if (string.eq (tc-env-key-name-text name-id) name)
+                        name-id
+                        (compiler-typecheck-smoke-expr-parsed-id body name))]
+                    [(AstDecl.DefStruct name-id _ _ _)
+                      (if (string.eq (tc-env-key-name-text name-id) name)
+                        name-id
+                        -1)]
+                    [(AstDecl.DefEnum name-id _ _)
+                      (if (string.eq (tc-env-key-name-text name-id) name)
+                        name-id
+                        -1)]
+                    [_ -1]))
+                (set! index (+ index 1)))))
+          found))]))
+
 (define (compiler-typecheck-smoke-required-parsed-id
+  [ctx : TcContext]
   [context : String]
   [name : String]) : i64
   (let
-    [name-id : i64 (tc-source-spelling-id name)]
+    [name-id : i64
+      (compiler-typecheck-smoke-program-parsed-id (tc-context-program ctx) name)]
     (if (>= name-id 0)
       name-id
       (io.panic (string.append context name)))))
 
 (define (compiler-typecheck-smoke-module-key-id
+  [ctx : TcContext]
   [module : String]
   [name : String]) : i64
   (compiler-symbol-module-key-id-by-id
     (compiler-typecheck-smoke-required-parsed-id
+      ctx
       "typecheck smoke: missing module id: "
       module)
     (compiler-typecheck-smoke-required-parsed-id
+      ctx
       "typecheck smoke: missing name id: "
       name)))
 
 (define (compiler-typecheck-smoke-qualified-cache-id?
+  [ctx : TcContext]
   [id : i64]
   [module : String]
   [name : String]) : bool
-  (= id (compiler-typecheck-smoke-module-key-id module name)))
+  (= id (compiler-typecheck-smoke-module-key-id ctx module name)))
 
 (define (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
   [entry-ctx : TcContext]
@@ -2592,6 +2730,7 @@
       env
       "helper.value"
       (compiler-typecheck-smoke-required-parsed-id
+        entry-ctx
         "typecheck smoke: missing dotted lookup id: "
         "helper.value")
       true)
@@ -2599,15 +2738,18 @@
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
+              entry-ctx
               "typecheck smoke: missing entry module id: "
               "entry.module")]
           [name-id : i64
             (compiler-typecheck-smoke-required-parsed-id
+              entry-ctx
               "typecheck smoke: missing dotted lookup id: "
               "helper.value")]
           (and
             (string.eq key "helper.module/value")
             (compiler-typecheck-smoke-qualified-cache-id?
+              entry-ctx
               (tc-source-dotted-alias-key-cache-get module-id name-id)
               "helper.module"
               "value")
@@ -2631,6 +2773,7 @@
       env
       "helper.module.value"
       (compiler-typecheck-smoke-required-parsed-id
+        full-ctx
         "typecheck smoke: missing full dotted lookup id: "
         "helper.module.value")
       true)
@@ -2638,15 +2781,18 @@
         (let
           [module-id : i64
             (compiler-typecheck-smoke-required-parsed-id
+              full-ctx
               "typecheck smoke: missing full entry module id: "
               "full.entry")]
           [name-id : i64
             (compiler-typecheck-smoke-required-parsed-id
+              full-ctx
               "typecheck smoke: missing full dotted lookup id: "
               "helper.module.value")]
           (and
             (string.eq key "helper.module/value")
             (compiler-typecheck-smoke-qualified-cache-id?
+              full-ctx
               (tc-source-dotted-full-path-key-cache-get module-id name-id)
               "helper.module"
               "value")
@@ -2676,6 +2822,7 @@
                   ctx
                   "full.entry"
                   (compiler-typecheck-smoke-required-parsed-id
+                    ctx
                     "typecheck smoke: missing full.entry id: "
                     "full.entry"))
                 env)]
@@ -3305,6 +3452,7 @@
                     ctx
                     "entry.module"
                     (compiler-typecheck-smoke-required-parsed-id
+                      ctx
                       "typecheck smoke: missing entry.module id: "
                       "entry.module"))]
                 (and
@@ -3313,17 +3461,24 @@
                   (not
                     (tc-name-bound-id?
                       env
-                      (compiler-typecheck-smoke-module-key-id "helper" "value")))
+                      (compiler-typecheck-smoke-module-key-id
+                        entry-ctx
+                        "helper"
+                        "value")))
                   (tc-name-bound-id?
                     env
                     (compiler-typecheck-smoke-module-key-id
+                      entry-ctx
                       "helper.module"
                       "value"))
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
                     "helper.value"
-                    (tc-existing-name-id "helper.value"))
+                    (compiler-typecheck-smoke-required-parsed-id
+                      entry-ctx
+                      "typecheck smoke: missing helper.value id: "
+                      "helper.value"))
                     [(ResultTcType.Ok _) true]
                     [(ResultTcType.Err _) false])
                   (compiler-typecheck-smoke-lazy-import-explicit-alias-cache-ok?
@@ -3333,20 +3488,27 @@
                     entry-ctx
                     env
                     "helper.get"
-                    (tc-existing-name-id "helper.get"))
+                    (compiler-typecheck-smoke-required-parsed-id
+                      entry-ctx
+                      "typecheck smoke: missing helper.get id: "
+                      "helper.get"))
                     [(ResultTcType.Ok _) true]
                     [(ResultTcType.Err _) false])
                   (match (tc-lookup-dotted-source-visible
                     entry-ctx
                     env
                     "helper.Choice.Full"
-                    (tc-existing-name-id "helper.Choice.Full"))
+                    (compiler-typecheck-smoke-required-parsed-id
+                      entry-ctx
+                      "typecheck smoke: missing helper.Choice.Full id: "
+                      "helper.Choice.Full"))
                     [(ResultTcType.Ok _) true]
                     [(ResultTcType.Err _) false])
                   (match (tc-dotted-type-name-lookup-key-from-id
                     entry-ctx
                     "helper.Item"
                     (compiler-typecheck-smoke-required-parsed-id
+                      entry-ctx
                       "typecheck smoke: missing helper.Item id: "
                       "helper.Item"))
                     [(ResultTcString.Ok key)
@@ -3363,13 +3525,17 @@
                           (tc-name-bound-id?
                             local-env
                             (compiler-typecheck-smoke-module-key-id
+                              entry-ctx
                               "helper"
                               "value")))
                         (match (tc-lookup-dotted-source-visible
                           entry-ctx
                           local-env
                           "helper.value"
-                          (tc-existing-name-id "helper.value"))
+                          (compiler-typecheck-smoke-required-parsed-id
+                            entry-ctx
+                            "typecheck smoke: missing helper.value id: "
+                            "helper.value"))
                           [(ResultTcType.Ok _) true]
                           [(ResultTcType.Err _) false]))]
                     [(ResultTcEnv.Err _) false])))]

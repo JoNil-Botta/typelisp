@@ -9765,77 +9765,14 @@
 (define (tc-arena-phase-token-region-marker-id [token-id : i64]) : i64
   (tc-arena-phase-structural-id 3 token-id 0))
 
-;; Compatibility boundary for display strings. Opaque generated identities must
-;; be carried as ids; only source and canonical generated names are recoverable
-;; by spelling.
-(define (tc-existing-name-id [name : String]) : i64
-  (match (ci.intern-lookup-content name)
-    [(InternLookupFound id) id]
-    [(InternLookupMissing)
-      (match (ci.intern-generated-canonical-lookup name)
-        [(InternLookupFound id) id]
-        [(InternLookupMissing) -1])]))
-
-;; Parsed dotted/qualified segments are temporary substring views, not the
-;; exact String object stored in the intern pool. Resolve them by source
-;; spelling while retaining tc-existing-name-id for generated identities.
-(define (tc-source-spelling-id [name : String]) : i64
-  (match (ci.intern-lookup-content name)
-    [(InternLookupFound id) id]
-    [(InternLookupMissing) -1]))
-
-(define (tc-existing-nominal-name-id [name : String]) : i64
-  (let
-    [existing : i64 (tc-existing-name-id name)]
-    (if (>= existing 0)
-      (compiler-symbol-name-id-key existing)
-      (let
-        [slash : i64 (tc-qualified-name-last-slash name)]
-        [n : i64 (string.string-length name)]
-        (if (or (<= slash 0) (>= slash (- n 1)))
-          -1
-          (let
-            [module-id : i64
-              (tc-existing-module-name-id (string.substring name 0 slash))]
-            [base-start : i64 (+ slash 1)]
-            [base-id : i64
-              (tc-source-spelling-id
-                (string.substring name base-start (- n base-start)))]
-            (if (or (< module-id 0) (< base-id 0))
-              -1
-              (compiler-symbol-module-key-id-by-id module-id base-id))))))))
-
-(define (tc-required-existing-nominal-name-id
-  [context : String]
-  [name : String]) : i64
-  (let
-    [id : i64 (tc-existing-nominal-name-id name)]
-    (if (< id 0)
-      (io.panic (string.append context name))
-      id)))
-
 (define (tc-qualified-name-key-id [module-id : i64] [base-id : i64]) : i64
   (compiler-symbol-module-key-id-by-id module-id base-id))
-
-(define (tc-existing-module-name-id [name : String]) : i64
-  (let
-    [existing : i64 (tc-existing-name-id name)]
-    (if (>= existing 0)
-      existing
-      (ctfe-existing-name-id name))))
 
 (define (tc-generated-module-name-id [name : String]) : i64
   (ci.intern-generated-canonical-name name))
 
-;; Generated qualified names do not yet have a structural identity in AstType.
-;; Keep the unavoidable first insertion at this boundary while callers carry
-;; the resulting id; repeated resolution must use tc-existing-name-id instead.
 (define (tc-generated-name-id [name : String]) : i64
-  (let
-    [existing : i64 (tc-existing-module-name-id name)]
-    (if (>= existing 0)
-      existing
-      (tc-generated-module-name-id name))))
+  (tc-generated-module-name-id name))
 
 (define (tc-arena-region-owned-by-id? [owner-id : i64] [region-id : i64]) : bool
   (if (or (< owner-id 0) (< region-id 0))

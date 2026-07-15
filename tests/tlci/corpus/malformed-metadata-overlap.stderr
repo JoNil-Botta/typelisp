@@ -1,0 +1,1 @@
+inspect: tests/tlci/corpus/malformed-metadata-overlap.tlci: tlci: metadata section overlaps previous section

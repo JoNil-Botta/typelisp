@@ -1,0 +1,1 @@
+inspect: tests/tlci/corpus/malformed-metadata-alignment.tlci: tlci: metadata section must be 8-byte aligned

@@ -6,3 +6,7 @@
 # across Linux and Windows.
 *.tl text eol=lf
 *.sh text eol=lf
+tests/tlci/corpus/*.stdout text eol=lf
+tests/tlci/corpus/*.stderr text eol=lf
+tests/tlci/corpus/SHA256SUMS text eol=lf
+tests/tlci/corpus/*.tlci binary

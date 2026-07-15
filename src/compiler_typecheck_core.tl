@@ -48787,13 +48787,43 @@
 
 (define (macro-decl-list-append [left : AstDeclList] [right : AstDeclList]) : AstDeclList
   (let
-    [out : AstDeclList
-      (ast-decl-list-with-capacity
-        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
-    (begin
-      (macro-decl-list-append-from (&mut out) (& left))
-      (macro-decl-list-append-from (&mut out) (& right))
-      out)))
+    [left-len : i64 (ast-decl-list-len (& left))]
+    [right-len : i64 (ast-decl-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          ;; Macro expansion walks a suffix of the current whole-program vector.
+          ;; Its consumed prefix is dead after the splice context is rebuilt, so
+          ;; reconstruct the next view in that headroom instead of retaining a
+          ;; fresh whole-program copy for every splice. Distinct backing storage
+          ;; is required because the left copy may otherwise overlap the writes.
+          (ast-decl-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            false)))
+      (let
+        [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
+        (begin
+          (macro-decl-list-append-from (&mut out) (& left))
+          (macro-decl-list-append-from (&mut out) (& right))
+          out)))))
 
 (define (macro-flatten-module-body-decls-into
   [decls : AstDeclList]
@@ -48886,13 +48916,132 @@
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
   (let
-    [out : AstDeclPathList
-      (ast-decl-path-list-with-capacity
-        (+ (ast-decl-path-list-len (& left)) (ast-decl-path-list-len (& right))))]
-    (begin
-      (macro-decl-path-list-append-from (&mut out) (& left))
-      (macro-decl-path-list-append-from (&mut out) (& right))
-      out)))
+    [left-len : i64 (ast-decl-path-list-len (& left))]
+    [right-len : i64 (ast-decl-path-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-path-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclPathList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            false)))
+      (let
+        [out : AstDeclPathList
+          (ast-decl-path-list-with-capacity (+ left-len right-len))]
+        (begin
+          (macro-decl-path-list-append-from (&mut out) (& left))
+          (macro-decl-path-list-append-from (&mut out) (& right))
+          out)))))
+
+(cfg
+  test
+  (define (macro-decl-list-slots-address [items : AstDeclList]) : i64
+    (unsafe
+      (cast
+        (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
+        : i64))))
+
+(cfg
+  test
+  (define (macro-decl-path-list-slots-address [items : AstDeclPathList]) : i64
+    (unsafe
+      (cast
+        (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
+        : i64))))
+
+(cfg
+  test
+  (define (macro-decl-module-eq? [decl : AstDecl] [wanted : String]) : bool
+    (match decl
+      [(AstDecl.Module name) (string.eq (intern-str name) wanted)]
+      [_ false])))
+
+(cfg
+  test
+  (define (macro-decl-list-append-headroom-smoke?) : bool
+    (let
+      [left : AstDeclList (ast-decl-list-with-capacity 1)]
+      [_left : unit (ast-decl-list-push (&mut left) (ast-decl-module "left"))]
+      [right-base : AstDeclList (ast-decl-list-new)]
+      [right-tail : AstDeclList
+        (ast-decl-list-prepend-builder (ast-decl-module "right-b") right-base)]
+      [right : AstDeclList
+        (ast-decl-list-prepend-builder (ast-decl-module "right-a") right-tail)]
+      [right-address : i64 (macro-decl-list-slots-address right)]
+      [reused : AstDeclList (macro-decl-list-append left right)]
+      [alias-left : AstDeclList
+        (begin
+          (array-set! (struct-get right slots) 0 (ast-decl-module "alias"))
+          (AstDeclList (struct-get right slots) 0 1 false))]
+      [copied : AstDeclList (macro-decl-list-append alias-left right)]
+      (and
+        (= (macro-decl-list-slots-address reused) right-address)
+        (= (struct-get reused offset) 1)
+        (= (ast-decl-list-len (& reused)) 3)
+        (macro-decl-module-eq? (ast-decl-list-ref reused 0) "left")
+        (macro-decl-module-eq? (ast-decl-list-ref reused 1) "right-a")
+        (macro-decl-module-eq? (ast-decl-list-ref reused 2) "right-b")
+        (not (= (macro-decl-list-slots-address copied) right-address))
+        (macro-decl-module-eq? (ast-decl-list-ref copied 0) "alias")
+        (macro-decl-module-eq? (ast-decl-list-ref copied 1) "right-a")
+        (macro-decl-module-eq? (ast-decl-list-ref copied 2) "right-b")))))
+
+(cfg
+  test
+  (define (macro-decl-path-list-append-headroom-smoke?) : bool
+    (let
+      [left : AstDeclPathList (ast-decl-path-list-with-capacity 1)]
+      [_left : unit (ast-decl-path-list-push (&mut left) "left")]
+      [right-base : AstDeclPathList (ast-decl-path-list-new)]
+      [right-tail : AstDeclPathList
+        (ast-decl-path-list-prepend-builder "right-b" right-base)]
+      [right : AstDeclPathList
+        (ast-decl-path-list-prepend-builder "right-a" right-tail)]
+      [right-address : i64 (macro-decl-path-list-slots-address right)]
+      [reused : AstDeclPathList (macro-decl-path-list-append left right)]
+      [alias-left : AstDeclPathList
+        (begin
+          (array-set! (struct-get right slots) 0 "alias")
+          (AstDeclPathList (struct-get right slots) 0 1 false))]
+      [copied : AstDeclPathList (macro-decl-path-list-append alias-left right)]
+      (and
+        (= (macro-decl-path-list-slots-address reused) right-address)
+        (= (struct-get reused offset) 1)
+        (= (ast-decl-path-list-len (& reused)) 3)
+        (string.eq (ast-decl-path-list-get (& reused) 0 "") "left")
+        (string.eq (ast-decl-path-list-get (& reused) 1 "") "right-a")
+        (string.eq (ast-decl-path-list-get (& reused) 2 "") "right-b")
+        (not (= (macro-decl-path-list-slots-address copied) right-address))
+        (string.eq (ast-decl-path-list-get (& copied) 0 "") "alias")
+        (string.eq (ast-decl-path-list-get (& copied) 1 "") "right-a")
+        (string.eq (ast-decl-path-list-get (& copied) 2 "") "right-b")))))
+
+(cfg
+  test
+  (test
+    macro-decl-list-append-headroom
+    (if (and
+      (macro-decl-list-append-headroom-smoke?)
+      (macro-decl-path-list-append-headroom-smoke?))
+      unit
+      (io.panic "typecheck: macro decl-list append headroom smoke failed"))))
 
 (define (macro-decl-list-current-suffix [head : AstDecl] [rest : AstDeclList]) : AstDeclList
   (let

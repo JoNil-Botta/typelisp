@@ -315,6 +315,11 @@
 (define (type-info [ty : Expr]) : TypeInfo
   (type-info ty))
 
+;: Return the element type of a boxed type during macro CTFE.
+;: The compiler replaces this bootstrap body with reflected type syntax.
+(define (box-element-type [ty : Expr]) : Expr
+  ty)
+
 ;: Return the canonical identity string for a module strategy operand.
 (define (module-name [module : String]) : String
   module)

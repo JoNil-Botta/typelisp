@@ -2044,9 +2044,11 @@
           names))]))
 
 (define (lower-name-has-clone-prefix? [name : String]) : bool
-  (if (>= (string.string-length name) 6)
-    (string.eq (string.substring name 0 6) "clone$")
-    false))
+  (let
+    [source-name : String (tc-hygiene-global-call-name name)]
+    (if (>= (string.string-length source-name) 6)
+      (string.eq (string.substring source-name 0 6) "clone$")
+      false)))
 
 (define (lower-resolve-name [state : LowerState] [source-name : String]) : String
   (lower-name-cache-resolve-hygiene (lower-state-names state) source-name))
@@ -2635,22 +2637,36 @@
     [(AstDecl.DefFn name _ _ _ _)
       (let
         [name-str : String (intern-str name)]
-        (if (lower-name-has-clone-prefix? name-str)
+        [source-name : String (tc-hygiene-global-call-name name-str)]
+        (if (lower-name-has-clone-prefix? source-name)
           (lower-name-env-add-module-binding
             names
             module
-            name-str
-            (lower-decl-logical-name entry-path decl-path module name-str))
+            source-name
+            (lower-decl-logical-name entry-path decl-path module source-name))
           names))]
-    [(AstDecl.ComptimeDecl _ template-box)
-      (let
-        [template : AstDecl (box-get template-box)]
-        (lower-name-env-add-clone-decl-in-module
-          names
-          entry-path
-          decl-path
-          module
-          template))]
+    [(AstDecl.ComptimeDecl meta template-box)
+      (match meta
+        [(AstGeneratedDeclMeta.Some generator item _ _)
+          (if (string.eq generator "stdlib.clone/synthesize-helper")
+            (lower-name-env-add-module-binding
+              names
+              module
+              item
+              (lower-decl-logical-name entry-path decl-path module item))
+            (lower-name-env-add-clone-decl-in-module
+              names
+              entry-path
+              decl-path
+              module
+              (box-get template-box)))]
+        [(AstGeneratedDeclMeta.No)
+          (lower-name-env-add-clone-decl-in-module
+            names
+            entry-path
+            decl-path
+            module
+            (box-get template-box))])]
     [(AstDecl.Unsafe inner-box)
       (let
         [inner : AstDecl (box-get inner-box)]
@@ -2680,8 +2696,7 @@
             (array-ref
               (struct-get decls slots)
               (+ (struct-get decls offset) index))]
-          [decl-path : String
-            (ast-decl-path-list-get (& paths) index entry-path)]
+          [decl-path : String (ast-decl-path-list-get (& paths) index "")]
           (begin
             (match decl
               [(AstDecl.Module next-module) (set! cur-module-id next-module)]
@@ -5375,16 +5390,19 @@
 
 (define (lower-clone-handoff-request-decl
   [pools : AstNodePoolContext]
+  [source-decls : AstDeclList]
   [root : String]) : AstDecl
   (let
     [callee : i64
       (ast-node-pool-context-expr-push
         pools
-        (AstExpr.Var (intern "stdlib.clone.synthesize-one-field-struct")))]
+        (AstExpr.Var
+          (intern
+            (tc-hygiene-global-context-name "stdlib.clone" "synthesize-helper"))))]
     [type-arg : i64
       (ast-node-pool-context-expr-push
         pools
-        (AstExpr.TypeLiteral (AstType.Struct (intern root))))]
+        (AstExpr.TypeLiteral (clone-root-ast-type source-decls root)))]
     [call-id : i64
       (ast-expr-call-with-pools
         pools
@@ -5416,13 +5434,11 @@
             (match meta
               [(AstGeneratedDeclMeta.Some generator item _ key)
                 (if (and
-                  (string.eq
-                    generator
-                    "stdlib.clone/synthesize-one-field-struct")
+                  (string.eq generator "stdlib.clone/synthesize-helper")
                   (string.eq item (clone-local-helper-name root))
                   (tc-string-prefix?
                     key
-                    "decls:stdlib.clone:stdlib.clone/synthesize-one-field-struct(")
+                    "decls:stdlib.clone:stdlib.clone/synthesize-helper(")
                   (string.eq module (clone-type-name-module root))
                   (=
                     (clone-helper-decl-count
@@ -5460,7 +5476,8 @@
   [root : String]) : ResultMacroDeclExpansion
   (let
     [module : String (clone-type-name-module root)]
-    [request : AstDecl (lower-clone-handoff-request-decl pools root)]
+    [request : AstDecl
+      (lower-clone-handoff-request-decl pools source-decls root)]
     (match (macro-expand-decl-with-path
       (tc-context-with-module ctx module)
       top-env
@@ -5470,9 +5487,7 @@
       entry-path)
       [(ResultMacroDeclExpansion.Ok generated generated-paths)
         (ResultMacroDeclExpansion.Ok
-          (if (string.eq module "")
-            generated
-            (ast-decl-cons (ast-decl-module module) generated))
+          (ast-decl-cons (ast-decl-module module) generated)
           generated-paths)]
       [(ResultMacroDeclExpansion.Err diag) (ResultMacroDeclExpansion.Err diag)])))
 
@@ -5505,14 +5520,16 @@
             (if (and
               (= (clone-helper-decl-count generated root) 1)
               (= (lower-clone-handoff-generated-origin-count generated root) 1))
-              (lower-clone-handoff-expand-roots
-                ctx
-                top-env
-                source-decls
-                entry-path
-                pools
-                (box-get rest)
-                (clone-decl-list-append acc generated))
+              (begin
+                (ast-node-pool-context-capture-active! pools)
+                (lower-clone-handoff-expand-roots
+                  ctx
+                  top-env
+                  source-decls
+                  entry-path
+                  pools
+                  (box-get rest)
+                  (clone-decl-list-append acc generated)))
               (ResultMacroDecls.Err
                 (box
                   (tc-diag-at-start
@@ -5554,17 +5571,8 @@
           (ast-decl-list-new))
           [(ResultMacroDecls.Ok handoff-decls)
             (let
-              [legacy-decls : AstDeclList
-                (clone-generated-decls-with-roots-and-able-skipping
-                  pools
-                  source-decls
-                  able
-                  roots
-                  handoff-roots)]
               [augmented-decls : AstDeclList
-                (clone-decl-list-append
-                  source-decls
-                  (clone-decl-list-append handoff-decls legacy-decls))]
+                (clone-decl-list-append source-decls handoff-decls)]
               (ResultLowerCloneAugment.Ok
                 (ast-program augmented-decls)
                 handoff-decls))]
@@ -7913,8 +7921,8 @@
         (box-get inner-box))]
     [_ used]))
 
-;; A synthesized clone$<T> helper (compiler_clone.tl). Clone helpers are
-;; generated as the exact transitive closure the reachable clone-roots need and
+;; A synthesized clone$<T> helper (`stdlib/clone.tl`). Clone helpers are
+;; generated as the exact transitive closure the reachable clone roots need and
 ;; reference one another through `(clone x)` forms the AST reachability walk does
 ;; not resolve to names, so a reachable helper's callees would otherwise be
 ;; dropped (undefined-symbol link error). Keep every synthesized helper.
@@ -7924,8 +7932,14 @@
       (lower-name-has-clone-prefix? (intern-str name))]
     [(AstDecl.Unsafe inner-box)
       (lower-decl-is-clone-helper? (box-get inner-box))]
-    [(AstDecl.ComptimeDecl _ inner-box)
-      (lower-decl-is-clone-helper? (box-get inner-box))]
+    [(AstDecl.ComptimeDecl meta inner-box)
+      (match meta
+        [(AstGeneratedDeclMeta.Some generator _ _ _)
+          (if (string.eq generator "stdlib.clone/synthesize-helper")
+            true
+            (lower-decl-is-clone-helper? (box-get inner-box)))]
+        [(AstGeneratedDeclMeta.No)
+          (lower-decl-is-clone-helper? (box-get inner-box))])]
     [_ false]))
 
 (define (lower-runtime-decl-kept-by-reach-or-dispatch?
@@ -7937,8 +7951,8 @@
   [dispatch-variants : lower_string_i64_map.Map]
   [decl : AstDecl]) : bool
   (if (lower-decl-is-clone-helper? decl)
-    ;; P4/C4.2: clone-augment (see lower-compiler-expanded-program-...) emits
-    ;; exactly the clone$<T> closure the reachable code needs, so keep them all.
+    ;; The clone handoff emits exactly the clone$<T> closure reachable code
+    ;; needs, so keep it all.
     true
     (match (lower-function-logical-name-from-decl
       entry-path

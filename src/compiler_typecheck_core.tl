@@ -8782,6 +8782,10 @@
           "enum-variant-payload-type"
           (tc-fn3 expr (AstType.I64) (AstType.I64) expr)))
       (set! out (tc-bind out "array-element-type" (tc-fn1 expr expr)))
+      (set! out (tc-bind out "box-element-type" (tc-fn1 expr expr)))
+      (set!
+        out
+        (tc-bind out "stdlib.comptime.box-element-type" (tc-fn1 expr expr)))
       (set! out (tc-bind out "array-length" (tc-fn1 expr (AstType.I64))))
       (set! out (tc-bind out "array-dynamic?" (tc-fn1 expr (AstType.Bool))))
       (set! out (tc-bind out "tuple-element-count" (tc-fn1 expr (AstType.I64))))
@@ -25096,6 +25100,12 @@
       (compiler-symbol-module-key-id-by-name-id module name)]
     [_ -1]))
 
+(define (tc-clone-root-collection-decl-local-key [decl : AstDecl]) : i64
+  (match (ast-decl-unwrapped decl)
+    [(AstDecl.Def name _ _) name]
+    [(AstDecl.DefFn name _ _ _ _) name]
+    [_ -1]))
+
 (define (tc-clone-root-collection-selected-from-program [program : AstProgram]) : tc_i64_i64_map.Map
   (match program
     [(AstProgram.Program decls-box)
@@ -25115,9 +25125,13 @@
               [decl : AstDecl
                 (ast-decl-list-get (& decls) index (ast-decl-fallback))]
               [key : i64 (tc-clone-root-collection-decl-key module decl)]
+              [local-key : i64 (tc-clone-root-collection-decl-local-key decl)]
               (begin
                 (if (>= key 0)
                   (tc_i64_i64_map.insert-ref! (&mut selected) key 1)
+                  unit)
+                (if (>= local-key 0)
+                  (tc_i64_i64_map.insert-ref! (&mut selected) local-key 1)
                   unit)
                 (match (ast-decl-unwrapped decl)
                   [(AstDecl.Module next-module)
@@ -25150,12 +25164,95 @@
   (if tc-clone-root-collection-active
     (let
       [key : i64 (tc-clone-root-collection-decl-key module decl)]
+      [local-key : i64 (tc-clone-root-collection-decl-local-key decl)]
       [selected : bool
         (and
           (>= key 0)
-          (tc_i64_i64_map.contains? (& tc-clone-root-collection-selected) key))]
+          (or
+            (tc_i64_i64_map.contains? (& tc-clone-root-collection-selected) key)
+            (and
+              (>= local-key 0)
+              (tc_i64_i64_map.contains?
+                (& tc-clone-root-collection-selected)
+                local-key))))]
       (set! tc-clone-root-collection-current-decl selected))
     unit))
+
+(define (tc-clone-root-canonicalize-type-list-at
+  [ctx : TcContext]
+  [types : (& types AstTypeList)]
+  [index : i64]) : AstTypeList
+  (if (>= index (ast-type-list-len types))
+    (ast-type-list-new)
+    (ast-type-cons
+      (tc-clone-root-canonicalize-type
+        ctx
+        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback))))
+      (tc-clone-root-canonicalize-type-list-at ctx types (+ index 1)))))
+
+(define (tc-clone-root-canonical-nominal-name [ctx : TcContext] [name : String]) : String
+  (let
+    [source-name : String
+      (match (tc-dotted-type-name-lookup-key ctx name)
+        [(ResultTcString.Ok key) key]
+        [(ResultTcString.Err _) name])]
+    [module : String (tc-context-module ctx)]
+    [lookup-name : String
+      (if (and
+        (> (string.string-length module) 0)
+        (not (tc-name-qualified? source-name)))
+        (compiler-symbol-module-key module source-name)
+        source-name)]
+    [handle : i64
+      (tc-resolve-type-name-symbol-lookup (tc-context-symbols ctx) lookup-name)]
+    (if (compiler-symbols-handle-found? handle)
+      (match (tc-nominal-owner-name ctx handle)
+        [(ResultTcString.Ok owner-name) owner-name]
+        [(ResultTcString.Err _) name])
+      name)))
+
+(define (tc-clone-root-canonicalize-type [ctx : TcContext] [ty : AstType]) : AstType
+  (match ty
+    [(AstType.Tuple elems)
+      (ast-ty-tuple
+        (tc-clone-root-canonicalize-type-list-at ctx (& (box-get elems)) 0))]
+    [(AstType.Array elem count)
+      (ast-ty-array
+        (tc-clone-root-canonicalize-type ctx (ty-node-get elem))
+        count)]
+    [(AstType.DynArray elem)
+      (ast-ty-dyn-array
+        (tc-clone-root-canonicalize-type ctx (ty-node-get elem)))]
+    [(AstType.Box elem)
+      (ast-ty-box (tc-clone-root-canonicalize-type ctx (ty-node-get elem)))]
+    [(AstType.Region region inner)
+      (ast-ty-region
+        region
+        (tc-clone-root-canonicalize-type ctx (ty-node-get inner)))]
+    [(AstType.Var name)
+      (tc-resolve-type-name
+        ctx
+        (tc-clone-root-canonical-nominal-name ctx (intern-str name)))]
+    [(AstType.Enum name)
+      (AstType.Enum
+        (intern (tc-clone-root-canonical-nominal-name ctx (intern-str name))))]
+    [(AstType.Struct name)
+      (AstType.Struct
+        (intern (tc-clone-root-canonical-nominal-name ctx (intern-str name))))]
+    [(AstType.VarArgs name lifetimes)
+      (tc-resolve-type-name-with-args
+        ctx
+        (tc-clone-root-canonical-nominal-name ctx (intern-str name))
+        (box-get lifetimes))]
+    [(AstType.EnumArgs name lifetimes)
+      (ast-ty-enum-args
+        (intern (tc-clone-root-canonical-nominal-name ctx (intern-str name)))
+        (box-get lifetimes))]
+    [(AstType.StructArgs name lifetimes)
+      (ast-ty-struct-args
+        (intern (tc-clone-root-canonical-nominal-name ctx (intern-str name)))
+        (box-get lifetimes))]
+    [_ ty]))
 
 (define (tc-clone-root-collection-note! [ctx : TcContext] [ty : AstType]) : unit
   (if (and
@@ -25169,7 +25266,9 @@
             (unsafe
               (arena.tl_arena_set tc-clone-root-collection-arena))]
           [resolved : AstType
-            (tc-type-without-regions (tc-resolve-type ctx ty))]
+            (tc-clone-root-canonicalize-type
+              ctx
+              (tc-type-without-regions (tc-resolve-type ctx ty)))]
           (begin
             ;; Resolve the nominal closure while `ty` and all nested type-pool
             ;; ids are still live in this function's semantic scratch scope.

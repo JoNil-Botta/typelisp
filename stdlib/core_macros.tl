@@ -18,6 +18,7 @@
 ;#       value)))
 ;# ```
 (import stdlib.comptime)
+(import stdlib.clone)
 
 ;: Short-circuiting boolean conjunction.
 ;:

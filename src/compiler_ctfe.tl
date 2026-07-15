@@ -26,7 +26,7 @@
 (define ctfe-builtin-ready : bool
   false)
 (define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 105))
+  (array.make-array i64 106))
 
 (define (ctfe-builtin-reset!) : unit
   (begin
@@ -145,6 +145,7 @@
       (ctfe-builtin-set! 102 "expr-clause-list-fold-if")
       (ctfe-builtin-set! 103 "type-cleanup-owning?")
       (ctfe-builtin-set! 104 "type-cleanup-function")
+      (ctfe-builtin-set! 105 "box-element-type")
       (set! ctfe-builtin-generation (intern-generation))
       (set! ctfe-builtin-ready true))))
 
@@ -250,6 +251,7 @@
         (ctfe-builtin-ref 85)
         (ctfe-builtin-ref 87))
       (= name-id (ctfe-builtin-ref 89))
+      (= name-id (ctfe-builtin-ref 105))
       (ctfe-builtin-id-any2?
         name-id
         (ctfe-builtin-ref 103)
@@ -3710,6 +3712,18 @@
                         (ctfe-diagnostic-at-expr
                           expr
                           "array-element-type requires array type")))])]
+              [(string.eq name "box-element-type")
+                (match ty
+                  [(AstType.Box elem)
+                    (ResultCtfe.Ok
+                      (CompilerCtfeValue.Type (ctfe-ty-get env elem))
+                      arg-fuel)]
+                  [_
+                    (ResultCtfe.Err
+                      (box
+                        (ctfe-diagnostic-at-expr
+                          expr
+                          "box-element-type requires box type")))])]
               [(string.eq name "array-length")
                 (match ty
                   [(AstType.Array _ count)
@@ -12336,6 +12350,8 @@
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-array (AstType.I64) 4)))]
     [dyn-array-ty : i64
       (ast-node-push (AstExpr.TypeLiteral (ast-ty-dyn-array (AstType.Bool))))]
+    [box-ty : i64
+      (ast-node-push (AstExpr.TypeLiteral (ast-ty-box (AstType.String))))]
     [tuple-ty : i64
       (ast-node-push
         (AstExpr.TypeLiteral
@@ -12455,6 +12471,12 @@
         (compiler-ctfe-call1 "array-element-type" array-ty)
         env
         (AstType.I64))
+        unit
+        (set! ok false))
+      (if (compiler-ctfe-eval-type-ok?
+        (compiler-ctfe-call1 "box-element-type" box-ty)
+        env
+        (AstType.String))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?

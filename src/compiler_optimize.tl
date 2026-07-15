@@ -48246,7 +48246,7 @@
 
 (define (opt-ssa-out-of-range-def-function [var : i64] [vars : i64]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "ssa_out_of_range_def"
+    (opt-test-symbol "ssa_out_of_range_def")
     (CompilerIrParamList.Nil)
     (AstType.I64)
     vars

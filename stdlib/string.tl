@@ -485,26 +485,25 @@
               [rw : (Ptr i64) (ptr-cast rp : (Ptr i64))]
               [words : i64 (shr left-len 3)]
               [i : i64 0]
-              [same : bool true]
               (begin
-                (while (and same (< i words))
-                  (if (=
-                    (ptr-read (ptr-offset lw i))
-                    (ptr-read (ptr-offset rw i)))
-                    (set! i (+ i 1))
-                    (set! same false)))
-                (if same
-                  (let
-                    [j : i64 (* words 8)]
-                    (begin
-                      (while (and same (< j left-len))
-                        (if (=
+                (while (< i words)
+                  (if (not
+                    (=
+                      (ptr-read (ptr-offset lw i))
+                      (ptr-read (ptr-offset rw i))))
+                    (return false)
+                    (set! i (+ i 1))))
+                (let
+                  [j : i64 (* words 8)]
+                  (begin
+                    (while (< j left-len)
+                      (if (not
+                        (=
                           (cast (ptr-read (ptr-offset lp j)) : i64)
-                          (cast (ptr-read (ptr-offset rp j)) : i64))
-                          (set! j (+ j 1))
-                          (set! same false)))
-                      same))
-                  false)))))))))
+                          (cast (ptr-read (ptr-offset rp j)) : i64)))
+                        (return false)
+                        (set! j (+ j 1))))
+                    true))))))))))
 
 ;: Alias for `eq`.
 (define (string=? [left : (& left str)] [right : (& right str)]) : bool

@@ -6,6 +6,9 @@ optimization work can be prioritized and regressions caught (refs #929, #1097).
 
 The separate opt-in [`ispc/`](ispc/) corpus holds pinned ports of official ISPC
 example kernels. ISPC is not required by this benchmark harness or by CI.
+Its shared report runner is `scripts/measure-ispc-spmd.sh`; it validates every
+case-specific parity gate before emitting kernel-symbol-only static codegen
+comparisons, and records missing ISPC as an explicit support state.
 
 Full timing benchmark runs are manual because wall-clock measurements are noisy.
 Required CI runs a timing-free comparison correctness gate that builds every

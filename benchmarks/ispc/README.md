@@ -10,8 +10,36 @@ The corpus is pinned to ISPC v1.31.0, commit
 BSD-3-Clause attribution and record the exact upstream path, function, and
 adaptations. `case.tsv` has one row per TypeLisp backend mode so unsupported
 pairs carry the exact compiler diagnostic instead of a zero or fabricated
-measurement. The shared discovery, compilation, static-analysis, and optional
-retired-instruction reporting contract is tracked by #4968.
+measurement. Run the shared discovery, compilation, and static-analysis
+harness with:
+
+```sh
+# TypeLisp-only correctness and static rows; ISPC rows say tool-missing.
+scripts/measure-ispc-spmd.sh
+
+# Full pinned comparison (the binary must identify itself as v1.31.0).
+ISPC_BIN=/path/to/ispc scripts/measure-ispc-spmd.sh
+
+# Fast parser/analyzer/report mutation tests.
+scripts/measure-ispc-spmd.sh --self-test
+```
+
+The harness writes `support.tsv`, `static.tsv`, `comparison.tsv`, and
+`tools.tsv` below `target/ispc-spmd-report/`, with assemblies and tool logs
+under its `raw/` directory. `support.tsv` distinguishes declared support from
+observed `measured`, `unsupported`, and `tool-missing` states. `static.tsv`
+contains only extracted kernel-symbol bodies and reports their source hash and
+bytes, instruction/branch/call/spill counts, distinct GPR/vector/opmask
+registers, XMM/YMM/ZMM instruction census, gathers, scatters, and stack
+accesses. `comparison.tsv` pairs measured TypeLisp/ISPC rows and computes metric
+ratios and geomeans over positive measured pairs only. It never substitutes a
+zero for a missing or unsupported implementation.
+
+`tools.tsv` fingerprints the compiler binaries and exact flags. Reports are
+informational: there is no checked performance baseline or tolerance. The
+host-keyed retired-instruction tools currently accept the checked TypeLisp/C
+SPMD corpus rather than arbitrary ISPC binaries, so this harness does not
+mislabel those counters as ISPC comparisons.
 
 ISPC v1.31.0 has no width-1 CPU target (`generic-i32x4` is the smallest
 generic target). A TypeLisp scalar row therefore uses the checked C scalar
@@ -64,3 +92,19 @@ ISPC_BIN=/path/to/ispc scripts/verify-ispc-mandelbrot.sh
 scripts/verify-ispc-point-transform.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-point-transform.sh
 ```
+
+## Case contract
+
+Every immediate child directory is discovered when it contains `case.tsv`.
+It must also contain `bench.tl`, `kernel.ispc`, `driver.c`, and
+`LICENSE.BSD-3-Clause`. Metadata uses the exact 23-column
+`typelisp-ispc-case-v1` header checked into the existing cases and must contain
+exactly one `scalar`, `avx2`, and `avx512` row. Each row records both exported
+symbols, lane/argument/repetition data, expected exit status, and pinned
+upstream provenance. The f32 width mapping is fixed: scalar/1 has no ISPC
+target, AVX2/8 uses `avx2-i32x8`, and AVX-512/16 uses `avx512skx-x16`.
+
+A corresponding `scripts/verify-ispc-<case-with-hyphens>.sh` remains the
+semantic authority. The shared harness runs it before measurement, so exit,
+stdout, stderr, case-specific bytes, and tolerance checks must pass before any
+static comparison is emitted.

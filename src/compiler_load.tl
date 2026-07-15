@@ -11,7 +11,7 @@
 (import stdlib.env)
 (import stdlib.fs)
 (import stdlib.hashmap)
-(import (hashmap i64 String) as load_i64_string_map)
+(import (hashmap i64 i64) as load_i64_i64_map)
 (import stdlib.vector)
 (import (vector String) as svec)
 (import compiler_embedded_stdlib as ces)
@@ -7397,19 +7397,19 @@
         (compiler-load-owned-path-from-root package-owner package-root path)))))
 
 (defenum CompilerLoadOwnedPathCacheResult
-  (CompilerLoadOwnedPathCacheResult load_i64_string_map.Map String))
+  (CompilerLoadOwnedPathCacheResult load_i64_i64_map.Map i64))
 
 (define (compiler-load-package-owned-path-cached
-  [cache : load_i64_string_map.Map]
+  [cache : load_i64_i64_map.Map]
   [package-owner : String]
   [package-root : String]
   [stdlib-roots : svec.Vec]
   [path : String]
   [path-id : i64]) : CompilerLoadOwnedPathCacheResult
-  (match (load_i64_string_map.get (& cache) path-id)
-    [(load_i64_string_map.LookupFound owned)
-      (CompilerLoadOwnedPathCacheResult cache owned)]
-    [(load_i64_string_map.LookupMissing)
+  (match (load_i64_i64_map.get (& cache) path-id)
+    [(load_i64_i64_map.LookupFound owned-id)
+      (CompilerLoadOwnedPathCacheResult cache owned-id)]
+    [(load_i64_i64_map.LookupMissing)
       (let
         [owned : String
           (compiler-load-package-owned-path
@@ -7417,10 +7417,11 @@
             package-root
             stdlib-roots
             path)]
-        [next-cache : load_i64_string_map.Map cache]
+        [owned-id : i64 (ci.intern-generated-canonical-name owned)]
+        [next-cache : load_i64_i64_map.Map cache]
         (begin
-          (load_i64_string_map.insert-ref! (&mut next-cache) path-id owned)
-          (CompilerLoadOwnedPathCacheResult next-cache owned)))]))
+          (load_i64_i64_map.insert-ref! (&mut next-cache) path-id owned-id)
+          (CompilerLoadOwnedPathCacheResult next-cache owned-id)))]))
 
 (define (compiler-load-package-decl-logical-name
   [entry-path : String]
@@ -7593,8 +7594,8 @@
     [path-cursor : AstDeclPathList paths]
     [current-module : String module]
     [out : AstDeclPathList (ast-decl-path-list-with-capacity count)]
-    [owned-cache : load_i64_string_map.Map
-      (load_i64_string_map.with-capacity (+ (* count 2) 16))]
+    [owned-cache : load_i64_i64_map.Map
+      (load_i64_i64_map.with-capacity (+ (* count 2) 16))]
     [done : bool false]
     (begin
       (while (not done)
@@ -7609,13 +7610,13 @@
                   (& path-cursor)
                   0
                   cbi.compiler-builtin-id-fix-empty)]
-              [owned-path : String
+              [owned-path-id : i64
                 (if (compiler-load-package-owned-decl-entry-main?
                   entry-path
                   current-module
                   decl-path
                   decl)
-                  ""
+                  cbi.compiler-builtin-id-fix-empty
                   (match (compiler-load-package-owned-path-cached
                     owned-cache
                     package-owner
@@ -7623,15 +7624,16 @@
                     stdlib-roots
                     decl-path
                     decl-path-id)
-                    [(CompilerLoadOwnedPathCacheResult next-cache cached-path)
+                    [(CompilerLoadOwnedPathCacheResult next-cache cached-id)
                       (begin
                         (set! owned-cache next-cache)
-                        cached-path)]))]
+                        cached-id)]))]
+              [owned-path : String (intern-str owned-path-id)]
               (begin
                 (ast-decl-path-list-push-with-owner-id
                   (&mut out)
                   owned-path
-                  decl-path-id)
+                  owned-path-id)
                 (match decl
                   [(AstDecl.Module name)
                     (set! current-module (intern-str name))]

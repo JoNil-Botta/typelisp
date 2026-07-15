@@ -2179,7 +2179,7 @@
   (if (>= index (ast-macro-param-list-len params))
     false
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty _ _)
         (if (lint-type-uses-import? ty alias module-name)
           true
           (lint-macro-param-list-uses-import-at?
@@ -3129,7 +3129,7 @@
   (if (>= index (ast-macro-param-list-len params))
     locals
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name _ _)
+      [(AstMacroParam.Param name _ _ _)
         (lint-macro-param-list-add-locals-at
           params
           (lint-name-list-add locals (intern-str name))
@@ -3286,7 +3286,7 @@
   (if (>= index (ast-macro-param-list-len params))
     locals
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name ty _)
+      [(AstMacroParam.Param name ty _ _)
         (lint-copy-on-update-macro-param-locals-at
           params
           shapes
@@ -7801,7 +7801,7 @@
   (if (>= index (ast-macro-param-list-len params))
     (LintUnusedVariableBindingBuild LintUnusedVariableBindingList.Nil cursor)
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name _ _)
+      [(AstMacroParam.Param name _ _ _)
         (let
           [text : String (intern-str name)]
           [found : LintSourceNameSpan
@@ -7956,7 +7956,7 @@
   (if (>= index (ast-macro-param-list-len params))
     state
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty _ _)
         (lint-unused-variable-macro-param-types-at
           params
           (lint-unused-variable-type ty state)

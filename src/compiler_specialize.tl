@@ -868,13 +868,14 @@
 
 (define (gen-macro-param-eq? [a : AstMacroParam] [b : AstMacroParam]) : bool
   (match a
-    [(AstMacroParam.Param a-name a-ty a-variadic)
+    [(AstMacroParam.Param a-name a-ty a-variadic a-type-kinds)
       (match b
-        [(AstMacroParam.Param b-name b-ty b-variadic)
+        [(AstMacroParam.Param b-name b-ty b-variadic b-type-kinds)
           (and
             (= a-name b-name)
             (ctfe-type-eq a-ty b-ty)
-            (= a-variadic b-variadic))])]))
+            (= a-variadic b-variadic)
+            (ast-macro-type-kind-list-eq? a-type-kinds b-type-kinds))])]))
 
 (define (gen-macro-param-list-eq?
   [a : AstMacroParamList]

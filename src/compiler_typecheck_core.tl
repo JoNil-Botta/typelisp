@@ -14171,7 +14171,7 @@
   (if (>= index (ast-macro-param-list-len params))
     ResultTcUnit.Ok
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty variadic)
+      [(AstMacroParam.Param _ ty variadic _)
         (if (tc-macro-type-param-kind? ty)
           (if variadic
             (ResultTcUnit.Err
@@ -18143,7 +18143,7 @@
     unit
     (begin
       (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-        [(AstMacroParam.Param _ ty _)
+        [(AstMacroParam.Param _ ty _ _)
           (ast-type-list-push
             out
             (ast-node-pool-reader-type-push
@@ -18399,7 +18399,7 @@
   (if (>= index (ast-macro-param-list-len params))
     env
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name ty variadic)
+      [(AstMacroParam.Param name ty variadic _)
         (tc-bind-macro-params-at
           ctx
           (tc-bind-id
@@ -18443,7 +18443,7 @@
   (if (>= index (ast-macro-param-list-len params))
     env
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name ty variadic)
+      [(AstMacroParam.Param name ty variadic _)
         (tc-ctfe-env-extend-macro-params-at
           ctx
           (ctfe-env-extend
@@ -38851,7 +38851,7 @@
   (if (>= index (ast-macro-param-list-len params))
     bound
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name _ _)
+      [(AstMacroParam.Param name _ _ _)
         (tc-macro-param-list-add-bound-names-at
           params
           (+ index 1)
@@ -40097,7 +40097,7 @@
   (if (>= index (ast-macro-param-list-len params))
     false
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty _ _)
         (if (or (tc-macro-type-param-kind? ty) (tc-macro-module-param-kind? ty))
           true
           (tc-macro-param-list-needs-call-context-at? params (+ index 1)))])))
@@ -49456,7 +49456,7 @@
               "macro call has too many arguments"))))]
     [else
       (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-        [(AstMacroParam.Param _ ty variadic)
+        [(AstMacroParam.Param _ ty variadic _)
           (if variadic
             (cond
               [(tc-macro-type-param-kind? ty)
@@ -50650,7 +50650,7 @@
   (if (>= index (ast-macro-param-list-len params))
     true
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty variadic)
+      [(AstMacroParam.Param _ ty variadic _)
         (and
           (if (macro-identity-syntax-param-type? ctx definition-module ty)
             ;; A syntax parameter can choose output by syntax even when its
@@ -55301,7 +55301,7 @@
               "macro call has too many arguments"))))]
     [else
       (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-        [(AstMacroParam.Param pname pty variadic)
+        [(AstMacroParam.Param pname pty variadic _)
           (if variadic
             (macro-bind-variadic-param
               ctx
@@ -55531,7 +55531,7 @@
   [index : i64]
   [env : CtfeEnv]) : AstExprList
   (match param
-    [(AstMacroParam.Param _ ty variadic)
+    [(AstMacroParam.Param _ ty variadic _)
       (if variadic
         (let
           [remaining : AstExprList (ast-expr-list-tail-from-ref args index)]
@@ -55884,7 +55884,7 @@
   [params : AstMacroParamList]) : bool
   (if (= (ast-macro-param-list-len (& params)) 1)
     (match (ast-macro-param-list-get (& params) 0 (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty variadic)
+      [(AstMacroParam.Param _ ty variadic _)
         (and
           variadic
           (tc-type-eq

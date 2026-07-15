@@ -149,6 +149,10 @@
   (Ok AstMacroParam)
   (Err String))
 
+(defenum ResultAstMacroTypeKindList
+  (Ok AstMacroTypeKindList)
+  (Err String))
+
 (defenum ResultAstMacroParamList
   (Ok AstMacroParamList)
   (Err String))
@@ -2403,7 +2407,185 @@
 
 (define (ast-macro-param-variadic? [param : AstMacroParam]) : bool
   (match param
-    [(AstMacroParam.Param _ _ variadic) variadic]))
+    [(AstMacroParam.Param _ _ variadic _) variadic]))
+
+(define (parse-ast-macro-type-kind-known? [name : String]) : bool
+  (cond
+    [(string.eq name "i64") true]
+    [(string.eq name "i32") true]
+    [(string.eq name "i16") true]
+    [(string.eq name "i8") true]
+    [(string.eq name "u64") true]
+    [(string.eq name "u32") true]
+    [(string.eq name "u16") true]
+    [(string.eq name "u8") true]
+    [(string.eq name "f64") true]
+    [(string.eq name "f32") true]
+    [(string.eq name "bool") true]
+    [(string.eq name "char") true]
+    [(string.eq name "string") true]
+    [(string.eq name "unit") true]
+    [(string.eq name "never") true]
+    [(string.eq name "array") true]
+    [(string.eq name "dyn-array") true]
+    [(string.eq name "function") true]
+    [(string.eq name "tuple") true]
+    [(string.eq name "struct") true]
+    [(string.eq name "enum") true]
+    [(string.eq name "str") true]
+    [(string.eq name "ptr") true]
+    [(string.eq name "mut-ptr") true]
+    [(string.eq name "ref") true]
+    [(string.eq name "mut-ref") true]
+    [(string.eq name "region") true]
+    [(string.eq name "type-var") true]
+    [else false]))
+
+(define (parse-ast-macro-type-kind-error
+  [operand-name : String]
+  [detail : String]) : String
+  (string.concat3
+    "parse: macro type operand "
+    operand-name
+    (string.append " constraint :kind " detail)))
+
+(define (parse-ast-macro-type-kind-list
+  [operand-name : String]
+  [s : reader.Sexpr]) : ResultAstMacroTypeKindList
+  (match s
+    [(reader.Sexpr.Nil)
+      (ResultAstMacroTypeKindList.Ok (ast-macro-type-kind-list-empty))]
+    [(reader.Sexpr.Cons head tail)
+      (match (box-get head)
+        [(reader.Sexpr.Sym kind-name)
+          (if (parse-ast-macro-type-kind-known? kind-name)
+            (match (parse-ast-macro-type-kind-list operand-name (box-get tail))
+              [(ResultAstMacroTypeKindList.Ok rest)
+                (let
+                  [kind : i64 (intern kind-name)]
+                  (if (ast-macro-type-kind-list-contains-id? rest kind)
+                    (ResultAstMacroTypeKindList.Err
+                      (parse-ast-macro-type-kind-error
+                        operand-name
+                        (string.append "has duplicate kind " kind-name)))
+                    (ResultAstMacroTypeKindList.Ok
+                      (ast-macro-type-kind-list-cons-id kind rest))))]
+              [(ResultAstMacroTypeKindList.Err message)
+                (ResultAstMacroTypeKindList.Err message)])
+            (ResultAstMacroTypeKindList.Err
+              (parse-ast-macro-type-kind-error
+                operand-name
+                (string.append "has unknown kind " kind-name))))]
+        [_
+          (ResultAstMacroTypeKindList.Err
+            (parse-ast-macro-type-kind-error
+              operand-name
+              "expects unquoted kind names"))])]
+    [_
+      (ResultAstMacroTypeKindList.Err
+        (parse-ast-macro-type-kind-error operand-name "is malformed"))]))
+
+(define (parse-ast-macro-type-kind-constraint
+  [operand-name : String]
+  [s : reader.Sexpr]) : ResultAstMacroTypeKindList
+  (match s
+    [(reader.Sexpr.Cons head tail)
+      (match (box-get head)
+        [(reader.Sexpr.Sym tag)
+          (if (string.eq tag ":kind")
+            (match (box-get tail)
+              [(reader.Sexpr.Nil)
+                (ResultAstMacroTypeKindList.Err
+                  (parse-ast-macro-type-kind-error
+                    operand-name
+                    "requires at least one kind"))]
+              [(reader.Sexpr.Cons _ _)
+                (parse-ast-macro-type-kind-list operand-name (box-get tail))]
+              [_
+                (ResultAstMacroTypeKindList.Err
+                  (parse-ast-macro-type-kind-error operand-name "is malformed"))])
+            (ResultAstMacroTypeKindList.Err
+              (string.concat3
+                "parse: macro type operand "
+                operand-name
+                (string.append " has unknown constraint form " tag))))]
+        [_
+          (ResultAstMacroTypeKindList.Err
+            (parse-ast-macro-type-kind-error operand-name "is malformed"))])]
+    [_
+      (ResultAstMacroTypeKindList.Err
+        (parse-ast-macro-type-kind-error operand-name "is malformed"))]))
+
+(define (parse-ast-macro-type-operand? [ty : AstType]) : bool
+  (match ty
+    [(AstType.Var name) (string.eq (intern-str name) "type")]
+    [_ false]))
+
+(define (parse-ast-macro-param-after-type
+  [name : String]
+  [parsed-ty : AstType]
+  [rest : reader.Sexpr]) : ResultAstMacroParam
+  (match rest
+    [(reader.Sexpr.Nil)
+      (ResultAstMacroParam.Ok (ast-macro-param name parsed-ty false))]
+    [(reader.Sexpr.Cons suffix suffix-rest)
+      (match (box-get suffix)
+        [(reader.Sexpr.Sym suffix-name)
+          (if (string.eq suffix-name "...")
+            (match (box-get suffix-rest)
+              [(reader.Sexpr.Nil)
+                (ResultAstMacroParam.Ok (ast-macro-param name parsed-ty true))]
+              [_ (ResultAstMacroParam.Err "parse: malformed macro operand")])
+            (ResultAstMacroParam.Err "parse: malformed macro operand"))]
+        [(reader.Sexpr.Cons _ _)
+          (if (parse-ast-macro-type-operand? parsed-ty)
+            (match (box-get suffix-rest)
+              [(reader.Sexpr.Nil)
+                (match (parse-ast-macro-type-kind-constraint
+                  name
+                  (box-get suffix))
+                  [(ResultAstMacroTypeKindList.Ok type-kinds)
+                    (ResultAstMacroParam.Ok
+                      (ast-macro-param-with-type-kinds
+                        name
+                        parsed-ty
+                        false
+                        type-kinds))]
+                  [(ResultAstMacroTypeKindList.Err message)
+                    (ResultAstMacroParam.Err message)])]
+              [(reader.Sexpr.Cons maybe-dots after-dots)
+                (match (box-get maybe-dots)
+                  [(reader.Sexpr.Sym dots-name)
+                    (if (and
+                      (string.eq dots-name "...")
+                      (match (box-get after-dots)
+                        [(reader.Sexpr.Nil) true]
+                        [_ false]))
+                      (ResultAstMacroParam.Err
+                        (parse-ast-macro-type-kind-error
+                          name
+                          "is not legal on variadic operands"))
+                      (ResultAstMacroParam.Err
+                        (parse-ast-macro-type-kind-error
+                          name
+                          "allows only one constraint form")))]
+                  [_
+                    (ResultAstMacroParam.Err
+                      (parse-ast-macro-type-kind-error
+                        name
+                        "allows only one constraint form"))])]
+              [_
+                (ResultAstMacroParam.Err
+                  (parse-ast-macro-type-kind-error
+                    name
+                    "allows only one constraint form"))])
+            (ResultAstMacroParam.Err
+              (string.concat3
+                "parse: macro operand "
+                name
+                " constraint :kind is only legal on fixed type operands")))]
+        [_ (ResultAstMacroParam.Err "parse: malformed macro operand")])]
+    [_ (ResultAstMacroParam.Err "parse: malformed macro operand")]))
 
 (define (parse-ast-macro-param
   [dispatch : sym_i64_env.SymI64Env]
@@ -2421,40 +2603,14 @@
                 (match (box-get rest2)
                   [(reader.Sexpr.Cons ty rest3)
                     (if (sexpr-colon? (box-get colon))
-                      (match (box-get rest3)
-                        [(reader.Sexpr.Nil)
-                          (match (parse-ast-type dispatch pools (box-get ty))
-                            [(ResultAstType.Ok parsed-ty)
-                              (ResultAstMacroParam.Ok
-                                (ast-macro-param name parsed-ty false))]
-                            [(ResultAstType.Err message)
-                              (ResultAstMacroParam.Err message)])]
-                        [(reader.Sexpr.Cons dots end)
-                          (match (box-get end)
-                            [(reader.Sexpr.Nil)
-                              (match (box-get dots)
-                                [(reader.Sexpr.Sym dots-name)
-                                  (if (string.eq dots-name "...")
-                                    (match (parse-ast-type
-                                      dispatch
-                                      pools
-                                      (box-get ty))
-                                      [(ResultAstType.Ok parsed-ty)
-                                        (ResultAstMacroParam.Ok
-                                          (ast-macro-param name parsed-ty true))]
-                                      [(ResultAstType.Err message)
-                                        (ResultAstMacroParam.Err message)])
-                                    (ResultAstMacroParam.Err
-                                      "parse: malformed macro operand"))]
-                                [_
-                                  (ResultAstMacroParam.Err
-                                    "parse: malformed macro operand")])]
-                            [_
-                              (ResultAstMacroParam.Err
-                                "parse: malformed macro operand")])]
-                        [_
-                          (ResultAstMacroParam.Err
-                            "parse: malformed macro operand")])
+                      (match (parse-ast-type dispatch pools (box-get ty))
+                        [(ResultAstType.Ok parsed-ty)
+                          (parse-ast-macro-param-after-type
+                            name
+                            parsed-ty
+                            (box-get rest3))]
+                        [(ResultAstType.Err message)
+                          (ResultAstMacroParam.Err message)])
                       (ResultAstMacroParam.Err
                         "parse: expected ':' in macro operand"))]
                   [_ (ResultAstMacroParam.Err "parse: malformed macro operand")])]
@@ -11379,28 +11535,111 @@
                       (& params)
                       0
                       (ast-macro-param-fallback))
-                      [(AstMacroParam.Param first (AstType.Bool) false)
+                      [(AstMacroParam.Param
+                          first
+                          (AstType.Bool)
+                          false
+                          (AstMacroTypeKindList.Nil))
                         (= first (intern "first"))]
                       [_ false])
                     (match (ast-macro-param-list-get
                       (& params)
                       1
                       (ast-macro-param-fallback))
-                      [(AstMacroParam.Param rest (AstType.Bool) true)
+                      [(AstMacroParam.Param
+                          rest
+                          (AstType.Bool)
+                          true
+                          (AstMacroTypeKindList.Nil))
                         (= rest (intern "rest"))]
                       [_ false]))]
                 [_ false]))]
           [_ false]))]
     [(ResultAstProgram.Err _) false]))
 
+(define (compiler-parse-macro-type-kind-list-shape-ok?
+  [kinds : AstMacroTypeKindList]) : bool
+  (match kinds
+    [(AstMacroTypeKindList.Cons i64-kind i64-rest)
+      (and
+        (= i64-kind (intern "i64"))
+        (match (box-get i64-rest)
+          [(AstMacroTypeKindList.Cons struct-kind struct-rest)
+            (and
+              (= struct-kind (intern "struct"))
+              (match (box-get struct-rest)
+                [(AstMacroTypeKindList.Cons type-var-kind end)
+                  (and
+                    (= type-var-kind (intern "type-var"))
+                    (match (box-get end)
+                      [(AstMacroTypeKindList.Nil) true]
+                      [_ false]))]
+                [_ false]))]
+          [_ false]))]
+    [_ false]))
+
+(define (compiler-parse-defmacro-type-kind-constraint-shape-ok?) : bool
+  (match (parse-ast-source
+    "(defmacro (catalog [T : type (:kind i64 struct type-var)]) : Module unit)")
+    [(ResultAstProgram.Ok (AstProgram.Program decls-box))
+      (match (ast-decl-list-step (box-get decls-box))
+        [(AstDeclListStep.Cons (AstDecl.DefMacro name params _ _) rest)
+          (and
+            (= name (intern "catalog"))
+            (match (ast-decl-list-step rest)
+              [(AstDeclListStep.Nil) true]
+              [_ false])
+            (= (ast-macro-param-list-len (& params)) 1)
+            (match (ast-macro-param-list-get
+              (& params)
+              0
+              (ast-macro-param-fallback))
+              [(AstMacroParam.Param
+                  param-name
+                  (AstType.Var type-name)
+                  false
+                  type-kinds)
+                (and
+                  (= param-name (intern "T"))
+                  (= type-name (intern "type"))
+                  (compiler-parse-macro-type-kind-list-shape-ok? type-kinds))]
+              [_ false]))]
+        [_ false])]
+    [(ResultAstProgram.Err _) false]))
+
 (define (compiler-parse-defmacro-tests-ok?) : bool
   (and
     (compiler-parse-defmacro-shape-ok?)
+    (compiler-parse-defmacro-type-kind-constraint-shape-ok?)
     (compiler-parse-ok?
       "(defmacro (and2 [lhs : bool] [rhs : bool]) : bool (expr-if lhs rhs (expr-bool false)))")
     (compiler-parse-error-ok?
       "(defmacro (bad [rest : bool ...] [x : bool]) : bool rest)"
-      "parse: variadic macro operand must be final")))
+      "parse: variadic macro operand must be final")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:kind)]) : Module unit)"
+      "parse: macro type operand T constraint :kind requires at least one kind")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:kind i64 i64)]) : Module unit)"
+      "parse: macro type operand T constraint :kind has duplicate kind i64")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:kind record)]) : Module unit)"
+      "parse: macro type operand T constraint :kind has unknown kind record")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [value : Expr (:kind i64)]) : Expr value)"
+      "parse: macro operand value constraint :kind is only legal on fixed type operands")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:kind i64) ...]) : Module unit)"
+      "parse: macro type operand T constraint :kind is not legal on variadic operands")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:kind i64) (:kind i32)]) : Module unit)"
+      "parse: macro type operand T constraint :kind allows only one constraint form")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:shape struct)]) : Module unit)"
+      "parse: macro type operand T has unknown constraint form :shape")
+    (compiler-parse-error-ok?
+      "(defmacro (bad [T : type (:kind \"i64\")]) : Module unit)"
+      "parse: macro type operand T constraint :kind expects unquoted kind names")))
 
 (define (compiler-parse-smoke) : i64
   (match (parse-ast-source (compiler-parse-smoke-source))

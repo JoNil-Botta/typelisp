@@ -7228,7 +7228,7 @@
   (if (>= index (ast-macro-param-list-len params))
     used
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty _ _)
         (lower-used-types-add-macro-param-list-at
           pools
           (lower-used-types-add-type pools used module ty)

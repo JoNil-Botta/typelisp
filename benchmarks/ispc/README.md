@@ -26,6 +26,7 @@ comparison. AVX2 `i32x8` and AVX-512 `x16` remain width-matched for f32 lanes.
 | [`perfbench_loads`](perfbench_loads/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::loads` | Scalar, AVX2, and AVX-512 supported |
 | [`perfbench_stores`](perfbench_stores/) | `f32` | `examples/cpu/perfbench/perfbench.ispc::stores` | Supported |
 | [`mandelbrot`](mandelbrot/) | `f32`/`i32` | `examples/cpu/mandelbrot/mandelbrot.ispc::mandelbrot_ispc` | Scalar and AVX-512 supported; AVX2 staged by #4971 |
+| [`point_transform`](point_transform/) | `f32` | `examples/cpu/point_transform_ctypes/point_transform.ispc::transform_points` | Scalar, AVX2, and AVX-512 supported |
 
 `perfbench_loads` uses only integer-valued binary32 inputs and keeps every
 partial sum within the exactly representable integer range. Its scalar oracle,
@@ -44,6 +45,12 @@ gang widths 1, 8, and 16 for f32. Its distinct integer-valued lane inputs make
 the complete output byte pattern repeat at exactly that width. The TypeLisp
 and width-matched ISPC rows must agree, while generic x4 is validation only.
 
+`point_transform` factors the upstream uniform `sin(rotation)`/`cos(rotation)`
+prelude out of both implementations and passes identical exact f32 constants.
+It preserves the scale/rotate/translate/strength zip body without adding a
+libm dependency or measuring a struct ABI. Exact identity-rotation fixtures and
+a finite-only two-ULP oracle cover empty, x8/x16, sub-gang, and tail lengths.
+
 Validate the required metadata/diagnostic contract, and optionally the real
 ISPC generic/AVX2 driver when v1.31.0 is installed, with:
 
@@ -54,4 +61,6 @@ scripts/verify-ispc-perfbench-stores.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-perfbench-stores.sh
 scripts/verify-ispc-mandelbrot.sh
 ISPC_BIN=/path/to/ispc scripts/verify-ispc-mandelbrot.sh
+scripts/verify-ispc-point-transform.sh
+ISPC_BIN=/path/to/ispc scripts/verify-ispc-point-transform.sh
 ```

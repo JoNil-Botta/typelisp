@@ -23,7 +23,7 @@ set -eu
 #   TYPELISP_BIN=./target/stage0/typelisp scripts/verify-spmd-simd.sh
 #
 # On the fleet's AVX-512 Windows box (the only AVX-512 machine), run from Git
-# Bash / MSYS with clang on PATH; detect-simd-isa.sh reports `avx2`+`avx512bw`
+# Bash / MSYS with clang on PATH; detect-simd-isa.sh reports `avx2`+`avx512`
 # there, so all three modes are exercised. A generic windows-latest or Linux CI
 # runner without AVX-512 runs scalar+avx2 and skips avx512 cleanly.
 
@@ -238,7 +238,7 @@ while IFS= read -r prog; do
     fi
     echo "[spmd-simd] $prog scalar -> $scalar_code"
 
-    for pair in "avx2 avx2" "avx512 avx512bw"; do
+    for pair in "avx2 avx2" "avx512 avx512"; do
         mode=${pair%% *}
         isa=${pair##* }
         if expected_diag=$(spmd_mode_expected_compile_diagnostic "$prog" "$mode"); then

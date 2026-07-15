@@ -109,7 +109,7 @@ typelisp_mode_runnable() {
     case "$1" in
         scalar) return 0 ;;
         avx2) printf '%s\n' "$SIMD_ISAS" | grep -qx avx2 ;;
-        avx512) printf '%s\n' "$SIMD_ISAS" | grep -qx avx512bw ;;
+        avx512) printf '%s\n' "$SIMD_ISAS" | grep -qx avx512 ;;
         *) return 1 ;;
     esac
 }
@@ -238,10 +238,10 @@ else
     echo "perfbench_loads optional ISPC AVX2 run skipped (host lacks AVX2)"
 fi
 if [ "${ISPC_PERFBENCH_LOADS_AVX512:-0}" = 1 ]; then
-    if printf '%s\n' "$SIMD_ISAS" | grep -qx avx512bw; then
+    if printf '%s\n' "$SIMD_ISAS" | grep -qx avx512; then
         run_ispc_target avx512 avx512skx-x16
     else
-        echo "perfbench_loads: AVX-512 requested but host lacks AVX-512BW" >&2
+        echo "perfbench_loads: AVX-512 requested but host lacks runnable F+BW+DQ" >&2
         exit 1
     fi
 fi

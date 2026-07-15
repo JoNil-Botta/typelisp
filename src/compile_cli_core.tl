@@ -127,6 +127,31 @@
 (define (compile-cli-cfg-names-to-env [names : CompileCliCfgNames]) : sym_i64_env.SymI64Env
   (compile-cli-cfg-names-to-env-from (& names) 0 (compiler-cfg-empty)))
 
+(define (compile-cli-cfg-names-to-env-with-intern-state-from
+  [names : (& names CompileCliCfgNames)]
+  [index : i64]
+  [env : sym_i64_env.SymI64Env]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (if (>= index (struct-get names len))
+    env
+    (compile-cli-cfg-names-to-env-with-intern-state-from
+      names
+      (+ index 1)
+      (compiler-cfg-enable-with-intern-state
+        env
+        (compile-cli-cfg-names-get names index)
+        intern-state)
+      intern-state)))
+
+(define (compile-cli-cfg-names-to-env-with-intern-state
+  [names : CompileCliCfgNames]
+  [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
+  (compile-cli-cfg-names-to-env-with-intern-state-from
+    (& names)
+    0
+    (compiler-cfg-empty)
+    intern-state))
+
 (defenum CompileCliConfig
   (Config
     String
@@ -827,67 +852,83 @@
   [backend-mode : CompilerBackendMode]
   [opt-level : i64]
   [inline-preflight : bool]) : i64
-  (let
-    [doctest-status : i64
-      (compile-cli-typecheck-doctests input-path stdlib-roots)]
-    (if (= doctest-status 0)
-      (let
-        [inline-test-status : i64
-          (if inline-preflight
-            (tltest-inline-typecheck-file-with-cfg
-              input-path
-              stdlib-roots
-              (compiler-driver-target-cfgs
-                target
-                (compile-cli-cfg-names-to-env cfgs))
-              "typecheck-prefix-inline-compile")
-            0)]
-        (if (= inline-test-status 0)
-          (begin
-            (compiler-driver-state-reset-file-state! state)
-            (let
-              [emit-cfgs : sym_i64_env.SymI64Env
-                (compile-cli-cfg-names-to-env cfgs)]
-              [status : i64
-                (if emit-ir
-                  (compiler-driver-write-result
-                    (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
-                      state
-                      input-path
-                      target
-                      stdlib-roots
-                      opt-level
-                      backend-mode
-                      emit-cfgs)
-                    output-path)
-                  (if pic
-                    (compiler-driver-write-pic-result
-                      (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+  (begin
+    ;; Doctest and inline preflight still enter the standalone compiler-check
+    ;; call graph before this job's state-aware reset. Make that residual
+    ;; compatibility boundary explicit instead of relying on the previous
+    ;; batch entry's cleanup to leave these globals installed.
+    ;; A fresh state must advance its generation before installation: otherwise
+    ;; process-level parser caches from CLI startup can mistake generation zero
+    ;; for their owner and reuse ids from the bootstrap compatibility table.
+    (if (= (compiler-driver-state-intern-generation state) 0)
+      (ci.intern-compat-state-reset!
+        (compiler-driver-state-owned-interns state))
+      unit)
+    (compiler-driver-state-install-pools! state)
+    (compiler-driver-state-install-interns! state)
+    (let
+      [doctest-status : i64
+        (compile-cli-typecheck-doctests input-path stdlib-roots)]
+      (if (= doctest-status 0)
+        (let
+          [inline-test-status : i64
+            (if inline-preflight
+              (tltest-inline-typecheck-file-with-cfg
+                input-path
+                stdlib-roots
+                (compiler-driver-target-cfgs
+                  target
+                  (compile-cli-cfg-names-to-env cfgs))
+                "typecheck-prefix-inline-compile")
+              0)]
+          (if (= inline-test-status 0)
+            (begin
+              (compiler-driver-state-reset-file-state! state)
+              (let
+                [emit-cfgs : sym_i64_env.SymI64Env
+                  (compile-cli-cfg-names-to-env-with-intern-state
+                    cfgs
+                    (compiler-driver-state-owned-interns state))]
+                [status : i64
+                  (if emit-ir
+                    (compiler-driver-write-result
+                      (compiler-driver-state-emit-ir-summary-file-with-target-roots-level-mode-and-cfg
                         state
                         input-path
                         target
-                        true
                         stdlib-roots
                         opt-level
                         backend-mode
                         emit-cfgs)
                       output-path)
-                    (compiler-driver-write-buffer-result
-                      (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
-                        state
-                        input-path
-                        target
-                        true
-                        stdlib-roots
-                        opt-level
-                        backend-mode
-                        emit-cfgs)
-                      output-path)))]
-              (begin
-                (compiler-driver-state-capture-session-floors! state)
-                status)))
-          inline-test-status))
-      doctest-status)))
+                    (if pic
+                      (compiler-driver-write-pic-result
+                        (compiler-driver-state-emit-file-pic-with-target-roots-level-mode-and-cfg
+                          state
+                          input-path
+                          target
+                          true
+                          stdlib-roots
+                          opt-level
+                          backend-mode
+                          emit-cfgs)
+                        output-path)
+                      (compiler-driver-write-buffer-result
+                        (compiler-driver-state-emit-file-buffer-with-target-roots-level-mode-and-cfg
+                          state
+                          input-path
+                          target
+                          true
+                          stdlib-roots
+                          opt-level
+                          backend-mode
+                          emit-cfgs)
+                        output-path)))]
+                (begin
+                  (compiler-driver-state-capture-session-floors! state)
+                  status)))
+            inline-test-status))
+        doctest-status))))
 
 (define (compile-cli-run-batch-inline-tests-from
   [entries : (& entries cli_svec.Vec)]
@@ -1129,6 +1170,12 @@
           (begin
             (arena.set! home)
             (arena.destroy scratch-end)))
+        ;; The next standalone preflight and the opt-in allocation profiler
+        ;; still observe compatibility globals between batch entries. Install
+        ;; the already-reset job context at that explicit boundary, after the
+        ;; entry scratch owner has been destroyed.
+        (compiler-driver-state-install-pools! state)
+        (compiler-driver-state-install-interns! state)
         (cfg
           compile-profile
           (compiler-driver-batch-profile-mark! ordinal "scratch-destroy-steady")

@@ -121,11 +121,11 @@ else
     echo "[spmd-lane-identity] skip avx2 (not runnable on this $HOST_OS host)"
 fi
 
-if isa_available avx512bw; then
+if isa_available avx512; then
     expect_exit tests/spmd/lane_identity_i64.tl avx512 54
     expect_exit tests/spmd/lane_identity_reduce_i64.tl avx512 142
 else
-    echo "[spmd-lane-identity] skip avx512 (avx512bw not runnable on this $HOST_OS host)"
+    echo "[spmd-lane-identity] skip avx512 (AVX-512F+BW+DQ not runnable on this $HOST_OS host)"
 fi
 
 if [ -s "$FAILURES" ]; then

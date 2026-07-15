@@ -38,6 +38,11 @@ contains|call _tl_parse_factor
 contains|call _tl_eval
 end
 
+case|integration_clone_macro_handoff|tests/integration/clone_macro_handoff.tl|assembly|exactly-one|direct
+contains|_tl_clone_macro_handoff_clone_u24CloneMacroUsed:
+not-contains|_tl_clone_macro_handoff_clone_u24CloneMacroUnused
+end
+
 case|integration_lexer|tests/integration/lexer.tl|assembly|present|direct
 contains|_tl_lex:
 contains|_tl_ident_token:

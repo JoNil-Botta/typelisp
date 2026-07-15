@@ -482,6 +482,188 @@
       (+ (intern-compat-state-generation state) 1))
     (array-set! (struct-get state map-ready) 0 true)))
 
+(define (intern-compat-state-persistent-substring
+  [state : InternCompatState]
+  [text : String]
+  [start : i64]
+  [len : i64]) : String
+  (let
+    [prev-arena : i64 (tl_arena_current)]
+    (if (= prev-arena (intern-compat-state-persistent-arena state))
+      (intern-substring text start len)
+      (let
+        [out : String
+          (begin
+            (unsafe
+              (tl_arena_set (intern-compat-state-persistent-arena state)))
+            (let
+              [copied : String (intern-substring text start len)]
+              (begin
+                (unsafe
+                  (tl_arena_set prev-arena))
+                copied)))]
+        out))))
+
+(define (intern-compat-state-persistent-copy
+  [state : InternCompatState]
+  [text : String]) : String
+  (if (= (tl_arena_current) (intern-compat-state-persistent-arena state))
+    text
+    (intern-compat-state-persistent-substring
+      state
+      text
+      0
+      (intern-private-string-length text))))
+
+(define (intern-compat-state-record-qualified-metadata!
+  [state : InternCompatState]
+  [id : i64]
+  [name : String]) : unit
+  (let
+    [i : i64 0]
+    [n : i64 (intern-private-string-length name)]
+    [slash : i64 -1]
+    [dot : i64 -1]
+    (begin
+      (while (< i n)
+        (let
+          [c : char (intern-private-string-ref name i)]
+          (begin
+            (if (= c '/')
+              (set! slash i)
+              unit)
+            (if (and (< dot 0) (= c '.'))
+              (set! dot i)
+              unit)
+            (set! i (+ i 1)))))
+      (array-set! (struct-get state pool-last-slash-slots) id slash)
+      (array-set! (struct-get state pool-first-dot-slots) id dot)
+      (array-set!
+        (struct-get state pool-leading-dot-id-slots)
+        id
+        (if (< dot 0)
+          -1
+          (intern-compat-state-intern state (intern-substring name 0 dot))))
+      (if (< slash 0)
+        (begin
+          (array-set! (struct-get state pool-qualified-slots) id false)
+          (array-set! (struct-get state pool-module-id-slots) id -1)
+          (array-set! (struct-get state pool-base-id-slots) id id))
+        (let
+          [base-start : i64 (+ slash 1)]
+          (begin
+            (array-set! (struct-get state pool-qualified-slots) id true)
+            (array-set!
+              (struct-get state pool-module-id-slots)
+              id
+              (intern-compat-state-intern state (intern-substring name 0 slash)))
+            (array-set!
+              (struct-get state pool-base-id-slots)
+              id
+              (intern-compat-state-intern
+                state
+                (intern-substring name base-start (- n base-start))))))))))
+
+;; State-owned interning mirrors the compatibility table without installing it
+;; into process globals. Compile-job setup and reset paths use this API while
+;; the legacy parser/typecheck/lower call graph is migrated incrementally.
+(define (intern-compat-state-intern [state : InternCompatState] [name : String]) : i64
+  (begin
+    (if (array-ref (struct-get state map-ready) 0)
+      unit
+      (intern-compat-state-reset! state))
+    (let
+      [capacity : i64 (array-length (struct-get state map-slots))]
+      [hash : i64 (intern-hash name)]
+      [cursor : i64 (intern-bucket hash capacity)]
+      [steps : i64 0]
+      [out : i64 -1]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< steps capacity))
+          (match (array-ref (struct-get state map-slots) cursor)
+            [(InternEmpty)
+              (let
+                [persistent-name : String
+                  (if (intern-compat-state-persistent-storage-enabled? state)
+                    (intern-compat-state-persistent-copy state name)
+                    name)]
+                [id : i64 (intern-compat-state-pool-len state)]
+                (begin
+                  (array-set! (struct-get state pool-slots) id persistent-name)
+                  (array-set!
+                    (struct-get state map-slots)
+                    cursor
+                    (InternUsed persistent-name id hash))
+                  (array-set! (struct-get state pool-count) 0 (+ id 1))
+                  (intern-compat-state-record-qualified-metadata!
+                    state
+                    id
+                    persistent-name)
+                  (set! out id)
+                  (set! done true)))]
+            [(InternUsed slot-key slot-id slot-hash)
+              (if (and
+                (= slot-hash hash)
+                (intern-private-string-eq slot-key name))
+                (begin
+                  (set! out slot-id)
+                  (set! done true))
+                (begin
+                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! steps (+ steps 1))))]))
+        out))))
+
+(define (intern-compat-state-lookup [state : InternCompatState] [name : String]) : InternLookup
+  (if (array-ref (struct-get state map-ready) 0)
+    (let
+      [capacity : i64 (array-length (struct-get state map-slots))]
+      [hash : i64 (intern-hash name)]
+      [cursor : i64 (intern-bucket hash capacity)]
+      [steps : i64 0]
+      [out : InternLookup InternLookupMissing]
+      [done : bool false]
+      (begin
+        (while (and (not done) (< steps capacity))
+          (match (array-ref (struct-get state map-slots) cursor)
+            [(InternEmpty) (set! done true)]
+            [(InternUsed slot-key slot-id slot-hash)
+              (if (and
+                (= slot-hash hash)
+                (intern-private-string-eq slot-key name))
+                (begin
+                  (set! out (InternLookupFound slot-id))
+                  (set! done true))
+                (begin
+                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! steps (+ steps 1))))]))
+        out))
+    (InternLookupMissing)))
+
+(define (intern-compat-state-str [state : InternCompatState] [id : i64]) : String
+  (array-ref (struct-get state pool-slots) id))
+
+(define (intern-compat-state-qualified? [state : InternCompatState] [id : i64]) : bool
+  (array-ref (struct-get state pool-qualified-slots) id))
+
+(define (intern-compat-state-first-dot [state : InternCompatState] [id : i64]) : i64
+  (array-ref (struct-get state pool-first-dot-slots) id))
+
+(define (intern-compat-state-leading-dot-id
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (array-ref (struct-get state pool-leading-dot-id-slots) id))
+
+(define (intern-compat-state-qualified-module-id
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (array-ref (struct-get state pool-module-id-slots) id))
+
+(define (intern-compat-state-qualified-base-id
+  [state : InternCompatState]
+  [id : i64]) : i64
+  (array-ref (struct-get state pool-base-id-slots) id))
+
 (define (intern-compat-state-install! [state : InternCompatState]) : unit
   (begin
     (set! intern-pool-slots (struct-get state pool-slots))

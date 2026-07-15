@@ -45740,6 +45740,7 @@ tl_arena_set:
 
     .globl tl_arena_poison_enable
 tl_arena_poison_enable:
+    movq $1, .L_tl_arena_poison_enabled(%rip)
     ret
 
     .globl tl_arena_make
@@ -45977,7 +45978,14 @@ tl_region_reset:
       (compiler-backend-runtime-profile-live-sub "%r9" "%r11" profile)
       (string.append
         "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
-    je .L_tl_region_reset_drop_newer_retire
+    jne .L_tl_region_reset_drop_newer_poison
+    movq 24(%r9), %rsi
+    subq %r9, %rsi
+    movq %r9, %rdi
+    movq $11, %rax
+    syscall
+    jmp .L_tl_region_reset_drop_newer_next
+.L_tl_region_reset_drop_newer_poison:
     movq 8(%r9), %rdi
     movq 24(%r9), %rcx
     subq %rdi, %rcx
@@ -45989,6 +45997,7 @@ tl_region_reset:
     movq %r11, 32(%r9)
     movq $0, 0(%r9)
     movq %r9, 32(%r12)
+.L_tl_region_reset_drop_newer_next:
     movq %r10, %r9
     jmp .L_tl_region_reset_drop_newer
 .L_tl_region_reset_restore:
@@ -46555,7 +46564,9 @@ tl_alloc:
 ;; Windows variant of `tl_region_reset`. Identical arena-walk structure to the
 ;; Linux helper (offsets: 0=prev arena, 8=usable base, 16=bump pointer, 24=end,
 ;; 32=retired list link/head, 40=root, 48=kind/lock, 56=root-current; the arena header sits at the VirtualAlloc
-;; base). Nonzero reset retires newer chunks; reset-all releases chunks with
+;; base). Nonzero reset releases newer chunks immediately unless debug poison
+;; retention is enabled; reset-all releases the remaining active chain and any
+;; poison-retired chunks with
 ;; `VirtualFree(lpAddress=arena, dwSize=0, dwFreeType=MEM_RELEASE=0x8000)` ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â the
 ;; arena node address is exactly the VirtualAlloc base, so MEM_RELEASE frees the
 ;; whole chunk. Arg (the mark) arrives in %rcx.
@@ -46606,13 +46617,27 @@ tl_region_reset:
     (string.append
       (compiler-backend-runtime-profile-live-sub "%r14" "%rax" profile)
       (string.append
-        "    movq 32(%r11), %rax
+        "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    jne .L_tl_region_reset_win_retire
+    movq %r14, %rcx
+    xorq %rdx, %rdx
+    movq $0x8000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    testq %rax, %rax
+    jnz .L_tl_region_reset_win_drop_next
+.L_tl_region_reset_win_retire:
+    movq 40(%r13), %r11
+    movq 32(%r11), %rax
     movq %rax, 32(%r14)
     movq $0, 0(%r14)
     movq %r14, 32(%r11)
+.L_tl_region_reset_win_drop_next:
     movq %rbx, %r14
     jmp .L_tl_region_reset_win_drop
 .L_tl_region_reset_win_restore:
+    movq 40(%r13), %r11
 "
         (string.append
           (compiler-backend-runtime-profile-live-rewind
@@ -46621,7 +46646,32 @@ tl_region_reset:
             "%rax"
             profile)
           (string.append
-            "    movq %r12, 16(%r13)
+            "    cmpq $0, .L_tl_arena_poison_enabled(%rip)
+    jne .L_tl_region_reset_win_decommit_done
+    movq %r12, %rbx
+    subq %r13, %rbx
+    addq $0x3fffff, %rbx
+    andq $-0x400000, %rbx
+    cmpq $0x400000, %rbx
+    jae .L_tl_region_reset_win_retain_ready
+    movq $0x400000, %rbx
+.L_tl_region_reset_win_retain_ready:
+    addq %r13, %rbx
+    cmpq 64(%r13), %rbx
+    jae .L_tl_region_reset_win_decommit_done
+    movq %rbx, %rcx
+    movq 64(%r13), %rdx
+    subq %rcx, %rdx
+    movq $0x4000, %r8
+    sub $32, %rsp
+    call VirtualFree
+    add $32, %rsp
+    testq %rax, %rax
+    jz .L_tl_region_reset_win_decommit_done
+    movq %rbx, 64(%r13)
+.L_tl_region_reset_win_decommit_done:
+    movq 40(%r13), %r11
+    movq %r12, 16(%r13)
     movq %r13, 56(%r11)
     movq %r13, %gs:0x28
     jmp .L_tl_region_reset_win_done

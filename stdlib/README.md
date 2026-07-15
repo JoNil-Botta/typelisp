@@ -44,6 +44,11 @@ use.
   and runtime hot paths that need construction, push, append, reserve, length,
   and explicit finish/copy boundaries without importing the full borrowed
   `bytes` view surface. Import it with `(import stdlib.byte_buf_core)`.
+- `clone.tl`: typed declaration-macro producer for compiler-discovered
+  reachable `clone` roots. The staged first surface synthesizes helpers for
+  one-field named structs after typechecking; cloneability, diagnostics, arena
+  behavior, and root discovery remain compiler-owned. Import it with
+  `(import stdlib.clone)` to enable the handoff.
 - `comptime.tl`: public stdlib-owned declarations for well-known macro syntax
   and reflection values (`Expr`, `ExprList`, `ExprClause`, `ExprClauseList`,
   `ExprBindingClause`, `ExprBindingClauseList`, `Pattern`, `PatternList`,
@@ -619,6 +624,7 @@ Stdlib modules are imported explicitly:
 (import stdlib.args)
 (import stdlib.array)
 (import stdlib.byte_buf)
+(import stdlib.clone)
 (import stdlib.env)
 (import stdlib.ffi)
 (import stdlib.fs)

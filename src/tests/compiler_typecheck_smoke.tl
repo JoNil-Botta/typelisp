@@ -3795,19 +3795,19 @@
     [arena-id : i64 (intern "arena")]
     [atomic-id : i64 (intern "atomic")]
     [tail-value-env : TcTypeEnv
-      (tc-bind (tc-default-env) runtime-tail-id (AstType.String))]
+      (tc-bind-id (tc-default-env) runtime-tail-id (AstType.String))]
     [tail-cleanup-env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-bind-cleanup-owner tail-value-env tail-resource-id)
         tail-resource-id
         (AstType.String))]
     [tail-arena-env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-bind-ordinary-arena-owner tail-cleanup-env tail-arena-id)
         tail-arena-id
         (AstType.I64))]
     [tail-atomic-env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-bind-atomic-arena-owner tail-arena-env tail-atomic-id)
         tail-atomic-id
         (AstType.I64))]
@@ -3817,17 +3817,17 @@
       (tc-type-env-scoped-runtime-enter!
         (tc-type-env-scoped-carrier-from-env base-env))]
     [resource-env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-bind-cleanup-owner base-env resource-id)
         resource-id
         (AstType.String))]
     [arena-env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-bind-ordinary-arena-owner resource-env arena-id)
         arena-id
         (AstType.I64))]
     [runtime-env : TcTypeEnv
-      (tc-bind
+      (tc-bind-id
         (tc-bind-atomic-arena-owner arena-env atomic-id)
         atomic-id
         (AstType.I64))]
@@ -3849,11 +3849,13 @@
         (not (tc-lifetime-visible-id? runtime-env runtime-tail-id))
         (tc-lifetime-outlives-binding-id? runtime-env outer-id resource-id)
         (tc-lifetime-outlives-binding-id? runtime-env resource-id arena-id)
-        (not (tc-lifetime-outlives-binding-id? runtime-env arena-id resource-id))
+        (not
+          (tc-lifetime-outlives-binding-id? runtime-env arena-id resource-id))
         (tc-lifetime-outlives-lifetime-id? runtime-env outer-id resource-id)
         (tc-lifetime-outlives-lifetime-id? runtime-env resource-id arena-id)
-        (not (tc-lifetime-outlives-lifetime-id? runtime-env arena-id resource-id)))]
-    [shadow-env : TcTypeEnv (tc-bind runtime-env resource-id (AstType.Bool))]
+        (not
+          (tc-lifetime-outlives-lifetime-id? runtime-env arena-id resource-id)))]
+    [shadow-env : TcTypeEnv (tc-bind-id runtime-env resource-id (AstType.Bool))]
     [shadowed : bool
       (and
         (not (tc-cleanup-owner-active-id? shadow-env resource-id))
@@ -3880,7 +3882,7 @@
   (let
     [cache-owner-id : i64 (intern "cache-owner")]
     [outer-env : TcTypeEnv
-      (tc-bind (tc-default-env) cache-owner-id (AstType.I64))]
+      (tc-bind-id (tc-default-env) cache-owner-id (AstType.I64))]
     [inactive-save : TcTypeEnvScopedRuntimeSave
       (tc-type-env-scoped-runtime-enter!
         (tc-type-env-scoped-carrier-from-env outer-env))]
@@ -3903,6 +3905,7 @@
             inner-hidden
             outer-visible-after
             (not (tc-type-env-scoped-runtime-active?))))))))
+
 (define (compiler-typecheck-smoke-hygiene-structural-ids-ok?) : bool
   (let
     [source-id : i64 17]

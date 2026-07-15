@@ -3446,7 +3446,7 @@
           module-id
           name-str
           name
-          metadata))]
+          (box-get metadata)))]
     [(AstDecl.DefEnum _ cleanup _)
       (lower-name-env-add-enum-cleanup-in-module
         names
@@ -3817,7 +3817,10 @@
           name
           logical-id
           name-str
-          (lower-extern-logical-symbol-id logical-id name-str metadata)))]
+          (lower-extern-logical-symbol-id
+            logical-id
+            name-str
+            (box-get metadata))))]
     [(AstDecl.DefEnum _ cleanup _)
       (match cleanup
         [(AstEnumCleanup.No) names]
@@ -4005,7 +4008,10 @@
           name
           logical-id
           name-str
-          (lower-extern-logical-symbol-id logical-id name-str metadata)))]
+          (lower-extern-logical-symbol-id
+            logical-id
+            name-str
+            (box-get metadata))))]
     [(AstDecl.DefEnum _ cleanup _)
       (match cleanup
         [(AstEnumCleanup.No) names]
@@ -4597,7 +4603,10 @@
         (LowerNameEnv.Bind
           name
           logical-id
-          (lower-extern-logical-symbol-id logical-id logical-name metadata)
+          (lower-extern-logical-symbol-id
+            logical-id
+            logical-name
+            (box-get metadata))
           (box names)))]
     [(AstDecl.DefEnum _ cleanup _)
       (lower-name-env-add-local-enum-cleanup names name-cache module cleanup)]
@@ -49932,7 +49941,7 @@
                               (lower-extern-logical-symbol-id
                                 logical-id
                                 logical-name
-                                metadata)
+                                (box-get metadata))
                               name
                               logical-name
                               (tc-type-without-regions resolved-ty)

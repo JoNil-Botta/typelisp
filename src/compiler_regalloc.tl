@@ -22849,7 +22849,7 @@
 
 (define (compiler-reg-memory-scratch-test-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "memory_scratch_vregs"
+    (intern "memory_scratch_vregs")
     CompilerIrParamList.Nil
     (AstType.Unit)
     2

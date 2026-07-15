@@ -968,7 +968,7 @@
         [(reader.Sexpr.Cons head rest)
           (match (box-get head)
             [(reader.Sexpr.Sym arrow)
-              (if (string.eq arrow "->")
+              (if (string.eq (tlci-symbol-text arrow) "->")
                 (let
                   [item-count : i64 (tlci-sexpr-list-length (box-get rest))]
                   (if (> item-count 0)
@@ -1241,11 +1241,13 @@
           (match (box-get fhead)
             [(reader.Sexpr.Sym fname)
               (cond
-                [(string.eq fname "abi")
+                [(string.eq (tlci-symbol-text fname) "abi")
                   (if has-abi
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `abi`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1265,11 +1267,13 @@
                           has-index-param
                           symbol
                           has-symbol)]))]
-                [(string.eq fname "backend")
+                [(string.eq (tlci-symbol-text fname) "backend")
                   (if has-backend
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `backend`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1289,11 +1293,13 @@
                           has-index-param
                           symbol
                           has-symbol)]))]
-                [(string.eq fname "lanes")
+                [(string.eq (tlci-symbol-text fname) "lanes")
                   (if has-lanes
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `lanes`")
-                    (match (tlci-field-i64-value (box-get ftail) fname)
+                    (match (tlci-field-i64-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciI64.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciI64.Ok value)
@@ -1313,11 +1319,13 @@
                           has-index-param
                           symbol
                           has-symbol)]))]
-                [(string.eq fname "args")
+                [(string.eq (tlci-symbol-text fname) "args")
                   (if has-args
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `args`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1337,11 +1345,13 @@
                           has-index-param
                           symbol
                           has-symbol)]))]
-                [(string.eq fname "result")
+                [(string.eq (tlci-symbol-text fname) "result")
                   (if has-result
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `result`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1361,11 +1371,13 @@
                           has-index-param
                           symbol
                           has-symbol)]))]
-                [(string.eq fname "index-param")
+                [(string.eq (tlci-symbol-text fname) "index-param")
                   (if has-index-param
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `index-param`")
-                    (match (tlci-field-i64-value (box-get ftail) fname)
+                    (match (tlci-field-i64-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciI64.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciI64.Ok value)
@@ -1385,11 +1397,13 @@
                           true
                           symbol
                           has-symbol)]))]
-                [(string.eq fname "symbol")
+                [(string.eq (tlci-symbol-text fname) "symbol")
                   (if has-symbol
                     (ResultTlciSpmdSpecialization.Err
                       "tlci metadata: duplicate specialization field `symbol`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdSpecialization.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1413,7 +1427,7 @@
                   (ResultTlciSpmdSpecialization.Err
                     (str_cat.str-cat
                       "tlci metadata: unknown specialization field `"
-                      fname
+                      (tlci-symbol-text fname)
                       "`"))])]
             [_
               (ResultTlciSpmdSpecialization.Err
@@ -1473,11 +1487,13 @@
           (match (box-get fhead)
             [(reader.Sexpr.Sym fname)
               (cond
-                [(string.eq fname "name")
+                [(string.eq (tlci-symbol-text fname) "name")
                   (if has-name
                     (ResultTlciSpmdCallable.Err
                       "tlci metadata: duplicate helper field `name`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdCallable.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1488,11 +1504,13 @@
                           signature
                           has-signature
                           specializations-rev)]))]
-                [(string.eq fname "signature")
+                [(string.eq (tlci-symbol-text fname) "signature")
                   (if has-signature
                     (ResultTlciSpmdCallable.Err
                       "tlci metadata: duplicate helper field `signature`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciSpmdCallable.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1503,7 +1521,7 @@
                           value
                           true
                           specializations-rev)]))]
-                [(string.eq fname "specialization")
+                [(string.eq (tlci-symbol-text fname) "specialization")
                   (match (tlci-spmd-specialization-from-field (box-get ftail))
                     [(ResultTlciSpmdSpecialization.Err message)
                       (ResultTlciSpmdCallable.Err message)]
@@ -1521,7 +1539,7 @@
                   (ResultTlciSpmdCallable.Err
                     (str_cat.str-cat
                       "tlci metadata: unknown helper field `"
-                      fname
+                      (tlci-symbol-text fname)
                       "`"))])]
             [_
               (ResultTlciSpmdCallable.Err
@@ -1537,7 +1555,7 @@
     [(reader.Sexpr.Cons head rest)
       (match (box-get head)
         [(reader.Sexpr.Sym name)
-          (if (string.eq name "helper")
+          (if (string.eq (tlci-symbol-text name) "helper")
             (tlci-spmd-helper-fields
               (box-get rest)
               ""
@@ -1548,7 +1566,7 @@
             (ResultTlciSpmdCallable.Err
               (str_cat.str-cat
                 "tlci metadata: expected `helper`, got `"
-                name
+                (tlci-symbol-text name)
                 "`")))]
         [_
           (ResultTlciSpmdCallable.Err
@@ -1735,7 +1753,7 @@
                           true
                           spmd-callables
                           has-spmd-callables)]))]
-                [(string.eq fname "spmd-callables")
+                [(string.eq (tlci-symbol-text fname) "spmd-callables")
                   (if has-spmd-callables
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `spmd-callables`")

@@ -5184,138 +5184,136 @@
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime-id : i64]) : bool
   (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
-      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
-      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
-      (if (and
-        tc-type-env-scoped-cache-visible-valid
-        (= tc-type-env-scoped-cache-visible-len slot-count)
-        (= tc-type-env-scoped-cache-visible-generation generation)
-        (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
-        tc-type-env-scoped-cache-visible-result
-        (let
-          [result : bool
-            (if (>=
-              (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)
-              0)
-              true
-              (tc-lifetime-visible-persistent-id?
-                (tc-type-env-scoped-carrier-persistent carrier)
-                lifetime-id))]
-          (begin
-            (set! tc-type-env-scoped-cache-visible-valid true)
-            (set! tc-type-env-scoped-cache-visible-len slot-count)
-            (set! tc-type-env-scoped-cache-visible-generation generation)
-            (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
-            (set! tc-type-env-scoped-cache-visible-result result)
-            result)))))
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get carrier sidecar) stack)]
+    [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+    [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+    (if (and
+      tc-type-env-scoped-cache-visible-valid
+      (= tc-type-env-scoped-cache-visible-len slot-count)
+      (= tc-type-env-scoped-cache-visible-generation generation)
+      (= tc-type-env-scoped-cache-visible-lifetime-id lifetime-id))
+      tc-type-env-scoped-cache-visible-result
+      (let
+        [result : bool
+          (if (>=
+            (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)
+            0)
+            true
+            (tc-lifetime-visible-persistent-id?
+              (tc-type-env-scoped-carrier-persistent carrier)
+              lifetime-id))]
+        (begin
+          (set! tc-type-env-scoped-cache-visible-valid true)
+          (set! tc-type-env-scoped-cache-visible-len slot-count)
+          (set! tc-type-env-scoped-cache-visible-generation generation)
+          (set! tc-type-env-scoped-cache-visible-lifetime-id lifetime-id)
+          (set! tc-type-env-scoped-cache-visible-result result)
+          result)))))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-binding-id?
   [carrier : TcTypeEnvScopedCarrier]
   [lifetime-id : i64]
   [target-id : i64]) : bool
   (let
-      [stack : TcTypeEnvScopedStack
-        (struct-get (struct-get carrier sidecar) stack)]
-      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
-      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
-      (if (and
-        tc-type-env-scoped-cache-outlives-binding-valid
-        (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
-        (= tc-type-env-scoped-cache-outlives-binding-generation generation)
-        (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
-        (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
-        tc-type-env-scoped-cache-outlives-binding-result
-        (let
-          [lifetime-index : i64
-            (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)]
-          [target-index : i64
-            (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
-          [result : bool
-            (cond
-              [(>= lifetime-index 0)
-                (and (>= target-index 0) (< lifetime-index target-index))]
-              [(>= target-index 0)
-                (tc-lifetime-visible-persistent-id?
-                  (tc-type-env-scoped-carrier-persistent carrier)
-                  lifetime-id)]
-              [else
-                (tc-lifetime-outlives-binding-persistent-id?
-                  (tc-type-env-scoped-carrier-persistent carrier)
-                  lifetime-id
-                  target-id)])]
-          (begin
-            (set! tc-type-env-scoped-cache-outlives-binding-valid true)
-            (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
-            (set!
-              tc-type-env-scoped-cache-outlives-binding-generation
-              generation)
-            (set!
-              tc-type-env-scoped-cache-outlives-binding-lifetime-id
-              lifetime-id)
-            (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
-            (set! tc-type-env-scoped-cache-outlives-binding-result result)
-            result)))))
+    [stack : TcTypeEnvScopedStack
+      (struct-get (struct-get carrier sidecar) stack)]
+    [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+    [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+    (if (and
+      tc-type-env-scoped-cache-outlives-binding-valid
+      (= tc-type-env-scoped-cache-outlives-binding-len slot-count)
+      (= tc-type-env-scoped-cache-outlives-binding-generation generation)
+      (= tc-type-env-scoped-cache-outlives-binding-lifetime-id lifetime-id)
+      (= tc-type-env-scoped-cache-outlives-binding-target-id target-id))
+      tc-type-env-scoped-cache-outlives-binding-result
+      (let
+        [lifetime-index : i64
+          (tc-type-env-scoped-stack-find-lifetime-index stack lifetime-id)]
+        [target-index : i64
+          (tc-type-env-scoped-stack-find-id-index (& stack) target-id)]
+        [result : bool
+          (cond
+            [(>= lifetime-index 0)
+              (and (>= target-index 0) (< lifetime-index target-index))]
+            [(>= target-index 0)
+              (tc-lifetime-visible-persistent-id?
+                (tc-type-env-scoped-carrier-persistent carrier)
+                lifetime-id)]
+            [else
+              (tc-lifetime-outlives-binding-persistent-id?
+                (tc-type-env-scoped-carrier-persistent carrier)
+                lifetime-id
+                target-id)])]
+        (begin
+          (set! tc-type-env-scoped-cache-outlives-binding-valid true)
+          (set! tc-type-env-scoped-cache-outlives-binding-len slot-count)
+          (set! tc-type-env-scoped-cache-outlives-binding-generation generation)
+          (set!
+            tc-type-env-scoped-cache-outlives-binding-lifetime-id
+            lifetime-id)
+          (set! tc-type-env-scoped-cache-outlives-binding-target-id target-id)
+          (set! tc-type-env-scoped-cache-outlives-binding-result result)
+          result)))))
 
 (define (tc-type-env-scoped-carrier-lifetime-outlives-lifetime-id?
   [carrier : TcTypeEnvScopedCarrier]
   [value-lifetime-id : i64]
   [target-lifetime-id : i64]) : bool
   (if (= value-lifetime-id target-lifetime-id)
-      true
-      (let
-        [stack : TcTypeEnvScopedStack
-          (struct-get (struct-get carrier sidecar) stack)]
-        [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
-        [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
-        (if (and
-          tc-type-env-scoped-cache-outlives-lifetime-valid
-          (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
-          (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
-          (=
-            tc-type-env-scoped-cache-outlives-lifetime-value-id
-            value-lifetime-id)
-          (=
-            tc-type-env-scoped-cache-outlives-lifetime-target-id
-            target-lifetime-id))
-          tc-type-env-scoped-cache-outlives-lifetime-result
-          (let
-            [value-index : i64
-              (tc-type-env-scoped-stack-find-lifetime-index
-                stack
-                value-lifetime-id)]
-            [target-index : i64
-              (tc-type-env-scoped-stack-find-lifetime-index
-                stack
-                target-lifetime-id)]
-            [result : bool
-              (cond
-                [(>= value-index 0)
-                  (and (>= target-index 0) (< value-index target-index))]
-                [(>= target-index 0)
-                  (tc-lifetime-visible-persistent-id?
-                    (tc-type-env-scoped-carrier-persistent carrier)
-                    value-lifetime-id)]
-                [else
-                  (tc-lifetime-outlives-lifetime-persistent-id?
-                    (tc-type-env-scoped-carrier-persistent carrier)
-                    value-lifetime-id
-                    target-lifetime-id)])]
-            (begin
-              (set! tc-type-env-scoped-cache-outlives-lifetime-valid true)
-              (set! tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
-              (set!
-                tc-type-env-scoped-cache-outlives-lifetime-generation
-                generation)
-              (set!
-                tc-type-env-scoped-cache-outlives-lifetime-value-id
-                value-lifetime-id)
-              (set!
-                tc-type-env-scoped-cache-outlives-lifetime-target-id
-                target-lifetime-id)
-              (set! tc-type-env-scoped-cache-outlives-lifetime-result result)
-              result))))))
+    true
+    (let
+      [stack : TcTypeEnvScopedStack
+        (struct-get (struct-get carrier sidecar) stack)]
+      [slot-count : i64 (tc-type-env-scoped-stack-len stack)]
+      [generation : i64 (tc-type-env-scoped-stack-cache-generation stack)]
+      (if (and
+        tc-type-env-scoped-cache-outlives-lifetime-valid
+        (= tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
+        (= tc-type-env-scoped-cache-outlives-lifetime-generation generation)
+        (=
+          tc-type-env-scoped-cache-outlives-lifetime-value-id
+          value-lifetime-id)
+        (=
+          tc-type-env-scoped-cache-outlives-lifetime-target-id
+          target-lifetime-id))
+        tc-type-env-scoped-cache-outlives-lifetime-result
+        (let
+          [value-index : i64
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              value-lifetime-id)]
+          [target-index : i64
+            (tc-type-env-scoped-stack-find-lifetime-index
+              stack
+              target-lifetime-id)]
+          [result : bool
+            (cond
+              [(>= value-index 0)
+                (and (>= target-index 0) (< value-index target-index))]
+              [(>= target-index 0)
+                (tc-lifetime-visible-persistent-id?
+                  (tc-type-env-scoped-carrier-persistent carrier)
+                  value-lifetime-id)]
+              [else
+                (tc-lifetime-outlives-lifetime-persistent-id?
+                  (tc-type-env-scoped-carrier-persistent carrier)
+                  value-lifetime-id
+                  target-lifetime-id)])]
+          (begin
+            (set! tc-type-env-scoped-cache-outlives-lifetime-valid true)
+            (set! tc-type-env-scoped-cache-outlives-lifetime-len slot-count)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-generation
+              generation)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-value-id
+              value-lifetime-id)
+            (set!
+              tc-type-env-scoped-cache-outlives-lifetime-target-id
+              target-lifetime-id)
+            (set! tc-type-env-scoped-cache-outlives-lifetime-result result)
+            result))))))
 
 (define tc-type-env-scoped-runtime-active : bool
   false)
@@ -10046,16 +10044,10 @@
       (tc-arena-owner-active-persistent-id? env name-id marker-id))))
 
 (define (tc-ordinary-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (tc-arena-owner-active-id?
-    env
-    name-id
-    (tc-ordinary-arena-owner-marker-id)))
+  (tc-arena-owner-active-id? env name-id (tc-ordinary-arena-owner-marker-id)))
 
 (define (tc-atomic-arena-owner-active-id? [env : TcTypeEnv] [name-id : i64]) : bool
-  (tc-arena-owner-active-id?
-    env
-    name-id
-    (tc-atomic-arena-owner-marker-id)))
+  (tc-arena-owner-active-id? env name-id (tc-atomic-arena-owner-marker-id)))
 
 (define (tc-active-cleanup-owners-scan [root : TcTypeEnv] [env : TcTypeEnv]) : TcStringList
   (match env
@@ -10395,8 +10387,7 @@
   (if (or (< lifetime-id 0) (< target-id 0))
     false
     (let
-      [lifetime-rank : i64
-        (tc-ordinary-binding-rank-id-from env lifetime-id 0)]
+      [lifetime-rank : i64 (tc-ordinary-binding-rank-id-from env lifetime-id 0)]
       [target-rank : i64 (tc-ordinary-binding-rank-id-from env target-id 0)]
       (if (and (>= lifetime-rank 0) (>= target-rank 0))
         (> lifetime-rank target-rank)
@@ -10413,10 +10404,7 @@
       target-id)
     (begin
       (cfg compile-profile (compiler-tc-env-profile-note-marker-scan))
-      (tc-lifetime-outlives-binding-persistent-id?
-        env
-        lifetime-id
-        target-id))))
+      (tc-lifetime-outlives-binding-persistent-id? env lifetime-id target-id))))
 
 (define (tc-reference-lifetimes-outlive-binding-id?
   [env : TcTypeEnv]
@@ -11721,9 +11709,8 @@
 ;; Variant taking the already-interned `name-id` so the hot name-resolution
 ;; path interns each name once and reads the slash position from the id-keyed
 ;; metadata instead of re-hashing the string. The hygiene checks stay on the
-;; string (cheap prefix tests, no interning). `intern-name-last-slash name`
-;; is exactly `intern-qualified-last-slash (intern name)`, so this is
-;; semantics-preserving.
+;; string (cheap prefix tests, no interning). Slash metadata is read directly
+;; from the source identity carried by the AST.
 (define (tc-source-slash-qualified-id? [name : String] [name-id : i64]) : bool
   (let
     [source-name-id : i64
@@ -61509,7 +61496,7 @@
                           target-module
                           target-module-id
                           alias
-                          span)]
+                          (box-get span))]
                       (ResultMacroDeclExpansion.Ok
                         expanded
                         (macro-paths-for-decls expanded decl-path)))]
@@ -61536,7 +61523,7 @@
                     target-module
                     target-module-id
                     alias
-                    span)]
+                    (box-get span))]
                 (ResultMacroDeclExpansion.Ok
                   expanded
                   (macro-paths-for-decls expanded decl-path)))]
@@ -64884,7 +64871,9 @@
           [(ResultPkgResolve.Ok resolved)
             (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
               resolved
-              (compiler-load-resolved-path-id-for-generated-import resolved expected)
+              (compiler-load-resolved-path-id-for-generated-import
+                resolved
+                expected)
               seen
               stdlib-roots
               kind

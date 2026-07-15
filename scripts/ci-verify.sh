@@ -168,6 +168,11 @@ run_gate \
     "SPMD mode instruction-count harness self-tests" \
     scripts/measure-spmd-mode-instruction-counts.sh \
     --self-test
+run_gate \
+    "C measured-region instruction harness self-tests" \
+    scripts/measure-instruction-counts.sh \
+    --self-test \
+    --output target/instruction-count-c-region-self-test
 run_with_compiler \
     "$SEED_TYPELISP_BIN" \
     "embedded stdlib generated payload" \

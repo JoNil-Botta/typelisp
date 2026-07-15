@@ -22,13 +22,29 @@ scripts/check-instruction-counts.sh \
   --output target/instruction-count-heavy
 ```
 
-TypeLisp-generated cachegrind metrics, including `self_compile`, are
-deterministic across WSL and GitHub-hosted Linux for a fixed compiler and
-command. Benchmark metrics are exact: `current != baseline` fails and the
-baseline must ratchet in the same PR. The checker currently applies a 0.5%
-self-compile tolerance (`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`), but
-intentional exact changes should still be reported and ratcheted rather than
-treated as runner noise.
+TypeLisp-generated cachegrind metrics, including `self_compile`, retain
+full-process measurement and are deterministic across WSL and GitHub-hosted
+Linux for a fixed compiler and command. C baselines are compiled with
+`benchmarks/cachegrind-region.c` and run with Cachegrind instrumentation off
+until the C `main` boundary. This excludes dynamic-loader and PIE startup while
+retaining the benchmark, libc work reached by the benchmark, and process-exit
+path. The C harness requires a Cachegrind version and development header that
+provide `CACHEGRIND_START_INSTRUMENTATION`; its self-test fails with an explicit
+unsupported-environment diagnostic if the request is unavailable. Run it with:
+
+```sh
+scripts/measure-instruction-counts.sh --self-test
+```
+
+The self-test compiles binaries with different constructor workloads and
+requires identical nonzero measured-region counts across both workloads and a
+repeated invocation. Benchmark metrics remain exact: `current != baseline`
+fails and the baseline must ratchet in the same PR. A clang, libc, or Valgrind
+change that alters instructions executed from `main` onward is still a real,
+reviewable C comparison change; only pre-`main` loader startup is excluded. The
+checker currently applies a 0.5% self-compile tolerance
+(`TYPELISP_IR_SELF_COMPILE_TOLERANCE_PPM=5000`), but intentional exact changes
+should still be reported and ratcheted rather than treated as runner noise.
 
 Comparison benchmark rows are split by implementation. TypeLisp-generated
 executables use `benchmark/typelisp/<name>` and the paired deterministic

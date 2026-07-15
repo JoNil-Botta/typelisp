@@ -320,6 +320,7 @@ fi
 
 if awk -F '\t' \
     -v self_compile_tolerance_ppm="$SELF_COMPILE_TOLERANCE_PPM" \
+    -v benchmarks_only="$BENCHMARKS_ONLY" \
     -v self_compile_only="$SELF_COMPILE_ONLY" '
 function signed(n,    s) {
     s = sprintf("%.0f", n)
@@ -351,6 +352,9 @@ NR == FNR {
         next
     }
     if (self_compile_only == 1 && $1 != "self_compile/compile_cli_opt1") {
+        next
+    }
+    if (benchmarks_only == 1 && $1 == "self_compile/compile_cli_opt1") {
         next
     }
     baseline[$1] = $2

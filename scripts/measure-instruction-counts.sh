@@ -6,10 +6,11 @@ set -eu
 # This is a deterministic measurement harness, not a CI gate. It measures the
 # full process under valgrind/cachegrind and records the `Ir` event (executed
 # instructions) for TypeLisp benchmark binaries, their clang -O2 C baselines,
-# and for a compiler self-compile command. Startup is intentionally included;
-# the benchmark loops and the self-compile workload are large enough to dominate
-# it. If a future tiny case needs startup exclusion, use callgrind region
-# toggling in a separate gate.
+# and for a compiler self-compile command. TypeLisp and self-compile rows retain
+# full-process measurement. C baselines start Cachegrind instrumentation at the
+# C `main` boundary through benchmarks/cachegrind-region.c, excluding the
+# dynamically linked PIE startup path whose exact count varies across supported
+# local/CI loader environments.
 #
 # The self_compile metric measures an opt2-built stage2 compiling src/main.tl,
 # matching check-instruction-counts.sh (the CI gate) and the number it ratchets
@@ -43,6 +44,10 @@ C_OPT=-O2
 C_SCALAR=${TYPELISP_IR_MEASURE_C_SCALAR:-0}
 MEASURE_BENCHMARKS=1
 MEASURE_SELF_COMPILE=1
+SELF_TEST=0
+C_REGION_MAIN=typelisp_instruction_count_benchmark_main
+C_REGION_WRAPPER="$ROOT/benchmarks/cachegrind-region.c"
+C_REGION_SELF_TEST="$ROOT/benchmarks/cachegrind-region-self-test.c"
 
 usage() {
     cat <<'EOF'
@@ -62,6 +67,8 @@ Options:
   --c-scalar            Also build each C baseline with clang vectorization
                         disabled (-fno-vectorize -fno-slp-vectorize) and
                         measure it as benchmark/c-scalar/<name> (opt-in)
+  --self-test           Verify that the C measured region excludes startup and
+                        is reproducible; does not require a TypeLisp compiler
   -h, --help            Show this help
 
 Environment:
@@ -144,6 +151,10 @@ while [ "$#" -gt 0 ]; do
             C_SCALAR=1
             shift
             ;;
+        --self-test)
+            SELF_TEST=1
+            shift
+            ;;
         -h | --help)
             usage
             exit 0
@@ -194,7 +205,7 @@ case "$C_SCALAR" in
         ;;
 esac
 
-if [ "$MEASURE_BENCHMARKS" -eq 0 ] && [ "$MEASURE_SELF_COMPILE" -eq 0 ]; then
+if [ "$SELF_TEST" -eq 0 ] && [ "$MEASURE_BENCHMARKS" -eq 0 ] && [ "$MEASURE_SELF_COMPILE" -eq 0 ]; then
     echo "nothing to measure: both benchmark and self-compile modes are disabled" >&2
     exit 2
 fi
@@ -223,8 +234,12 @@ for tool in valgrind awk tr sed basename dirname; do
     }
 done
 VALGRIND=$(command -v valgrind)
-if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
+if [ "$MEASURE_BENCHMARKS" -eq 1 ] || [ "$SELF_TEST" -eq 1 ]; then
     command -v clang >/dev/null 2>&1 || fail "missing tool: clang (C baseline compiler)"
+fi
+
+if [ "$MEASURE_BENCHMARKS" -eq 1 ] || [ "$SELF_TEST" -eq 1 ]; then
+    [ -f "$C_REGION_WRAPPER" ] || fail "missing C measured-region wrapper: $C_REGION_WRAPPER"
 fi
 
 # SELF_STAGE2 (default on) builds an opt2 stage2 from the seed so a standalone
@@ -236,7 +251,10 @@ fi
 # not reflect the metric CI ratchets).
 SELF_STAGE2=${TYPELISP_IR_SELF_STAGE2:-1}
 BUILD_STAGE2_FROM_SEED=0
-if [ -n "$SEED_ARG" ]; then
+if [ "$SELF_TEST" -eq 1 ]; then
+    [ -z "$SEED_ARG" ] || fail "--self-test does not accept a TypeLisp compiler"
+    COMPILER=/bin/true
+elif [ -n "$SEED_ARG" ]; then
     COMPILER=$SEED_ARG
 elif [ -n "${TYPELISP_BIN:-}" ]; then
     COMPILER=$TYPELISP_BIN
@@ -347,7 +365,8 @@ run_cachegrind() {
     kind=$1
     name=$2
     run=$3
-    shift 3
+    instr_at_start=$4
+    shift 4
 
     safe=$(safe_name "$kind-$name-$run")
     cgout="$WORKDIR/logs/$safe.cachegrind.out"
@@ -356,7 +375,8 @@ run_cachegrind() {
 
     set +e
     env -i LC_ALL=C "$VALGRIND" \
-        --quiet --tool=cachegrind --cachegrind-out-file="$cgout" \
+        --quiet --tool=cachegrind --instr-at-start="$instr_at_start" \
+        --cachegrind-out-file="$cgout" \
         "$@" >"$stdout" 2>"$stderr"
     status=$?
     set -e
@@ -385,7 +405,8 @@ measure_repeated() {
     kind=$1
     name=$2
     require_zero=$3
-    shift 3
+    instr_at_start=$4
+    shift 4
 
     first=
     min=
@@ -395,7 +416,7 @@ measure_repeated() {
     run=1
     while [ "$run" -le "$RUNS" ]; do
         echo "[ir-count] $kind/$name run $run"
-        run_cachegrind "$kind" "$name" "$run" "$@"
+        run_cachegrind "$kind" "$name" "$run" "$instr_at_start" "$@"
         if [ "$require_zero" -eq 1 ] && [ "$LAST_STATUS" -ne 0 ]; then
             safe=$(safe_name "$kind-$name-$run")
             show_logs "$WORKDIR/logs/$safe.stdout" "$WORKDIR/logs/$safe.stderr"
@@ -428,6 +449,52 @@ measure_repeated() {
     LAST_SUMMARY_STATUS=$first_status
 }
 
+build_c_region_self_test() {
+    startup_iterations=$1
+    name=$2
+    bin="$WORKDIR/bin/c-region-$name"
+    stdout="$WORKDIR/logs/c-region-$name.build.stdout"
+    stderr="$WORKDIR/logs/c-region-$name.build.stderr"
+
+    if ! clang "$C_OPT" \
+        "-DTYPELISP_IR_STARTUP_ITERATIONS=$startup_iterations" \
+        "-Dmain=$C_REGION_MAIN" \
+        "$C_REGION_SELF_TEST" "$C_REGION_WRAPPER" \
+        -o "$bin" >"$stdout" 2>"$stderr"; then
+        show_logs "$stdout" "$stderr"
+        fail "unsupported C measured-region toolchain: clang must find valgrind/cachegrind.h"
+    fi
+    [ -x "$bin" ] || fail "C measured-region self-test did not write executable: $bin"
+    C_REGION_SELF_TEST_BIN=$bin
+}
+
+run_c_region_self_test() {
+    [ -f "$C_REGION_SELF_TEST" ] || fail "missing C measured-region self-test: $C_REGION_SELF_TEST"
+
+    build_c_region_self_test 1 short-startup
+    short_bin=$C_REGION_SELF_TEST_BIN
+    build_c_region_self_test 100000 long-startup
+    long_bin=$C_REGION_SELF_TEST_BIN
+
+    run_cachegrind "self-test/c-region" short-startup 1 no "$short_bin"
+    short_ir=$LAST_IR
+    run_cachegrind "self-test/c-region" long-startup 1 no "$long_bin"
+    long_ir=$LAST_IR
+    run_cachegrind "self-test/c-region" long-startup-repeat 1 no "$long_bin"
+    repeat_ir=$LAST_IR
+
+    [ "$short_ir" -gt 0 ] || {
+        fail "unsupported Cachegrind measured-region environment: start instrumentation request recorded zero instructions"
+    }
+    [ "$short_ir" = "$long_ir" ] || {
+        fail "C measured region includes startup work: short=$short_ir long=$long_ir"
+    }
+    [ "$long_ir" = "$repeat_ir" ] || {
+        fail "C measured region is not reproducible: first=$long_ir repeat=$repeat_ir"
+    }
+    echo "[ir-count] C measured-region self-test passed: Ir=$short_ir"
+}
+
 build_typelisp_benchmark() {
     bench_tl=$1
     name=$2
@@ -448,7 +515,7 @@ build_typelisp_benchmark() {
     fi
     [ -x "$bin" ] || fail "benchmark build did not write executable: $bin"
     # shellcheck disable=SC2086
-    measure_repeated "benchmark/typelisp" "$name" 0 "$bin" $bench_args
+    measure_repeated "benchmark/typelisp" "$name" 0 yes "$bin" $bench_args
     TL_STATUS=$LAST_SUMMARY_STATUS
 }
 
@@ -461,13 +528,16 @@ build_c_benchmark() {
     stderr="$WORKDIR/logs/$safe.build.stderr"
 
     echo "[ir-count] build benchmark/c $name"
-    if ! clang "$C_OPT" "$baseline_c" -o "$bin" >"$stdout" 2>"$stderr"; then
+    if ! clang "$C_OPT" \
+        "-Dmain=$C_REGION_MAIN" \
+        "$baseline_c" "$C_REGION_WRAPPER" \
+        -o "$bin" >"$stdout" 2>"$stderr"; then
         show_logs "$stdout" "$stderr"
-        fail "failed to build C benchmark $name"
+        fail "failed to build C benchmark $name (the measured-region wrapper requires valgrind/cachegrind.h)"
     fi
     [ -x "$bin" ] || fail "C benchmark build did not write executable: $bin"
     # shellcheck disable=SC2086
-    measure_repeated "benchmark/c" "$name" 0 "$bin" $bench_args
+    measure_repeated "benchmark/c" "$name" 0 no "$bin" $bench_args
     C_STATUS=$LAST_SUMMARY_STATUS
 }
 
@@ -480,13 +550,16 @@ build_c_scalar_benchmark() {
     stderr="$WORKDIR/logs/$safe.build.stderr"
 
     echo "[ir-count] build benchmark/c-scalar $name"
-    if ! clang "$C_OPT" -fno-vectorize -fno-slp-vectorize "$baseline_c" -o "$bin" >"$stdout" 2>"$stderr"; then
+    if ! clang "$C_OPT" -fno-vectorize -fno-slp-vectorize \
+        "-Dmain=$C_REGION_MAIN" \
+        "$baseline_c" "$C_REGION_WRAPPER" \
+        -o "$bin" >"$stdout" 2>"$stderr"; then
         show_logs "$stdout" "$stderr"
-        fail "failed to build scalar C benchmark $name"
+        fail "failed to build scalar C benchmark $name (the measured-region wrapper requires valgrind/cachegrind.h)"
     fi
     [ -x "$bin" ] || fail "scalar C benchmark build did not write executable: $bin"
     # shellcheck disable=SC2086
-    measure_repeated "benchmark/c-scalar" "$name" 0 "$bin" $bench_args
+    measure_repeated "benchmark/c-scalar" "$name" 0 no "$bin" $bench_args
     C_SCALAR_STATUS=$LAST_SUMMARY_STATUS
 }
 
@@ -556,7 +629,7 @@ measure_benchmarks() {
 
 measure_self_compile() {
     asm="$WORKDIR/bin/self-compile.opt$OPT_LEVEL.s"
-    measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 \
+    measure_repeated self_compile "compile_cli_opt$OPT_LEVEL" 1 yes \
         "$COMPILER" compile src/main.tl -o "$asm" \
         --target "$NL_BOOTSTRAP_TARGET" \
         $(native_target_cfg_args) \
@@ -566,9 +639,15 @@ measure_self_compile() {
     [ -s "$asm" ] || fail "self-compile did not write assembly: $asm"
 }
 
+if [ "$SELF_TEST" -eq 1 ]; then
+    run_c_region_self_test
+    exit 0
+fi
+
 echo "[ir-count] compiler: $COMPILER"
 if [ "$MEASURE_BENCHMARKS" -eq 1 ]; then
     echo "[ir-count] C benchmark compiler: clang $C_OPT"
+    echo "[ir-count] C benchmark region: Cachegrind starts at C main"
     if [ "$C_SCALAR" -eq 1 ]; then
         echo "[ir-count] scalar C baseline: clang $C_OPT -fno-vectorize -fno-slp-vectorize"
     fi

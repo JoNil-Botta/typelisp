@@ -117,9 +117,7 @@
       (intern-generated-canonical-name name))))
 
 (define (ctfe-materialize-generated-name-id [name : String]) : i64
-  (match (intern-generated-canonical-lookup name)
-    [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing) (ctfe-generated-name-store name)]))
+  (ctfe-generated-name-store name))
 
 (define (ctfe-materialize-generated-name-from-source-id
   [name : String]

@@ -134,6 +134,52 @@
   [notes : CompilerDiagnosticNoteList]) : CompilerDiagnostic
   (CompilerDiagnostic message level code category primary help secondary notes))
 
+(define (compiler-diagnostic-copy-maybe-string
+  [value : CompilerDiagnosticMaybeString]) : CompilerDiagnosticMaybeString
+  (match value
+    [CompilerDiagnosticNoString CompilerDiagnosticNoString]
+    [(CompilerDiagnosticSomeString text)
+      (CompilerDiagnosticSomeString (string.copy (& text)))]))
+
+(define (compiler-diagnostic-copy-span [span : CompilerDiagnosticSpan]) : CompilerDiagnosticSpan
+  (CompilerDiagnosticSpan
+    (string.copy (& (struct-get span path)))
+    (struct-get span start-line)
+    (struct-get span start-col)
+    (struct-get span end-line)
+    (struct-get span end-col)))
+
+(define (compiler-diagnostic-copy-label-list
+  [labels : CompilerDiagnosticLabelList]) : CompilerDiagnosticLabelList
+  (match labels
+    [CompilerDiagnosticLabelNil CompilerDiagnosticLabelNil]
+    [(CompilerDiagnosticLabelCons label rest)
+      (CompilerDiagnosticLabelCons
+        (CompilerDiagnosticLabel
+          (compiler-diagnostic-copy-span (struct-get label span))
+          (compiler-diagnostic-copy-maybe-string (struct-get label label)))
+        (box (compiler-diagnostic-copy-label-list (box-get rest))))]))
+
+(define (compiler-diagnostic-copy-note-list
+  [notes : CompilerDiagnosticNoteList]) : CompilerDiagnosticNoteList
+  (match notes
+    [CompilerDiagnosticNoteNil CompilerDiagnosticNoteNil]
+    [(CompilerDiagnosticNoteCons note rest)
+      (CompilerDiagnosticNoteCons
+        (string.copy (& note))
+        (box (compiler-diagnostic-copy-note-list (box-get rest))))]))
+
+(define (compiler-diagnostic-copy [diag : CompilerDiagnostic]) : CompilerDiagnostic
+  (CompilerDiagnostic
+    (string.copy (& (struct-get diag message)))
+    (struct-get diag level)
+    (compiler-diagnostic-copy-maybe-string (struct-get diag code))
+    (compiler-diagnostic-copy-maybe-string (struct-get diag category))
+    (compiler-diagnostic-copy-span (struct-get diag primary))
+    (compiler-diagnostic-copy-maybe-string (struct-get diag help))
+    (compiler-diagnostic-copy-label-list (struct-get diag secondary))
+    (compiler-diagnostic-copy-note-list (struct-get diag notes))))
+
 (define (compiler-diagnostic-simple
   [path : String]
   [line : i64]

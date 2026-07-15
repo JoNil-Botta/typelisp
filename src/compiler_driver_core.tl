@@ -286,11 +286,23 @@
 
 (define (compiler-driver-state-new-checked-lower-pools) : AstNodePoolContext
   (let
+    [prev-arena : i64 (arena.tl_arena_current)]
     [pool-arena : i64 (arena.tl_arena_make)]
-    (ast-node-pool-context-new-with-capacities-in-arena
-      compiler-driver-checked-lower-expr-pool-initial-capacity
-      compiler-driver-compile-type-pool-initial-capacity
-      pool-arena)))
+    [_set-pool-arena : unit
+      (unsafe
+        (arena.tl_arena_set pool-arena))]
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        compiler-driver-checked-lower-expr-pool-initial-capacity
+        compiler-driver-compile-type-pool-initial-capacity
+        pool-arena)]
+    (begin
+      ;; Keep the context's wrapper cells with its backing arrays. Early source
+      ;; retirement can otherwise unmap wrapper cells allocated in the frontend
+      ;; arena before an error path gets a chance to release this pool.
+      (unsafe
+        (arena.tl_arena_set prev-arena))
+      pools)))
 
 (define (compiler-driver-state-destroy-uncommitted-pools!
   [pools : AstNodePoolContext]) : unit
@@ -2363,7 +2375,9 @@
                 unit)]
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
-                (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                (begin
+                  (compiler-lower-checked-dest-pools-abort-uncommitted!)
+                  (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_destroy-deferred-source : unit
               (if (and defer-source-destroy? dest-committed?)
@@ -2533,7 +2547,9 @@
                 unit)]
             [_destroy-unused-dest : unit
               (if (and release-source-pools? (not dest-committed?))
-                (compiler-driver-state-destroy-uncommitted-pools! dest-pools)
+                (begin
+                  (compiler-lower-checked-dest-pools-abort-uncommitted!)
+                  (compiler-driver-state-destroy-uncommitted-pools! dest-pools))
                 unit)]
             [_destroy-deferred-source : unit
               (if (and defer-source-destroy? dest-committed?)

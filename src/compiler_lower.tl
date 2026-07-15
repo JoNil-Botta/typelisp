@@ -244,9 +244,42 @@
   (No)
   (Some LowerVectorMapValue))
 
+(defstruct LowerVectorMapStore
+  (array-var i64)
+  (value LowerVectorMapValue))
+
+(defstruct LowerVectorMapStoreList
+  (items (Array LowerVectorMapStore))
+  (count i64))
+
+(defenum LowerMaybeVectorMapStore
+  (No)
+  (Some LowerVectorMapStore AstType i64))
+
+(defenum LowerVectorMapValueKey
+  (Array i64)
+  (LaneArray i64)
+  (Uniform CompilerIrValue)
+  (BroadcastArray i64 CompilerIrValue)
+  (LaneIndex)
+  (LaneCount)
+  (BinOp CompilerIrBinOp CompilerIrValue CompilerIrValue))
+
+(defstruct LowerVectorMapValueCache
+  (keys (Array LowerVectorMapValueKey))
+  (values (Array CompilerIrValue))
+  (count i64))
+
+(defenum LowerVectorMapCachedEmit
+  (Emit LowerState CompilerIrValue LowerVectorMapValueCache))
+
+(defenum LowerVectorMapEmitMode
+  (Full)
+  (Predicated CompilerIrValue CompilerIrValue))
+
 (defenum LowerMaybeVectorMap
   (No)
-  (Some i64 LowerVectorMapValue AstType i64))
+  (Some LowerVectorMapStoreList AstType i64))
 
 (defenum LowerMaybeMaskedVectorMap
   (No)
@@ -36096,18 +36129,113 @@
         (lower-vector-map-value-array-vars (box-get lhs))
         (lower-vector-map-value-array-vars (box-get rhs)))]))
 
-(define (lower-simple-vector-map
+(define (lower-vector-map-value-uses-array?
+  [plan : LowerVectorMapValue]
+  [array-var : i64]) : bool
+  (match plan
+    [(LowerVectorMapValue.Array found) (= found array-var)]
+    [(LowerVectorMapValue.LaneArray found) (= found array-var)]
+    [(LowerVectorMapValue.BroadcastArray found _) (= found array-var)]
+    [(LowerVectorMapValue.BinOp _ lhs rhs)
+      (or
+        (lower-vector-map-value-uses-array? (box-get lhs) array-var)
+        (lower-vector-map-value-uses-array? (box-get rhs) array-var))]
+    [_ false]))
+
+(define (lower-vector-map-store-list-empty) : LowerVectorMapStoreList
+  (LowerVectorMapStoreList (make-array LowerVectorMapStore 0) 0))
+
+(define (lower-vector-map-store-list-add
+  [stores : LowerVectorMapStoreList]
+  [store : LowerVectorMapStore]) : LowerVectorMapStoreList
+  (let
+    [items : (Array LowerVectorMapStore) (struct-get stores items)]
+    [count : i64 (struct-get stores count)]
+    (begin
+      (array-push! items store)
+      (LowerVectorMapStoreList items (+ count 1)))))
+
+(define (lower-vector-map-store-list-ref
+  [stores : LowerVectorMapStoreList]
+  [index : i64]) : LowerVectorMapStore
+  (array-ref (struct-get stores items) index))
+
+(define (lower-vector-map-store-list-has-destination?
+  [stores : LowerVectorMapStoreList]
+  [array-var : i64]) : bool
+  (let
+    [count : i64 (struct-get stores count)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (lower-vector-map-store-list-ref stores index)
+          [(LowerVectorMapStore array-var-found _)
+            (if (= array-var-found array-var)
+              (set! found true)
+              (set! index (+ index 1)))]))
+      found)))
+
+(define (lower-vector-map-store-list-input-uses-destination?
+  [stores : LowerVectorMapStoreList]) : bool
+  (let
+    [count : i64 (struct-get stores count)]
+    [index : i64 0]
+    [found : bool false]
+    (begin
+      (while (and (not found) (< index count))
+        (match (lower-vector-map-store-list-ref stores index)
+          [(LowerVectorMapStore _ value-plan)
+            (let
+              [dst-index : i64 0]
+              (begin
+                (while (and (not found) (< dst-index count))
+                  (match (lower-vector-map-store-list-ref stores dst-index)
+                    [(LowerVectorMapStore dst-array _)
+                      (if (lower-vector-map-value-uses-array?
+                        value-plan
+                        dst-array)
+                        (set! found true)
+                        (set! dst-index (+ dst-index 1)))]))
+                (set! index (+ index 1))))]))
+      found)))
+
+(define (lower-vector-map-store-list-array-vars
+  [stores : LowerVectorMapStoreList]) : LowerArrayVarSet
+  (let
+    [count : i64 (struct-get stores count)]
+    [index : i64 0]
+    [arrays : LowerArrayVarSet (lower-array-var-set-empty)]
+    (begin
+      (while (< index count)
+        (match (lower-vector-map-store-list-ref stores index)
+          [(LowerVectorMapStore dst-array value-plan)
+            (begin
+              (set!
+                arrays
+                (lower-array-var-set-merge
+                  arrays
+                  (lower-vector-map-value-array-vars value-plan)))
+              (set! arrays (lower-array-var-set-add arrays dst-array 0))
+              (set! index (+ index 1)))]))
+      arrays)))
+
+(define (lower-simple-vector-map-store
   [ctx : TcContext]
   [mode : CompilerLowerMode]
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [index : String]
-  [body : AstExpr]) : LowerMaybeVectorMap
-  (match body
+  [expr : AstExpr]) : LowerMaybeVectorMapStore
+  (match expr
     [(AstExpr.Spanned inner-box _)
-      (let
-        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
-        (lower-simple-vector-map ctx mode env type-env index inner))]
+      (lower-simple-vector-map-store
+        ctx
+        mode
+        env
+        type-env
+        index
+        (lower-context-expr-get ctx inner-box))]
     [(AstExpr.ArraySet arr-box set-index-box value-box)
       (let
         [arr : AstExpr (lower-context-expr-get ctx arr-box)]
@@ -36127,12 +36255,111 @@
                     index
                     dst-elem
                     value)
-                    [(LowerMaybeVectorMapValue.Some plan)
-                      (LowerMaybeVectorMap.Some dst-var plan dst-elem lanes)]
-                    [(LowerMaybeVectorMapValue.No) (LowerMaybeVectorMap.No)])
-                  (LowerMaybeVectorMap.No)))]
-            [(LowerMaybeArrayVar.No) (LowerMaybeVectorMap.No)])
-          (LowerMaybeVectorMap.No)))]
+                    [(LowerMaybeVectorMapValue.Some value-plan)
+                      (LowerMaybeVectorMapStore.Some
+                        (LowerVectorMapStore dst-var value-plan)
+                        dst-elem
+                        lanes)]
+                    [(LowerMaybeVectorMapValue.No)
+                      (LowerMaybeVectorMapStore.No)])
+                  (LowerMaybeVectorMapStore.No)))]
+            [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapStore.No)])
+          (LowerMaybeVectorMapStore.No)))]
+    [_ (LowerMaybeVectorMapStore.No)]))
+
+(define (lower-simple-vector-map-expr-list
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [exprs : AstExprList]) : LowerMaybeVectorMap
+  (lower-simple-vector-map-expr-list-at
+    ctx
+    mode
+    env
+    type-env
+    index
+    (& exprs)
+    0
+    (lower-vector-map-store-list-empty)
+    (AstType.Unit)
+    0))
+
+(define (lower-simple-vector-map-expr-list-at
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [exprs : (& exprs AstExprList)]
+  [expr-index : i64]
+  [stores : LowerVectorMapStoreList]
+  [elem-ty : AstType]
+  [lanes : i64]) : LowerMaybeVectorMap
+  (if (>= expr-index (struct-get exprs len))
+    (if (and
+      (> (struct-get stores count) 0)
+      (or
+        (= (struct-get stores count) 1)
+        (not (lower-vector-map-store-list-input-uses-destination? stores))))
+      (LowerMaybeVectorMap.Some stores elem-ty lanes)
+      (LowerMaybeVectorMap.No))
+    (match (lower-simple-vector-map-store
+      ctx
+      mode
+      env
+      type-env
+      index
+      (lower-context-expr-get ctx (ast-expr-list-get exprs expr-index 0)))
+      [(LowerMaybeVectorMapStore.Some store store-elem store-lanes)
+        (match store
+          [(LowerVectorMapStore dst-array _)
+            (if (or
+              (lower-vector-map-store-list-has-destination? stores dst-array)
+              (and
+                (> (struct-get stores count) 0)
+                (or
+                  (not (tc-type-eq elem-ty store-elem))
+                  (not (= lanes store-lanes)))))
+              (LowerMaybeVectorMap.No)
+              (lower-simple-vector-map-expr-list-at
+                ctx
+                mode
+                env
+                type-env
+                index
+                exprs
+                (+ expr-index 1)
+                (lower-vector-map-store-list-add stores store)
+                store-elem
+                store-lanes))])]
+      [(LowerMaybeVectorMapStore.No) (LowerMaybeVectorMap.No)])))
+
+(define (lower-simple-vector-map
+  [ctx : TcContext]
+  [mode : CompilerLowerMode]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [body : AstExpr]) : LowerMaybeVectorMap
+  (match body
+    [(AstExpr.Spanned inner-box _)
+      (let
+        [inner : AstExpr (lower-context-expr-get ctx inner-box)]
+        (lower-simple-vector-map ctx mode env type-env index inner))]
+    [(AstExpr.Begin exprs)
+      (lower-simple-vector-map-expr-list ctx mode env type-env index exprs)]
+    [(AstExpr.ArraySet _ _ _)
+      (match (lower-simple-vector-map-store ctx mode env type-env index body)
+        [(LowerMaybeVectorMapStore.Some store elem-ty lanes)
+          (LowerMaybeVectorMap.Some
+            (lower-vector-map-store-list-add
+              (lower-vector-map-store-list-empty)
+              store)
+            elem-ty
+            lanes)]
+        [(LowerMaybeVectorMapStore.No) (LowerMaybeVectorMap.No)])]
     [_ (LowerMaybeVectorMap.No)]))
 
 (define (lower-simple-vector-reduce-op-supported?
@@ -37391,6 +37618,124 @@
             [(LowerExpr.Expr load-state source-value _)
               (lower-emit-splat load-state source-value lanes elem-ty)])])]))
 
+(define (lower-vector-map-ir-value-eq?
+  [left : CompilerIrValue]
+  [right : CompilerIrValue]) : bool
+  ;; Vector-map uniform values are restricted by the planner to local numeric
+  ;; variables and numeric scalar literals. Broadcast lane operands use the
+  ;; same subset. Keep this comparator aligned with that invariant instead of
+  ;; paying for unrelated pointer, function, string, and unit IR variants.
+  (match left
+    [(CompilerIrValue.Var a)
+      (match right
+        [(CompilerIrValue.Var b) (= a b)]
+        [_ false])]
+    [(CompilerIrValue.I64 a)
+      (match right
+        [(CompilerIrValue.I64 b) (= a b)]
+        [_ false])]
+    [(CompilerIrValue.F64 a)
+      (match right
+        [(CompilerIrValue.F64 b) (= a b)]
+        [_ false])]
+    [_ false]))
+
+(define (lower-vector-map-binop-eq?
+  [left : CompilerIrBinOp]
+  [right : CompilerIrBinOp]) : bool
+  (match left
+    [(CompilerIrBinOp.Add)
+      (match right
+        [(CompilerIrBinOp.Add) true]
+        [_ false])]
+    [(CompilerIrBinOp.Mul)
+      (match right
+        [(CompilerIrBinOp.Mul) true]
+        [_ false])]
+    [_ false]))
+
+(define (lower-vector-map-value-key-eq?
+  [left : LowerVectorMapValueKey]
+  [right : LowerVectorMapValueKey]) : bool
+  (match left
+    [(LowerVectorMapValueKey.Array left-array)
+      (match right
+        [(LowerVectorMapValueKey.Array right-array) (= left-array right-array)]
+        [_ false])]
+    [(LowerVectorMapValueKey.LaneArray left-array)
+      (match right
+        [(LowerVectorMapValueKey.LaneArray right-array)
+          (= left-array right-array)]
+        [_ false])]
+    [(LowerVectorMapValueKey.Uniform left-value)
+      (match right
+        [(LowerVectorMapValueKey.Uniform right-value)
+          (lower-vector-map-ir-value-eq? left-value right-value)]
+        [_ false])]
+    [(LowerVectorMapValueKey.BroadcastArray left-array left-lane)
+      (match right
+        [(LowerVectorMapValueKey.BroadcastArray right-array right-lane)
+          (and
+            (= left-array right-array)
+            (lower-vector-map-ir-value-eq? left-lane right-lane))]
+        [_ false])]
+    [(LowerVectorMapValueKey.LaneIndex)
+      (match right
+        [(LowerVectorMapValueKey.LaneIndex) true]
+        [_ false])]
+    [(LowerVectorMapValueKey.LaneCount)
+      (match right
+        [(LowerVectorMapValueKey.LaneCount) true]
+        [_ false])]
+    [(LowerVectorMapValueKey.BinOp left-op left-lhs left-rhs)
+      (match right
+        [(LowerVectorMapValueKey.BinOp right-op right-lhs right-rhs)
+          (and
+            (lower-vector-map-binop-eq? left-op right-op)
+            (lower-vector-map-ir-value-eq? left-lhs right-lhs)
+            (lower-vector-map-ir-value-eq? left-rhs right-rhs))]
+        [_ false])]))
+
+(define (lower-vector-map-value-cache-empty) : LowerVectorMapValueCache
+  (LowerVectorMapValueCache
+    (make-array LowerVectorMapValueKey 0)
+    (make-array CompilerIrValue 0)
+    0))
+
+(define (lower-vector-map-value-cache-lookup
+  [cache : LowerVectorMapValueCache]
+  [key : LowerVectorMapValueKey]) : LowerMaybeIrValue
+  (let
+    [index : i64 0]
+    [found : LowerMaybeIrValue (LowerMaybeIrValue.No)]
+    (begin
+      (while (and
+        (< index (struct-get cache count))
+        (match found
+          [(LowerMaybeIrValue.No) true]
+          [(LowerMaybeIrValue.Some _) false]))
+        (if (lower-vector-map-value-key-eq?
+          key
+          (array-ref (struct-get cache keys) index))
+          (set!
+            found
+            (LowerMaybeIrValue.Some (array-ref (struct-get cache values) index)))
+          (set! index (+ index 1))))
+      found)))
+
+(define (lower-vector-map-value-cache-add
+  [cache : LowerVectorMapValueCache]
+  [key : LowerVectorMapValueKey]
+  [value : CompilerIrValue]) : LowerVectorMapValueCache
+  (let
+    [keys : (Array LowerVectorMapValueKey) (struct-get cache keys)]
+    [values : (Array CompilerIrValue) (struct-get cache values)]
+    [count : i64 (struct-get cache count)]
+    (begin
+      (array-push! keys key)
+      (array-push! values value)
+      (LowerVectorMapValueCache keys values (+ count 1)))))
+
 (define (lower-emit-vector-map-value
   [ctx : TcContext]
   [state : LowerState]
@@ -37457,6 +37802,195 @@
                 rhs-value
                 lanes
                 elem-ty)])])]))
+
+(define (lower-vector-map-cache-emitted
+  [emitted : LowerExpr]
+  [key : LowerVectorMapValueKey]
+  [cache : LowerVectorMapValueCache]) : LowerVectorMapCachedEmit
+  (match emitted
+    [(LowerExpr.Expr state value _)
+      (LowerVectorMapCachedEmit.Emit
+        state
+        value
+        (lower-vector-map-value-cache-add cache key value))]))
+
+(define (lower-emit-vector-map-value-for-mode
+  [ctx : TcContext]
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [plan : LowerVectorMapValue]
+  [emit-mode : LowerVectorMapEmitMode]) : LowerExpr
+  (match emit-mode
+    [(LowerVectorMapEmitMode.Full)
+      (lower-emit-vector-map-value ctx state index-var lanes elem-ty plan)]
+    [(LowerVectorMapEmitMode.Predicated end-value mask)
+      (lower-emit-predicated-vector-map-value
+        ctx
+        state
+        index-var
+        end-value
+        mask
+        lanes
+        elem-ty
+        plan)]))
+
+(define (lower-emit-vector-map-value-cached
+  [ctx : TcContext]
+  [state : LowerState]
+  [index-var : i64]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [plan : LowerVectorMapValue]
+  [emit-mode : LowerVectorMapEmitMode]
+  [cache : LowerVectorMapValueCache]) : LowerVectorMapCachedEmit
+  (match plan
+    [(LowerVectorMapValue.Array array-var)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.Array array-var))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.Array array-var)
+              emit-mode)
+            (LowerVectorMapValueKey.Array array-var)
+            cache)])]
+    [(LowerVectorMapValue.LaneArray array-var)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.LaneArray array-var))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.LaneArray array-var)
+              emit-mode)
+            (LowerVectorMapValueKey.LaneArray array-var)
+            cache)])]
+    [(LowerVectorMapValue.Uniform uniform-value)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.Uniform uniform-value))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.Uniform uniform-value)
+              emit-mode)
+            (LowerVectorMapValueKey.Uniform uniform-value)
+            cache)])]
+    [(LowerVectorMapValue.BroadcastArray array-var lane)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.BroadcastArray array-var lane))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.BroadcastArray array-var lane)
+              emit-mode)
+            (LowerVectorMapValueKey.BroadcastArray array-var lane)
+            cache)])]
+    [(LowerVectorMapValue.LaneIndex)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.LaneIndex))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.LaneIndex)
+              emit-mode)
+            (LowerVectorMapValueKey.LaneIndex)
+            cache)])]
+    [(LowerVectorMapValue.LaneCount)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.LaneCount))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.LaneCount)
+              emit-mode)
+            (LowerVectorMapValueKey.LaneCount)
+            cache)])]
+    [(LowerVectorMapValue.BinOp op lhs rhs)
+      (match (lower-emit-vector-map-value-cached
+        ctx
+        state
+        index-var
+        lanes
+        elem-ty
+        (box-get lhs)
+        emit-mode
+        cache)
+        [(LowerVectorMapCachedEmit.Emit lhs-state lhs-value lhs-cache)
+          (match (lower-emit-vector-map-value-cached
+            ctx
+            lhs-state
+            index-var
+            lanes
+            elem-ty
+            (box-get rhs)
+            emit-mode
+            lhs-cache)
+            [(LowerVectorMapCachedEmit.Emit rhs-state rhs-value rhs-cache)
+              (match (lower-vector-map-value-cache-lookup
+                rhs-cache
+                (LowerVectorMapValueKey.BinOp op lhs-value rhs-value))
+                [(LowerMaybeIrValue.Some value)
+                  (LowerVectorMapCachedEmit.Emit rhs-state value rhs-cache)]
+                [(LowerMaybeIrValue.No)
+                  (lower-vector-map-cache-emitted
+                    (lower-emit-vector-binop
+                      rhs-state
+                      op
+                      lhs-value
+                      rhs-value
+                      lanes
+                      elem-ty)
+                    (LowerVectorMapValueKey.BinOp op lhs-value rhs-value)
+                    rhs-cache)])])])]))
 
 (define (lower-emit-predicated-vector-map-value
   [ctx : TcContext]
@@ -37574,10 +38108,25 @@
         (lower-vector-map-value-needs-scalar-tail? (box-get rhs)))]
     [_ false]))
 
+(define (lower-vector-map-store-list-needs-scalar-tail?
+  [stores : LowerVectorMapStoreList]) : bool
+  (let
+    [count : i64 (struct-get stores count)]
+    [index : i64 0]
+    [needs-tail : bool false]
+    (begin
+      (while (and (not needs-tail) (< index count))
+        (match (lower-vector-map-store-list-ref stores index)
+          [(LowerVectorMapStore _ value-plan)
+            (if (lower-vector-map-value-needs-scalar-tail? value-plan)
+              (set! needs-tail true)
+              (set! index (+ index 1)))]))
+      needs-tail)))
+
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
   (match plan
-    [(LowerMaybeVectorMap.Some _ value-plan _ _)
-      (lower-vector-map-value-needs-scalar-tail? value-plan)]
+    [(LowerMaybeVectorMap.Some stores _ _)
+      (lower-vector-map-store-list-needs-scalar-tail? stores)]
     [(LowerMaybeVectorMap.No) false]))
 
 (define (lower-emit-scalar-vector-map-value
@@ -37672,9 +38221,9 @@
   [state : LowerState]
   [index-var : i64]
   [end-value : CompilerIrValue]
-  [dst-array : i64]
-  [value-plan : LowerVectorMapValue]
+  [stores : LowerVectorMapStoreList]
   [elem-ty : AstType]
+  [lanes : i64]
   [exit-label : String]) : ResultLowerExpr
   (match (lower-state-alloc-var state)
     [(LowerAlloc.Alloc alloc-state tail-var)
@@ -37692,6 +38241,7 @@
         [tail-cond : CompilerIrValue CompilerIrValue.Unit]
         [scalar-value : CompilerIrValue CompilerIrValue.Unit]
         [elem-ptr : CompilerIrValue CompilerIrValue.Unit]
+        [store-index : i64 0]
         (begin
           (match (lower-state-fresh-label s "foreach_broadcast_tail_header")
             [(LowerLabel.Label next-s label)
@@ -37735,33 +38285,43 @@
                 s
                 (CompilerIrInstr.Branch tail-cond body-label exit-label))
               body-label))
-          (match (lower-emit-scalar-vector-map-value
-            ctx
-            s
-            index-var
-            tail-var
-            active-lanes
-            (lower-simd-lanes-for-elem (lower-state-mode s) elem-ty)
-            elem-ty
-            value-plan)
-            [(LowerExpr.Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! scalar-value value))])
-          (match (lower-array-element-addr
-            ctx
-            s
-            (CompilerIrValue.Var dst-array)
-            (CompilerIrValue.Var tail-var)
-            (AstType.I64)
-            elem-ty)
-            [(LowerExpr.Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! elem-ptr value))])
-          (set!
-            s
-            (lower-array-elem-store-state ctx s elem-ptr scalar-value elem-ty))
+          (while (< store-index (struct-get stores count))
+            (match (lower-vector-map-store-list-ref stores store-index)
+              [(LowerVectorMapStore dst-array value-plan)
+                (begin
+                  (match (lower-emit-scalar-vector-map-value
+                    ctx
+                    s
+                    index-var
+                    tail-var
+                    active-lanes
+                    lanes
+                    elem-ty
+                    value-plan)
+                    [(LowerExpr.Expr next-s value _)
+                      (begin
+                        (set! s next-s)
+                        (set! scalar-value value))])
+                  (match (lower-array-element-addr
+                    ctx
+                    s
+                    (CompilerIrValue.Var dst-array)
+                    (CompilerIrValue.Var tail-var)
+                    (AstType.I64)
+                    elem-ty)
+                    [(LowerExpr.Expr next-s value _)
+                      (begin
+                        (set! s next-s)
+                        (set! elem-ptr value))])
+                  (set!
+                    s
+                    (lower-array-elem-store-state
+                      ctx
+                      s
+                      elem-ptr
+                      scalar-value
+                      elem-ty))
+                  (set! store-index (+ store-index 1)))]))
           (match (lower-state-alloc-var s)
             [(LowerAlloc.Alloc inc-alloc inc-var)
               (ResultLowerExpr.Ok
@@ -37793,30 +38353,54 @@
   [next-index : CompilerIrValue]
   [plan : LowerMaybeVectorMap]) : LowerState
   (match plan
-    [(LowerMaybeVectorMap.Some dst-array value-plan elem-ty lanes)
+    [(LowerMaybeVectorMap.Some stores elem-ty lanes)
       (let
         [s : LowerState state]
+        [count : i64 (struct-get stores count)]
+        [results : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+        [store-index : i64 0]
+        [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
         [result-vec : CompilerIrValue CompilerIrValue.Unit]
         (begin
-          (match (lower-emit-vector-map-value
-            ctx
-            s
-            index-var
-            lanes
-            elem-ty
-            value-plan)
-            [(LowerExpr.Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! result-vec value))])
+          ;; Evaluate all values before the first store so common loads and
+          ;; products stay in one side-effect-free region for normal CSE.
+          (while (< store-index count)
+            (match (lower-vector-map-store-list-ref stores store-index)
+              [(LowerVectorMapStore _ value-plan)
+                (begin
+                  (match (lower-emit-vector-map-value-cached
+                    ctx
+                    s
+                    index-var
+                    lanes
+                    elem-ty
+                    value-plan
+                    (LowerVectorMapEmitMode.Full)
+                    cache)
+                    [(LowerVectorMapCachedEmit.Emit next-s value next-cache)
+                      (begin
+                        (set! s next-s)
+                        (set! result-vec value)
+                        (set! cache next-cache))])
+                  (array-set! results store-index result-vec)
+                  (set! store-index (+ store-index 1)))]))
+          (set! store-index 0)
+          (while (< store-index count)
+            (match (lower-vector-map-store-list-ref stores store-index)
+              [(LowerVectorMapStore dst-array _)
+                (begin
+                  (set!
+                    s
+                    (lower-emit-vector-store
+                      s
+                      (CompilerIrValue.Var dst-array)
+                      (CompilerIrValue.Var index-var)
+                      (array-ref results store-index)
+                      lanes
+                      elem-ty))
+                  (set! store-index (+ store-index 1)))]))
           (lower-state-emit
-            (lower-emit-vector-store
-              s
-              (CompilerIrValue.Var dst-array)
-              (CompilerIrValue.Var index-var)
-              result-vec
-              lanes
-              elem-ty)
+            s
             (CompilerIrInstr.Mov index-var next-index (AstType.I64)))))]
     [(LowerMaybeVectorMap.No) state]))
 
@@ -40791,9 +41375,13 @@
   [end-value : CompilerIrValue]
   [plan : LowerMaybeVectorMap]) : LowerState
   (match plan
-    [(LowerMaybeVectorMap.Some dst-array value-plan elem-ty lanes)
+    [(LowerMaybeVectorMap.Some stores elem-ty lanes)
       (let
         [s : LowerState state]
+        [count : i64 (struct-get stores count)]
+        [results : (Array CompilerIrValue) (make-array CompilerIrValue count)]
+        [store-index : i64 0]
+        [cache : LowerVectorMapValueCache (lower-vector-map-value-cache-empty)]
         [mask : CompilerIrValue CompilerIrValue.Unit]
         [result-vec : CompilerIrValue CompilerIrValue.Unit]
         (begin
@@ -40806,27 +41394,43 @@
               (begin
                 (set! s next-s)
                 (set! mask value))])
-          (match (lower-emit-predicated-vector-map-value
-            ctx
-            s
-            index-var
-            end-value
-            mask
-            lanes
-            elem-ty
-            value-plan)
-            [(LowerExpr.Expr next-s value _)
-              (begin
-                (set! s next-s)
-                (set! result-vec value))])
-          (lower-emit-predicated-store
-            s
-            (CompilerIrValue.Var dst-array)
-            (CompilerIrValue.Var index-var)
-            result-vec
-            mask
-            lanes
-            elem-ty)))]
+          (while (< store-index count)
+            (match (lower-vector-map-store-list-ref stores store-index)
+              [(LowerVectorMapStore _ value-plan)
+                (begin
+                  (match (lower-emit-vector-map-value-cached
+                    ctx
+                    s
+                    index-var
+                    lanes
+                    elem-ty
+                    value-plan
+                    (LowerVectorMapEmitMode.Predicated end-value mask)
+                    cache)
+                    [(LowerVectorMapCachedEmit.Emit next-s value next-cache)
+                      (begin
+                        (set! s next-s)
+                        (set! result-vec value)
+                        (set! cache next-cache))])
+                  (array-set! results store-index result-vec)
+                  (set! store-index (+ store-index 1)))]))
+          (set! store-index 0)
+          (while (< store-index count)
+            (match (lower-vector-map-store-list-ref stores store-index)
+              [(LowerVectorMapStore dst-array _)
+                (begin
+                  (set!
+                    s
+                    (lower-emit-predicated-store
+                      s
+                      (CompilerIrValue.Var dst-array)
+                      (CompilerIrValue.Var index-var)
+                      (array-ref results store-index)
+                      mask
+                      lanes
+                      elem-ty))
+                  (set! store-index (+ store-index 1)))]))
+          s))]
     [(LowerMaybeVectorMap.No) state]))
 
 (define (lower-avx512-masked-map-body
@@ -41224,7 +41828,7 @@
   [body : AstExpr]
   [plan : LowerMaybeVectorMap]) : ResultLowerExpr
   (match plan
-    [(LowerMaybeVectorMap.Some dst-array value-plan _ lanes)
+    [(LowerMaybeVectorMap.Some stores _ lanes)
       (match (lower-state-alloc-var state)
         [(LowerAlloc.Alloc index-alloc index-var)
           (let
@@ -41233,10 +41837,7 @@
                 index-alloc
                 (CompilerIrInstr.Mov index-var start-value index-ty))]
             [arrays : LowerArrayVarSet
-              (lower-array-var-set-add
-                (lower-vector-map-value-array-vars value-plan)
-                dst-array
-                0)]
+              (lower-vector-map-store-list-array-vars stores)]
             [header-label : String ""]
             [body-label : String ""]
             [tail-header-label : String ""]
@@ -41391,15 +41992,15 @@
                 (not (lower-mode-avx512? (lower-state-mode s)))
                 (lower-maybe-vector-map-needs-scalar-tail? plan))
                 (match plan
-                  [(LowerMaybeVectorMap.Some dst-array value-plan elem-ty _)
+                  [(LowerMaybeVectorMap.Some stores elem-ty store-lanes)
                     (lower-avx2-broadcast-tail-map-body
                       ctx
                       s
                       index-var
                       end-value
-                      dst-array
-                      value-plan
+                      stores
                       elem-ty
+                      store-lanes
                       exit-label)]
                   [(LowerMaybeVectorMap.No)
                     (ResultLowerExpr.Err
@@ -41469,7 +42070,7 @@
       type-env
       index
       body)
-      [(LowerMaybeVectorMap.Some _ _ _ _)
+      [(LowerMaybeVectorMap.Some _ _ _)
         (lower-avx2-foreach-lowered
           ctx
           state

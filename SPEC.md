@@ -6291,7 +6291,9 @@ in documentation passes.
   `spmd-scan`, `spmd-broadcast`, `spmd-shuffle`, lane identity forms,
   masked varying `if`, varying `while`, and varying `match` (enum tags and
   payload bindings). AVX2/AVX-512 contiguous `foreach` map/zip subsets over
-  all scalar integer and float lane types; eligible vectorized
+  all scalar integer and float lane types, including straight-line
+  multi-destination maps with one shared lane shape, distinct destinations,
+  and no destination read by a fused value; eligible vectorized
   `spmd-reduce` folds; AVX2/AVX-512 masked varying `if` subsets including
   nested branch-mask composition and value-producing selects; runtime
   dispatch via `defdispatch` with cached CPUID/XGETBV selection.

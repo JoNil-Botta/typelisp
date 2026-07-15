@@ -15964,22 +15964,18 @@
           (opt-induction-find-fact-instr-seq body-blocks loop preheader instrs)])]
     [(OptMaybeBlock.No) (OptMaybeInductionFact.No)]))
 
-(define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
-  (match instr
+(define (opt-induction-blocker-instr-seq-at?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (match (& (array-ref (struct-get instrs slots) index))
     [(CompilerIrInstr.Alloc _ _) true]
     [(CompilerIrInstr.CopyBytes _ _ _) true]
-    [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload _ _ _ _ _) true])]
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _) true])]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
     [(CompilerIrInstr.CpuId _ _ _ _) true]
     [(CompilerIrInstr.Xgetbv _ _) true]
     [(CompilerIrInstr.Syscall _ _) true]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _) true])]
+    [(CompilerIrInstr.SpmdCall _) true]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))
@@ -15990,7 +15986,7 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
     (or
-      (opt-induction-blocker-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-induction-blocker-instr-seq-at? instrs index)
       (opt-induction-blocker-instr-seq-from? instrs (+ index 1)))))
 
 (define (opt-induction-blocker-instr-seq? [instrs : CompilerIrInstrSeq]) : bool

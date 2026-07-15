@@ -17270,6 +17270,28 @@
 (define (compiler-backend-bool-not-source) : String
   "(define (f [a : bool]) : bool (not a))")
 
+(define (compiler-backend-negated-compare-branch-source) : String
+  "(define (f [a : i64] [b : i64]) : i64
+  (if (not (= a b)) 1 2))")
+
+(define (compiler-backend-negated-compare-branch-ok?) : bool
+  (match (compiler-backend-emit-source
+    (compiler-backend-negated-compare-branch-source))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_f")]
+        (and
+          (not (string.eq body ""))
+          (compiler-backend-string-contains? body "    cmpq ")
+          (or
+            (compiler-backend-string-contains? body "    je ")
+            (compiler-backend-string-contains? body "    jne "))
+          (not (compiler-backend-string-contains? body "    sete "))
+          (not (compiler-backend-string-contains? body "    setne "))
+          (not (compiler-backend-string-contains? body "    xorq $1, "))
+          (not (compiler-backend-string-contains? body "    testq "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
 (define (compiler-backend-direct-condition-branch-ok?) : bool
   (match (compiler-backend-emit-branch
     (compiler-reg-assignment-cons
@@ -17405,7 +17427,8 @@
           (compiler-backend-bool-not-source)
           (compiler-backend-todo-marker))
         (compiler-backend-direct-condition-branch-ok?)
-        (compiler-backend-direct-compare-branch-ok?)))))
+        (compiler-backend-direct-compare-branch-ok?)
+        (compiler-backend-negated-compare-branch-ok?)))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms.

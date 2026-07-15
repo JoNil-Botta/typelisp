@@ -36391,6 +36391,147 @@
                           func-diag
                           use-counts
                           buf))]
+                    [(CompilerIrInstr.UnOp
+                        not-dst
+                        (CompilerIrUnOp.Not)
+                        not-src
+                        (AstType.Bool))
+                      ;; A single-use `not` between a comparison and its branch
+                      ;; only reverses the two successors. Keep the compare
+                      ;; flags live, omit both boolean materializations, and
+                      ;; branch to the opposite labels directly.
+                      (if (and
+                        (compiler-backend-var-single-use? use-counts dst)
+                        (compiler-backend-var-single-use? use-counts not-dst)
+                        (compiler-backend-branch-uses-var? not-src dst))
+                        (match (box-get after-branch)
+                          [(CompilerIrInstrList.Cons branch after-not-branch)
+                            (match branch
+                              [(CompilerIrInstr.Branch
+                                  cond
+                                  true-label
+                                  false-label)
+                                (if (compiler-backend-branch-uses-var?
+                                  cond
+                                  not-dst)
+                                  (compiler-backend-emit-fused-compare-branch-rest
+                                    target
+                                    function
+                                    source-function
+                                    blocks
+                                    current-label
+                                    fallthrough
+                                    dst
+                                    op
+                                    lhs
+                                    rhs
+                                    ty
+                                    false-label
+                                    true-label
+                                    (box-get after-not-branch)
+                                    assignments
+                                    vars
+                                    types
+                                    global-types
+                                    ret-ty
+                                    plan
+                                    functions
+                                    externs
+                                    program-index
+                                    spans
+                                    func-diag
+                                    use-counts
+                                    buf)
+                                  (compiler-backend-emit-instrs-normal
+                                    target
+                                    function
+                                    source-function
+                                    blocks
+                                    current-label
+                                    fallthrough
+                                    instr
+                                    (box-get rest)
+                                    assignments
+                                    vars
+                                    types
+                                    global-types
+                                    ret-ty
+                                    plan
+                                    functions
+                                    externs
+                                    program-index
+                                    spans
+                                    func-diag
+                                    use-counts
+                                    buf))]
+                              [_
+                                (compiler-backend-emit-instrs-normal
+                                  target
+                                  function
+                                  source-function
+                                  blocks
+                                  current-label
+                                  fallthrough
+                                  instr
+                                  (box-get rest)
+                                  assignments
+                                  vars
+                                  types
+                                  global-types
+                                  ret-ty
+                                  plan
+                                  functions
+                                  externs
+                                  program-index
+                                  spans
+                                  func-diag
+                                  use-counts
+                                  buf)])]
+                          [_
+                            (compiler-backend-emit-instrs-normal
+                              target
+                              function
+                              source-function
+                              blocks
+                              current-label
+                              fallthrough
+                              instr
+                              (box-get rest)
+                              assignments
+                              vars
+                              types
+                              global-types
+                              ret-ty
+                              plan
+                              functions
+                              externs
+                              program-index
+                              spans
+                              func-diag
+                              use-counts
+                              buf)])
+                        (compiler-backend-emit-instrs-normal
+                          target
+                          function
+                          source-function
+                          blocks
+                          current-label
+                          fallthrough
+                          instr
+                          (box-get rest)
+                          assignments
+                          vars
+                          types
+                          global-types
+                          ret-ty
+                          plan
+                          functions
+                          externs
+                          program-index
+                          spans
+                          func-diag
+                          use-counts
+                          buf))]
                     [_
                       (compiler-backend-emit-instrs-normal
                         target

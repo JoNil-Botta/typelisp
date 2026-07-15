@@ -6337,6 +6337,48 @@
           out-program
           (ast-node-pool-context-snapshot dest-pools))))))
 
+;: Copy `program` into the existing tail of `dest-pools`, remapping every
+;: reachable source id without discarding declarations already copied there.
+;: This is the per-file loader counterpart to whole-program compaction.
+(define (ast-program-copy-append-with-pools
+  [source-pools : AstNodePoolContext]
+  [dest-pools : AstNodePoolContext]
+  [program : AstProgram]) : AstProgramCompaction
+  (let
+    [prev-arena : i64 (arena.tl_arena_current)]
+    [map-arena : i64 (arena.tl_arena_make)]
+    [_set-map-arena : unit
+      (unsafe
+        (arena.tl_arena_set map-arena))]
+    [expr-map : (Array i64)
+      (ast-compaction-id-map-create
+        (ast-node-pool-context-expr-len source-pools))]
+    [type-map : (Array i64)
+      (ast-compaction-id-map-create
+        (ast-node-pool-context-type-len source-pools))]
+    [remap : AstProgramCompactionRemap
+      (AstProgramCompactionRemap source-pools dest-pools expr-map type-map)]
+    [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
+    [out-program : AstProgram
+      (begin
+        (unsafe
+          (arena.tl_arena_set dest-arena))
+        (let
+          [out : AstProgram (ast-compaction-remap-program remap program)]
+          (begin
+            (ast-node-pool-context-sync-base-arena!
+              dest-pools
+              (arena.tl_arena_current))
+            (unsafe
+              (arena.tl_arena_set prev-arena))
+            out)))]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy map-arena))
+      (AstProgramCompaction
+        out-program
+        (ast-node-pool-context-snapshot dest-pools)))))
+
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty
     [(AstType.I64) 1]

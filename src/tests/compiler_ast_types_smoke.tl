@@ -522,6 +522,62 @@
             (ast.ast-node-pool-context-install! active-before)
             (and shape-ok installed-ok)))])))
 
+(define (compiler-ast-program-copy-append-smoke?) : bool
+  (let
+    [source-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [dest-pools : ast.AstNodePoolContext
+      (ast.ast-node-pool-context-new-with-capacities 4 4)]
+    [_dest-expr : i64
+      (ast.ast-node-pool-context-expr-push
+        dest-pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 111)))]
+    [_dest-type : i64
+      (ast.ast-node-pool-context-type-push dest-pools (ast.AstType.Bool))]
+    [_source-decoy : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 999)))]
+    [source-expr : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 222)))]
+    [source-type : i64
+      (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+    [program : ast.AstProgram
+      (ast.ast-program
+        (ast.ast-decl-cons
+          (ast.ast-decl-def
+            "appended"
+            (ast.AstMaybeType.Some (ast.AstType.Ptr source-type))
+            source-expr)
+          (ast.ast-decl-list-new)))]
+    [copied : ast.AstProgramCompaction
+      (ast.ast-program-copy-append-with-pools source-pools dest-pools program)]
+    (match copied
+      [(ast.AstProgramCompaction out-program out-pools)
+        (and
+          (= (ast.ast-node-pool-context-expr-len out-pools) 2)
+          (= (ast.ast-node-pool-context-type-len out-pools) 2)
+          (compiler-ast-context-expr-int-lit? out-pools 0 111)
+          (match out-program
+            [(ast.AstProgram.Program decls-box)
+              (match (ast.ast-decl-list-step (box-get decls-box))
+                [(ast.AstDeclListStep.Cons decl rest)
+                  (match decl
+                    [(ast.AstDecl.Def _ maybe-type body)
+                      (and
+                        (compiler-ast-context-expr-int-lit? out-pools body 222)
+                        (match maybe-type
+                          [(ast.AstMaybeType.Some (ast.AstType.Ptr inner))
+                            (compiler-ast-context-type-i64? out-pools inner)]
+                          [_ false])
+                        (match (ast.ast-decl-list-step rest)
+                          [(ast.AstDeclListStep.Nil) true]
+                          [_ false]))]
+                    [_ false])]
+                [_ false])]))])))
+
 (define (compiler-ast-compaction-string-def-ok?
   [pools : ast.AstNodePoolContext]
   [decl : ast.AstDecl]) : bool
@@ -992,6 +1048,7 @@
     (unless (compiler-ast-state-owned-node-pools-smoke?) (return 3))
     (unless (compiler-ast-active-context-sync-smoke?) (return 4))
     (unless (compiler-ast-program-compaction-smoke?) (return 5))
+    (unless (compiler-ast-program-copy-append-smoke?) (return 13))
     (unless (compiler-ast-decl-cons-growth-smoke?) (return 6))
     (unless (compiler-ast-decl-cons-pure-smoke?) (return 7))
     (unless (compiler-ast-program-compaction-string-payloads-smoke?) (return 8))

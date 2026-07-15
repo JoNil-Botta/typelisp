@@ -6331,6 +6331,90 @@
       cfgs
       pools)))
 
+;; Parse one uncached file in disposable storage, then copy only its reachable
+;; AST into the caller's program-lifetime pools. Lexer tokens, reader forms,
+;; source text, parser scratch, and superseded temporary pool arrays are all
+;; released before import traversal continues to the next file.
+(define (compiler-load-parse-file-diagnostic-detached-with-pools
+  [path : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (let
+    [caller-arena : i64 (arena.tl_arena_current)]
+    [scratch-root : i64 (arena.tl_arena_make)]
+    [_use-scratch : unit
+      (unsafe
+        (arena.tl_arena_set scratch-root))]
+    [source : String (io.read-file path)]
+    [source-len : i64 (string.string-length source)]
+    ;; Source bytes are a useful low-cost predictor for parser node count. A
+    ;; modest estimate avoids both a multi-million-node reserve per file and a
+    ;; long geometric growth chain for compiler-sized modules.
+    [expr-capacity : i64
+      (let
+        [estimate : i64 (/ source-len 8)]
+        (if (< estimate 1024)
+          1024
+          estimate))]
+    [type-capacity : i64
+      (let
+        [estimate : i64 (/ source-len 128)]
+        (if (< estimate 256)
+          256
+          estimate))]
+    [scratch-base : i64 (arena.tl_arena_current)]
+    [scratch-pools : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        expr-capacity
+        type-capacity
+        scratch-base)]
+    [persistent-before : bool (intern-persistent-storage-on?)]
+    [_persist-new-interns : unit
+      (if persistent-before
+        unit
+        (intern-persistent-storage-enable!))]
+    [parsed : ResultAstProgramDiagnostic
+      (compiler-load-parse-source-diagnostic-escaping-with-pools
+        path
+        source
+        cfgs
+        scratch-pools)]
+    (match parsed
+      [(ResultAstProgramDiagnostic.Ok program)
+        (match (ast-program-copy-append-with-pools scratch-pools pools program)
+          [(AstProgramCompaction out-program _)
+            (let
+              [scratch-head : i64 (arena.tl_arena_current)]
+              [_restore-caller : unit
+                (unsafe
+                  (arena.tl_arena_set caller-arena))]
+              [out : ResultAstProgramDiagnostic
+                (ResultAstProgramDiagnostic.Ok out-program)]
+              (begin
+                (if persistent-before
+                  unit
+                  (intern-persistent-storage-disable!))
+                (unsafe
+                  (arena.tl_arena_destroy scratch-head))
+                out))])]
+      [(ResultAstProgramDiagnostic.Err diag)
+        (let
+          [scratch-head : i64 (arena.tl_arena_current)]
+          [_restore-caller : unit
+            (unsafe
+              (arena.tl_arena_set caller-arena))]
+          [stable-diag : (Box CompilerDiagnostic)
+            (box (compiler-diagnostic-copy (box-get diag)))]
+          [out : ResultAstProgramDiagnostic
+            (ResultAstProgramDiagnostic.Err stable-diag)]
+          (begin
+            (if persistent-before
+              unit
+              (intern-persistent-storage-disable!))
+            (unsafe
+              (arena.tl_arena_destroy scratch-head))
+            out))])))
+
 (define (compiler-load-cache-program-result
   [key : String]
   [result : ResultAstProgramDiagnostic]) : ResultAstProgramDiagnostic
@@ -6562,7 +6646,7 @@
                 path
                 cfgs
                 pools)))]))
-    (compiler-load-parse-file-diagnostic-escaping-with-pools path cfgs pools)))
+    (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
   [key : String]
@@ -7035,7 +7119,7 @@
               stdlib-roots
               parse-cfgs
               pools)
-            (compiler-load-parse-file-diagnostic-escaping-with-pools
+            (compiler-load-parse-file-diagnostic-detached-with-pools
               path
               parse-cfgs
               pools))

@@ -2673,6 +2673,25 @@
       (AstType.Struct canonical-id)]
     [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _) (AstType.Enum canonical-id)]))
 
+(define (ctfe-reflect-info-canonical-id [info : CtfeReflectInfo]) : i64
+  (match info
+    [(CtfeReflectInfo.Struct _ _ _ canonical-id _ _) canonical-id]
+    [(CtfeReflectInfo.Enum _ _ _ canonical-id _ _) canonical-id]))
+
+(define (ctfe-reflect-info-nominal-name-id [info : CtfeReflectInfo]) : i64
+  (let
+    [canonical-id : i64 (ctfe-reflect-info-canonical-id info)]
+    (if (intern-composite-pair-id? canonical-id)
+      (intern-composite-pair-right-id canonical-id)
+      canonical-id)))
+
+(define (ctfe-reflect-info-nominal-module-id [info : CtfeReflectInfo]) : i64
+  (let
+    [canonical-id : i64 (ctfe-reflect-info-canonical-id info)]
+    (if (intern-composite-pair-id? canonical-id)
+      (intern-composite-pair-left-id canonical-id)
+      cbi.compiler-builtin-id-fix-empty)))
+
 (define (ctfe-reflect-resolve-type-list-with-pools
   [pools : AstNodePoolContext]
   [infos : CtfeReflectInfoList]
@@ -3912,15 +3931,10 @@
                   infos
                   ty)
                   [(CtfeMaybeReflectInfo.Some info)
-                    (match info
-                      [(CtfeReflectInfo.Struct _ module _ _ _ _)
-                        (ResultCtfe.Ok
-                          (ctfe-generated-string-value module)
-                          arg-fuel)]
-                      [(CtfeReflectInfo.Enum _ module _ _ _ _)
-                        (ResultCtfe.Ok
-                          (ctfe-generated-string-value module)
-                          arg-fuel)])]
+                    (ResultCtfe.Ok
+                      (ctfe-name-value
+                        (ctfe-reflect-info-nominal-module-id info))
+                      arg-fuel)]
                   [(CtfeMaybeReflectInfo.None)
                     (ResultCtfe.Err
                       (box
@@ -3933,15 +3947,9 @@
                   infos
                   ty)
                   [(CtfeMaybeReflectInfo.Some info)
-                    (match info
-                      [(CtfeReflectInfo.Struct _ _ nominal-name _ _ _)
-                        (ResultCtfe.Ok
-                          (ctfe-generated-string-value nominal-name)
-                          arg-fuel)]
-                      [(CtfeReflectInfo.Enum _ _ nominal-name _ _ _)
-                        (ResultCtfe.Ok
-                          (ctfe-generated-string-value nominal-name)
-                          arg-fuel)])]
+                    (ResultCtfe.Ok
+                      (ctfe-name-value (ctfe-reflect-info-nominal-name-id info))
+                      arg-fuel)]
                   [(CtfeMaybeReflectInfo.None)
                     (ResultCtfe.Err
                       (box

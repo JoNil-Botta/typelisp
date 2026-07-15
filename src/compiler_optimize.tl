@@ -29166,7 +29166,7 @@
           (<= instr-count (opt-inline-tiny-predicate-max-instrs))
           (> (opt-inline-return-count-blocks cblocks) 0)
           (opt-inline-structure-ok-reclaiming? cblocks)
-          (opt-inline-tiny-predicate-acyclic? cblocks)
+          (opt-inline-tiny-predicate-acyclic-reclaiming? cblocks)
           (not (opt-inline-param-mutating-blocks? cblocks np))
           (opt-inline-tiny-predicate-blocks-ok? cblocks)))]))
 
@@ -30360,7 +30360,7 @@
                     np)]
                 [bounds-loop-ok? : bool
                   (if (opt-inline-blocks-have-bounds-check? cblocks)
-                    (opt-inline-tiny-predicate-acyclic? cblocks)
+                    (opt-inline-tiny-predicate-acyclic-reclaiming? cblocks)
                     true)]
                 [inline? : bool
                   (and
@@ -30937,7 +30937,7 @@
                     np)]
                 [bounds-loop-ok? : bool
                   (if (opt-inline-blocks-have-bounds-check? cblocks)
-                    (opt-inline-tiny-predicate-acyclic? cblocks)
+                    (opt-inline-tiny-predicate-acyclic-reclaiming? cblocks)
                     true)]
                 [inline? : bool
                   (and
@@ -31468,6 +31468,28 @@
           (arena.tl_arena_set scratch))]
       [mark : i64 (arena.tl_region_mark)]
       [ok : bool (opt-inline-structure-ok? blocks)]
+      [scratch-head : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch-head)
+          (arena.tl_region_reset mark))
+        (set! opt-inline-verify-scratch-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set enclosing))
+        ok))))
+
+(define (opt-inline-tiny-predicate-acyclic-reclaiming?
+  [blocks : CompilerIrBlockList]) : bool
+  (if (= opt-inline-verify-scratch-arena 0)
+    (opt-inline-tiny-predicate-acyclic? blocks)
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 opt-inline-verify-scratch-arena]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set scratch))]
+      [mark : i64 (arena.tl_region_mark)]
+      [ok : bool (opt-inline-tiny-predicate-acyclic? blocks)]
       [scratch-head : i64 (arena.tl_arena_current)]
       (begin
         (unsafe

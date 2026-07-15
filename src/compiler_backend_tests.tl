@@ -11520,13 +11520,17 @@
                     (= (compiler-backend-string-count loop "    movq 0(") 0)
                     (= (compiler-backend-string-count loop "    movq (%") 2)
                     (= (compiler-backend-string-count loop "    vmovdqu (") 1)
-                    (= (compiler-backend-string-count loop "    vpaddq (") 1)
+                    (= (compiler-backend-string-count loop "    vpaddq (") 0)
                     (=
                       (compiler-backend-string-count loop "    vmovdqu %ymm6")
                       1)
                     (compiler-backend-string-contains? body "foreach_avx2_body")
                     (compiler-backend-string-contains? body "foreach_tail")
-                    true)
+                    (=
+                      (compiler-backend-string-count
+                        loop
+                        "    vpaddq %ymm6, %ymm6, %ymm6")
+                      1))
                   (not
                     (compiler-backend-string-contains?
                       loop

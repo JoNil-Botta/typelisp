@@ -611,7 +611,7 @@
     (array-set!
       (struct-get state reset-generation)
       0
-      (+ (intern-compat-state-generation state) 1))
+      (intern-generation-allocate!))
     (array-set! (struct-get state map-ready) 0 true)))
 
 (define (intern-compat-state-reset-to! [state : InternCompatState] [mark : i64]) : unit
@@ -627,7 +627,7 @@
     (array-set!
       (struct-get state reset-generation)
       0
-      (+ (intern-compat-state-generation state) 1))
+      (intern-generation-allocate!))
     (array-set! (struct-get state map-ready) 0 true)))
 
 (define (intern-compat-state-persistent-substring
@@ -1877,17 +1877,17 @@
                 (if (and
                   (= slot-hash hash)
                   (intern-string-slice-eq? slot-key text start len))
-                (begin
-                  (cfg
-                    compile-profile
-                    (set!
-                      intern-profile-slice-hit-count
-                      (+ intern-profile-slice-hit-count 1)))
-                  (set! out source-id)
-                  (set! done true))
-                (begin
-                  (set! cursor (intern-bucket (+ cursor 1) capacity))
-                  (set! steps (+ steps 1))))))))
+                  (begin
+                    (cfg
+                      compile-profile
+                      (set!
+                        intern-profile-slice-hit-count
+                        (+ intern-profile-slice-hit-count 1)))
+                    (set! out source-id)
+                    (set! done true))
+                  (begin
+                    (set! cursor (intern-bucket (+ cursor 1) capacity))
+                    (set! steps (+ steps 1))))))))
         out))))
 
 ;: Lexer-only entry point. Keeping source-token volume separate from internal
@@ -2040,24 +2040,6 @@
 
 (define (intern-qualified-base [id : i64]) : String
   (intern-str (intern-qualified-base-id id)))
-
-(define (intern-name-qualified? [name : String]) : bool
-  (intern-qualified? (intern name)))
-
-(define (intern-name-last-slash [name : String]) : i64
-  (intern-qualified-last-slash (intern name)))
-
-(define (intern-name-first-dot [name : String]) : i64
-  (intern-first-dot (intern name)))
-
-(define (intern-name-dotted? [name : String]) : bool
-  (intern-dotted? (intern name)))
-
-(define (intern-name-module [name : String]) : String
-  (intern-qualified-module (intern name)))
-
-(define (intern-name-base [name : String]) : String
-  (intern-qualified-base (intern name)))
 
 (define (intern-qualified-metadata-case-ok?
   [id : i64]
@@ -2448,8 +2430,8 @@
             (intern-str (intern-dotted-final-id nested-dotted))
             "x")
           (set! ok false))
-        (unless (intern-name-dotted? "point.x") (set! ok false))
-        (unless (= (intern-name-first-dot "point.x") 5) (set! ok false))
+        (unless (intern-dotted? dotted) (set! ok false))
+        (unless (= (intern-first-dot dotted) 5) (set! ok false))
         (unless (intern-slice-tests-ok?) (set! ok false))
         (unless (intern-generated-name-tests-ok?) (set! ok false))
         (unless (intern-persistent-arena-tests-ok?) (set! ok false))

@@ -8,6 +8,7 @@
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
+(import compiler_builtin_ids as cbi)
 (import compiler_intern as ci)
 (import sym_i64_env)
 (import (hashmap i64 i64) as lower_i64_i64_map)
@@ -865,10 +866,9 @@
           (ast-node-pool-context-expr-push
             pools-a
             (AstExpr.Literal (AstLiteral.Bool false)))]
+        [replacement-id : i64 (intern "replacement")]
         [quote-var-id : i64
-          (ast-node-pool-context-expr-push
-            pools-a
-            (AstExpr.Var (intern "replacement")))]
+          (ast-node-pool-context-expr-push pools-a (AstExpr.Var replacement-id))]
         [quote-unquote-id : i64
           (ast-expr-unquote-with-pools pools-a quote-var-id)]
         [quote-if-id : i64
@@ -880,9 +880,9 @@
         [quasiquote-id : i64
           (ast-expr-quasiquote-with-pools pools-a quote-if-id)]
         [quote-env : CtfeEnv
-          (ctfe-env-extend
+          (ctfe-env-extend-id
             env-a
-            "replacement"
+            replacement-id
             (CompilerCtfeValue.Expr quote-cond-id (AstType.Bool)))]
         [quote-len-before : i64 (ast-node-pool-context-expr-len pools-a)]
         (begin
@@ -1064,7 +1064,10 @@
     [ok : bool true]
     (begin
       (unless (not (= state-a-ids-addr state-b-ids-addr)) (set! ok false))
+      (compiler-driver-state-install-interns! state-a)
       (compiler-driver-state-install-builtins! state-a)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (compiler-driver-state-capture-active-interns! state-a)
       (let
         [string-length-id : i64 (intern "__tl_string_length")]
         (begin
@@ -1077,7 +1080,10 @@
             [state-a-generation : i64
               (compiler-driver-state-builtin-generation state-a)]
             (begin
+              (compiler-driver-state-install-interns! state-b)
               (compiler-driver-state-install-builtins! state-b)
+              (cbi.compiler-builtin-initialize-for-parse!)
+              (compiler-driver-state-capture-active-interns! state-b)
               (let
                 [array-length-id : i64 (intern "array-length")]
                 (begin
@@ -1105,6 +1111,7 @@
                       (compiler-driver-state-builtin-ids-data-addr state-a)
                       state-a-ids-addr)
                     (set! ok false))
+                  (compiler-driver-state-install-interns! state-a)
                   (compiler-driver-state-install-builtins! state-a)
                   (let
                     [string-length-id-after-reset : i64
@@ -1121,7 +1128,10 @@
     [state : CompilerDriverState (compiler-driver-state-new)]
     [ok : bool true]
     (begin
+      (compiler-driver-state-install-interns! state)
       (compiler-driver-state-install-builtins! state)
+      (cbi.compiler-builtin-initialize-for-parse!)
+      (compiler-driver-state-capture-active-interns! state)
       (let
         [before : i64 (compiler-driver-state-builtin-ids-data-addr state)]
         [string-length-id : i64 (intern "__tl_string_length")]
@@ -1142,6 +1152,8 @@
               (unless
                 (= (compiler-driver-state-builtin-ids-data-addr state) before)
                 (set! ok false))
+              (cbi.compiler-builtin-initialize-for-parse!)
+              (compiler-driver-state-capture-active-interns! state)
               (unless
                 (compiler-driver-builtin-typecheck-string-length-id?
                   string-length-id)
@@ -1350,7 +1362,7 @@
         [name-id : i64 (intern "state-b-reset-decoy")]
         [owner : InternIdProvenance (intern-id-provenance-capture)]
         [generation : i64 (intern-generation)]
-        [pool-address : i64 (intern-active-pool-data-addr)]
+        [table-id : i64 (intern-active-table-id)]
         [ok : bool
           (begin
             (compiler-driver-state-capture-active-interns! state-b)
@@ -1358,7 +1370,7 @@
             (compiler-driver-state-release-file-state! state-a)
             (and
               (= (intern-generation) generation)
-              (= (intern-active-pool-data-addr) pool-address)
+              (= (intern-active-table-id) table-id)
               (compiler-driver-state-smoke-render-ok?
                 owner
                 name-id
@@ -1380,7 +1392,7 @@
         [decoy-id : i64 (intern "state-b-cfg-decoy")]
         [owner : InternIdProvenance (intern-id-provenance-capture)]
         [generation : i64 (intern-generation)]
-        [pool-address : i64 (intern-active-pool-data-addr)]
+        [table-id : i64 (intern-active-table-id)]
         (begin
           (compiler-driver-state-capture-active-interns! state-b)
           (let
@@ -1432,7 +1444,7 @@
                 (compiler-cfg-empty))]
             (and
               (= (intern-generation) generation)
-              (= (intern-active-pool-data-addr) pool-address)
+              (= (intern-active-table-id) table-id)
               (compiler-driver-state-smoke-render-ok?
                 owner
                 decoy-id
@@ -1480,6 +1492,7 @@
     [ok : bool true]
     (begin
       (compiler-driver-state-reset-file-state! state-a)
+      (compiler-driver-state-install-interns! state-a)
       (let
         [a-shared : i64 (intern "owner-shared")]
         [a-only : i64
@@ -1498,6 +1511,7 @@
             (not (tc-env-key-has-name-id? a-structural-key))
             (set! ok false))
           (compiler-driver-state-reset-file-state! state-b)
+          (compiler-driver-state-install-interns! state-b)
           (let
             [b-shared : i64 (intern "owner-shared")]
             [b-only : i64
@@ -1530,6 +1544,7 @@
               ;; then restore A. Reused temporary storage and numeric IDs must
               ;; not affect A's owned spellings.
               (compiler-driver-state-reset-file-state! state-b)
+              (compiler-driver-state-install-interns! state-b)
               (let
                 [b-reused : i64
                   (with-scratch
@@ -1632,9 +1647,9 @@
                 (array-ref (struct-get state-a intern-state) 0))
               (and
                 (= (compiler-driver-state-intern-pool-len state-a) 0)
-                (=
+                (>
                   (compiler-driver-state-intern-generation state-a)
-                  (+ a-generation 1))
+                  a-generation)
                 (= (compiler-driver-state-intern-pool-len state-b) 1)
                 (=
                   (compiler-driver-state-intern-generation state-b)

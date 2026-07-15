@@ -1168,29 +1168,20 @@
   [state : CompilerDriverState]
   [target : CompilerBackendTarget]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (if (=
-    (ci.intern-active-table-id)
-    (compiler-driver-state-intern-table-id state))
-    (let
-      [target-cfgs : sym_i64_env.SymI64Env
-        (compiler-driver-target-cfgs target cfgs)]
-      (begin
-        (compiler-driver-state-capture-active-interns! state)
-        target-cfgs))
-    (let
-      [intern-state : ci.InternCompatState
-        (array-ref (struct-get state intern-state) 0)]
-      (compiler-driver-enable-language-cfgs-with-intern-state
-        (match target
-          [(CompilerBackendTarget.Linux)
-            (compiler-driver-enable-linux-cfgs-with-intern-state
-              cfgs
-              intern-state)]
-          [(CompilerBackendTarget.Windows)
-            (compiler-driver-enable-windows-cfgs-with-intern-state
-              cfgs
-              intern-state)])
-        intern-state))))
+  (let
+    [intern-state : ci.InternCompatState
+      (array-ref (struct-get state intern-state) 0)]
+    (compiler-driver-enable-language-cfgs-with-intern-state
+      (match target
+        [(CompilerBackendTarget.Linux)
+          (compiler-driver-enable-linux-cfgs-with-intern-state
+            cfgs
+            intern-state)]
+        [(CompilerBackendTarget.Windows)
+          (compiler-driver-enable-windows-cfgs-with-intern-state
+            cfgs
+            intern-state)])
+      intern-state)))
 
 (define (compiler-driver-emit-lowered
   [input-path : String]
@@ -1633,26 +1624,11 @@
     unit))
 
 (define (compiler-driver-abort-early-intern-preparation!) : unit
-  (if (compiler-lower-checked-frontend-interns-prepared?)
-    (let
-      [persistent-before : bool
-        (compiler-lower-checked-frontend-intern-persistence-before?)]
-      [persisted-count : i64 (compiler-lower-checked-frontend-intern-count)]
-      [intern-count : i64 (ci.intern-pool-len)]
-      (begin
-        ;; Diagnostics and the process-global dedup map can retain names added
-        ;; after macro compaction even when lowering fails. Promote that tail
-        ;; before the error adapter releases checked storage.
-        (ci.intern-persist-range! persisted-count intern-count)
-        (ci.intern-reset-to! intern-count)
-        (compiler-driver-restore-intern-persistence! persistent-before)
-        (compiler-lower-checked-frontend-intern-preparation-clear!)))
-    unit))
+  (compiler-lower-checked-frontend-intern-preparation-clear!))
 
-(define (compiler-driver-restore-intern-persistence! [persistent-before : bool]) : unit
-  (if persistent-before
-    unit
-    (ci.intern-persistent-storage-disable!)))
+(define (compiler-driver-restore-intern-persistence!
+  [_persistent-before : bool]) : unit
+  unit)
 
 (define (compiler-driver-restore-frontend-return-arena!) : unit
   (if (= compiler-driver-pending-frontend-return-arena 0)
@@ -1663,6 +1639,7 @@
         (set! compiler-driver-pending-frontend-return-arena 0)
         (unsafe
           (arena.tl_arena_set return-arena))))))
+
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
   (and
     (>= opt-level 1)

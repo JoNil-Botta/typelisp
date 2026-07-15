@@ -3182,6 +3182,13 @@
     source-module-id
     (ast-decl-path-list-owner-id paths index source-module-id)))
 
+(define (lower-decl-owner-module-name
+  [source-module-id : i64]
+  [owner-module-id : i64]) : String
+  (if (= source-module-id owner-module-id)
+    (intern-str source-module-id)
+    ""))
+
 (define (lower-entry-main-decl? [decl : AstDecl]) : bool
   (match decl
     [(AstDecl.Def name _ _) (= name cbi.compiler-builtin-id-fix-main)]
@@ -3633,7 +3640,9 @@
                       cur-names
                       entry-path
                       decl-path
-                      (intern-str logical-module-id)
+                      (lower-decl-owner-module-name
+                        cur-module-id
+                        logical-module-id)
                       logical-module-id
                       decl)]
                   (set!
@@ -9719,7 +9728,9 @@
                 (lower-decl-kept-by-reach-or-dispatch?
                   entry-path
                   decl-path
-                  (intern-str logical-module-id)
+                  (lower-decl-owner-module-name
+                    source-module-id
+                    logical-module-id)
                   logical-module-id
                   all-functions
                   reachable
@@ -49853,7 +49864,8 @@
                   entry-path
                   decl-path
                   cur-module-id)]
-              [logical-module : String (intern-str logical-module-id)]
+              [logical-module : String
+                (lower-decl-owner-module-name cur-module-id logical-module-id)]
               [decl-name-cache : LowerNameCache
                 (lower-name-cache-with-module-id
                   cur-name-cache

@@ -3185,7 +3185,10 @@
 (define (lower-decl-owner-module-name
   [source-module-id : i64]
   [owner-module-id : i64]) : String
-  (if (= source-module-id owner-module-id)
+  (if (and
+    (= source-module-id owner-module-id)
+    (>= source-module-id 0)
+    (< source-module-id (intern-capacity)))
     (intern-str source-module-id)
     ""))
 

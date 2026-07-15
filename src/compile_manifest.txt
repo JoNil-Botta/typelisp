@@ -467,8 +467,8 @@ end
 
 case|selfhost_compiler_lower|src/compiler_lower.tl|assembly|skip|direct
 contains|_tl_lower_compiler_source:
-contains|_tl_lower_compiler_program_checked:
-contains|_tl_compiler_lower_self_test:
+contains|_tl_lower_compiler_program:
+contains|_tl_compiler_lower_back_half_tests_ok_question:
 contains|lower: unsupported expression
 end
 

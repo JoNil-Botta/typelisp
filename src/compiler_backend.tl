@@ -417,9 +417,7 @@
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
   (hash-string bool)
-  (tlci-macro-entry bool)
-  (region-mark-call-id i64)
-  (region-reset-call-id i64))
+  (tlci-macro-entry bool))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
@@ -484,8 +482,6 @@
   (calls backend_i64_i64_map.Map)
   (needs-div-abort bool)
   (needs-shift-abort bool)
-  (region-mark-call-id i64)
-  (region-reset-call-id i64)
   (tlci-macro-entry-call-id i64))
 
 (defstruct CompilerBackendRuntimePlanWithIndex
@@ -527,14 +523,6 @@
 (define (compiler-backend-runtime-tail-tlci-macro-entry?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail tlci-macro-entry))
-
-(define (compiler-backend-runtime-tail-region-mark-call-id
-  [tail : CompilerBackendRuntimeTailPlan]) : i64
-  (struct-get tail region-mark-call-id))
-
-(define (compiler-backend-runtime-tail-region-reset-call-id
-  [tail : CompilerBackendRuntimeTailPlan]) : i64
-  (struct-get tail region-reset-call-id))
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
@@ -43416,13 +43404,15 @@
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [crt-entry : bool]
+  [scratch : i64]) : ResultCompilerBackend
   (let
     ;; The symbol cache stores generated strings. Per-function emission runs in
     ;; a scratch arena, so cached values must not survive across functions.
     [_cache-before : unit (compiler-backend-user-symbol-cache-reset!)]
     [result : ResultCompilerBackend
-      (with-scratch
+      (with-escape
+        (arena.Arena scratch)
         (compiler-backend-emit-function
           target
           mode
@@ -43459,7 +43449,8 @@
   [spans : CompilerSourceSpans]
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
-  [crt-entry : bool]) : ResultCompilerBackend
+  [crt-entry : bool]
+  [scratch : i64]) : ResultCompilerBackend
   (let
     [result : ResultCompilerBackend
       (if (compiler-backend-emit-function-direct? func)
@@ -43491,7 +43482,8 @@
           spans
           span-index
           emit-entry
-          crt-entry))]
+          crt-entry
+          scratch))]
     (begin
       (compiler-backend-clear-function-emit-state!)
       result)))
@@ -43540,6 +43532,7 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]
+  [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (match functions
     [(CompilerIrFunctionList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
@@ -43559,7 +43552,8 @@
           spans
           span-index
           emit-entry
-          crt-entry)
+          crt-entry
+          scratch)
           [(ResultCompilerBackend.Ok head)
             (begin
               (cfg
@@ -43581,6 +43575,7 @@
                 span-index
                 emit-entry
                 crt-entry
+                scratch
                 (text_buf.append buf (compiler-backend-emergency-wrap head))))]
           [(ResultCompilerBackend.Err message)
             (begin
@@ -43606,6 +43601,7 @@
         span-index
         emit-entry
         crt-entry
+        scratch
         buf)]))
 
 (define (compiler-backend-emit-function-seq-buffer-into
@@ -43623,6 +43619,7 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]
+  [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (if (>= index (compiler-ir-function-seq-count functions))
     (ResultCompilerBackendBuffer.Ok buf)
@@ -43643,7 +43640,8 @@
           spans
           span-index
           emit-entry
-          crt-entry)
+          crt-entry
+          scratch)
           [(ResultCompilerBackend.Ok head)
             (begin
               (cfg
@@ -43666,6 +43664,7 @@
                 span-index
                 emit-entry
                 crt-entry
+                scratch
                 (text_buf.append buf (compiler-backend-emergency-wrap head))))]
           [(ResultCompilerBackend.Err message)
             (begin
@@ -43692,6 +43691,7 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]
+  [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (match functions
     [(CompilerIrFunctionList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
@@ -43714,7 +43714,8 @@
             spans
             span-index
             emit-entry
-            crt-entry)
+            crt-entry
+            scratch)
             [(ResultCompilerBackend.Ok head)
               (begin
                 (cfg
@@ -43741,6 +43742,7 @@
                   span-index
                   emit-entry
                   crt-entry
+                  scratch
                   buf))]
             [(ResultCompilerBackend.Err message)
               (begin
@@ -43768,6 +43770,7 @@
         span-index
         emit-entry
         crt-entry
+        scratch
         buf)]))
 
 (define (compiler-backend-emit-function-seq-stream-into
@@ -43785,6 +43788,7 @@
   [span-index : CompilerBackendSourceSpanIndex]
   [emit-entry : bool]
   [crt-entry : bool]
+  [scratch : i64]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (if (>= index (compiler-ir-function-seq-count functions))
     (ResultCompilerBackendBuffer.Ok buf)
@@ -43807,7 +43811,8 @@
           spans
           span-index
           emit-entry
-          crt-entry)
+          crt-entry
+          scratch)
           [(ResultCompilerBackend.Ok head)
             (begin
               (cfg
@@ -43835,6 +43840,7 @@
                 span-index
                 emit-entry
                 crt-entry
+                scratch
                 buf))]
           [(ResultCompilerBackend.Err message)
             (begin
@@ -43862,37 +43868,46 @@
   [emit-entry : bool]
   [crt-entry : bool]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
-  (if (compiler-backend-assembly-stream-active?)
-    (compiler-backend-emit-functions-stream-into
-      target
-      mode
-      functions
-      all-functions
-      globals
-      global-types
-      externs
-      plan
-      program-index
-      spans
-      span-index
-      emit-entry
-      crt-entry
-      buf)
-    (compiler-backend-emit-functions-buffer-raw-into
-      target
-      mode
-      functions
-      all-functions
-      globals
-      global-types
-      externs
-      plan
-      program-index
-      spans
-      span-index
-      emit-entry
-      crt-entry
-      buf)))
+  (let
+    [scratch : i64 (arena.tl_arena_make)]
+    [result : ResultCompilerBackendBuffer
+      (if (compiler-backend-assembly-stream-active?)
+        (compiler-backend-emit-functions-stream-into
+          target
+          mode
+          functions
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry
+          scratch
+          buf)
+        (compiler-backend-emit-functions-buffer-raw-into
+          target
+          mode
+          functions
+          all-functions
+          globals
+          global-types
+          externs
+          plan
+          program-index
+          spans
+          span-index
+          emit-entry
+          crt-entry
+          scratch
+          buf))]
+    (begin
+      (unsafe
+        (arena.tl_arena_destroy scratch))
+      result)))
 
 (define (compiler-backend-emit-closure-descriptor-entry [name : String]) : String
   (str_cat.str-cat
@@ -45175,8 +45190,6 @@
     (backend_i64_i64_map.with-capacity 256)
     false
     false
-    -1
-    -1
     -1))
 
 (define (compiler-backend-runtime-index-defines?
@@ -45215,8 +45228,6 @@
         (struct-get index calls)
         (struct-get index needs-div-abort)
         (struct-get index needs-shift-abort)
-        (struct-get index region-mark-call-id)
-        (struct-get index region-reset-call-id)
         (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
@@ -45232,8 +45243,6 @@
         (struct-get index calls)
         (struct-get index needs-div-abort)
         (struct-get index needs-shift-abort)
-        (struct-get index region-mark-call-id)
-        (struct-get index region-reset-call-id)
         (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-add-call
@@ -45249,12 +45258,6 @@
         calls
         (struct-get index needs-div-abort)
         (struct-get index needs-shift-abort)
-        (if (string.eq (compiler-ir-symbol-text name-id) "tl_region_mark")
-          name-id
-          (struct-get index region-mark-call-id))
-        (if (string.eq (compiler-ir-symbol-text name-id) "tl_region_reset")
-          name-id
-          (struct-get index region-reset-call-id))
         (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-with-div-abort
@@ -45265,8 +45268,6 @@
     (struct-get index calls)
     true
     (struct-get index needs-shift-abort)
-    (struct-get index region-mark-call-id)
-    (struct-get index region-reset-call-id)
     (struct-get index tlci-macro-entry-call-id)))
 
 (define (compiler-backend-runtime-index-with-shift-abort
@@ -45277,8 +45278,6 @@
     (struct-get index calls)
     (struct-get index needs-div-abort)
     true
-    (struct-get index region-mark-call-id)
-    (struct-get index region-reset-call-id)
     (struct-get index tlci-macro-entry-call-id)))
 
 (define (compiler-backend-runtime-index-with-extern-role
@@ -45291,12 +45290,6 @@
     (struct-get index calls)
     (struct-get index needs-div-abort)
     (struct-get index needs-shift-abort)
-    (if (= link-id cbi.compiler-builtin-id-tl-region-mark)
-      call-id
-      (struct-get index region-mark-call-id))
-    (if (= link-id cbi.compiler-builtin-id-tl-region-reset)
-      call-id
-      (struct-get index region-reset-call-id))
     (if (string.eq (compiler-ir-symbol-text link-id) "tl_tlci_call_macro_entry")
       call-id
       (struct-get index tlci-macro-entry-call-id))))
@@ -45668,20 +45661,10 @@
             (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
             (and
               region-mark
-              (or
-                (cbi.compiler-builtin-backend-tl-region-mark-id? name-id)
-                (=
-                  name-id
-                  (compiler-backend-runtime-tail-region-mark-call-id
-                    provides-tail))))
+              (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
             (and
               region-reset
-              (or
-                (cbi.compiler-builtin-backend-tl-region-reset-id? name-id)
-                (=
-                  name-id
-                  (compiler-backend-runtime-tail-region-reset-call-id
-                    provides-tail))))
+              (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
             false
             (and
               substring
@@ -46072,9 +46055,7 @@
           (CompilerBackendRuntimeTailPlan
             needs-profile
             false
-            needs-tlci-macro-entry
-            (struct-get index region-mark-call-id)
-            (struct-get index region-reset-call-id)))
+            needs-tlci-macro-entry))
         index))))
 
 (define (compiler-backend-runtime-plan-for

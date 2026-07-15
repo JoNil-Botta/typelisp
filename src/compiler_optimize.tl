@@ -24,6 +24,7 @@
 (import stdlib.array)
 (import stdlib.vector)
 (import compiler_allocation_profile as allocation_profile)
+(import compiler_builtin_ids as cbi)
 (import "compiler_ir_types.tl")
 (import "compiler_clone.tl")
 (import "compiler_float.tl")
@@ -50325,18 +50326,22 @@
             body-blocks)))]))
 
 (define (opt-scratch-reset-mark-instr [mark-var : i64]) : CompilerIrInstr
-  (CompilerIrInstr.Call
-    mark-var
-    (opt-test-symbol "tl_region_mark")
-    (CompilerIrCallArgs.Nil)
-    (AstType.I64)))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (CompilerIrInstr.Call
+      mark-var
+      cbi.compiler-builtin-id-tl-region-mark
+      (CompilerIrCallArgs.Nil)
+      (AstType.I64))))
 
 (define (opt-scratch-reset-reset-instr [reset-var : i64] [mark-var : i64]) : CompilerIrInstr
-  (CompilerIrInstr.Call
-    reset-var
-    (opt-test-symbol "tl_region_reset")
-    (CompilerIrCallArgs.One (CompilerIrValue.Var mark-var))
-    (AstType.Unit)))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (CompilerIrInstr.Call
+      reset-var
+      cbi.compiler-builtin-id-tl-region-reset
+      (CompilerIrCallArgs.One (CompilerIrValue.Var mark-var))
+      (AstType.Unit))))
 
 (define (opt-scratch-reset-mark-instrs [mark-var : i64]) : CompilerIrInstrList
   (compiler-ir-instr-cons
@@ -50835,6 +50840,17 @@
     (= (opt-scratch-reset-call-count func "tl_region_mark") 0)
     (= (opt-scratch-reset-call-count func "tl_region_reset") 0)))
 
+(define (opt-scratch-reset-runtime-ids-canonical?) : bool
+  (match (opt-scratch-reset-mark-instr 10)
+    [(CompilerIrInstr.Call _ mark-id _ _)
+      (match (opt-scratch-reset-reset-instr 11 10)
+        [(CompilerIrInstr.Call _ reset-id _ _)
+          (and
+            (= mark-id cbi.compiler-builtin-id-tl-region-mark)
+            (= reset-id cbi.compiler-builtin-id-tl-region-reset))]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-optimize-scratch-region-self-test) : i64
   (let
     [positive : OptScratchScopeReport
@@ -50947,6 +50963,7 @@
       [(not (= level1-reset-count 0)) 18]
       [(not (= level2-mark-count 1)) 19]
       [(not (= level2-reset-count 1)) 20]
+      [(not (opt-scratch-reset-runtime-ids-canonical?)) 21]
       [else 42])))
 
 ;; --- block-local redundant-load CSE -----------------------------------------

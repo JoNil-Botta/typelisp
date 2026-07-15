@@ -5,7 +5,8 @@ param(
     [ValidateSet(0, 1, 2)][int]$OptLevel = 1,
     [string]$Target = "windows-x86_64",
     [string[]]$StdlibRoot = @("stdlib", "src"),
-    [ValidateRange(1, 1000)][int]$SampleMilliseconds = 5
+    [ValidateRange(1, 1000)][int]$SampleMilliseconds = 5,
+    [ValidateRange(1048576, [long]::MaxValue)][long]$MaxBytes = 4294967296
 )
 
 $ErrorActionPreference = "Stop"
@@ -29,6 +30,100 @@ function ConvertTo-NativeArgument([string]$Argument) {
 
 if ([System.Environment]::OSVersion.Platform -ne [System.PlatformID]::Win32NT) {
     Fail "Windows process working-set/private-memory counters are required"
+}
+
+if (-not ("TypeLispCompileMemoryJob" -as [type])) {
+    Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+
+public sealed class TypeLispCompileMemoryJob : IDisposable {
+    [StructLayout(LayoutKind.Sequential)]
+    struct IoCounters {
+        public ulong ReadOperationCount, WriteOperationCount, OtherOperationCount;
+        public ulong ReadTransferCount, WriteTransferCount, OtherTransferCount;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct BasicLimits {
+        public long PerProcessUserTimeLimit, PerJobUserTimeLimit;
+        public uint LimitFlags;
+        public UIntPtr MinimumWorkingSetSize, MaximumWorkingSetSize;
+        public uint ActiveProcessLimit;
+        public UIntPtr Affinity;
+        public uint PriorityClass, SchedulingClass;
+    }
+
+    [StructLayout(LayoutKind.Sequential)]
+    struct ExtendedLimits {
+        public BasicLimits BasicLimitInformation;
+        public IoCounters IoInfo;
+        public UIntPtr ProcessMemoryLimit, JobMemoryLimit;
+        public UIntPtr PeakProcessMemoryUsed, PeakJobMemoryUsed;
+    }
+
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    static extern IntPtr CreateJobObject(IntPtr attributes, string name);
+
+    [DllImport("kernel32.dll")]
+    static extern bool SetInformationJobObject(
+        IntPtr job, int infoClass, ref ExtendedLimits info, uint length);
+
+    [DllImport("kernel32.dll")]
+    static extern bool QueryInformationJobObject(
+        IntPtr job, int infoClass, ref ExtendedLimits info, uint length,
+        IntPtr returnedLength);
+
+    [DllImport("kernel32.dll")]
+    static extern bool AssignProcessToJobObject(IntPtr job, IntPtr process);
+
+    [DllImport("kernel32.dll")]
+    static extern bool CloseHandle(IntPtr handle);
+
+    IntPtr handle;
+
+    TypeLispCompileMemoryJob(IntPtr handle) {
+        this.handle = handle;
+    }
+
+    public static TypeLispCompileMemoryJob Create(ulong maxBytes) {
+        IntPtr job = CreateJobObject(IntPtr.Zero, null);
+        if (job == IntPtr.Zero) throw new Win32Exception();
+        var limits = new ExtendedLimits();
+        limits.BasicLimitInformation.LimitFlags = 0x200;
+        limits.JobMemoryLimit = new UIntPtr(maxBytes);
+        uint size = (uint)Marshal.SizeOf(limits);
+        if (!SetInformationJobObject(job, 9, ref limits, size)) {
+            int error = Marshal.GetLastWin32Error();
+            CloseHandle(job);
+            throw new Win32Exception(error);
+        }
+        return new TypeLispCompileMemoryJob(job);
+    }
+
+    public void Assign(IntPtr process) {
+        if (!AssignProcessToJobObject(handle, process))
+            throw new Win32Exception();
+    }
+
+    public ulong PeakJobBytes() {
+        var observed = new ExtendedLimits();
+        uint size = (uint)Marshal.SizeOf(observed);
+        if (!QueryInformationJobObject(
+            handle, 9, ref observed, size, IntPtr.Zero))
+            throw new Win32Exception();
+        return observed.PeakJobMemoryUsed.ToUInt64();
+    }
+
+    public void Dispose() {
+        if (handle != IntPtr.Zero) {
+            CloseHandle(handle);
+            handle = IntPtr.Zero;
+        }
+    }
+}
+'@
 }
 
 $compilerPath = (Resolve-Path -LiteralPath $Compiler -ErrorAction Stop).Path
@@ -75,8 +170,18 @@ if ($null -ne $startInfo.ArgumentList) {
 
 $process = [System.Diagnostics.Process]::new()
 $process.StartInfo = $startInfo
+$memoryJob = [TypeLispCompileMemoryJob]::Create([uint64]$MaxBytes)
 if (-not $process.Start()) {
+    $memoryJob.Dispose()
     Fail "could not start compiler child"
+}
+try {
+    $memoryJob.Assign($process.Handle)
+} catch {
+    $process.Kill()
+    $process.WaitForExit()
+    $memoryJob.Dispose()
+    throw
 }
 $stdoutTask = $process.StandardOutput.ReadToEndAsync()
 $stderrLineTask = $process.StandardError.ReadLineAsync()
@@ -158,6 +263,8 @@ $process.WaitForExit()
 $started.Stop()
 $stdout = $stdoutTask.GetAwaiter().GetResult()
 $stderrWriter.Dispose()
+$jobPeak = $memoryJob.PeakJobBytes()
+$memoryJob.Dispose()
 [System.IO.File]::WriteAllText(
     $stdoutPath,
     $stdout,
@@ -256,6 +363,6 @@ foreach ($phase in $phaseOrder) {
 $phaseRows |
     Export-Csv -LiteralPath $summaryPath -Delimiter "`t" -NoTypeInformation
 
-Write-Output "[compile-memory] elapsed_ms=$($started.ElapsedMilliseconds) working_peak_bytes=$workingPeak private_peak_bytes=$privatePeak"
+Write-Output "[compile-memory] elapsed_ms=$($started.ElapsedMilliseconds) working_peak_bytes=$workingPeak private_peak_bytes=$privatePeak job_peak_bytes=$jobPeak max_bytes=$MaxBytes"
 Write-Output "[compile-memory] owner samples $samplesPath"
 Write-Output "[compile-memory] phase summary $summaryPath"

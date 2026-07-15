@@ -50541,7 +50541,8 @@
     [(AstType.MutPtr _) 8]
     [(AstType.Ref _ _) 8]
     [(AstType.MutRef _ _) 8]
-    [(AstType.Region _ inner) (opt-load-loc-type-size (ty-node-get inner))]
+    [(AstType.Region _ inner)
+      (opt-load-loc-type-size (ast-node-pool-reader-type-get inner))]
     [(AstType.Enum _) 8]
     [(AstType.EnumArgs _ _) 8]
     [(AstType.Struct _) 8]
@@ -50551,7 +50552,8 @@
     [(AstType.Bytes) 8]
     [(AstType.Var _) 8]
     [(AstType.VarArgs _ _) 8]
-    [(AstType.Consume inner) (opt-load-loc-type-size (ty-node-get inner))]))
+    [(AstType.Consume inner)
+      (opt-load-loc-type-size (ast-node-pool-reader-type-get inner))]))
 
 ;; What memory a pointer-valued var addresses:
 ;;   Element          -- points at/into some array/string DATA BUFFER (the

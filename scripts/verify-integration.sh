@@ -929,10 +929,11 @@ build_linux_fixture_driver() {
     fi
 }
 
-run_linux_opt2_program_fixture() {
+run_linux_program_fixture() {
     _label=$1
     _source=$2
     _want=$3
+    _opt_level=$4
     _dir="$WORKDIR/$_label"
     mkdir -p "$_dir"
     _asm="$_dir/$_label.s"
@@ -943,10 +944,10 @@ run_linux_opt2_program_fixture() {
     _build_stdout="$_dir/$_label.build.stdout"
     _build_stderr="$_dir/$_label.build.stderr"
 
-    echo "[$_label] compile --opt-level 2 -> run"
+    echo "[$_label] compile --opt-level $_opt_level -> run"
     run_build "$COMPILER" compile "$ROOT/$_source" \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-        --opt-level 2 -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
+        --opt-level "$_opt_level" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: $_label compile failed" >&2
         show_build_streams "$_build_stdout" "$_build_stderr"
@@ -976,14 +977,26 @@ run_linux_opt2_program_fixture() {
 }
 
 run_linux_backend_fixtures() {
-    run_linux_opt2_program_fixture \
+    run_linux_program_fixture \
         phi-forward-scavenge-live-through-opt2 \
         tests/integration/phi_forward_scavenge_live_through.tl \
-        42
-    run_linux_opt2_program_fixture \
+        42 \
+        2
+    run_linux_program_fixture \
         inline-alloc-scavenge-live-through-opt2 \
         tests/integration/inline_alloc_scavenge_live_through.tl \
-        42
+        42 \
+        2
+    run_linux_program_fixture \
+        f32-mandelbrot-loop-opt0 \
+        tests/integration/opt2_f32_mandelbrot_loop.tl \
+        42 \
+        0
+    run_linux_program_fixture \
+        f32-mandelbrot-loop-opt2 \
+        tests/integration/opt2_f32_mandelbrot_loop.tl \
+        42 \
+        2
 
     _runtime_dir="$WORKDIR/backend-runtime"
     mkdir -p "$_runtime_dir"
@@ -1243,10 +1256,11 @@ assemble_link_windows() {
     }
 }
 
-run_windows_opt2_program_fixture() {
+run_windows_program_fixture() {
     _label=$1
     _source=$2
     _want=$3
+    _opt_level=$4
     _dir="$WORKDIR/$_label"
     mkdir -p "$_dir"
     _asm="$_dir/$_label.s"
@@ -1258,11 +1272,11 @@ run_windows_opt2_program_fixture() {
     _build_stdout="$_dir/$_label.build.stdout"
     _build_stderr="$_dir/$_label.build.stderr"
 
-    echo "[$_label] compile --opt-level 2 -> run (windows)"
+    echo "[$_label] compile --opt-level $_opt_level -> run (windows)"
     run_build "$COMPILER" compile "$ROOT/$_source" \
         --target windows-x86_64 --cfg windows \
         --stdlib-root "$ROOT/stdlib" --stdlib-root "$ROOT/src" \
-        --opt-level 2 -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
+        --opt-level "$_opt_level" -o "$_asm" > "$_build_stdout" 2> "$_build_stderr"
     if [ "$build_rc" -ne 0 ]; then
         echo "FAIL: $_label compile failed" >&2
         show_build_streams "$_build_stdout" "$_build_stderr"
@@ -1279,14 +1293,26 @@ run_windows_opt2_program_fixture() {
 }
 
 run_windows_backend_fixtures() {
-    run_windows_opt2_program_fixture \
+    run_windows_program_fixture \
         phi-forward-scavenge-live-through-opt2 \
         tests/integration/phi_forward_scavenge_live_through.tl \
-        42
-    run_windows_opt2_program_fixture \
+        42 \
+        2
+    run_windows_program_fixture \
         inline-alloc-scavenge-live-through-opt2 \
         tests/integration/inline_alloc_scavenge_live_through.tl \
-        42
+        42 \
+        2
+    run_windows_program_fixture \
+        f32-mandelbrot-loop-opt0 \
+        tests/integration/opt2_f32_mandelbrot_loop.tl \
+        42 \
+        0
+    run_windows_program_fixture \
+        f32-mandelbrot-loop-opt2 \
+        tests/integration/opt2_f32_mandelbrot_loop.tl \
+        42 \
+        2
 
     _runtime_dir="$WORKDIR/windows-backend-runtime"
     mkdir -p "$_runtime_dir"

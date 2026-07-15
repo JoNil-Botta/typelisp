@@ -6656,10 +6656,13 @@
         (if (compiler-backend-current-fn-win64?)
           7
           6))]
-    [planned : i64 (compiler-backend-frame-slots vars assignments)]
     [base : i64
-      (if (> planned gp-max)
-        planned
+      (if (compiler-backend-current-fn-win64?)
+        (let
+          [planned : i64 (compiler-backend-frame-slots vars assignments)]
+          (if (> planned gp-max)
+            planned
+            gp-max))
         gp-max)]
     (if has-group-vars
       (+ base (* 2 vars))
@@ -6786,12 +6789,14 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [frame : i64]) : String
-  (compiler-backend-emit-save-win64-xmm-callee-regs-at
-    target
-    assignments
-    vars
-    frame
-    0))
+  (if (compiler-backend-target-windows? target)
+    (compiler-backend-emit-save-win64-xmm-callee-regs-at
+      target
+      assignments
+      vars
+      frame
+      0)
+    ""))
 
 (define (compiler-backend-emit-windows-seh-endprologue
   [target : CompilerBackendTarget]) : String
@@ -7590,13 +7595,15 @@
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
-  (compiler-backend-emit-restore-win64-xmm-callee-regs-at
-    assignments
-    vars
-    (-
-      (compiler-abi-callee-saved-xmm-register-count
-        (CompilerRegTargetAbi.Windows))
-      1)))
+  (if (compiler-backend-current-fn-win64?)
+    (compiler-backend-emit-restore-win64-xmm-callee-regs-at
+      assignments
+      vars
+      (-
+        (compiler-abi-callee-saved-xmm-register-count
+          (CompilerRegTargetAbi.Windows))
+        1))
+    ""))
 
 (define (compiler-backend-emit-save-callee-regs
   [assignments : CompilerRegAssignmentList]

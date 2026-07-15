@@ -1737,15 +1737,15 @@
     10
     9))
 
-(define (compiler-reg-low-bit-index32 [bits : i64]) : i64
-  (let
-    [value : i64 (bit-and bits 0xffffffff)]
+(defmacro (compiler-reg-low-bit-index32 [bits : i64]) : i64
+  `(let
+    [value : i64 (bit-and ,bits 0xffffffff)]
     (if (= value 0)
-      31
+      (cast 31 : i64)
       (let
         [isolated : i64 (bit-and value (- 0 value))]
         [slot : i64 (shr (bit-and (* isolated 0x077cb531) 0xffffffff) 27)]
-        (array-ref compiler-reg-low-bit-index32-table slot)))))
+        (cast (array-ref compiler-reg-low-bit-index32-table slot) : i64)))))
 
 (cfg
   test

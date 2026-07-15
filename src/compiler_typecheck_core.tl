@@ -55927,7 +55927,7 @@
   (if (>= index (ast-macro-param-list-len params))
     env
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name-id _ _)
+      [(AstMacroParam.Param name-id _ _ _)
         (macro-hygiene-output-macro-param-env
           params
           (+ index 1)

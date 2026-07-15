@@ -3652,7 +3652,7 @@
 ;; artificial `unknown` demand for every alias.
 (define (compiler-load-lazy-macro-param-list-demand-at?
   [params : (& params AstMacroParamList)]
-  [alias : String]
+  [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -3671,7 +3671,7 @@
 
 (define (compiler-load-lazy-macro-param-list-demand
   [params : AstMacroParamList]
-  [alias : String]
+  [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-lazy-macro-param-list-demand-at?
@@ -3691,9 +3691,7 @@
       [(AstMacroParam.Param name _ _ _)
         (compiler-load-lazy-macro-param-list-locals-at
           params
-          (if compiler-load-lazy-qualified-observer-exhaustive
-            (compiler-load-lazy-demand-bind-local-exhaustive locals name)
-            (sym_i64_env.sym-i64-bind-id locals name 1))
+          (sym_i64_env.sym-i64-bind-id locals name 1)
           (+ index 1))])))
 
 (define (compiler-load-lazy-macro-param-list-locals
@@ -3703,7 +3701,7 @@
 
 (define (compiler-load-lazy-field-list-demand-at?
   [fields : (& fields AstFieldDefList)]
-  [alias : String]
+  [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -3722,14 +3720,14 @@
 
 (define (compiler-load-lazy-field-list-demand
   [fields : AstFieldDefList]
-  [alias : String]
+  [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-lazy-field-list-demand-at? (& fields) alias summary locals 0))
 
 (define (compiler-load-lazy-variant-list-demand-at?
   [variants : (& variants AstVariantDefList)]
-  [alias : String]
+  [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]
   [index : i64]) : CompilerLoadLazyAliasDemand
@@ -3748,7 +3746,7 @@
 
 (define (compiler-load-lazy-variant-list-demand
   [variants : AstVariantDefList]
-  [alias : String]
+  [alias : i64]
   [summary : CompilerLoadSurfaceSummary]
   [locals : sym_i64_env.SymI64Env]) : CompilerLoadLazyAliasDemand
   (compiler-load-lazy-variant-list-demand-at?

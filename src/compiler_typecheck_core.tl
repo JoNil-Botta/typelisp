@@ -48517,9 +48517,8 @@
               (macro-expand-allocation-profile-snapshot! retired)
               (if (= retired 0)
                 unit
-                (begin
-                  (unsafe
-                    (arena.tl_arena_destroy retired))))
+                (unsafe
+                  (arena.tl_arena_destroy retired)))
               (ResultCompilerSymbols.Ok symbols)))]
         [(ResultCompilerSymbols.Err message)
           ;; Preserve the public error after releasing the failed generation.

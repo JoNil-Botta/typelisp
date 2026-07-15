@@ -78,6 +78,32 @@ so the driver also runs from the repository root with `typelisp run`.
 Use a smoke driver when the module is main-less or when CI needs to compile and
 run the module through the TypeLisp executable boundary.
 
+## Intern ID provenance
+
+Parser tokens enter the source interner once through `intern-source-slice` and
+AST name fields retain that ID. Compiler-created names enter through an explicit
+`intern-generated-*` API; canonical and opaque generated names have different
+identity rules. Builtin/fixed IDs, macro hygiene names, dotted names, and
+module-qualified names are created or mapped by their owning ID API rather than
+by interning a rendered String in a later compiler phase.
+
+An intern ID belongs to one installed `InternCompatState` table and generation.
+`intern-reset!` invalidates every previous ID in that state;
+`intern-reset-to!` preserves only source IDs below the mark and invalidates all
+generated IDs. A driver must install the ID's owner before lookup or rendering.
+The same numeric ID may mean different text in two driver states.
+
+Negative missing/sentinel values and packed composite symbol keys are not intern
+IDs. They may key registries and environments as `i64`, but must not be passed to
+`intern-str`. String-taking AST constructors remain compatibility boundaries for
+synthetic callers until those callers have an explicit owner-state ID; parser-only
+and ID-first constructors should not recover an ID from String storage.
+
+`compiler_driver_state_smoke.tl` owns the cross-state install/capture/reset cases,
+including equal numeric IDs with different spellings. `compiler_ast_types_smoke.tl`
+owns synthetic AST construction, empty-name compatibility, and pool reset cases.
+`compiler_parse_smoke.tl` owns parsed-token identity.
+
 ### src/ reachability
 
 The package follows the standard layout: `typelisp build` resolves the default

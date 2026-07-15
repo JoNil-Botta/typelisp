@@ -3,6 +3,7 @@
 (import stdlib.vector)
 (import (vector String) as svec)
 (import "../compiler_load.tl")
+(import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (define (lazy-unused-dotted-import-ok?) : bool
@@ -30,8 +31,8 @@
           (= (compiler-load-lazy-import-skip-count) 1)
           (= (compiler-load-decl-list-count decls) 3)
           (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
-          (sym_i64_env.sym-i64-contains seen "lazy.dotted.entry")
-          (not (sym_i64_env.sym-i64-contains seen "nested.dep")))]
+          (compiler-load-test-seen-contains? seen "lazy.dotted.entry")
+          (not (compiler-load-test-seen-contains? seen "nested.dep")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-used-dotted-import-ok?) : bool
@@ -53,8 +54,8 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains seen "lazy.dotted.used.entry")
-          (sym_i64_env.sym-i64-contains seen "nested.dep"))]
+          (compiler-load-test-seen-contains? seen "lazy.dotted.used.entry")
+          (compiler-load-test-seen-contains? seen "nested.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-used-stdlib-array-dotted-import-ok?) : bool
@@ -83,9 +84,9 @@
             decls
             "stdlib.array"
             "array")
-          (sym_i64_env.sym-i64-contains seen "lazy.stdlib.array.entry")
-          (sym_i64_env.sym-i64-contains seen "nested.user")
-          (sym_i64_env.sym-i64-contains seen "stdlib.array"))]
+          (compiler-load-test-seen-contains? seen "lazy.stdlib.array.entry")
+          (compiler-load-test-seen-contains? seen "nested.user")
+          (compiler-load-test-seen-contains? seen "stdlib.array"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-canonical-stdlib-array-import-ok?) : bool
@@ -117,11 +118,11 @@
             decls
             "stdlib.array"
             "array")
-          (sym_i64_env.sym-i64-contains
+          (compiler-load-test-seen-contains?
             seen
             "lazy.stdlib.array.canonical.entry")
-          (sym_i64_env.sym-i64-contains seen "nested.user")
-          (not (sym_i64_env.sym-i64-contains seen "stdlib.array")))]
+          (compiler-load-test-seen-contains? seen "nested.user")
+          (not (compiler-load-test-seen-contains? seen "stdlib.array")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-stdlib-result-macro-import-ok?) : bool
@@ -143,8 +144,8 @@
             decls
             "stdlib.result"
             "result")
-          (sym_i64_env.sym-i64-contains seen "lazy.stdlib.result.entry")
-          (sym_i64_env.sym-i64-contains seen "stdlib.result"))]
+          (compiler-load-test-seen-contains? seen "lazy.stdlib.result.entry")
+          (compiler-load-test-seen-contains? seen "stdlib.result"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-direct-module-macro-demand-ok?) : bool
@@ -162,8 +163,8 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains seen "lazy.module.macro.entry")
-          (sym_i64_env.sym-i64-contains seen "stdlib.option"))]
+          (compiler-load-test-seen-contains? seen "lazy.module.macro.entry")
+          (compiler-load-test-seen-contains? seen "stdlib.option"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-unused-module-macro-import-ok?) : bool
@@ -180,8 +181,10 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 1)
-          (sym_i64_env.sym-i64-contains seen "lazy.unused.module.macro.entry")
-          (not (sym_i64_env.sym-i64-contains seen "stdlib.option")))]
+          (compiler-load-test-seen-contains?
+            seen
+            "lazy.unused.module.macro.entry")
+          (not (compiler-load-test-seen-contains? seen "stdlib.option")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-aliased-module-macro-demand-ok?) : bool
@@ -206,8 +209,10 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains seen "lazy.aliased.module.macro.entry")
-          (sym_i64_env.sym-i64-contains seen "generic.macro.dep"))]
+          (compiler-load-test-seen-contains?
+            seen
+            "lazy.aliased.module.macro.entry")
+          (compiler-load-test-seen-contains? seen "generic.macro.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-qualified-module-macro-demand-ok?) : bool
@@ -232,10 +237,10 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains
+          (compiler-load-test-seen-contains?
             seen
             "lazy.qualified.module.macro.entry")
-          (sym_i64_env.sym-i64-contains seen "generic.macro.dep"))]
+          (compiler-load-test-seen-contains? seen "generic.macro.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-stdlib-vector-qualified-module-macro-demand-ok?) : bool
@@ -260,10 +265,10 @@
         [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (= (compiler-load-lazy-import-skip-count) 0)
-            (sym_i64_env.sym-i64-contains
+            (compiler-load-test-seen-contains?
               seen
               "lazy.stdlib.vector.module.macro.entry")
-            (sym_i64_env.sym-i64-contains seen "stdlib.vector"))]
+            (compiler-load-test-seen-contains? seen "stdlib.vector"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
 (define (package-lazy-unused-dotted-import-ok?) : bool
@@ -290,8 +295,8 @@
           (= (compiler-load-lazy-import-skip-count) 1)
           (= (compiler-load-decl-list-count decls) 3)
           (compiler-load-decl-list-has-import-alias? decls "nested.dep" "dep")
-          (sym_i64_env.sym-i64-contains seen "pkg.lazy.dotted.entry")
-          (not (sym_i64_env.sym-i64-contains seen "nested.dep")))]
+          (compiler-load-test-seen-contains? seen "pkg.lazy.dotted.entry")
+          (not (compiler-load-test-seen-contains? seen "nested.dep")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (package-lazy-used-dotted-import-ok?) : bool
@@ -316,8 +321,8 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains seen "pkg.lazy.dotted.used.entry")
-          (sym_i64_env.sym-i64-contains seen "nested.dep"))]
+          (compiler-load-test-seen-contains? seen "pkg.lazy.dotted.used.entry")
+          (compiler-load-test-seen-contains? seen "nested.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-local-alias-does-not-demand-ok?) : bool
@@ -343,8 +348,8 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 1)
-          (sym_i64_env.sym-i64-contains seen "generic.local.entry")
-          (not (sym_i64_env.sym-i64-contains seen "generic.local.dep")))]
+          (compiler-load-test-seen-contains? seen "generic.local.entry")
+          (not (compiler-load-test-seen-contains? seen "generic.local.dep")))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-generic-qualified-surface-demand-ok?) : bool
@@ -373,8 +378,8 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains seen "generic.surface.entry")
-          (sym_i64_env.sym-i64-contains seen "generic.surface.dep"))]
+          (compiler-load-test-seen-contains? seen "generic.surface.entry")
+          (compiler-load-test-seen-contains? seen "generic.surface.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-generic-direct-surface-demand-ok?) : bool
@@ -397,8 +402,8 @@
       [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
         (and
           (= (compiler-load-lazy-import-skip-count) 0)
-          (sym_i64_env.sym-i64-contains seen "generic.direct.entry")
-          (sym_i64_env.sym-i64-contains seen "generic.direct.dep"))]
+          (compiler-load-test-seen-contains? seen "generic.direct.entry")
+          (compiler-load-test-seen-contains? seen "generic.direct.dep"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (lazy-cfg-selected-surface-demand-ok?) : bool
@@ -426,11 +431,11 @@
         [(ResultCompilerLoadWithPaths.Ok _ _ _ seen)
           (and
             (= (compiler-load-lazy-import-skip-count) 0)
-            (sym_i64_env.sym-i64-contains seen "generic.cfg.entry")
-            (sym_i64_env.sym-i64-contains seen "generic.cfg.dep"))]
+            (compiler-load-test-seen-contains? seen "generic.cfg.entry")
+            (compiler-load-test-seen-contains? seen "generic.cfg.dep"))]
         [(ResultCompilerLoadWithPaths.Err _) false]))))
 
-(define (structural-member-demand-source [source : String] [alias : String]) : CompilerLoadStructuralMemberDemand
+(define (structural-member-demand-source [source : String] [alias : i64]) : CompilerLoadStructuralMemberDemand
   (match (compiler-load-parse-source-diagnostic-escaping
     "src/structural_member_demand.tl"
     source
@@ -443,7 +448,7 @@
   (match (structural-member-demand-source
     "(module demand.none)
 (define (main) : i64 42)"
-    "api")
+    cbi.compiler-builtin-id-fix-subject)
     [(CompilerLoadStructuralNoDemand) true]
     [_ false]))
 
@@ -452,11 +457,13 @@
     [demand : CompilerLoadStructuralMemberDemand
       (structural-member-demand-source
         "(module demand.one)
-(define (main) : i64 (api.answer))"
-        "api")]
+(define (main) : i64 (subject.value))"
+        cbi.compiler-builtin-id-fix-subject)]
     (and
       (= (compiler-load-structural-member-demand-count demand) 1)
-      (compiler-load-structural-member-demand-contains? demand "answer"))))
+      (compiler-load-structural-member-demand-contains?
+        demand
+        cbi.compiler-builtin-id-fix-value))))
 
 (define (structural-member-demand-union-ok?) : bool
   (let
@@ -465,33 +472,37 @@
         "(module demand.union)
 (define (main) : i64
   (begin
-    (api.first)
-    (api/second)
-    (api.first)))"
-        "api")]
+    (subject.left)
+    (subject/right)
+    (subject.left)))"
+        cbi.compiler-builtin-id-fix-subject)]
     (and
       (= (compiler-load-structural-member-demand-count demand) 2)
-      (compiler-load-structural-member-demand-contains? demand "first")
-      (compiler-load-structural-member-demand-contains? demand "second"))))
+      (compiler-load-structural-member-demand-contains?
+        demand
+        cbi.compiler-builtin-id-fix-left)
+      (compiler-load-structural-member-demand-contains?
+        demand
+        cbi.compiler-builtin-id-fix-right))))
 
 (define (structural-member-demand-shadowing-ok?) : bool
   (and
     (match (structural-member-demand-source
       "(module demand.local)
-(define (main) : i64 (let [api : i64 42] api))"
-      "api")
+(define (main) : i64 (let [subject : i64 42] subject))"
+      cbi.compiler-builtin-id-fix-subject)
       [(CompilerLoadStructuralNoDemand) true]
       [_ false])
     (match (structural-member-demand-source
       "(module demand.param)
-(define (use [api : i64]) : i64 api)"
-      "api")
+(define (use [subject : i64]) : i64 subject)"
+      cbi.compiler-builtin-id-fix-subject)
       [(CompilerLoadStructuralNoDemand) true]
       [_ false])
     (match (structural-member-demand-source
       "(module demand.pattern)
-(define (main) : i64 (match 42 [api api]))"
-      "api")
+(define (main) : i64 (match 42 [subject subject]))"
+      cbi.compiler-builtin-id-fix-subject)
       [(CompilerLoadStructuralNoDemand) true]
       [_ false])))
 
@@ -504,12 +515,14 @@
   (define (shadow [api : i64]) : i64 api))
 (define (main) : i64
   (begin
-    ((lambda ([api : i64]) : i64 api) 1)
-    (api.after)))"
-        "api")]
+    ((lambda ([subject : i64]) : i64 subject) 1)
+    (subject.same)))"
+        cbi.compiler-builtin-id-fix-subject)]
     (and
       (= (compiler-load-structural-member-demand-count demand) 1)
-      (compiler-load-structural-member-demand-contains? demand "after"))))
+      (compiler-load-structural-member-demand-contains?
+        demand
+        cbi.compiler-builtin-id-fix-same))))
 
 (define (structural-member-demand-unknown-ok?) : bool
   (match (compiler-load-parse-source-diagnostic-escaping
@@ -518,7 +531,9 @@
 (defstruct Aggregate (value i64))"
     (compiler-cfg-empty))
     [(ResultAstProgramDiagnostic.Ok (AstProgram.Program decls))
-      (match (compiler-load-structural-member-demand (box-get decls) "api")
+      (match (compiler-load-structural-member-demand
+        (box-get decls)
+        cbi.compiler-builtin-id-fix-subject)
         [(CompilerLoadStructuralFullDemand) true]
         [_ false])]
     [(ResultAstProgramDiagnostic.Err _) false]))

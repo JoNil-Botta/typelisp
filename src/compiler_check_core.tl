@@ -6,6 +6,7 @@
 (cfg compile-profile (import stdlib.profile))
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
+(import compiler_builtin_ids as cbi)
 (import sym_i64_env)
 
 (defenum ResultCompilerCheck
@@ -287,33 +288,40 @@
           prelude-paths
           _
           prelude-seen)
-        (match (compiler-load-parse-source-diagnostic-escaping
-          path
-          source
-          (compiler-check-language-cfgs))
-          [(ResultAstProgramDiagnostic.Ok program)
-            (compiler-check-loaded-with-prelude-cache
+        (let
+          [parse-identity : CompilerLoadParseIdentity
+            (compiler-load-parse-identity
               path
-              prelude-decls
-              prelude-paths
-              (compiler-load-package-program-with-paths-and-roots-expect
+              (compiler-load-canonical-module-id-from-path path)
+              AstMaybeModuleName.No)]
+          (match (compiler-load-parse-source-diagnostic-escaping
+            path
+            source
+            (compiler-check-language-cfgs))
+            [(ResultAstProgramDiagnostic.Ok program)
+              (compiler-check-loaded-with-prelude-cache
                 path
-                program
-                prelude-seen
+                prelude-decls
+                prelude-paths
+                (compiler-load-package-program-with-paths-and-roots-expect
+                  path
+                  program
+                  prelude-seen
+                  stdlib-roots
+                  AstMaybeModuleName.No
+                  manifest-dir
+                  deps
+                  (compiler-check-language-cfgs)
+                  parse-identity)
                 stdlib-roots
-                AstMaybeModuleName.No
-                manifest-dir
-                deps
-                (compiler-check-language-cfgs))
-              stdlib-roots
-              (compiler-typecheck-prefix-cache-scope
-                "typecheck-prefix-check"
-                stdlib-roots
-                (compiler-check-language-cfgs)))]
-          [(ResultAstProgramDiagnostic.Err diag)
-            (begin
-              (cfg compile-profile (compiler-check-profile-finish "load"))
-              (ResultCompilerCheck.Err diag))])]
+                (compiler-typecheck-prefix-cache-scope
+                  "typecheck-prefix-check"
+                  stdlib-roots
+                  (compiler-check-language-cfgs)))]
+            [(ResultAstProgramDiagnostic.Err diag)
+              (begin
+                (cfg compile-profile (compiler-check-profile-finish "load"))
+                (ResultCompilerCheck.Err diag))]))]
       [(ResultCompilerLoadWithPaths.Err diag)
         (begin
           (cfg compile-profile (compiler-check-profile-finish "load"))
@@ -593,6 +601,7 @@
                       symbols
                       registries
                       ""
+                      cbi.compiler-builtin-id-fix-empty
                       (ast-node-pool-context-capture-active))]
                   (and
                     (compiler-check-inline-layout-name-ok? ctx "AstTypeList")
@@ -726,18 +735,18 @@
     (compiler-check-implicit-core-prelude-source)))
 
 (define (compiler-check-seen-root-ok?) : bool
-  (match (compiler-load-source
-    "src/already_loaded.tl"
-    "(define answer : i64 1)"
-    (sym_i64_env.sym-i64-bind
-      (sym_i64_env.sym-i64-empty)
-      "src.already_loaded"
-      1))
-    [(ResultCompilerLoad.Ok decls _)
-      (match (ast-decl-list-step decls)
-        [(AstDeclListStep.Nil) true]
-        [_ false])]
-    [(ResultCompilerLoad.Err _) false]))
+  (let
+    [path : String "src/already_loaded.tl"]
+    [source : String "(define answer : i64 1)"]
+    (match (compiler-load-source path source (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoad.Ok _ seen)
+        (match (compiler-load-source path source seen)
+          [(ResultCompilerLoad.Ok decls _)
+            (match (ast-decl-list-step decls)
+              [(AstDeclListStep.Nil) true]
+              [_ false])]
+          [(ResultCompilerLoad.Err _) false])]
+      [(ResultCompilerLoad.Err _) false])))
 
 (define (compiler-check-pool-reset-ok?) : bool
   (let

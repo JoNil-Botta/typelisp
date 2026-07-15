@@ -1782,7 +1782,7 @@
         (selfhost-lint-dead-dispatch-variant-list-refs-from
           variants
           (+ index 1)
-          (selfhost-lint-dead-ref-add refs name))])))
+          (selfhost-lint-dead-ref-add-id refs name))])))
 
 (define (selfhost-lint-dead-dispatch-variant-list-refs
   [variants : AstDispatchVariantList]

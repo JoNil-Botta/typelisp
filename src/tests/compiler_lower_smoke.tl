@@ -159,16 +159,18 @@
         (begin
           (svec.push (&mut items) "stdlib")
           items))]
-    (match (compiler-driver-load-and-lower-escaping
-      "stdlib/args.tl"
-      (CompilerBackendTarget.Linux)
-      roots
-      (CompilerBackendMode.Scalar)
-      (compiler-driver-target-cfgs
+    (begin
+      (compiler-driver-reset-file-state!)
+      (match (compiler-driver-load-and-lower-escaping
+        "stdlib/args.tl"
         (CompilerBackendTarget.Linux)
-        (compiler-cfg-empty)))
-      [(ResultCompilerDriverLowered.Ok _ _ _) true]
-      [(ResultCompilerDriverLowered.Err _) false])))
+        roots
+        (CompilerBackendMode.Scalar)
+        (compiler-driver-target-cfgs
+          (CompilerBackendTarget.Linux)
+          (compiler-cfg-empty)))
+        [(ResultCompilerDriverLowered.Ok _ _ _) true]
+        [(ResultCompilerDriverLowered.Err _) false]))))
 
 (define (compiler-lower-smoke-module-macro-stdlib-vector-import-no-main-source) : String
   "(defmacro (vector-user) : Module

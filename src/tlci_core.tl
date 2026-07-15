@@ -11,6 +11,9 @@
 (import read as reader)
 (import compiler_comptime_image_core as comptime_image)
 
+(define (tlci-symbol-text [name-id : i64]) : String
+  (reader.read-symbol-text-for-id name-id))
+
 (define (tlci-string-length [text : String]) : i64
   (cfg
     feature-compiler-private-string-intrinsics
@@ -630,27 +633,6 @@
         (struct-get payload macro-table-offset)
         (struct-get payload macro-name-offset))]))
 
-(define (tlci-package-comptime-programs [macro-names : (Array String)]) : (Array
-    comptime_image.CompilerComptimeMacroProgram)
-  (let
-    [count : i64 (array-length macro-names)]
-    [programs : (Array comptime_image.CompilerComptimeMacroProgram)
-      (make-array comptime_image.CompilerComptimeMacroProgram count)]
-    [index : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (array-set!
-            programs
-            index
-            (comptime_image.CompilerComptimeMacroProgram
-              (array-ref macro-names index)
-              (make-array (comptime_image.CompilerComptimeOperation.HostCall 4))
-              0
-              0))
-          (set! index (+ index 1))))
-      programs)))
-
 (define (tlci-code-bearing-package-fixups [macro-count : i64]) : (Array u8)
   (make-array u8 (* (* macro-count 2) tlci-section-fixup-record-size)))
 
@@ -717,8 +699,8 @@
   [compiler-build-hash : String]
   [macro-names : (Array String)]
   [windows-target : bool]) : ResultTlciBytes
-  (match (comptime_image.compiler-comptime-lower-package
-    (tlci-package-comptime-programs macro-names)
+  (match (comptime_image.compiler-comptime-lower-package-names
+    macro-names
     windows-target)
     [(comptime_image.ResultCompilerComptimePackageImagePayload.Err message)
       (ResultTlciBytes.Err message)]
@@ -1630,11 +1612,13 @@
         [(reader.Sexpr.Cons fhead ftail)
           (match (box-get fhead)
             [(reader.Sexpr.Sym fname)
-              (if (string.eq fname "name")
+              (if (string.eq (tlci-symbol-text fname) "name")
                 (if has-name
                   (ResultTlciMetadata.Err
                     "tlci metadata: duplicate package field `name`")
-                  (match (tlci-field-string-value (box-get ftail) fname)
+                  (match (tlci-field-string-value
+                    (box-get ftail)
+                    (tlci-symbol-text fname))
                     [(ResultTlciString.Err message)
                       (ResultTlciMetadata.Err message)]
                     [(ResultTlciString.Ok value)
@@ -1644,11 +1628,13 @@
                         true
                         version
                         has-version)]))
-                (if (string.eq fname "version")
+                (if (string.eq (tlci-symbol-text fname) "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate package field `version`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciMetadata.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1661,7 +1647,7 @@
                   (ResultTlciMetadata.Err
                     (str_cat.str-cat
                       "tlci metadata: unknown package field `"
-                      fname
+                      (tlci-symbol-text fname)
                       "`"))))]
             [_
               (ResultTlciMetadata.Err
@@ -1713,11 +1699,13 @@
           (match (box-get fhead)
             [(reader.Sexpr.Sym fname)
               (cond
-                [(string.eq fname "version")
+                [(string.eq (tlci-symbol-text fname) "version")
                   (if has-version
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `version`")
-                    (match (tlci-field-string-value (box-get ftail) fname)
+                    (match (tlci-field-string-value
+                      (box-get ftail)
+                      (tlci-symbol-text fname))
                       [(ResultTlciString.Err message)
                         (ResultTlciMetadata.Err message)]
                       [(ResultTlciString.Ok value)
@@ -1730,7 +1718,7 @@
                           has-package
                           spmd-callables
                           has-spmd-callables)]))]
-                [(string.eq fname "package")
+                [(string.eq (tlci-symbol-text fname) "package")
                   (if has-package
                     (ResultTlciMetadata.Err
                       "tlci metadata: duplicate field `package`")
@@ -1766,7 +1754,10 @@
                           true)]))]
                 [else
                   (ResultTlciMetadata.Err
-                    (str_cat.str-cat "tlci metadata: unknown field `" fname "`"))])]
+                    (str_cat.str-cat
+                      "tlci metadata: unknown field `"
+                      (tlci-symbol-text fname)
+                      "`"))])]
             [_
               (ResultTlciMetadata.Err
                 "tlci metadata: fields must start with a field name")])]
@@ -1778,7 +1769,7 @@
     [(reader.Sexpr.Cons head rest)
       (match (box-get head)
         [(reader.Sexpr.Sym name)
-          (if (string.eq name "typelisp-tlci-metadata")
+          (if (string.eq (tlci-symbol-text name) "typelisp-tlci-metadata")
             (tlci-metadata-fields
               (box-get rest)
               ""
@@ -1791,7 +1782,7 @@
             (ResultTlciMetadata.Err
               (str_cat.str-cat
                 "expected `typelisp-tlci-metadata` form, got `"
-                name
+                (tlci-symbol-text name)
                 "`")))]
         [_
           (ResultTlciMetadata.Err

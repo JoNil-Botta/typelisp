@@ -13,6 +13,7 @@
 (import stdlib.io)
 (import stdlib.string)
 (import "compiler_ast_types.tl")
+(import compiler_intern as ci)
 (import token)
 (import "lex.tl")
 
@@ -2784,7 +2785,7 @@
       index
       (ast-dispatch-variant-fallback))
       [(AstDispatchVariant.Variant _ name)
-        (if (lint-name-uses-import? name alias module-name)
+        (if (lint-name-id-uses-import? name alias module-name)
           true
           (lint-dispatch-variant-list-uses-import-from?
             variants
@@ -3003,16 +3004,20 @@
           (match expected
             [(AstMaybeModuleName.No) acc]
             [(AstMaybeModuleName.Some module-name)
-              (match maybe-alias
-                [(AstMaybeImportAlias.No) acc]
-                [(AstMaybeImportAlias.Some alias)
-                  (if (and
-                    (string.eq alias (lint-module-default-alias module-name))
-                    (lint-import-span-has-explicit-alias? source (box-get span)))
-                    (lint-findings-add
-                      (lint-redundant-import-alias-finding (box-get span))
-                      acc)
-                    acc)])])]
+              (let
+                [module-name : String (intern-str module-name)]
+                (match maybe-alias
+                  [(AstMaybeImportAlias.No) acc]
+                  [(AstMaybeImportAlias.Some alias)
+                    (if (and
+                      (string.eq
+                        (intern-str alias)
+                        (lint-module-default-alias module-name))
+                      (lint-import-span-has-explicit-alias? source (box-get span)))
+                      (lint-findings-add
+                        (lint-redundant-import-alias-finding (box-get span))
+                        acc)
+                      acc)]))])]
         [_ acc])]))
 
 (define (lint-unused-import-add-if-needed
@@ -3033,17 +3038,17 @@
               (match maybe-alias
                 [(AstMaybeImportAlias.No) acc]
                 [(AstMaybeImportAlias.Some alias)
-                  (if (lint-underscore-prefixed? alias)
+                  (if (lint-underscore-prefixed? (intern-str alias))
                     acc
                     (if (lint-decl-list-uses-import?
                       all-decls
-                      alias
-                      module-name)
+                      (intern-str alias)
+                      (intern-str module-name))
                       acc
                       (lint-findings-add
                         (lint-unused-import-finding
-                          module-name
-                          alias
+                          (intern-str module-name)
+                          (intern-str alias)
                           (box-get span))
                         acc)))])]))])))
 
@@ -7873,18 +7878,18 @@
     state
     (lint-unused-variable-lifetime-list-at
       items
-      (lint-unused-variable-read-name
+      (lint-unused-variable-read-id
         state
         (ast-lifetime-list-get items index (ast-lifetime-fallback)))
       (+ index 1))))
 
 (define (lint-unused-variable-type-lifetime
-  [name : String]
+  [name : i64]
   [inner : i64]
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (lint-unused-variable-type
     (ty-node-get inner)
-    (lint-unused-variable-read-name state name)))
+    (lint-unused-variable-read-id state name)))
 
 (define (lint-unused-variable-type
   [ty : AstType]
@@ -7968,7 +7973,7 @@
   [state : LintUnusedVariableState]) : LintUnusedVariableState
   (match lifetime
     [(AstBorrowLifetime.Inferred) state]
-    [(AstBorrowLifetime.Named name) (lint-unused-variable-read-name state name)]))
+    [(AstBorrowLifetime.Named name) (lint-unused-variable-read-id state name)]))
 
 (define (lint-unused-variable-pattern-bindings
   [pattern : AstPattern]
@@ -10476,7 +10481,7 @@
   (lint-walk-tail-expr (ast-node-get e) threshold acc))
 
 (define (lint-test-var [name : String]) : i64
-  (ast-node-push (AstExpr.Var (intern name))))
+  (ast-node-push (AstExpr.Var (ci.intern-generated-name name))))
 
 (define (lint-test-expr-list2 [a : i64] [b : i64]) : AstExprList
   (ast-expr-cons a (ast-expr-cons b (ast-expr-list-new))))
@@ -10523,8 +10528,8 @@
       (ast-expr-if vx return-one (ast-expr-if vx one (ast-expr-if vx one one)))]
     [not-vx : i64 (ast-expr-unary (AstUnOp.Not) vx)]
     [set-ok-false : i64
-      (ast-expr-set
-        "ok"
+      (ast-expr-set-id
+        (ci.intern-generated-name "ok")
         (ast-node-push (AstExpr.Literal (AstLiteral.Bool false))))]
     [unit-then-guard : i64 (ast-expr-if vx unit-expr return-one)]
     [unit-else-guard : i64 (ast-expr-if vx return-one unit-expr)]
@@ -10537,20 +10542,29 @@
     [in-let : i64
       (ast-expr-let
         (ast-let-binding-cons
-          (ast-let-binding "y" (AstMaybeType.No) ladder3)
+          (ast-let-binding-id
+            (ci.intern-generated-name "y")
+            (AstMaybeType.No)
+            ladder3)
           (ast-let-binding-list-new))
         vx)]
     [outer-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "a" (AstMaybeType.No) one)
+        (ast-let-binding-id
+          (ci.intern-generated-name "a")
+          (AstMaybeType.No)
+          one)
         (ast-let-binding-list-new))]
     [inner-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "b" (AstMaybeType.No) vx)
+        (ast-let-binding-id (ci.intern-generated-name "b") (AstMaybeType.No) vx)
         (ast-let-binding-list-new))]
     [shadowing-let-bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "a" (AstMaybeType.No) one)
+        (ast-let-binding-id
+          (ci.intern-generated-name "a")
+          (AstMaybeType.No)
+          one)
         (ast-let-binding-list-new))]
     [nested-let : i64
       (ast-expr-let outer-let-bindings (ast-expr-let inner-let-bindings vx))]

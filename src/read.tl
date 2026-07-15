@@ -30,9 +30,11 @@
 ;; `main`-bearing file is a runnable demo.
 (module read)
 
-(import stdlib.io)
 (import stdlib.arena)
+(import stdlib.io)
 (import stdlib.string)
+(import compiler_intern as ci)
+(import lex as lexer)
 (import token)
 
 ;; --------------------------------------------------------------------------
@@ -55,7 +57,7 @@
 ;; every importer.
 (defenum Sexpr
   (Int i64 String)
-  (Sym String)
+  (Sym i64)
   (Nil)
   (Cons (Box Sexpr) (Box Sexpr))
   (Str String)
@@ -68,7 +70,7 @@
 
 (defenum SpannedSexpr
   (Int i64 String token.SourceSpan)
-  (Sym String token.SourceSpan)
+  (Sym i64 token.SourceSpan)
   (Nil token.SourceSpan)
   (Cons i64 i64 token.SourceSpan)
   (Str String token.SourceSpan)
@@ -107,6 +109,27 @@
       (if (= previous-arena base-arena)
         head-arena
         previous-arena))))
+
+;; Source symbols remain ids from lexer through reader and parser. Consumers
+;; request display text explicitly only when diagnostics or data formats need it.
+;: Preserve the lexer-assigned id across the reader/parser boundary.
+(define (read-symbol-id [name-id : i64]) : i64
+  name-id)
+
+;: Parser metadata may deliberately promote a string literal to a symbol.
+;: Assign that spelling its sole source id while the frontend is still writable.
+(define (read-string-symbol-id [text : String]) : i64
+  (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
+
+;: Intern a process-stable parser literal once and memoize its String object.
+(define (read-stable-symbol-id [text : String]) : i64
+  (ci.intern-source-slice text 0 (ci.intern-private-string-length text)))
+
+(define (read-symbol-text-for-id [id : i64]) : String
+  (ci.intern-str id))
+
+(define (read-token-symbol-text [tok : token.Token]) : String
+  (read-symbol-text-for-id (token.sym-id tok)))
 
 (define (sp-node-pool-len) : i64
   sp-node-pool-count)
@@ -273,19 +296,19 @@
     (= t (token.tag-comma))
     (= t (token.tag-comma-at))))
 
-(define (read-prefix-symbol [t : i64]) : String
+(define (read-prefix-symbol [t : i64]) : i64
   (cond
-    [(= t (token.tag-quote)) "quote"]
-    [(= t (token.tag-backtick)) "quasiquote"]
-    [(= t (token.tag-comma)) "unquote"]
-    [(= t (token.tag-comma-at)) "unquote-splicing"]
-    [else "quote"]))
+    [(= t (token.tag-quote)) (read-stable-symbol-id "quote")]
+    [(= t (token.tag-backtick)) (read-stable-symbol-id "quasiquote")]
+    [(= t (token.tag-comma)) (read-stable-symbol-id "unquote")]
+    [(= t (token.tag-comma-at)) (read-stable-symbol-id "unquote-splicing")]
+    [else (read-stable-symbol-id "quote")]))
 
-(define (read-prefix-form [name : String] [form : Sexpr]) : Sexpr
+(define (read-prefix-form [name : i64] [form : Sexpr]) : Sexpr
   (sexpr-cons (Sexpr.Sym name) (sexpr-cons form Sexpr.Nil)))
 
 (define (read-prefix-spanned-form
-  [name : String]
+  [name : i64]
   [prefix-span : token.SourceSpan]
   [form : SpannedSexpr]) : SpannedSexpr
   (let
@@ -379,10 +402,10 @@
             (ResultSpannedSexpr.Ok (SpannedSexpr.Float s span))))]
       [(= t (token.tag-sym))
         (let
-          [s : String (token.sym tok)]
+          [name-id : i64 (token.sym-id tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Sym s span))))]
+            (ResultSpannedSexpr.Ok (SpannedSexpr.Sym name-id span))))]
       [(= t (token.tag-str))
         (let
           [s : String (token.str tok)]
@@ -405,7 +428,7 @@
           (read-bracket-list-spanned-result toks cur span))]
       [(read-prefix-tag? t)
         (let
-          [name : String (read-prefix-symbol t)]
+          [name : i64 (read-prefix-symbol t)]
           (begin
             (advance cur)
             (match (read-form-spanned-result toks cur)
@@ -501,10 +524,10 @@
             (ResultSexpr.Ok (Sexpr.Float s))))]
       [(= t (token.tag-sym))
         (let
-          [s : String (token.sym (peek-tok toks cur))]
+          [name-id : i64 (token.sym-id (peek-tok toks cur))]
           (begin
             (advance cur)
-            (ResultSexpr.Ok (Sexpr.Sym s))))]
+            (ResultSexpr.Ok (Sexpr.Sym name-id))))]
       [(= t (token.tag-str))
         (let
           [s : String (token.str (peek-tok toks cur))]
@@ -527,7 +550,7 @@
           (read-bracket-list-result toks cur))]
       [(read-prefix-tag? t)
         (let
-          [name : String (read-prefix-symbol t)]
+          [name : i64 (read-prefix-symbol t)]
           (begin
             (advance cur)
             (match (read-form-result toks cur)
@@ -624,6 +647,40 @@
   (match (read-spanned-result toks)
     [(ResultSpannedSexpr.Ok form) form]
     [(ResultSpannedSexpr.Err err) (io.panic (token.source-error-message err))]))
+
+(define (read-symbol-id-preservation-ok?) : bool
+  (match (lexer.lex-spanned-result "(alpha alpha)")
+    [(lexer.ResultSpannedTokens.Ok toks)
+      (let
+        [first-id : i64
+          (token.sym-id (token.spanned-token-token (array-ref toks 1)))]
+        [second-id : i64
+          (token.sym-id (token.spanned-token-token (array-ref toks 2)))]
+        [pool-len-before : i64 (ci.intern-pool-len)]
+        (begin
+          (sp-node-pool-reset!)
+          (match (read-spanned-result toks)
+            [(ResultSpannedSexpr.Ok form)
+              (and
+                (= pool-len-before (ci.intern-pool-len))
+                (= first-id second-id)
+                (match form
+                  [(SpannedSexpr.Cons first-node tail-node _)
+                    (match (sp-node-get first-node)
+                      [(SpannedSexpr.Sym first-text _)
+                        (match (sp-node-get tail-node)
+                          [(SpannedSexpr.Cons second-node _ _)
+                            (match (sp-node-get second-node)
+                              [(SpannedSexpr.Sym second-text _)
+                                (and
+                                  (= (read-symbol-id first-text) first-id)
+                                  (= (read-symbol-id second-text) second-id))]
+                              [_ false])]
+                          [_ false])]
+                      [_ false])]
+                  [_ false]))]
+            [(ResultSpannedSexpr.Err _) false])))]
+    [(lexer.ResultSpannedTokens.Err _) false]))
 
 (define (read [toks : (Array token.Token)]) : Sexpr
   (match (read-result toks)

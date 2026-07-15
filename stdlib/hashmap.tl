@@ -746,8 +746,9 @@
                   [(base.I64I64MapFound value) (LookupFound value)]
                   [(base.I64I64MapMissing) (LookupMissing)]))
               (define (get [map : (& map Map)] [key : i64]) : Lookup
-                (lookup-from-base
-                  (base.i64-i64-map-get-ref (& (struct-get map inner)) key)))
+                (match (base.i64-i64-map-get-ref (& (struct-get map inner)) key)
+                  [(base.I64I64MapFound value) (LookupFound value)]
+                  [(base.I64I64MapMissing) (LookupMissing)]))
               (define (lookup-value-or [lookup : Lookup] [fallback : i64]) : i64
                 (match lookup
                   [(LookupFound value) value]

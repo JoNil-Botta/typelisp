@@ -27,6 +27,9 @@
   (kind PackageCachePinKind)
   (value String))
 
+(define (package-lock-symbol-text [name-id : i64]) : String
+  (reader.read-symbol-text-for-id name-id))
+
 (defenum PackageLockMaybeEntry
   (No)
   (Some PackageLockEntry))
@@ -251,7 +254,8 @@
                       (if (string.eq pin-value "")
                         (ResultPackageLockPin.Err
                           "package-lock: pin value must not be empty")
-                        (match (package-lock-parse-pin-kind kind-name)
+                        (match (package-lock-parse-pin-kind
+                          (package-lock-symbol-text kind-name))
                           [(ResultPackageLockPinKind.Err message)
                             (ResultPackageLockPin.Err message)]
                           [(ResultPackageLockPinKind.Ok pin-kind)
@@ -319,13 +323,13 @@
           (match (box-get fhead)
             [(reader.Sexpr.Sym fname)
               (cond
-                [(string.eq fname "alias")
+                [(string.eq (package-lock-symbol-text fname) "alias")
                   (if has-alias
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `alias`")
                     (match (package-lock-field-string-value
                       (box-get ftail)
-                      fname)
+                      (package-lock-symbol-text fname))
                       [(ResultPackageLockString.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockString.Ok value)
@@ -340,13 +344,13 @@
                           has-pin
                           commit
                           has-commit)]))]
-                [(string.eq fname "url")
+                [(string.eq (package-lock-symbol-text fname) "url")
                   (if has-url
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `url`")
                     (match (package-lock-field-string-value
                       (box-get ftail)
-                      fname)
+                      (package-lock-symbol-text fname))
                       [(ResultPackageLockString.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockString.Ok value)
@@ -361,7 +365,7 @@
                           has-pin
                           commit
                           has-commit)]))]
-                [(string.eq fname "pin")
+                [(string.eq (package-lock-symbol-text fname) "pin")
                   (if has-pin
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `pin`")
@@ -380,13 +384,13 @@
                           true
                           commit
                           has-commit)]))]
-                [(string.eq fname "commit")
+                [(string.eq (package-lock-symbol-text fname) "commit")
                   (if has-commit
                     (ResultPackageLockEntry.Err
                       "package-lock: duplicate dependency field `commit`")
                     (match (package-lock-field-string-value
                       (box-get ftail)
-                      fname)
+                      (package-lock-symbol-text fname))
                       [(ResultPackageLockString.Err message)
                         (ResultPackageLockEntry.Err message)]
                       [(ResultPackageLockString.Ok value)
@@ -405,7 +409,7 @@
                   (ResultPackageLockEntry.Err
                     (string.concat3
                       "package-lock: unknown dependency field `"
-                      fname
+                      (package-lock-symbol-text fname)
                       "`"))])]
             [_
               (ResultPackageLockEntry.Err
@@ -422,7 +426,7 @@
     [(reader.Sexpr.Cons head rest)
       (match (box-get head)
         [(reader.Sexpr.Sym name)
-          (if (string.eq name "dependency")
+          (if (string.eq (package-lock-symbol-text name) "dependency")
             (package-lock-entry-fields
               (box-get rest)
               ""
@@ -486,11 +490,13 @@
         [(reader.Sexpr.Cons fhead ftail)
           (match (box-get fhead)
             [(reader.Sexpr.Sym fname)
-              (if (string.eq fname "version")
+              (if (string.eq (package-lock-symbol-text fname) "version")
                 (if has-version
                   (ResultPackageLockFile.Err
                     "package-lock: duplicate field `version`")
-                  (match (package-lock-field-string-value (box-get ftail) fname)
+                  (match (package-lock-field-string-value
+                    (box-get ftail)
+                    (package-lock-symbol-text fname))
                     [(ResultPackageLockString.Err message)
                       (ResultPackageLockFile.Err message)]
                     [(ResultPackageLockString.Ok value)
@@ -500,7 +506,7 @@
                         true
                         entries
                         has-deps)]))
-                (if (string.eq fname "dependencies")
+                (if (string.eq (package-lock-symbol-text fname) "dependencies")
                   (if has-deps
                     (ResultPackageLockFile.Err
                       "package-lock: duplicate field `dependencies`")
@@ -517,7 +523,10 @@
                           parsed
                           true)]))
                   (ResultPackageLockFile.Err
-                    (string.concat3 "package-lock: unknown field `" fname "`"))))]
+                    (string.concat3
+                      "package-lock: unknown field `"
+                      (package-lock-symbol-text fname)
+                      "`"))))]
             [_
               (ResultPackageLockFile.Err
                 "package-lock: fields must start with a field name")])]
@@ -529,7 +538,7 @@
     [(reader.Sexpr.Cons head rest)
       (match (box-get head)
         [(reader.Sexpr.Sym name)
-          (if (string.eq name "typelisp-lock")
+          (if (string.eq (package-lock-symbol-text name) "typelisp-lock")
             (package-lock-fields
               (box-get rest)
               ""
@@ -537,7 +546,10 @@
               (package_lock_entry_vec.new)
               false)
             (ResultPackageLockFile.Err
-              (string.concat3 "expected `typelisp-lock` form, got `" name "`")))]
+              (string.concat3
+                "expected `typelisp-lock` form, got `"
+                (package-lock-symbol-text name)
+                "`")))]
         [_
           (ResultPackageLockFile.Err
             "package-lock: lockfile must start with `typelisp-lock`")])]

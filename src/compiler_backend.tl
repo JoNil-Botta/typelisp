@@ -153,7 +153,8 @@
   compile-profile
   (define (compiler-backend-profile-function-name [func : CompilerIrFunction]) : String
     (match func
-      [(CompilerIrFunction.Function name _ _ _ _) name])))
+      [(CompilerIrFunction.Function name _ _ _ _)
+        (compiler-ir-symbol-text name)])))
 
 (defenum ResultBackendReg
   (Ok String)
@@ -365,8 +366,8 @@
 
 (defenum CompilerBackendGlobalTypeList
   (Nil)
-  (Cons String AstType (Box CompilerBackendGlobalTypeList))
-  (Cache backend_string_i64_map.Map (Array AstType)))
+  (Cons i64 AstType (Box CompilerBackendGlobalTypeList))
+  (Cache backend_i64_i64_map.Map (Array AstType)))
 
 (defenum ResultCompilerBackend
   (Ok String)
@@ -416,7 +417,9 @@
 (defstruct CompilerBackendRuntimeTailPlan
   (profile bool)
   (hash-string bool)
-  (tlci-macro-entry bool))
+  (tlci-macro-entry bool)
+  (region-mark-call-id i64)
+  (region-reset-call-id i64))
 
 (defenum CompilerBackendRuntimeHelperOwner
   (Unknown)
@@ -476,11 +479,14 @@
   (WithScratch (Box CompilerBackendRuntimePlan) CompilerRegScratchPlan))
 
 (defstruct CompilerBackendRuntimeIndex
-  (defines backend_string_i64_map.Map)
-  (externs backend_string_i64_map.Map)
-  (calls backend_string_i64_map.Map)
+  (defines backend_i64_i64_map.Map)
+  (externs backend_i64_i64_map.Map)
+  (calls backend_i64_i64_map.Map)
   (needs-div-abort bool)
-  (needs-shift-abort bool))
+  (needs-shift-abort bool)
+  (region-mark-call-id i64)
+  (region-reset-call-id i64)
+  (tlci-macro-entry-call-id i64))
 
 (defstruct CompilerBackendRuntimePlanWithIndex
   (plan CompilerBackendRuntimePlan)
@@ -499,7 +505,8 @@
   ;; source names and link symbols to this same slot.
   (extern-call-infos (Array i64))
   (extern-references backend_i64_i64_map.Map)
-  (extern-link-symbols (Array String))
+  (extern-link-references backend_i64_i64_map.Map)
+  (extern-link-symbols (Array i64))
   (extern-provided (Array bool))
   ;; Aggregate type name -> machine-word count, for every register-group
   ;; type constructed anywhere in the program (whole-program compile). Drives the
@@ -520,6 +527,14 @@
 (define (compiler-backend-runtime-tail-tlci-macro-entry?
   [tail : CompilerBackendRuntimeTailPlan]) : bool
   (struct-get tail tlci-macro-entry))
+
+(define (compiler-backend-runtime-tail-region-mark-call-id
+  [tail : CompilerBackendRuntimeTailPlan]) : i64
+  (struct-get tail region-mark-call-id))
+
+(define (compiler-backend-runtime-tail-region-reset-call-id
+  [tail : CompilerBackendRuntimeTailPlan]) : i64
+  (struct-get tail region-reset-call-id))
 
 (define (compiler-backend-runtime-plan-tail [plan : CompilerBackendRuntimePlan]) : CompilerBackendRuntimeTailPlan
   (match plan
@@ -676,18 +691,21 @@
 (define (compiler-backend-current-fn-win64?) : bool
   compiler-backend-current-fn-win64)
 
-;; Per-emission cache for interned user-symbol mangling. The generation guard
-;; keeps direct helper calls safe across intern-reset! reuse of numeric ids.
+;; Per-emission cache for interned user-symbol mangling. Compat states may have
+;; the same generation while assigning the same numeric id to different names,
+;; so both the generation and pool identity guard cached values.
 (define compiler-backend-user-symbol-cache-values : (Array String)
-  (array.make-array String 262144))
+  (array.make-array String (ci.intern-capacity)))
 (define compiler-backend-user-symbol-cache-epochs : (Array i64)
-  (array.make-array i64 262144))
+  (array.make-array i64 (ci.intern-capacity)))
 (define compiler-backend-user-symbol-cache-epoch : i64
   1)
 (define compiler-backend-user-symbol-cache-count-value : i64
   0)
 (define compiler-backend-user-symbol-cache-generation : i64
   -1)
+(define compiler-backend-user-symbol-cache-table-id : i64
+  0)
 
 (define (compiler-backend-user-symbol-cache-reset!) : unit
   (begin
@@ -695,10 +713,15 @@
     (set!
       compiler-backend-user-symbol-cache-epoch
       (+ compiler-backend-user-symbol-cache-epoch 1))
-    (set! compiler-backend-user-symbol-cache-generation (ci.intern-generation))))
+    (set! compiler-backend-user-symbol-cache-generation (ci.intern-generation))
+    (set!
+      compiler-backend-user-symbol-cache-table-id
+      (ci.intern-active-table-id))))
 
 (define (compiler-backend-user-symbol-cache-ensure-current!) : unit
-  (if (= compiler-backend-user-symbol-cache-generation (ci.intern-generation))
+  (if (and
+    (= compiler-backend-user-symbol-cache-generation (ci.intern-generation))
+    (= compiler-backend-user-symbol-cache-table-id (ci.intern-active-table-id)))
     unit
     (compiler-backend-user-symbol-cache-reset!)))
 
@@ -779,6 +802,10 @@
   (Nil)
   (Cons String (Box BackendStringList)))
 
+(defenum BackendSymbolList
+  (Nil)
+  (Cons i64 (Box BackendSymbolList)))
+
 (defenum BackendFloatList
   (Nil)
   (Cons AstType u64 (Box BackendFloatList)))
@@ -787,6 +814,9 @@
   [head : String]
   [rest : BackendStringList]) : BackendStringList
   (BackendStringList.Cons head (box rest)))
+
+(define (compiler-backend-symbol-cons [head : i64] [rest : BackendSymbolList]) : BackendSymbolList
+  (BackendSymbolList.Cons head (box rest)))
 
 (define (compiler-backend-float-cons
   [ty : AstType]
@@ -997,16 +1027,30 @@
         true
         (compiler-backend-string-list-contains? (box-get rest) needle))]))
 
+(define (compiler-backend-symbol-list-contains-id?
+  [items : BackendSymbolList]
+  [needle-id : i64]) : bool
+  (match items
+    [(BackendSymbolList.Nil) false]
+    [(BackendSymbolList.Cons head rest)
+      (if (= (compiler-ir-symbol-id head) needle-id)
+        true
+        (compiler-backend-symbol-list-contains-id? (box-get rest) needle-id))]))
+
 (defstruct BackendStringSet
   (seen backend_string_i64_map.Map)
   (items BackendStringList))
+
+(defstruct BackendSymbolSet
+  (seen backend_i64_i64_map.Map)
+  (items BackendSymbolList))
 
 (defstruct BackendFloatSet
   (seen backend_string_i64_map.Map)
   (items BackendFloatList))
 
 (defstruct CompilerBackendProgramCollections
-  (functions BackendStringSet)
+  (functions BackendSymbolSet)
   (strings BackendStringSet)
   (floats BackendFloatSet)
   (bytes BackendStringSet)
@@ -1023,6 +1067,11 @@
   (BackendStringSet
     (backend_string_i64_map.with-capacity capacity)
     BackendStringList.Nil))
+
+(define (compiler-backend-symbol-set-new [capacity : i64]) : BackendSymbolSet
+  (BackendSymbolSet
+    (backend_i64_i64_map.with-capacity capacity)
+    BackendSymbolList.Nil))
 
 (define (compiler-backend-float-payload-bits [ty : AstType] [bits : u64]) : u64
   (if (compiler-backend-f64-type? ty)
@@ -1056,6 +1105,20 @@
           seen
           (compiler-backend-string-cons text (struct-get set items)))))))
 
+(define (compiler-backend-symbol-set-add
+  [set : BackendSymbolSet]
+  [symbol : i64]) : BackendSymbolSet
+  (let
+    [seen : backend_i64_i64_map.Map (struct-get set seen)]
+    [id : i64 (compiler-ir-symbol-id symbol)]
+    (if (backend_i64_i64_map.contains? (& seen) id)
+      set
+      (begin
+        (backend_i64_i64_map.insert-ref! (&mut seen) id 1)
+        (BackendSymbolSet
+          seen
+          (compiler-backend-symbol-cons symbol (struct-get set items)))))))
+
 (define (compiler-backend-float-set-add
   [set : BackendFloatSet]
   [ty : AstType]
@@ -1074,7 +1137,7 @@
 
 (define (compiler-backend-program-collections-new) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (compiler-backend-string-set-new 256)
+    (compiler-backend-symbol-set-new 256)
     (compiler-backend-string-set-new 256)
     (compiler-backend-float-set-new 256)
     (compiler-backend-string-set-new 64)
@@ -1084,9 +1147,9 @@
 
 (define (compiler-backend-program-collections-add-function
   [collections : CompilerBackendProgramCollections]
-  [name : String]) : CompilerBackendProgramCollections
+  [name : i64]) : CompilerBackendProgramCollections
   (CompilerBackendProgramCollections
-    (compiler-backend-string-set-add (struct-get collections functions) name)
+    (compiler-backend-symbol-set-add (struct-get collections functions) name)
     (struct-get collections strings)
     (struct-get collections floats)
     (struct-get collections bytes)
@@ -1305,11 +1368,14 @@
 
 (define (compiler-backend-instr-diagnostic
   [spans : CompilerSourceSpans]
-  [function : String]
+  [function : i64]
   [instr : CompilerIrInstr]
   [fallback : CompilerDiagnostic]
   [message : String]) : CompilerDiagnostic
-  (match (compiler-source-spans-lookup-instr spans function instr)
+  (match (compiler-source-spans-lookup-instr
+    spans
+    (compiler-ir-symbol-text function)
+    instr)
     [(CompilerMaybeSourceSpan.Some span)
       (compiler-diagnostic-from-ast-span "" span message)]
     [(CompilerMaybeSourceSpan.No)
@@ -1353,7 +1419,9 @@
   [func : CompilerIrFunction]) : CompilerBackendMode
   (match func
     [(CompilerIrFunction.Function name _ _ _ _)
-      (compiler-backend-effective-mode-for-function-name mode name)]))
+      (compiler-backend-effective-mode-for-function-name
+        mode
+        (compiler-ir-symbol-text name))]))
 
 (define (compiler-backend-avx2-shape-ok? [elem-ty : AstType] [lanes : i64]) : bool
   (match elem-ty
@@ -8063,9 +8131,9 @@
         (string.append (& xmm) (& gp)))
       gp)))
 
-(define (compiler-backend-return-label [source-function : String]) : String
+(define (compiler-backend-return-label [source-function : i64]) : String
   (compiler-backend-asm-label
-    (compiler-backend-user-symbol source-function)
+    (compiler-backend-user-symbol-id source-function)
     "return"))
 
 (define (compiler-backend-inline-return-tail
@@ -8354,11 +8422,6 @@
             symbol)))
       (compiler-backend-user-symbol-uncached (ci.intern-str name-id)))))
 
-(define (compiler-backend-user-symbol [name : String]) : String
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id) (compiler-backend-user-symbol-id name-id)]
-    [(InternLookupMissing) (compiler-backend-user-symbol-uncached name)]))
-
 (define (compiler-backend-symbol-leaf [name : String]) : String
   (let
     [i : i64 0]
@@ -8437,38 +8500,45 @@
 
 (define (compiler-backend-function-symbol-index
   [index : CompilerBackendProgramIndex]
-  [name : String]) : String
+  [name : i64]) : String
   (if (compiler-backend-index-extern-provided? index name)
     (compiler-backend-index-extern-link-symbol index name)
     (let
+      [name-text : String (compiler-ir-symbol-text name)]
       [runtime-symbol : String
-        (compiler-backend-runtime-prelude-string-helper-symbol name)]
+        (compiler-backend-runtime-prelude-string-helper-symbol name-text)]
       (if (not (string.eq runtime-symbol ""))
         runtime-symbol
-        (if (compiler-backend-compact-function-symbol? name)
-          (match (compiler-backend-index-function-slot index name)
-            [(backend_i64_i64_map.LookupFound slot)
-              (str_cat.str-cat "_tl_f" (string.int->string slot) "")]
-            [(backend_i64_i64_map.LookupMissing)
-              (compiler-backend-user-symbol name)])
-          (compiler-backend-user-symbol name))))))
+        (match (compiler-backend-index-function-slot index name)
+          [(backend_i64_i64_map.LookupFound slot)
+            (let
+              [indexed-name : String
+                (array-ref (struct-get index function-names) slot)]
+              (if (compiler-backend-compact-function-symbol? indexed-name)
+                (str_cat.str-cat "_tl_f" (string.int->string slot) "")
+                (compiler-backend-user-symbol-id name)))]
+          [(backend_i64_i64_map.LookupMissing)
+            (compiler-backend-user-symbol-id name)])))))
 
 (define (compiler-backend-function-symbol-map-comment
   [index : CompilerBackendProgramIndex]
-  [name : String]) : String
-  (if (and
-    (compiler-backend-compact-function-symbol? name)
-    (not (compiler-backend-index-extern-provided? index name)))
-    (string.append
-      "#t "
+  [name : i64]) : String
+  (let
+    [name-text : String (compiler-ir-symbol-text name)]
+    (if (and
+      (compiler-backend-compact-function-symbol? name-text)
+      (not (compiler-backend-index-extern-provided? index name)))
       (string.append
-        (compiler-backend-function-symbol-index index name)
+        "#t "
         (string.append
-          " "
+          (compiler-backend-function-symbol-index index name)
           (string.append
-            (compiler-backend-user-symbol (compiler-backend-symbol-leaf name))
-            "\n"))))
-    ""))
+            " "
+            (string.append
+              (compiler-backend-user-symbol-uncached
+                (compiler-backend-symbol-leaf name-text))
+              "\n"))))
+      "")))
 
 (define (compiler-backend-closure-descriptor-label [name : String]) : String
   (string.append ".L_tl_fn_desc_" (compiler-backend-asm-safe-symbol name)))
@@ -8482,6 +8552,9 @@
     (and
       (>= name-id 0)
       (cbi.compiler-builtin-backend-env-path-separator-id? name-id))))
+
+(define (compiler-backend-runtime-user-symbol-id? [name-id : i64]) : bool
+  (cbi.compiler-builtin-backend-env-path-separator-id? name-id))
 
 (define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
   (or
@@ -8499,6 +8572,17 @@
     (string.eq name "tl_tlci_call_image_entry")
     (string.eq name "tl_tlci_call_macro_entry")))
 
+(define (compiler-backend-fixed-fault-symbol-id? [name-id : i64]) : bool
+  (or
+    (cbi.compiler-builtin-backend-fixed-fault-id? name-id)
+    (let
+      [name : String (compiler-ir-symbol-text name-id)]
+      (or
+        (string.eq name "tl_memcpy")
+        (string.eq name "tl_memchr")
+        (string.eq name "tl_tlci_call_image_entry")
+        (string.eq name "tl_tlci_call_macro_entry")))))
+
 (define (compiler-backend-call-raw-symbol?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
@@ -8506,49 +8590,58 @@
     (compiler-backend-plan-provides? plan name)
     (compiler-backend-fixed-fault-symbol? name)))
 
-(define (compiler-backend-link-symbol
-  [name : String]
+(define (compiler-backend-call-raw-symbol-id?
+  [plan : CompilerBackendRuntimePlan]
+  [name-id : i64]) : bool
+  (or
+    (compiler-backend-plan-provides-id? plan name-id)
+    (compiler-backend-fixed-fault-symbol-id? name-id)))
+
+(define (compiler-backend-link-symbol-id
+  [name-id : i64]
   [plan : CompilerBackendRuntimePlan]) : String
-  (if (compiler-backend-call-raw-symbol? plan name)
-    (if (compiler-backend-runtime-user-symbol? name)
-      (compiler-backend-user-symbol name)
-      name)
-    (compiler-backend-asm-safe-symbol name)))
+  (if (compiler-backend-call-raw-symbol-id? plan name-id)
+    (if (compiler-backend-runtime-user-symbol-id? name-id)
+      (compiler-backend-user-symbol-id name-id)
+      (compiler-ir-symbol-text name-id))
+    (compiler-backend-asm-safe-symbol (compiler-ir-symbol-text name-id))))
 
 (define (compiler-backend-call-symbol-index
-  [name : String]
+  [name : i64]
   [plan : CompilerBackendRuntimePlan]
   [index : CompilerBackendProgramIndex]) : String
-  (cond
-    [(compiler-backend-index-extern-provided? index name)
-      (compiler-backend-index-extern-link-symbol index name)]
-    [(compiler-backend-index-extern-references? index name)
-      (let
-        [link-symbol : String
-          (compiler-backend-index-extern-link-symbol index name)]
-        (if (and
-          (string.eq link-symbol name)
-          (compiler-backend-call-raw-symbol? plan name)
+  (let
+    [name-text : String (compiler-ir-symbol-text name)]
+    (cond
+      [(compiler-backend-index-extern-provided? index name)
+        (compiler-backend-index-extern-link-symbol index name)]
+      [(compiler-backend-index-extern-references? index name)
+        (let
+          [link-symbol-id : i64
+            (compiler-backend-index-extern-link-symbol-id index name)]
+          (if (and
+            (= link-symbol-id name)
+            (compiler-backend-call-raw-symbol-id? plan name)
+            (not (compiler-backend-index-function-defines? index name)))
+            (if (compiler-backend-runtime-user-symbol-id? name)
+              (compiler-backend-user-symbol-id name)
+              name-text)
+            (compiler-backend-link-symbol-id link-symbol-id plan)))]
+      [(and
+          (compiler-backend-call-raw-symbol-id? plan name)
           (not (compiler-backend-index-function-defines? index name)))
-          (if (compiler-backend-runtime-user-symbol? name)
-            (compiler-backend-user-symbol name)
-            name)
-          (compiler-backend-link-symbol link-symbol plan)))]
-    [(and
-        (compiler-backend-call-raw-symbol? plan name)
-        (not (compiler-backend-index-function-defines? index name)))
-      (if (compiler-backend-runtime-user-symbol? name)
-        (compiler-backend-user-symbol name)
-        name)]
-    [else (compiler-backend-function-symbol-index index name)]))
+        (if (compiler-backend-runtime-user-symbol-id? name)
+          (compiler-backend-user-symbol-id name)
+          name-text)]
+      [else (compiler-backend-function-symbol-index index name)])))
 
 (define (compiler-backend-function-label-scope
   [index : CompilerBackendProgramIndex]
-  [name : String]) : String
+  [name : i64]) : String
   (match (compiler-backend-index-function-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
       (str_cat.str-cat "f" (string.int->string slot) "")]
-    [(backend_i64_i64_map.LookupMissing) (compiler-backend-user-symbol name)]))
+    [(backend_i64_i64_map.LookupMissing) (compiler-backend-user-symbol-id name)]))
 
 (define (compiler-backend-type-size [ty : AstType]) : i64
   (match ty
@@ -8805,7 +8898,7 @@
             "    "
             mov
             " "
-            (compiler-backend-user-symbol name)
+            (compiler-backend-user-symbol-id name)
             "(%rip), "
             reg
             "\n"))]
@@ -8882,7 +8975,7 @@
     [(CompilerIrValue.Var _)
       (compiler-backend-float-value-stack-address assignments value)]
     [(CompilerIrValue.Global name)
-      (str-cat (compiler-backend-user-symbol name) "(%rip)")]
+      (str-cat (compiler-backend-user-symbol-id name) "(%rip)")]
     [(CompilerIrValue.F64 bits)
       (str-cat (compiler-backend-float-label ty bits) "(%rip)")]
     [_ ""]))
@@ -8980,7 +9073,7 @@
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    movq "
-          (compiler-backend-user-symbol name)
+          (compiler-backend-user-symbol-id name)
           "(%rip), "
           reg
           "\n"))]
@@ -8988,7 +9081,7 @@
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    leaq "
-          (compiler-backend-user-symbol name)
+          (compiler-backend-user-symbol-id name)
           "(%rip), "
           reg
           "\n"))]
@@ -8996,7 +9089,8 @@
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    leaq "
-          (compiler-backend-closure-descriptor-label name)
+          (compiler-backend-closure-descriptor-label
+            (compiler-ir-symbol-text name))
           "(%rip), "
           reg
           "\n"))]
@@ -9038,7 +9132,13 @@
           (compiler-backend-bytes-fat-label text)
           "(%rip), "
           reg
-          "\n"))]))
+          "\n"))]
+    [(CompilerIrValue.RuntimeGlobal _)
+      (ResultCompilerBackend.Err
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: runtime-global marker used as an instruction value")))]))
 
 (define (compiler-backend-emit-load-typed-var-to-reg-with-plan
   [assignments : CompilerRegAssignmentList]
@@ -11221,17 +11321,17 @@
 
 (define (compiler-backend-function-or-global-addr-symbol
   [program-index : CompilerBackendProgramIndex]
-  [name : String]) : String
+  [name : i64]) : String
   (if (compiler-backend-index-function-defines? program-index name)
     (compiler-backend-function-symbol-index program-index name)
-    (compiler-backend-user-symbol name)))
+    (compiler-backend-user-symbol-id name)))
 
 (define (compiler-backend-global-symbol-index
   [program-index : CompilerBackendProgramIndex]
-  [name : String]) : String
+  [name : i64]) : String
   (if (compiler-backend-index-extern-references? program-index name)
     (compiler-backend-index-extern-link-symbol program-index name)
-    (compiler-backend-user-symbol name)))
+    (compiler-backend-user-symbol-id name)))
 
 (define (compiler-backend-unsigned-rel-ty? [ty : AstType]) : bool
   (match ty
@@ -11243,38 +11343,44 @@
 
 (define (compiler-backend-global-type-lookup
   [types : CompilerBackendGlobalTypeList]
-  [name : String]) : CompilerRegMaybeType
+  [name : i64]) : CompilerRegMaybeType
   (match types
     [(CompilerBackendGlobalTypeList.Nil) (CompilerRegMaybeType.No)]
     [(CompilerBackendGlobalTypeList.Cons key ty rest)
-      (if (string.eq key name)
+      (if (compiler-ir-symbol-eq? key name)
         (CompilerRegMaybeType.Some ty)
         (compiler-backend-global-type-lookup (box-get rest) name))]
     [(CompilerBackendGlobalTypeList.Cache ids values)
-      (match (backend_string_i64_map.get (& ids) name)
-        [(backend_string_i64_map.LookupFound index)
+      (match (backend_i64_i64_map.get (& ids) (compiler-ir-symbol-id name))
+        [(backend_i64_i64_map.LookupFound index)
           (CompilerRegMaybeType.Some (array-ref values index))]
-        [(backend_string_i64_map.LookupMissing) (CompilerRegMaybeType.No)])]))
+        [(backend_i64_i64_map.LookupMissing) (CompilerRegMaybeType.No)])]))
 
 (define (compiler-backend-global-type-list-boxed-ok?) : bool
   (let
     [types : CompilerBackendGlobalTypeList
       (CompilerBackendGlobalTypeList.Cons
-        "left"
+        (compiler-ir-test-symbol "left")
         (AstType.I64)
         (box
           (CompilerBackendGlobalTypeList.Cons
-            "right"
+            (compiler-ir-test-symbol "right")
             (AstType.Bool)
             (box CompilerBackendGlobalTypeList.Nil))))]
     (and
-      (match (compiler-backend-global-type-lookup types "left")
+      (match (compiler-backend-global-type-lookup
+        types
+        (compiler-ir-test-symbol "left"))
         [(CompilerRegMaybeType.Some (AstType.I64)) true]
         [_ false])
-      (match (compiler-backend-global-type-lookup types "right")
+      (match (compiler-backend-global-type-lookup
+        types
+        (compiler-ir-test-symbol "right"))
         [(CompilerRegMaybeType.Some (AstType.Bool)) true]
         [_ false])
-      (match (compiler-backend-global-type-lookup types "missing")
+      (match (compiler-backend-global-type-lookup
+        types
+        (compiler-ir-test-symbol "missing"))
         [(CompilerRegMaybeType.No) true]
         [_ false]))))
 
@@ -11287,9 +11393,9 @@
 
 (define (compiler-backend-global-types-fill
   [globals : CompilerIrGlobalList]
-  [ids : backend_string_i64_map.Map]
+  [ids : backend_i64_i64_map.Map]
   [values : (Array AstType)]
-  [index : i64]) : backend_string_i64_map.Map
+  [index : i64]) : backend_i64_i64_map.Map
   (match globals
     [(CompilerIrGlobalList.Nil) ids]
     [(CompilerIrGlobalList.Cons global rest)
@@ -11297,7 +11403,10 @@
         [(CompilerIrGlobal.Global name ty _)
           (begin
             (array-set! values index ty)
-            (backend_string_i64_map.insert-ref! (&mut ids) name index)
+            (backend_i64_i64_map.insert-ref!
+              (&mut ids)
+              (compiler-ir-symbol-id name)
+              index)
             (compiler-backend-global-types-fill
               (box-get rest)
               ids
@@ -11317,7 +11426,7 @@
     (CompilerBackendGlobalTypeList.Cache
       (compiler-backend-global-types-fill
         globals
-        (backend_string_i64_map.with-capacity (+ (* count 2) 16))
+        (backend_i64_i64_map.with-capacity (+ (* count 2) 16))
         values
         0)
       values)))
@@ -15868,7 +15977,7 @@
     (compiler-backend-scavenge-reg-here exclude 6 "%r8")))
 
 (define (compiler-backend-emit-binop-return
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -16835,7 +16944,10 @@
     (compiler-backend-emit-call-space-sub call-space)
     (str_cat.str-cat
       "    call "
-      (compiler-backend-call-symbol-index "tl_oob_abort" plan program-index)
+      (compiler-backend-call-symbol-index
+        cbi.compiler-builtin-id-tl-oob-abort
+        plan
+        program-index)
       "\n"
       (string.append
         (compiler-backend-emit-call-space-add call-space)
@@ -20638,22 +20750,40 @@
       (+ 1 (compiler-backend-extern-list-count (box-get rest)))]
     [(CompilerIrExternList.Array seq) (compiler-ir-extern-seq-count seq)]))
 
-;; Intern the name (instead of intern-lookup) so EVERY indexed entry is
-;; reachable through the id map. The lookup-only form silently skipped names
-;; that were never interned (generated helper names), which forced the query
-;; side to keep an O(n) full-array string-scan fallback for every id-map miss.
-;; Negative queries -- every "is this callee a function?" probe for an extern
-;; or runtime helper -- paid that scan against all ~6.5k function names on
-;; each call site emitted (~16% of self-compile CPU in string.eq). With the
-;; build side interning, an id-map miss is a definitive "absent" and the scan
-;; is gone.
 (define (compiler-backend-program-index-bind-name
   [ids : backend_i64_i64_map.Map]
-  [name : String]
+  [name : i64]
   [index : i64]) : backend_i64_i64_map.Map
-  (begin
-    (backend_i64_i64_map.insert-ref! (&mut ids) (ci.intern name) index)
-    ids))
+  (let
+    [name-id : i64 (compiler-ir-symbol-id name)]
+    (if (< name-id 0)
+      (panic
+        (string.append
+          "backend: IR name has no pre-existing symbol id: "
+          (compiler-ir-symbol-text name)))
+      (begin
+        (backend_i64_i64_map.insert-ref! (&mut ids) name-id index)
+        ids))))
+
+(define (compiler-backend-program-index-bind-extern-id
+  [ids : backend_i64_i64_map.Map]
+  [name-id : i64]
+  [index : i64]) : backend_i64_i64_map.Map
+  (if (< name-id 0)
+    (panic "backend: extern has no pre-existing symbol id")
+    (begin
+      (backend_i64_i64_map.insert-ref! (&mut ids) name-id index)
+      ids)))
+
+(define (compiler-backend-program-index-bind-extern-ids
+  [ids : backend_i64_i64_map.Map]
+  [name-id : i64]
+  [source-name-id : i64]
+  [index : i64]) : backend_i64_i64_map.Map
+  (compiler-backend-program-index-bind-extern-id
+    (compiler-backend-program-index-bind-extern-id ids name-id index)
+    source-name-id
+    index))
 
 (define (compiler-backend-program-index-functions-into
   [functions : CompilerIrFunctionList]
@@ -20667,7 +20797,7 @@
       (match func
         [(CompilerIrFunction.Function name params ret-ty _ _)
           (begin
-            (array-set! names index name)
+            (array-set! names index (compiler-ir-symbol-text name))
             (array-set!
               signatures
               index
@@ -20701,7 +20831,7 @@
     (match (compiler-ir-function-seq-ref functions seq-index)
       [(CompilerIrFunction.Function name params ret-ty _ _)
         (begin
-          (array-set! names out-index name)
+          (array-set! names out-index (compiler-ir-symbol-text name))
           (array-set!
             signatures
             out-index
@@ -20764,7 +20894,15 @@
     [(CompilerIrExternList.Nil) signature-ids]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name ty abi _ _ _)
+        [(CompilerIrExtern.Extern
+            extern-name-id
+            source-name-id
+            extern-name
+            ty
+            abi
+            _
+            _
+            _)
           (begin
             (array-set! names index extern-name)
             (array-set!
@@ -20777,9 +20915,10 @@
               (compiler-backend-program-index-extern-call-info ty abi))
             (compiler-backend-program-index-extern-signatures-into
               (box-get rest)
-              (compiler-backend-program-index-bind-name
+              (compiler-backend-program-index-bind-extern-ids
                 signature-ids
-                extern-name
+                extern-name-id
+                source-name-id
                 index)
               names
               signatures
@@ -20794,42 +20933,40 @@
         call-infos
         index)]))
 
-;; First pass: fill the side arrays and bind the LINK SYMBOLS only.
-(define (compiler-backend-program-index-extern-references-into
+;; Link symbols have their own intern identity, distinct from source identity.
+(define (compiler-backend-program-index-extern-links-into
   [externs : CompilerIrExternList]
-  [reference-ids : backend_i64_i64_map.Map]
-  [link-symbols : (Array String)]
+  [link-references : backend_i64_i64_map.Map]
+  [link-symbols : (Array i64)]
   [provideds : (Array bool)]
   [index : i64]) : backend_i64_i64_map.Map
   (match externs
-    [(CompilerIrExternList.Nil) reference-ids]
+    [(CompilerIrExternList.Nil) link-references]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern _ _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern _ _ _ _ _ link-symbol _ provided)
           (begin
             (array-set! link-symbols index link-symbol)
             (array-set! provideds index provided)
-            (compiler-backend-program-index-extern-references-into
+            (backend_i64_i64_map.insert-ref!
+              (&mut link-references)
+              link-symbol
+              index)
+            (compiler-backend-program-index-extern-links-into
               (box-get rest)
-              (compiler-backend-program-index-bind-name
-                reference-ids
-                link-symbol
-                index)
+              link-references
               link-symbols
               provideds
               (+ index 1)))])]
     [(CompilerIrExternList.Array seq)
-      (compiler-backend-program-index-extern-references-into
+      (compiler-backend-program-index-extern-links-into
         (compiler-ir-extern-seq-to-list seq)
-        reference-ids
+        link-references
         link-symbols
         provideds
         index)]))
 
-;; Second pass: bind the extern NAMES after every link symbol, so a name
-;; binding always overwrites a link-symbol binding for the same spelling.
-;; This preserves the retired scan-fallback's priority (extern names were
-;; searched before link symbols) in the single reference map.
+;; Logical extern names carry parser/generated identities.
 (define (compiler-backend-program-index-extern-reference-names-into
   [externs : CompilerIrExternList]
   [reference-ids : backend_i64_i64_map.Map]
@@ -20838,12 +20975,13 @@
     [(CompilerIrExternList.Nil) reference-ids]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name _ _ _ _ _)
+        [(CompilerIrExtern.Extern extern-name-id source-name-id _ _ _ _ _ _)
           (compiler-backend-program-index-extern-reference-names-into
             (box-get rest)
-            (compiler-backend-program-index-bind-name
+            (compiler-backend-program-index-bind-extern-ids
               reference-ids
-              extern-name
+              extern-name-id
+              source-name-id
               index)
             (+ index 1))])]
     [(CompilerIrExternList.Array seq)
@@ -20856,10 +20994,10 @@
 ;; type-name -> word-count map). Empty for non-aggregate types.
 (define (compiler-backend-aggregate-type-name [ty : AstType]) : String
   (match ty
-    [(AstType.Struct name) (ci.intern-str name)]
-    [(AstType.StructArgs name _) (ci.intern-str name)]
-    [(AstType.Enum name) (ci.intern-str name)]
-    [(AstType.EnumArgs name _) (ci.intern-str name)]
+    [(AstType.Struct name) (tc-nominal-name-id-display name)]
+    [(AstType.StructArgs name _) (tc-nominal-name-id-display name)]
+    [(AstType.Enum name) (tc-nominal-name-id-display name)]
+    [(AstType.EnumArgs name _) (tc-nominal-name-id-display name)]
     [(AstType.Region _ inner)
       (compiler-backend-aggregate-type-name
         (ast-node-pool-reader-type-get inner))]
@@ -21113,8 +21251,7 @@
     [extern-signatures : (Array CompilerBackendMaybeSignature)
       (array.make-array CompilerBackendMaybeSignature extern-count)]
     [extern-call-infos : (Array i64) (array.make-array i64 extern-count)]
-    [extern-link-symbols : (Array String)
-      (array.make-array String extern-count)]
+    [extern-link-symbols : (Array i64) (array.make-array i64 extern-count)]
     [extern-provided : (Array bool) (array.make-array bool extern-count)]
     [function-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-functions-into
@@ -21134,12 +21271,14 @@
     [extern-reference-ids : backend_i64_i64_map.Map
       (compiler-backend-program-index-extern-reference-names-into
         externs
-        (compiler-backend-program-index-extern-references-into
-          externs
-          (backend_i64_i64_map.with-capacity (+ (* extern-count 4) 1))
-          extern-link-symbols
-          extern-provided
-          0)
+        (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
+        0)]
+    [extern-link-references : backend_i64_i64_map.Map
+      (compiler-backend-program-index-extern-links-into
+        externs
+        (backend_i64_i64_map.with-capacity (+ (* extern-count 2) 1))
+        extern-link-symbols
+        extern-provided
         0)]
     [group-word-counts : backend_string_i64_map.Map
       (compiler-backend-collect-group-counts-functions
@@ -21158,6 +21297,7 @@
       extern-signatures
       extern-call-infos
       extern-reference-ids
+      extern-link-references
       extern-link-symbols
       extern-provided
       group-word-counts
@@ -21336,38 +21476,65 @@
         (compiler-backend-group-word-sse-bit word-index))
       0)))
 
-;; Every indexed name is interned at index-build time (see
-;; compiler-backend-program-index-bind-name), so a name the intern table has
-;; never seen cannot be in the index, and an id-map miss is definitive. The
-;; extern-reference map binds both the extern name and its link symbol, so one
-;; map probe covers both spellings.
+;; Logical IR names have ids before index construction. Extern link symbols are
+;; probed separately as exact ABI Strings.
 (define (compiler-backend-index-function-slot
   [index : CompilerBackendProgramIndex]
-  [name : String]) : backend_i64_i64_map.Lookup
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id)
-      (backend_i64_i64_map.get (& (struct-get index functions)) name-id)]
-    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+  [name : i64]) : backend_i64_i64_map.Lookup
+  (let
+    [name-id : i64 (compiler-ir-symbol-id name)]
+    [slot : i64
+      (if (< name-id 0)
+        -1
+        (backend_i64_i64_map.get-value-or
+          (& (struct-get index functions))
+          name-id
+          -1))]
+    (if (< slot 0)
+      (backend_i64_i64_map.LookupMissing)
+      (backend_i64_i64_map.LookupFound slot))))
 
 (define (compiler-backend-index-extern-signature-slot
   [index : CompilerBackendProgramIndex]
-  [name : String]) : backend_i64_i64_map.Lookup
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id)
-      (backend_i64_i64_map.get (& (struct-get index extern-signatures)) name-id)]
-    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+  [name : i64]) : backend_i64_i64_map.Lookup
+  (let
+    [name-id : i64 (compiler-ir-symbol-id name)]
+    [slot : i64
+      (if (< name-id 0)
+        -1
+        (backend_i64_i64_map.get-value-or
+          (& (struct-get index extern-signatures))
+          name-id
+          -1))]
+    (if (< slot 0)
+      (backend_i64_i64_map.LookupMissing)
+      (backend_i64_i64_map.LookupFound slot))))
 
 (define (compiler-backend-index-extern-reference-slot
   [index : CompilerBackendProgramIndex]
-  [name : String]) : backend_i64_i64_map.Lookup
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id)
-      (backend_i64_i64_map.get (& (struct-get index extern-references)) name-id)]
-    [(InternLookupMissing) (backend_i64_i64_map.LookupMissing)]))
+  [name : i64]) : backend_i64_i64_map.Lookup
+  (let
+    [name-id : i64 (compiler-ir-symbol-id name)]
+    [logical-slot : i64
+      (if (< name-id 0)
+        -1
+        (backend_i64_i64_map.get-value-or
+          (& (struct-get index extern-references))
+          name-id
+          -1))]
+    (if (>= logical-slot 0)
+      (backend_i64_i64_map.LookupFound logical-slot)
+      (match (backend_i64_i64_map.get
+        (& (struct-get index extern-link-references))
+        name-id)
+        [(backend_i64_i64_map.LookupFound slot)
+          (backend_i64_i64_map.LookupFound slot)]
+        [(backend_i64_i64_map.LookupMissing)
+          (backend_i64_i64_map.LookupMissing)]))))
 
 (define (compiler-backend-index-extern-call-info
   [index : CompilerBackendProgramIndex]
-  [name : String]) : i64
+  [name : i64]) : i64
   (match (compiler-backend-index-extern-reference-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-call-infos) slot)]
@@ -21385,14 +21552,19 @@
 (define (compiler-backend-index-function-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
-  (match (backend_i64_i64_map.get (& (struct-get index functions)) name-id)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index function-signatures) slot)]
-    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
+  (let
+    [slot : i64
+      (backend_i64_i64_map.get-value-or
+        (& (struct-get index functions))
+        name-id
+        -1)]
+    (if (>= slot 0)
+      (array-ref (struct-get index function-signatures) slot)
+      (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-function-signature
   [index : CompilerBackendProgramIndex]
-  [name : String]) : CompilerBackendMaybeSignature
+  [name : i64]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index function-signatures) slot)]
@@ -21401,16 +21573,19 @@
 (define (compiler-backend-index-extern-signature-id
   [index : CompilerBackendProgramIndex]
   [name-id : i64]) : CompilerBackendMaybeSignature
-  (match (backend_i64_i64_map.get
-    (& (struct-get index extern-signatures))
-    name-id)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-signature-values) slot)]
-    [(backend_i64_i64_map.LookupMissing) (CompilerBackendMaybeSignature.No)]))
+  (let
+    [slot : i64
+      (backend_i64_i64_map.get-value-or
+        (& (struct-get index extern-signatures))
+        name-id
+        -1)]
+    (if (>= slot 0)
+      (array-ref (struct-get index extern-signature-values) slot)
+      (CompilerBackendMaybeSignature.No))))
 
 (define (compiler-backend-index-extern-signature
   [index : CompilerBackendProgramIndex]
-  [name : String]) : CompilerBackendMaybeSignature
+  [name : i64]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-extern-signature-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-signature-values) slot)]
@@ -21418,7 +21593,7 @@
 
 (define (compiler-backend-index-signature
   [index : CompilerBackendProgramIndex]
-  [name : String]) : CompilerBackendMaybeSignature
+  [name : i64]) : CompilerBackendMaybeSignature
   (match (compiler-backend-index-function-signature index name)
     [(CompilerBackendMaybeSignature.Some args ret-ty)
       (CompilerBackendMaybeSignature.Some args ret-ty)]
@@ -21432,7 +21607,7 @@
 
 (define (compiler-backend-index-function-defines?
   [index : CompilerBackendProgramIndex]
-  [name : String]) : bool
+  [name : i64]) : bool
   (match (compiler-backend-index-function-slot index name)
     [(backend_i64_i64_map.LookupFound _) true]
     [(backend_i64_i64_map.LookupMissing) false]))
@@ -21446,28 +21621,26 @@
 
 (define (compiler-backend-index-extern-references?
   [index : CompilerBackendProgramIndex]
-  [name : String]) : bool
+  [name : i64]) : bool
   (match (compiler-backend-index-extern-reference-slot index name)
     [(backend_i64_i64_map.LookupFound _) true]
     [(backend_i64_i64_map.LookupMissing) false]))
 
 (define (compiler-backend-index-extern-link-symbol-id
   [index : CompilerBackendProgramIndex]
-  [name-id : i64]) : String
+  [name-id : i64]) : i64
   (match (backend_i64_i64_map.get
     (& (struct-get index extern-references))
     name-id)
     [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-link-symbols) slot)]
-    [(backend_i64_i64_map.LookupMissing) (ci.intern-str name-id)]))
+    [(backend_i64_i64_map.LookupMissing) name-id]))
 
 (define (compiler-backend-index-extern-link-symbol
   [index : CompilerBackendProgramIndex]
-  [name : String]) : String
-  (match (compiler-backend-index-extern-reference-slot index name)
-    [(backend_i64_i64_map.LookupFound slot)
-      (array-ref (struct-get index extern-link-symbols) slot)]
-    [(backend_i64_i64_map.LookupMissing) name]))
+  [name : i64]) : String
+  (compiler-ir-symbol-text
+    (compiler-backend-index-extern-link-symbol-id index name)))
 
 (define (compiler-backend-index-extern-provided-id?
   [index : CompilerBackendProgramIndex]
@@ -21481,7 +21654,7 @@
 
 (define (compiler-backend-index-extern-provided?
   [index : CompilerBackendProgramIndex]
-  [name : String]) : bool
+  [name : i64]) : bool
   (match (compiler-backend-index-extern-signature-slot index name)
     [(backend_i64_i64_map.LookupFound slot)
       (array-ref (struct-get index extern-provided) slot)]
@@ -21492,18 +21665,18 @@
     (box (compiler-diagnostic-at-start "" message))))
 
 (define (compiler-backend-emits-extern-symbol?
-  [name : String]
-  [link-symbol : String]
+  [name-id : i64]
+  [link-symbol-id : i64]
   [provided : bool]
   [plan : CompilerBackendRuntimePlan]) : bool
   (not
     (or
       provided
-      (compiler-backend-fixed-fault-symbol? link-symbol)
+      (compiler-backend-fixed-fault-symbol-id? link-symbol-id)
       (and
-        (string.eq name link-symbol)
-        (compiler-backend-plan-provides? plan name))
-      (compiler-backend-plan-provides? plan link-symbol))))
+        (= name-id link-symbol-id)
+        (compiler-backend-plan-provides-id? plan name-id))
+      (compiler-backend-plan-provides-id? plan link-symbol-id))))
 
 (define (compiler-backend-validate-global-symbols-into
   [globals : CompilerIrGlobalList]
@@ -21514,7 +21687,7 @@
       (match global
         [(CompilerIrGlobal.Global name _ _)
           (let
-            [symbol : String (compiler-backend-user-symbol name)]
+            [symbol : String (compiler-backend-user-symbol-id name)]
             (if (backend_string_i64_map.contains? (& seen) symbol)
               (compiler-backend-symbol-validation-error
                 (string.append
@@ -21531,15 +21704,14 @@
         seen)]))
 
 (define (compiler-backend-runtime-prelude-string-helper-export?
-  [name : String]
-  [symbol : String]) : bool
+  [name-id : i64]
+  [symbol-id : i64]) : bool
   (let
-    [symbol-id : i64 (compiler-backend-runtime-helper-name-id symbol)]
     [prelude-symbol : String
-      (compiler-backend-runtime-prelude-string-helper-symbol name)]
+      (compiler-backend-runtime-prelude-string-helper-symbol
+        (compiler-ir-symbol-text name-id))]
     (and
-      (string.eq prelude-symbol symbol)
-      (>= symbol-id 0)
+      (string.eq prelude-symbol (compiler-ir-symbol-text symbol-id))
       (or
         (cbi.compiler-builtin-backend-tl-substring-id? symbol-id)
         (cbi.compiler-builtin-backend-tl-str-view-id? symbol-id)
@@ -21563,7 +21735,7 @@
               (compiler-backend-function-symbol-index index name)]
             (cond
               [(and
-                  (string.eq name "main")
+                  (string.eq (compiler-ir-symbol-text name) "main")
                   (compiler-backend-index-extern-provided? index name))
                 (compiler-backend-symbol-validation-error
                   "backend: main cannot use :export-symbol")]
@@ -21581,11 +21753,12 @@
                     symbol))]
               [(and
                   (compiler-backend-index-extern-provided? index name)
-                  (compiler-backend-runtime-helper-known? symbol)
+                  (compiler-backend-runtime-helper-known-id?
+                    (compiler-backend-index-extern-link-symbol-id index name))
                   (not
                     (compiler-backend-runtime-prelude-string-helper-export?
                       name
-                      symbol)))
+                      (compiler-backend-index-extern-link-symbol-id index name))))
                 (compiler-backend-symbol-validation-error
                   (string.append
                     "backend: exported function symbol collides with runtime symbol "
@@ -21620,7 +21793,7 @@
           [symbol : String (compiler-backend-function-symbol-index index name)]
           (cond
             [(and
-                (string.eq name "main")
+                (string.eq (compiler-ir-symbol-text name) "main")
                 (compiler-backend-index-extern-provided? index name))
               (compiler-backend-symbol-validation-error
                 "backend: main cannot use :export-symbol")]
@@ -21638,11 +21811,12 @@
                   symbol))]
             [(and
                 (compiler-backend-index-extern-provided? index name)
-                (compiler-backend-runtime-helper-known? symbol)
+                (compiler-backend-runtime-helper-known-id?
+                  (compiler-backend-index-extern-link-symbol-id index name))
                 (not
                   (compiler-backend-runtime-prelude-string-helper-export?
                     name
-                    symbol)))
+                    (compiler-backend-index-extern-link-symbol-id index name))))
               (compiler-backend-symbol-validation-error
                 (string.append
                   "backend: exported function symbol collides with runtime symbol "
@@ -21665,27 +21839,30 @@
     [(CompilerIrExternList.Nil) (ResultCompilerBackendSymbolValidation.Ok seen)]
     [(CompilerIrExternList.Cons ext rest)
       (match ext
-        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
-          (if (compiler-backend-emits-extern-symbol?
-            name
-            link-symbol
-            provided
-            plan)
-            (let
-              [symbol : String (compiler-backend-link-symbol link-symbol plan)]
-              (if (backend_string_i64_map.contains? (& seen) symbol)
-                (compiler-backend-symbol-validation-error
-                  (string.append
-                    "backend: extern symbol collides with emitted symbol "
-                    symbol))
-                (compiler-backend-validate-extern-symbols-into
-                  (box-get rest)
-                  plan
-                  seen)))
-            (compiler-backend-validate-extern-symbols-into
-              (box-get rest)
-              plan
-              seen))])]
+        [(CompilerIrExtern.Extern name-id _ _ _ _ link-symbol-id _ provided)
+          (let
+            [link-symbol : String (compiler-ir-symbol-text link-symbol-id)]
+            (if (compiler-backend-emits-extern-symbol?
+              name-id
+              link-symbol-id
+              provided
+              plan)
+              (let
+                [symbol : String
+                  (compiler-backend-link-symbol-id link-symbol-id plan)]
+                (if (backend_string_i64_map.contains? (& seen) symbol)
+                  (compiler-backend-symbol-validation-error
+                    (string.append
+                      "backend: extern symbol collides with emitted symbol "
+                      symbol))
+                  (compiler-backend-validate-extern-symbols-into
+                    (box-get rest)
+                    plan
+                    seen)))
+              (compiler-backend-validate-extern-symbols-into
+                (box-get rest)
+                plan
+                seen)))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-validate-extern-symbols-into
         (compiler-ir-extern-seq-to-list seq)
@@ -21724,25 +21901,23 @@
     [(ResultCompilerBackendSymbolValidation.Err message)
       (ResultCompilerBackendSymbolValidation.Err message)]))
 
-(define (compiler-backend-runtime-param-types [name : String]) : AstTypeList
-  (let
-    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (cond
-      [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
-        (ast-type-cons (AstType.Char) (ast-type-list-new))]
-      [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
-        (ast-type-cons (AstType.F64) (ast-type-list-new))]
-      [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
+(define (compiler-backend-runtime-param-types-id [name-id : i64]) : AstTypeList
+  (cond
+    [(cbi.compiler-builtin-backend-tl-print-char-id? name-id)
+      (ast-type-cons (AstType.Char) (ast-type-list-new))]
+    [(cbi.compiler-builtin-backend-tl-print-f64-id? name-id)
+      (ast-type-cons (AstType.F64) (ast-type-list-new))]
+    [(cbi.compiler-builtin-backend-tl-array-fill8-id? name-id)
+      (ast-type-cons
+        (ast-ty-mut-ptr (AstType.U8))
         (ast-type-cons
-          (ast-ty-mut-ptr (AstType.U8))
-          (ast-type-cons
-            (AstType.I64)
-            (ast-type-cons (AstType.U64) (ast-type-list-new))))]
-      [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
-        (ast-type-cons
-          (ast-ty-mut-ptr (AstType.U8))
-          (ast-type-cons (AstType.I64) (ast-type-list-new)))]
-      [else (ast-type-list-new)])))
+          (AstType.I64)
+          (ast-type-cons (AstType.U64) (ast-type-list-new))))]
+    [(cbi.compiler-builtin-backend-tl-array-zero-id? name-id)
+      (ast-type-cons
+        (ast-ty-mut-ptr (AstType.U8))
+        (ast-type-cons (AstType.I64) (ast-type-list-new)))]
+    [else (ast-type-list-new)]))
 
 (define (compiler-backend-varargs-linux-vector-count
   [types : AstTypeList]
@@ -21841,12 +22016,12 @@
           (compiler-backend-windows-vararg-dup-asm param-types fixed-count 0)]))))
 
 (define (compiler-backend-call-param-types-index
-  [name : String]
+  [name : i64]
   [index : CompilerBackendProgramIndex]) : AstTypeList
   (match (compiler-backend-index-signature index name)
     [(CompilerBackendMaybeSignature.Some param-types _) param-types]
     [(CompilerBackendMaybeSignature.No)
-      (compiler-backend-runtime-param-types name)]))
+      (compiler-backend-runtime-param-types-id name)]))
 
 (define (compiler-backend-call-actual-type
   [types : CompilerRegVarTypeList]
@@ -22106,7 +22281,7 @@
       (compiler-backend-type-list-has-aggregate-at? types (+ index 1)))))
 
 (define (compiler-backend-call-param-types-for-call
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [types : CompilerRegVarTypeList]
   [global-types : CompilerBackendGlobalTypeList]
@@ -22414,7 +22589,7 @@
 
 (define (compiler-backend-incoming-stack-arg-count
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [source-function : i64]
   [program-index : CompilerBackendProgramIndex]) : i64
   (compiler-backend-type-list-stack-arg-count
     target
@@ -22446,8 +22621,8 @@
 
 (define (compiler-backend-direct-tail-call?
   [target : CompilerBackendTarget]
-  [source-function : String]
-  [name : String]
+  [source-function : i64]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [types : AstTypeList]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -22570,9 +22745,9 @@
 
 (define (compiler-backend-identity-tail-forwarder-call?
   [target : CompilerBackendTarget]
-  [_source-function : String]
+  [_source-function : i64]
   [params : CompilerIrParamList]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [program-index : CompilerBackendProgramIndex]) : bool
   (if (compiler-backend-index-function-defines? program-index name)
@@ -22593,7 +22768,7 @@
 
 (define (compiler-backend-identity-tail-forwarder-block?
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [source-function : i64]
   [params : CompilerIrParamList]
   [block : CompilerIrBlock]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -22614,7 +22789,7 @@
 
 (define (compiler-backend-identity-tail-forwarder?
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [source-function : i64]
   [params : CompilerIrParamList]
   [blocks : CompilerIrBlockList]
   [program-index : CompilerBackendProgramIndex]) : bool
@@ -26216,7 +26391,7 @@
   (and (compiler-backend-plan-uses-callee-regs? assignments) (> return-count 1)))
 
 (define (compiler-backend-return-tail-for-return-count
-  [source-function : String]
+  [source-function : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [return-count : i64]) : String
@@ -26229,7 +26404,7 @@
     (compiler-backend-inline-return-tail assignments vars)))
 
 (define (compiler-backend-return-tail
-  [source-function : String]
+  [source-function : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [blocks : CompilerIrBlockList]) : String
@@ -26240,7 +26415,7 @@
     (compiler-backend-block-list-return-count blocks)))
 
 (define (compiler-backend-return-epilogue
-  [source-function : String]
+  [source-function : i64]
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [blocks : CompilerIrBlockList]) : String
@@ -26252,14 +26427,17 @@
       "")
     ""))
 
-(define (compiler-backend-spmd-varying-return-function? [name : String]) : bool
-  (compiler-backend-string-prefix-at? name "__tl_spmd_ret_varying_" 0))
+(define (compiler-backend-spmd-symbol-prefix? [name : i64] [prefix : String]) : bool
+  (compiler-backend-string-prefix-at? (compiler-ir-symbol-text name) prefix 0))
 
-(define (compiler-backend-spmd-mask-return-function? [name : String]) : bool
-  (compiler-backend-string-prefix-at? name "__tl_spmd_ret_mask_" 0))
+(define (compiler-backend-spmd-varying-return-function? [name : i64]) : bool
+  (compiler-backend-spmd-symbol-prefix? name "__tl_spmd_ret_varying_"))
+
+(define (compiler-backend-spmd-mask-return-function? [name : i64]) : bool
+  (compiler-backend-spmd-symbol-prefix? name "__tl_spmd_ret_mask_"))
 
 (define (compiler-backend-emit-spmd-private-return-value
-  [source-function : String]
+  [source-function : i64]
   [value : CompilerIrValue]
   [assignments : CompilerRegAssignmentList]
   [ret-ty : AstType]) : ResultCompilerBackend
@@ -26310,7 +26488,7 @@
           (box (compiler-diagnostic-at-start "" message)))])))
 
 (define (compiler-backend-emit-return-with-return-count
-  [source-function : String]
+  [source-function : i64]
   [return-count : i64]
   [value : CompilerIrMaybeValue]
   [assignments : CompilerRegAssignmentList]
@@ -26321,11 +26499,13 @@
     [(CompilerIrMaybeValue.No)
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
-          (if (string.eq source-function "main")
+          (if (=
+            (compiler-ir-symbol-id source-function)
+            cbi.compiler-builtin-id-fix-main)
             "    xorl %eax, %eax\n"
             "")
           (compiler-backend-return-tail-for-return-count
-            (string.copy source-function)
+            source-function
             assignments
             vars
             return-count)))]
@@ -26388,7 +26568,7 @@
               (ResultCompilerBackend.Err message)])))]))
 
 (define (compiler-backend-emit-return
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [value : CompilerIrMaybeValue]
   [assignments : CompilerRegAssignmentList]
@@ -26406,9 +26586,9 @@
 
 (define (compiler-backend-emit-tail-call
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
@@ -26577,7 +26757,7 @@
       [_ (ResultBackendPhiReturnMatch.Ok (CompilerBackendPhiReturnMatch.No))])))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-instrs
-  [source-function : String]
+  [source-function : i64]
   [return-count : i64]
   [instrs : CompilerIrInstrSeq]
   [from-label : String]
@@ -26628,7 +26808,7 @@
         [_ (ResultCompilerBackend.Ok "")]))))
 
 (define (compiler-backend-emit-trivial-phi-return-edge
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [target-label : String]
   [from-label : String]
@@ -26673,7 +26853,7 @@
         program-index)]))
 
 (define (compiler-backend-emit-trivial-phi-return-edge-seq
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
   [target-label : String]
@@ -26708,7 +26888,7 @@
             program-index))])))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-instrs
-  [source-function : String]
+  [source-function : i64]
   [return-count : i64]
   [instrs : CompilerIrInstrSeq]
   [from-label : String]
@@ -26764,7 +26944,7 @@
         [_ (ResultCompilerBackend.Ok "")]))))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [target-label : String]
   [from-label : String]
@@ -26817,7 +26997,7 @@
         program-index)]))
 
 (define (compiler-backend-emit-mov-trivial-phi-return-edge-seq
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
   [target-label : String]
@@ -27155,41 +27335,31 @@
             reg
             ty))))))
 
-(define (compiler-backend-tls-current-arena-call-name? [name : String]) : bool
-  (let
-    [len : i64 (string.string-length name)]
-    (if (or (= len 25) (= len 26))
-      (let
-        [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-        (and
-          (>= name-id 0)
-          (cbi.compiler-builtin-backend-tls-current-arena-call-id? name-id)))
-      false)))
+(define (compiler-backend-tls-current-arena-call-id? [name-id : i64]) : bool
+  (cbi.compiler-builtin-backend-tls-current-arena-call-id? name-id))
 
 (define (compiler-backend-tls-current-arena-inline-asm
   [target : CompilerBackendTarget]
-  [name : String]
+  [name-id : i64]
   [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
-  (let
-    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (cond
-      [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
-        (ResultCompilerBackend.Ok
-          (compiler-backend-current-arena-load target "%rax"))]
-      [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
-        (match (compiler-backend-target-arg-reg target 0)
-          [(ResultBackendReg.Ok reg)
-            (ResultCompilerBackend.Ok
-              (compiler-backend-current-arena-store target reg))]
-          [(ResultBackendReg.Err message)
-            (ResultCompilerBackend.Err
-              (box (compiler-diagnostic-with-message instr-diag message)))])]
-      [else
-        (ResultCompilerBackend.Err
-          (box
-            (compiler-diagnostic-with-message
-              instr-diag
-              "backend: unknown tls current arena helper")))])))
+  (cond
+    [(cbi.compiler-builtin-backend-tls-current-arena-load-id? name-id)
+      (ResultCompilerBackend.Ok
+        (compiler-backend-current-arena-load target "%rax"))]
+    [(cbi.compiler-builtin-backend-tls-current-arena-store-id? name-id)
+      (match (compiler-backend-target-arg-reg target 0)
+        [(ResultBackendReg.Ok reg)
+          (ResultCompilerBackend.Ok
+            (compiler-backend-current-arena-store target reg))]
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-with-message instr-diag message)))])]
+    [else
+      (ResultCompilerBackend.Err
+        (box
+          (compiler-diagnostic-with-message
+            instr-diag
+            "backend: unknown tls current arena helper")))]))
 
 (define (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
   [target : CompilerBackendTarget]
@@ -27197,7 +27367,7 @@
   [arg-assignments : CompilerRegAssignmentList]
   [planned-stage : String]
   [dst : i64]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [types : CompilerRegVarTypeList]
@@ -27476,7 +27646,8 @@
   [arg-assignments : CompilerRegAssignmentList]
   [planned-stage : String]
   [dst : i64]
-  [name : String]
+  [name : i64]
+  [inline-name : String]
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [types : CompilerRegVarTypeList]
@@ -27534,7 +27705,7 @@
                 (string.append
                   args-asm
                   (string.append
-                    (compiler-backend-inline-memory-call-asm target name)
+                    (compiler-backend-inline-memory-call-asm target inline-name)
                     (string.append
                       (compiler-backend-emit-call-space-add call-space)
                       result-store)))))]
@@ -27556,7 +27727,7 @@
   [function : String]
   [current-label : String]
   [dst : i64]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [ty : AstType]
   [assignments : CompilerRegAssignmentList]
@@ -27574,15 +27745,17 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
-      (compiler-backend-inline-memory-call-target name call-symbol)]
+      (compiler-backend-inline-memory-call-target
+        (compiler-ir-symbol-text name)
+        call-symbol)]
     (cond
       [(and
           (> fast-alloc-size 0)
-          (cbi.compiler-builtin-backend-tl-alloc-id?
-            (compiler-backend-runtime-helper-name-id name))
-          (compiler-backend-plan-provides? plan "tl_alloc")
-          (cbi.compiler-builtin-backend-tl-alloc-id?
-            (compiler-backend-runtime-helper-name-id call-symbol)))
+          (cbi.compiler-builtin-backend-tl-alloc-id? name)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-tl-alloc)
+          (string.eq call-symbol "tl_alloc"))
         (ResultCompilerBackend.Ok
           (str_cat.str-cat
             (if (compiler-backend-inline-fast-alloc? fast-alloc-size)
@@ -27592,7 +27765,9 @@
                 current-label
                 dst
                 fast-alloc-size
-                (compiler-backend-plan-provides? plan "tl_profile_alloc_total"))
+                (compiler-backend-plan-provides-id?
+                  plan
+                  cbi.compiler-builtin-id-tl-profile-alloc-total))
               (str_cat.str-cat
                 "    call "
                 (compiler-backend-fast-alloc-label fast-alloc-size)
@@ -27605,7 +27780,7 @@
               "%rax"
               ty)))]
       [(and
-          (compiler-backend-tls-current-arena-call-name? name)
+          (compiler-backend-tls-current-arena-call-id? name)
           (not (compiler-backend-index-function-defines? program-index name)))
         (compiler-backend-emit-inline-tls-current-arena-call-with-arg-assignments
           target
@@ -27629,6 +27804,7 @@
           arg-assignments
           planned-stage
           dst
+          name
           inline-memory-name
           args
           ty
@@ -28054,7 +28230,7 @@
 
 (define (compiler-backend-emit-spmd-call-scalar
   [target : CompilerBackendTarget]
-  [name : String]
+  [name : i64]
   [active-mask : CompilerIrValue]
   [args : CompilerIrSpmdCallArgList]
   [result : CompilerIrSpmdCallResult]
@@ -28121,7 +28297,7 @@
 
 (define (compiler-backend-emit-spmd-call-avx512
   [target : CompilerBackendTarget]
-  [name : String]
+  [name : i64]
   [lanes : i64]
   [active-mask : CompilerIrValue]
   [args : CompilerIrSpmdCallArgList]
@@ -28230,7 +28406,7 @@
 
 (define (compiler-backend-emit-spmd-call
   [target : CompilerBackendTarget]
-  [name : String]
+  [name : i64]
   [backend : CompilerIrSpmdBackend]
   [lanes : i64]
   [active-mask : CompilerIrValue]
@@ -29386,7 +29562,7 @@
 (define (compiler-backend-emit-instr
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -29983,7 +30159,7 @@
       [(CompilerIrInstr.Store name value ty)
         (let
           [addr : String
-            (str_cat.str-cat (compiler-backend-user-symbol name) "(%rip)" "")]
+            (str_cat.str-cat (compiler-backend-user-symbol-id name) "(%rip)" "")]
           (if (compiler-backend-group-type? program-index ty)
             ;; Storing a register-group into a global writes both words
             ;; inline (word0 at sym, word1 at sym+8).
@@ -29994,12 +30170,12 @@
                 (compiler-backend-group-return-reg program-index ty 1)]
               [sym0 : String
                 (str_cat.str-cat
-                  (compiler-backend-user-symbol name)
+                  (compiler-backend-user-symbol-id name)
                   "(%rip)"
                   "")]
               [sym1 : String
                 (str_cat.str-cat
-                  (compiler-backend-user-symbol name)
+                  (compiler-backend-user-symbol-id name)
                   "+8(%rip)"
                   "")]
               (match (compiler-backend-emit-group-load
@@ -30857,7 +31033,7 @@
 (define (compiler-backend-emit-instr-with-call-rax
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31018,7 +31194,7 @@
 (define (compiler-backend-emit-instrs-after-emitted
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31139,7 +31315,7 @@
 (define (compiler-backend-emit-instrs-normal
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31208,7 +31384,7 @@
 (define (compiler-backend-emit-fused-result-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31302,7 +31478,7 @@
 (define (compiler-backend-emit-instrs-materialize-rax
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31353,7 +31529,7 @@
 (define (compiler-backend-emit-instrs-with-rax-step
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31650,7 +31826,7 @@
 (define (compiler-backend-emit-instrs-with-call-rax-step
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31752,7 +31928,7 @@
 (define (compiler-backend-emit-fused-compare-branch-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -31836,7 +32012,7 @@
 (define (compiler-backend-emit-fused-load-compare-branch-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -32004,7 +32180,7 @@
 (define (compiler-backend-emit-fused-gep-load-compare-branch-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -32345,7 +32521,7 @@
 (define (compiler-backend-emit-fused-gep-load-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -32446,7 +32622,7 @@
 (define (compiler-backend-emit-fused-gep-load-plain-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -32925,7 +33101,7 @@
 (define (compiler-backend-emit-fused-gep-store-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -33008,7 +33184,7 @@
 (define (compiler-backend-emit-fused-mov-trivial-phi-return-rest
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -33211,9 +33387,9 @@
 
 (define (compiler-backend-emit-call-return
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [assignments : CompilerRegAssignmentList]
   [planned-stage : String]
@@ -33229,7 +33405,9 @@
     [call-symbol : String
       (compiler-backend-call-symbol-index name plan program-index)]
     [inline-memory-name : String
-      (compiler-backend-inline-memory-call-target name call-symbol)]
+      (compiler-backend-inline-memory-call-target
+        (compiler-ir-symbol-text name)
+        call-symbol)]
     [extern-call-info : i64
       (compiler-backend-index-extern-call-info program-index name)]
     [param-types : AstTypeList
@@ -33266,7 +33444,7 @@
       vars)
       [(ResultCompilerBackend.Ok args-asm)
         (if (and
-          (compiler-backend-tls-current-arena-call-name? name)
+          (compiler-backend-tls-current-arena-call-id? name)
           (not (compiler-backend-index-function-defines? program-index name)))
           (match (compiler-backend-tls-current-arena-inline-asm
             target
@@ -33465,7 +33643,8 @@
                             (compiler-backend-emit-load-i64-immediate 0 env-reg)
                             (str_cat.str-cat
                               "    call "
-                              (compiler-backend-closure-entry-label name)
+                              (compiler-backend-closure-entry-label
+                                (compiler-ir-symbol-text name))
                               "\n"
                               (string.append
                                 (compiler-backend-emit-call-space-add
@@ -33561,7 +33740,7 @@
 
 (define (compiler-backend-emit-tail-indirect-call
   [target : CompilerBackendTarget]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [func : CompilerIrValue]
   [args : CompilerIrCallArgs]
@@ -33847,7 +34026,7 @@
 (define (compiler-backend-emit-c-abi-store-result-call
   [target : CompilerBackendTarget]
   [base : CompilerIrValue]
-  [name : String]
+  [name : i64]
   [args : CompilerIrCallArgs]
   [slots : CompilerIrCAbiReturnSlotList]
   [assignments : CompilerRegAssignmentList]
@@ -34066,7 +34245,7 @@
 (define (compiler-backend-emit-instrs-step
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -36855,7 +37034,7 @@
 (define (compiler-backend-emit-instrs-loop
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -37010,7 +37189,7 @@
 (define (compiler-backend-emit-instrs
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -37059,7 +37238,7 @@
 (define (compiler-backend-emit-instrs-with-call-rax
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -37110,7 +37289,7 @@
 (define (compiler-backend-emit-instrs-with-rax
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [current-label : String]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -37161,7 +37340,7 @@
 (define (compiler-backend-emit-block
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [blocks : CompilerIrBlockList]
   [block : CompilerIrBlock]
   [fallthrough : CompilerBackendMaybeLabel]
@@ -37236,7 +37415,7 @@
 (define (compiler-backend-emit-block-seq-into
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockSeq]
   [index : i64]
@@ -37309,7 +37488,7 @@
 (define (compiler-backend-emit-blocks-into
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
@@ -37400,7 +37579,7 @@
 (define (compiler-backend-emit-blocks
   [target : CompilerBackendTarget]
   [function : String]
-  [source-function : String]
+  [source-function : i64]
   [all-blocks : CompilerIrBlockList]
   [blocks : CompilerIrBlockList]
   [assignments : CompilerRegAssignmentList]
@@ -37440,11 +37619,11 @@
 ;; beyond a bank's registers are read back from the caller's stack frame at
 ;; `compiler-backend-incoming-stack-arg-offset`, indexed by a sequential
 ;; stack-param counter that mirrors the call site.
-(define (compiler-backend-spmd-private-function? [name : String]) : bool
+(define (compiler-backend-spmd-private-function? [name : i64]) : bool
   (or
     (compiler-backend-spmd-varying-return-function? name)
     (compiler-backend-spmd-mask-return-function? name)
-    (compiler-backend-string-prefix-at? name "__tl_spmd_ret_uniform_" 0)))
+    (compiler-backend-spmd-symbol-prefix? name "__tl_spmd_ret_uniform_")))
 
 (define (compiler-backend-spmd-varying-param? [name : String]) : bool
   (compiler-backend-string-prefix-at? name "__tl_spmd_varying_arg_" 0))
@@ -42482,7 +42661,10 @@
         [walk-func : CompilerIrFunction
           (CompilerIrFunction.Function name params ret-ty vars blocks)]
         [func-diag : CompilerDiagnostic
-          (compiler-backend-function-diagnostic-index span-index name "")]
+          (compiler-backend-function-diagnostic-index
+            span-index
+            (compiler-ir-symbol-text name)
+            "")]
         [_current-mode : unit (compiler-backend-set-current-mode! mode)]
         ;; Ensure the register allocator can see the program-wide group
         ;; word-count map (so a group-typed call result / param / mov gets a
@@ -42964,7 +43146,7 @@
                                 ""
                                 (string.append
                                   "backend: gep displacement ordinal drift in "
-                                  name))
+                                  (compiler-ir-symbol-text name)))
                               func-diag)))
                         (let
                           [dynamic-frame-extra : i64
@@ -43010,16 +43192,18 @@
                                 slot-vars)
                               (compiler-backend-emit-windows-main-argv-capture
                                 target
-                                name
+                                (compiler-ir-symbol-text name)
                                 emit-entry
                                 plan)
                               (compiler-backend-emit-linux-crt-main-argv-capture
                                 target
-                                name
+                                (compiler-ir-symbol-text name)
                                 crt-entry
                                 plan)
                               (if (and
-                                (string.eq name "main")
+                                (string.eq
+                                  (compiler-ir-symbol-text name)
+                                  "main")
                                 (or
                                   (compiler-backend-target-windows? target)
                                   (and
@@ -43344,7 +43528,7 @@
 
 (define (compiler-backend-implicit-main-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "main"
+    cbi.compiler-builtin-id-fix-main
     CompilerIrParamList.Nil
     (AstType.I64)
     1
@@ -43363,7 +43547,10 @@
   [emit-entry : bool]) : CompilerIrFunctionList
   (if (and
     emit-entry
-    (not (compiler-backend-function-list-defines? functions "main")))
+    (not
+      (compiler-backend-function-list-defines?
+        functions
+        cbi.compiler-builtin-id-fix-main)))
     (compiler-ir-function-cons
       (compiler-backend-implicit-main-function)
       functions)
@@ -43746,7 +43933,7 @@
     ""))
 
 (define (compiler-backend-emit-closure-descriptor-entry-into
-  [name : String]
+  [name : i64]
   [_functions : CompilerIrFunctionList]
   [_externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
@@ -43755,18 +43942,19 @@
     [(CompilerBackendMaybeSignature.Some _ _)
       (text_buf.append
         buf
-        (compiler-backend-emit-closure-descriptor-entry name))]
+        (compiler-backend-emit-closure-descriptor-entry
+          (compiler-ir-symbol-text name)))]
     [(CompilerBackendMaybeSignature.No) buf]))
 
 (define (compiler-backend-emit-closure-descriptor-entries-into
-  [names : BackendStringList]
+  [names : BackendSymbolList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match names
-    [(BackendStringList.Nil) buf]
-    [(BackendStringList.Cons name rest)
+    [(BackendSymbolList.Nil) buf]
+    [(BackendSymbolList.Cons name rest)
       (compiler-backend-emit-closure-descriptor-entries-into
         (box-get rest)
         functions
@@ -43780,13 +43968,13 @@
           buf))]))
 
 (define (compiler-backend-emit-closure-descriptors-into
-  [names : BackendStringList]
+  [names : BackendSymbolList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match names
-    [(BackendStringList.Nil) buf]
+    [(BackendSymbolList.Nil) buf]
     [_
       (compiler-backend-emit-closure-descriptor-entries-into
         names
@@ -43823,7 +44011,7 @@
 
 (define (compiler-backend-emit-closure-entry-adapter
   [target : CompilerBackendTarget]
-  [name : String]
+  [name : i64]
   [param-types : AstTypeList]
   [_ret-ty : AstType]
   [plan : CompilerBackendRuntimePlan]
@@ -43895,7 +44083,8 @@
               (str_cat.str-cat
                 (compiler-backend-emit-function-entry
                   target
-                  (compiler-backend-closure-entry-label name)
+                  (compiler-backend-closure-entry-label
+                    (compiler-ir-symbol-text name))
                   frame
                   CompilerRegAssignmentList.Nil
                   vars)
@@ -43943,15 +44132,15 @@
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-raw-into
   [target : CompilerBackendTarget]
-  [names : BackendStringList]
+  [names : BackendSymbolList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (match names
-    [(BackendStringList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
-    [(BackendStringList.Cons name rest)
+    [(BackendSymbolList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(BackendSymbolList.Cons name rest)
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (match (compiler-backend-emit-closure-entry-adapter
@@ -43986,15 +44175,15 @@
 
 (define (compiler-backend-emit-closure-entry-adapters-stream-into
   [target : CompilerBackendTarget]
-  [names : BackendStringList]
+  [names : BackendSymbolList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [buf : text_buf.TextBuf]) : ResultCompilerBackendBuffer
   (match names
-    [(BackendStringList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
-    [(BackendStringList.Cons name rest)
+    [(BackendSymbolList.Nil) (ResultCompilerBackendBuffer.Ok buf)]
+    [(BackendSymbolList.Cons name rest)
       (match (compiler-backend-index-signature program-index name)
         [(CompilerBackendMaybeSignature.Some param-types ret-ty)
           (let
@@ -44042,7 +44231,7 @@
 
 (define (compiler-backend-emit-closure-entry-adapters-buffer-into
   [target : CompilerBackendTarget]
-  [names : BackendStringList]
+  [names : BackendSymbolList]
   [functions : CompilerIrFunctionList]
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
@@ -44079,6 +44268,19 @@
 (define (compiler-backend-string-list-reverse [strings : BackendStringList]) : BackendStringList
   (compiler-backend-string-list-reverse-into strings BackendStringList.Nil))
 
+(define (compiler-backend-symbol-list-reverse-into
+  [symbols : BackendSymbolList]
+  [out : BackendSymbolList]) : BackendSymbolList
+  (match symbols
+    [(BackendSymbolList.Nil) out]
+    [(BackendSymbolList.Cons head rest)
+      (compiler-backend-symbol-list-reverse-into
+        (box-get rest)
+        (compiler-backend-symbol-cons head out))]))
+
+(define (compiler-backend-symbol-list-reverse [symbols : BackendSymbolList]) : BackendSymbolList
+  (compiler-backend-symbol-list-reverse-into symbols BackendSymbolList.Nil))
+
 (define (compiler-backend-float-list-reverse-into
   [floats : BackendFloatList]
   [out : BackendFloatList]) : BackendFloatList
@@ -44095,12 +44297,15 @@
 (define (compiler-backend-string-set-list [set : BackendStringSet]) : BackendStringList
   (compiler-backend-string-list-reverse (struct-get set items)))
 
+(define (compiler-backend-symbol-set-list [set : BackendSymbolSet]) : BackendSymbolList
+  (compiler-backend-symbol-list-reverse (struct-get set items)))
+
 (define (compiler-backend-float-set-list [set : BackendFloatSet]) : BackendFloatList
   (compiler-backend-float-list-reverse (struct-get set items)))
 
 (define (compiler-backend-program-collections-functions
-  [collections : CompilerBackendProgramCollections]) : BackendStringList
-  (compiler-backend-string-set-list (struct-get collections functions)))
+  [collections : CompilerBackendProgramCollections]) : BackendSymbolList
+  (compiler-backend-symbol-set-list (struct-get collections functions)))
 
 (define (compiler-backend-program-collections-strings
   [collections : CompilerBackendProgramCollections]) : BackendStringList
@@ -44716,15 +44921,22 @@
       (ResultCompilerBackend.Ok (compiler-backend-float-bits-directive ty bits))]
     [(CompilerIrValue.Global name)
       (ResultCompilerBackend.Ok
-        (str_cat.str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
+        (str_cat.str-cat
+          "    .quad "
+          (compiler-backend-user-symbol-id name)
+          "\n"))]
     [(CompilerIrValue.GlobalAddr name)
       (ResultCompilerBackend.Ok
-        (str_cat.str-cat "    .quad " (compiler-backend-user-symbol name) "\n"))]
+        (str_cat.str-cat
+          "    .quad "
+          (compiler-backend-user-symbol-id name)
+          "\n"))]
     [(CompilerIrValue.Function name)
       (ResultCompilerBackend.Ok
         (str_cat.str-cat
           "    .quad "
-          (compiler-backend-closure-descriptor-label name)
+          (compiler-backend-closure-descriptor-label
+            (compiler-ir-symbol-text name))
           "\n"))]
     [(CompilerIrValue.String text)
       (ResultCompilerBackend.Ok
@@ -44749,6 +44961,7 @@
   [ty : AstType]
   [value : CompilerIrValue]) : bool
   (match value
+    [(CompilerIrValue.RuntimeGlobal _) true]
     [(CompilerIrValue.Unit)
       (match ty
         [(AstType.Unit) false]
@@ -44782,7 +44995,7 @@
   (match global
     [(CompilerIrGlobal.Global name ty value)
       (let
-        [symbol : String (compiler-backend-user-symbol name)]
+        [symbol : String (compiler-backend-user-symbol-id name)]
         (if (compiler-backend-runtime-global? ty value)
           (ResultCompilerBackend.Ok
             (str_cat.str-cat
@@ -44838,13 +45051,14 @@
   (string.append "__global_init_" global-name))
 
 (define (compiler-backend-global-init-call
-  [name : String]
+  [name : i64]
+  [init : i64]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : String
   (let
-    [symbol : String (compiler-backend-user-symbol name)]
-    [init-symbol : String
-      (compiler-backend-user-symbol (compiler-backend-global-init-name name))]
+    [name-text : String (compiler-ir-symbol-text name)]
+    [symbol : String (compiler-backend-user-symbol-id name)]
+    [init-symbol : String (compiler-backend-user-symbol-id init)]
     (str_cat.str-cat
       "    call "
       init-symbol
@@ -44878,9 +45092,10 @@
       (match global
         [(CompilerIrGlobal.Global name ty value)
           (str_cat.str-cat
-            (if (compiler-backend-runtime-global? ty value)
-              (compiler-backend-global-init-call name ty program-index)
-              "")
+            (match value
+              [(CompilerIrValue.RuntimeGlobal init)
+                (compiler-backend-global-init-call name init ty program-index)]
+              [_ ""])
             (compiler-backend-global-initializers (box-get rest) program-index))])]
     [(CompilerIrGlobalList.Array seq)
       (compiler-backend-global-initializers
@@ -44889,13 +45104,13 @@
 
 (define (compiler-backend-function-list-defines?
   [functions : CompilerIrFunctionList]
-  [name : String]) : bool
+  [name : i64]) : bool
   (match functions
     [(CompilerIrFunctionList.Nil) false]
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function func-name _ _ _ _)
-          (if (string.eq func-name name)
+          (if (compiler-ir-symbol-eq? func-name name)
             true
             (compiler-backend-function-list-defines? (box-get rest) name))])]
     [(CompilerIrFunctionList.Array seq)
@@ -44903,13 +45118,13 @@
 
 (define (compiler-backend-function-seq-defines?
   [functions : CompilerIrFunctionSeq]
-  [name : String]
+  [name : i64]
   [index : i64]) : bool
   (if (>= index (compiler-ir-function-seq-count functions))
     false
     (match (compiler-ir-function-seq-ref functions index)
       [(CompilerIrFunction.Function func-name _ _ _ _)
-        (if (string.eq func-name name)
+        (if (compiler-ir-symbol-eq? func-name name)
           true
           (compiler-backend-function-seq-defines? functions name (+ index 1)))])))
 
@@ -44928,7 +45143,9 @@
     [(CompilerIrFunctionList.Cons func rest)
       (match func
         [(CompilerIrFunction.Function name _ _ _ _)
-          (if (compiler-backend-runtime-prelude-helper-function? name helper)
+          (if (compiler-backend-runtime-prelude-helper-function?
+            (compiler-ir-symbol-text name)
+            helper)
             true
             (compiler-backend-function-list-defines-runtime-prelude-helper?
               (box-get rest)
@@ -44947,7 +45164,9 @@
     false
     (match (compiler-ir-function-seq-ref functions index)
       [(CompilerIrFunction.Function name _ _ _ _)
-        (if (compiler-backend-runtime-prelude-helper-function? name helper)
+        (if (compiler-backend-runtime-prelude-helper-function?
+          (compiler-ir-symbol-text name)
+          helper)
           true
           (compiler-backend-function-seq-defines-runtime-prelude-helper?
             functions
@@ -44981,34 +45200,29 @@
 
 (define (compiler-backend-runtime-index-empty) : CompilerBackendRuntimeIndex
   (CompilerBackendRuntimeIndex
-    (backend_string_i64_map.with-capacity 256)
-    (backend_string_i64_map.with-capacity 256)
-    (backend_string_i64_map.with-capacity 256)
+    (backend_i64_i64_map.with-capacity 256)
+    (backend_i64_i64_map.with-capacity 256)
+    (backend_i64_i64_map.with-capacity 256)
     false
-    false))
+    false
+    -1
+    -1
+    -1))
 
 (define (compiler-backend-runtime-index-defines?
   [index : CompilerBackendRuntimeIndex]
-  [name : String]) : bool
-  (backend_string_i64_map.contains? (& (struct-get index defines)) name))
+  [name-id : i64]) : bool
+  (backend_i64_i64_map.contains? (& (struct-get index defines)) name-id))
 
 (define (compiler-backend-runtime-index-extern?
   [index : CompilerBackendRuntimeIndex]
-  [name : String]) : bool
-  (backend_string_i64_map.contains? (& (struct-get index externs)) name))
-
-(define (compiler-backend-runtime-index-extern-alias?
-  [index : CompilerBackendRuntimeIndex]
-  [canonical : String]
-  [alias : String]) : bool
-  (or
-    (compiler-backend-runtime-index-extern? index canonical)
-    (compiler-backend-runtime-index-extern? index alias)))
+  [name-id : i64]) : bool
+  (backend_i64_i64_map.contains? (& (struct-get index externs)) name-id))
 
 (define (compiler-backend-runtime-index-calls?
   [index : CompilerBackendRuntimeIndex]
-  [name : String]) : bool
-  (backend_string_i64_map.contains? (& (struct-get index calls)) name))
+  [name-id : i64]) : bool
+  (backend_i64_i64_map.contains? (& (struct-get index calls)) name-id))
 
 (define (compiler-backend-runtime-index-needs-div-abort?
   [index : CompilerBackendRuntimeIndex]) : bool
@@ -45020,45 +45234,58 @@
 
 (define (compiler-backend-runtime-index-add-define
   [index : CompilerBackendRuntimeIndex]
-  [name : String]) : CompilerBackendRuntimeIndex
+  [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
-    [defines : backend_string_i64_map.Map (struct-get index defines)]
+    [defines : backend_i64_i64_map.Map (struct-get index defines)]
     (begin
-      (backend_string_i64_map.insert-ref! (&mut defines) name 1)
+      (backend_i64_i64_map.insert-ref! (&mut defines) name-id 1)
       (CompilerBackendRuntimeIndex
         defines
         (struct-get index externs)
         (struct-get index calls)
         (struct-get index needs-div-abort)
-        (struct-get index needs-shift-abort)))))
+        (struct-get index needs-shift-abort)
+        (struct-get index region-mark-call-id)
+        (struct-get index region-reset-call-id)
+        (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-add-extern-name
   [index : CompilerBackendRuntimeIndex]
-  [name : String]) : CompilerBackendRuntimeIndex
+  [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
-    [externs : backend_string_i64_map.Map (struct-get index externs)]
+    [externs : backend_i64_i64_map.Map (struct-get index externs)]
     (begin
-      (backend_string_i64_map.insert-ref! (&mut externs) name 1)
+      (backend_i64_i64_map.insert-ref! (&mut externs) name-id 1)
       (CompilerBackendRuntimeIndex
         (struct-get index defines)
         externs
         (struct-get index calls)
         (struct-get index needs-div-abort)
-        (struct-get index needs-shift-abort)))))
+        (struct-get index needs-shift-abort)
+        (struct-get index region-mark-call-id)
+        (struct-get index region-reset-call-id)
+        (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-add-call
   [index : CompilerBackendRuntimeIndex]
-  [name : String]) : CompilerBackendRuntimeIndex
+  [name-id : i64]) : CompilerBackendRuntimeIndex
   (let
-    [calls : backend_string_i64_map.Map (struct-get index calls)]
+    [calls : backend_i64_i64_map.Map (struct-get index calls)]
     (begin
-      (backend_string_i64_map.insert-ref! (&mut calls) name 1)
+      (backend_i64_i64_map.insert-ref! (&mut calls) name-id 1)
       (CompilerBackendRuntimeIndex
         (struct-get index defines)
         (struct-get index externs)
         calls
         (struct-get index needs-div-abort)
-        (struct-get index needs-shift-abort)))))
+        (struct-get index needs-shift-abort)
+        (if (string.eq (compiler-ir-symbol-text name-id) "tl_region_mark")
+          name-id
+          (struct-get index region-mark-call-id))
+        (if (string.eq (compiler-ir-symbol-text name-id) "tl_region_reset")
+          name-id
+          (struct-get index region-reset-call-id))
+        (struct-get index tlci-macro-entry-call-id)))))
 
 (define (compiler-backend-runtime-index-with-div-abort
   [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex
@@ -45067,7 +45294,10 @@
     (struct-get index externs)
     (struct-get index calls)
     true
-    (struct-get index needs-shift-abort)))
+    (struct-get index needs-shift-abort)
+    (struct-get index region-mark-call-id)
+    (struct-get index region-reset-call-id)
+    (struct-get index tlci-macro-entry-call-id)))
 
 (define (compiler-backend-runtime-index-with-shift-abort
   [index : CompilerBackendRuntimeIndex]) : CompilerBackendRuntimeIndex
@@ -45076,7 +45306,30 @@
     (struct-get index externs)
     (struct-get index calls)
     (struct-get index needs-div-abort)
-    true))
+    true
+    (struct-get index region-mark-call-id)
+    (struct-get index region-reset-call-id)
+    (struct-get index tlci-macro-entry-call-id)))
+
+(define (compiler-backend-runtime-index-with-extern-role
+  [index : CompilerBackendRuntimeIndex]
+  [call-id : i64]
+  [link-id : i64]) : CompilerBackendRuntimeIndex
+  (CompilerBackendRuntimeIndex
+    (struct-get index defines)
+    (struct-get index externs)
+    (struct-get index calls)
+    (struct-get index needs-div-abort)
+    (struct-get index needs-shift-abort)
+    (if (= link-id cbi.compiler-builtin-id-tl-region-mark)
+      call-id
+      (struct-get index region-mark-call-id))
+    (if (= link-id cbi.compiler-builtin-id-tl-region-reset)
+      call-id
+      (struct-get index region-reset-call-id))
+    (if (string.eq (compiler-ir-symbol-text link-id) "tl_tlci_call_macro_entry")
+      call-id
+      (struct-get index tlci-macro-entry-call-id))))
 
 (define (compiler-backend-runtime-index-instr
   [index : CompilerBackendRuntimeIndex]
@@ -45091,7 +45344,9 @@
     [(CompilerIrInstr.TailCall call-name _ _)
       (compiler-backend-runtime-index-add-call index call-name)]
     [(CompilerIrInstr.BoundsCheck _ _ _)
-      (compiler-backend-runtime-index-add-call index "tl_oob_abort")]
+      (compiler-backend-runtime-index-add-call
+        index
+        cbi.compiler-builtin-id-tl-oob-abort)]
     [(CompilerIrInstr.BinOp _ op _ rhs ty)
       (let
         [with-div : CompilerBackendRuntimeIndex
@@ -45206,16 +45461,34 @@
     [(CompilerIrExternList.Nil) index]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern extern-name _ _ link-symbol _ provided)
+        [(CompilerIrExtern.Extern
+            name-id
+            source-name-id
+            _
+            _
+            _
+            link-symbol
+            _
+            provided)
           (if provided
             (compiler-backend-runtime-index-externs index (box-get rest))
-            (compiler-backend-runtime-index-externs
-              (compiler-backend-runtime-index-add-extern-name
+            (let
+              [with-names : CompilerBackendRuntimeIndex
                 (compiler-backend-runtime-index-add-extern-name
-                  index
-                  extern-name)
-                link-symbol)
-              (box-get rest)))])]
+                  (compiler-backend-runtime-index-add-extern-name
+                    (compiler-backend-runtime-index-add-extern-name
+                      index
+                      name-id)
+                    source-name-id)
+                  link-symbol)]
+              [with-runtime-role : CompilerBackendRuntimeIndex
+                (compiler-backend-runtime-index-with-extern-role
+                  with-names
+                  name-id
+                  link-symbol)]
+              (compiler-backend-runtime-index-externs
+                with-runtime-role
+                (box-get rest))))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-runtime-index-externs
         index
@@ -45341,30 +45614,54 @@
   [index : CompilerBackendRuntimeIndex]) : bool
   (or
     (backend-or4
-      (compiler-backend-runtime-index-defines? index "tl_string_concat")
-      (compiler-backend-runtime-index-defines? index "tl_string_concat3")
-      (compiler-backend-runtime-index-defines? index "tl_string_concat4")
-      (compiler-backend-runtime-index-defines? index "tl_string_concat5"))
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-string-concat)
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-string-concat3)
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-string-concat4)
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-string-concat5))
     false))
 
 (define (compiler-backend-runtime-index-extern-concat?
   [index : CompilerBackendRuntimeIndex]) : bool
   (or
     (backend-or4
-      (compiler-backend-runtime-index-extern? index "tl_string_concat")
-      (compiler-backend-runtime-index-extern? index "tl_string_concat3")
-      (compiler-backend-runtime-index-extern? index "tl_string_concat4")
-      (compiler-backend-runtime-index-extern? index "tl_string_concat5"))
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-string-concat)
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-string-concat3)
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-string-concat4)
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-string-concat5))
     false))
 
 (define (compiler-backend-runtime-index-calls-concat?
   [index : CompilerBackendRuntimeIndex]) : bool
   (or
     (backend-or4
-      (compiler-backend-runtime-index-calls? index "tl_string_concat")
-      (compiler-backend-runtime-index-calls? index "tl_string_concat3")
-      (compiler-backend-runtime-index-calls? index "tl_string_concat4")
-      (compiler-backend-runtime-index-calls? index "tl_string_concat5"))
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-string-concat)
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-string-concat3)
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-string-concat4)
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-string-concat5))
     false))
 
 (define (compiler-backend-runtime-name-id [name : String]) : i64
@@ -45473,10 +45770,20 @@
             (and alloc (cbi.compiler-builtin-backend-tl-alloc-id? name-id))
             (and
               region-mark
-              (cbi.compiler-builtin-backend-tl-region-mark-id? name-id))
+              (or
+                (cbi.compiler-builtin-backend-tl-region-mark-id? name-id)
+                (=
+                  name-id
+                  (compiler-backend-runtime-tail-region-mark-call-id
+                    provides-tail))))
             (and
               region-reset
-              (cbi.compiler-builtin-backend-tl-region-reset-id? name-id))
+              (or
+                (cbi.compiler-builtin-backend-tl-region-reset-id? name-id)
+                (=
+                  name-id
+                  (compiler-backend-runtime-tail-region-reset-call-id
+                    provides-tail))))
             false
             (and
               substring
@@ -45523,17 +45830,29 @@
     [index : CompilerBackendRuntimeIndex
       (compiler-backend-runtime-index functions externs)]
     [defines-alloc : bool
-      (compiler-backend-runtime-index-defines? index "tl_alloc")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-alloc)]
     [defines-oob : bool
-      (compiler-backend-runtime-index-defines? index "tl_oob_abort")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-oob-abort)]
     [defines-div-abort : bool
-      (compiler-backend-runtime-index-defines? index "tl_div_abort")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-div-abort)]
     [defines-shift-abort : bool
-      (compiler-backend-runtime-index-defines? index "tl_shift_abort")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-shift-abort)]
     [defines-substring : bool
-      (compiler-backend-runtime-index-defines? index "tl_substring")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-substring)]
     [defines-str-view : bool
-      (compiler-backend-runtime-index-defines? index "tl_str_view")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-str-view)]
     [defines-concat : bool
       (compiler-backend-runtime-index-defines-concat? index)]
     [provides-substring : bool
@@ -45558,279 +45877,159 @@
         (compiler-backend-function-list-defines-runtime-prelude-helper?
           functions
           "string-concat5"))]
-    [_defines-string-eq : bool
-      (compiler-backend-runtime-index-defines? index "tl_string_eq")]
-    [_defines-string-to-int : bool
-      (compiler-backend-runtime-index-defines? index "tl_string_to_int")]
-    [_defines-hash-string : bool
-      (compiler-backend-runtime-index-defines? index "tl_hash_string")]
     [defines-int-to-string : bool
-      (compiler-backend-runtime-index-defines? index "tl_int_to_string")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-int-to-string)]
     [provides-int-to-string : bool
       (compiler-backend-function-list-defines-runtime-prelude-helper?
         functions
         "int-to-string")]
-    [_defines-print-err : bool
-      (compiler-backend-runtime-index-defines? index "tl_print_err")]
-    [_defines-print-str : bool
-      (compiler-backend-runtime-index-defines? index "tl_print_str")]
-    [_defines-print-string : bool
-      (compiler-backend-runtime-index-defines? index "tl_print_string")]
-    [_defines-print-char : bool
-      (compiler-backend-runtime-index-defines? index "tl_print_char")]
-    [_defines-print-f64 : bool
-      (compiler-backend-runtime-index-defines? index "tl_print_f64")]
     [defines-region-mark : bool
-      (compiler-backend-runtime-index-defines? index "tl_region_mark")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-region-mark)]
     [defines-region-reset : bool
-      (compiler-backend-runtime-index-defines? index "tl_region_reset")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-region-reset)]
     [defines-env-var-exists : bool
-      (compiler-backend-runtime-index-defines? index "tl_env_var_exists")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-env-var-exists)]
     [defines-env-var-value : bool
-      (compiler-backend-runtime-index-defines? index "tl_env_var_value")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-env-var-value)]
     [defines-env-path-separator : bool
-      (compiler-backend-runtime-index-defines? index "path-separator")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-env-path-separator)]
     [defines-profile-alloc-total : bool
-      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_total")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-total)]
     [defines-profile-alloc-live : bool
-      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_live")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-live)]
     [defines-profile-alloc-peak : bool
-      (compiler-backend-runtime-index-defines? index "tl_profile_alloc_peak")]
+      (compiler-backend-runtime-index-defines?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-peak)]
     [defines-profile-alloc-reset-peak : bool
       (compiler-backend-runtime-index-defines?
         index
-        "tl_profile_alloc_reset_peak")]
-    [_extern-alloc : bool
-      (compiler-backend-runtime-index-extern? index "tl_alloc")]
+        cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
     [extern-oob : bool
-      (compiler-backend-runtime-index-extern? index "tl_oob_abort")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-oob-abort)]
     [extern-div-abort : bool
-      (compiler-backend-runtime-index-extern? index "tl_div_abort")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-div-abort)]
     [extern-shift-abort : bool
-      (compiler-backend-runtime-index-extern? index "tl_shift_abort")]
-    [_extern-substring : bool
-      (compiler-backend-runtime-index-extern? index "tl_substring")]
-    [_extern-str-view : bool
-      (compiler-backend-runtime-index-extern? index "tl_str_view")]
-    [_extern-concat : bool
-      (compiler-backend-runtime-index-extern-concat? index)]
-    [_extern-string-eq : bool
-      (compiler-backend-runtime-index-extern? index "tl_string_eq")]
-    [_extern-string-to-int : bool
-      (compiler-backend-runtime-index-extern? index "tl_string_to_int")]
-    [_extern-hash-string : bool
-      (compiler-backend-runtime-index-extern? index "tl_hash_string")]
-    [_extern-int-to-string : bool
-      (compiler-backend-runtime-index-extern? index "tl_int_to_string")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-shift-abort)]
     [extern-abort : bool
-      (compiler-backend-runtime-index-extern-alias?
-        index
-        ".L_tl_abort"
-        "tl_abort_string")]
-    [_extern-print-err : bool
-      (compiler-backend-runtime-index-extern-alias?
-        index
-        "tl_print_err"
-        "tl_print_error")]
-    [_extern-print-str : bool
-      (compiler-backend-runtime-index-extern-alias?
-        index
-        "tl_print_str"
-        "tl_print_string")]
-    [_extern-print-char : bool
-      (compiler-backend-runtime-index-extern? index "tl_print_char")]
-    [_extern-print-f64 : bool
-      (compiler-backend-runtime-index-extern? index "tl_print_f64")]
-    [_extern-arg-count : bool
-      (compiler-backend-runtime-index-extern-alias?
-        index
-        ".L_tl_arg_count"
-        "tl_arg_count")]
-    [_extern-arg : bool
-      (compiler-backend-runtime-index-extern-alias? index ".L_tl_arg" "tl_arg")]
-    [_extern-read-file : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_read_file")]
-    [_extern-write-file : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_write_file")]
-    [_extern-file-exists : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_exists")]
-    [_extern-read-file-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_read_file_status")]
-    [_extern-write-file-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_write_file_status")]
-    [_extern-append-file-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_append_file_status")]
-    [_extern-file-exists-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_exists_status")]
-    [_extern-file-open-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_open_status")]
-    [_extern-file-close-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_close_status")]
-    [_extern-file-read-chunk-status : bool
       (compiler-backend-runtime-index-extern?
         index
-        ".L_tl_file_read_chunk_status")]
-    [_extern-file-write-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_write_status")]
-    [_extern-file-flush-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_flush_status")]
-    [_extern-file-read-chunk-bytes : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        ".L_tl_file_read_chunk_bytes")]
-    [_extern-file-read-chunk-eof : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_file_read_chunk_eof")]
-    [_extern-fs-mkdir-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_mkdir_status")]
-    [_extern-fs-remove-file-status : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        ".L_tl_fs_remove_file_status")]
-    [_extern-fs-remove-dir-status : bool
-      (compiler-backend-runtime-index-extern?
-        index
-        ".L_tl_fs_remove_dir_status")]
-    [_extern-fs-rename-status : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_rename_status")]
-    [_extern-fs-process-id : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_fs_process_id")]
-    [_extern-read-line : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_read_stdin_line")]
-    [_extern-read-bytes : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_read_stdin_bytes")]
-    [_extern-stdin-eof : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_stdin_eof")]
-    [_extern-flush-stdout : bool
-      (compiler-backend-runtime-index-extern? index ".L_tl_flush_stdout")]
+        cbi.compiler-builtin-id-tl-abort-label)]
     [extern-region-mark : bool
-      (compiler-backend-runtime-index-extern? index "tl_region_mark")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-region-mark)]
     [extern-region-reset : bool
-      (compiler-backend-runtime-index-extern? index "tl_region_reset")]
-    [_extern-env-var-exists : bool
-      (compiler-backend-runtime-index-extern? index "tl_env_var_exists")]
-    [_extern-env-var-value : bool
-      (compiler-backend-runtime-index-extern? index "tl_env_var_value")]
-    [_extern-env-path-separator : bool
-      (compiler-backend-runtime-index-extern? index "path-separator")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-region-reset)]
     [extern-profile-alloc-total : bool
-      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_total")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-total)]
     [extern-profile-alloc-live : bool
-      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_live")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-live)]
     [extern-profile-alloc-peak : bool
-      (compiler-backend-runtime-index-extern? index "tl_profile_alloc_peak")]
+      (compiler-backend-runtime-index-extern?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-peak)]
     [extern-profile-alloc-reset-peak : bool
       (compiler-backend-runtime-index-extern?
         index
-        "tl_profile_alloc_reset_peak")]
+        cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
     [calls-alloc : bool
-      (compiler-backend-runtime-index-calls? index "tl_alloc")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-alloc)]
     [calls-oob : bool
-      (compiler-backend-runtime-index-calls? index "tl_oob_abort")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-oob-abort)]
     [calls-div-abort : bool
-      (compiler-backend-runtime-index-calls? index "tl_div_abort")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-div-abort)]
     [calls-shift-abort : bool
-      (compiler-backend-runtime-index-calls? index "tl_shift_abort")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-shift-abort)]
     [calls-substring : bool
-      (compiler-backend-runtime-index-calls? index "tl_substring")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-substring)]
     [calls-str-view : bool
-      (compiler-backend-runtime-index-calls? index "tl_str_view")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-str-view)]
     [calls-concat : bool (compiler-backend-runtime-index-calls-concat? index)]
-    [_calls-string-eq : bool
-      (compiler-backend-runtime-index-calls? index "tl_string_eq")]
-    [_calls-string-to-int : bool
-      (compiler-backend-runtime-index-calls? index "tl_string_to_int")]
-    [_calls-hash-string : bool
-      (compiler-backend-runtime-index-calls? index "tl_hash_string")]
     [calls-int-to-string : bool
-      (compiler-backend-runtime-index-calls? index "tl_int_to_string")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-int-to-string)]
     [calls-abort : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_abort")]
-    [_calls-print-err : bool
-      (compiler-backend-runtime-index-calls? index "tl_print_err")]
-    [_calls-print-str : bool
-      (compiler-backend-runtime-index-calls? index "tl_print_str")]
-    [_calls-print-string : bool
-      (compiler-backend-runtime-index-calls? index "tl_print_string")]
-    [_calls-print-char : bool
-      (compiler-backend-runtime-index-calls? index "tl_print_char")]
-    [_calls-print-f64 : bool
-      (compiler-backend-runtime-index-calls? index "tl_print_f64")]
-    [_calls-arg-count : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_arg_count")]
-    [_calls-arg : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_arg")]
-    [_calls-read-file : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_read_file")]
-    [_calls-write-file : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_write_file")]
-    [_calls-file-exists : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_exists")]
-    [_calls-read-file-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_read_file_status")]
-    [_calls-write-file-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_write_file_status")]
-    [_calls-append-file-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_append_file_status")]
-    [_calls-file-exists-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_exists_status")]
-    [_calls-file-open-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_open_status")]
-    [_calls-file-close-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_close_status")]
-    [_calls-file-read-chunk-status : bool
       (compiler-backend-runtime-index-calls?
         index
-        ".L_tl_file_read_chunk_status")]
-    [_calls-file-write-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_write_status")]
-    [_calls-file-flush-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_flush_status")]
-    [_calls-file-read-chunk-bytes : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        ".L_tl_file_read_chunk_bytes")]
-    [_calls-file-read-chunk-eof : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_file_read_chunk_eof")]
-    [_calls-fs-mkdir-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_mkdir_status")]
-    [_calls-fs-remove-file-status : bool
-      (compiler-backend-runtime-index-calls?
-        index
-        ".L_tl_fs_remove_file_status")]
-    [_calls-fs-remove-dir-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_remove_dir_status")]
-    [_calls-fs-rename-status : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_rename_status")]
-    [_calls-fs-process-id : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_fs_process_id")]
-    [_calls-read-line : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_line")]
-    [_calls-read-bytes : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_read_stdin_bytes")]
-    [_calls-stdin-eof : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_stdin_eof")]
-    [_calls-flush-stdout : bool
-      (compiler-backend-runtime-index-calls? index ".L_tl_flush_stdout")]
+        cbi.compiler-builtin-id-tl-abort-label)]
     [calls-region-mark : bool
-      (compiler-backend-runtime-index-calls? index "tl_region_mark")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-region-mark)]
     [calls-region-reset : bool
-      (compiler-backend-runtime-index-calls? index "tl_region_reset")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-region-reset)]
     [calls-env-var-exists : bool
-      (compiler-backend-runtime-index-calls? index "tl_env_var_exists")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-env-var-exists)]
     [calls-env-var-value : bool
-      (compiler-backend-runtime-index-calls? index "tl_env_var_value")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-env-var-value)]
     [calls-env-path-separator : bool
-      (compiler-backend-runtime-index-calls? index "path-separator")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-env-path-separator)]
     [calls-profile-alloc-total : bool
-      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_total")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-total)]
     [calls-profile-alloc-live : bool
-      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_live")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-live)]
     [calls-profile-alloc-peak : bool
-      (compiler-backend-runtime-index-calls? index "tl_profile_alloc_peak")]
+      (compiler-backend-runtime-index-calls?
+        index
+        cbi.compiler-builtin-id-tl-profile-alloc-peak)]
     [calls-profile-alloc-reset-peak : bool
       (compiler-backend-runtime-index-calls?
         index
-        "tl_profile_alloc_reset_peak")]
+        cbi.compiler-builtin-id-tl-profile-alloc-reset-peak)]
     [needs-oob : bool (and (not defines-oob) (or extern-oob calls-oob))]
     [needs-div-abort : bool
       (or
@@ -45930,11 +46129,11 @@
           (not defines-profile-alloc-reset-peak)
           (or extern-profile-alloc-reset-peak calls-profile-alloc-reset-peak)))]
     [needs-tlci-macro-entry : bool
-      (or
-        (compiler-backend-runtime-index-calls? index "tl_tlci_call_macro_entry")
-        (compiler-backend-runtime-index-calls?
-          index
-          "tlci-loader-call-macro-entry-raw"))]
+      (let
+        [call-id : i64 (struct-get index tlci-macro-entry-call-id)]
+        (and
+          (>= call-id 0)
+          (compiler-backend-runtime-index-calls? index call-id)))]
     (ResultBackendRuntimePlanWithIndex.Ok
       (CompilerBackendRuntimePlanWithIndex
         (CompilerBackendRuntimePlan.Plan
@@ -45975,7 +46174,9 @@
           (CompilerBackendRuntimeTailPlan
             needs-profile
             false
-            needs-tlci-macro-entry))
+            needs-tlci-macro-entry
+            (struct-get index region-mark-call-id)
+            (struct-get index region-reset-call-id)))
         index))))
 
 (define (compiler-backend-runtime-plan-for
@@ -46007,69 +46208,67 @@
 
 (define (compiler-backend-extern-symbol-referenced?
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendStringList]
-  [extern-name : String]
-  [link-symbol : String]) : bool
+  [referenced-functions : BackendSymbolList]
+  [extern-name-id : i64]
+  [link-symbol-id : i64]) : bool
   (let
-    [user-symbol : String (compiler-backend-user-symbol extern-name)]
     [foreign-link-symbol : bool
       (and
-        (not (string.eq extern-name link-symbol))
-        (not (compiler-backend-runtime-helper-known? extern-name))
-        (not (compiler-backend-runtime-helper-known? link-symbol)))]
+        (not (= extern-name-id link-symbol-id))
+        (not (compiler-backend-runtime-helper-known-id? extern-name-id))
+        (not (compiler-backend-runtime-helper-known-id? link-symbol-id)))]
     (or
       foreign-link-symbol
       (backend-or4
-        (compiler-backend-runtime-index-calls? runtime-index extern-name)
-        (compiler-backend-runtime-index-calls? runtime-index link-symbol)
-        (compiler-backend-string-list-contains?
+        (compiler-backend-runtime-index-calls? runtime-index extern-name-id)
+        (compiler-backend-runtime-index-calls? runtime-index link-symbol-id)
+        (compiler-backend-symbol-list-contains-id?
           referenced-functions
-          extern-name)
-        (compiler-backend-string-list-contains?
-          referenced-functions
-          link-symbol))
-      (compiler-backend-runtime-index-calls? runtime-index user-symbol)
-      (compiler-backend-string-list-contains? referenced-functions user-symbol))))
+          extern-name-id)
+        false)
+      false)))
 
 (define (compiler-backend-emit-externs-into
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendStringList]
+  [referenced-functions : BackendSymbolList]
   [buf : text_buf.TextBuf]) : text_buf.TextBuf
   (match externs
     [(CompilerIrExternList.Nil) buf]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
-          (if (and
-            (compiler-backend-emits-extern-symbol?
-              name
-              link-symbol
-              provided
-              plan)
-            (compiler-backend-extern-symbol-referenced?
-              runtime-index
-              referenced-functions
-              name
-              link-symbol))
-            (compiler-backend-emit-externs-into
-              (box-get rest)
-              plan
-              runtime-index
-              referenced-functions
-              (text_buf.append
-                (text_buf.append buf ".extern ")
-                (str_cat.str-cat
-                  (compiler-backend-link-symbol link-symbol plan)
-                  "\n"
-                  "")))
-            (compiler-backend-emit-externs-into
-              (box-get rest)
-              plan
-              runtime-index
-              referenced-functions
-              buf))])]
+        [(CompilerIrExtern.Extern name-id _ name _ _ link-symbol-id _ provided)
+          (let
+            [link-symbol : String (compiler-ir-symbol-text link-symbol-id)]
+            (if (and
+              (compiler-backend-emits-extern-symbol?
+                name-id
+                link-symbol-id
+                provided
+                plan)
+              (compiler-backend-extern-symbol-referenced?
+                runtime-index
+                referenced-functions
+                name-id
+                link-symbol-id))
+              (compiler-backend-emit-externs-into
+                (box-get rest)
+                plan
+                runtime-index
+                referenced-functions
+                (text_buf.append
+                  (text_buf.append buf ".extern ")
+                  (str_cat.str-cat
+                    (compiler-backend-link-symbol-id link-symbol-id plan)
+                    "\n"
+                    "")))
+              (compiler-backend-emit-externs-into
+                (box-get rest)
+                plan
+                runtime-index
+                referenced-functions
+                buf)))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-emit-externs-into
         (compiler-ir-extern-seq-to-list seq)
@@ -49004,7 +49203,7 @@ tl_tlci_call_macro_entry:
   [plan : CompilerBackendRuntimePlan]
   [program-index : CompilerBackendProgramIndex]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [closure-names : BackendStringList]
+  [closure-names : BackendSymbolList]
   [strings : BackendStringList]
   [bytes : BackendStringList]
   [floats : BackendFloatList]
@@ -49140,7 +49339,7 @@ tl_tlci_call_macro_entry:
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
-    [closure-names : BackendStringList
+    [closure-names : BackendSymbolList
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringList
       (compiler-backend-program-collections-strings collections)]
@@ -49691,7 +49890,7 @@ tl_tlci_call_macro_entry:
   (match value
     [(CompilerIrValue.Global name)
       (let
-        [symbol : String (compiler-backend-user-symbol name)]
+        [symbol : String (compiler-backend-user-symbol-id name)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             parts
@@ -49701,7 +49900,7 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
     [(CompilerIrValue.GlobalAddr name)
       (let
-        [symbol : String (compiler-backend-user-symbol name)]
+        [symbol : String (compiler-backend-user-symbol-id name)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             parts
@@ -49741,7 +49940,9 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectX64Instr.LoadRip symbol)))]
     [(CompilerIrValue.Function name)
       (let
-        [symbol : String (compiler-backend-closure-descriptor-label name)]
+        [symbol : String
+          (compiler-backend-closure-descriptor-label
+            (compiler-ir-symbol-text name))]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             parts
@@ -50155,7 +50356,8 @@ tl_tlci_call_macro_entry:
     [(CompilerIrValue.F64 _)
       (compiler-backend-object-add-nonempty-bytes
         (compiler-backend-object-value-ref parts site value)
-        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]))
+        (compiler-backend-object-mov-reg-reg-bytes "%rax" reg))]
+    [(CompilerIrValue.RuntimeGlobal _) parts]))
 
 (define (compiler-backend-object-load-value-to-reg-with-type
   [parts : CompilerBackendObjectParts]
@@ -50839,7 +51041,7 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectX64Instr.TailCall call-target)))]
     [(CompilerIrInstr.Store name value ty)
       (let
-        [symbol : String (compiler-backend-user-symbol name)]
+        [symbol : String (compiler-backend-user-symbol-id name)]
         (compiler-backend-object-add-text
           (compiler-backend-object-add-text-relocation
             (compiler-backend-object-value-ref-with-type
@@ -51385,7 +51587,7 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.Global name)
       (let
-        [symbol : String (compiler-backend-user-symbol name)]
+        [symbol : String (compiler-backend-user-symbol-id name)]
         (compiler-backend-object-add-data
           (compiler-backend-object-add-data-relocation
             parts
@@ -51395,7 +51597,7 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.GlobalAddr name)
       (let
-        [symbol : String (compiler-backend-user-symbol name)]
+        [symbol : String (compiler-backend-user-symbol-id name)]
         (compiler-backend-object-add-data
           (compiler-backend-object-add-data-relocation
             parts
@@ -51405,7 +51607,9 @@ tl_tlci_call_macro_entry:
           (cobj.CompilerObjectDataRecord.SymbolAddress symbol)))]
     [(CompilerIrValue.Function name)
       (let
-        [symbol : String (compiler-backend-closure-descriptor-label name)]
+        [symbol : String
+          (compiler-backend-closure-descriptor-label
+            (compiler-ir-symbol-text name))]
         (compiler-backend-object-add-data
           (compiler-backend-object-add-data-relocation
             parts
@@ -51425,7 +51629,7 @@ tl_tlci_call_macro_entry:
       (match global
         [(CompilerIrGlobal.Global name ty value)
           (let
-            [symbol : String (compiler-backend-user-symbol name)]
+            [symbol : String (compiler-backend-user-symbol-id name)]
             (compiler-backend-object-globals
               (if (compiler-backend-runtime-global? ty value)
                 (compiler-backend-object-add-bss
@@ -51582,14 +51786,16 @@ tl_tlci_call_macro_entry:
 
 (define (compiler-backend-object-closure-descriptors
   [parts : CompilerBackendObjectParts]
-  [names : BackendStringList]
+  [names : BackendSymbolList]
   [program-index : CompilerBackendProgramIndex]) : CompilerBackendObjectParts
   (match names
-    [(BackendStringList.Nil) parts]
-    [(BackendStringList.Cons name rest)
+    [(BackendSymbolList.Nil) parts]
+    [(BackendSymbolList.Cons name rest)
       (let
-        [descriptor : String (compiler-backend-closure-descriptor-label name)]
-        [entry : String (compiler-backend-closure-entry-label name)]
+        [name-text : String (compiler-ir-symbol-text name)]
+        [descriptor : String
+          (compiler-backend-closure-descriptor-label name-text)]
+        [entry : String (compiler-backend-closure-entry-label name-text)]
         (compiler-backend-object-closure-descriptors
           (match (compiler-backend-index-signature program-index name)
             [(CompilerBackendMaybeSignature.Some _ _)
@@ -51623,37 +51829,39 @@ tl_tlci_call_macro_entry:
   [externs : CompilerIrExternList]
   [plan : CompilerBackendRuntimePlan]
   [runtime-index : CompilerBackendRuntimeIndex]
-  [referenced-functions : BackendStringList]) : CompilerBackendObjectParts
+  [referenced-functions : BackendSymbolList]) : CompilerBackendObjectParts
   (match externs
     [(CompilerIrExternList.Nil) parts]
     [(CompilerIrExternList.Cons item rest)
       (match item
-        [(CompilerIrExtern.Extern name _ _ link-symbol _ provided)
-          (compiler-backend-object-externs
-            (if (and
-              (not
-                (compiler-backend-object-runtime-symbol-provided?
-                  plan
-                  link-symbol))
-              (compiler-backend-emits-extern-symbol?
-                name
-                link-symbol
-                provided
-                plan)
-              (compiler-backend-extern-symbol-referenced?
-                runtime-index
-                referenced-functions
-                name
-                link-symbol))
-              (compiler-backend-object-symbol-extern
-                parts
-                (compiler-backend-link-symbol link-symbol plan)
-                (cobj.CompilerObjectSymbolKind.Function))
-              parts)
-            (box-get rest)
-            plan
-            runtime-index
-            referenced-functions)])]
+        [(CompilerIrExtern.Extern name-id _ name _ _ link-symbol-id _ provided)
+          (let
+            [link-symbol : String (compiler-ir-symbol-text link-symbol-id)]
+            (compiler-backend-object-externs
+              (if (and
+                (not
+                  (compiler-backend-object-runtime-symbol-provided-id?
+                    plan
+                    link-symbol-id))
+                (compiler-backend-emits-extern-symbol?
+                  name-id
+                  link-symbol-id
+                  provided
+                  plan)
+                (compiler-backend-extern-symbol-referenced?
+                  runtime-index
+                  referenced-functions
+                  name-id
+                  link-symbol-id))
+                (compiler-backend-object-symbol-extern
+                  parts
+                  (compiler-backend-link-symbol-id link-symbol-id plan)
+                  (cobj.CompilerObjectSymbolKind.Function))
+                parts)
+              (box-get rest)
+              plan
+              runtime-index
+              referenced-functions))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-object-externs
         parts
@@ -51695,6 +51903,14 @@ tl_tlci_call_macro_entry:
     (string.eq name "tl_memcpy")
     (string.eq name "tl_memchr")
     (string.eq name "tl_tlci_call_image_entry")))
+
+(define (compiler-backend-object-runtime-symbol-provided-id?
+  [plan : CompilerBackendRuntimePlan]
+  [name-id : i64]) : bool
+  (or
+    (compiler-backend-plan-provides-id? plan name-id)
+    (cbi.compiler-builtin-backend-tl-alloc-id? name-id)
+    (compiler-backend-fixed-fault-symbol-id? name-id)))
 
 (define (compiler-backend-object-runtime-symbols
   [parts : CompilerBackendObjectParts]
@@ -52394,7 +52610,7 @@ tl_tlci_call_macro_entry:
   (let
     [collections : CompilerBackendProgramCollections
       (compiler-backend-collect-program-collections program)]
-    [closure-names : BackendStringList
+    [closure-names : BackendSymbolList
       (compiler-backend-program-collections-functions collections)]
     [strings : BackendStringList
       (compiler-backend-program-collections-strings collections)]
@@ -55901,21 +56117,36 @@ tl_tlci_call_macro_entry:
 
 (define (compiler-backend-runtime-helper-externs) : CompilerIrExternList
   (compiler-ir-extern-cons
-    (compiler-ir-extern-default "tl_alloc" (AstType.I64))
+    (compiler-ir-extern-default-id
+      cbi.compiler-builtin-id-tl-alloc
+      "tl_alloc"
+      (AstType.I64))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_substring" (AstType.I64))
+      (compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-substring
+        "tl_substring"
+        (AstType.I64))
       (compiler-ir-extern-cons
-        (compiler-ir-extern-default "tl_string_concat" (AstType.I64))
+        (compiler-ir-extern-default-id
+          cbi.compiler-builtin-id-tl-string-concat
+          "tl_string_concat"
+          (AstType.I64))
         (compiler-ir-extern-cons
-          (compiler-ir-extern-default "tl_int_to_string" (AstType.String))
+          (compiler-ir-extern-default-id
+            cbi.compiler-builtin-id-tl-int-to-string
+            "tl_int_to_string"
+            (AstType.String))
           CompilerIrExternList.Nil)))))
+
+(define (compiler-backend-test-symbol [name : String]) : i64
+  (compiler-ir-test-symbol name))
 
 (define (compiler-backend-runtime-helper-program) : CompilerIrProgram
   (CompilerIrProgram.Program
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "main"
+        (compiler-backend-test-symbol "main")
         CompilerIrParamList.Nil
         (AstType.I64)
         4
@@ -55925,13 +56156,13 @@ tl_tlci_call_macro_entry:
             (compiler-ir-instr-cons
               (CompilerIrInstr.Call
                 0
-                "tl_alloc"
+                (compiler-backend-test-symbol "tl_alloc")
                 (CompilerIrCallArgs.One (CompilerIrValue.I64 8))
                 (AstType.I64))
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   1
-                  "tl_substring"
+                  (compiler-backend-test-symbol "tl_substring")
                   (compiler-ir-call-args-from-list
                     (compiler-ir-value-cons
                       (CompilerIrValue.I64 0)
@@ -55944,7 +56175,7 @@ tl_tlci_call_macro_entry:
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     2
-                    "tl_string_concat"
+                    (compiler-backend-test-symbol "tl_string_concat")
                     (compiler-ir-call-args-from-list
                       (compiler-ir-value-cons
                         (CompilerIrValue.I64 0)
@@ -56142,7 +56373,7 @@ tl_tlci_call_macro_entry:
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "stdlib/runtime.tl::str-view"
+        (compiler-backend-test-symbol "stdlib/runtime.tl::str-view")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -56156,7 +56387,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (compiler-backend-test-symbol "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           0
@@ -56170,7 +56401,10 @@ tl_tlci_call_macro_entry:
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_str_view" (AstType.I64))
+      (compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-str-view
+        "tl_str_view"
+        (AstType.I64))
       CompilerIrExternList.Nil)))
 
 (define (compiler-backend-unused-str-view-extern-ok?) : bool
@@ -56329,7 +56563,7 @@ tl_tlci_call_macro_entry:
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "tl_alloc"
+        (compiler-backend-test-symbol "tl_alloc")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -56343,7 +56577,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (compiler-backend-test-symbol "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           1
@@ -56353,7 +56587,7 @@ tl_tlci_call_macro_entry:
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
-                  "tl_alloc"
+                  (compiler-backend-test-symbol "tl_alloc")
                   (CompilerIrCallArgs.Nil)
                   (AstType.I64))
                 (compiler-ir-instr-cons
@@ -56383,7 +56617,7 @@ tl_tlci_call_macro_entry:
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "tl_alloc"
+        (compiler-backend-test-symbol "tl_alloc")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -56397,7 +56631,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (compiler-backend-test-symbol "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           2
@@ -56407,13 +56641,13 @@ tl_tlci_call_macro_entry:
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
-                  "tl_alloc"
+                  (compiler-backend-test-symbol "tl_alloc")
                   (CompilerIrCallArgs.Nil)
                   (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Call
                     1
-                    "tl_substring"
+                    (compiler-backend-test-symbol "tl_substring")
                     (compiler-ir-call-args-from-list
                       (compiler-ir-value-cons
                         (CompilerIrValue.I64 0)
@@ -56430,7 +56664,10 @@ tl_tlci_call_macro_entry:
             CompilerIrBlockList.Nil))
         CompilerIrFunctionList.Nil))
     (compiler-ir-extern-cons
-      (compiler-ir-extern-default "tl_substring" (AstType.I64))
+      (compiler-ir-extern-default-id
+        cbi.compiler-builtin-id-tl-substring
+        "tl_substring"
+        (AstType.I64))
       CompilerIrExternList.Nil)))
 
 (define (compiler-backend-runtime-coexist-ok?) : bool
@@ -56456,7 +56693,7 @@ tl_tlci_call_macro_entry:
     CompilerIrGlobalList.Nil
     (compiler-ir-function-cons
       (CompilerIrFunction.Function
-        "lib.tl::helper"
+        (compiler-backend-test-symbol "lib.tl::helper")
         CompilerIrParamList.Nil
         (AstType.I64)
         0
@@ -56470,7 +56707,7 @@ tl_tlci_call_macro_entry:
           CompilerIrBlockList.Nil))
       (compiler-ir-function-cons
         (CompilerIrFunction.Function
-          "main"
+          (compiler-backend-test-symbol "main")
           CompilerIrParamList.Nil
           (AstType.I64)
           1
@@ -56480,7 +56717,7 @@ tl_tlci_call_macro_entry:
               (compiler-ir-instr-cons
                 (CompilerIrInstr.Call
                   0
-                  "lib.tl::helper"
+                  (compiler-backend-test-symbol "lib.tl::helper")
                   (CompilerIrCallArgs.Nil)
                   (AstType.I64))
                 (compiler-ir-instr-cons

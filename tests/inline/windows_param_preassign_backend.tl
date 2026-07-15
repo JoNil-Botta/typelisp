@@ -1,6 +1,7 @@
 ;; windows_param_preassign_backend.tl - backend smoke for #3493's Win64
 ;; incoming scalar parameter homes.
 (import stdlib.io)
+(import compiler_intern as ci)
 
 ;; Retained for #2454 path-import compatibility: compiler_backend.tl is raw
 ;; source without a resolvable top-level module name.
@@ -11,23 +12,32 @@
     unit
     (io.panic message)))
 
-(define (win-param-preassign-globals) : CompilerIrGlobalList
+(define (win-param-preassign-logical-name [name : String]) : i64
+  (ci.intern-generated-name name))
+
+(define (win-param-preassign-globals
+  [pa : i64]
+  [pb : i64]
+  [pc : i64]
+  [pd : i64]) : CompilerIrGlobalList
   (compiler-ir-global-cons
-    (CompilerIrGlobal.Global "win_pa" (AstType.I64) (CompilerIrValue.I64 0))
+    (CompilerIrGlobal.Global pa (AstType.I64) (CompilerIrValue.I64 0))
     (compiler-ir-global-cons
-      (CompilerIrGlobal.Global "win_pb" (AstType.I64) (CompilerIrValue.I64 0))
+      (CompilerIrGlobal.Global pb (AstType.I64) (CompilerIrValue.I64 0))
       (compiler-ir-global-cons
-        (CompilerIrGlobal.Global "win_pc" (AstType.I64) (CompilerIrValue.I64 0))
+        (CompilerIrGlobal.Global pc (AstType.I64) (CompilerIrValue.I64 0))
         (compiler-ir-global-cons
-          (CompilerIrGlobal.Global
-            "win_pd"
-            (AstType.I64)
-            (CompilerIrValue.I64 0))
+          (CompilerIrGlobal.Global pd (AstType.I64) (CompilerIrValue.I64 0))
           CompilerIrGlobalList.Nil)))))
 
-(define (win-param-preassign-function) : CompilerIrFunction
+(define (win-param-preassign-function
+  [function-name : i64]
+  [pa : i64]
+  [pb : i64]
+  [pc : i64]
+  [pd : i64]) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "win_param_preassign"
+    function-name
     (compiler-ir-param-cons
       (CompilerIrParam.Param "a" (AstType.I64) 0)
       (compiler-ir-param-cons
@@ -43,38 +53,36 @@
       (compiler-ir-block
         "entry"
         (compiler-ir-instr-cons
-          (CompilerIrInstr.Store "win_pa" (CompilerIrValue.Var 0) (AstType.I64))
+          (CompilerIrInstr.Store pa (CompilerIrValue.Var 0) (AstType.I64))
           (compiler-ir-instr-cons
-            (CompilerIrInstr.Store
-              "win_pb"
-              (CompilerIrValue.Var 1)
-              (AstType.I64))
+            (CompilerIrInstr.Store pb (CompilerIrValue.Var 1) (AstType.I64))
             (compiler-ir-instr-cons
-              (CompilerIrInstr.Store
-                "win_pc"
-                (CompilerIrValue.Var 2)
-                (AstType.I64))
+              (CompilerIrInstr.Store pc (CompilerIrValue.Var 2) (AstType.I64))
               (compiler-ir-instr-cons
-                (CompilerIrInstr.Store
-                  "win_pd"
-                  (CompilerIrValue.Var 3)
-                  (AstType.I64))
+                (CompilerIrInstr.Store pd (CompilerIrValue.Var 3) (AstType.I64))
                 (compiler-ir-instr-cons
                   (CompilerIrInstr.Return CompilerIrMaybeValue.No)
                   CompilerIrInstrList.Nil))))))
       CompilerIrBlockList.Nil)))
 
 (define (win-param-preassign-program) : CompilerIrProgram
-  (CompilerIrProgram.Program
-    (win-param-preassign-globals)
-    (compiler-ir-function-cons
-      (win-param-preassign-function)
-      CompilerIrFunctionList.Nil)
-    CompilerIrExternList.Nil))
+  (let
+    [function-name : i64
+      (win-param-preassign-logical-name "win_param_preassign")]
+    [pa : i64 (win-param-preassign-logical-name "win_pa")]
+    [pb : i64 (win-param-preassign-logical-name "win_pb")]
+    [pc : i64 (win-param-preassign-logical-name "win_pc")]
+    [pd : i64 (win-param-preassign-logical-name "win_pd")]
+    (CompilerIrProgram.Program
+      (win-param-preassign-globals pa pb pc pd)
+      (compiler-ir-function-cons
+        (win-param-preassign-function function-name pa pb pc pd)
+        CompilerIrFunctionList.Nil)
+      CompilerIrExternList.Nil)))
 
 (define (win-param-preassign-safe-div-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "win_param_safe_div"
+    (win-param-preassign-logical-name "win_param_safe_div")
     (compiler-ir-param-cons
       (CompilerIrParam.Param "a" (AstType.I64) 0)
       (compiler-ir-param-cons

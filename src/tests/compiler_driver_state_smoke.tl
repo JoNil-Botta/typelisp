@@ -8,6 +8,7 @@
 (import "../compiler_clone.tl")
 (import "../compiler_specialize.tl")
 (import "../compiler_ctfe.tl")
+(import compiler_intern as ci)
 (import sym_i64_env)
 (import (hashmap i64 i64) as lower_i64_i64_map)
 
@@ -127,15 +128,24 @@
       (compiler-driver-state-session-cache-enable (compiler-driver-state-new))]
     [state-b : CompilerDriverState (compiler-driver-state-new)]
     [program : AstProgram (ast-program (ast-decl-list-new))]
+    [program-key : CompilerLoadProgramCacheKey
+      (CompilerLoadProgramCacheKey
+        CompilerLoadProgramEmbedded
+        -10
+        (sym_i64_env.sym-i64-empty))]
+    [prelude-key : CompilerLoadPreludeCacheKey
+      (CompilerLoadPreludeCacheKey
+        CompilerLoadInternIdNil
+        (sym_i64_env.sym-i64-empty))]
     [ok : bool true]
     (begin
       (compiler-driver-state-apply-session-flags! state-a)
       (compiler-load-program-cache-clear!)
       (unless
-        (compiler-load-program-cache-store "state-key" program)
+        (compiler-load-program-cache-store program-key program)
         (set! ok false))
       (compiler-load-runtime-prelude-cache-store
-        "prelude-key"
+        prelude-key
         (ast-decl-list-new)
         (ast-decl-path-list-new)
         (ast-decl-module-list-new)
@@ -149,10 +159,10 @@
       (unless
         (= (compiler-load-program-cache-store-count-value) 0)
         (set! ok false))
-      (match (compiler-load-program-cache-lookup "state-key")
+      (match (compiler-load-program-cache-lookup program-key)
         [(CompilerLoadProgramCacheMiss) unit]
         [(CompilerLoadProgramCacheHit _) (set! ok false)])
-      (match (compiler-load-runtime-prelude-cache-lookup "prelude-key")
+      (match (compiler-load-runtime-prelude-cache-lookup prelude-key)
         [(CompilerLoadPreludeCacheMiss) unit]
         [(CompilerLoadPreludeCacheHit _ _ _ _) (set! ok false)])
       (compiler-driver-state-apply-session-flags! state-a)
@@ -163,10 +173,10 @@
       (unless
         (= (compiler-load-program-cache-store-count-value) 1)
         (set! ok false))
-      (match (compiler-load-program-cache-lookup "state-key")
+      (match (compiler-load-program-cache-lookup program-key)
         [(CompilerLoadProgramCacheHit _) unit]
         [(CompilerLoadProgramCacheMiss) (set! ok false)])
-      (match (compiler-load-runtime-prelude-cache-lookup "prelude-key")
+      (match (compiler-load-runtime-prelude-cache-lookup prelude-key)
         [(CompilerLoadPreludeCacheHit _ _ _ _) unit]
         [(CompilerLoadPreludeCacheMiss) (set! ok false)])
       (compiler-load-session-cache-disable-for-test!)
@@ -363,6 +373,23 @@
               (compiler-driver-state-smoke-context-ptr-null-u8? pools body-id)))]
         [_ false])]))
 
+(define (compiler-driver-state-smoke-program-paths
+  [program : AstProgram]
+  [path : String]
+  [path-id : i64]) : AstDeclPathList
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [count : i64 (ast-decl-list-len (& (box-get decls-box)))]
+        [paths : AstDeclPathList (ast-decl-path-list-with-capacity count)]
+        [index : i64 0]
+        (begin
+          (while (< index count)
+            (begin
+              (ast-decl-path-list-push-with-owner-id (&mut paths) path path-id)
+              (set! index (+ index 1))))
+          paths))]))
+
 (define (compiler-driver-state-smoke-parse-pools-isolated?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -422,11 +449,16 @@
   [name : String]) : AstProgram
   (let
     [elem : i64 (ast-node-pool-context-type-push pools (AstType.I64))]
+    [field-name-id : i64 (ci.intern-generated-name "items")]
+    [name-id : i64 (ci.intern-generated-name name)]
     [field : AstFieldDef
-      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
+      (ast-field-def-id
+        field-name-id
+        (AstType.Array elem 2)
+        (AstFieldCleanup.No))]
     [decl : AstDecl
-      (ast-decl-def-struct
-        name
+      (ast-decl-def-struct-id
+        name-id
         (AstStructRepr.Default)
         (AstStructCleanup.No)
         (ast-field-def-cons field (ast-field-def-list-new)))]
@@ -464,7 +496,7 @@
 
 (define (compiler-driver-state-smoke-clone-dest-program
   [pools : AstNodePoolContext]
-  [name : String]) : AstProgram
+  [name-id : i64]) : AstProgram
   (let
     [_source-decoy-type : i64
       (ast-node-pool-context-type-push pools (AstType.Bool))]
@@ -473,15 +505,20 @@
       (ast-node-pool-context-expr-push pools (AstExpr.Literal (ast-lit-int -1)))]
     [value : i64
       (ast-node-pool-context-expr-push pools (AstExpr.Literal (ast-lit-int 91)))]
+    [field-name-id : i64 (ci.intern-generated-name "items")]
+    [value-name-id : i64 (ci.intern-generated-name "kept")]
     [field : AstFieldDef
-      (ast-field-def "items" (AstType.Array elem 2) (AstFieldCleanup.No))]
+      (ast-field-def-id
+        field-name-id
+        (AstType.Array elem 2)
+        (AstFieldCleanup.No))]
     [struct-decl : AstDecl
-      (ast-decl-def-struct
-        name
+      (ast-decl-def-struct-id
+        name-id
         (AstStructRepr.Default)
         (AstStructCleanup.No)
         (ast-field-def-cons field (ast-field-def-list-new)))]
-    [value-decl : AstDecl (ast-decl-def "kept" AstMaybeType.No value)]
+    [value-decl : AstDecl (ast-decl-def-id value-name-id AstMaybeType.No value)]
     (ast-program
       (ast-decl-cons struct-decl (ast-decl-cons value-decl (ast-decl-list-new))))))
 
@@ -583,10 +620,11 @@
           (compiler-driver-state-pool-context state-source)]
         [dest-pools : AstNodePoolContext
           (compiler-driver-state-pool-context state-dest)]
+        [clone-name-id : i64 (ci.intern-generated-name "CloneDest")]
         [program : AstProgram
           (compiler-driver-state-smoke-clone-dest-program
             source-pools
-            "CloneDest")]
+            clone-name-id)]
         [source-expr-len-before : i64
           (ast-node-pool-context-expr-len source-pools)]
         [source-type-len-before : i64
@@ -598,7 +636,9 @@
         [dest-decoy-type : i64
           (ast-node-pool-context-type-push dest-pools (AstType.Bool))]
         [roots : CloneNameList
-          (CloneNameList.Cons "CloneDest" (box (CloneNameList.Nil)))]
+          (CloneNameList.ConsId
+            (clone-name-key-id clone-name-id)
+            (box (CloneNameList.Nil)))]
         [compacted : AstProgramCompaction
           (clone-augment-program-with-roots-from-pools
             source-pools
@@ -897,32 +937,38 @@
   [type-cell : (Array i64)]
   [before-cell : (Array i64)]
   [after-cell : (Array i64)]) : bool
-  (match (parse-ast-source-diagnostic-with-cfg-and-pools
-    path
-    source
-    (compiler-cfg-empty)
-    pools)
-    [(ResultAstProgramDiagnostic.Ok program)
-      (if (compiler-driver-state-smoke-note-main-ptr-u8!
-        pools
-        program
-        body-cell
-        type-cell)
-        (begin
-          (array-set! before-cell 0 (ast-node-pool-context-expr-len pools))
-          (match (typecheck-compiler-program-with-paths-cache-and-pools
-            program
-            (ast-decl-path-list-new)
-            (svec.new)
-            (tc-prefix-default-cache-scope)
-            pools)
-            [(ResultCompilerTypecheck.Ok _)
-              (begin
-                (array-set! after-cell 0 (ast-node-pool-context-expr-len pools))
-                true)]
-            [(ResultCompilerTypecheck.Err _) false]))
-        false)]
-    [(ResultAstProgramDiagnostic.Err _) false]))
+  (let
+    [path-id : i64 (ci.intern-source-slice path 0 (string.string-length path))]
+    [_empty-path-id : i64 (ci.intern-source-slice "" 0 0)]
+    (match (parse-ast-source-diagnostic-with-cfg-and-pools
+      path
+      source
+      (compiler-cfg-empty)
+      pools)
+      [(ResultAstProgramDiagnostic.Ok program)
+        (if (compiler-driver-state-smoke-note-main-ptr-u8!
+          pools
+          program
+          body-cell
+          type-cell)
+          (begin
+            (array-set! before-cell 0 (ast-node-pool-context-expr-len pools))
+            (match (typecheck-compiler-program-with-paths-cache-and-pools
+              program
+              (compiler-driver-state-smoke-program-paths program path path-id)
+              (svec.new)
+              (tc-prefix-default-cache-scope)
+              pools)
+              [(ResultCompilerTypecheck.Ok _)
+                (begin
+                  (array-set!
+                    after-cell
+                    0
+                    (ast-node-pool-context-expr-len pools))
+                  true)]
+              [(ResultCompilerTypecheck.Err _) false]))
+          false)]
+      [(ResultAstProgramDiagnostic.Err _) false])))
 
 (define (compiler-driver-state-smoke-typecheck-macro-pools-isolated?) : bool
   (let
@@ -1125,12 +1171,11 @@
       (unless
         (not
           (=
-            (compiler-driver-state-intern-pool-data-addr state-a)
-            (compiler-driver-state-intern-pool-data-addr state-b)))
+            (compiler-driver-state-intern-table-id state-a)
+            (compiler-driver-state-intern-table-id state-b)))
         (set! ok false))
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-install-interns! state-a)
-      (intern-persistent-storage-enable!)
       (let
         [a-shared : i64
           (with-scratch
@@ -1163,7 +1208,6 @@
           (compiler-driver-state-capture-active-interns! state-a)
           (compiler-driver-state-reset-file-state! state-b)
           (compiler-driver-state-install-interns! state-b)
-          (intern-persistent-storage-enable!)
           (let
             ;; Insert the different name first so equal spellings receive
             ;; different numeric ids, while id 0 means different things in A/B.
@@ -1342,8 +1386,40 @@
           (let
             [intern-state : InternCompatState
               (array-ref (struct-get state-a intern-state) 0)]
-            [_persistent : unit
-              (intern-compat-state-persistent-storage-enable! intern-state)]
+            [_cfg-seed : unit
+              (with-scratch
+                (begin
+                  (intern-compat-state-intern intern-state "linux")
+                  (intern-compat-state-intern intern-state "unix")
+                  (intern-compat-state-intern intern-state "target-linux")
+                  (intern-compat-state-intern intern-state "os-linux")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-ptr-addr-of")
+                  (intern-compat-state-intern intern-state "feature-str-view")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-runtime-str-view-extern")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-private-string-intrinsics")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-compiler-private-string-intrinsics")
+                  (intern-compat-state-intern
+                    intern-state
+                    "array-helper-intrinsics")
+                  (intern-compat-state-intern intern-state "feature-tl-memchr")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-plain-comptime-well-known")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-comptime-public-fields")
+                  (intern-compat-state-intern
+                    intern-state
+                    "feature-cleanup-owner-reflection")
+                  unit))]
             [qualified-id : i64
               (with-scratch
                 (intern-compat-state-intern
@@ -1382,14 +1458,119 @@
                     intern-state
                     qualified-id))
                 "name.part")
-              (sym_i64_env.sym-i64-contains-with-intern-state
-                cfgs
-                "cfg:linux"
-                intern-state)
-              (sym_i64_env.sym-i64-contains-with-intern-state
-                cfgs
-                "cfg:feature-cleanup-owner-reflection"
-                intern-state))))))))
+              (match (intern-compat-state-lookup intern-state "linux")
+                [(InternLookupFound id)
+                  (sym_i64_env.sym-i64-contains-id
+                    cfgs
+                    (compiler-cfg-key-id id))]
+                [(InternLookupMissing) false])
+              (match (intern-compat-state-lookup
+                intern-state
+                "feature-cleanup-owner-reflection")
+                [(InternLookupFound id)
+                  (sym_i64_env.sym-i64-contains-id
+                    cfgs
+                    (compiler-cfg-key-id id))]
+                [(InternLookupMissing) false]))))))))
+
+(define (compiler-driver-state-smoke-intern-id-provenance?) : bool
+  (let
+    [state-a : CompilerDriverState (compiler-driver-state-new)]
+    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [ok : bool true]
+    (begin
+      (compiler-driver-state-reset-file-state! state-a)
+      (let
+        [a-shared : i64 (intern "owner-shared")]
+        [a-only : i64
+          (with-scratch (intern (string.substring "xxowner-a-slotyy" 2 12)))]
+        [a-generated : i64
+          (ci.intern-generated-canonical-name "owner-a-generated")]
+        [a-module : i64 (intern "owner-a-module")]
+        [a-structural-key : i64
+          (compiler-symbol-module-key-id-by-id a-module a-only)]
+        (begin
+          (compiler-driver-state-capture-active-interns! state-a)
+          (unless
+            (compiler-composite-pair-key-id? a-structural-key)
+            (set! ok false))
+          (unless
+            (not (tc-env-key-has-name-id? a-structural-key))
+            (set! ok false))
+          (compiler-driver-state-reset-file-state! state-b)
+          (let
+            [b-shared : i64 (intern "owner-shared")]
+            [b-only : i64
+              (with-scratch (intern (string.substring "xxowner-b-slotyy" 2 12)))]
+            [b-generated : i64
+              (ci.intern-generated-canonical-name "owner-b-generated")]
+            [b-generation : i64 (intern-generation)]
+            (begin
+              (compiler-driver-state-capture-active-interns! state-b)
+              ;; Numeric IDs are table-local: both source and generated IDs
+              ;; intentionally collide while their spellings remain isolated.
+              (unless (= a-shared b-shared) (set! ok false))
+              (unless (= a-only b-only) (set! ok false))
+              (unless (= a-generated b-generated) (set! ok false))
+              (compiler-driver-state-install-interns! state-a)
+              (unless
+                (string.eq (intern-str a-only) "owner-a-slot")
+                (set! ok false))
+              (unless
+                (string.eq (intern-str a-generated) "owner-a-generated")
+                (set! ok false))
+              (compiler-driver-state-install-interns! state-b)
+              (unless
+                (string.eq (intern-str b-only) "owner-b-slot")
+                (set! ok false))
+              (unless
+                (string.eq (intern-str b-generated) "owner-b-generated")
+                (set! ok false))
+              ;; Reset B, allocate an equal-length replacement from scratch,
+              ;; then restore A. Reused temporary storage and numeric IDs must
+              ;; not affect A's owned spellings.
+              (compiler-driver-state-reset-file-state! state-b)
+              (let
+                [b-reused : i64
+                  (with-scratch
+                    (intern (string.substring "xxowner-c-slotyy" 2 12)))]
+                (begin
+                  (unless (> (intern-generation) b-generation) (set! ok false))
+                  (unless
+                    (string.eq (intern-str b-reused) "owner-c-slot")
+                    (set! ok false))
+                  (compiler-driver-state-capture-active-interns! state-b)
+                  (compiler-driver-state-install-interns! state-a)
+                  (unless
+                    (string.eq (intern-str a-only) "owner-a-slot")
+                    (set! ok false))
+                  (unless
+                    (string.eq (intern-str a-generated) "owner-a-generated")
+                    (set! ok false))
+                  ok)))))))))
+
+(define (compiler-driver-state-smoke-active-cfg-id-survives?) : bool
+  (let
+    [state : CompilerDriverState (compiler-driver-state-new)]
+    (begin
+      (compiler-driver-state-reset-file-state! state)
+      (let
+        [name : String "stage0-build-version"]
+        [cfgs : sym_i64_env.SymI64Env
+          (compiler-cfg-enable (compiler-cfg-empty) name)]
+        [name-id : i64
+          (match (intern-lookup name)
+            [(InternLookupFound found) found]
+            [(InternLookupMissing) -1])]
+        [target-cfgs : sym_i64_env.SymI64Env
+          (compiler-driver-state-target-cfgs
+            state
+            (CompilerBackendTarget.Linux)
+            cfgs)]
+        (and
+          (>= name-id 0)
+          (string.eq (intern-str name-id) name)
+          (compiler-cfg-enabled? target-cfgs name-id))))))
 
 (define (compiler-driver-state-smoke-intern-arena-reset-isolated?) : bool
   (let
@@ -1463,27 +1644,34 @@
                   [(InternLookupFound found) (= found b-id)]
                   [(InternLookupMissing) false])))))))))
 
-(define (compiler-driver-state-smoke-intern-storage-flags-isolated?) : bool
+(define (compiler-driver-state-smoke-intern-reset-invalidates-read-lanes?) : bool
   (let
-    [state-a : CompilerDriverState (compiler-driver-state-new)]
-    [state-b : CompilerDriverState (compiler-driver-state-new)]
+    [state : CompilerDriverState (compiler-driver-state-new)]
     (begin
-      (compiler-driver-state-install-interns! state-b)
-      (intern-persistent-storage-enable!)
-      (compiler-driver-state-capture-active-interns! state-b)
-      (compiler-driver-state-apply-session-flags! state-a)
-      (compiler-driver-state-session-program-cache-disable state-a)
+      (compiler-driver-state-install-interns! state)
+      (intern-reset!)
+      (intern "state-reset-stale")
+      (intern-generated-canonical-name "generated-reset-stale")
+      (compiler-driver-state-capture-active-interns! state)
+      ;; Reset preserves table identity, so generation must invalidate the
+      ;; process-local source lanes and the generated canonical domain.
+      (compiler-load-session-reset-interns-with-state!
+        (array-ref (struct-get state intern-state) 0))
+      (compiler-driver-state-install-interns! state)
       (let
         [ok : bool
           (and
-            (intern-persistent-storage-on?)
-            (not
-              (intern-compat-state-persistent-storage-enabled?
-                (array-ref (struct-get state-a intern-state) 0)))
-            (intern-compat-state-persistent-storage-enabled?
-              (array-ref (struct-get state-b intern-state) 0)))]
+            (=
+              (intern-generated-canonical-name "generated-reset-fresh")
+              (- (intern-capacity) 1))
+            (match (intern-lookup "state-reset-stale")
+              [(InternLookupMissing) true]
+              [(InternLookupFound _) false])
+            (match (intern-generated-canonical-lookup "generated-reset-stale")
+              [(InternLookupMissing) true]
+              [(InternLookupFound _) false]))]
         (begin
-          (intern-persistent-storage-disable!)
+          (compiler-driver-state-reset-file-state! state)
           ok)))))
 
 (define (compiler-driver-state-smoke-adopt-pools-does-not-install?) : bool
@@ -1528,22 +1716,23 @@
     (begin
       (compiler-driver-state-install-interns! state-a)
       (intern-reset!)
-      (intern "never")
       (let
+        [never-a : i64 (intern "never")]
         [dispatch-a : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
         [a-ok : bool
           (=
-            (compiler-parse-dispatch-tag dispatch-a "never")
+            (compiler-parse-dispatch-tag dispatch-a never-a)
             (compiler-parse-tag-ty-never))]
         (begin
           (compiler-driver-state-install-interns! state-b)
           (intern-reset!)
           (let
+            [never-b : i64 (intern "never")]
             [dispatch-b : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
             (and
               a-ok
               (=
-                (compiler-parse-dispatch-tag dispatch-b "never")
+                (compiler-parse-dispatch-tag dispatch-b never-b)
                 (compiler-parse-tag-ty-never)))))))))
 
 (define (compiler-driver-state-smoke-lower-arenas-isolated?) : bool
@@ -1608,7 +1797,8 @@
           (compiler-driver-state-pool-context state-a)]
         [pools-b : AstNodePoolContext
           (compiler-driver-state-pool-context state-b)]
-        [ref-ty : AstType (ast-ty-ref-with-pools pools-a "r" (AstType.Str))]
+        [ref-ty : AstType
+          (ast-ty-ref-with-pools pools-a (intern "r") (AstType.Str))]
         [decoy-id : i64 (ast-node-pool-context-type-push pools-b (AstType.I64))]
         [array-ty : AstType
           (ast-ty-dyn-array-with-pools pools-a (AstType.Bool))]
@@ -1622,7 +1812,13 @@
                   [(ResultCompilerRegistries.Ok registries)
                     (let
                       [ctx : TcContext
-                        (TcContext program symbols registries "" pools-a)]
+                        (TcContext
+                          program
+                          symbols
+                          registries
+                          ""
+                          (intern "")
+                          pools-a)]
                       [_ : unit (ast-node-pool-context-install! pools-b)]
                       [active-len : i64 (ty-node-pool-len)]
                       [name-id : i64 (intern "xs")]
@@ -1794,7 +1990,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -1906,7 +2108,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [rvo-has-return : bool
@@ -2064,7 +2272,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [env : sym_i64_env.SymI64Env
                     (sym_i64_env.sym-i64-bind-id
                       (sym_i64_env.sym-i64-empty)
@@ -2153,7 +2367,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [lower-state : LowerState
                     (LowerState.State
                       0
@@ -2179,7 +2399,7 @@
                       lower-state
                       (sym_i64_env.sym-i64-empty)
                       (TcTypeEnv.Nil)
-                      LowerStringSet.Nil
+                      LowerIdSet.Nil
                       "i"
                       0
                       (CompilerIrValue.I64 255)
@@ -2237,7 +2457,13 @@
               [(ResultCompilerRegistries.Ok registries)
                 (let
                   [ctx : TcContext
-                    (TcContext program symbols registries "" pools-a)]
+                    (TcContext
+                      program
+                      symbols
+                      registries
+                      ""
+                      (intern "")
+                      pools-a)]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [rewritten : ResultLowerAstExpr
@@ -2247,7 +2473,7 @@
                       (TcTypeEnv.Nil)
                       (AstExpr.Binary (AstBinOp.Add) left-a right-a)
                       LowerSpmdInlineSubst.Nil
-                      LowerStringSet.Nil)]
+                      LowerIdSet.Nil)]
                   [after-a : i64 (ast-node-pool-context-expr-len pools-a)]
                   [active-after : i64 (ast-node-pool-len)]
                   (and
@@ -2296,6 +2522,7 @@
       (let
         [cursor : AstDeclList (box-get decls-box)]
         [done : bool false]
+        [root-name-id : i64 -1]
         (begin
           (tc-clone-root-collection-use! program)
           (while (not done)
@@ -2304,17 +2531,18 @@
               [(AstDeclListStep.Cons decl rest)
                 (begin
                   (match (ast-decl-unwrapped decl)
+                    [(AstDecl.DefStruct name _ _ _) (set! root-name-id name)]
                     [(AstDecl.DefFn name _ _ _ _)
                       (if (string.eq (intern-str name) "use-clone")
                         (begin
-                          (tc-clone-root-collection-select-decl! decl "")
+                          (tc-clone-root-collection-select-decl!
+                            decl
+                            (tc-context-module-id ctx))
                           (set! done true))
                         unit)]
                     [_ unit])
                   (set! cursor rest))]))
-          (tc-clone-root-collection-note!
-            ctx
-            (AstType.Struct (intern "CloneRootA")))
+          (tc-clone-root-collection-note! ctx (AstType.Struct root-name-id))
           (tc-clone-root-collection-finish! ctx)))]))
 
 (define (compiler-driver-state-smoke-lower-reachability-source-a) : String
@@ -2339,15 +2567,21 @@
           (compiler-driver-state-pool-context state-a)]
         [pools-b : AstNodePoolContext
           (compiler-driver-state-pool-context state-b)]
+        [path-a : String "reach-state-a.tl"]
+        [_path-a-id : i64
+          (ci.intern-source-slice path-a 0 (string.string-length path-a))]
+        [path-b : String "reach-state-b.tl"]
+        [_path-b-id : i64
+          (ci.intern-source-slice path-b 0 (string.string-length path-b))]
         [paths : AstDeclPathList (ast-decl-path-list-new)]
         (match (parse-ast-source-diagnostic-with-cfg-and-pools
-          "reach-state-a.tl"
+          path-a
           (compiler-driver-state-smoke-lower-reachability-source-a)
           (compiler-cfg-empty)
           pools-a)
           [(ResultAstProgramDiagnostic.Ok program-a)
             (match (parse-ast-source-diagnostic-with-cfg-and-pools
-              "reach-state-b.tl"
+              path-b
               (compiler-driver-state-smoke-lower-reachability-source-b)
               (compiler-cfg-empty)
               pools-b)
@@ -2359,14 +2593,14 @@
                         (lower-name-env-from-decls
                           (box-get decls-box)
                           paths
-                          "reach-state-a.tl"
+                          path-a
                           LowerNameEnv.Nil)])]
                   [_ : unit (ast-node-pool-context-install! pools-b)]
                   [active-before : i64 (ast-node-pool-len)]
                   [pruned : LowerPrunedProgram
                     (lower-prune-unreachable-functions
                       pools-a
-                      "reach-state-a.tl"
+                      path-a
                       program-a
                       paths
                       names)]
@@ -2401,21 +2635,27 @@
     (begin
       (compiler-driver-state-reset-file-state! state-a)
       (compiler-driver-state-reset-file-state! state-b)
-      (compiler-driver-state-install-builtins! state-a)
       (let
         [pools-a : AstNodePoolContext
           (compiler-driver-state-pool-context state-a)]
         [pools-b : AstNodePoolContext
           (compiler-driver-state-pool-context state-b)]
+        [path-a : String "clone-state-a.tl"]
+        [_path-a-id : i64
+          (ci.intern-source-slice path-a 0 (string.string-length path-a))]
+        [path-b : String "clone-state-b.tl"]
+        [_path-b-id : i64
+          (ci.intern-source-slice path-b 0 (string.string-length path-b))]
+        [empty-module-id : i64 (ci.intern-source-slice "" 0 0)]
         [paths : AstDeclPathList (ast-decl-path-list-new)]
         (match (parse-ast-source-diagnostic-with-cfg-and-pools
-          "clone-state-a.tl"
+          path-a
           (compiler-driver-state-smoke-lower-clone-roots-source-a)
           (compiler-cfg-empty)
           pools-a)
           [(ResultAstProgramDiagnostic.Ok program-a)
             (match (parse-ast-source-diagnostic-with-cfg-and-pools
-              "clone-state-b.tl"
+              path-b
               (compiler-driver-state-smoke-lower-clone-roots-source-b)
               (compiler-cfg-empty)
               pools-b)
@@ -2428,14 +2668,20 @@
                       [(ResultCompilerRegistries.Ok registries)
                         (let
                           [ctx : TcContext
-                            (TcContext program-a symbols registries "" pools-a)]
+                            (TcContext
+                              program-a
+                              symbols
+                              registries
+                              ""
+                              empty-module-id
+                              pools-a)]
                           [names : LowerNameEnv
                             (match program-a
                               [(AstProgram.Program decls-box)
                                 (lower-name-env-from-decls
                                   (box-get decls-box)
                                   paths
-                                  "clone-state-a.tl"
+                                  path-a
                                   LowerNameEnv.Nil)])]
                           (match (tc-build-top-env ctx program-a)
                             [(ResultTcEnv.Ok top-env)
@@ -2450,19 +2696,26 @@
                                     names
                                     program-a)]
                                 [active-after : i64 (ast-node-pool-len)]
-                                (and
-                                  (=
-                                    active-before
-                                    (ast-node-pool-context-expr-len pools-b))
-                                  (= active-after active-before)
-                                  (match roots
-                                    [(CloneNameList.Cons name rest)
-                                      (and
-                                        (string.eq name "CloneRootA")
-                                        (match (box-get rest)
-                                          [(CloneNameList.Nil) true]
-                                          [_ false]))]
-                                    [_ false])))]
+                                [ok : bool
+                                  (and
+                                    (=
+                                      active-before
+                                      (ast-node-pool-context-expr-len pools-b))
+                                    (= active-after active-before)
+                                    (match roots
+                                      [(CloneNameList.ConsId name-id rest)
+                                        (and
+                                          (string.eq
+                                            (clone-name-key-string name-id)
+                                            "CloneRootA")
+                                          (match (box-get rest)
+                                            [(CloneNameList.Nil) true]
+                                            [_ false]))]
+                                      [_ false]))]
+                                (begin
+                                  (compiler-driver-state-reset-file-state!
+                                    state-b)
+                                  ok))]
                             [(ResultTcEnv.Err _) false]))]
                       [(ResultCompilerRegistries.Err _) false])]
                   [(ResultCompilerSymbols.Err _) false])]
@@ -2500,10 +2753,14 @@
               [pools-b : AstNodePoolContext
                 (compiler-driver-state-pool-context state-b)]
               (begin
+                (compiler-driver-state-capture-active-interns! state-a)
+                (compiler-driver-state-capture-active-builtins! state-a)
                 (compiler-driver-state-reset-file-state! state-b)
                 (ast-node-pool-context-type-push pools-b (AstType.Bool))
                 (ast-node-pool-context-type-push pools-b (AstType.Char))
                 (ast-node-pool-context-install! pools-b)
+                (compiler-driver-state-install-interns! state-a)
+                (compiler-driver-state-install-builtins! state-a)
                 (let
                   [active-type-len-before : i64 (ty-node-pool-len)]
                   [emitted : ResultCompilerDriver
@@ -3044,15 +3301,14 @@
     (unless
       (compiler-driver-state-smoke-target-cfgs-do-not-install?)
       (return 37))
+    (unless (compiler-driver-state-smoke-intern-id-provenance?) (return 38))
+    (unless (compiler-driver-state-smoke-active-cfg-id-survives?) (return 39))
     (unless
       (compiler-driver-state-smoke-intern-arena-reset-isolated?)
       (return 32))
     (unless
       (compiler-driver-state-smoke-intern-table-reset-isolated?)
       (return 33))
-    (unless
-      (compiler-driver-state-smoke-intern-storage-flags-isolated?)
-      (return 35))
     (unless
       (compiler-driver-state-smoke-adopt-pools-does-not-install?)
       (return 34))
@@ -3114,6 +3370,9 @@
       [double-lower-status : i64
         (compiler-driver-state-smoke-lower-loaded-twice-status)]
       (unless (= double-lower-status 0) (return (+ 260 double-lower-status))))
+    (unless
+      (compiler-driver-state-smoke-intern-reset-invalidates-read-lanes?)
+      (return 36))
     ;; This check deliberately retires the complete uncached frontend state, so
     ;; run it after the state-reuse tests above.
     (unless

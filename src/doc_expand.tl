@@ -5,6 +5,7 @@
 (import (vector.vector String) as doc_svec)
 (import doc_render)
 (import doc_extract)
+(import read as reader)
 (import "compiler_load.tl")
 (import "compiler_typecheck_api.tl")
 
@@ -345,7 +346,7 @@
 
 (define (doc-import-alias-string [alias : AstMaybeImportAlias]) : String
   (match alias
-    [(AstMaybeImportAlias.Some name) name]
+    [(AstMaybeImportAlias.Some name) (intern-str name)]
     [(AstMaybeImportAlias.No) ""]))
 
 (define (doc-ast-type-id-source [ty-id : i64]) : String
@@ -377,7 +378,8 @@
       (if (= index 0)
         ""
         " ")
-      (ast-lifetime-list-get (& lifetimes) index "")
+      (intern-str
+        (ast-lifetime-list-get (& lifetimes) index (ast-lifetime-fallback)))
       (doc-ast-lifetime-list-source-from lifetimes (+ index 1) count))))
 
 (define (doc-ast-lifetime-list-source [lifetimes : AstLifetimeList]) : String
@@ -431,11 +433,26 @@
       (doc-cat3 "(Array " (doc-ast-type-id-source elem) ")")]
     [(AstType.Box elem) (doc-cat3 "(Box " (doc-ast-type-id-source elem) ")")]
     [(AstType.Region region elem)
-      (doc-cat5 "(Region " region " " (doc-ast-type-id-source elem) ")")]
+      (doc-cat5
+        "(Region "
+        (intern-str region)
+        " "
+        (doc-ast-type-id-source elem)
+        ")")]
     [(AstType.Ref lifetime elem)
-      (doc-cat5 "(& " lifetime " " (doc-ast-type-id-source elem) ")")]
+      (doc-cat5
+        "(& "
+        (intern-str lifetime)
+        " "
+        (doc-ast-type-id-source elem)
+        ")")]
     [(AstType.MutRef lifetime elem)
-      (doc-cat5 "(&mut " lifetime " " (doc-ast-type-id-source elem) ")")]
+      (doc-cat5
+        "(&mut "
+        (intern-str lifetime)
+        " "
+        (doc-ast-type-id-source elem)
+        ")")]
     [(AstType.Enum name) (intern-str name)]
     [(AstType.EnumArgs name _) (intern-str name)]
     [(AstType.Struct name) (intern-str name)]
@@ -552,7 +569,12 @@
 (define (doc-macro-import-form [call-id : i64] [alias : AstMaybeImportAlias]) : String
   (match alias
     [(AstMaybeImportAlias.Some name)
-      (doc-cat5 "(import " (doc-ast-expr-source call-id) " as " name ")")]
+      (doc-cat5
+        "(import "
+        (doc-ast-expr-source call-id)
+        " as "
+        (intern-str name)
+        ")")]
     [(AstMaybeImportAlias.No)
       (doc-cat3 "(import " (doc-ast-expr-source call-id) ")")]))
 
@@ -675,7 +697,10 @@
                   (doc-macro-import-example-find
                     macro-examples
                     (doc-import-alias-string alias))]
-                (doc-generated-target-example-add! targets target-module form))]
+                (doc-generated-target-example-add!
+                  targets
+                  (intern-str target-module)
+                  form))]
             [(AstMaybeModuleName.No) unit])]
         [_ unit])]
     [(AstDecl.ComptimeDecl _ inner-box)
@@ -1295,13 +1320,13 @@
   (string.eq
     (doc-ast-macro-param-source
       (ast-macro-param-with-type-kinds
-        "T"
-        (AstType.Var (intern "type"))
+        (reader.read-stable-symbol-id "T")
+        (AstType.Var (reader.read-stable-symbol-id "type"))
         false
         (ast-macro-type-kind-list-cons
-          "i64"
+          (reader.read-stable-symbol-id "i64")
           (ast-macro-type-kind-list-cons
-            "struct"
+            (reader.read-stable-symbol-id "struct")
             (ast-macro-type-kind-list-empty)))))
     "[T : type (:kind i64 struct)]"))
 

@@ -12,9 +12,9 @@
 (import (vector String) as lsp_svec)
 (import lex as lexer)
 (import read as reader)
+(import compiler_builtin_ids as cbi)
 (import "compiler_check_core.tl")
 (import "compiler_load.tl")
-(import compiler_builtin_ids as cbi)
 (import "format_rules.tl")
 (import "lint_driver_core.tl")
 (import "lsp_vector_families.tl")
@@ -3179,82 +3179,84 @@
 ;; Validate forms using real parser. Returns ValidLspForms on success,
 ;; or InvalidLspForms with line, col, message, and context on failure.
 (define (lsp-validate-forms-result [text : String]) : LspValidationResult
-  (match (lexer.lex-spanned-result text)
-    [(lexer.ResultSpannedTokens.Err err)
-      (let
-        [span : token.SourceSpan (token.source-error-span err)]
-        [line : i64 (token.span-start-line span)]
-        [col : i64 (token.span-start-col span)]
-        [msg : String (token.source-error-message err)]
-        (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
-    [(lexer.ResultSpannedTokens.Ok toks)
-      (let
-        [cur : (Array i64) (make-array i64 1)]
-        [dispatch : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
-        [done : bool false]
-        [result : LspValidationResult LspValidationResult.Valid]
-        (begin
-          (array-set! cur 0 0)
-          (while (and
-            (not done)
-            (not (= (reader.peek-spanned-tag toks cur) (token.tag-end))))
-            (match (reader.read-form-spanned-result toks cur)
-              [(reader.ResultSpannedSexpr.Err err)
-                (let
-                  [span : token.SourceSpan (token.source-error-span err)]
-                  [line : i64 (token.span-start-line span)]
-                  [col : i64 (token.span-start-col span)]
-                  [msg : String (token.source-error-message err)]
-                  (begin
-                    (set!
-                      result
-                      (LspValidationResult.Invalid
-                        line
-                        col
-                        msg
-                        (lsp-line-at text line)))
-                    (set! done true)))]
-              [(reader.ResultSpannedSexpr.Ok sexpr)
-                (match (parse-ast-decl-maybe dispatch sexpr)
-                  [(ResultAstMaybeDecl.Err msg)
-                    (match (parse-ast-expr dispatch sexpr)
-                      [(ResultAstExpr.Err _)
-                        (let
-                          [span : token.SourceSpan
-                            (reader.spanned-sexpr-span sexpr)]
-                          [line : i64 (token.span-start-line span)]
-                          [col : i64 (token.span-start-col span)]
-                          (begin
-                            (set!
-                              result
-                              (LspValidationResult.Invalid
-                                line
-                                col
-                                msg
-                                (lsp-line-at text line)))
-                            (set! done true)))]
-                      [(ResultAstExpr.Ok _) unit])]
-                  [(ResultAstMaybeDecl.NoDecl)
-                    (match (parse-ast-expr dispatch sexpr)
-                      [(ResultAstExpr.Err msg)
-                        (let
-                          [span : token.SourceSpan
-                            (reader.spanned-sexpr-span sexpr)]
-                          [line : i64 (token.span-start-line span)]
-                          [col : i64 (token.span-start-col span)]
-                          (begin
-                            (set!
-                              result
-                              (LspValidationResult.Invalid
-                                line
-                                col
-                                msg
-                                (lsp-line-at text line)))
-                            (set! done true)))]
-                      [(ResultAstExpr.Ok _) unit])]
-                  [(ResultAstMaybeDecl.SomeDecl _) unit]
-                  [(ResultAstMaybeDecl.Decls _) unit])]))
-          result))]))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (match (lexer.lex-spanned-result text)
+      [(lexer.ResultSpannedTokens.Err err)
+        (let
+          [span : token.SourceSpan (token.source-error-span err)]
+          [line : i64 (token.span-start-line span)]
+          [col : i64 (token.span-start-col span)]
+          [msg : String (token.source-error-message err)]
+          (LspValidationResult.Invalid line col msg (lsp-line-at text line)))]
+      [(lexer.ResultSpannedTokens.Ok toks)
+        (let
+          [cur : (Array i64) (make-array i64 1)]
+          [dispatch : sym_i64_env.SymI64Env (compiler-parse-dispatch-env)]
+          [done : bool false]
+          [result : LspValidationResult LspValidationResult.Valid]
+          (begin
+            (array-set! cur 0 0)
+            (while (and
+              (not done)
+              (not (= (reader.peek-spanned-tag toks cur) (token.tag-end))))
+              (match (reader.read-form-spanned-result toks cur)
+                [(reader.ResultSpannedSexpr.Err err)
+                  (let
+                    [span : token.SourceSpan (token.source-error-span err)]
+                    [line : i64 (token.span-start-line span)]
+                    [col : i64 (token.span-start-col span)]
+                    [msg : String (token.source-error-message err)]
+                    (begin
+                      (set!
+                        result
+                        (LspValidationResult.Invalid
+                          line
+                          col
+                          msg
+                          (lsp-line-at text line)))
+                      (set! done true)))]
+                [(reader.ResultSpannedSexpr.Ok sexpr)
+                  (match (parse-ast-decl-maybe dispatch sexpr)
+                    [(ResultAstMaybeDecl.Err msg)
+                      (match (parse-ast-expr dispatch sexpr)
+                        [(ResultAstExpr.Err _)
+                          (let
+                            [span : token.SourceSpan
+                              (reader.spanned-sexpr-span sexpr)]
+                            [line : i64 (token.span-start-line span)]
+                            [col : i64 (token.span-start-col span)]
+                            (begin
+                              (set!
+                                result
+                                (LspValidationResult.Invalid
+                                  line
+                                  col
+                                  msg
+                                  (lsp-line-at text line)))
+                              (set! done true)))]
+                        [(ResultAstExpr.Ok _) unit])]
+                    [(ResultAstMaybeDecl.NoDecl)
+                      (match (parse-ast-expr dispatch sexpr)
+                        [(ResultAstExpr.Err msg)
+                          (let
+                            [span : token.SourceSpan
+                              (reader.spanned-sexpr-span sexpr)]
+                            [line : i64 (token.span-start-line span)]
+                            [col : i64 (token.span-start-col span)]
+                            (begin
+                              (set!
+                                result
+                                (LspValidationResult.Invalid
+                                  line
+                                  col
+                                  msg
+                                  (lsp-line-at text line)))
+                              (set! done true)))]
+                        [(ResultAstExpr.Ok _) unit])]
+                    [(ResultAstMaybeDecl.SomeDecl _) unit]
+                    [(ResultAstMaybeDecl.Decls _) unit])]))
+            result))])))
 
 ;; Find the byte offset where the body of a define/defmacro begins,
 ;; given the offset of the opening '(' of the form.

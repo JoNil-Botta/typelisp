@@ -34,6 +34,7 @@
 (module lex)
 
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import stdlib.io)
 (import token)
 (import stdlib.text_buf)
@@ -598,6 +599,7 @@
     [message : String ""]
     [err-pos : i64 0]
     (begin
+      (cfg compile-profile (ci.intern-profile-note-source-bytes n))
       (while (and (< i n) ok)
         (let
           [c : char (string.string-ref src i)]
@@ -719,12 +721,15 @@
                     (array-set!
                       toks
                       count
-                      (token.Token.Sym (ci.intern-slice src i (- end i))))
+                      (token.Token.Sym (ci.intern-source-slice src i (- end i))))
                     (set! count (+ count 1))
                     (set! i end))
                   (begin
                     (array-set! starts count i)
-                    (array-set! toks count (token.Token.Sym (ci.intern ":")))
+                    (array-set!
+                      toks
+                      count
+                      (token.Token.Sym cbi.compiler-builtin-id-fix-colon))
                     (set! count (+ count 1))
                     (set! i (+ i 1)))))]
             [(is-symbol-char c)
@@ -735,7 +740,7 @@
                   (array-set!
                     toks
                     count
-                    (token.Token.Sym (ci.intern-slice src i (- end i))))
+                    (token.Token.Sym (ci.intern-source-slice src i (- end i))))
                   (set! count (+ count 1))
                   (set! i end)))]
             [else
@@ -795,6 +800,7 @@
     [message : String ""]
     [err-pos : i64 0]
     (begin
+      (cfg compile-profile (ci.intern-profile-note-source-bytes n))
       (while (and (< i n) ok)
         (let
           [c : char (string.string-ref src i)]
@@ -985,7 +991,8 @@
                       stoks
                       count
                       (token.spanned-token-new
-                        (token.Token.Sym (ci.intern-slice src i (- end i)))
+                        (token.Token.Sym
+                          (ci.intern-source-slice src i (- end i)))
                         line
                         col))
                     (set! count (+ count 1))
@@ -996,7 +1003,7 @@
                       stoks
                       count
                       (token.spanned-token-new
-                        (token.Token.Sym (ci.intern ":"))
+                        (token.Token.Sym cbi.compiler-builtin-id-fix-colon)
                         line
                         col))
                     (set! count (+ count 1))
@@ -1010,7 +1017,7 @@
                     stoks
                     count
                     (token.spanned-token-new
-                      (token.Token.Sym (ci.intern-slice src i (- end i)))
+                      (token.Token.Sym (ci.intern-source-slice src i (- end i)))
                       line
                       col))
                   (set! count (+ count 1))

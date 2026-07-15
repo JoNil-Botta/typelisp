@@ -754,6 +754,28 @@
                     macro-table-offset
                     layouts))))))))))
 
+(define (compiler-comptime-lower-package-names
+  [macro-names : (Array String)]
+  [windows-target : bool]) : ResultCompilerComptimePackageImagePayload
+  (let
+    [count : i64 (array-length macro-names)]
+    [programs : (Array CompilerComptimeMacroProgram)
+      (make-array CompilerComptimeMacroProgram count)]
+    [index : i64 0]
+    (begin
+      (while (< index count)
+        (begin
+          (array-set!
+            programs
+            index
+            (CompilerComptimeMacroProgram
+              (array-ref macro-names index)
+              (make-array (CompilerComptimeOperation.HostCall 4))
+              0
+              0))
+          (set! index (+ index 1))))
+      (compiler-comptime-lower-package programs windows-target))))
+
 (define (compiler-comptime-windows-template-oracle) : (Array u8)
   (compiler-comptime-byte-array-from-hex
     "48b8544c4349494d414748890248c742080100000048c742104000000048894a1848c742200000000048c7422800000000488d05280100004889423048c742380100000031c0c3660f1f8400000000004883f90476134c8b4c24304883ec28e81c0000004883c428c34881fa5151000075044889c8c3b804000000c30f1f400041544155415641574d89cc4989cd4989d64d89c74883ec38498b45304c89f14c89fa41b8010000004531c948c74424200000000048c744242800000000ffd04885c0740d4883c438415f415e415d415cc3498b45304c89f14c89fa41b8040000004531c948c74424200000000048c744242800000000ffd04885c0740d4883c438415f415e415d415cc3498b45304c89f14c89fa41b8010000004531c948c74424200000000048c744242800000000ffd04885c0740d4883c438415f415e415d415cc349c704249210000031c04883c438415f415e415d415cc3660f1f44000000000000000000000c00000000000000000000000000000000000000000000006e61746976652d70726f6265"))

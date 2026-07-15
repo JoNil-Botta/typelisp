@@ -1,6 +1,7 @@
 ;; compiler_ir_types_smoke.tl - Runnable IR type/effect smoke.
 (import stdlib.string)
 (import "../compiler_ir_types.tl")
+(import compiler_intern as ci)
 
 (define (compiler-ir-smoke-function-list-first-name?
   [functions : CompilerIrFunctionList]
@@ -157,7 +158,7 @@
     [(CompilerIrExternList.Cons extern rest)
       (if (= index 0)
         (match extern
-          [(CompilerIrExtern.Extern name _ _ _ _ _) (string.eq name want)])
+          [(CompilerIrExtern.Extern _ _ name _ _ _ _ _) (string.eq name want)])
         (compiler-ir-smoke-extern-list-name-at? (box-get rest) (- index 1) want))]
     [(CompilerIrExternList.Nil) false]
     [(CompilerIrExternList.Array _) false]))
@@ -185,9 +186,15 @@
     [cloned-globals : CompilerIrGlobalList
       (compiler-ir-clone-global-list compact-globals)]
     [first-extern : CompilerIrExtern
-      (compiler-ir-extern-default "first-extern" (AstType.I64))]
+      (compiler-ir-extern-default-id
+        (ci.intern-source-slice "first-extern" 0 12)
+        "first-extern"
+        (AstType.I64))]
     [second-extern : CompilerIrExtern
-      (compiler-ir-extern-default "second-extern" (AstType.Bool))]
+      (compiler-ir-extern-default-id
+        (ci.intern-source-slice "second-extern" 0 13)
+        "second-extern"
+        (AstType.Bool))]
     [reversed-externs : CompilerIrExternList
       (compiler-ir-extern-cons
         second-extern

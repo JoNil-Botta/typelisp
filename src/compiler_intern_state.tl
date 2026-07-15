@@ -30,14 +30,14 @@
       (array-set! map-ready 0 false)
       (array-set! reset-generation 0 0)
       (InternState
-        (make-array String 262144)
-        (make-array bool 262144)
-        (make-array i64 262144)
-        (make-array i64 262144)
-        (make-array i64 262144)
-        (make-array i64 262144)
+        (make-array String (ci.intern-capacity))
+        (make-array bool (ci.intern-capacity))
+        (make-array i64 (ci.intern-capacity))
+        (make-array i64 (ci.intern-capacity))
+        (make-array i64 (ci.intern-capacity))
+        (make-array i64 (ci.intern-capacity))
         pool-count
-        (make-array ci.InternSlot 262144)
+        (make-array ci.InternSlot (ci.intern-capacity))
         map-ready
         reset-generation))))
 

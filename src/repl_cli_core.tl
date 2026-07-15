@@ -183,7 +183,8 @@
     (string.append
       " "
       (string.append
-        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))
+        (intern-str
+          (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback)))
         (repl-lifetime-list-render-spaced-at lifetimes (+ index 1))))))
 
 (define (repl-lifetime-list-render-spaced [lifetimes : AstLifetimeList]) : String
@@ -248,7 +249,7 @@
       (string.append
         "(& "
         (string.append
-          region
+          (intern-str region)
           (string.append
             " "
             (string.append (repl-type-render (ty-node-get inner)) ")"))))]
@@ -256,7 +257,7 @@
       (string.append
         "(&mut "
         (string.append
-          region
+          (intern-str region)
           (string.append
             " "
             (string.append (repl-type-render (ty-node-get inner)) ")"))))]
@@ -264,25 +265,25 @@
       (string.append
         "(in "
         (string.append
-          region
+          (intern-str region)
           (string.append
             " "
             (string.append (repl-type-render (ty-node-get inner)) ")"))))]
-    [(AstType.Enum name) (intern-str name)]
+    [(AstType.Enum name) (ast-nominal-name-id-display name)]
     [(AstType.EnumArgs name lifetimes)
       (string.append
         "("
         (string.append
-          (intern-str name)
+          (ast-nominal-name-id-display name)
           (string.append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
             ")")))]
-    [(AstType.Struct name) (intern-str name)]
+    [(AstType.Struct name) (ast-nominal-name-id-display name)]
     [(AstType.StructArgs name lifetimes)
       (string.append
         "("
         (string.append
-          (intern-str name)
+          (ast-nominal-name-id-display name)
           (string.append
             (repl-lifetime-list-render-spaced (box-get lifetimes))
             ")")))]

@@ -6,7 +6,9 @@
 ;; Parser result/error wrappers, typechecker registries, inferred types, and
 ;; lowered IR metadata live elsewhere.
 (import compiler_intern as ci)
+(import compiler_builtin_ids as cbi)
 (import stdlib.array)
+(import stdlib.io)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena
@@ -18,27 +20,38 @@
 (import stdlib.hash)
 (import stdlib.string)
 
-;; Name-bearing AST fields fall into three construction categories:
-;;
-;; - The parser builds id-carrying variants directly from `intern-slice` ids.
-;; - Compiler synthesis should prefer the `*-id` helpers when it already owns an
-;;   id in the active intern state.
-;; - String-taking helpers remain compatibility boundaries for parser helpers,
-;;   tests, and synthesis that still starts from a spelling. They deliberately
-;;   call `ci.intern`, including for an empty spelling; they are not parser-only
-;;   assertions and must not panic merely because a token did not pre-intern it.
-;;
-;; Lifetimes/regions, diagnostics, import metadata, include payloads, and some
-;; compatibility records intentionally remain Strings. Fallback payload ids and
-;; structural nominal keys are sentinels, not intern ids. Raw AST ids inherit
-;; compiler_intern's table/generation provenance contract and may be rendered
-;; only while their owner state is installed.
-;; Safe current-state diagnostic rendering for a nominal id. Structural and
-;; sentinel values are intentionally not passed to `ci.intern-str`.
-(define (ast-nominal-name-display [name-id : i64]) : String
-  (if (and (>= name-id 0) (< name-id (ci.intern-pool-len)))
-    (ci.intern-str name-id)
-    "<structural-nominal>"))
+;; Nominal AST nodes carry either a parser intern id or a structural module/name
+;; id. Rendering must decode the latter instead of indexing the intern pool with
+;; the composite value.
+(define (ast-nominal-name-id-display [name-id : i64]) : String
+  (let
+    [stride : i64 (ci.intern-capacity)]
+    [stride2 : i64 (* stride stride)]
+    [triple-offset : i64 (+ stride stride2)]
+    (cond
+      [(and
+          (>= name-id triple-offset)
+          (< name-id (+ triple-offset (* stride2 stride))))
+        (let
+          [raw : i64 (- name-id triple-offset)]
+          [module-id : i64 (/ raw stride2)]
+          [enum-id : i64 (% (/ raw stride) stride)]
+          [variant-id : i64 (% raw stride)]
+          (string.append
+            (ci.intern-str module-id)
+            (string.append
+              "/"
+              (string.append
+                (ci.intern-str enum-id)
+                (string.append "." (ci.intern-str variant-id))))))]
+      [(and (>= name-id stride) (< name-id (+ stride stride2)))
+        (let
+          [raw : i64 (- name-id stride)]
+          (string.append
+            (ci.intern-str (/ raw stride))
+            (string.append "/" (ci.intern-str (% raw stride)))))]
+      [(and (>= name-id 0) (< name-id stride)) (ci.intern-str name-id)]
+      [else "<structural-nominal>"])))
 
 (defstruct AstSourceSpan
   (start-line i32)
@@ -252,9 +265,9 @@
   (Array i64 i64)
   (DynArray i64)
   (Box i64)
-  (Region String i64)
-  (Ref String i64)
-  (MutRef String i64)
+  (Region i64 i64)
+  (Ref i64 i64)
+  (MutRef i64 i64)
   (Enum i64)
   (EnumArgs i64 (Box AstLifetimeList))
   (Struct i64)
@@ -271,7 +284,7 @@
   (len i64))
 
 (defstruct AstLifetimeList
-  (slots (Array String))
+  (slots (Array i64))
   (len i64))
 
 (defenum AstMaybeType
@@ -280,7 +293,7 @@
 
 (defenum AstBorrowLifetime
   (Inferred)
-  (Named String))
+  (Named i64))
 
 (defenum AstParam
   (Param i64 AstType bool bool))
@@ -339,7 +352,7 @@
   (Export i64))
 
 (defenum AstExternMetadata
-  (Metadata AstExternAbi String AstExternLinkInputList bool))
+  (Metadata AstExternAbi i64 AstExternLinkInputList bool))
 
 (defenum AstStructCleanup
   (No)
@@ -484,7 +497,7 @@
   (SpmdProgramCount)
   (StructGet i64 i64)
   (StructSet i64 i64 i64)
-  (WithRegion String AstExprList)
+  (WithRegion i64 AstExprList)
   (WithEscape i64 AstExprList)
   (WithScratch AstExprList)
   (InArena i64 AstExprList)
@@ -585,7 +598,7 @@
   (array.make-array AstExpr 65536))
 
 ;; The program (base) arena, captured at global-init while it is the
-;; active arena (the pool make-array above proves an allocation has happened, so
+;; active arena (the seed make-array above proves an allocation has happened, so
 ;; this is the real base handle, not the pre-allocation 0 sentinel). The node
 ;; pools live here for the whole program; a grow MUST allocate the new backing
 ;; array here too, otherwise -- if the grow fires while a transient scratch arena
@@ -895,17 +908,6 @@
       (set! node-pool-base-arena head-arena)
       (set! ty-node-pool-slots new-slots))))
 
-;; Payload copies for stored nodes. The pool array is persistent
-;; and `ty-node-push` dedup compares later candidates against stored
-;; nodes, so a stored node must never embed a String, lifetime spine, or
-;; type-list spine allocated in a transient scratch arena (per-function
-;; typecheck arenas): after the scratch rewinds, the next dedup probe would
-;; compare against freed memory. These helpers run with the node-pool base
-;; arena active, so every copy is program-lifetime. Node-id references need
-;; no copy: they point at pool nodes made persistent by the same rule.
-(define (ty-node-persist-string [s : String]) : String
-  (string.substring s 0 (string.string-length s)))
-
 (define (ty-node-persist-lifetimes-into
   [items : (& items AstLifetimeList)]
   [out : (&mut out AstLifetimeList)]
@@ -915,8 +917,7 @@
     (begin
       (ast-lifetime-list-push
         out
-        (ty-node-persist-string
-          (ast-lifetime-list-get items index (ast-lifetime-fallback))))
+        (ast-lifetime-list-get items index (ast-lifetime-fallback)))
       (ty-node-persist-lifetimes-into items out (+ index 1)))))
 
 (define (ty-node-persist-lifetimes [items : AstLifetimeList]) : AstLifetimeList
@@ -953,11 +954,9 @@
       (AstType.Func (box (ty-node-persist-type-list (box-get args))) ret)]
     [(AstType.Tuple args)
       (AstType.Tuple (box (ty-node-persist-type-list (box-get args))))]
-    [(AstType.Region name inner)
-      (AstType.Region (ty-node-persist-string name) inner)]
-    [(AstType.Ref name inner) (AstType.Ref (ty-node-persist-string name) inner)]
-    [(AstType.MutRef name inner)
-      (AstType.MutRef (ty-node-persist-string name) inner)]
+    [(AstType.Region name inner) (AstType.Region name inner)]
+    [(AstType.Ref name inner) (AstType.Ref name inner)]
+    [(AstType.MutRef name inner) (AstType.MutRef name inner)]
     [(AstType.EnumArgs name lifetimes)
       (AstType.EnumArgs
         name
@@ -1302,12 +1301,8 @@
   (if (>= index len)
     (hash.combine seed 11)
     (let
-      [name : String (array-ref (struct-get items slots) index)]
-      (ty-lifetime-list-hash-at
-        items
-        len
-        (hash.combine seed (hash.string-key (& name)))
-        (+ index 1)))))
+      [name : i64 (array-ref (struct-get items slots) index)]
+      (ty-lifetime-list-hash-at items len (hash.combine seed name) (+ index 1)))))
 
 (define (ty-lifetime-list-hash [items : AstLifetimeList] [seed : i64]) : i64
   (ty-lifetime-list-hash-at (& items) (ast-lifetime-list-len (& items)) seed 0))
@@ -1355,12 +1350,9 @@
     [(AstType.Array elem count) (hash.combine (hash.combine 21 elem) count)]
     [(AstType.DynArray elem) (hash.combine 22 elem)]
     [(AstType.Box inner) (hash.combine 23 inner)]
-    [(AstType.Region name inner)
-      (hash.combine (hash.combine 24 (hash.string-key (& name))) inner)]
-    [(AstType.Ref name inner)
-      (hash.combine (hash.combine 25 (hash.string-key (& name))) inner)]
-    [(AstType.MutRef name inner)
-      (hash.combine (hash.combine 26 (hash.string-key (& name))) inner)]
+    [(AstType.Region name inner) (hash.combine (hash.combine 24 name) inner)]
+    [(AstType.Ref name inner) (hash.combine (hash.combine 25 name) inner)]
+    [(AstType.MutRef name inner) (hash.combine (hash.combine 26 name) inner)]
     [(AstType.Enum name) (hash.combine 27 name)]
     [(AstType.EnumArgs name lifetimes)
       (ty-lifetime-list-hash (box-get lifetimes) (hash.combine 28 name))]
@@ -1382,7 +1374,7 @@
   (if (>= index len)
     true
     (and
-      (string.eq
+      (=
         (array-ref (struct-get a slots) index)
         (array-ref (struct-get b slots) index))
       (ty-lifetime-list-eq-at? a b len (+ index 1)))))
@@ -1522,17 +1514,17 @@
     [(AstType.Region a-name a-inner)
       (match b
         [(AstType.Region b-name b-inner)
-          (and (= a-inner b-inner) (string.eq a-name b-name))]
+          (and (= a-inner b-inner) (= a-name b-name))]
         [_ false])]
     [(AstType.Ref a-name a-inner)
       (match b
         [(AstType.Ref b-name b-inner)
-          (and (= a-inner b-inner) (string.eq a-name b-name))]
+          (and (= a-inner b-inner) (= a-name b-name))]
         [_ false])]
     [(AstType.MutRef a-name a-inner)
       (match b
         [(AstType.MutRef b-name b-inner)
-          (and (= a-inner b-inner) (string.eq a-name b-name))]
+          (and (= a-inner b-inner) (= a-name b-name))]
         [_ false])]
     [(AstType.Enum a-name)
       (match b
@@ -1856,9 +1848,25 @@
         type-capacity
         (struct-get expr-pool base-arena))]
     [shared-arena : i64 (struct-get type-pool base-arena)]
-    (ast-node-pool-context-new
-      (ast-expr-node-pool-state-with-base-arena expr-pool shared-arena)
-      (ast-type-node-pool-state-with-base-arena type-pool shared-arena))))
+    [previous-arena : i64 (arena.tl_arena_current)]
+    [_set-arena : unit
+      (unsafe
+        (arena.tl_arena_set shared-arena))]
+    ;; The context cells are part of the pool's retained ownership graph. If
+    ;; they land in the caller's active scratch arena, committing the pool and
+    ;; releasing that scratch arena leaves every explicit pool access dangling.
+    [pools : AstNodePoolContext
+      (ast-node-pool-context-new
+        (ast-expr-node-pool-state-with-base-arena expr-pool shared-arena)
+        (ast-type-node-pool-state-with-base-arena type-pool shared-arena))]
+    [head-arena : i64 (arena.tl_arena_current)]
+    (begin
+      (ast-node-pool-context-sync-base-arena! pools head-arena)
+      (node-pool-restore-arena-after-base-alloc!
+        previous-arena
+        shared-arena
+        head-arena)
+      pools)))
 
 (define (ast-node-pool-context-new-with-capacities
   [expr-capacity : i64]
@@ -2059,11 +2067,11 @@
 
 (defenum AstMaybeModuleName
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum AstMaybeImportAlias
   (No)
-  (Some String))
+  (Some i64))
 
 (defenum AstImportKind
   (Path)
@@ -2085,7 +2093,7 @@
   (Avx512))
 
 (defenum AstDispatchVariant
-  (Variant AstDispatchIsa String))
+  (Variant AstDispatchIsa i64))
 
 (defstruct AstDispatchVariantList
   (slots (Array AstDispatchVariant))
@@ -2137,6 +2145,7 @@
 
 (defstruct AstDeclPathList
   (slots (Array String))
+  (owner-ids (Array i64))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -2146,7 +2155,7 @@
   (Cons String AstDeclPathList))
 
 (defstruct AstDeclModuleList
-  (slots (Array String))
+  (slots (Array i64))
   (offset i64)
   (len i64)
   (prependable bool))
@@ -2305,13 +2314,13 @@
 (define (ast-ty-box [elem : AstType]) : AstType
   (AstType.Box (ast-node-pool-reader-type-push elem)))
 
-(define (ast-ty-region [region : String] [inner : AstType]) : AstType
+(define (ast-ty-region [region : i64] [inner : AstType]) : AstType
   (AstType.Region region (ast-node-pool-reader-type-push inner)))
 
-(define (ast-ty-ref [region : String] [inner : AstType]) : AstType
+(define (ast-ty-ref [region : i64] [inner : AstType]) : AstType
   (AstType.Ref region (ast-node-pool-reader-type-push inner)))
 
-(define (ast-ty-mut-ref [region : String] [inner : AstType]) : AstType
+(define (ast-ty-mut-ref [region : i64] [inner : AstType]) : AstType
   (AstType.MutRef region (ast-node-pool-reader-type-push inner)))
 
 (define (ast-ty-ptr [elem : AstType]) : AstType
@@ -2353,19 +2362,19 @@
 
 (define (ast-ty-region-with-pools
   [pools : AstNodePoolContext]
-  [region : String]
+  [region : i64]
   [inner : AstType]) : AstType
   (AstType.Region region (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-ref-with-pools
   [pools : AstNodePoolContext]
-  [region : String]
+  [region : i64]
   [inner : AstType]) : AstType
   (AstType.Ref region (ast-node-pool-context-type-push pools inner)))
 
 (define (ast-ty-mut-ref-with-pools
   [pools : AstNodePoolContext]
-  [region : String]
+  [region : i64]
   [inner : AstType]) : AstType
   (AstType.MutRef region (ast-node-pool-context-type-push pools inner)))
 
@@ -2377,8 +2386,8 @@
   [elem : AstType]) : AstType
   (AstType.MutPtr (ast-node-pool-context-type-push pools elem)))
 
-(define (ast-lifetime-fallback) : String
-  "")
+(define (ast-lifetime-fallback) : i64
+  cbi.compiler-builtin-id-fix-empty)
 
 (define (ast-lifetime-list-with-capacity [capacity : i64]) : AstLifetimeList
   (let
@@ -2386,7 +2395,7 @@
       (if (< capacity 0)
         0
         capacity)]
-    (AstLifetimeList (array.make-array String cap) 0)))
+    (AstLifetimeList (array.make-array i64 cap) 0)))
 
 (define (ast-lifetime-list-new) : AstLifetimeList
   (ast-lifetime-list-with-capacity 0))
@@ -2400,14 +2409,14 @@
 (define (ast-lifetime-list-get
   [v : (& v AstLifetimeList)]
   [index : i64]
-  [fallback : String]) : String
+  [fallback : i64]) : i64
   (if (and (>= index 0) (< index (ast-lifetime-list-len v)))
     (array-ref (struct-get v slots) index)
     fallback))
 
 (define (ast-lifetime-list-copy-range
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (Array i64))]
+  [src : (& src (Array i64))]
   [index : i64]
   [count : i64]) : unit
   (if (>= index count)
@@ -2424,12 +2433,12 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array String) (array.make-array String new-cap)]
+    [bigger : (Array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-lifetime-list-copy-range (&mut bigger) (& (struct-get v slots)) 0 n)
       (set! (struct-get v slots) bigger))))
 
-(define (ast-lifetime-list-push [v : (&mut v AstLifetimeList)] [value : String]) : unit
+(define (ast-lifetime-list-push [v : (&mut v AstLifetimeList)] [value : i64]) : unit
   (begin
     (if (< (struct-get v len) (array-length (struct-get v slots)))
       unit
@@ -2452,7 +2461,7 @@
         (ast-lifetime-list-get items index (ast-lifetime-fallback)))
       (ast-lifetime-list-append-from out items (+ index 1)))))
 
-(define (ast-lifetime-cons [head : String] [rest : AstLifetimeList]) : AstLifetimeList
+(define (ast-lifetime-cons [head : i64] [rest : AstLifetimeList]) : AstLifetimeList
   (let
     [out : AstLifetimeList
       (ast-lifetime-list-with-capacity (+ 1 (ast-lifetime-list-len (& rest))))]
@@ -2461,17 +2470,8 @@
       (ast-lifetime-list-append-from (&mut out) (& rest) 0)
       out)))
 
-;; Compatibility spelling boundary. ID-first synthesis uses
-;; `ast-param-id-with-consume` below.
-(define (ast-param [name : String] [ty : AstType] [is-comptime : bool]) : AstParam
-  (AstParam.Param (ci.intern name) ty is-comptime false))
-
-(define (ast-param-with-consume
-  [name : String]
-  [ty : AstType]
-  [is-comptime : bool]
-  [consume : bool]) : AstParam
-  (AstParam.Param (ci.intern name) ty is-comptime consume))
+(define (ast-param-id [name : i64] [ty : AstType] [is-comptime : bool]) : AstParam
+  (AstParam.Param name ty is-comptime false))
 
 (define (ast-param-id-with-consume
   [name : i64]
@@ -2570,9 +2570,9 @@
   (AstMacroTypeKindList.Cons kind (box rest)))
 
 (define (ast-macro-type-kind-list-cons
-  [kind : String]
+  [kind : i64]
   [rest : AstMacroTypeKindList]) : AstMacroTypeKindList
-  (ast-macro-type-kind-list-cons-id (ci.intern kind) rest))
+  (ast-macro-type-kind-list-cons-id kind rest))
 
 (define (ast-macro-type-kind-list-contains-id?
   [kinds : AstMacroTypeKindList]
@@ -2601,18 +2601,21 @@
         [_ false])]))
 
 (define (ast-macro-param-with-type-kinds
-  [name : String]
+  [name : i64]
   [ty : AstType]
   [variadic : bool]
   [type-kinds : AstMacroTypeKindList]) : AstMacroParam
-  (AstMacroParam.Param (ci.intern name) ty variadic type-kinds))
+  (AstMacroParam.Param name ty variadic type-kinds))
 
-(define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
+(define (ast-macro-param [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
   (ast-macro-param-with-type-kinds
     name
     ty
     variadic
     (ast-macro-type-kind-list-empty)))
+
+(define (ast-macro-param-id [name : i64] [ty : AstType] [variadic : bool]) : AstMacroParam
+  (ast-macro-param name ty variadic))
 
 (define (ast-macro-param-fallback) : AstMacroParam
   (AstMacroParam.Param 0 (AstType.Unit) false (ast-macro-type-kind-list-empty)))
@@ -2680,14 +2683,14 @@
         (array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ index 1))))))
 
-(define (ast-field-cleanup-fn [name : String]) : AstFieldCleanup
-  (AstFieldCleanup.Fn (ci.intern name)))
+(define (ast-field-cleanup-fn-id [name : i64]) : AstFieldCleanup
+  (AstFieldCleanup.Fn name))
 
-(define (ast-field-def
-  [name : String]
+(define (ast-field-def-id
+  [name : i64]
   [ty : AstType]
   [cleanup : AstFieldCleanup]) : AstFieldDef
-  (AstFieldDef.Def (ci.intern name) ty cleanup))
+  (AstFieldDef.Def name ty cleanup))
 
 (define (ast-field-def-fallback) : AstFieldDef
   (AstFieldDef.Def 0 (AstType.Unit) AstFieldCleanup.No))
@@ -2842,17 +2845,17 @@
         (array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ index 1))))))
 
-(define (ast-fn-export [name : String]) : AstFnExport
-  (AstFnExport.Export (ci.intern name)))
+(define (ast-fn-export-id [name : i64]) : AstFnExport
+  (AstFnExport.Export name))
 
-(define (ast-struct-cleanup-fn [name : String]) : AstStructCleanup
-  (AstStructCleanup.Fn (ci.intern name)))
+(define (ast-struct-cleanup-fn-id [name : i64]) : AstStructCleanup
+  (AstStructCleanup.Fn name))
 
-(define (ast-enum-cleanup-fn [name : String]) : AstEnumCleanup
-  (AstEnumCleanup.Fn (ci.intern name)))
+(define (ast-enum-cleanup-fn-id [name : i64]) : AstEnumCleanup
+  (AstEnumCleanup.Fn name))
 
-(define (ast-variant-payload-cleanup-fn [name : String]) : AstVariantPayloadCleanup
-  (AstVariantPayloadCleanup.Fn (ci.intern name)))
+(define (ast-variant-payload-cleanup-fn-id [name : i64]) : AstVariantPayloadCleanup
+  (AstVariantPayloadCleanup.Fn name))
 
 (define (ast-variant-payload-cleanup-fallback) : AstVariantPayloadCleanup
   AstVariantPayloadCleanup.No)
@@ -2940,11 +2943,11 @@
           (ast-variant-payload-cleanup-fallback)))
       (ast-variant-payload-cleanup-list-append-from out items (+ index 1)))))
 
-(define (ast-variant-def
-  [name : String]
+(define (ast-variant-def-id
+  [name : i64]
   [fields : AstTypeList]
   [cleanups : AstVariantPayloadCleanupList]) : AstVariantDef
-  (AstVariantDef.Def (ci.intern name) fields cleanups))
+  (AstVariantDef.Def name fields cleanups))
 
 (define (ast-variant-def-fallback) : AstVariantDef
   (AstVariantDef.Def
@@ -3145,23 +3148,14 @@
       (ast-pattern-list-append-from (&mut out) (& rest) 0)
       out)))
 
-(define (ast-pat-binding [name : String]) : AstPattern
-  (AstPattern.Binding (ci.intern name)))
+(define (ast-pat-binding-id [name : i64]) : AstPattern
+  (AstPattern.Binding name))
 
 (define (ast-pat-tuple [items : AstPatternList]) : AstPattern
   (AstPattern.Tuple (box items)))
 
-(define (ast-pat-variant [name : String] [items : AstPatternList]) : AstPattern
-  (AstPattern.Variant (ci.intern name) (box items)))
-
 (define (ast-pat-variant-id [name : i64] [items : AstPatternList]) : AstPattern
   (AstPattern.Variant name (box items)))
-
-(define (ast-let-binding
-  [name : String]
-  [maybe-ty : AstMaybeType]
-  [value : i64]) : AstLetBinding
-  (AstLetBinding.Binding (ci.intern name) maybe-ty value))
 
 (define (ast-let-binding-id
   [name : i64]
@@ -3259,9 +3253,6 @@
       (ast-let-binding-list-push (&mut out) head)
       (ast-let-binding-list-append-from (&mut out) (& rest) 0)
       out)))
-
-(define (ast-resource-binding [name : String] [init : i64] [cleanup : i64]) : AstResourceBinding
-  (AstResourceBinding.Binding (ci.intern name) init cleanup))
 
 (define (ast-resource-binding-id [name : i64] [init : i64] [cleanup : i64]) : AstResourceBinding
   (AstResourceBinding.Binding name init cleanup))
@@ -3786,9 +3777,6 @@
 (define (ast-expr-while [cond : i64] [body : i64]) : i64
   (ast-node-push (AstExpr.While cond body)))
 
-(define (ast-expr-set [name : String] [value : i64]) : i64
-  (ast-node-push (AstExpr.Set (ci.intern name) value)))
-
 (define (ast-expr-set-id [name : i64] [value : i64]) : i64
   (ast-node-push (AstExpr.Set name value)))
 
@@ -3807,16 +3795,6 @@
 (define (ast-expr-match [scrutinee : i64] [arms : AstMatchArmList]) : i64
   (ast-node-push (AstExpr.Match (box (AstMatch.Match scrutinee arms)))))
 
-(define (ast-expr-foreach
-  [name : String]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [body : i64]) : i64
-  (ast-node-push
-    (AstExpr.Foreach
-      (box (AstForeach.Foreach (ci.intern name) index-ty start end body)))))
-
 (define (ast-expr-foreach-id
   [name : i64]
   [index-ty : AstType]
@@ -3825,19 +3803,6 @@
   [body : i64]) : i64
   (ast-node-push
     (AstExpr.Foreach (box (AstForeach.Foreach name index-ty start end body)))))
-
-(define (ast-expr-spmd-reduce
-  [op : AstReduceOp]
-  [name : String]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [init : i64]
-  [value : i64]) : i64
-  (ast-node-push
-    (AstExpr.SpmdReduce
-      (box
-        (AstSpmdReduce.Reduce op (ci.intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id
   [op : AstReduceOp]
@@ -3850,32 +3815,6 @@
   (ast-node-push
     (AstExpr.SpmdReduce
       (box (AstSpmdReduce.Reduce op name index-ty start end init value)))))
-
-(define (ast-expr-spmd-scan
-  [op : AstReduceOp]
-  [index : String]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [prefix : String]
-  [prefix-ty : AstType]
-  [init : i64]
-  [value : i64]
-  [body : i64]) : i64
-  (ast-node-push
-    (AstExpr.SpmdScan
-      (box
-        (AstSpmdScan.Scan
-          op
-          (ci.intern index)
-          index-ty
-          start
-          end
-          (ci.intern prefix)
-          prefix-ty
-          init
-          value
-          body)))))
 
 (define (ast-expr-spmd-scan-id
   [op : AstReduceOp]
@@ -3915,9 +3854,6 @@
 (define (ast-expr-spmd-program-count) : i64
   (ast-node-push (AstExpr.SpmdProgramCount)))
 
-(define (ast-expr-struct-get [target : i64] [field : String]) : i64
-  (ast-node-push (AstExpr.StructGet target (ci.intern field))))
-
 (define (ast-expr-struct-get-id [target : i64] [field : i64]) : i64
   (ast-node-push (AstExpr.StructGet target field)))
 
@@ -3925,7 +3861,7 @@
   (ast-node-push (AstExpr.StructSet target field value)))
 
 (define (ast-expr-unquote-set-target-field-id) : i64
-  (ci.intern "__tl_unquote_set_target"))
+  cbi.compiler-builtin-id-fix-tl_unquote_set_target)
 
 (define (ast-expr-with-escape [escape : i64] [body : AstExprList]) : i64
   (ast-node-push (AstExpr.WithEscape escape body)))
@@ -4141,12 +4077,6 @@
   [body : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.While cond body)))
 
-(define (ast-expr-set-with-pools
-  [pools : AstNodePoolContext]
-  [name : String]
-  [value : i64]) : i64
-  (ast-node-pool-context-expr-push pools (AstExpr.Set (ci.intern name) value)))
-
 (define (ast-expr-set-id-with-pools
   [pools : AstNodePoolContext]
   [name : i64]
@@ -4180,18 +4110,6 @@
     pools
     (AstExpr.Match (box (AstMatch.Match scrutinee arms)))))
 
-(define (ast-expr-foreach-with-pools
-  [pools : AstNodePoolContext]
-  [name : String]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [body : i64]) : i64
-  (ast-node-pool-context-expr-push
-    pools
-    (AstExpr.Foreach
-      (box (AstForeach.Foreach (ci.intern name) index-ty start end body)))))
-
 (define (ast-expr-foreach-id-with-pools
   [pools : AstNodePoolContext]
   [name : i64]
@@ -4202,21 +4120,6 @@
   (ast-node-pool-context-expr-push
     pools
     (AstExpr.Foreach (box (AstForeach.Foreach name index-ty start end body)))))
-
-(define (ast-expr-spmd-reduce-with-pools
-  [pools : AstNodePoolContext]
-  [op : AstReduceOp]
-  [name : String]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [init : i64]
-  [value : i64]) : i64
-  (ast-node-pool-context-expr-push
-    pools
-    (AstExpr.SpmdReduce
-      (box
-        (AstSpmdReduce.Reduce op (ci.intern name) index-ty start end init value)))))
 
 (define (ast-expr-spmd-reduce-id-with-pools
   [pools : AstNodePoolContext]
@@ -4231,34 +4134,6 @@
     pools
     (AstExpr.SpmdReduce
       (box (AstSpmdReduce.Reduce op name index-ty start end init value)))))
-
-(define (ast-expr-spmd-scan-with-pools
-  [pools : AstNodePoolContext]
-  [op : AstReduceOp]
-  [index : String]
-  [index-ty : AstType]
-  [start : i64]
-  [end : i64]
-  [prefix : String]
-  [prefix-ty : AstType]
-  [init : i64]
-  [value : i64]
-  [body : i64]) : i64
-  (ast-node-pool-context-expr-push
-    pools
-    (AstExpr.SpmdScan
-      (box
-        (AstSpmdScan.Scan
-          op
-          (ci.intern index)
-          index-ty
-          start
-          end
-          (ci.intern prefix)
-          prefix-ty
-          init
-          value
-          body)))))
 
 (define (ast-expr-spmd-scan-id-with-pools
   [pools : AstNodePoolContext]
@@ -4306,28 +4181,11 @@
 (define (ast-expr-spmd-program-count-with-pools [pools : AstNodePoolContext]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.SpmdProgramCount)))
 
-(define (ast-expr-struct-get-with-pools
-  [pools : AstNodePoolContext]
-  [target : i64]
-  [field : String]) : i64
-  (ast-node-pool-context-expr-push
-    pools
-    (AstExpr.StructGet target (ci.intern field))))
-
 (define (ast-expr-struct-get-id-with-pools
   [pools : AstNodePoolContext]
   [target : i64]
   [field : i64]) : i64
   (ast-node-pool-context-expr-push pools (AstExpr.StructGet target field)))
-
-(define (ast-expr-struct-set-with-pools
-  [pools : AstNodePoolContext]
-  [target : i64]
-  [field : String]
-  [value : i64]) : i64
-  (ast-node-pool-context-expr-push
-    pools
-    (AstExpr.StructSet target (ci.intern field) value)))
 
 (define (ast-expr-struct-set-id-with-pools
   [pools : AstNodePoolContext]
@@ -4505,7 +4363,7 @@
   (ast-node-pool-context-expr-push pools (AstExpr.Syscall args)))
 
 (define (ast-dispatch-variant-fallback) : AstDispatchVariant
-  (AstDispatchVariant.Variant (AstDispatchIsa.Scalar) ""))
+  (AstDispatchVariant.Variant (AstDispatchIsa.Scalar) 0))
 
 (define (ast-dispatch-variant-list-with-capacity [capacity : i64]) : AstDispatchVariantList
   (let
@@ -4575,7 +4433,7 @@
         (set! (struct-get v len) (+ index 1))))))
 
 (define (ast-decl-fallback) : AstDecl
-  (AstDecl.Module (ci.intern "<ast-decl-list-fallback>")))
+  (AstDecl.Module cbi.compiler-builtin-id-fix-lt_ast_decl_list_fallback_gt))
 
 ;; Synthetic declaration helpers may still need a neutral source-span value;
 ;; this does not imply storage alongside every AstDeclList element.
@@ -4748,38 +4606,21 @@
 (define (ast-decl-cons-boxed [head : AstDecl] [rest : (Box AstDeclList)]) : AstDeclList
   (ast-decl-cons head (box-get rest)))
 
-;; The String-taking declaration constructors below are compatibility spelling
-;; boundaries. Parser/id-owning synthesis uses the adjacent `*-id` forms where
-;; available; not every synthetic caller has migrated yet.
-(define (ast-decl-module [name : String]) : AstDecl
-  (AstDecl.Module (ci.intern name)))
-
-(define (ast-decl-module-body [name : String] [body : AstDeclList]) : AstDecl
-  (AstDecl.ModuleBody (ci.intern name) (box body)))
+(define (ast-decl-module-id [name : i64]) : AstDecl
+  (AstDecl.Module name))
 
 (define (ast-decl-module-body-id [name : i64] [body : AstDeclList]) : AstDecl
   (AstDecl.ModuleBody name (box body)))
 
-(define (ast-decl-def [name : String] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
-  (AstDecl.Def (ci.intern name) maybe-ty value))
-
 (define (ast-decl-def-id [name : i64] [maybe-ty : AstMaybeType] [value : i64]) : AstDecl
   (AstDecl.Def name maybe-ty value))
 
-(define (ast-decl-def-fn
-  [name : String]
+(define (ast-decl-def-fn-id
+  [name : i64]
   [params : AstParamList]
   [ret : AstType]
   [body : i64]) : AstDecl
-  (AstDecl.DefFn (ci.intern name) params ret body AstFnExport.No))
-
-(define (ast-decl-def-fn-export
-  [name : String]
-  [params : AstParamList]
-  [ret : AstType]
-  [body : i64]
-  [export : AstFnExport]) : AstDecl
-  (AstDecl.DefFn (ci.intern name) params ret body export))
+  (AstDecl.DefFn name params ret body AstFnExport.No))
 
 (define (ast-decl-def-fn-export-id
   [name : i64]
@@ -4789,13 +4630,6 @@
   [export : AstFnExport]) : AstDecl
   (AstDecl.DefFn name params ret body export))
 
-(define (ast-decl-def-macro
-  [name : String]
-  [params : AstMacroParamList]
-  [ret : AstType]
-  [body : i64]) : AstDecl
-  (AstDecl.DefMacro (ci.intern name) params ret body))
-
 (define (ast-decl-def-macro-id
   [name : i64]
   [params : AstMacroParamList]
@@ -4803,48 +4637,48 @@
   [body : i64]) : AstDecl
   (AstDecl.DefMacro name params ret body))
 
-(define (ast-decl-extern
-  [name : String]
+(define (ast-decl-extern-id
+  [name : i64]
   [kind : AstExternKind]
   [metadata : AstExternMetadata]
   [ty : AstType]) : AstDecl
-  (AstDecl.Extern (ci.intern name) kind (box metadata) ty))
+  (AstDecl.Extern name kind (box metadata) ty))
 
-(define (ast-decl-def-enum
-  [name : String]
+(define (ast-decl-def-enum-id
+  [name : i64]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnum (ci.intern name) cleanup variants))
+  (AstDecl.DefEnum name cleanup variants))
 
-(define (ast-decl-def-enum-lifetimes
-  [name : String]
+(define (ast-decl-def-enum-lifetimes-id
+  [name : i64]
   [lifetimes : AstLifetimeList]
   [cleanup : AstEnumCleanup]
   [variants : AstVariantDefList]) : AstDecl
-  (AstDecl.DefEnumLifetimes (ci.intern name) lifetimes cleanup variants))
+  (AstDecl.DefEnumLifetimes name lifetimes cleanup variants))
 
-(define (ast-decl-def-struct
-  [name : String]
+(define (ast-decl-def-struct-id
+  [name : i64]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStruct (ci.intern name) repr cleanup fields))
+  (AstDecl.DefStruct name repr cleanup fields))
 
-(define (ast-decl-def-struct-lifetimes
-  [name : String]
+(define (ast-decl-def-struct-lifetimes-id
+  [name : i64]
   [lifetimes : AstLifetimeList]
   [repr : AstStructRepr]
   [cleanup : AstStructCleanup]
   [fields : AstFieldDefList]) : AstDecl
-  (AstDecl.DefStructLifetimes (ci.intern name) lifetimes repr cleanup fields))
+  (AstDecl.DefStructLifetimes name lifetimes repr cleanup fields))
 
-(define (ast-decl-def-dispatch
-  [name : String]
+(define (ast-decl-def-dispatch-id
+  [name : i64]
   [variants : AstDispatchVariantList]) : AstDecl
-  (AstDecl.DefDispatch (ci.intern name) variants))
+  (AstDecl.DefDispatch name variants))
 
-(define (ast-decl-test [name : String] [body : i64] [span : AstSourceSpan]) : AstDecl
-  (AstDecl.Test (ci.intern name) body span))
+(define (ast-decl-test-id [name : i64] [body : i64] [span : AstSourceSpan]) : AstDecl
+  (AstDecl.Test name body span))
 
 (define (ast-decl-unsafe [inner : AstDecl]) : AstDecl
   (AstDecl.Unsafe (box inner)))
@@ -4870,7 +4704,12 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstDeclPathList (array.make-array String cap) 0 0 true)))
+    (AstDeclPathList
+      (array.make-array String cap)
+      (array.make-array i64 cap)
+      0
+      0
+      true)))
 
 (define (ast-decl-path-list-new) : AstDeclPathList
   (ast-decl-path-list-with-capacity 4))
@@ -4884,6 +4723,14 @@
   [fallback : String]) : String
   (if (and (>= index 0) (< index (ast-decl-path-list-len v)))
     (array-ref (struct-get v slots) (+ (struct-get v offset) index))
+    fallback))
+
+(define (ast-decl-path-list-owner-id
+  [v : (& v AstDeclPathList)]
+  [index : i64]
+  [fallback : i64]) : i64
+  (if (and (>= index 0) (< index (ast-decl-path-list-len v)))
+    (array-ref (struct-get v owner-ids) (+ (struct-get v offset) index))
     fallback))
 
 (define (ast-decl-path-list-copy-range
@@ -4927,6 +4774,7 @@
         1
         (* old-cap 2))]
     [bigger : (Array String) (array.make-array String new-cap)]
+    [bigger-owner-ids : (Array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-decl-path-list-copy-range
         (&mut bigger)
@@ -4934,13 +4782,22 @@
         (struct-get v offset)
         0
         n)
+      (ast-decl-module-list-copy-to
+        (&mut bigger-owner-ids)
+        (& (struct-get v owner-ids))
+        (struct-get v offset)
+        0
+        0
+        n)
       (set! (struct-get v slots) bigger)
+      (set! (struct-get v owner-ids) bigger-owner-ids)
       (set! (struct-get v offset) 0)
       (set! (struct-get v prependable) true))))
 
-(define (ast-decl-path-list-push
+(define (ast-decl-path-list-push-with-owner-id
   [v : (&mut v AstDeclPathList)]
-  [value : String]) : unit
+  [value : String]
+  [owner-id : i64]) : unit
   (begin
     (if (<
       (struct-get v len)
@@ -4951,7 +4808,28 @@
       [index : i64 (+ (struct-get v offset) (struct-get v len))]
       (begin
         (array-set! (struct-get v slots) index value)
+        (array-set! (struct-get v owner-ids) index owner-id)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
+
+(define (ast-decl-path-list-push
+  [v : (&mut v AstDeclPathList)]
+  [value : String]) : unit
+  (ast-decl-path-list-push-with-owner-id
+    v
+    value
+    (match (ci.intern-lookup-content value)
+      [(InternLookupFound path-id) path-id]
+      [(InternLookupMissing) cbi.compiler-builtin-id-fix-empty])))
+
+(define (ast-decl-path-list-tail [items : AstDeclPathList]) : AstDeclPathList
+  (if (<= (ast-decl-path-list-len (& items)) 0)
+    (ast-decl-path-list-new)
+    (AstDeclPathList
+      (struct-get items slots)
+      (struct-get items owner-ids)
+      (+ (struct-get items offset) 1)
+      (- (struct-get items len) 1)
+      false)))
 
 (define (ast-decl-path-list-step [items : AstDeclPathList]) : AstDeclPathListStep
   (let
@@ -4961,7 +4839,12 @@
       (AstDeclPathListStep.Nil)
       (AstDeclPathListStep.Cons
         (array-ref (struct-get items slots) offset)
-        (AstDeclPathList (struct-get items slots) (+ offset 1) (- len 1) false)))))
+        (AstDeclPathList
+          (struct-get items slots)
+          (struct-get items owner-ids)
+          (+ offset 1)
+          (- len 1)
+          false)))))
 
 (define (ast-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]
@@ -4970,19 +4853,28 @@
   (if (>= index (ast-decl-path-list-len items))
     unit
     (begin
-      (ast-decl-path-list-push out (ast-decl-path-list-get items index ""))
+      (ast-decl-path-list-push-with-owner-id
+        out
+        (ast-decl-path-list-get items index "")
+        (ast-decl-path-list-owner-id
+          items
+          index
+          cbi.compiler-builtin-id-fix-empty))
       (ast-decl-path-list-append-from out items (+ index 1)))))
 
-(define (ast-decl-path-list-prepend-builder
+(define (ast-decl-path-list-prepend-builder-with-owner-id
   [head : String]
+  [owner-id : i64]
   [rest : AstDeclPathList]) : AstDeclPathList
   (if (and (> (struct-get rest offset) 0) (struct-get rest prependable))
     (let
       [new-offset : i64 (- (struct-get rest offset) 1)]
       (begin
         (array-set! (struct-get rest slots) new-offset head)
+        (array-set! (struct-get rest owner-ids) new-offset owner-id)
         (AstDeclPathList
           (struct-get rest slots)
+          (struct-get rest owner-ids)
           new-offset
           (+ (struct-get rest len) 1)
           true)))
@@ -4995,8 +4887,10 @@
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
       [slots : (Array String) (array.make-array String new-cap)]
+      [owner-ids : (Array i64) (array.make-array i64 new-cap)]
       (begin
         (array-set! slots new-offset head)
+        (array-set! owner-ids new-offset owner-id)
         (ast-decl-path-list-copy-to
           (&mut slots)
           (& (struct-get rest slots))
@@ -5004,7 +4898,24 @@
           (+ new-offset 1)
           0
           rest-len)
-        (AstDeclPathList slots new-offset new-len true)))))
+        (ast-decl-module-list-copy-to
+          (&mut owner-ids)
+          (& (struct-get rest owner-ids))
+          (struct-get rest offset)
+          (+ new-offset 1)
+          0
+          rest-len)
+        (AstDeclPathList slots owner-ids new-offset new-len true)))))
+
+(define (ast-decl-path-list-prepend-builder
+  [head : String]
+  [rest : AstDeclPathList]) : AstDeclPathList
+  (ast-decl-path-list-prepend-builder-with-owner-id
+    head
+    (match (ci.intern-lookup-content head)
+      [(InternLookupFound path-id) path-id]
+      [(InternLookupMissing) cbi.compiler-builtin-id-fix-empty])
+    rest))
 
 (define (ast-decl-path-cons [head : String] [rest : AstDeclPathList]) : AstDeclPathList
   (let
@@ -5021,7 +4932,7 @@
       (if (< capacity 1)
         1
         capacity)]
-    (AstDeclModuleList (array.make-array String cap) 0 0 true)))
+    (AstDeclModuleList (array.make-array i64 cap) 0 0 true)))
 
 (define (ast-decl-module-list-new) : AstDeclModuleList
   (ast-decl-module-list-with-capacity 4))
@@ -5034,12 +4945,21 @@
   [index : i64]
   [fallback : String]) : String
   (if (and (>= index 0) (< index (ast-decl-module-list-len v)))
+    (ci.intern-str
+      (array-ref (struct-get v slots) (+ (struct-get v offset) index)))
+    fallback))
+
+(define (ast-decl-module-list-get-id
+  [v : (& v AstDeclModuleList)]
+  [index : i64]
+  [fallback : i64]) : i64
+  (if (and (>= index 0) (< index (ast-decl-module-list-len v)))
     (array-ref (struct-get v slots) (+ (struct-get v offset) index))
     fallback))
 
 (define (ast-decl-module-list-copy-to
-  [dst : (&mut dst (Array String))]
-  [src : (& src (Array String))]
+  [dst : (&mut dst (Array i64))]
+  [src : (& src (Array i64))]
   [src-offset : i64]
   [dst-offset : i64]
   [index : i64]
@@ -5064,7 +4984,7 @@
       (if (< old-cap 1)
         1
         (* old-cap 2))]
-    [bigger : (Array String) (array.make-array String new-cap)]
+    [bigger : (Array i64) (array.make-array i64 new-cap)]
     (begin
       (ast-decl-module-list-copy-to
         (&mut bigger)
@@ -5077,9 +4997,9 @@
       (set! (struct-get v offset) 0)
       (set! (struct-get v prependable) true))))
 
-(define (ast-decl-module-list-push
+(define (ast-decl-module-list-push-id
   [v : (&mut v AstDeclModuleList)]
-  [value : String]) : unit
+  [value : i64]) : unit
   (begin
     (if (<
       (+ (struct-get v offset) (struct-get v len))
@@ -5092,6 +5012,22 @@
         (array-set! (struct-get v slots) index value)
         (set! (struct-get v len) (+ (struct-get v len) 1))))))
 
+(define (ast-existing-module-name-id [name : String]) : i64
+  (if (= (string.string-length name) 0)
+    cbi.compiler-builtin-id-fix-empty
+    (match (ci.intern-lookup-content name)
+      [(InternLookupFound name-id) name-id]
+      [(InternLookupMissing)
+        (io.panic
+          (string.append
+            "AST declaration module has no load-assigned symbol id: "
+            name))])))
+
+(define (ast-decl-module-list-push
+  [v : (&mut v AstDeclModuleList)]
+  [value : String]) : unit
+  (ast-decl-module-list-push-id v (ast-existing-module-name-id value)))
+
 (define (ast-decl-module-list-append-from
   [out : (&mut out AstDeclModuleList)]
   [items : (& items AstDeclModuleList)]
@@ -5099,11 +5035,16 @@
   (if (>= index (ast-decl-module-list-len items))
     unit
     (begin
-      (ast-decl-module-list-push out (ast-decl-module-list-get items index ""))
+      (ast-decl-module-list-push-id
+        out
+        (ast-decl-module-list-get-id
+          items
+          index
+          cbi.compiler-builtin-id-fix-empty))
       (ast-decl-module-list-append-from out items (+ index 1)))))
 
-(define (ast-decl-module-list-prepend-builder
-  [head : String]
+(define (ast-decl-module-list-prepend-builder-id
+  [head : i64]
   [rest : AstDeclModuleList]) : AstDeclModuleList
   (if (and (> (struct-get rest offset) 0) (struct-get rest prependable))
     (let
@@ -5123,7 +5064,7 @@
           4
           (* new-len 2))]
       [new-offset : i64 (- new-cap new-len)]
-      [slots : (Array String) (array.make-array String new-cap)]
+      [slots : (Array i64) (array.make-array i64 new-cap)]
       (begin
         (array-set! slots new-offset head)
         (ast-decl-module-list-copy-to
@@ -5135,15 +5076,62 @@
           rest-len)
         (AstDeclModuleList slots new-offset new-len true)))))
 
-(define (ast-decl-module-cons [head : String] [rest : AstDeclModuleList]) : AstDeclModuleList
+(define (ast-decl-module-list-prepend-builder
+  [head : String]
+  [rest : AstDeclModuleList]) : AstDeclModuleList
+  (ast-decl-module-list-prepend-builder-id
+    (ast-existing-module-name-id head)
+    rest))
+
+(define (ast-decl-module-cons-id [head : i64] [rest : AstDeclModuleList]) : AstDeclModuleList
   (let
     [out : AstDeclModuleList
       (ast-decl-module-list-with-capacity
         (+ 1 (ast-decl-module-list-len (& rest))))]
     (begin
-      (ast-decl-module-list-push (&mut out) head)
+      (ast-decl-module-list-push-id (&mut out) head)
       (ast-decl-module-list-append-from (&mut out) (& rest) 0)
       out)))
+
+(define (ast-decl-module-cons [head : String] [rest : AstDeclModuleList]) : AstDeclModuleList
+  (ast-decl-module-cons-id (ast-existing-module-name-id head) rest))
+
+(define (ast-decl-path-list-with-modules
+  [paths : AstDeclPathList]
+  [modules : AstDeclModuleList]) : AstDeclPathList
+  (let
+    [owner-ids : (Array i64)
+      (array.make-array i64 (array-length (struct-get paths slots)))]
+    [index : i64 0]
+    [count : i64 (ast-decl-path-list-len (& paths))]
+    (begin
+      (while (< index count)
+        (let
+          [module-id : i64
+            (ast-decl-module-list-get-id
+              (& modules)
+              index
+              cbi.compiler-builtin-id-fix-empty)]
+          [recorded-owner-id : i64
+            (ast-decl-path-list-owner-id
+              (& paths)
+              index
+              cbi.compiler-builtin-id-fix-empty)]
+          [owner-id : i64
+            (cond
+              [(not (= module-id cbi.compiler-builtin-id-fix-empty)) module-id]
+              [(not (= recorded-owner-id cbi.compiler-builtin-id-fix-empty))
+                recorded-owner-id]
+              [else cbi.compiler-builtin-id-fix-empty])]
+          (begin
+            (array-set! owner-ids (+ (struct-get paths offset) index) owner-id)
+            (set! index (+ index 1)))))
+      (AstDeclPathList
+        (struct-get paths slots)
+        owner-ids
+        (struct-get paths offset)
+        (struct-get paths len)
+        (struct-get paths prependable)))))
 
 (define (ast-program [decls : AstDeclList]) : AstProgram
   (AstProgram.Program (box decls)))
@@ -5190,8 +5178,7 @@
     (begin
       (ast-lifetime-list-push
         out
-        (ast-compaction-copy-string
-          (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback))))
+        (ast-lifetime-list-get lifetimes index (ast-lifetime-fallback)))
       (ast-compaction-remap-lifetime-list-into lifetimes out (+ index 1)))))
 
 (define (ast-compaction-remap-lifetime-list [lifetimes : AstLifetimeList]) : AstLifetimeList
@@ -5263,17 +5250,11 @@
       (AstType.DynArray (ast-compaction-remap-type-id remap elem))]
     [(AstType.Box elem) (AstType.Box (ast-compaction-remap-type-id remap elem))]
     [(AstType.Region region inner)
-      (AstType.Region
-        (ast-compaction-copy-string region)
-        (ast-compaction-remap-type-id remap inner))]
+      (AstType.Region region (ast-compaction-remap-type-id remap inner))]
     [(AstType.Ref region inner)
-      (AstType.Ref
-        (ast-compaction-copy-string region)
-        (ast-compaction-remap-type-id remap inner))]
+      (AstType.Ref region (ast-compaction-remap-type-id remap inner))]
     [(AstType.MutRef region inner)
-      (AstType.MutRef
-        (ast-compaction-copy-string region)
-        (ast-compaction-remap-type-id remap inner))]
+      (AstType.MutRef region (ast-compaction-remap-type-id remap inner))]
     [(AstType.Enum name) (AstType.Enum name)]
     [(AstType.EnumArgs name lifetimes)
       (AstType.EnumArgs
@@ -5487,7 +5468,7 @@
     [(AstExternMetadata.Metadata abi symbol links no-mangle)
       (AstExternMetadata.Metadata
         (ast-compaction-remap-extern-abi remap abi)
-        (ast-compaction-copy-string symbol)
+        symbol
         (ast-compaction-remap-extern-link-input-list links)
         no-mangle)]))
 
@@ -5603,14 +5584,12 @@
   [module-name : AstMaybeModuleName]) : AstMaybeModuleName
   (match module-name
     [(AstMaybeModuleName.No) AstMaybeModuleName.No]
-    [(AstMaybeModuleName.Some name)
-      (AstMaybeModuleName.Some (ast-compaction-copy-string name))]))
+    [(AstMaybeModuleName.Some name) (AstMaybeModuleName.Some name)]))
 
 (define (ast-compaction-remap-maybe-import-alias [alias : AstMaybeImportAlias]) : AstMaybeImportAlias
   (match alias
     [(AstMaybeImportAlias.No) AstMaybeImportAlias.No]
-    [(AstMaybeImportAlias.Some name)
-      (AstMaybeImportAlias.Some (ast-compaction-copy-string name))]))
+    [(AstMaybeImportAlias.Some name) (AstMaybeImportAlias.Some name)]))
 
 (define (ast-compaction-remap-import-spec
   [remap : AstProgramCompactionRemap]
@@ -5627,7 +5606,7 @@
 (define (ast-compaction-remap-dispatch-variant [variant : AstDispatchVariant]) : AstDispatchVariant
   (match variant
     [(AstDispatchVariant.Variant isa name)
-      (AstDispatchVariant.Variant isa (ast-compaction-copy-string name))]))
+      (AstDispatchVariant.Variant isa name)]))
 
 (define (ast-compaction-remap-dispatch-variant-list-into
   [variants : (& variants AstDispatchVariantList)]
@@ -5669,12 +5648,6 @@
     [(AstLiteral.String text)
       (AstLiteral.String (ast-compaction-copy-string text))]
     [(AstLiteral.Unit) AstLiteral.Unit]))
-
-(define (ast-compaction-remap-borrow-lifetime [lifetime : AstBorrowLifetime]) : AstBorrowLifetime
-  (match lifetime
-    [(AstBorrowLifetime.Inferred) AstBorrowLifetime.Inferred]
-    [(AstBorrowLifetime.Named name)
-      (AstBorrowLifetime.Named (ast-compaction-copy-string name))]))
 
 (define (ast-compaction-remap-pattern
   [remap : AstProgramCompactionRemap]
@@ -5963,7 +5936,7 @@
     [(AstExpr.Borrow mutable lifetime inner)
       (AstExpr.Borrow
         mutable
-        (ast-compaction-remap-borrow-lifetime lifetime)
+        lifetime
         (ast-compaction-remap-expr-id remap inner))]
     [(AstExpr.Match payload)
       (match (box-get payload)
@@ -6041,9 +6014,7 @@
         field
         (ast-compaction-remap-expr-id remap value))]
     [(AstExpr.WithRegion region body)
-      (AstExpr.WithRegion
-        (ast-compaction-copy-string region)
-        (ast-compaction-remap-expr-list remap body))]
+      (AstExpr.WithRegion region (ast-compaction-remap-expr-list remap body))]
     [(AstExpr.WithEscape escape body)
       (AstExpr.WithEscape
         (ast-compaction-remap-expr-id remap escape)
@@ -6254,9 +6225,7 @@
         (ast-compaction-copy-string name)
         (ast-compaction-copy-string path))]
     [(AstDecl.IncludeBin name path)
-      (AstDecl.IncludeBin
-        (ast-compaction-copy-string name)
-        (ast-compaction-copy-string path))]
+      (AstDecl.IncludeBin name (ast-compaction-copy-string path))]
     [(AstDecl.DefDispatch name variants)
       (AstDecl.DefDispatch
         name
@@ -6581,7 +6550,7 @@
   (if (>= index len)
     true
     (and
-      (string.eq
+      (=
         (array-ref (struct-get a slots) index)
         (array-ref (struct-get b slots) index))
       (ast-lifetime-list-eq-at? a b len (+ index 1)))))
@@ -6732,7 +6701,7 @@
       (match b
         [(AstType.Region b-region b-inner)
           (and
-            (string.eq a-region b-region)
+            (= a-region b-region)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-inner)
               (ast-node-pool-reader-type-get b-inner)))]
@@ -6741,7 +6710,7 @@
       (match b
         [(AstType.Ref b-lifetime b-inner)
           (and
-            (string.eq a-lifetime b-lifetime)
+            (= a-lifetime b-lifetime)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-inner)
               (ast-node-pool-reader-type-get b-inner)))]
@@ -6750,7 +6719,7 @@
       (match b
         [(AstType.MutRef b-lifetime b-inner)
           (and
-            (string.eq a-lifetime b-lifetime)
+            (= a-lifetime b-lifetime)
             (ast-type-eq?
               (ast-node-pool-reader-type-get a-inner)
               (ast-node-pool-reader-type-get b-inner)))]
@@ -6871,7 +6840,11 @@
 
 (define (ast-extern-metadata-symbol [metadata : AstExternMetadata]) : String
   (match metadata
-    [(AstExternMetadata.Metadata _ symbol _ _) symbol]))
+    [(AstExternMetadata.Metadata _ symbol-id _ _) (ci.intern-str symbol-id)]))
+
+(define (ast-extern-metadata-symbol-id [metadata : AstExternMetadata]) : i64
+  (match metadata
+    [(AstExternMetadata.Metadata _ symbol-id _ _) symbol-id]))
 
 (define (ast-extern-metadata-abi [metadata : AstExternMetadata]) : AstExternAbi
   (match metadata
@@ -6914,7 +6887,7 @@
       (let
         [args : AstPatternList (box-get args-box)]
         (and
-          (= name (ci.intern "Some"))
+          (= name cbi.compiler-builtin-id-fix-Some)
           (= (struct-get (& args) len) 1)
           (match (ast-pattern-list-get (& args) 0 (ast-pattern-fallback))
             [(AstPattern.Tuple items-box)
@@ -6927,7 +6900,7 @@
                     0
                     (ast-pattern-fallback))
                     [(AstPattern.Binding bind-name)
-                      (= bind-name (ci.intern "item"))]
+                      (= bind-name cbi.compiler-builtin-id-fix-item)]
                     [_ false])
                   (match (ast-pattern-list-get
                     (& items)
@@ -6967,7 +6940,7 @@
                   (let
                     [init : AstExpr (ast-node-get init-box)]
                     (and
-                      (= name (ci.intern "x"))
+                      (= name cbi.compiler-builtin-id-fix-x)
                       (compiler-ast-begin-expr? init)))]
                 [_ false])
               (match body
@@ -7008,48 +6981,55 @@
           (ast-expr-cons one (ast-expr-cons two (ast-expr-list-new)))))]
     [bindings : AstLetBindingList
       (ast-let-binding-cons
-        (ast-let-binding "x" (AstMaybeType.No) begin-expr)
+        (ast-let-binding-id
+          cbi.compiler-builtin-id-fix-x
+          (AstMaybeType.No)
+          begin-expr)
         (ast-let-binding-list-new))]
     [tuple-pattern : AstPattern
       (ast-pat-tuple
         (ast-pattern-cons
-          (ast-pat-binding "item")
+          (ast-pat-binding-id cbi.compiler-builtin-id-fix-item)
           (ast-pattern-cons (AstPattern.Wildcard) (ast-pattern-list-new))))]
     [variant-pattern : AstPattern
-      (ast-pat-variant
-        "Some"
+      (ast-pat-variant-id
+        cbi.compiler-builtin-id-fix-Some
         (ast-pattern-cons tuple-pattern (ast-pattern-list-new)))]
     [arms : AstMatchArmList
       (ast-match-arm-cons
         (ast-match-arm variant-pattern begin-expr)
         (ast-match-arm-list-new))]
     [match-expr : i64
-      (ast-expr-match (ast-node-push (AstExpr.Var (ci.intern "input"))) arms)]
+      (ast-expr-match
+        (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-input))
+        arms)]
     [nested : i64
       (ast-expr-let
         bindings
         (ast-expr-if
-          (ast-node-push (AstExpr.Var (ci.intern "cond")))
+          (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-cond))
           match-expr
           begin-expr))]
     (compiler-ast-nested-expr-box-ok? (ast-node-get nested))))
 
 (define (compiler-ast-decl-def-lit-ok?
   [decl : AstDecl]
-  [want-name : String]
+  [want-name-id : i64]
   [want-value : i64]) : bool
   (match decl
     [(AstDecl.Def name _ value-box)
       (let
         [value : AstExpr (ast-node-get value-box)]
         (and
-          (= name (ci.intern want-name))
+          (= name want-name-id)
           (match value
             [(AstExpr.Literal (AstLiteral.Int actual _)) (= actual want-value)]
             [_ false])))]
     [_ false]))
 
-(define (compiler-ast-nested-decl-box-ok? [decl : AstDecl]) : bool
+(define (compiler-ast-nested-decl-box-ok?
+  [decl : AstDecl]
+  [generated-name-id : i64]) : bool
   (match decl
     [(AstDecl.Unsafe inner-box)
       (let
@@ -7058,20 +7038,22 @@
           [(AstDecl.ComptimeDecl _ template-box)
             (let
               [template : AstDecl (box-get template-box)]
-              (compiler-ast-decl-def-lit-ok? template "generated" 7))]
+              (compiler-ast-decl-def-lit-ok? template generated-name-id 7))]
           [_ false]))]
     [_ false]))
 
 (define (compiler-ast-decl-program-box-smoke?) : bool
   (let
+    [generated-name-id : i64 (ci.intern-generated-name "generated")]
+    [runtime-name-id : i64 (ci.intern-generated-name "runtime")]
     [generated : AstDecl
-      (ast-decl-def
-        "generated"
+      (ast-decl-def-id
+        generated-name-id
         (AstMaybeType.Some (AstType.I64))
         (ast-node-push (AstExpr.Literal (ast-lit-int 7))))]
     [runtime : AstDecl
-      (ast-decl-def
-        "runtime"
+      (ast-decl-def-id
+        runtime-name-id
         (AstMaybeType.Some (AstType.I64))
         (ast-node-push (AstExpr.Literal (ast-lit-int 9))))]
     [nested : AstDecl (ast-decl-unsafe (ast-decl-comptime-decl generated))]
@@ -7087,13 +7069,16 @@
               (let
                 [rest : AstDeclList rest-box]
                 (and
-                  (compiler-ast-nested-decl-box-ok? first)
+                  (compiler-ast-nested-decl-box-ok? first generated-name-id)
                   (match (ast-decl-list-step rest)
                     [(AstDeclListStep.Cons second done-box)
                       (let
                         [done : AstDeclList done-box]
                         (and
-                          (compiler-ast-decl-def-lit-ok? second "runtime" 9)
+                          (compiler-ast-decl-def-lit-ok?
+                            second
+                            runtime-name-id
+                            9)
                           (match (ast-decl-list-step done)
                             [(AstDeclListStep.Nil) true]
                             [_ false])))]
@@ -7155,11 +7140,15 @@
 
 (define (compiler-ast-smoke) : i64
   (let
+    [_builtin-init : unit (cbi.compiler-builtin-initialize-for-parse!)]
     [i64-ty : AstType (AstType.I64)]
     [string-ty : AstType (AstType.String)]
     [arg-tys : AstTypeList
       (ast-type-cons i64-ty (ast-type-cons string-ty (ast-type-list-new)))]
-    [ret-ty : AstType (ast-ty-ref "r" (ast-ty-ptr (ast-ty-array i64-ty 4)))]
+    [ret-ty : AstType
+      (ast-ty-ref
+        (ci.intern-generated-name "r")
+        (ast-ty-ptr (ast-ty-array i64-ty 4)))]
     [fn-ty : AstType (ast-ty-func arg-tys ret-ty)]
     [nested-ty-ok? : bool
       (match fn-ty
@@ -7167,7 +7156,7 @@
           (match (ty-node-get ret)
             [(AstType.Ref region ptr)
               (and
-                (string.eq region "r")
+                (string.eq (ci.intern-str region) "r")
                 (match (ty-node-get ptr)
                   [(AstType.Ptr array)
                     (match (ty-node-get array)
@@ -7189,9 +7178,10 @@
     [decl-program-ok? : bool (compiler-ast-decl-program-box-smoke?)]
     [type-dedup-ok? : bool (compiler-ast-type-dedup-smoke?)]
     [pool-exhaustion-ok? : bool (compiler-ast-type-pool-exhaustion-smoke?)]
-    [param : AstParam (ast-param "x" i64-ty false)]
+    [param : AstParam (ast-param-id cbi.compiler-builtin-id-fix-x i64-ty false)]
     [params : AstParamList (ast-param-cons param (ast-param-list-new))]
-    [decl : AstDecl (ast-decl-def-fn "main" params i64-ty expr)]
+    [decl : AstDecl
+      (ast-decl-def-fn-id cbi.compiler-builtin-id-fix-main params i64-ty expr)]
     [program : AstProgram
       (ast-program (ast-decl-cons decl (ast-decl-list-new)))]
     (match program

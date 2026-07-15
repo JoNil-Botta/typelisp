@@ -1986,7 +1986,7 @@
 
 (define (compiler-live-straight-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "straight"
+    (compiler-ir-test-symbol "straight")
     CompilerIrParamList.Nil
     (compiler-live-i64-ty)
     3
@@ -2010,7 +2010,7 @@
 
 (define (compiler-live-branch-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "branch"
+    (compiler-ir-test-symbol "branch")
     CompilerIrParamList.Nil
     (compiler-live-i64-ty)
     3
@@ -2038,7 +2038,7 @@
 
 (define (compiler-live-phi-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "phi"
+    (compiler-ir-test-symbol "phi")
     CompilerIrParamList.Nil
     (compiler-live-i64-ty)
     4
@@ -2110,14 +2110,14 @@
           (compiler-ir-instr-cons
             (CompilerIrInstr.Call
               3
-              "f"
+              (compiler-ir-test-symbol "f")
               (CompilerIrCallArgs.Two
                 (CompilerIrValue.Var 1)
                 (CompilerIrValue.Var 13))
               (compiler-live-i64-ty))
             (compiler-ir-instr-cons
               (CompilerIrInstr.Store
-                "g"
+                (compiler-ir-test-symbol "g")
                 (CompilerIrValue.Var 14)
                 (compiler-live-i64-ty))
               (compiler-ir-instr-cons

@@ -61452,10 +61452,16 @@
                       ;; not-yet-loaded module). Load it inline with the
                       ;; threaded loader context, refresh the hoisted prescan
                       ;; (the loaded file may define macros the rest of this
-                      ;; walk must see and fire), rebuild the live symbols/env
-                      ;; over the loaded view, and continue the walk over the
-                      ;; loaded content -- what the retired fixed-point loop's
-                      ;; materialization + re-pass did, inline in this pass.
+                      ;; walk must see and fire), rebuild the live symbols over
+                      ;; the loaded view, extend the current top environment
+                      ;; with the newly loaded declarations, and continue the
+                      ;; walk over the loaded content -- what the retired fixed-
+                      ;; point loop's materialization + re-pass did, inline in
+                      ;; this pass. Source-file materialization remains a full
+                      ;; symbol/registry rebuild because it can add arbitrary
+                      ;; index-bearing declarations; the environment itself is
+                      ;; additive and can use the same refresh path as a macro
+                      ;; splice instead of retaining another whole-program env.
                       (let
                         [full-decls : AstDeclList
                           (macro-scratch-decl-list-prefix-rev-current-suffix
@@ -61543,7 +61549,13 @@
                                   next-decls
                                   next-paths
                                   cur-module
-                                  MacroSpliceEnvPlan.Rebuild)
+                                  (MacroSpliceEnvPlan.Refresh
+                                    cur-top-env
+                                    materialized-decls
+                                    (macro-scratch-decl-list-filter-path
+                                      rest
+                                      rest-paths
+                                      decl-path)))
                                   [(ResultMacroSpliceRebuild.Ok
                                       next-ctx
                                       next-top-env)

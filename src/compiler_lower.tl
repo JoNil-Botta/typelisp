@@ -6731,16 +6731,18 @@
 
 (define (lower-clone-handoff-request-decl
   [pools : AstNodePoolContext]
-  [root : String]) : AstDecl
+  [root-key-id : i64]) : AstDecl
   (let
     [callee : i64
       (ast-node-pool-context-expr-push
         pools
-        (AstExpr.Var (intern "stdlib.clone.synthesize-one-field-struct")))]
+        (AstExpr.Var
+          cbi.compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct))]
     [type-arg : i64
       (ast-node-pool-context-expr-push
         pools
-        (AstExpr.TypeLiteral (AstType.Struct (intern root))))]
+        (AstExpr.TypeLiteral
+          (AstType.Struct (clone-name-key-base-id root-key-id))))]
     [call-id : i64
       (ast-expr-call-with-pools
         pools
@@ -6756,8 +6758,8 @@
 
 (define (lower-clone-handoff-generated-origin-count-in-module
   [decls : AstDeclList]
-  [root : String]
-  [module : String]) : i64
+  [root-key-id : i64]
+  [module-id : i64]) : i64
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) 0]
     [(AstDeclListStep.Cons decl rest)
@@ -6765,8 +6767,8 @@
         [(AstDecl.Module next-module)
           (lower-clone-handoff-generated-origin-count-in-module
             rest
-            root
-            (intern-str next-module))]
+            root-key-id
+            next-module)]
         [(AstDecl.ComptimeDecl meta template-box)
           (+
             (match meta
@@ -6775,37 +6777,46 @@
                   (string.eq
                     generator
                     "stdlib.clone/synthesize-one-field-struct")
-                  (string.eq item (clone-local-helper-name root))
+                  (string.eq
+                    item
+                    (intern-str (clone-helper-name-id-for-key root-key-id)))
                   (tc-string-prefix?
                     key
                     "decls:stdlib.clone:stdlib.clone/synthesize-one-field-struct(")
-                  (string.eq module (clone-type-name-module root))
+                  (=
+                    module-id
+                    (if (clone-name-key-qualified? root-key-id)
+                      (clone-name-key-module-id root-key-id)
+                      cbi.compiler-builtin-id-fix-empty))
                   (=
                     (clone-helper-decl-count
                       (ast-decl-cons
-                        (ast-decl-module module)
+                        (ast-decl-module-id module-id)
                         (ast-decl-cons
                           (box-get template-box)
                           (ast-decl-list-new)))
-                      root)
+                      root-key-id)
                     1))
                   1
                   0)]
               [(AstGeneratedDeclMeta.No) 0])
             (lower-clone-handoff-generated-origin-count-in-module
               rest
-              root
-              module))]
+              root-key-id
+              module-id))]
         [_
           (lower-clone-handoff-generated-origin-count-in-module
             rest
-            root
-            module)])]))
+            root-key-id
+            module-id)])]))
 
 (define (lower-clone-handoff-generated-origin-count
   [decls : AstDeclList]
-  [root : String]) : i64
-  (lower-clone-handoff-generated-origin-count-in-module decls root ""))
+  [root-key-id : i64]) : i64
+  (lower-clone-handoff-generated-origin-count-in-module
+    decls
+    root-key-id
+    cbi.compiler-builtin-id-fix-empty))
 
 (define (lower-clone-handoff-expand-one
   [ctx : TcContext]
@@ -6813,22 +6824,31 @@
   [source-decls : AstDeclList]
   [entry-path : String]
   [pools : AstNodePoolContext]
-  [root : String]) : ResultMacroDeclExpansion
+  [root-key-id : i64]) : ResultMacroDeclExpansion
   (let
-    [module : String (clone-type-name-module root)]
-    [request : AstDecl (lower-clone-handoff-request-decl pools root)]
+    [module-id : i64
+      (if (clone-name-key-qualified? root-key-id)
+        (clone-name-key-module-id root-key-id)
+        cbi.compiler-builtin-id-fix-empty)]
+    [module : String
+      (if (= module-id cbi.compiler-builtin-id-fix-empty)
+        ""
+        (intern-str module-id))]
+    [_helper-name-id : i64 (clone-helper-name-id-for-key root-key-id)]
+    [request : AstDecl (lower-clone-handoff-request-decl pools root-key-id)]
     (match (macro-expand-decl-with-path
-      (tc-context-with-module ctx module)
+      (tc-context-with-module-id ctx module module-id)
       top-env
       source-decls
       module
+      module-id
       request
       entry-path)
       [(ResultMacroDeclExpansion.Ok generated generated-paths)
         (ResultMacroDeclExpansion.Ok
           (if (string.eq module "")
             generated
-            (ast-decl-cons (ast-decl-module module) generated))
+            (ast-decl-cons (ast-decl-module-id module-id) generated))
           generated-paths)]
       [(ResultMacroDeclExpansion.Err diag) (ResultMacroDeclExpansion.Err diag)])))
 
@@ -6842,25 +6862,29 @@
   [acc : AstDeclList]) : ResultMacroDecls
   (match roots
     [(CloneNameList.Nil) (ResultMacroDecls.Ok acc)]
-    [(CloneNameList.Cons root rest)
-      (if (> (clone-helper-decl-count source-decls root) 0)
+    [(CloneNameList.ConsId root-key-id rest)
+      (if (> (clone-helper-decl-count source-decls root-key-id) 0)
         (ResultMacroDecls.Err
           (box
             (tc-diag-at-start
               (str_cat.str-cat
                 "clone: conflicting helper producer for "
-                (clone-helper-name root)))))
+                (intern-str (clone-helper-name-id-for-key root-key-id))))))
         (match (lower-clone-handoff-expand-one
           ctx
           top-env
           source-decls
           entry-path
           pools
-          root)
+          root-key-id)
           [(ResultMacroDeclExpansion.Ok generated _)
             (if (and
-              (= (clone-helper-decl-count generated root) 1)
-              (= (lower-clone-handoff-generated-origin-count generated root) 1))
+              (= (clone-helper-decl-count generated root-key-id) 1)
+              (=
+                (lower-clone-handoff-generated-origin-count
+                  generated
+                  root-key-id)
+                1))
               (lower-clone-handoff-expand-roots
                 ctx
                 top-env
@@ -6874,15 +6898,15 @@
                   (tc-diag-at-start
                     (str_cat.str-cat
                       "clone: stdlib handoff produced an invalid or conflicting helper for "
-                      root
+                      (clone-name-key-string root-key-id)
                       " (helper-count="
                       (string.int->string
-                        (clone-helper-decl-count generated root))
+                        (clone-helper-decl-count generated root-key-id))
                       ", origin-count="
                       (string.int->string
                         (lower-clone-handoff-generated-origin-count
                           generated
-                          root))
+                          root-key-id))
                       ")")))))]
           [(ResultMacroDeclExpansion.Err diag) (ResultMacroDecls.Err diag)]))]))
 

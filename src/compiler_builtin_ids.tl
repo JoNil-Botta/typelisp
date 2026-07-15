@@ -550,6 +550,12 @@
   -1)
 (define compiler-builtin-id-fix-handle : i64
   -1)
+(define compiler-builtin-id-fix-stdlib_dot_clone : i64
+  -1)
+(define compiler-builtin-id-fix-synthesize_one_field_struct : i64
+  -1)
+(define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct : i64
+  -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
   (make-array i64 212))
 
@@ -562,7 +568,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 270)]
+    [ids : (Array i64) (make-array i64 273)]
     [ctfe-ids : (Array i64) (make-array i64 212)]
     [i : i64 0]
     (begin
@@ -570,7 +576,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 270)
+      (while (< i 273)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -975,6 +981,12 @@
     (state-set! state 267 compiler-builtin-id-fix-handle)
     (state-set! state 268 compiler-builtin-id-fix-when)
     (state-set! state 269 compiler-builtin-id-fix-unless)
+    (state-set! state 270 compiler-builtin-id-fix-stdlib_dot_clone)
+    (state-set! state 271 compiler-builtin-id-fix-synthesize_one_field_struct)
+    (state-set!
+      state
+      272
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1314,6 +1326,13 @@
     (set! compiler-builtin-id-fix-handle (state-ref state 267))
     (set! compiler-builtin-id-fix-when (state-ref state 268))
     (set! compiler-builtin-id-fix-unless (state-ref state 269))
+    (set! compiler-builtin-id-fix-stdlib_dot_clone (state-ref state 270))
+    (set!
+      compiler-builtin-id-fix-synthesize_one_field_struct
+      (state-ref state 271))
+    (set!
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct
+      (state-ref state 272))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -2458,6 +2477,19 @@
     (set!
       compiler-builtin-id-fix-handle
       (compiler-builtin-resolve-name insert-missing "handle"))
+    (set!
+      compiler-builtin-id-fix-stdlib_dot_clone
+      (compiler-builtin-resolve-name insert-missing "stdlib.clone"))
+    (set!
+      compiler-builtin-id-fix-synthesize_one_field_struct
+      (compiler-builtin-resolve-name
+        insert-missing
+        "synthesize-one-field-struct"))
+    (set!
+      compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct
+      (compiler-builtin-resolve-name
+        insert-missing
+        "stdlib.clone.synthesize-one-field-struct"))
     (set! compiler-builtin-generation (ci.intern-generation))
     (set! compiler-builtin-table-id (ci.intern-active-table-id))
     (set! compiler-builtin-pool-len (ci.intern-pool-len))

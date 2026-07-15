@@ -48,6 +48,19 @@
     [(clone_id_map.LookupFound helper-name-id) helper-name-id]
     [(clone_id_map.LookupMissing) fallback]))
 
+(define (clone-helper-name-id-for-key [type-key-id : i64]) : i64
+  (match (clone_id_map.get (& clone-helper-name-ids) type-key-id)
+    [(clone_id_map.LookupFound helper-name-id) helper-name-id]
+    [(clone_id_map.LookupMissing)
+      (let
+        [helper-name-id : i64
+          (ci.intern-generated-name
+            (clone-local-helper-name
+              (ci.intern-str (clone-name-key-base-id type-key-id))))]
+        (begin
+          (clone-helper-name-id-bind! type-key-id helper-name-id)
+          helper-name-id))]))
+
 (define (clone-helper-acc-name-id-for-key-or
   [type-key-id : i64]
   [fallback : i64]) : i64
@@ -1343,12 +1356,8 @@
                         (not (clone-name-list-contains-id? skip name-key-id)))
                         (let
                           [helper-name-id : i64
-                            (ci.intern-generated-name
-                              (clone-local-helper-name (ci.intern-str name)))]
+                            (clone-helper-name-id-for-key name-key-id)]
                           (begin
-                            (clone-helper-name-id-bind!
-                              name-key-id
-                              helper-name-id)
                             (set!
                               out
                               (clone-prepend-generated-decls-in-module
@@ -1373,12 +1382,8 @@
                         (not (clone-name-list-contains-id? skip name-key-id)))
                         (let
                           [helper-name-id : i64
-                            (ci.intern-generated-name
-                              (clone-local-helper-name (ci.intern-str name)))]
+                            (clone-helper-name-id-for-key name-key-id)]
                           (begin
-                            (clone-helper-name-id-bind!
-                              name-key-id
-                              helper-name-id)
                             (set!
                               out
                               (clone-prepend-generated-decls-in-module
@@ -1737,63 +1742,61 @@
 ;; which already-resolved roots may use the stdlib declaration producer.
 (define (clone-one-field-struct-root-in-module?
   [decls : AstDeclList]
-  [root : String]
-  [module : String]) : bool
+  [root-key-id : i64]
+  [module-id : i64]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (match (ast-decl-unwrapped decl)
         [(AstDecl.Module next-module)
-          (clone-one-field-struct-root-in-module?
-            rest
-            root
-            (intern-str next-module))]
+          (clone-one-field-struct-root-in-module? rest root-key-id next-module)]
         [(AstDecl.DefStruct name _ _ fields)
           (if (and
-            (string.eq
-              (clone-type-name-canonical module (intern-str name))
-              root)
+            (= (clone-name-key-id-in-module module-id name) root-key-id)
             (= (ast-field-def-list-len (& fields)) 1))
             true
-            (clone-one-field-struct-root-in-module? rest root module))]
-        [_ (clone-one-field-struct-root-in-module? rest root module)])]))
+            (clone-one-field-struct-root-in-module? rest root-key-id module-id))]
+        [_ (clone-one-field-struct-root-in-module? rest root-key-id module-id)])]))
 
-(define (clone-one-field-struct-root? [decls : AstDeclList] [root : String]) : bool
-  (clone-one-field-struct-root-in-module? decls root ""))
+(define (clone-one-field-struct-root? [decls : AstDeclList] [root-key-id : i64]) : bool
+  (clone-one-field-struct-root-in-module?
+    decls
+    root-key-id
+    cbi.compiler-builtin-id-fix-empty))
 
 (define (clone-stdlib-handoff-macro-present-in-module?
   [decls : AstDeclList]
-  [module : String]) : bool
+  [module-id : i64]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) false]
     [(AstDeclListStep.Cons decl rest)
       (match (ast-decl-unwrapped decl)
         [(AstDecl.Module next-module)
-          (clone-stdlib-handoff-macro-present-in-module?
-            rest
-            (intern-str next-module))]
+          (clone-stdlib-handoff-macro-present-in-module? rest next-module)]
         [(AstDecl.DefMacro name _ _ _)
           (if (and
-            (string.eq module "stdlib.clone")
-            (string.eq (intern-str name) "synthesize-one-field-struct"))
+            (= module-id cbi.compiler-builtin-id-fix-stdlib_dot_clone)
+            (= name cbi.compiler-builtin-id-fix-synthesize_one_field_struct))
             true
-            (clone-stdlib-handoff-macro-present-in-module? rest module))]
-        [_ (clone-stdlib-handoff-macro-present-in-module? rest module)])]))
+            (clone-stdlib-handoff-macro-present-in-module? rest module-id))]
+        [_ (clone-stdlib-handoff-macro-present-in-module? rest module-id)])]))
 
 (define (clone-stdlib-handoff-macro-present? [decls : AstDeclList]) : bool
-  (clone-stdlib-handoff-macro-present-in-module? decls ""))
+  (clone-stdlib-handoff-macro-present-in-module?
+    decls
+    cbi.compiler-builtin-id-fix-empty))
 
 (define (clone-stdlib-handoff-roots-from-expanded
   [decls : AstDeclList]
   [expanded : CloneNameList]) : CloneNameList
   (match expanded
     [(CloneNameList.Nil) CloneNameList.Nil]
-    [(CloneNameList.Cons root rest)
+    [(CloneNameList.ConsId root-key-id rest)
       (let
         [tail : CloneNameList
           (clone-stdlib-handoff-roots-from-expanded decls (box-get rest))]
-        (if (clone-one-field-struct-root? decls root)
-          (CloneNameList.Cons root (box tail))
+        (if (clone-one-field-struct-root? decls root-key-id)
+          (CloneNameList.ConsId root-key-id (box tail))
           tail))]))
 
 (define (clone-stdlib-handoff-roots
@@ -1809,26 +1812,33 @@
 
 (define (clone-helper-decl-count-in-module
   [decls : AstDeclList]
-  [root : String]
-  [module : String]) : i64
+  [root-key-id : i64]
+  [module-id : i64]) : i64
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Nil) 0]
     [(AstDeclListStep.Cons decl rest)
       (match (ast-decl-unwrapped decl)
         [(AstDecl.Module next-module)
-          (clone-helper-decl-count-in-module rest root (intern-str next-module))]
+          (clone-helper-decl-count-in-module rest root-key-id next-module)]
         [(AstDecl.DefFn name _ _ _ _)
           (+
             (if (and
-              (string.eq module (clone-type-name-module root))
-              (string.eq (intern-str name) (clone-local-helper-name root)))
+              (=
+                module-id
+                (if (clone-name-key-qualified? root-key-id)
+                  (clone-name-key-module-id root-key-id)
+                  cbi.compiler-builtin-id-fix-empty))
+              (= name (clone-helper-name-id-for-key root-key-id)))
               1
               0)
-            (clone-helper-decl-count-in-module rest root module))]
-        [_ (clone-helper-decl-count-in-module rest root module)])]))
+            (clone-helper-decl-count-in-module rest root-key-id module-id))]
+        [_ (clone-helper-decl-count-in-module rest root-key-id module-id)])]))
 
-(define (clone-helper-decl-count [decls : AstDeclList] [root : String]) : i64
-  (clone-helper-decl-count-in-module decls root ""))
+(define (clone-helper-decl-count [decls : AstDeclList] [root-key-id : i64]) : i64
+  (clone-helper-decl-count-in-module
+    decls
+    root-key-id
+    cbi.compiler-builtin-id-fix-empty))
 
 (define (clone-name-list-to-set [names : CloneNameList] [acc : CloneNameSet]) : CloneNameSet
   (let

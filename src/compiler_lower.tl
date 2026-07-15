@@ -230,6 +230,9 @@
 
 (defenum LowerVectorMapValue
   (Array i64)
+  ;; Gather `source[indexes[i]]`; indexes are contiguous i64 lanes and source
+  ;; accesses are non-contiguous reads.
+  (Gather i64 i64)
   ;; A dynamic array indexed by `(program-index)`. Unlike `Array`, this source
   ;; repeats the same lane vector for every foreach gang.
   (LaneArray i64)
@@ -257,6 +260,7 @@
 
 (defenum LowerVectorMapValueKey
   (Array i64)
+  (Gather i64 i64)
   (LaneArray i64)
   (Uniform CompilerIrValue)
   (BroadcastArray i64 CompilerIrValue)
@@ -35343,6 +35347,51 @@
         (LowerMaybeVectorMapValue.No))]
     [_ (LowerMaybeVectorMapValue.No)]))
 
+(define (lower-simple-vector-map-lane-array-value
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst-elem : AstType]
+  [value : AstExpr]) : LowerMaybeVectorMapValue
+  (match (lower-array-ref-var-for-program-index ctx env type-env value)
+    [(LowerMaybeArrayVar.Some array-var array-elem)
+      (if (tc-type-eq array-elem dst-elem)
+        (LowerMaybeVectorMapValue.Some
+          (LowerVectorMapValue.LaneArray array-var))
+        (LowerMaybeVectorMapValue.No))]
+    [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))
+
+(define (lower-simple-vector-map-gather-value
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [dst-elem : AstType]
+  [value : AstExpr]) : LowerMaybeVectorMapValue
+  (match value
+    [(AstExpr.ArrayRef source-box indexes-box)
+      (let
+        [source : AstExpr (lower-context-expr-get ctx source-box)]
+        [indexes : AstExpr (lower-context-expr-get ctx indexes-box)]
+        (match (lower-dynamic-array-var ctx env type-env source)
+          [(LowerMaybeArrayVar.Some source-var source-elem)
+            (match (lower-array-ref-var-for-index
+              ctx
+              env
+              type-env
+              indexes
+              index)
+              [(LowerMaybeArrayVar.Some indexes-var indexes-elem)
+                (if (and
+                  (tc-type-eq source-elem dst-elem)
+                  (tc-type-eq indexes-elem (AstType.I64)))
+                  (LowerMaybeVectorMapValue.Some
+                    (LowerVectorMapValue.Gather source-var indexes-var))
+                  (LowerMaybeVectorMapValue.No))]
+              [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])]
+          [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))]
+    [_ (LowerMaybeVectorMapValue.No)]))
+
 (define (lower-simple-vector-map-value
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -35403,13 +35452,22 @@
               (LowerVectorMapValue.Array array-var))
             (LowerMaybeVectorMapValue.No))]
         [(LowerMaybeArrayVar.No)
-          (match (lower-array-ref-var-for-program-index ctx env type-env value)
-            [(LowerMaybeArrayVar.Some array-var array-elem)
-              (if (tc-type-eq array-elem dst-elem)
-                (LowerMaybeVectorMapValue.Some
-                  (LowerVectorMapValue.LaneArray array-var))
-                (LowerMaybeVectorMapValue.No))]
-            [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])])]
+          (match (lower-simple-vector-map-gather-value
+            ctx
+            env
+            type-env
+            index
+            dst-elem
+            value)
+            [(LowerMaybeVectorMapValue.Some plan)
+              (LowerMaybeVectorMapValue.Some plan)]
+            [(LowerMaybeVectorMapValue.No)
+              (lower-simple-vector-map-lane-array-value
+                ctx
+                env
+                type-env
+                dst-elem
+                value)])])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [source : AstExpr (lower-context-expr-get ctx value-box)]
@@ -35526,6 +35584,10 @@
   (match plan
     [(LowerVectorMapValue.Array array-var)
       (lower-array-var-set-add (lower-array-var-set-empty) array-var 0)]
+    [(LowerVectorMapValue.Gather _ indexes-var)
+      ;; Only the contiguous index stream participates in the vector loop's
+      ;; range proof. Gathered source indexes are checked individually below.
+      (lower-array-var-set-add (lower-array-var-set-empty) indexes-var 0)]
     [(LowerVectorMapValue.LaneArray _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.Uniform _) (lower-array-var-set-empty)]
     [(LowerVectorMapValue.BroadcastArray array-var _)
@@ -35542,6 +35604,8 @@
   [array-var : i64]) : bool
   (match plan
     [(LowerVectorMapValue.Array found) (= found array-var)]
+    [(LowerVectorMapValue.Gather source indexes)
+      (or (= source array-var) (= indexes array-var))]
     [(LowerVectorMapValue.LaneArray found) (= found array-var)]
     [(LowerVectorMapValue.BroadcastArray found _) (= found array-var)]
     [(LowerVectorMapValue.BinOp _ lhs rhs)
@@ -35912,6 +35976,64 @@
               (CompilerIrInstr.VectorLoad v data-ptr index lanes elem-ty))
             (CompilerIrValue.Var v)
             elem-ty)])]))
+
+(define (lower-emit-gather-load
+  [state : LowerState]
+  [base : CompilerIrValue]
+  [index-base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]) : LowerExpr
+  (match (lower-state-alloc-var state)
+    [(LowerAlloc.Alloc s v)
+      (LowerExpr.Expr
+        (lower-state-emit
+          s
+          (ir-instr-gather-load v base index-base index lanes elem-ty))
+        (CompilerIrValue.Var v)
+        elem-ty)]))
+
+(define (lower-emit-gather-lane-checks
+  [_ctx : TcContext]
+  [state : LowerState]
+  [indexes-data : CompilerIrValue]
+  [base-index-var : i64]
+  [lane : i64]
+  [lanes : i64]
+  [source-len : CompilerIrValue]) : LowerExpr
+  (if (>= lane lanes)
+    (LowerExpr.Expr state CompilerIrValue.Unit (AstType.Unit))
+    (match (if (= lane 0)
+      (LowerExpr.Expr state (CompilerIrValue.Var base-index-var) (AstType.I64))
+      (lower-emit-binop
+        state
+        CompilerIrBinOp.Add
+        (CompilerIrValue.Var base-index-var)
+        (CompilerIrValue.I64 lane)
+        (AstType.I64)))
+      [(LowerExpr.Expr lane-state logical-index _)
+        ;; The vector-loop range guard has already proved this contiguous
+        ;; index lane is in bounds. Address it directly so gather validation
+        ;; performs only the semantically required source-index check.
+        (match (lower-emit-gep
+          lane-state
+          indexes-data
+          logical-index
+          (AstType.I64))
+          [(LowerExpr.Expr addr-state index-ptr _)
+            (match (lower-emit-load addr-state index-ptr (AstType.I64))
+              [(LowerExpr.Expr index-state gathered-index _)
+                (lower-emit-gather-lane-checks
+                  _ctx
+                  (lower-emit-bounds-check
+                    index-state
+                    gathered-index
+                    source-len)
+                  indexes-data
+                  base-index-var
+                  (+ lane 1)
+                  lanes
+                  source-len)])])])))
 
 (define (lower-emit-vector-store
   [state : LowerState]
@@ -37070,6 +37192,11 @@
       (match right
         [(LowerVectorMapValueKey.Array right-array) (= left-array right-array)]
         [_ false])]
+    [(LowerVectorMapValueKey.Gather left-source left-indexes)
+      (match right
+        [(LowerVectorMapValueKey.Gather right-source right-indexes)
+          (and (= left-source right-source) (= left-indexes right-indexes))]
+        [_ false])]
     [(LowerVectorMapValueKey.LaneArray left-array)
       (match right
         [(LowerVectorMapValueKey.LaneArray right-array)
@@ -37159,6 +37286,33 @@
         (CompilerIrValue.Var index-var)
         lanes
         elem-ty)]
+    [(LowerVectorMapValue.Gather source-var indexes-var)
+      (match (lower-array-len-value state (CompilerIrValue.Var source-var))
+        [(LowerExpr.Expr len-state source-len _)
+          (match (lower-array-data-pointer-value
+            len-state
+            (CompilerIrValue.Var source-var))
+            [(LowerExpr.Expr source-state source-data _)
+              (match (lower-array-data-pointer-value
+                source-state
+                (CompilerIrValue.Var indexes-var))
+                [(LowerExpr.Expr indexes-state indexes-data _)
+                  (match (lower-emit-gather-lane-checks
+                    ctx
+                    indexes-state
+                    indexes-data
+                    index-var
+                    0
+                    lanes
+                    source-len)
+                    [(LowerExpr.Expr checked-state _ _)
+                      (lower-emit-gather-load
+                        checked-state
+                        source-data
+                        indexes-data
+                        (CompilerIrValue.Var index-var)
+                        lanes
+                        elem-ty)])])])])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-array-len-value state (CompilerIrValue.Var array-var))
         [(LowerExpr.Expr len-state array-len _)
@@ -37271,6 +37425,24 @@
               (LowerVectorMapValue.Array array-var)
               emit-mode)
             (LowerVectorMapValueKey.Array array-var)
+            cache)])]
+    [(LowerVectorMapValue.Gather source-var indexes-var)
+      (match (lower-vector-map-value-cache-lookup
+        cache
+        (LowerVectorMapValueKey.Gather source-var indexes-var))
+        [(LowerMaybeIrValue.Some value)
+          (LowerVectorMapCachedEmit.Emit state value cache)]
+        [(LowerMaybeIrValue.No)
+          (lower-vector-map-cache-emitted
+            (lower-emit-vector-map-value-for-mode
+              ctx
+              state
+              index-var
+              lanes
+              elem-ty
+              (LowerVectorMapValue.Gather source-var indexes-var)
+              emit-mode)
+            (LowerVectorMapValueKey.Gather source-var indexes-var)
             cache)])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-vector-map-value-cache-lookup
@@ -37418,6 +37590,9 @@
         mask
         lanes
         elem-ty)]
+    ;; Gather maps use the scalar tail path so only active lanes are checked.
+    [(LowerVectorMapValue.Gather _ _)
+      (LowerExpr.Expr state CompilerIrValue.Unit elem-ty)]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-emit-binop
         state
@@ -37497,6 +37672,7 @@
 
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
+    [(LowerVectorMapValue.Gather _ _) true]
     [(LowerVectorMapValue.BroadcastArray _ _) true]
     [(LowerVectorMapValue.LaneArray _) true]
     [(LowerVectorMapValue.LaneIndex) true]
@@ -37505,6 +37681,15 @@
       (or
         (lower-vector-map-value-needs-scalar-tail? (box-get lhs))
         (lower-vector-map-value-needs-scalar-tail? (box-get rhs)))]
+    [_ false]))
+
+(define (lower-vector-map-value-has-gather? [plan : LowerVectorMapValue]) : bool
+  (match plan
+    [(LowerVectorMapValue.Gather _ _) true]
+    [(LowerVectorMapValue.BinOp _ lhs rhs)
+      (or
+        (lower-vector-map-value-has-gather? (box-get lhs))
+        (lower-vector-map-value-has-gather? (box-get rhs)))]
     [_ false]))
 
 (define (lower-vector-map-store-list-needs-scalar-tail?
@@ -37522,10 +37707,31 @@
               (set! index (+ index 1)))]))
       needs-tail)))
 
+(define (lower-vector-map-store-list-has-gather?
+  [stores : LowerVectorMapStoreList]) : bool
+  (let
+    [count : i64 (struct-get stores count)]
+    [index : i64 0]
+    [has-gather : bool false]
+    (begin
+      (while (and (not has-gather) (< index count))
+        (match (lower-vector-map-store-list-ref stores index)
+          [(LowerVectorMapStore _ value-plan)
+            (if (lower-vector-map-value-has-gather? value-plan)
+              (set! has-gather true)
+              (set! index (+ index 1)))]))
+      has-gather)))
+
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
   (match plan
     [(LowerMaybeVectorMap.Some stores _ _)
       (lower-vector-map-store-list-needs-scalar-tail? stores)]
+    [(LowerMaybeVectorMap.No) false]))
+
+(define (lower-maybe-vector-map-has-gather? [plan : LowerMaybeVectorMap]) : bool
+  (match plan
+    [(LowerMaybeVectorMap.Some stores _ _)
+      (lower-vector-map-store-list-has-gather? stores)]
     [(LowerMaybeVectorMap.No) false]))
 
 (define (lower-emit-scalar-vector-map-value
@@ -37548,6 +37754,26 @@
         elem-ty)
         [(LowerExpr.Expr addr-state elem-ptr _)
           (lower-emit-load addr-state elem-ptr elem-ty)])]
+    [(LowerVectorMapValue.Gather source-var indexes-var)
+      (match (lower-array-element-addr
+        ctx
+        state
+        (CompilerIrValue.Var indexes-var)
+        (CompilerIrValue.Var current-index-var)
+        (AstType.I64)
+        (AstType.I64))
+        [(LowerExpr.Expr index-addr-state index-ptr _)
+          (match (lower-emit-load index-addr-state index-ptr (AstType.I64))
+            [(LowerExpr.Expr index-state gathered-index _)
+              (match (lower-array-element-addr
+                ctx
+                index-state
+                (CompilerIrValue.Var source-var)
+                gathered-index
+                (AstType.I64)
+                elem-ty)
+                [(LowerExpr.Expr source-addr-state source-ptr _)
+                  (lower-emit-load source-addr-state source-ptr elem-ty)])])])]
     [(LowerVectorMapValue.LaneArray array-var)
       (match (lower-emit-binop
         state
@@ -41183,34 +41409,51 @@
                         exit-label))
                     tail-body-label)))
               (if (lower-mode-avx512? (lower-state-mode s))
-                (begin
-                  (match (lower-avx512-masked-tail-ok
-                    s
-                    index-var
-                    end-value
-                    arrays)
-                    [(LowerExpr.Expr next-s value _)
-                      (begin
-                        (set! s next-s)
-                        (set! tail-safe value))])
+                (if (lower-maybe-vector-map-has-gather? plan)
+                  ;; Gather sources require per-lane scalar tail semantics.
+                  ;; Enter the ordinary one-iteration tail body directly
+                  ;; instead of materializing a predicated vector value that
+                  ;; cannot represent those source checks.
                   (set!
                     s
                     (lower-state-finish-block
                       (lower-state-emit
                         s
-                        (CompilerIrInstr.Branch
-                          tail-safe
-                          tail-mask-label
-                          tail-body-label))
-                      tail-mask-label))
-                  (set!
-                    s
-                    (lower-avx512-tail-map-body ctx s index-var end-value plan))
-                  (set!
-                    s
-                    (lower-state-finish-block
-                      (lower-state-emit s (CompilerIrInstr.Jump exit-label))
-                      tail-body-label)))
+                        (CompilerIrInstr.Jump tail-body-label))
+                      tail-body-label))
+                  (begin
+                    (match (lower-avx512-masked-tail-ok
+                      s
+                      index-var
+                      end-value
+                      arrays)
+                      [(LowerExpr.Expr next-s value _)
+                        (begin
+                          (set! s next-s)
+                          (set! tail-safe value))])
+                    (set!
+                      s
+                      (lower-state-finish-block
+                        (lower-state-emit
+                          s
+                          (CompilerIrInstr.Branch
+                            tail-safe
+                            tail-mask-label
+                            tail-body-label))
+                        tail-mask-label))
+                    (set!
+                      s
+                      (lower-avx512-tail-map-body
+                        ctx
+                        s
+                        index-var
+                        end-value
+                        plan))
+                    (set!
+                      s
+                      (lower-state-finish-block
+                        (lower-state-emit s (CompilerIrInstr.Jump exit-label))
+                        tail-body-label))))
                 unit)
               (if (and
                 (not (lower-mode-avx512? (lower-state-mode s)))

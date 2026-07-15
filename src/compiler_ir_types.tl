@@ -167,6 +167,13 @@
 (defenum CompilerIrInstrPredicatedLoadPayload
   (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue i64 AstType))
 
+;; A checked SPMD gather. The lowering has already validated every logical
+;; index, in lane order, before this instruction is emitted. `index-base` is a
+;; contiguous i64 vector starting at `index`; `base` is the gathered element
+;; data pointer.
+(defenum CompilerIrInstrGatherLoadPayload
+  (Payload i64 CompilerIrValue CompilerIrValue CompilerIrValue i64 AstType))
+
 (defenum CompilerIrInstrCallCAbiStoreResultPayload
   (Payload
     CompilerIrValue
@@ -231,6 +238,7 @@
   (VectorStore (Box CompilerIrInstrVectorStorePayload))
   (PredicatedStore (Box CompilerIrInstrPredicatedStorePayload))
   (PredicatedLoad (Box CompilerIrInstrPredicatedLoadPayload))
+  (GatherLoad (Box CompilerIrInstrGatherLoadPayload))
   (TailMask i64 CompilerIrValue CompilerIrValue i64)
   (EntryArgc i64)
   (EntryArgv i64)
@@ -374,6 +382,23 @@
         base
         index
         mask
+        lanes
+        ty))))
+
+(define (ir-instr-gather-load
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index-base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [ty : AstType]) : CompilerIrInstr
+  (CompilerIrInstr.GatherLoad
+    (box
+      (CompilerIrInstrGatherLoadPayload.Payload
+        dst
+        base
+        index-base
+        index
         lanes
         ty))))
 
@@ -2284,6 +2309,22 @@
             (compiler-ir-clone-value mask)
             lanes
             (compiler-ir-clone-type ty))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            lanes
+            ty)
+          (ir-instr-gather-load
+            dst
+            (compiler-ir-clone-value base)
+            (compiler-ir-clone-value index-base)
+            (compiler-ir-clone-value index)
+            lanes
+            (compiler-ir-clone-type ty))])]
     [(CompilerIrInstr.TailMask dst index len lanes)
       (CompilerIrInstr.TailMask
         dst
@@ -3316,6 +3357,7 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _)
           CompilerIrEffect.MemoryRead])]
+    [(CompilerIrInstr.GatherLoad _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.EntryArgc _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.EntryArgv _) CompilerIrEffect.MemoryRead]
     [(CompilerIrInstr.EntryEnvp _) CompilerIrEffect.MemoryRead]
@@ -3708,6 +3750,13 @@
             spans
             (compiler-source-spans-value-key function dst)
             span)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+          (compiler-source-spans-insert-instr-entry
+            spans
+            (compiler-source-spans-value-key function dst)
+            span)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (compiler-source-spans-insert-instr-entry
         spans
@@ -3891,6 +3940,12 @@
         [(CompilerIrInstr.PredicatedLoad payload-box)
           (match (box-get payload-box)
             [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+              (compiler-source-spans-entry-list-lookup
+                instr-entries
+                (compiler-source-spans-value-key function dst))])]
+        [(CompilerIrInstr.GatherLoad payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
               (compiler-source-spans-entry-list-lookup
                 instr-entries
                 (compiler-source-spans-value-key function dst))])]
@@ -4959,6 +5014,25 @@
             (compiler-ir-value-describe index)
             ", "
             (compiler-ir-value-describe mask)
+            (compiler-ir-vector-suffix lanes elem-ty))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            lanes
+            elem-ty)
+          (str_cat.str-cat
+            "  "
+            (compiler-ir-value-describe (CompilerIrValue.Var dst))
+            " = gather_load "
+            (compiler-ir-value-describe base)
+            ", "
+            (compiler-ir-value-describe index-base)
+            ", "
+            (compiler-ir-value-describe index)
             (compiler-ir-vector-suffix lanes elem-ty))])]
     [(CompilerIrInstr.TailMask dst index len lanes)
       (str_cat.str-cat

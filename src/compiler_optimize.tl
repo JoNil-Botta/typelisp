@@ -1341,6 +1341,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
           (opt-invalidate-def env dst instr)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.EntryArgc dst) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.EntryArgv dst) (opt-invalidate-def env dst instr)]
@@ -1446,6 +1450,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-invalidate-def env dst instr)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-invalidate-def env dst instr)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-invalidate-def env dst instr)]
     [(CompilerIrInstr.EntryArgc dst) (opt-invalidate-def env dst instr)]
@@ -1679,6 +1687,14 @@
           (opt-collect-value-uses
             (opt-collect-value-uses (opt-collect-value-uses set base) index)
             mask)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (opt-collect-value-uses
+            (opt-collect-value-uses
+              (opt-collect-value-uses set base)
+              index-base)
+            index)])]
     [(CompilerIrInstr.TailMask _ index length _)
       (opt-collect-value-uses (opt-collect-value-uses set index) length)]
     [(CompilerIrInstr.EntryArgc _) set]
@@ -2114,6 +2130,13 @@
             (opt-collect-value-uses-array items base)
             (opt-collect-value-uses-array items index)
             (opt-collect-value-uses-array items mask))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (begin
+            (opt-collect-value-uses-array items base)
+            (opt-collect-value-uses-array items index-base)
+            (opt-collect-value-uses-array items index))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (opt-collect-value-uses-array items index)
@@ -2827,6 +2850,19 @@
             (opt-aggregate-value-has-pointer? base ptrs load-base)
             (opt-aggregate-value-has-pointer? base ptrs index)
             (opt-aggregate-value-has-pointer? base ptrs mask))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            _
+            load-base
+            index-base
+            index
+            _
+            _)
+          (or
+            (opt-aggregate-value-has-pointer? base ptrs load-base)
+            (opt-aggregate-value-has-pointer? base ptrs index-base)
+            (opt-aggregate-value-has-pointer? base ptrs index))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (or
         (opt-aggregate-value-has-pointer? base ptrs index)
@@ -3610,6 +3646,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-aggregate-field-facts-invalidate-var facts dst)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-aggregate-field-facts-invalidate-var facts dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (opt-aggregate-field-facts-invalidate-var facts dst)]
@@ -4600,6 +4640,33 @@
                     (= alanes blanes)
                     (opt-type-eq aty bty))])]
             [_ false])])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            ad
+            abase
+            aindex-base
+            aindex
+            alanes
+            aty)
+          (match b
+            [(CompilerIrInstr.GatherLoad other-payload-box)
+              (match (box-get other-payload-box)
+                [(CompilerIrInstrGatherLoadPayload.Payload
+                    bd
+                    bbase
+                    bindex-base
+                    bindex
+                    blanes
+                    bty)
+                  (and
+                    (= ad bd)
+                    (opt-value-eq abase bbase)
+                    (opt-value-eq aindex-base bindex-base)
+                    (opt-value-eq aindex bindex)
+                    (= alanes blanes)
+                    (opt-type-eq aty bty))])]
+            [_ false])])]
     [(CompilerIrInstr.VectorReduce ad aop av alanes aty)
       (match b
         [(CompilerIrInstr.VectorReduce bd bop bv blanes bty)
@@ -5304,6 +5371,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
           (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+          (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (OptCseResult.Result (opt-expr-invalidate-var table dst) instr)]
     [(CompilerIrInstr.EntryArgc dst)
@@ -5676,6 +5747,7 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _) instr])]
+    [(CompilerIrInstr.GatherLoad _) instr]
     [(CompilerIrInstr.TailMask _ _ _ _) instr]
     [(CompilerIrInstr.EntryArgc _) instr]
     [(CompilerIrInstr.EntryArgv _) instr]
@@ -5846,6 +5918,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-copy-invalidate-var env dst)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-copy-invalidate-var env dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-copy-invalidate-var env dst)]
     [(CompilerIrInstr.EntryArgc dst) (opt-copy-invalidate-var env dst)]
@@ -6108,6 +6184,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-bounds-invalidate-var facts dst)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-bounds-invalidate-var facts dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-bounds-invalidate-var facts dst)]
     [(CompilerIrInstr.EntryArgc dst) (opt-bounds-invalidate-var facts dst)]
@@ -8284,6 +8364,10 @@
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
           (option_i64.Some dst)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+          (option_i64.Some dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (option_i64.Some dst)]
     [(CompilerIrInstr.EntryArgc dst) (option_i64.Some dst)]
     [(CompilerIrInstr.EntryArgv dst) (option_i64.Some dst)]
@@ -8789,6 +8873,14 @@
             (opt-verify-two
               (opt-verify-value-use defs doms index block-label pos)
               (opt-verify-value-use defs doms mask block-label pos)))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (opt-verify-two
+            (opt-verify-value-use defs doms base block-label pos)
+            (opt-verify-two
+              (opt-verify-value-use defs doms index-base block-label pos)
+              (opt-verify-value-use defs doms index block-label pos)))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (opt-verify-two
         (opt-verify-value-use defs doms index block-label pos)
@@ -9257,6 +9349,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-ssa-facts-add-def-bad facts dst)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-ssa-facts-add-def-bad facts dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _) (opt-ssa-facts-add-def-bad facts dst)]
     [(CompilerIrInstr.EntryArgv dst) (opt-ssa-facts-add-def-bad facts dst)]
@@ -9939,6 +10035,25 @@
               name
               (opt-ssa-rewrite-call-args env args)
               slots)
+            env
+            next-var)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            lanes
+            ty)
+          (OptSsaInstrResult.Result
+            (ir-instr-gather-load
+              dst
+              (opt-ssa-rewrite-value env base)
+              (opt-ssa-rewrite-value env index-base)
+              (opt-ssa-rewrite-value env index)
+              lanes
+              ty)
             env
             next-var)])]
     [(CompilerIrInstr.CallIndirectCAbiStoreResult payload-box)
@@ -11666,6 +11781,7 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload _ _ _ _ _ _) instr])]
+    [(CompilerIrInstr.GatherLoad _) instr]
     [(CompilerIrInstr.TailMask _ _ _ _) instr]
     [(CompilerIrInstr.AddrOf _ _) instr]
     [(CompilerIrInstr.Alloc _ _) instr]
@@ -17188,6 +17304,9 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _) dst])]
     [(CompilerIrInstr.TailMask dst _ _ _) dst]
     [(CompilerIrInstr.Call dst _ _ _) dst]
     [(CompilerIrInstr.CallIndirect dst _ _ _) dst]
@@ -17552,6 +17671,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (opt-sccp-state-bind state dst (OptSccpValue.Overdefined))]
@@ -18013,6 +18136,22 @@
             op
             (opt-sccp-rewrite-value env lhs)
             (opt-sccp-rewrite-value env rhs)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            lanes
+            ty)
+          (ir-instr-gather-load
+            dst
+            (opt-sccp-rewrite-value env base)
+            (opt-sccp-rewrite-value env index-base)
+            (opt-sccp-rewrite-value env index)
             lanes
             ty)])]
     [(CompilerIrInstr.VectorReduce dst op src lanes ty)
@@ -18807,6 +18946,9 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _) dst])]
     [(CompilerIrInstr.TailMask dst _ _ _) dst]
     [(CompilerIrInstr.EntryArgc dst) dst]
     [(CompilerIrInstr.EntryArgv dst) dst]
@@ -22198,6 +22340,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (opt-loop-bce-state-invalidate-def state dst)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (opt-loop-bce-state-invalidate-def state dst)])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (opt-loop-bce-state-invalidate-def state dst)]
@@ -27789,6 +27935,16 @@
               (opt-inline-census-value index census base)
               idx)
             mask)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base idx _ _)
+          (opt-inline-census-value
+            index
+            (opt-inline-census-value
+              index
+              (opt-inline-census-value index census base)
+              index-base)
+            idx)])]
     [(CompilerIrInstr.TailMask _ idx length _)
       (opt-inline-census-value
         index
@@ -31865,6 +32021,16 @@
             index
             (opt-reach-value index (opt-reach-value index state base) idx)
             mask)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base idx _ _)
+          (opt-reach-value
+            index
+            (opt-reach-value
+              index
+              (opt-reach-value index state base)
+              index-base)
+            idx)])]
     [(CompilerIrInstr.TailMask _ idx length _)
       (opt-reach-value index (opt-reach-value index state idx) length)]
     [(CompilerIrInstr.EntryArgc _) state]
@@ -33027,6 +33193,14 @@
               (opt-const-globals-disq-value disq base)
               idx)
             mask)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base idx _ _)
+          (opt-const-globals-disq-value
+            (opt-const-globals-disq-value
+              (opt-const-globals-disq-value disq base)
+              index-base)
+            idx)])]
     [(CompilerIrInstr.TailMask _ idx length _)
       (opt-const-globals-disq-value
         (opt-const-globals-disq-value disq idx)
@@ -33545,6 +33719,10 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
+          (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
           (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))])]
     [(CompilerIrInstr.TailMask dst _ _ _)
       (OptRemapSpanKey.SomeKey (opt-remap-spans-value-key value-prefix dst))]
@@ -48679,6 +48857,10 @@
         (match (box-get payload-box)
           [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _)
             (opt-alias-mark-may-alias facts dst)])]
+      [(CompilerIrInstr.GatherLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+            (opt-alias-mark-may-alias facts dst)])]
       [_ facts])))
 
 (define (opt-alias-run [facts : OptAliasFacts] [instrs : CompilerIrInstrList]) : OptAliasFacts
@@ -48974,6 +49156,21 @@
                 (opt-scratch-value-derived? roots facts base)
                 (opt-scratch-value-derived? roots facts index)
                 (opt-scratch-value-derived? roots facts mask))
+                (OptScratchBlockerReason.Blocked "raw_pointer")
+                (OptScratchBlockerReason.NoBlocker))])]
+        [(CompilerIrInstr.GatherLoad payload-box)
+          (match (box-get payload-box)
+            [(CompilerIrInstrGatherLoadPayload.Payload
+                _
+                base
+                index-base
+                index
+                _
+                _)
+              (if (or
+                (opt-scratch-value-derived? roots facts base)
+                (opt-scratch-value-derived? roots facts index-base)
+                (opt-scratch-value-derived? roots facts index))
                 (OptScratchBlockerReason.Blocked "raw_pointer")
                 (OptScratchBlockerReason.NoBlocker))])]
         [(CompilerIrInstr.Return maybe)

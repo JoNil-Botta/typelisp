@@ -4122,6 +4122,356 @@
       elem-ty
       instr-diag)))
 
+(define (compiler-backend-avx2-gather-mnemonic [elem-ty : AstType]) : String
+  (match elem-ty
+    [(AstType.I32) "vpgatherqd"]
+    [(AstType.I64) "vpgatherqq"]
+    [(AstType.F32) "vgatherqps"]
+    [(AstType.F64) "vgatherqpd"]
+    [_ ""]))
+
+(define (compiler-backend-avx512-gather-mnemonic [elem-ty : AstType]) : String
+  (compiler-backend-avx2-gather-mnemonic elem-ty))
+
+(define (compiler-backend-gather-dword-element? [elem-ty : AstType]) : bool
+  (or (tc-type-eq elem-ty (AstType.I32)) (tc-type-eq elem-ty (AstType.F32))))
+
+(define (compiler-backend-avx2-gather-mask-reg [dst-reg : String]) : String
+  (if (string.eq (compiler-backend-vector-reg-lower-ymm dst-reg) "%ymm13")
+    "%ymm12"
+    "%ymm13"))
+
+(define (compiler-backend-emit-avx2-gather-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index-base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [mnemonic : String (compiler-backend-avx2-gather-mnemonic elem-ty)]
+    [dword : bool (compiler-backend-gather-dword-element? elem-ty)]
+    (if (or
+      (string.eq mnemonic "")
+      (if dword
+        (not (= lanes 8))
+        (not (= lanes 4))))
+      (compiler-backend-avx2-shape-diagnostic instr-diag elem-ty lanes)
+      (match (compiler-backend-vector-dst-reg
+        assignments
+        dst
+        "gather dst"
+        "ymm"
+        (compiler-backend-vector-spill-scratch "ymm" 0))
+        [(ResultBackendReg.Ok dst-reg)
+          (match (compiler-backend-emit-simd-indexed-address
+            assignments
+            index-base
+            index
+            (AstType.I64))
+            [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
+              (let
+                [index-asm : String (struct-get index-plan asm)]
+                [index-addr : String (struct-get index-plan addr)]
+                [base-reg : String
+                  (compiler-backend-scavenge-reg-here
+                    (compiler-backend-scavenge-exclude-ops2
+                      assignments
+                      base
+                      base)
+                    7
+                    "%r8")]
+                [mask-reg : String
+                  (compiler-backend-avx2-gather-mask-reg dst-reg)]
+                [mask-xmm : String
+                  (compiler-backend-vector-reg-lower-xmm mask-reg)]
+                [dst-xmm : String
+                  (compiler-backend-vector-reg-lower-xmm dst-reg)]
+                [stack-bytes : i64
+                  (if dword
+                    128
+                    32)]
+                [result-off : i64 96]
+                (match (compiler-backend-emit-simd-base-data-pointer
+                  assignments
+                  base
+                  base-reg)
+                  [(ResultCompilerBackend.Ok base-asm)
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        index-asm
+                        "    vmovdqu "
+                        index-addr
+                        ", %ymm15\n"
+                        (if dword
+                          (str_cat.str-cat
+                            "    vmovdqu 32"
+                            index-addr
+                            ", %ymm14\n")
+                          "")
+                        base-asm
+                        "    subq $"
+                        (string.int->string stack-bytes)
+                        ", %rsp\n    vmovdqu "
+                        mask-reg
+                        ", (%rsp)\n"
+                        (if dword
+                          "    vmovdqu %ymm14, 64(%rsp)\n"
+                          "")
+                        "    vpxor "
+                        dst-reg
+                        ", "
+                        dst-reg
+                        ", "
+                        dst-reg
+                        "\n    vpcmpeqd "
+                        mask-reg
+                        ", "
+                        mask-reg
+                        ", "
+                        mask-reg
+                        "\n    "
+                        mnemonic
+                        " "
+                        (if dword
+                          mask-xmm
+                          mask-reg)
+                        ", ("
+                        base-reg
+                        ",%ymm15,"
+                        (if dword
+                          "4"
+                          "8")
+                        "), "
+                        (if dword
+                          dst-xmm
+                          dst-reg)
+                        "\n"
+                        (if dword
+                          (str_cat.str-cat
+                            "    vmovdqu "
+                            dst-xmm
+                            ", "
+                            (string.int->string result-off)
+                            "(%rsp)\n    vpxor "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n    vpcmpeqd "
+                            mask-reg
+                            ", "
+                            mask-reg
+                            ", "
+                            mask-reg
+                            "\n    vmovdqu 64(%rsp), %ymm15\n    "
+                            mnemonic
+                            " "
+                            mask-xmm
+                            ", ("
+                            base-reg
+                            ",%ymm15,4), "
+                            dst-xmm
+                            "\n    vmovdqu "
+                            dst-xmm
+                            ", 112(%rsp)\n    vmovdqu 96(%rsp), "
+                            dst-reg
+                            "\n")
+                          "")
+                        "    vmovdqu (%rsp), "
+                        mask-reg
+                        "\n"
+                        (compiler-backend-vector-store-dst
+                          assignments
+                          dst
+                          "ymm"
+                          elem-ty
+                          dst-reg)
+                        "    addq $"
+                        (string.int->string stack-bytes)
+                        ", %rsp\n"))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))]))]
+            [(ResultCompilerBackendSimdIndexedAddress.Err message)
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    instr-diag)))])]
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-with-message instr-diag message)))]))))
+
+(define (compiler-backend-emit-avx512-gather-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index-base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (let
+    [mnemonic : String (compiler-backend-avx512-gather-mnemonic elem-ty)]
+    [dword : bool (compiler-backend-gather-dword-element? elem-ty)]
+    (if (or
+      (string.eq mnemonic "")
+      (if dword
+        (not (= lanes 16))
+        (not (= lanes 8))))
+      (compiler-backend-avx512-shape-diagnostic instr-diag elem-ty lanes)
+      (match (compiler-backend-vector-dst-reg
+        assignments
+        dst
+        "gather dst"
+        "zmm"
+        (compiler-backend-vector-spill-scratch "zmm" 0))
+        [(ResultBackendReg.Ok dst-reg)
+          (match (compiler-backend-emit-simd-indexed-address
+            assignments
+            index-base
+            index
+            (AstType.I64))
+            [(ResultCompilerBackendSimdIndexedAddress.Ok index-plan)
+              (let
+                [index-asm : String (struct-get index-plan asm)]
+                [index-addr : String (struct-get index-plan addr)]
+                [base-reg : String
+                  (compiler-backend-scavenge-reg-here
+                    (compiler-backend-scavenge-exclude-ops2
+                      assignments
+                      base
+                      base)
+                    7
+                    "%r8")]
+                [dst-ymm : String
+                  (compiler-backend-vector-reg-lower-ymm dst-reg)]
+                (match (compiler-backend-emit-simd-base-data-pointer
+                  assignments
+                  base
+                  base-reg)
+                  [(ResultCompilerBackend.Ok base-asm)
+                    (ResultCompilerBackend.Ok
+                      (str_cat.str-cat
+                        index-asm
+                        "    vmovdqu64 "
+                        index-addr
+                        ", %zmm15\n"
+                        (if dword
+                          (str_cat.str-cat
+                            "    vmovdqu64 64"
+                            index-addr
+                            ", %zmm14\n")
+                          "")
+                        base-asm
+                        (if dword
+                          "    subq $128, %rsp\n"
+                          "")
+                        (if dword
+                          "    vmovdqu64 %zmm14, (%rsp)\n"
+                          "")
+                        "    kxnorw %k7, %k7, %k7\n    vpxord "
+                        dst-reg
+                        ", "
+                        dst-reg
+                        ", "
+                        dst-reg
+                        "\n    "
+                        mnemonic
+                        " ("
+                        base-reg
+                        ",%zmm15,"
+                        (if dword
+                          "4"
+                          "8")
+                        "), "
+                        (if dword
+                          dst-ymm
+                          dst-reg)
+                        "{%k7}\n"
+                        (if dword
+                          (str_cat.str-cat
+                            "    vmovdqu32 "
+                            dst-ymm
+                            ", 64(%rsp)\n    kxnorw %k7, %k7, %k7\n    vpxord "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            ", "
+                            dst-reg
+                            "\n    vmovdqu64 (%rsp), %zmm15\n    "
+                            mnemonic
+                            " ("
+                            base-reg
+                            ",%zmm15,4), "
+                            dst-ymm
+                            "{%k7}\n    vmovdqu32 "
+                            dst-ymm
+                            ", 96(%rsp)\n    vmovdqu32 64(%rsp), "
+                            dst-reg
+                            "\n")
+                          "")
+                        (compiler-backend-vector-store-dst
+                          assignments
+                          dst
+                          "zmm"
+                          elem-ty
+                          dst-reg)
+                        (if dword
+                          "    addq $128, %rsp\n"
+                          "")))]
+                  [(ResultCompilerBackend.Err message)
+                    (ResultCompilerBackend.Err
+                      (box
+                        (compiler-backend-apply-instr-diagnostic
+                          (box-get message)
+                          instr-diag)))]))]
+            [(ResultCompilerBackendSimdIndexedAddress.Err message)
+              (ResultCompilerBackend.Err
+                (box
+                  (compiler-backend-apply-instr-diagnostic
+                    (box-get message)
+                    instr-diag)))])]
+        [(ResultBackendReg.Err message)
+          (ResultCompilerBackend.Err
+            (box (compiler-diagnostic-with-message instr-diag message)))]))))
+
+(define (compiler-backend-emit-gather-load
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [base : CompilerIrValue]
+  [index-base : CompilerIrValue]
+  [index : CompilerIrValue]
+  [lanes : i64]
+  [elem-ty : AstType]
+  [instr-diag : CompilerDiagnostic]) : ResultCompilerBackend
+  (if (compiler-backend-current-mode-avx2?)
+    (compiler-backend-emit-avx2-gather-load
+      assignments
+      dst
+      base
+      index-base
+      index
+      lanes
+      elem-ty
+      instr-diag)
+    (compiler-backend-emit-avx512-gather-load
+      assignments
+      dst
+      base
+      index-base
+      index
+      lanes
+      elem-ty
+      instr-diag)))
+
 (define (compiler-backend-emit-vector-binop
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -29264,6 +29614,24 @@
               lanes
               elem-ty
               instr-diag)])]
+      [(CompilerIrInstr.GatherLoad payload-box)
+        (match (box-get payload-box)
+          [(CompilerIrInstrGatherLoadPayload.Payload
+              dst
+              base
+              index-base
+              index
+              lanes
+              elem-ty)
+            (compiler-backend-emit-gather-load
+              assignments
+              dst
+              base
+              index-base
+              index
+              lanes
+              elem-ty
+              instr-diag)])]
       [(CompilerIrInstr.TailMask dst index len lanes)
         (compiler-backend-emit-tail-mask
           function
@@ -29873,6 +30241,13 @@
             (compiler-backend-count-value-use counts base)
             (compiler-backend-count-value-use counts index)
             (compiler-backend-count-value-use counts mask))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (begin
+            (compiler-backend-count-value-use counts base)
+            (compiler-backend-count-value-use counts index-base)
+            (compiler-backend-count-value-use counts index))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-backend-count-value-use counts index)
@@ -43510,6 +43885,14 @@
               (compiler-backend-collect-value-collections collections base)
               index)
             mask)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (compiler-backend-collect-value-collections
+            (compiler-backend-collect-value-collections
+              (compiler-backend-collect-value-collections collections base)
+              index-base)
+            index)])]
     [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-collect-value-collections
         (compiler-backend-collect-value-collections collections index)
@@ -50114,6 +50497,16 @@ tl_tlci_call_macro_entry:
               index)
             function
             mask)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (compiler-backend-object-value-ref
+            (compiler-backend-object-value-ref
+              (compiler-backend-object-value-ref parts function base)
+              function
+              index-base)
+            function
+            index)])]
     [(CompilerIrInstr.TailMask _ index length _)
       (compiler-backend-object-value-ref
         (compiler-backend-object-value-ref parts function index)

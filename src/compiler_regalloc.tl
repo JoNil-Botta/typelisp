@@ -4308,6 +4308,10 @@
           (match elem-ty
             [(AstType.Bool) set]
             [_ (compiler-live-set-insert set dst)])])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _)
+          (compiler-live-set-insert set dst)])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ backend _ _ _ result)
@@ -5172,6 +5176,9 @@
     [(CompilerIrInstr.PredicatedLoad payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrPredicatedLoadPayload.Payload dst _ _ _ _ _) dst])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ _ _) dst])]
     [(CompilerIrInstr.TailMask dst _ _ _) dst]
     [(CompilerIrInstr.EntryArgc dst) dst]
     [(CompilerIrInstr.EntryArgv dst) dst]
@@ -7008,6 +7015,7 @@
     [(CompilerIrInstr.VectorStore _) true]
     [(CompilerIrInstr.PredicatedStore _) true]
     [(CompilerIrInstr.PredicatedLoad _) true]
+    [(CompilerIrInstr.GatherLoad _) true]
     [(CompilerIrInstr.TailMask _ _ _ _) true]
     [(CompilerIrInstr.EntryArgc _) true]
     [(CompilerIrInstr.EntryArgv _) true]
@@ -17249,6 +17257,10 @@
           (match elem-ty
             [(AstType.Bool) unit]
             [_ (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload dst _ _ _ lanes elem-ty)
+          (compiler-reg-vector-stack-words-set! words dst lanes elem-ty)])]
     [(CompilerIrInstr.SpmdCall payload-box)
       (match (box-get payload-box)
         [(CompilerIrInstrSpmdCallPayload.Payload _ backend lanes _ _ result)
@@ -18167,6 +18179,13 @@
             (compiler-reg-color-invalidate-value! roots invalid base)
             (compiler-reg-color-invalidate-value! roots invalid index)
             (compiler-reg-color-invalidate-value! roots invalid mask))])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload _ base index-base index _ _)
+          (begin
+            (compiler-reg-color-invalidate-value! roots invalid base)
+            (compiler-reg-color-invalidate-value! roots invalid index-base)
+            (compiler-reg-color-invalidate-value! roots invalid index))])]
     [(CompilerIrInstr.TailMask _ index length _)
       (begin
         (compiler-reg-color-invalidate-value! roots invalid index)
@@ -19362,6 +19381,22 @@
             (compiler-reg-remap-value remap base)
             (compiler-reg-remap-value remap index)
             (compiler-reg-remap-value remap mask)
+            lanes
+            ty)])]
+    [(CompilerIrInstr.GatherLoad payload-box)
+      (match (box-get payload-box)
+        [(CompilerIrInstrGatherLoadPayload.Payload
+            dst
+            base
+            index-base
+            index
+            lanes
+            ty)
+          (ir-instr-gather-load
+            (compiler-reg-remap-id remap dst)
+            (compiler-reg-remap-value remap base)
+            (compiler-reg-remap-value remap index-base)
+            (compiler-reg-remap-value remap index)
             lanes
             ty)])]
     [(CompilerIrInstr.TailMask dst index length lanes)

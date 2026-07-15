@@ -35831,6 +35831,51 @@
         (LowerMaybeVectorMapValue.No))]
     [_ (LowerMaybeVectorMapValue.No)]))
 
+(define (lower-simple-vector-map-lane-array-value
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [dst-elem : AstType]
+  [value : AstExpr]) : LowerMaybeVectorMapValue
+  (match (lower-array-ref-var-for-program-index ctx env type-env value)
+    [(LowerMaybeArrayVar.Some array-var array-elem)
+      (if (tc-type-eq array-elem dst-elem)
+        (LowerMaybeVectorMapValue.Some
+          (LowerVectorMapValue.LaneArray array-var))
+        (LowerMaybeVectorMapValue.No))]
+    [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))
+
+(define (lower-simple-vector-map-gather-value
+  [ctx : TcContext]
+  [env : sym_i64_env.SymI64Env]
+  [type-env : TcTypeEnv]
+  [index : String]
+  [dst-elem : AstType]
+  [value : AstExpr]) : LowerMaybeVectorMapValue
+  (match value
+    [(AstExpr.ArrayRef source-box indexes-box)
+      (let
+        [source : AstExpr (lower-context-expr-get ctx source-box)]
+        [indexes : AstExpr (lower-context-expr-get ctx indexes-box)]
+        (match (lower-dynamic-array-var ctx env type-env source)
+          [(LowerMaybeArrayVar.Some source-var source-elem)
+            (match (lower-array-ref-var-for-index
+              ctx
+              env
+              type-env
+              indexes
+              index)
+              [(LowerMaybeArrayVar.Some indexes-var indexes-elem)
+                (if (and
+                  (tc-type-eq source-elem dst-elem)
+                  (tc-type-eq indexes-elem (AstType.I64)))
+                  (LowerMaybeVectorMapValue.Some
+                    (LowerVectorMapValue.Gather source-var indexes-var))
+                  (LowerMaybeVectorMapValue.No))]
+              [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])]
+          [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))]
+    [_ (LowerMaybeVectorMapValue.No)]))
+
 (define (lower-simple-vector-map-value
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -35891,40 +35936,22 @@
               (LowerVectorMapValue.Array array-var))
             (LowerMaybeVectorMapValue.No))]
         [(LowerMaybeArrayVar.No)
-          (match value
-            [(AstExpr.ArrayRef source-box indexes-box)
-              (let
-                [source : AstExpr (lower-context-expr-get ctx source-box)]
-                [indexes : AstExpr (lower-context-expr-get ctx indexes-box)]
-                (match (lower-dynamic-array-var ctx env type-env source)
-                  [(LowerMaybeArrayVar.Some source-var source-elem)
-                    (match (lower-array-ref-var-for-index
-                      ctx
-                      env
-                      type-env
-                      indexes
-                      index)
-                      [(LowerMaybeArrayVar.Some indexes-var indexes-elem)
-                        (if (and
-                          (tc-type-eq source-elem dst-elem)
-                          (tc-type-eq indexes-elem (AstType.I64)))
-                          (LowerMaybeVectorMapValue.Some
-                            (LowerVectorMapValue.Gather source-var indexes-var))
-                          (LowerMaybeVectorMapValue.No))]
-                      [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])]
-                  [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)]))]
-            [_
-              (match (lower-array-ref-var-for-program-index
+          (match (lower-simple-vector-map-gather-value
+            ctx
+            env
+            type-env
+            index
+            dst-elem
+            value)
+            [(LowerMaybeVectorMapValue.Some plan)
+              (LowerMaybeVectorMapValue.Some plan)]
+            [(LowerMaybeVectorMapValue.No)
+              (lower-simple-vector-map-lane-array-value
                 ctx
                 env
                 type-env
-                value)
-                [(LowerMaybeArrayVar.Some array-var array-elem)
-                  (if (tc-type-eq array-elem dst-elem)
-                    (LowerMaybeVectorMapValue.Some
-                      (LowerVectorMapValue.LaneArray array-var))
-                    (LowerMaybeVectorMapValue.No))]
-                [(LowerMaybeArrayVar.No) (LowerMaybeVectorMapValue.No)])])])]
+                dst-elem
+                value)])])]
     [(AstExpr.SpmdBroadcast value-box lane-box)
       (let
         [source : AstExpr (lower-context-expr-get ctx value-box)]
@@ -37623,10 +37650,25 @@
         (lower-vector-map-value-needs-scalar-tail? (box-get rhs)))]
     [_ false]))
 
+(define (lower-vector-map-value-has-gather? [plan : LowerVectorMapValue]) : bool
+  (match plan
+    [(LowerVectorMapValue.Gather _ _) true]
+    [(LowerVectorMapValue.BinOp _ lhs rhs)
+      (or
+        (lower-vector-map-value-has-gather? (box-get lhs))
+        (lower-vector-map-value-has-gather? (box-get rhs)))]
+    [_ false]))
+
 (define (lower-maybe-vector-map-needs-scalar-tail? [plan : LowerMaybeVectorMap]) : bool
   (match plan
     [(LowerMaybeVectorMap.Some _ value-plan _ _)
       (lower-vector-map-value-needs-scalar-tail? value-plan)]
+    [(LowerMaybeVectorMap.No) false]))
+
+(define (lower-maybe-vector-map-has-gather? [plan : LowerMaybeVectorMap]) : bool
+  (match plan
+    [(LowerMaybeVectorMap.Some _ value-plan _ _)
+      (lower-vector-map-value-has-gather? value-plan)]
     [(LowerMaybeVectorMap.No) false]))
 
 (define (lower-emit-scalar-vector-map-value
@@ -41427,11 +41469,11 @@
                         exit-label))
                     tail-body-label)))
               (if (lower-mode-avx512? (lower-state-mode s))
-                (if (lower-maybe-vector-map-needs-scalar-tail? plan)
-                  ;; Some vector sources (including gather) require per-lane
-                  ;; scalar tail semantics. Enter the ordinary one-iteration
-                  ;; tail body directly instead of materializing a predicated
-                  ;; vector value that cannot represent those source checks.
+                (if (lower-maybe-vector-map-has-gather? plan)
+                  ;; Gather sources require per-lane scalar tail semantics.
+                  ;; Enter the ordinary one-iteration tail body directly
+                  ;; instead of materializing a predicated vector value that
+                  ;; cannot represent those source checks.
                   (set!
                     s
                     (lower-state-finish-block

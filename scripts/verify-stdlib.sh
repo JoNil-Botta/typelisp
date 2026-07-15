@@ -168,6 +168,7 @@ args.tl
 array.tl
 byte_buf.tl
 byte_buf_core.tl
+clone.tl
 comptime.tl
 core_macros.tl
 io_core.tl

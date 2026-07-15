@@ -21610,7 +21610,7 @@
         (compiler-reg-assignment-cons
           (CompilerRegAssignment.Assignment
             0
-            (CompilerRegLocation.Register "%r10"))
+            (CompilerRegLocation.Register "%r8"))
           CompilerRegAssignmentList.Nil)]
       [listed : CompilerRegScratchPlanResult
         (compiler-backend-scratch-test-result
@@ -21632,10 +21632,31 @@
         (not (string.eq index-reg ""))
         (not (string.eq table-reg ""))
         (not (string.eq index-reg table-reg))
-        (not (string.eq index-reg "%r10"))
-        (not (string.eq table-reg "%r10"))
+        (not (string.eq index-reg "%r8"))
+        (not (string.eq table-reg "%r8"))
         (string.eq index-reg (compiler-backend-scratch-test-register dense 0))
-        (string.eq table-reg (compiler-backend-scratch-test-register dense 1))))
+        (string.eq table-reg (compiler-backend-scratch-test-register dense 1))
+        (match listed
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (compiler-reg-string-list-contains?
+                (struct-get
+                  (struct-get
+                    (struct-get
+                      (array-ref (struct-get plan items) 0)
+                      requirement)
+                    constraint)
+                  excluded)
+                "%r8")
+              (compiler-reg-string-list-contains?
+                (struct-get
+                  (struct-get
+                    (struct-get
+                      (array-ref (struct-get plan items) 1)
+                      requirement)
+                    constraint)
+                  excluded)
+                "%r8"))])))
     true))
 
 (define (compiler-backend-scratch-vreg-aggregate-plan-ok?) : bool

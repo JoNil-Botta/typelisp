@@ -299,6 +299,22 @@ STAGE2_BIN=$(sed -n '1p' "$STAGE2_PATH_FILE")
 ensure_executable "bootstrapped compiler" "$STAGE2_BIN"
 echo "[ci-verify] every gate runs the converged bootstrapped compiler: $STAGE2_BIN"
 
+# The default-off scratch planner changes the compiler's own ABI and switch
+# movement only when its cfg is enabled. A focused unit fixture is not enough:
+# #4911 reproduced only after a scratch-built stage2 executed its generated
+# stage3 compiler. Require the same multi-generation fixpoint on both hosts,
+# while reusing the normal converged compiler as the seed and skipping duplicate
+# stage1 CLI surface checks.
+TYPELISP_BOOTSTRAP_CFG=scratch-vreg
+TYPELISP_BOOTSTRAP_WORKDIR="$ROOT/target/bootstrap-fixpoint-scratch-vreg"
+TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE=1
+export TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE
+run_gate \
+    "scratch-vreg bootstrap fixpoint" \
+    scripts/check-bootstrap-fixpoint.sh \
+    "$STAGE2_BIN"
+unset TYPELISP_BOOTSTRAP_CFG TYPELISP_BOOTSTRAP_WORKDIR TYPELISP_BOOTSTRAP_SKIP_CLI_SMOKE
+
 # Fail-closed run-capability probe: stage2 must compile -> assemble -> link ->
 # RUN a native program before the run-assert tiers below may execute. A failed
 # probe is a CI failure, never a reason to omit gates.

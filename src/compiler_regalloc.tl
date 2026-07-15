@@ -20434,6 +20434,8 @@
       (compiler-reg-string-list-append
         (compiler-reg-scratch-value-registers assignments index)
         (compiler-reg-scratch-value-registers assignments length))]
+    [(CompilerIrInstr.Switch index _ _ _)
+      (compiler-reg-scratch-value-registers assignments index)]
     [(CompilerIrInstr.Store _ value _)
       (compiler-reg-scratch-value-registers assignments value)]
     [(CompilerIrInstr.Cast dst src _ _)
@@ -20490,6 +20492,15 @@
     (struct-get policy gp-allowed)
     (struct-get policy phi-excluded)
     ""))
+
+(define (compiler-reg-scratch-switch-constraint
+  [policy : CompilerRegScratchPolicy]
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]) : CompilerRegScratchConstraint
+  (compiler-reg-scratch-gp-constraint-excluding
+    (compiler-reg-string-list-append
+      (struct-get policy phi-excluded)
+      (compiler-reg-scratch-instr-registers assignments instr))))
 
 ;; Phi copies execute on predecessor edges, before the merge block's phi
 ;; destinations become live.  Exclude every phi destination home in the
@@ -20734,8 +20745,7 @@
         (if (= ordinal 0)
           (CompilerRegScratchRole.SwitchIndex)
           (CompilerRegScratchRole.SwitchTable))
-        (compiler-reg-scratch-gp-constraint-excluding
-          (struct-get policy phi-excluded))
+        (compiler-reg-scratch-switch-constraint policy assignments instr)
         point
         (+ point 1)
         var)]

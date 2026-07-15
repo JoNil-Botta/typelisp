@@ -214,7 +214,7 @@
   (Err String))
 
 (defenum ResultAstExternSymbol
-  (Ok String)
+  (Ok String i64)
   (Err String))
 
 (defenum ResultAstFnExport
@@ -222,7 +222,7 @@
   (Err String))
 
 (defenum ResultAstExternParts
-  (Ok AstExternAbi String bool AstType)
+  (Ok AstExternAbi i64 bool AstType)
   (Err String))
 
 (defenum AstExternHeadItem
@@ -442,6 +442,15 @@
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
 
+(define (compiler-cfg-enable-id [cfgs : sym_i64_env.SymI64Env] [name-id : i64]) : sym_i64_env.SymI64Env
+  (compiler-cfg-bind-id cfgs name-id 1))
+
+(define (compiler-cfg-bind-id
+  [cfgs : sym_i64_env.SymI64Env]
+  [name-id : i64]
+  [value : i64]) : sym_i64_env.SymI64Env
+  (sym_i64_env.sym-i64-bind-id cfgs (compiler-cfg-key-id name-id) value))
+
 (define (compiler-cfg-enable [cfgs : sym_i64_env.SymI64Env] [name : String]) : sym_i64_env.SymI64Env
   (compiler-cfg-bind cfgs name 1))
 
@@ -449,26 +458,18 @@
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
   [value : i64]) : sym_i64_env.SymI64Env
-  (let
-    [name-id : i64
-      (match (ci.intern-lookup-content name)
-        [(ci.InternLookupFound id) id]
-        [(ci.InternLookupMissing)
-          (ci.intern-source-slice name 0 (ci.intern-private-string-length name))])]
-    (sym_i64_env.sym-i64-bind-id cfgs (compiler-cfg-key-id name-id) value)))
+  (compiler-cfg-bind-id
+    cfgs
+    (ci.intern-source-slice name 0 (ci.intern-private-string-length name))
+    value))
 
 (define (compiler-cfg-enable-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]
   [name : String]
   [intern-state : ci.InternCompatState]) : sym_i64_env.SymI64Env
-  (match (ci.intern-compat-state-lookup intern-state name)
-    [(ci.InternLookupFound name-id)
-      (sym_i64_env.sym-i64-bind-id cfgs (compiler-cfg-key-id name-id) 1)]
-    [(ci.InternLookupMissing)
-      (sym_i64_env.sym-i64-bind-id
-        cfgs
-        (compiler-cfg-key-id (ci.intern-compat-state-intern intern-state name))
-        1)]))
+  (compiler-cfg-enable-id
+    cfgs
+    (ci.intern-compat-state-intern intern-state name)))
 
 (define (compiler-cfg-enable-private-dynamic-buffer
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
@@ -7212,7 +7213,7 @@
               (let
                 [value : String (ci.intern-str value-id)]
                 (if (> (string.string-length value) 0)
-                  (ResultAstExternSymbol.Ok value)
+                  (ResultAstExternSymbol.Ok value value-id)
                   (ResultAstExternSymbol.Err
                     (string.append
                       "parse: extern "
@@ -7252,7 +7253,7 @@
   [pools : AstNodePoolContext]
   [items : reader.SpannedSexpr]
   [abi : AstExternAbi]
-  [symbol : String]
+  [symbol-id : i64]
   [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]) : ResultAstExternParts
@@ -7268,7 +7269,7 @@
                   pools
                   (reader.sp-node-get ty))
                   [(ResultAstType.Ok parsed-ty)
-                    (ResultAstExternParts.Ok abi symbol seen-abi parsed-ty)]
+                    (ResultAstExternParts.Ok abi symbol-id seen-abi parsed-ty)]
                   [(ResultAstType.Err message)
                     (ResultAstExternParts.Err message)])]
               [_ (ResultAstExternParts.Err "parse: malformed extern")])]
@@ -7289,7 +7290,7 @@
                             pools
                             (reader.sp-node-get tail)
                             parsed-abi
-                            symbol
+                            symbol-id
                             link-inputs
                             true
                             seen-symbol)]
@@ -7300,13 +7301,13 @@
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
                       (match (parse-ast-extern-symbol-tail (box-get after-key))
-                        [(ResultAstExternSymbol.Ok parsed-symbol)
+                        [(ResultAstExternSymbol.Ok _ parsed-symbol-id)
                           (parse-ast-extern-items
                             dispatch
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            parsed-symbol
+                            parsed-symbol-id
                             link-inputs
                             seen-abi
                             true)]
@@ -7316,7 +7317,7 @@
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
-                      [(ResultAstExternSymbol.Ok value)
+                      [(ResultAstExternSymbol.Ok value _)
                         (begin
                           (ast-extern-link-input-list-push
                             link-inputs
@@ -7326,7 +7327,7 @@
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            symbol
+                            symbol-id
                             link-inputs
                             seen-abi
                             seen-symbol))]
@@ -7336,7 +7337,7 @@
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
-                      [(ResultAstExternSymbol.Ok value)
+                      [(ResultAstExternSymbol.Ok value _)
                         (begin
                           (ast-extern-link-input-list-push
                             link-inputs
@@ -7346,7 +7347,7 @@
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            symbol
+                            symbol-id
                             link-inputs
                             seen-abi
                             seen-symbol))]
@@ -7356,7 +7357,7 @@
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
-                      [(ResultAstExternSymbol.Ok value)
+                      [(ResultAstExternSymbol.Ok value _)
                         (begin
                           (ast-extern-link-input-list-push
                             link-inputs
@@ -7366,7 +7367,7 @@
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            symbol
+                            symbol-id
                             link-inputs
                             seen-abi
                             seen-symbol))]
@@ -7386,13 +7387,13 @@
 (define (parse-ast-extern-head-finish
   [pools : AstNodePoolContext]
   [abi : AstExternAbi]
-  [symbol : String]
+  [symbol-id : i64]
   [seen-abi : bool]
   [param-types : AstTypeList]
   [ret : AstType]) : ResultAstExternParts
   (ResultAstExternParts.Ok
     abi
-    symbol
+    symbol-id
     seen-abi
     (ast-ty-func-with-pools pools param-types ret)))
 
@@ -7401,7 +7402,7 @@
   [pools : AstNodePoolContext]
   [items : reader.SpannedSexpr]
   [abi : AstExternAbi]
-  [symbol : String]
+  [symbol-id : i64]
   [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
@@ -7409,7 +7410,13 @@
   [ret : AstType]) : ResultAstExternParts
   (match items
     [(reader.SpannedSexpr.Nil _)
-      (parse-ast-extern-head-finish pools abi symbol seen-abi param-types ret)]
+      (parse-ast-extern-head-finish
+        pools
+        abi
+        symbol-id
+        seen-abi
+        param-types
+        ret)]
     [(reader.SpannedSexpr.Cons head tail _)
       (match (reader.spanned-sexpr-form (reader.sp-node-get head))
         [(reader.Sexpr.Cons key-node after-key)
@@ -7429,7 +7436,7 @@
                               pools
                               (reader.sp-node-get tail)
                               combined-abi
-                              symbol
+                              symbol-id
                               link-inputs
                               true
                               seen-symbol
@@ -7444,13 +7451,13 @@
                     (ResultAstExternParts.Err
                       "parse: duplicate extern :symbol metadata")
                     (match (parse-ast-extern-symbol-tail (box-get after-key))
-                      [(ResultAstExternSymbol.Ok parsed-symbol)
+                      [(ResultAstExternSymbol.Ok _ parsed-symbol-id)
                         (parse-ast-extern-head-post-ret
                           dispatch
                           pools
                           (reader.sp-node-get tail)
                           abi
-                          parsed-symbol
+                          parsed-symbol-id
                           link-inputs
                           seen-abi
                           true
@@ -7462,7 +7469,7 @@
                   (match (parse-ast-extern-string-tail
                     ":link-lib"
                     (box-get after-key))
-                    [(ResultAstExternSymbol.Ok value)
+                    [(ResultAstExternSymbol.Ok value _)
                       (begin
                         (ast-extern-link-input-list-push
                           link-inputs
@@ -7472,7 +7479,7 @@
                           pools
                           (reader.sp-node-get tail)
                           abi
-                          symbol
+                          symbol-id
                           link-inputs
                           seen-abi
                           seen-symbol
@@ -7484,7 +7491,7 @@
                   (match (parse-ast-extern-string-tail
                     ":link-search"
                     (box-get after-key))
-                    [(ResultAstExternSymbol.Ok value)
+                    [(ResultAstExternSymbol.Ok value _)
                       (begin
                         (ast-extern-link-input-list-push
                           link-inputs
@@ -7494,7 +7501,7 @@
                           pools
                           (reader.sp-node-get tail)
                           abi
-                          symbol
+                          symbol-id
                           link-inputs
                           seen-abi
                           seen-symbol
@@ -7506,7 +7513,7 @@
                   (match (parse-ast-extern-string-tail
                     ":link-arg"
                     (box-get after-key))
-                    [(ResultAstExternSymbol.Ok value)
+                    [(ResultAstExternSymbol.Ok value _)
                       (begin
                         (ast-extern-link-input-list-push
                           link-inputs
@@ -7516,7 +7523,7 @@
                           pools
                           (reader.sp-node-get tail)
                           abi
-                          symbol
+                          symbol-id
                           link-inputs
                           seen-abi
                           seen-symbol
@@ -7539,7 +7546,7 @@
   [pools : AstNodePoolContext]
   [items : reader.SpannedSexpr]
   [abi : AstExternAbi]
-  [symbol : String]
+  [symbol-id : i64]
   [link-inputs : (&mut link-inputs AstExternLinkInputList)]
   [seen-abi : bool]
   [seen-symbol : bool]
@@ -7559,7 +7566,7 @@
                     (parse-ast-extern-head-finish
                       pools
                       abi
-                      symbol
+                      symbol-id
                       seen-abi
                       param-types
                       parsed-ret)]
@@ -7576,7 +7583,7 @@
                       pools
                       (reader.sp-node-get end)
                       abi
-                      symbol
+                      symbol-id
                       link-inputs
                       seen-abi
                       seen-symbol
@@ -7603,7 +7610,7 @@
                                 pools
                                 (reader.sp-node-get tail)
                                 combined-abi
-                                symbol
+                                symbol-id
                                 link-inputs
                                 true
                                 seen-symbol
@@ -7617,13 +7624,13 @@
                       (ResultAstExternParts.Err
                         "parse: duplicate extern :symbol metadata")
                       (match (parse-ast-extern-symbol-tail (box-get after-key))
-                        [(ResultAstExternSymbol.Ok parsed-symbol)
+                        [(ResultAstExternSymbol.Ok _ parsed-symbol-id)
                           (parse-ast-extern-head-rest
                             dispatch
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            parsed-symbol
+                            parsed-symbol-id
                             link-inputs
                             seen-abi
                             true
@@ -7634,7 +7641,7 @@
                     (match (parse-ast-extern-string-tail
                       ":link-lib"
                       (box-get after-key))
-                      [(ResultAstExternSymbol.Ok value)
+                      [(ResultAstExternSymbol.Ok value _)
                         (begin
                           (ast-extern-link-input-list-push
                             link-inputs
@@ -7644,7 +7651,7 @@
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            symbol
+                            symbol-id
                             link-inputs
                             seen-abi
                             seen-symbol
@@ -7655,7 +7662,7 @@
                     (match (parse-ast-extern-string-tail
                       ":link-search"
                       (box-get after-key))
-                      [(ResultAstExternSymbol.Ok value)
+                      [(ResultAstExternSymbol.Ok value _)
                         (begin
                           (ast-extern-link-input-list-push
                             link-inputs
@@ -7665,7 +7672,7 @@
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            symbol
+                            symbol-id
                             link-inputs
                             seen-abi
                             seen-symbol
@@ -7676,7 +7683,7 @@
                     (match (parse-ast-extern-string-tail
                       ":link-arg"
                       (box-get after-key))
-                      [(ResultAstExternSymbol.Ok value)
+                      [(ResultAstExternSymbol.Ok value _)
                         (begin
                           (ast-extern-link-input-list-push
                             link-inputs
@@ -7686,7 +7693,7 @@
                             pools
                             (reader.sp-node-get tail)
                             abi
-                            symbol
+                            symbol-id
                             link-inputs
                             seen-abi
                             seen-symbol
@@ -7718,24 +7725,19 @@
           pools
           rest
           abi
-          (compiler-parse-name-text name)
+          name
           (&mut link-inputs)
           false
           false
           param-types)
-          [(ResultAstExternParts.Ok parsed-abi parsed-symbol explicit-abi ty)
+          [(ResultAstExternParts.Ok parsed-abi parsed-symbol-id explicit-abi ty)
             (ResultAstDecl.Ok
               (ast-decl-extern-id
                 name
                 (AstExternKind.Function)
                 (AstExternMetadata.Metadata
                   parsed-abi
-                  (if (string.eq parsed-symbol (compiler-parse-name-text name))
-                    name
-                    (ci.intern-source-slice
-                      parsed-symbol
-                      0
-                      (string.string-length parsed-symbol)))
+                  parsed-symbol-id
                   link-inputs
                   explicit-abi)
                 ty))]
@@ -7758,13 +7760,13 @@
               pools
               (reader.sp-node-get after-name)
               (AstExternAbi.C)
-              (compiler-parse-name-text name)
+              name
               (&mut link-inputs)
               false
               false)
               [(ResultAstExternParts.Ok
                   parsed-abi
-                  parsed-symbol
+                  parsed-symbol-id
                   explicit-abi
                   parsed-ty)
                 (ResultAstDecl.Ok
@@ -7773,14 +7775,7 @@
                     (AstExternKind.Value)
                     (AstExternMetadata.Metadata
                       parsed-abi
-                      (if (string.eq
-                        parsed-symbol
-                        (compiler-parse-name-text name))
-                        name
-                        (ci.intern-source-slice
-                          parsed-symbol
-                          0
-                          (string.string-length parsed-symbol)))
+                      parsed-symbol-id
                       link-inputs
                       explicit-abi)
                     parsed-ty))]

@@ -2,7 +2,6 @@
 ;;
 ;; The lowerer accepts the checked program and builds a deterministic
 ;; CompilerIrProgram.
-(import stdlib.io)
 (import stdlib.arena)
 (import stdlib.vector)
 (import (vector String) as svec)
@@ -1188,53 +1187,6 @@
       (string.eq (intern-str name) "tl_str_view")
       (lower-bytes-view-from-parts-name? (intern-str name)))))
 
-(define (lower-instr-list-fill-array-reversed
-  [instrs : CompilerIrInstrList]
-  [slots : (Array CompilerIrInstr)]
-  [index : i64]) : unit
-  (match instrs
-    [(CompilerIrInstrList.Nil) unit]
-    [(CompilerIrInstrList.Cons head rest)
-      (begin
-        (array-set! slots index head)
-        (lower-instr-list-fill-array-reversed (box-get rest) slots (- index 1)))]))
-
-(define (lower-instr-seq-from-reversed-list [instrs : CompilerIrInstrList]) : CompilerIrInstrSeq
-  (let
-    [count : i64 (compiler-ir-instr-list-count instrs)]
-    [slots : (Array CompilerIrInstr) (make-array CompilerIrInstr count)]
-    (begin
-      (lower-instr-list-fill-array-reversed instrs slots (- count 1))
-      (CompilerIrInstrSeq slots count))))
-
-(define (lower-global-list-reverse-onto
-  [globals : CompilerIrGlobalList]
-  [acc : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (compiler-ir-global-list-reverse-onto globals acc))
-
-(define (lower-global-list-reverse [globals : CompilerIrGlobalList]) : CompilerIrGlobalList
-  (compiler-ir-global-list-compact-reversed globals))
-
-(define (lower-function-list-append
-  [left : CompilerIrFunctionList]
-  [right : CompilerIrFunctionList]) : CompilerIrFunctionList
-  (match (compiler-ir-function-list-force-cons left)
-    [(CompilerIrFunctionList.Nil) right]
-    [(CompilerIrFunctionList.Cons head rest)
-      (compiler-ir-function-cons
-        head
-        (lower-function-list-append (box-get rest) right))]
-    [(CompilerIrFunctionList.Array seq)
-      (lower-function-list-append (compiler-ir-function-seq-to-list seq) right)]))
-
-(define (lower-extern-list-reverse-onto
-  [externs : CompilerIrExternList]
-  [acc : CompilerIrExternList]) : CompilerIrExternList
-  (compiler-ir-extern-list-reverse-onto externs acc))
-
-(define (lower-extern-list-reverse [externs : CompilerIrExternList]) : CompilerIrExternList
-  (compiler-ir-extern-list-compact-reversed externs))
-
 (define (lower-name-env-lookup-with-id
   [names : LowerNameEnv]
   [source-name : String]
@@ -1420,15 +1372,6 @@
               (array-set! values next logical-name)
               (lower_i64_i64_map.insert-ref! (&mut ids) source-id next)
               (LowerNameCache ids values (struct-get cache parent))))]))))
-
-(define (lower-name-cache-add
-  [cache : LowerNameCache]
-  [source-name : String]
-  [logical-name : String]) : LowerNameCache
-  (lower-name-cache-add-id
-    cache
-    (lower-name-cache-source-id-value source-name)
-    logical-name))
 
 (define (lower-name-cache-from-env-into
   [names : LowerNameEnv]
@@ -1917,14 +1860,6 @@
                   1))
               (set! cur (box-get rest)))])))))
 
-(define (lower-name-env-add-alias-if-free
-  [names : LowerNameEnv]
-  [source-name : String]
-  [logical-name : String]) : LowerNameEnv
-  (match (lower-name-env-lookup names source-name)
-    [(TcMaybeString.Some _) names]
-    [(TcMaybeString.No) (lower-name-env-bind source-name logical-name names)]))
-
 (define (lower-name-env-add-alias-if-free-id
   [names : LowerNameEnv]
   [source-name : String]
@@ -1934,15 +1869,6 @@
     [(TcMaybeString.Some _) names]
     [(TcMaybeString.No)
       (lower-name-env-bind-id source-name source-id logical-name names)]))
-
-(define (lower-name-env-add-import-alias-binding
-  [names : LowerNameEnv]
-  [alias : String]
-  [source-name : String]
-  [logical-name : String]) : LowerNameEnv
-  (if (string.eq alias "")
-    (lower-name-env-add-alias-if-free names source-name logical-name)
-    (lower-name-env-bind source-name logical-name names)))
 
 (define (lower-name-env-add-import-alias-binding-id
   [names : LowerNameEnv]
@@ -2649,13 +2575,6 @@
           module
           inner))]
     [_ names]))
-
-(define (lower-name-env-add-decl
-  [names : LowerNameEnv]
-  [entry-path : String]
-  [decl-path : String]
-  [decl : AstDecl]) : LowerNameEnv
-  (lower-name-env-add-decl-in-module names entry-path decl-path "" decl))
 
 (define (lower-name-env-from-decls
   [decls : AstDeclList]
@@ -3397,79 +3316,6 @@
     ""
     path-aware))
 
-(define (lower-name-env-from-import-aliases-in-module
-  [all-decls : AstDeclList]
-  [all-paths : AstDeclPathList]
-  [decls : AstDeclList]
-  [_paths : AstDeclPathList]
-  [entry-path : String]
-  [names : LowerNameEnv]
-  [target-current-module : String]
-  [current-module : String]
-  [path-aware : bool]) : LowerNameEnv
-  (let
-    [count : i64 (ast-decl-list-len (& decls))]
-    [index : i64 0]
-    [cur-names : LowerNameEnv names]
-    [target-module-id : i64 (intern target-current-module)]
-    [cur-module-id : i64 (intern current-module)]
-    (begin
-      ;; Seed the overlay membership set from the base env for O(1) per-alias
-      ;; dedup instead of scanning `names` on every added alias.
-      (lower-alias-overlay-seed-from-env! cur-names)
-      (while (< index count)
-        (let
-          [decl : AstDecl
-            (array-ref
-              (struct-get decls slots)
-              (+ (struct-get decls offset) index))]
-          (begin
-            (match decl
-              [(AstDecl.Import
-                  (AstImportSpec.Spec
-                    _
-                    _
-                    (AstMaybeModuleName.Some target-module)
-                    (AstMaybeImportAlias.Some alias)
-                    _))
-                (if (= cur-module-id target-module-id)
-                  (set!
-                    cur-names
-                    (lower-name-env-add-module-aliases
-                      all-decls
-                      all-paths
-                      entry-path
-                      cur-names
-                      target-module
-                      alias
-                      ""
-                      path-aware))
-                  unit)]
-              [_ unit])
-            (match decl
-              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
-              [_ unit])
-            (set! index (+ index 1)))))
-      cur-names)))
-
-(define (lower-name-env-with-import-aliases-in-module
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
-  [entry-path : String]
-  [names : LowerNameEnv]
-  [module : String]
-  [path-aware : bool]) : LowerNameEnv
-  (lower-name-env-from-import-aliases-in-module
-    decls
-    paths
-    decls
-    paths
-    entry-path
-    names
-    module
-    ""
-    path-aware))
-
 (define (lower-name-env-from-import-aliases-in-module-cache
   [all-decls : AstDeclList]
   [decls : AstDeclList]
@@ -3621,13 +3467,6 @@
           module
           inner))]
     [_ names]))
-
-(define (lower-name-env-add-local-decl
-  [names : LowerNameEnv]
-  [name-cache : LowerNameCache]
-  [module : String]
-  [decl : AstDecl]) : LowerNameEnv
-  (lower-name-env-add-local-decl-resolve names names name-cache module decl))
 
 (define (lower-module-local-type-envs-bind-qualified
   [top-env : TcTypeEnv]
@@ -8350,9 +8189,6 @@
 (define (lower-comptime-runtime-skip-module? [module : String]) : bool
   (string.eq module "stdlib.comptime"))
 
-(define (lower-no-main-entry-prune-active?) : bool
-  lower-no-main-entry-prune-active)
-
 (define (lower-no-main-entry-prune-set! [active : bool]) : unit
   (set! lower-no-main-entry-prune-active active))
 
@@ -9055,11 +8891,6 @@
   (match state
     [(LowerState.State _ _ _ _ _ _ _ _ _ _ type-cache _ _ _ _) type-cache]))
 
-(define (lower-state-functions [state : LowerState]) : CompilerIrFunctionList
-  (match state
-    [(LowerState.State _ _ _ _ _ _ functions _ _ _ _ _ _ _ _)
-      (compiler-ir-function-builder-to-list functions)]))
-
 (define (lower-state-mode [state : LowerState]) : CompilerLowerMode
   (match state
     [(LowerState.State _ _ _ _ _ _ _ _ _ _ _ mode _ _ _) mode]))
@@ -9316,49 +9147,6 @@
             tail-param-start
             tail-param-end)))]))
 
-(define (lower-state-record-instr-span
-  [state : LowerState]
-  [instr : CompilerIrInstr]
-  [span : AstSourceSpan]) : LowerState
-  (match state
-    [(LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        spans
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)
-      (LowerState.State
-        next-var
-        next-label
-        next-lambda
-        current-label
-        current-instrs
-        blocks
-        functions
-        function
-        (box
-          (compiler-source-spans-insert-instr
-            (box-get spans)
-            function
-            instr
-            span))
-        names
-        type-cache
-        mode
-        address-taken
-        tail-param-start
-        tail-param-end)]))
-
 (define (lower-state-emit-at-expr
   [state : LowerState]
   [instr : CompilerIrInstr]
@@ -9543,9 +9331,6 @@
     [(AstLiteral.Char c) (CompilerIrValue.Char c)]
     [(AstLiteral.String s) (CompilerIrValue.String s)]
     [(AstLiteral.Unit) CompilerIrValue.Unit]))
-
-(define (lower-literal-value [lit : AstLiteral]) : CompilerIrValue
-  (lower-literal-value-with-type lit (tc-literal-type lit)))
 
 (define (lower-binop [op : AstBinOp]) : CompilerIrBinOp
   (match op
@@ -10130,9 +9915,6 @@
 ;; (ceil(size/8)). 1 word => carried as a single scalar value; 2
 ;; words => carried as a register-group value built with CompilerIrInstr.Pack and read
 ;; with IrInstrWord. Only meaningful when `lower-type-register-resident?` holds.
-(define (lower-type-register-word-count [ctx : TcContext] [ty : AstType]) : i64
-  (/ (+ (lower-type-size ctx ty) 7) 8))
-
 ;; True for a register-resident aggregate that needs the multi-word
 ;; register-group representation (2+ words) rather than the single-word scalar
 ;; representation. Drives the CompilerIrInstr.Pack/CompilerIrInstr.Word lowering paths.
@@ -10700,89 +10482,6 @@
 ;; one-word pointers; only values built by this helper become structural
 ;; Pack/Word groups. The pair order matches descriptor storage exactly:
 ;; data_ptr in word0, nonnegative length in word1.
-(define (lower-emit-descriptor-pair
-  [state : LowerState]
-  [data : CompilerIrValue]
-  [length : CompilerIrValue]
-  [kind : CompilerIrDescriptorPairKind]) : LowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc allocated var-id)
-      (LowerExpr.Expr
-        (lower-state-emit
-          allocated
-          (ir-instr-descriptor-pair-pack var-id data length kind))
-        (CompilerIrValue.Var var-id)
-        (compiler-ir-descriptor-pair-handle-type kind))]))
-
-(define (lower-copy-descriptor-pair
-  [state : LowerState]
-  [pair : CompilerIrValue]
-  [kind : CompilerIrDescriptorPairKind]) : ResultLowerExpr
-  ;; Mov/Phi group closure in regalloc propagates structural group-ness to the
-  ;; copy even though its provenance type is still the one-word source handle.
-  (lower-materialize state pair (compiler-ir-descriptor-pair-handle-type kind)))
-
-(define (lower-descriptor-pair-data
-  [state : LowerState]
-  [pair : CompilerIrValue]) : LowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc allocated var-id)
-      (LowerExpr.Expr
-        (lower-state-emit allocated (ir-instr-descriptor-pair-data var-id pair))
-        (CompilerIrValue.Var var-id)
-        (AstType.U64))]))
-
-(define (lower-descriptor-pair-length
-  [state : LowerState]
-  [pair : CompilerIrValue]) : LowerExpr
-  (match (lower-state-alloc-var state)
-    [(LowerAlloc.Alloc allocated var-id)
-      (LowerExpr.Expr
-        (lower-state-emit
-          allocated
-          (ir-instr-descriptor-pair-length var-id pair))
-        (CompilerIrValue.Var var-id)
-        (AstType.I64))]))
-
-(define (lower-load-descriptor-pair-from-handle
-  [state : LowerState]
-  [handle : CompilerIrValue]
-  [kind : CompilerIrDescriptorPairKind]) : LowerExpr
-  (match (lower-load-at-offset state handle 0 (AstType.U64))
-    [(LowerExpr.Expr data-state data _)
-      (match (lower-load-at-offset data-state handle 8 (AstType.I64))
-        [(LowerExpr.Expr length-state length _)
-          (lower-emit-descriptor-pair length-state data length kind)])]))
-
-(define (lower-store-descriptor-pair-at-ptr
-  [state : LowerState]
-  [storage : CompilerIrValue]
-  [pair : CompilerIrValue]) : LowerState
-  (match (lower-descriptor-pair-data state pair)
-    [(LowerExpr.Expr data-state data _)
-      (match (lower-descriptor-pair-length data-state pair)
-        [(LowerExpr.Expr length-state length _)
-          (lower-store-at-offset
-            (lower-store-at-offset length-state storage 0 data (AstType.U64))
-            storage
-            8
-            length
-            (AstType.I64))])]))
-
-(define (lower-materialize-descriptor-pair-at-ptr
-  [state : LowerState]
-  [storage : CompilerIrValue]
-  [pair : CompilerIrValue]
-  [kind : CompilerIrDescriptorPairKind]) : ResultLowerExpr
-  ;; `storage` owns the boundary lifetime: pass the original descriptor handle
-  ;; to preserve identity, a caller/result slot for ABI transfer, or stable
-  ;; aggregate/global/capture storage. This helper never returns a pointer to a
-  ;; hidden temporary whose lifetime could be too short.
-  (lower-materialize
-    (lower-store-descriptor-pair-at-ptr state storage pair)
-    storage
-    (compiler-ir-descriptor-pair-handle-type kind)))
-
 (define (lower-load-register-resident-from-ptr
   [ctx : TcContext]
   [state : LowerState]
@@ -14221,23 +13920,6 @@
     (ResultLowerExpr.Ok
       (LowerExpr.Expr state (CompilerIrValue.Var local-id) ty))))
 
-(define (lower-var-storage-aware
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [name : String]
-  [ty : AstType]) : ResultLowerExpr
-  (let
-    [id : i64
-      (sym_i64_env.sym-i64-lookup-or env name (compiler-symbols-missing-handle))]
-    (if (compiler-symbols-handle-found? id)
-      (lower-register-address-taken-local-read ctx state id ty)
-      (ResultLowerExpr.Ok
-        (LowerExpr.Expr
-          state
-          (CompilerIrValue.Global (lower-resolve-name state name))
-          ty)))))
-
 (define (lower-var-id-storage-aware
   [ctx : TcContext]
   [state : LowerState]
@@ -15751,18 +15433,6 @@
 (define (lower-spmd-scan-val-id) : i64
   lower-spmd-scan-val-id-cache)
 
-(define (lower-name-id [name : String]) : i64
-  (cond
-    [(string.eq name (lower-spmd-reduce-acc-name)) (lower-spmd-reduce-acc-id)]
-    [(string.eq name (lower-spmd-reduce-end-name)) (lower-spmd-reduce-end-id)]
-    [(string.eq name (lower-spmd-reduce-val-name)) (lower-spmd-reduce-val-id)]
-    [(string.eq name (lower-spmd-reduce-current-name))
-      (lower-spmd-reduce-current-id)]
-    [(string.eq name (lower-spmd-scan-acc-name)) (lower-spmd-scan-acc-id)]
-    [(string.eq name (lower-spmd-scan-end-name)) (lower-spmd-scan-end-id)]
-    [(string.eq name (lower-spmd-scan-val-name)) (lower-spmd-scan-val-id)]
-    [else (intern name)]))
-
 (define (lower-refresh-marker-ids!) : unit
   (begin
     (set! lower-cleanup-marker-id-cache (intern (lower-cleanup-marker-name)))
@@ -16304,59 +15974,6 @@
             [(ResultLowerState.Err message) (ResultLowerExpr.Err message)])])]
     [(ResultLowerLoopTarget.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-emit-active-cleanups-with
-  [ctx : TcContext]
-  [cleanup-marker-id : i64]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]) : ResultLowerState
-  (match (tc-type-env-spine-step type-env)
-    [(TcTypeEnvSpineStep.Done) (ResultLowerState.Ok state)]
-    [(TcTypeEnvSpineStep.Cache rest-env)
-      (lower-emit-active-cleanups-with ctx cleanup-marker-id state env rest-env)]
-    [(TcTypeEnvSpineStep.Bind key ty rest-env)
-      (if (= key cleanup-marker-id)
-        (match ty
-          [(AstType.Tuple types)
-            (match (lower-emit-cleanup-marker-tuple
-              ctx
-              state
-              env
-              (box-get types))
-              [(ResultLowerState.Ok next-state)
-                (lower-emit-active-cleanups-with
-                  ctx
-                  cleanup-marker-id
-                  next-state
-                  env
-                  rest-env)]
-              [(ResultLowerState.Err message) (ResultLowerState.Err message)])]
-          [_
-            (lower-emit-active-cleanups-with
-              ctx
-              cleanup-marker-id
-              state
-              env
-              rest-env)])
-        (lower-emit-active-cleanups-with
-          ctx
-          cleanup-marker-id
-          state
-          env
-          rest-env))]))
-
-(define (lower-emit-active-cleanups
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]) : ResultLowerState
-  (lower-emit-active-cleanups-with
-    ctx
-    (lower-cleanup-marker-id)
-    state
-    env
-    type-env))
-
 (define (lower-return-form
   [ctx : TcContext]
   [state : LowerState]
@@ -16697,12 +16314,6 @@
     (not (sym_i64_env.sym-i64-contains-id env name-id))
     (not (lower-top-level-value-defined-id? ctx name-id))))
 
-(define (lower-builtin-call-available?
-  [ctx : TcContext]
-  [env : sym_i64_env.SymI64Env]
-  [name : String]) : bool
-  (lower-builtin-call-available-id? ctx env (intern name)))
-
 (define (lower-string-runtime-builtin? [name : String]) : bool
   (let
     [_ : String name]
@@ -16713,14 +16324,8 @@
 (define (lower-arena-builtin-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-arena-id? name-id))
 
-(define (lower-arena-builtin? [name : String]) : bool
-  (lower-arena-builtin-id? (intern name)))
-
 (define (lower-arena-builtin-nullary-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-lower-arena-nullary-id? name-id))
-
-(define (lower-arena-builtin-nullary? [name : String]) : bool
-  (lower-arena-builtin-nullary-id? (intern name)))
 
 (define (lower-arena-builtin-symbol-id [name-id : i64]) : String
   (cond
@@ -16732,9 +16337,6 @@
     [(cbi.compiler-builtin-lower-arena-set-id? name-id) "tl_arena_set"]
     [(cbi.compiler-builtin-lower-arena-destroy-id? name-id) "tl_arena_destroy"]
     [else "tl_region_reset"]))
-
-(define (lower-arena-builtin-symbol [name : String]) : String
-  (lower-arena-builtin-symbol-id (intern name)))
 
 (define (lower-arena-builtin-call
   [ctx : TcContext]
@@ -19025,25 +18627,6 @@
             [_ (ResultLowerExpr.Ok lowered)])])]
     [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
 
-(define (lower-var-or-nullary-variant
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [name : String]
-  [expr-ty : AstType]) : ResultLowerExpr
-  (lower-materialize-group-global
-    ctx
-    (if (sym_i64_env.sym-i64-contains env name)
-      (lower-var-storage-aware ctx state env name expr-ty)
-      (lower-nullary-variant-or-function-value
-        ctx
-        state
-        env
-        type-env
-        name
-        expr-ty))))
-
 (define (lower-var-or-nullary-variant-id
   [ctx : TcContext]
   [state : LowerState]
@@ -19323,24 +18906,6 @@
               type-cache
               body)]
           [(ResultTcEnv.Err message) (ResultTcType.Err message)]))]))
-
-(define (lower-match-rest-result-types-fast
-  [ctx : TcContext]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [type-cache : LowerTypeCache]
-  [scrut-ty : AstType]
-  [arms : AstMatchArmList]
-  [want : AstType]) : ResultTcType
-  (lower-match-rest-result-types-fast-at
-    ctx
-    env
-    type-env
-    type-cache
-    scrut-ty
-    (& arms)
-    0
-    want))
 
 (define (lower-match-rest-result-types-fast-at
   [ctx : TcContext]
@@ -24538,65 +24103,6 @@
           (CompilerIrValue.Var var-id)
           result-ty))]))
 
-(define (lower-one-arg-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [fallback-name : String]
-  [runtime-name : String]
-  [expected-ty : AstType]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (if (= (struct-get (& args) len) 1)
-    (let
-      [arg : AstExpr
-        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
-      (match (lower-expr ctx state env type-env arg)
-        [(ResultLowerExpr.Ok lowered)
-          (match lowered
-            [(LowerExpr.Expr arg-state arg-value arg-ty)
-              (match (lower-cast-value arg-state arg-value arg-ty expected-ty)
-                [(LowerExpr.Expr cast-state cast-value _)
-                  (lower-runtime-call-values
-                    cast-state
-                    runtime-name
-                    (compiler-ir-value-cons cast-value CompilerIrValueList.Nil)
-                    result-ty)])])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
-    (lower-direct-call
-      ctx
-      state
-      env
-      type-env
-      fallback-name
-      args
-      result-ty
-      origin)))
-
-(define (lower-one-string-object-runtime-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [arg : AstExpr]
-  [runtime-name : String]
-  [result-ty : AstType]
-  [message : String]) : ResultLowerExpr
-  (match (lower-expr ctx state env type-env arg)
-    [(ResultLowerExpr.Ok lowered)
-      (match lowered
-        [(LowerExpr.Expr arg-state arg-value arg-ty)
-          (if (lower-string-handle-type? ctx arg-ty)
-            (lower-runtime-call-values
-              arg-state
-              runtime-name
-              (compiler-ir-value-cons arg-value CompilerIrValueList.Nil)
-              result-ty)
-            (ResultLowerExpr.Err (box (lower-diagnostic-at-expr arg message))))])]
-    [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
-
 (define (lower-inline-string-eq-finish
   [state : LowerState]
   [_true-label : String]
@@ -25107,40 +24613,6 @@
       env
       type-env
       "__tl_string_to_int"
-      args
-      result-ty
-      origin)))
-
-(define (lower-int-to-string-call
-  [ctx : TcContext]
-  [state : LowerState]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [args : AstExprList]
-  [result-ty : AstType]
-  [origin : AstExpr]) : ResultLowerExpr
-  (if (= (struct-get (& args) len) 1)
-    (let
-      [arg : AstExpr
-        (lower-context-expr-get ctx (ast-expr-list-get (& args) 0 0))]
-      (match (lower-expr ctx state env type-env arg)
-        [(ResultLowerExpr.Ok lowered)
-          (match lowered
-            [(LowerExpr.Expr arg-state arg-value arg-ty)
-              (match (lower-cast-value arg-state arg-value arg-ty (AstType.I64))
-                [(LowerExpr.Expr cast-state cast-value _)
-                  (lower-runtime-call-values
-                    cast-state
-                    "tl_int_to_string"
-                    (compiler-ir-value-cons cast-value CompilerIrValueList.Nil)
-                    result-ty)])])]
-        [(ResultLowerExpr.Err message) (ResultLowerExpr.Err message)]))
-    (lower-direct-call
-      ctx
-      state
-      env
-      type-env
-      "string.int->string"
       args
       result-ty
       origin)))
@@ -32901,38 +32373,6 @@
             value)))]
     [_ -1]))
 
-(define (lower-masked-vector-expr-list-lanes
-  [ctx : TcContext]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [index : String]
-  [exprs : AstExprList]) : i64
-  (lower-masked-vector-expr-list-lanes-with-locals
-    ctx
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    exprs))
-
-(define (lower-masked-vector-let-bindings-lanes
-  [ctx : TcContext]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [index : String]
-  [bindings : AstLetBindingList]) : i64
-  (lower-masked-vector-let-bindings-lanes-with-locals
-    ctx
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    bindings))
-
 (define (lower-masked-vector-expr-lanes
   [ctx : TcContext]
   [mode : CompilerLowerMode]
@@ -33302,38 +32742,6 @@
     index
     (lower-masked-vector-empty-lane-locals)
     expr))
-
-(define (lower-masked-vector-expr-list-has-varying-if?
-  [ctx : TcContext]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [index : String]
-  [exprs : AstExprList]) : bool
-  (lower-masked-vector-expr-list-has-varying-if-with-locals?
-    ctx
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    exprs))
-
-(define (lower-masked-vector-let-bindings-have-varying-if?
-  [ctx : TcContext]
-  [mode : CompilerLowerMode]
-  [env : sym_i64_env.SymI64Env]
-  [type-env : TcTypeEnv]
-  [index : String]
-  [bindings : AstLetBindingList]) : bool
-  (lower-masked-vector-let-bindings-have-varying-if-with-locals?
-    ctx
-    mode
-    env
-    type-env
-    index
-    (lower-masked-vector-empty-lane-locals)
-    bindings))
 
 (define (lower-masked-vector-body-has-varying-while-with-locals?
   [ctx : TcContext]
@@ -38087,15 +37495,6 @@
                 lanes
                 elem-ty)])])]))
 
-(define (lower-vector-map-value-has-broadcast? [plan : LowerVectorMapValue]) : bool
-  (match plan
-    [(LowerVectorMapValue.BroadcastArray _ _) true]
-    [(LowerVectorMapValue.BinOp _ lhs rhs)
-      (or
-        (lower-vector-map-value-has-broadcast? (box-get lhs))
-        (lower-vector-map-value-has-broadcast? (box-get rhs)))]
-    [_ false]))
-
 (define (lower-vector-map-value-needs-scalar-tail? [plan : LowerVectorMapValue]) : bool
   (match plan
     [(LowerVectorMapValue.BroadcastArray _ _) true]
@@ -38403,181 +37802,6 @@
             s
             (CompilerIrInstr.Mov index-var next-index (AstType.I64)))))]
     [(LowerMaybeVectorMap.No) state]))
-
-(define (lower-avx2-vector-ok
-  [state : LowerState]
-  [index-var : i64]
-  [next-index : CompilerIrValue]
-  [end-value : CompilerIrValue]
-  [out-len : CompilerIrValue]
-  [lhs-len : CompilerIrValue]
-  [rhs-len : CompilerIrValue]
-  [lanes : i64]) : LowerExpr
-  (let
-    [s : LowerState state]
-    [ok : CompilerIrValue CompilerIrValue.Unit]
-    [within : CompilerIrValue CompilerIrValue.Unit]
-    (begin
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Ge)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 0)
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 (- 9223372036854775807 lanes))
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        end-value
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        out-len
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        lhs-len
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        next-index
-        rhs-len
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool)))))
-
-(define (lower-avx512-tail-ok
-  [state : LowerState]
-  [index-var : i64]
-  [end-value : CompilerIrValue]
-  [out-len : CompilerIrValue]
-  [lhs-len : CompilerIrValue]
-  [rhs-len : CompilerIrValue]) : LowerExpr
-  (let
-    [s : LowerState state]
-    [ok : CompilerIrValue CompilerIrValue.Unit]
-    [within : CompilerIrValue CompilerIrValue.Unit]
-    (begin
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Ge)
-        (CompilerIrValue.Var index-var)
-        (CompilerIrValue.I64 0)
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        (CompilerIrValue.Var index-var)
-        end-value
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        end-value
-        out-len
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        end-value
-        lhs-len
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (match (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! ok value))])
-      (match (lower-emit-binop
-        s
-        (CompilerIrBinOp.Le)
-        end-value
-        rhs-len
-        (AstType.Bool))
-        [(LowerExpr.Expr next-s value _)
-          (begin
-            (set! s next-s)
-            (set! within value))])
-      (lower-emit-binop s (CompilerIrBinOp.And) ok within (AstType.Bool)))))
 
 (define (lower-avx512-index-plus-offset
   [state : LowerState]
@@ -46010,26 +45234,6 @@
         (lower-type-contains-inline-aggregate? ctx ty)
         (lower-type-list-contains-inline-aggregate-at? ctx types (+ index 1))))))
 
-(define (lower-param-list-contains-inline-aggregate?
-  [ctx : TcContext]
-  [params : AstParamList]) : bool
-  (lower-param-list-contains-inline-aggregate-at? ctx (& params) 0))
-
-(define (lower-param-list-contains-inline-aggregate-at?
-  [ctx : TcContext]
-  [params : (& params AstParamList)]
-  [index : i64]) : bool
-  (if (>= index (ast-param-list-len params))
-    false
-    (match (ast-param-list-get params index (ast-param-fallback))
-      [(AstParam.Param _ ty _ _)
-        (or
-          (lower-type-contains-inline-aggregate? ctx ty)
-          (lower-param-list-contains-inline-aggregate-at?
-            ctx
-            params
-            (+ index 1)))])))
-
 (define (lower-param-list-contains-unsupported-reference?
   [ctx : TcContext]
   [params : AstParamList]) : bool
@@ -46057,18 +45261,6 @@
         ctx
         (tc-context-type-get ctx inner))]
     [_ true]))
-
-(define (lower-logical-name-has-suffix?
-  [logical-name : String]
-  [suffix : String]) : bool
-  (let
-    [name-len : i64 (string.string-length logical-name)]
-    [suffix-len : i64 (string.string-length suffix)]
-    (and
-      (>= name-len suffix-len)
-      (string.eq
-        (string.substring logical-name (- name-len suffix-len) suffix-len)
-        suffix))))
 
 (define (lower-logical-name-has-prefix?
   [logical-name : String]
@@ -46348,13 +45540,6 @@
 (define (compiler-lower-arena-state-capture-from-globals!
   [state : CompilerLowerArenaState]) : unit
   (compiler-lower-arena-state-set! state lower-scratch-arena lower-ir-arena))
-
-(define (compiler-lower-arena-state-capture) : CompilerLowerArenaState
-  (let
-    [state : CompilerLowerArenaState (compiler-lower-arena-state-new)]
-    (begin
-      (compiler-lower-arena-state-capture-from-globals! state)
-      state)))
 
 (define (compiler-lower-arena-state-install! [state : CompilerLowerArenaState]) : unit
   (begin
@@ -47091,11 +46276,6 @@
 (define lower-dispatch-avx512-required-feature-mask : i64
   ;; CPUID.7.0:EBX AVX512F bit 16, AVX512DQ bit 17, AVX512BW bit 30.
   1073938432)
-
-(define (lower-dispatch-feature-mask-satisfied?
-  [available : i64]
-  [required : i64]) : bool
-  (= (bit-and available required) required))
 
 (define (lower-dispatch-feature-blocks
   [prefix : String]
@@ -48341,28 +47521,6 @@
                   (struct-get success spans)))]
             [(ResultLowerDecls.Err message) (ResultCompilerLower.Err message)]))])))
 
-(define (lower-compiler-program-checked-with-names
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [program : AstProgram]
-  [names : LowerNameEnv]) : ResultCompilerLower
-  (lower-compiler-program-checked-with-names-mode
-    ctx
-    top-env
-    program
-    names
-    (CompilerLowerMode.Scalar)))
-
-(define (lower-compiler-program-checked
-  [ctx : TcContext]
-  [top-env : TcTypeEnv]
-  [program : AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-checked-with-names
-    ctx
-    top-env
-    program
-    LowerNameEnv.Nil))
-
 ;; Internal `expanded` workers assume macro expansion has already run; the
 ;; public `-mode` wrappers below own the expand -> specialize -> typecheck
 ;; boundary so every lowering path (scalar and SPMD) expands exactly once.
@@ -48411,9 +47569,6 @@
             (lower-compiler-expanded-program-unlocated-mode expanded mode)]
           [(ResultMacroExpand.Err diag) (ResultCompilerLower.Err diag)])]
       [(ResultGenProgram.Err diag) (ResultCompilerLower.Err diag)])))
-
-(define (lower-compiler-program-unlocated [program : AstProgram]) : ResultCompilerLower
-  (lower-compiler-program-unlocated-mode program (CompilerLowerMode.Scalar)))
 
 (define (lower-compiler-program-with-path-mode
   [path : String]
@@ -48735,51 +47890,6 @@
             (ResultCompilerLower.Err
               (box (lower-diagnostic-with-path (box-get diag) entry-path))))]))))
 
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
-  [entry-path : String]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache-active-and-pools
-    entry-path
-    program
-    paths
-    mode
-    stdlib-roots
-    cache-scope
-    (ast-node-pool-context-capture-active)))
-
-(define (lower-compiler-expanded-program-with-decl-paths-mode-cache
-  [entry-path : String]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [mode : CompilerLowerMode]
-  [stdlib-roots : svec.Vec]
-  [cache-scope : String]) : ResultCompilerLower
-  (let
-    [prev-active : bool lower-entry-main-module-active]
-    [prev-module : String lower-entry-main-module]
-    [selection : LowerMaybeEntryMainModule
-      (lower-entry-main-selection-for-program entry-path program paths)]
-    (begin
-      ;; Inline-test harnesses are generated inside the source module so they
-      ;; can call private helpers; the selected entry still needs ABI name main.
-      (lower-entry-main-selection-install! selection)
-      (let
-        [result : ResultCompilerLower
-          (lower-compiler-expanded-program-with-decl-paths-mode-cache-active
-            entry-path
-            program
-            paths
-            mode
-            stdlib-roots
-            cache-scope)]
-        (begin
-          (lower-entry-main-selection-restore! prev-active prev-module)
-          result)))))
-
 (define (lower-compiler-expanded-program-with-decl-paths-mode-cache-and-pools
   [entry-path : String]
   [program : AstProgram]
@@ -48808,19 +47918,6 @@
         (begin
           (lower-entry-main-selection-restore! prev-active prev-module)
           result)))))
-
-(define (lower-compiler-expanded-program-with-decl-paths-mode
-  [entry-path : String]
-  [program : AstProgram]
-  [paths : AstDeclPathList]
-  [mode : CompilerLowerMode]) : ResultCompilerLower
-  (lower-compiler-expanded-program-with-decl-paths-mode-cache
-    entry-path
-    program
-    paths
-    mode
-    (svec.new)
-    (tc-prefix-default-cache-scope)))
 
 (define (lower-compiler-program-with-decl-paths-mode-cache
   [entry-path : String]
@@ -49939,12 +49036,6 @@
       (string.eq (compiler-diagnostic-message (box-get diag)) want)]
     [(ResultCompilerLower.Ok _ _) false]))
 
-(define (compiler-lower-linux-error-ok? [src : String] [want : String]) : bool
-  (match (lower-compiler-source-with-mode src (CompilerLowerMode.LinuxScalar))
-    [(ResultCompilerLower.Err diag)
-      (string.eq (compiler-diagnostic-message (box-get diag)) want)]
-    [(ResultCompilerLower.Ok _ _) false]))
-
 (define (compiler-lower-windows-error-ok? [src : String] [want : String]) : bool
   (match (lower-compiler-source-with-mode src (CompilerLowerMode.WindowsScalar))
     [(ResultCompilerLower.Err diag)
@@ -50138,97 +49229,6 @@
        (+ (array-ref items 0)
           (+ (array-ref items 1)
              (+ (array-ref items 2) dyn-array-literal-trace))))))")
-
-(define (compiler-lower-private-array-length-source) : String
-  "(define (dyn-len [a : (Array i64)]) : i64 (__tl_array-length a))
-(define (main) : i64 0)")
-
-(define (compiler-lower-qualified-array-length-source) : String
-  "(import stdlib.array)
-(define (dyn-len [a : (Array i64)]) : i64 (array-length a))
-(define (main) : i64 0)")
-
-(define (compiler-lower-private-array-access-source) : String
-  "(define (get [a : (Array i64)] [i : i64]) : i64 (__tl_array-ref a i))
-(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (__tl_array-set! a i v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-qualified-array-access-source) : String
-  "(import stdlib.array)
-(define (get [a : (Array i64)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64)] [i : i64] [v : i64]) : unit (array-set! a i v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-private-fixed-array-access-source) : String
-  "(define (get [a : (Array i64 3)] [i : i64]) : i64 (__tl_array-ref a i))
-(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (__tl_array-set! a i v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-qualified-fixed-array-access-source) : String
-  "(import stdlib.array)
-(define (get [a : (Array i64 3)] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (Array i64 3)] [i : i64] [v : i64]) : unit (array-set! a i v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-private-mut-ref-array-access-source) : String
-  "(define (len [a : (& a (Array i64))]) : i64 (__tl_array-length a))
-(define (get [a : (& a (Array i64))] [i : i64]) : i64 (__tl_array-ref a i))
-(define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
-  (__tl_array-set! a i v))
-(define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
-  (__tl_array-push! a v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-qualified-mut-ref-array-access-source) : String
-  "(import stdlib.array)
-(define (len [a : (& a (Array i64))]) : i64 (array-length a))
-(define (get [a : (& a (Array i64))] [i : i64]) : i64 (array-ref a i))
-(define (put [a : (&mut a (Array i64))] [i : i64] [v : i64]) : unit
-  (array-set! a i v))
-(define (grow [a : (&mut a (Array i64))] [v : i64]) : unit
-  (array-push! a v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-private-array-push-source) : String
-  "(define (grow [a : (Array i64)] [v : i64]) : unit (__tl_array-push! a v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-qualified-array-push-source) : String
-  "(import stdlib.array)
-(define (grow [a : (Array i64)] [v : i64]) : unit (array-push! a v))
-(define (main) : i64 0)")
-
-(define (compiler-lower-private-make-array-source) : String
-  "(define (main [n : i64]) : i64
-  (let
-    [a : (Array i64) (__tl_make-array i64 n)]
-    (begin
-      (__tl_array-set! a 0 40)
-      (__tl_array-set! a 1 2)
-      (+ (__tl_array-length a) (+ (__tl_array-ref a 0) (__tl_array-ref a 1))))))")
-
-(define (compiler-lower-qualified-make-array-source) : String
-  "(import stdlib.array)
-(define (main [n : i64]) : i64
-  (let
-    [a : (Array i64) (make-array i64 n)]
-    (begin
-      (array-set! a 0 40)
-      (array-set! a 1 2)
-      (+ (array-length a) (+ (array-ref a 0) (array-ref a 1))))))")
-
-(define (compiler-lower-private-make-array-init-source) : String
-  "(define (main [n : i64]) : i64
-  (let
-    [items : (Array String) (__tl_make-array String n)]
-    (__tl_array-length items)))")
-
-(define (compiler-lower-qualified-make-array-init-source) : String
-  "(import stdlib.array)
-(define (main [n : i64]) : i64
-  (let
-    [items : (Array String) (make-array String n)]
-    (array-length items)))")
 
 (define (compiler-lower-make-array-register-resident-fill8-source) : String
   "(defstruct OneWord (value i64))
@@ -50462,53 +49462,6 @@
     [r : (Tuple i32 i32 i32 i32) (cpuid 0 0)]
     (+ (cast (tuple-ref r 0) : i64) (xgetbv 0))))")
 
-(define (compiler-lower-file-handle-status-source) : String
-  "(extern (os-open [arg0 : (Ptr u8)] [arg1 : i32] [arg2 : i32]) : i32 (:symbol \"open\"))
-(extern (os-close [arg0 : i32]) : i32 (:symbol \"close\"))
-(extern (os-read [arg0 : i32] [arg1 : (MutPtr u8)] [arg2 : i64]) : i64 (:symbol \"read\"))
-(extern (os-write [arg0 : i32] [arg1 : (Ptr u8)] [arg2 : i64]) : i64 (:symbol \"write\"))
-(extern (os-fflush [arg0 : (Ptr u8)]) : i32 (:symbol \"fflush\"))
-(define (io.file-open-status [path : String] [mode : i64]) : i64
-  (cast
-    (os-open (unsafe (string-data path)) (cast mode : i32) (cast 384 : i32))
-    : i64))
-(define (io.file-close-status [handle : i64]) : i64
-  (cast (os-close (cast handle : i32)) : i64))
-(define (io.file-read-chunk-status [handle : i64] [count : i64]) : i64
-  (let
-    [buf : (Array u8) (make-array u8 count)]
-    (os-read (cast handle : i32) (unsafe (array-data buf)) count)))
-(define (io.file-write-status [handle : i64] [text : String]) : i64
-  (os-write
-    (cast handle : i32)
-    (unsafe (string-data text))
-    (__tl_string_length text)))
-(define (io.file-flush-status [handle : i64]) : i64
-  (cast (os-fflush (ptr-null : (Ptr u8))) : i64))
-(define (io.file-read-chunk-bytes [handle : i64]) : String
-  (let
-    [buf : (Array u8) (make-array u8 0)]
-    (unsafe (string-from-bytes (ptr-cast (array-data buf) : (Ptr u8)) 0))))
-(define (io.file-read-chunk-eof? [handle : i64]) : bool false)
-(define (io.append-file-status [path : String] [text : String]) : i64
-  (let
-    [handle : i64 (io.file-open-status path 2)]
-    (+ (io.file-write-status handle text) (io.file-close-status handle))))
-(define (main) : i64
-  (let
-    [path : String \"input.txt\"]
-    [suffix : String \"x\"]
-    [chunk : String \"chunk\"]
-    [handle : i64 (io.file-open-status path 0)]
-    (+ handle
-      (+ (io.append-file-status path suffix)
-        (+ (io.file-read-chunk-status handle 4)
-          (+ (io.file-write-status handle chunk)
-            (+ (io.file-flush-status handle)
-              (+ (__tl_string_length (io.file-read-chunk-bytes handle))
-                (+ (if (io.file-read-chunk-eof? handle) 1 0)
-                   (io.file-close-status handle))))))))))")
-
 (define (compiler-lower-fs-status-source) : String
   "(define (current-dir-status) : i64 0)
 (define (current-dir) : String \".\")
@@ -50706,35 +49659,6 @@
   (let
     [item : NestedClone (make-nested s)]
     (__tl_string_length (struct-get (struct-get item used) name))))")
-
-(define (compiler-lower-clone-macro-handoff-source) : String
-  "(import stdlib.clone)
-(defstruct CloneMacroUsed (name String))
-(defstruct CloneMacroUnused (name String))
-(define (clone-macro-copy [value : CloneMacroUsed]) : CloneMacroUsed
-  (clone value))
-(define (main) : i64
-  (let
-    [first : CloneMacroUsed (clone-macro-copy (CloneMacroUsed \"a\"))]
-    [second : CloneMacroUsed (clone-macro-copy (CloneMacroUsed \"b\"))]
-    (+ 40 (+ (__tl_string_length (struct-get first name))
-      (__tl_string_length (struct-get second name))))))")
-
-(define (compiler-lower-clone-macro-conflict-source) : String
-  "(import stdlib.clone)
-(import stdlib.comptime)
-(defstruct CloneMacroConflict (name String))
-(defmacro (conflicting-clone [T : type]) : Decls
-  (let
-    [helper-name : comptime.Expr
-      (comptime.expr-var
-        (comptime.string-append \"clone$\" (type-nominal-name T)))]
-    `(begin
-      (define (,helper-name [value : ,T]) : ,T value))))
-(conflicting-clone (type CloneMacroConflict))
-(define (main) : i64
-  (__tl_string_length
-    (struct-get (clone (CloneMacroConflict \"x\")) name)))")
 
 ;; `main` must lower with both element stores (bool + i64 each written into the
 ;; aggregate) and a load for the `tuple-ref`.
@@ -50943,27 +49867,6 @@
                   1))])]
         [(ResultCompilerLower.Err _) false])]
     [(ResultAstProgram.Err _) false]))
-
-(define (compiler-lower-clone-macro-handoff-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-clone-macro-handoff-source))
-    [(ResultCompilerLower.Ok program _)
-      (match program
-        [(CompilerIrProgram.Program _ functions _)
-          (and
-            (lower-test-function-defined?
-              functions
-              "<source>::clone$CloneMacroUsed")
-            (not
-              (lower-test-function-defined?
-                functions
-                "<source>::clone$CloneMacroUnused"))
-            (=
-              (lower-test-function-call-count
-                functions
-                "<source>::clone-macro-copy"
-                "<source>::clone$CloneMacroUsed")
-              1))])]
-    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-inline-struct-source) : String
   "(defstruct Packet (tag i64) (small u8) (count i64))
@@ -51601,15 +50504,6 @@
       (if flag (return 7) unit)
       42)))")
 
-(define (compiler-lower-sret-rvo-early-return-source) : String
-  "(defstruct Big (a i64) (b i64) (c i64))
-(define (make-big [flag : bool]) : Big
-  (begin
-    (if flag (return (Big 4 5 6)) unit)
-    (Big 1 2 3)))
-(define (main [flag : bool]) : Big
-  (make-big flag))")
-
 (define (compiler-lower-resource-with-source) : String
   "(import stdlib.result)
 (import (result i64 String) as result_i64_string)
@@ -51661,17 +50555,6 @@
   (buffer i64 (:cleanup close-buffer)))
 (define (main) : i64
   (with ([b (BufferedFile (FileHandle 10) 20) cleanup-buffered-file])
-    42))")
-
-(define (compiler-lower-cleanup-enum-source) : String
-  "(define (close-a [value : i64]) : unit unit)
-(define (close-b [value : i64]) : unit unit)
-(defenum Owned
-  (:cleanup cleanup-owned)
-  (None)
-  (Both i64 (:cleanup close-a) i64 (:cleanup close-b)))
-(define (main) : i64
-  (with ([value (Owned.Both 10 20) cleanup-owned])
     42))")
 
 (define (compiler-lower-ok? [src : String]) : bool
@@ -51838,20 +50721,6 @@
         1
         0)]
     [_ 0]))
-
-(define (lower-test-value-list-function-count
-  [values : CompilerIrValueList]
-  [name : String]) : i64
-  (match values
-    [(CompilerIrValueList.Nil) 0]
-    [(CompilerIrValueList.Array seq)
-      (lower-test-value-list-function-count
-        (compiler-ir-value-seq-to-list seq)
-        name)]
-    [(CompilerIrValueList.Cons value rest)
-      (+
-        (lower-test-value-function-count value name)
-        (lower-test-value-list-function-count (box-get rest) name))]))
 
 (define (lower-test-call-args-function-count
   [args : CompilerIrCallArgs]
@@ -52270,318 +51139,11 @@
         0)]
     [_ 0]))
 
-(define (lower-test-instrs-phi-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-phi-count instr)
-        (lower-test-instrs-phi-count (box-get rest)))]))
-
-(define (lower-test-instrs-load-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-load-count instr)
-        (lower-test-instrs-load-count (box-get rest)))]))
-
-(define (lower-test-instrs-branch-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-branch-count instr)
-        (lower-test-instrs-branch-count (box-get rest)))]))
-
-(define (lower-test-instrs-bounds-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-bounds-count instr)
-        (lower-test-instrs-bounds-count (box-get rest)))]))
-
-(define (lower-test-instrs-return-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-return-count instr)
-        (lower-test-instrs-return-count (box-get rest)))]))
-
-(define (lower-test-instrs-call-count
-  [instrs : CompilerIrInstrList]
-  [name : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-call-count instr name)
-        (lower-test-instrs-call-count (box-get rest) name))]))
-
 (define (lower-test-instr-call-name? [instr : CompilerIrInstr] [name : String]) : bool
   (match instr
     [(CompilerIrInstr.Call _ call-name _ _) (string.eq call-name name)]
     [(CompilerIrInstr.TailCall call-name _ _) (string.eq call-name name)]
     [_ false]))
-
-(define (lower-test-instrs-call-before?
-  [instrs : CompilerIrInstrList]
-  [first : String]
-  [second : String]
-  [seen-first : bool]) : bool
-  (match instrs
-    [(CompilerIrInstrList.Nil) false]
-    [(CompilerIrInstrList.Cons instr rest)
-      (if (lower-test-instr-call-name? instr second)
-        seen-first
-        (lower-test-instrs-call-before?
-          (box-get rest)
-          first
-          second
-          (if (lower-test-instr-call-name? instr first)
-            true
-            seen-first)))]))
-
-(define (lower-test-instrs-cpuid-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-cpuid-count instr)
-        (lower-test-instrs-cpuid-count (box-get rest)))]))
-
-(define (lower-test-instrs-xgetbv-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-xgetbv-count instr)
-        (lower-test-instrs-xgetbv-count (box-get rest)))]))
-
-(define (lower-test-instrs-indirect-call-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-indirect-call-count instr)
-        (lower-test-instrs-indirect-call-count (box-get rest)))]))
-
-(define (lower-test-instrs-indirect-tail-call-count
-  [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-indirect-tail-call-count instr)
-        (lower-test-instrs-indirect-tail-call-count (box-get rest)))]))
-
-(define (lower-test-instrs-indirect-unit-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-indirect-unit-count instr)
-        (lower-test-instrs-indirect-unit-count (box-get rest)))]))
-
-(define (lower-test-instrs-return-function-count
-  [instrs : CompilerIrInstrList]
-  [function-name : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-return-function-count instr function-name)
-        (lower-test-instrs-return-function-count (box-get rest) function-name))]))
-
-(define (lower-test-instrs-indirect-callee-function-count
-  [instrs : CompilerIrInstrList]
-  [function-name : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-indirect-callee-function-count instr function-name)
-        (lower-test-instrs-indirect-callee-function-count
-          (box-get rest)
-          function-name))]))
-
-(define (lower-test-instrs-call-arg-function-count
-  [instrs : CompilerIrInstrList]
-  [call-name : String]
-  [function-name : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-call-arg-function-count instr call-name function-name)
-        (lower-test-instrs-call-arg-function-count
-          (box-get rest)
-          call-name
-          function-name))]))
-
-(define (lower-test-instrs-tail-call-count
-  [instrs : CompilerIrInstrList]
-  [name : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-tail-call-count instr name)
-        (lower-test-instrs-tail-call-count (box-get rest) name))]))
-
-(define (lower-test-instrs-store-ptr-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-store-ptr-count instr)
-        (lower-test-instrs-store-ptr-count (box-get rest)))]))
-
-(define (lower-test-instrs-copy-bytes-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-copy-bytes-count instr)
-        (lower-test-instrs-copy-bytes-count (box-get rest)))]))
-
-(define (lower-test-instrs-alloc-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-alloc-count instr)
-        (lower-test-instrs-alloc-count (box-get rest)))]))
-
-(define (lower-test-instrs-addr-of-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-addr-of-count instr)
-        (lower-test-instrs-addr-of-count (box-get rest)))]))
-
-(define (lower-test-instrs-vector-load-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-vector-load-count instr)
-        (lower-test-instrs-vector-load-count (box-get rest)))]))
-
-(define (lower-test-instrs-vector-binop-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-vector-binop-count instr)
-        (lower-test-instrs-vector-binop-count (box-get rest)))]))
-
-(define (lower-test-instrs-vector-reduce-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-vector-reduce-count instr)
-        (lower-test-instrs-vector-reduce-count (box-get rest)))]))
-
-(define (lower-test-instrs-vector-store-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-vector-store-count instr)
-        (lower-test-instrs-vector-store-count (box-get rest)))]))
-
-(define (lower-test-instrs-predicated-load-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-predicated-load-count instr)
-        (lower-test-instrs-predicated-load-count (box-get rest)))]))
-
-(define (lower-test-instrs-predicated-store-count
-  [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-predicated-store-count instr)
-        (lower-test-instrs-predicated-store-count (box-get rest)))]))
-
-(define (lower-test-instrs-select-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-select-count instr)
-        (lower-test-instrs-select-count (box-get rest)))]))
-
-(define (lower-test-instrs-tail-mask-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-tail-mask-count instr)
-        (lower-test-instrs-tail-mask-count (box-get rest)))]))
-
-(define (lower-test-instrs-vector-shape-count
-  [instrs : CompilerIrInstrList]
-  [lanes : i64]
-  [elem-ty : AstType]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-vector-shape-count instr lanes elem-ty)
-        (lower-test-instrs-vector-shape-count (box-get rest) lanes elem-ty))]))
-
-(define (lower-test-instrs-u64-mov-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-u64-mov-count instr)
-        (lower-test-instrs-u64-mov-count (box-get rest)))]))
-
-(define (lower-test-instrs-binop-op-count
-  [instrs : CompilerIrInstrList]
-  [op : CompilerIrBinOp]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-binop-op-count instr op)
-        (lower-test-instrs-binop-op-count (box-get rest) op))]))
-
-(define (lower-test-instrs-cast-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-cast-count instr)
-        (lower-test-instrs-cast-count (box-get rest)))]))
-
-(define (lower-test-instrs-bitcast-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-bitcast-count instr)
-        (lower-test-instrs-bitcast-count (box-get rest)))]))
-
-(define (lower-test-instrs-store-global-count
-  [instrs : CompilerIrInstrList]
-  [name : String]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-store-global-count instr name)
-        (lower-test-instrs-store-global-count (box-get rest) name))]))
 
 (define (lower-test-instr-seq-phi-count [instrs : CompilerIrInstrSeq]) : i64
   (let
@@ -53693,22 +52255,6 @@
         (compiler-ir-function-seq-to-list seq)
         name)]))
 
-(define (lower-test-function-instruction-count
-  [funcs : CompilerIrFunctionList]
-  [name : String]) : i64
-  (match funcs
-    [(CompilerIrFunctionList.Nil) (- 0 1)]
-    [(CompilerIrFunctionList.Cons func rest)
-      (match func
-        [(CompilerIrFunction.Function fname _ _ _ _)
-          (if (string.eq fname name)
-            (compiler-ir-function-instruction-count func)
-            (lower-test-function-instruction-count (box-get rest) name))])]
-    [(CompilerIrFunctionList.Array seq)
-      (lower-test-function-instruction-count
-        (compiler-ir-function-seq-to-list seq)
-        name)]))
-
 (define (lower-test-function-load-count
   [funcs : CompilerIrFunctionList]
   [name : String]) : i64
@@ -54465,20 +53011,6 @@
               ok))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-defdispatch-avx512-feature-decision-ok?) : bool
-  (let
-    ;; F+BW without DQ must never select a variant that may contain `vpmullq`.
-    [f-and-bw : i64 1073807360]
-    [f-bw-and-dq : i64 1073938432]
-    (and
-      (not
-        (lower-dispatch-feature-mask-satisfied?
-          f-and-bw
-          lower-dispatch-avx512-required-feature-mask))
-      (lower-dispatch-feature-mask-satisfied?
-        f-bw-and-dq
-        lower-dispatch-avx512-required-feature-mask))))
-
 (define (compiler-lower-defdispatch-shared-helper-ok?) : bool
   (match (lower-compiler-source
     (compiler-lower-defdispatch-shared-helper-source))
@@ -54645,27 +53177,6 @@
   "(module stdlib.arena)
 (define (helper) : i64 41)
 (define (main) : i64 (helper))")
-
-(define (compiler-lower-module-entry-main-ok?) : bool
-  (match (parse-ast-source (compiler-lower-module-entry-main-source))
-    [(ResultAstProgram.Ok program)
-      (match (lower-compiler-program-with-decl-paths
-        "stdlib/arena.tl"
-        program
-        (ast-decl-path-list-new))
-        [(ResultCompilerLower.Ok lowered _)
-          (match lowered
-            [(CompilerIrProgram.Program _ functions _)
-              (and
-                (lower-test-function-defined? functions "main")
-                (=
-                  (lower-test-function-direct-call-count
-                    functions
-                    "main"
-                    "arena.tl::stdlib.arena/helper")
-                  1))])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-lower-module-qualified-source) : String
   "(module left)
@@ -55718,11 +54229,6 @@
         [_ 0])]
     [_ 0]))
 
-(define (lower-test-f64-bits [text : String]) : u64
-  (match (compiler-float-parse-f64-bits text)
-    [(CompilerFloatSomeBits bits) bits]
-    [(CompilerFloatNoBits) 0]))
-
 (define (lower-test-instr-f64-mov-count [instr : CompilerIrInstr] [want : u64]) : i64
   (match instr
     [(CompilerIrInstr.Mov _ value _)
@@ -55752,44 +54258,6 @@
             0)]
         [_ 0])]
     [_ 0]))
-
-(define (lower-test-instrs-i64-mov-count
-  [instrs : CompilerIrInstrList]
-  [want : i64]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-i64-mov-count instr want)
-        (lower-test-instrs-i64-mov-count (box-get rest) want))]))
-
-(define (lower-test-instrs-f64-mov-count
-  [instrs : CompilerIrInstrList]
-  [want : u64]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-f64-mov-count instr want)
-        (lower-test-instrs-f64-mov-count (box-get rest) want))]))
-
-(define (lower-test-instrs-binop-count [instrs : CompilerIrInstrList]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-binop-count instr)
-        (lower-test-instrs-binop-count (box-get rest)))]))
-
-(define (lower-test-instrs-gep-offset-count
-  [instrs : CompilerIrInstrList]
-  [want : i64]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (lower-test-instr-gep-offset-count instr want)
-        (lower-test-instrs-gep-offset-count (box-get rest) want))]))
 
 (define (lower-test-instr-seq-i64-mov-count
   [instrs : CompilerIrInstrSeq]
@@ -55936,12 +54404,6 @@
         (compiler-ir-function-seq-to-list seq)
         name
         want)]))
-
-(define (lower-test-function-f64-mov-count
-  [funcs : CompilerIrFunctionList]
-  [name : String]
-  [want : String]) : i64
-  (lower-test-function-f64-mov-count-bits funcs name (lower-test-f64-bits want)))
 
 (define (lower-test-function-f64-mov-count-bits
   [funcs : CompilerIrFunctionList]
@@ -56124,16 +54586,6 @@
             (> (lower-test-functions-call-count functions "tl_region_reset") 1))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-sret-rvo-early-return-fallback-shape-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-sret-rvo-early-return-source))
-    [(ResultCompilerLower.Ok program _)
-      (match program
-        [(CompilerIrProgram.Program _ functions _)
-          (and
-            (> (lower-test-function-call-count functions "main" "make-big") 0)
-            (> (lower-test-function-copy-bytes-count functions "main") 0))])]
-    [(ResultCompilerLower.Err _) false]))
-
 (define (compiler-lower-resource-with-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-resource-with-source))
     [(ResultCompilerLower.Ok program _)
@@ -56206,31 +54658,6 @@
               "cleanup-buffered-file"
               "close-buffer"
               "cleanup-file-handle"))])]
-    [(ResultCompilerLower.Err _) false]))
-
-(define (compiler-lower-cleanup-enum-shape-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-cleanup-enum-source))
-    [(ResultCompilerLower.Ok program _)
-      (match program
-        [(CompilerIrProgram.Program _ functions _)
-          (and
-            (=
-              (lower-test-function-direct-call-count
-                functions
-                "cleanup-owned"
-                "close-a")
-              1)
-            (=
-              (lower-test-function-direct-call-count
-                functions
-                "cleanup-owned"
-                "close-b")
-              1)
-            (lower-test-function-call-before?
-              functions
-              "cleanup-owned"
-              "close-b"
-              "close-a"))])]
     [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-array-access-shape-ok? [src : String]) : bool
@@ -56370,150 +54797,6 @@
               0)
             (>= (lower-test-function-store-ptr-count functions "main") 3))])]
     [(ResultCompilerLower.Err _) false]))
-
-(define (compiler-lower-array-function-counts-match?
-  [private-funcs : CompilerIrFunctionList]
-  [qualified-funcs : CompilerIrFunctionList]
-  [private-name : String]
-  [qualified-name : String]) : bool
-  (and
-    (lower-test-function-defined? private-funcs private-name)
-    (lower-test-function-defined? qualified-funcs qualified-name)
-    (=
-      (lower-test-function-instruction-count private-funcs private-name)
-      (lower-test-function-instruction-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-alloc-count private-funcs private-name)
-      (lower-test-function-alloc-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-load-count private-funcs private-name)
-      (lower-test-function-load-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-store-ptr-count private-funcs private-name)
-      (lower-test-function-store-ptr-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-bounds-count private-funcs private-name)
-      (lower-test-function-bounds-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-binop-count private-funcs private-name)
-      (lower-test-function-binop-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-branch-count private-funcs private-name)
-      (lower-test-function-branch-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-copy-bytes-count private-funcs private-name)
-      (lower-test-function-copy-bytes-count qualified-funcs qualified-name))
-    (=
-      (lower-test-function-call-count private-funcs private-name "tl_alloc")
-      (lower-test-function-call-count qualified-funcs qualified-name "tl_alloc"))
-    (=
-      (lower-test-function-call-count private-funcs private-name "tl_oob_abort")
-      (lower-test-function-call-count
-        qualified-funcs
-        qualified-name
-        "tl_oob_abort"))
-    (=
-      (lower-test-function-call-count
-        private-funcs
-        private-name
-        "tl_array_zero")
-      (lower-test-function-call-count
-        qualified-funcs
-        qualified-name
-        "tl_array_zero"))
-    (=
-      (lower-test-function-call-count
-        private-funcs
-        private-name
-        "tl_array_fill8")
-      (lower-test-function-call-count
-        qualified-funcs
-        qualified-name
-        "tl_array_fill8"))))
-
-(define (compiler-lower-array-function-parity-ok?
-  [private-src : String]
-  [qualified-src : String]
-  [private-name : String]
-  [qualified-name : String]) : bool
-  (match (lower-compiler-source private-src)
-    [(ResultCompilerLower.Ok private-program _)
-      (match (lower-compiler-source qualified-src)
-        [(ResultCompilerLower.Ok qualified-program _)
-          (match private-program
-            [(CompilerIrProgram.Program _ private-funcs _)
-              (match qualified-program
-                [(CompilerIrProgram.Program _ qualified-funcs _)
-                  (compiler-lower-array-function-counts-match?
-                    private-funcs
-                    qualified-funcs
-                    private-name
-                    qualified-name)])])]
-        [(ResultCompilerLower.Err _) false])]
-    [(ResultCompilerLower.Err _) false]))
-
-(define (compiler-lower-qualified-array-parity-ok?) : bool
-  (and
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-array-length-source)
-      (compiler-lower-qualified-array-length-source)
-      "dyn-len"
-      ".::dyn-len")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-array-access-source)
-      (compiler-lower-qualified-array-access-source)
-      "get"
-      ".::get")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-array-access-source)
-      (compiler-lower-qualified-array-access-source)
-      "put"
-      ".::put")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-fixed-array-access-source)
-      (compiler-lower-qualified-fixed-array-access-source)
-      "get"
-      ".::get")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-fixed-array-access-source)
-      (compiler-lower-qualified-fixed-array-access-source)
-      "put"
-      ".::put")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-mut-ref-array-access-source)
-      (compiler-lower-qualified-mut-ref-array-access-source)
-      "len"
-      ".::len")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-mut-ref-array-access-source)
-      (compiler-lower-qualified-mut-ref-array-access-source)
-      "get"
-      ".::get")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-mut-ref-array-access-source)
-      (compiler-lower-qualified-mut-ref-array-access-source)
-      "put"
-      ".::put")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-mut-ref-array-access-source)
-      (compiler-lower-qualified-mut-ref-array-access-source)
-      "grow"
-      ".::grow")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-array-push-source)
-      (compiler-lower-qualified-array-push-source)
-      "grow"
-      ".::grow")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-make-array-source)
-      (compiler-lower-qualified-make-array-source)
-      "main"
-      ".::main")
-    (compiler-lower-array-function-parity-ok?
-      (compiler-lower-private-make-array-init-source)
-      (compiler-lower-qualified-make-array-init-source)
-      "main"
-      ".::main")))
 
 (define (compiler-lower-make-array-register-resident-fill8-shape-ok?) : bool
   (match (lower-compiler-source-with-mode
@@ -57145,134 +55428,6 @@
     (compiler-lower-capturing-lambda-shadow-shape-ok?)
     (compiler-lower-capturing-lambda-reference-shape-ok?)
     (compiler-lower-capturing-lambda-reference-immediate-shape-ok?)))
-
-(define (compiler-lower-file-handle-status-shape-ok? [src : String]) : bool
-  (match (lower-compiler-source src)
-    [(ResultCompilerLower.Ok program _)
-      (match program
-        [(CompilerIrProgram.Program _ functions _)
-          (let
-            [ok : bool true]
-            (begin
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_open_status")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_close_status")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_append_file_status")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_read_chunk_status")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_write_status")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_flush_status")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_read_chunk_bytes")
-                0)
-                unit
-                (set! ok false))
-              (if (=
-                (lower-test-functions-call-count
-                  functions
-                  ".L_tl_file_read_chunk_eof")
-                0)
-                unit
-                (set! ok false))
-              (if (> (lower-test-functions-call-count functions "os-open") 0)
-                unit
-                (set! ok false))
-              (if (> (lower-test-functions-call-count functions "os-close") 0)
-                unit
-                (set! ok false))
-              (if (> (lower-test-functions-call-count functions "os-read") 0)
-                unit
-                (set! ok false))
-              (if (> (lower-test-functions-call-count functions "os-write") 0)
-                unit
-                (set! ok false))
-              (if (> (lower-test-functions-call-count functions "os-fflush") 0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count functions "file-open-status")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count functions "file-close-status")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count functions "append-file-status")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count
-                  functions
-                  "file-read-chunk-status")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count functions "file-write-status")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count functions "file-flush-status")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count
-                  functions
-                  "file-read-chunk-bytes")
-                0)
-                unit
-                (set! ok false))
-              (if (>
-                (lower-test-functions-call-count
-                  functions
-                  "file-read-chunk-eof?")
-                0)
-                unit
-                (set! ok false))
-              ok))])]
-    [(ResultCompilerLower.Err _) false]))
 
 (define (compiler-lower-fs-status-shape-ok?) : bool
   (match (lower-compiler-source (compiler-lower-fs-status-source))
@@ -58986,11 +57141,6 @@
       (array-set! out i (heavy i))
       (array-set! out i 0))))")
 
-(define (compiler-lower-spmd-small-helper-source) : String
-  "(define (bump [x : i64]) : i64 (+ x 1))
-(define (fill [out : (Array i64)] [n : i64]) : unit
-  (foreach ([i : i64 0 n]) (array-set! out i (bump i))))")
-
 (define (compiler-lower-spmd-source-call-count
   [src : String]
   [mode : CompilerLowerMode]) : i64
@@ -59736,514 +57886,6 @@
         unit
         (set! ok false))
       (if (compiler-lower-fs-status-shape-ok?)
-        unit
-        (set! ok false))
-      ok)))
-
-(define (compiler-lower-descriptor-pair-test-state) : LowerState
-  ;; Var 0 models an incoming ordinary one-word String handle.
-  (LowerState.State
-    1
-    0
-    0
-    "entry"
-    (compiler-ir-instr-builder-new)
-    (compiler-ir-block-builder-new)
-    (compiler-ir-function-builder-new)
-    "descriptor_pair_test"
-    (box (compiler-source-spans-empty))
-    (lower-empty-global-name-cache)
-    (LowerTypeCache.No)
-    (CompilerLowerMode.Scalar)
-    (lower_i64_i64_map.with-capacity 8)
-    0
-    1))
-
-(define (compiler-lower-descriptor-pair-test-instr-count
-  [instrs : CompilerIrInstrList]
-  [kind : i64]) : i64
-  (match instrs
-    [(CompilerIrInstrList.Nil) 0]
-    [(CompilerIrInstrList.Cons instr rest)
-      (+
-        (match instr
-          [(CompilerIrInstr.Pack _ _ ty)
-            (if (= kind 0)
-              (match ty
-                [(AstType.String) 1]
-                [_ 0])
-              0)]
-          [(CompilerIrInstr.Word _ _ index ty)
-            (cond
-              [(and (= kind 1) (= index 0))
-                (match ty
-                  [(AstType.U64) 1]
-                  [_ 0])]
-              [(and (= kind 2) (= index 1))
-                (match ty
-                  [(AstType.I64) 1]
-                  [_ 0])]
-              [else 0])]
-          [(CompilerIrInstr.StorePtr _ _ ty)
-            (cond
-              [(= kind 3)
-                (match ty
-                  [(AstType.U64) 1]
-                  [_ 0])]
-              [(= kind 4)
-                (match ty
-                  [(AstType.I64) 1]
-                  [_ 0])]
-              [else 0])]
-          [(CompilerIrInstr.Mov _ _ ty)
-            (if (= kind 5)
-              (match ty
-                [(AstType.String) 1]
-                [_ 0])
-              0)]
-          [_ 0])
-        (compiler-lower-descriptor-pair-test-instr-count (box-get rest) kind))]))
-
-(define (compiler-lower-descriptor-pair-capability-ok?) : bool
-  (let
-    [kind : CompilerIrDescriptorPairKind
-      (CompilerIrDescriptorPairKind.OwnedString)]
-    [loaded : LowerExpr
-      (lower-load-descriptor-pair-from-handle
-        (compiler-lower-descriptor-pair-test-state)
-        (CompilerIrValue.Var 0)
-        kind)]
-    (match loaded
-      [(LowerExpr.Expr load-state pair _)
-        (match (lower-copy-descriptor-pair load-state pair kind)
-          [(ResultLowerExpr.Ok (LowerExpr.Expr copy-state copied _))
-            (match (lower-descriptor-pair-data copy-state copied)
-              [(LowerExpr.Expr data-state _ _)
-                (match (lower-descriptor-pair-length data-state copied)
-                  [(LowerExpr.Expr length-state _ _)
-                    (match (lower-materialize-descriptor-pair-at-ptr
-                      length-state
-                      (CompilerIrValue.Var 0)
-                      copied
-                      kind)
-                      [(ResultLowerExpr.Ok
-                          (LowerExpr.Expr final-state materialized ty))
-                        (match final-state
-                          [(LowerState.State
-                              next-var
-                              _
-                              _
-                              _
-                              instr-builder
-                              _
-                              _
-                              _
-                              _
-                              _
-                              _
-                              _
-                              _
-                              _
-                              _)
-                            (let
-                              [instrs : CompilerIrInstrList
-                                (compiler-ir-instr-builder-to-list
-                                  instr-builder)]
-                              (and
-                                (= next-var 14)
-                                (match materialized
-                                  [(CompilerIrValue.Var id) (= id 13)]
-                                  [_ false])
-                                (match ty
-                                  [(AstType.String) true]
-                                  [_ false])
-                                (=
-                                  (compiler-lower-descriptor-pair-test-instr-count
-                                    instrs
-                                    0)
-                                  1)
-                                (=
-                                  (compiler-lower-descriptor-pair-test-instr-count
-                                    instrs
-                                    1)
-                                  2)
-                                (=
-                                  (compiler-lower-descriptor-pair-test-instr-count
-                                    instrs
-                                    2)
-                                  2)
-                                (=
-                                  (compiler-lower-descriptor-pair-test-instr-count
-                                    instrs
-                                    3)
-                                  1)
-                                (=
-                                  (compiler-lower-descriptor-pair-test-instr-count
-                                    instrs
-                                    4)
-                                  1)
-                                (=
-                                  (compiler-lower-descriptor-pair-test-instr-count
-                                    instrs
-                                    5)
-                                  2)))])]
-                      [(ResultLowerExpr.Err _) false])])])]
-          [(ResultLowerExpr.Err _) false])])))
-
-(define (compiler-lower-front-half-tests-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (compiler-lower-descriptor-pair-capability-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-and-or-short-circuit-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-entry-moduled-main-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-nested-expression-diagnostic-span-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-compound-expression-diagnostic-span-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok-summary? (compiler-lower-smoke-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-macro-expand-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-macro-expr-clause-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok?
-        (compiler-lower-macro-expr-clause-variadic-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-macro-hygiene-definition-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-macro-arity-source)
-        "macro call has too few arguments")
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-macro-expr-clause-to-expr-error-source)
-        "typecheck: macro operand type mismatch: expected Expr, got bracket clause")
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-macro-expr-to-clause-error-source)
-        "typecheck: ExprClause macro operand expects bracket syntax")
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-macro-expr-clause-shape-error-source)
-        "typecheck: ExprClause macro operand expects bracket clause [expr expr]")
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-bracket-ordinary-call-error-source)
-        "typecheck: bracket clause is only valid as an ExprClause or ExprBindingClause macro operand")
-        unit
-        (set! ok false))
-      (if (compiler-lower-spans-ok? (compiler-lower-smoke-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-match-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-match-tail-shape-ok? (compiler-lower-match-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-enum-match-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-enum-literal-payload-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-enum-nested-payload-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok?
-        (compiler-lower-enum-string-literal-payload-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-enum-string-literal-payload-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-borrowed-enum-match-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok?
-        (compiler-lower-borrowed-enum-match-ref-struct-array-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-borrowed-enum-match-str-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok?
-        (compiler-lower-borrowed-enum-match-nested-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-export-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-defdispatch-thunk-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-defdispatch-avx512-feature-decision-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-defdispatch-shared-helper-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-result-try-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-option-try-source))
-        unit
-        (set! ok false))
-      ok)))
-
-(define (compiler-lower-middle-tests-ok?) : bool
-  (let
-    [ok : bool true]
-    (begin
-      (if (compiler-lower-enum-match-shape-ok?
-        (compiler-lower-enum-match-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-borrowed-enum-match-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-result-try-shape-ok?
-        (compiler-lower-result-try-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-option-try-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-return-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-return-with-arena-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-sret-rvo-early-return-fallback-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-resource-with-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-resource-with-nested-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-cleanup-struct-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-cleanup-struct-nested-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-cleanup-enum-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-array-length-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-array-access-shape-ok?
-        (compiler-lower-array-access-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-array-take-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-fixed-array-access-shape-ok?
-        (compiler-lower-fixed-array-access-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-fixed-array-literal-stack-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-fixed-array-aggregate-layout-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-array-access-shape-ok?
-        (compiler-lower-mut-ref-array-access-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-mut-ref-by-value-writeback-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-mut-ref-array-field-access-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-array-push-shape-ok?
-        (compiler-lower-array-push-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-array-push-shape-ok?
-        (compiler-lower-mut-ref-array-access-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-fixed-array-push-source)
-        "typecheck: array-push! requires dynamic array type")
-        unit
-        (set! ok false))
-      (if (compiler-lower-make-array-shape-ok?
-        (compiler-lower-make-array-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-make-array-init-shape-ok?
-        (compiler-lower-make-array-init-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-dyn-array-literal-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-qualified-array-parity-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-make-array-register-resident-fill8-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-runtime-helper-tests-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-function-value-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-function-value-contextual-init-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-noncapturing-lambda-tests-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-capturing-lambda-tests-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-aggregate-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-init-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-tuple-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-tuple-return-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-clone-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-clone-dynarray-bulk-copy-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-clone-reachable-helpers-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-clone-macro-handoff-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-clone-macro-conflict-source)
-        "clone: conflicting helper producer for clone$CloneMacroConflict")
-        unit
-        (set! ok false))
-      (if (compiler-lower-error-ok?
-        (compiler-lower-clone-unsupported-source)
-        "typecheck: clone unsupported type (-> i64 i64)")
-        unit
-        (set! ok false))
-      (if (compiler-lower-inline-aggregate-tests-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-ok? (compiler-lower-comptime-decl-source))
-        unit
-        (set! ok false))
-      (if (compiler-lower-generated-paths-preserved-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-symbols-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-package-owned-symbols-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-entry-main-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-qualified-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-import-alias-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-dotted-import-default-alias-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-dotted-import-string-call-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-function-returning-struct-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-function-returning-enum-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-imported-enum-aggregate-payload-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-macro-codegen-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-module-macro-stdlib-vector-import-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-function-decl-count-wrapped-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-extern-link-metadata-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-extern-value-fnptr-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-c-abi-linux-tag-only-enum-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-c-abi-windows-enum-aggregate-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-c-abi-linux-payload-enum-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-c-abi-windows-byref-aggregate-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-c-abi-windows-small-float-aggregate-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-c-abi-windows-nested-small-aggregate-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-windows-error-ok?
-        (compiler-lower-c-abi-windows-unsupported-aggregate-source)
-        "lower: unsupported windows-x86_64 C aggregate ABI for OuterText; this slice supports scalar structs of size 1, 2, 4, or 8 bytes, including nested scalar struct fields")
-        unit
-        (set! ok false))
-      (if (compiler-lower-global-shape-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-raw-pointer-ops-ok?)
-        unit
-        (set! ok false))
-      (if (compiler-lower-raw-pointer-call-value-shape-ok?)
         unit
         (set! ok false))
       ok)))
@@ -61388,11 +59030,3 @@
         unit
         (set! ok false))
       ok)))
-
-(define (compiler-lower-self-test) : i64
-  (if (and
-    (compiler-lower-front-half-tests-ok?)
-    (compiler-lower-middle-tests-ok?)
-    (compiler-lower-back-half-tests-ok?))
-    42
-    (io.panic "lower: smoke score mismatch")))

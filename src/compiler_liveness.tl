@@ -269,32 +269,53 @@
       (if (= left-count 0)
         right
         (let
-          [count : i64 (compiler-live-set-max left-count right-count)]
-          [out : (Array i64) (make-array i64 count)]
-          [index : i64 0]
-          [changed : bool false]
+          ;; Both inputs are trimmed, so a longer right operand necessarily
+          ;; contributes a set bit. Otherwise scan only until the first bit
+          ;; missing from left. Fixpoint iterations commonly find no change;
+          ;; avoid allocating and filling a throwaway immutable copy for them.
+          [probe : i64 0]
+          [changed : bool (> right-count left-count)]
           (begin
-            (while (< index count)
+            (while (and (not changed) (< probe right-count))
               (let
                 [left-bits : i64
-                  (if (< index left-count)
-                    (unsafe
-                      (ptr-read (ptr-offset (array-data left-words) index)))
-                    0)]
+                  (unsafe
+                    (ptr-read (ptr-offset (array-data left-words) probe)))]
                 [right-bits : i64
-                  (if (< index right-count)
-                    (unsafe
-                      (ptr-read (ptr-offset (array-data right-words) index)))
-                    0)]
-                [merged : i64 (bit-or left-bits right-bits)]
+                  (unsafe
+                    (ptr-read (ptr-offset (array-data right-words) probe)))]
                 (begin
-                  (array-set! out index merged)
-                  (if (not (= merged left-bits))
+                  (if (not (= (bit-and right-bits (bit-xor left-bits -1)) 0))
                     (set! changed true)
                     unit)
-                  (set! index (+ index 1)))))
+                  (set! probe (+ probe 1)))))
             (if changed
-              (compiler-live-set-from-words-trimmed out count)
+              (let
+                [count : i64 (compiler-live-set-max left-count right-count)]
+                [out : (Array i64) (make-array i64 count)]
+                [index : i64 0]
+                (begin
+                  (while (< index count)
+                    (let
+                      [left-bits : i64
+                        (if (< index left-count)
+                          (unsafe
+                            (ptr-read
+                              (ptr-offset (array-data left-words) index)))
+                          0)]
+                      [right-bits : i64
+                        (if (< index right-count)
+                          (unsafe
+                            (ptr-read
+                              (ptr-offset (array-data right-words) index)))
+                          0)]
+                      (begin
+                        (array-set! out index (bit-or left-bits right-bits))
+                        (set! index (+ index 1)))))
+                  ;; The longer input's final word is nonzero because every
+                  ;; CompilerLiveI64Set is canonical, so union cannot introduce
+                  ;; a trailing zero word.
+                  (CompilerLiveI64Set out)))
               left)))))))
 
 (define (compiler-live-set-union-into
@@ -310,29 +331,46 @@
     [right-words : (Array i64) (compiler-live-set-words right)]
     [count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
-    [out : (Array i64) (make-array i64 count)]
-    [index : i64 0]
+    [probe-count : i64 (compiler-live-set-min count right-count)]
+    [probe : i64 0]
     [changed : bool false]
     (begin
-      (while (< index count)
+      ;; Prove the sets intersect before allocating the immutable result.
+      (while (and (not changed) (< probe probe-count))
         (let
           [left-bits : i64
             (unsafe
-              (ptr-read (ptr-offset (array-data left-words) index)))]
+              (ptr-read (ptr-offset (array-data left-words) probe)))]
           [right-bits : i64
-            (if (< index right-count)
-              (unsafe
-                (ptr-read (ptr-offset (array-data right-words) index)))
-              0)]
-          [next-bits : i64 (bit-and left-bits (bit-xor right-bits -1))]
+            (unsafe
+              (ptr-read (ptr-offset (array-data right-words) probe)))]
           (begin
-            (array-set! out index next-bits)
-            (if (not (= next-bits left-bits))
+            (if (not (= (bit-and left-bits right-bits) 0))
               (set! changed true)
               unit)
-            (set! index (+ index 1)))))
+            (set! probe (+ probe 1)))))
       (if changed
-        (compiler-live-set-from-words-trimmed out count)
+        (let
+          [out : (Array i64) (make-array i64 count)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (let
+                [left-bits : i64
+                  (unsafe
+                    (ptr-read (ptr-offset (array-data left-words) index)))]
+                [right-bits : i64
+                  (if (< index right-count)
+                    (unsafe
+                      (ptr-read (ptr-offset (array-data right-words) index)))
+                    0)]
+                (begin
+                  (array-set!
+                    out
+                    index
+                    (bit-and left-bits (bit-xor right-bits -1)))
+                  (set! index (+ index 1)))))
+            (compiler-live-set-from-words-trimmed out count)))
         left))))
 
 (define (compiler-live-set-eq?

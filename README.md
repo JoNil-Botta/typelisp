@@ -415,7 +415,8 @@ data-parallel lowering inside one task. `compile`, `run`, and `build` accept
   width.
 - `defdispatch` declares one logical function with scalar/AVX2/AVX-512
   variants; ordinary calls resolve once per process via the CPUID/XGETBV
-  checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires AVX-512BW).
+  checks exposed by `stdlib/cpu.tl` (AVX-512 dispatch requires F+BW+DQ and OS
+  ZMM/opmask state).
 
 Public vector/mask value types and vectorized scans/shuffles are deferred.
 Non-inlined varying helper calls now typecheck and lower to specialized private

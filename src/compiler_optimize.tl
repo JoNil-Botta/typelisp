@@ -47762,7 +47762,7 @@
     "ssa_duplicate_def"
     (CompilerIrParamList.Nil)
     (AstType.I64)
-    0
+    2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
@@ -47774,6 +47774,23 @@
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
               (CompilerIrInstrList.Nil)))))
+      (CompilerIrBlockList.Nil))))
+
+(define (opt-ssa-out-of-range-def-function [var : i64] [vars : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "ssa_out_of_range_def"
+    (CompilerIrParamList.Nil)
+    (AstType.I64)
+    vars
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov var (CompilerIrValue.I64 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
+            (CompilerIrInstrList.Nil))))
       (CompilerIrBlockList.Nil))))
 
 (define (opt-ssa-use-before-def-function) : CompilerIrFunction
@@ -48512,6 +48529,16 @@
             (opt-count-load-label-blocks pipeline-nested-blocks "inner_body")
             1))
         57]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-out-of-range-def-function -1 1))
+            "optimizer verify: duplicate var definition"))
+        58]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-out-of-range-def-function 1 1))
+            "optimizer verify: duplicate var definition"))
+        59]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

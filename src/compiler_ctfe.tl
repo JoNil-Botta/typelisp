@@ -12462,49 +12462,46 @@
         [_ false])]
     [(ResultCtfe.Err _) false]))
 
-(define (compiler-ctfe-call-name-id [name : String]) : i64
-  (ctfe-materialize-generated-name-id name))
-
-(define (compiler-ctfe-call1 [name : String] [arg : i64]) : i64
+(define (compiler-ctfe-call1 [name-id : i64] [arg : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (compiler-ctfe-call-name-id name)))
+    (ast-node-push (AstExpr.Var name-id))
     (ast-expr-cons arg (ast-expr-list-new))))
 
-(define (compiler-ctfe-call2 [name : String] [a : i64] [b : i64]) : i64
+(define (compiler-ctfe-call2 [name-id : i64] [a : i64] [b : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (compiler-ctfe-call-name-id name)))
+    (ast-node-push (AstExpr.Var name-id))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-list-new)))))
 
-(define (compiler-ctfe-call3 [name : String] [a : i64] [b : i64] [c : i64]) : i64
+(define (compiler-ctfe-call3 [name-id : i64] [a : i64] [b : i64] [c : i64]) : i64
   (ast-expr-call
-    (ast-node-push (AstExpr.Var (compiler-ctfe-call-name-id name)))
+    (ast-node-push (AstExpr.Var name-id))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c (ast-expr-list-new))))))
 
-(define (compiler-ctfe-call1-in-env [env : CtfeEnv] [name : String] [arg : i64]) : i64
+(define (compiler-ctfe-call1-in-env [env : CtfeEnv] [name-id : i64] [arg : i64]) : i64
   (ast-expr-call-with-pools
     (ctfe-env-pools env)
-    (ctfe-ast-push env (AstExpr.Var (compiler-ctfe-call-name-id name)))
+    (ctfe-ast-push env (AstExpr.Var name-id))
     (ast-expr-cons arg (ast-expr-list-new))))
 
 (define (compiler-ctfe-call2-in-env
   [env : CtfeEnv]
-  [name : String]
+  [name-id : i64]
   [a : i64]
   [b : i64]) : i64
   (ast-expr-call-with-pools
     (ctfe-env-pools env)
-    (ctfe-ast-push env (AstExpr.Var (compiler-ctfe-call-name-id name)))
+    (ctfe-ast-push env (AstExpr.Var name-id))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-list-new)))))
 
 (define (compiler-ctfe-call3-in-env
   [env : CtfeEnv]
-  [name : String]
+  [name-id : i64]
   [a : i64]
   [b : i64]
   [c : i64]) : i64
   (ast-expr-call-with-pools
     (ctfe-env-pools env)
-    (ctfe-ast-push env (AstExpr.Var (compiler-ctfe-call-name-id name)))
+    (ctfe-ast-push env (AstExpr.Var name-id))
     (ast-expr-cons a (ast-expr-cons b (ast-expr-cons c (ast-expr-list-new))))))
 
 (define (compiler-ctfe-eval-i64-ok? [expr : i64] [env : CtfeEnv] [want : i64]) : bool
@@ -12751,29 +12748,35 @@
     [qualified-status-ty : i64
       (ast-node-push (AstExpr.TypeLiteral (AstType.Var qualified-status-id)))]
     [packet-fields : CtfeLayoutFieldList
-      (ctfe-layout-field-list-push
-        (ctfe-layout-field-list-push
+      (ctfe-layout-field-list-push-id
+        (ctfe-layout-field-list-push-id
           (ctfe-layout-field-list-with-capacity 2)
-          (CtfeLayoutField.Field "tag" 0))
-        (CtfeLayoutField.Field "count" 8))]
+          (CtfeLayoutField.Field "tag" 0)
+          cbi.compiler-builtin-id-fix-tag)
+        (CtfeLayoutField.Field "count" 8)
+        cbi.compiler-builtin-id-fix-count)]
     [box-fields : CtfeLayoutFieldList
-      (ctfe-layout-field-list-push
+      (ctfe-layout-field-list-push-id
         (ctfe-layout-field-list-with-capacity 1)
-        (CtfeLayoutField.Field "x" 0))]
+        (CtfeLayoutField.Field "x" 0)
+        cbi.compiler-builtin-id-fix-x)]
     [layouts : CtfeLayoutInfoList
       (ctfe-layout-info-list-push-id
-        (ctfe-layout-info-list-push
-          (ctfe-layout-info-list-push
-            (ctfe-layout-info-list-push
+        (ctfe-layout-info-list-push-id
+          (ctfe-layout-info-list-push-id
+            (ctfe-layout-info-list-push-id
               (ctfe-layout-info-list-with-capacity 4)
-              (CtfeLayoutInfo.Info "Packet" true 16 8 packet-fields))
-            (CtfeLayoutInfo.Info "Box" true 8 8 box-fields))
+              (CtfeLayoutInfo.Info "Packet" true 16 8 packet-fields)
+              cbi.compiler-builtin-id-fix-Packet)
+            (CtfeLayoutInfo.Info "Box" true 8 8 box-fields)
+            cbi.compiler-builtin-id-fix-Box)
           (CtfeLayoutInfo.Info
             "Choice"
             false
             24
             8
-            (ctfe-layout-field-list-empty)))
+            (ctfe-layout-field-list-empty))
+          cbi.compiler-builtin-id-fix-Choice)
         (CtfeLayoutInfo.Info
           "stdlib/Status"
           false
@@ -12787,20 +12790,20 @@
     [ok : bool true]
     (begin
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "size-of" packet-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 0) packet-ty)
         env
         16)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "align-of" packet-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 1) packet-ty)
         env
         8)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
         (compiler-ctfe-call2
-          "offset-of"
+          (ctfe-builtin-ref 2)
           packet-ty
           (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-count)))
         env
@@ -12808,14 +12811,14 @@
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "size-of" box-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 0) box-ty)
         env
         8)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
         (compiler-ctfe-call2
-          "offset-of"
+          (ctfe-builtin-ref 2)
           box-ty
           (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-x)))
         env
@@ -12823,26 +12826,26 @@
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "size-of" choice-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 0) choice-ty)
         env
         24)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "align-of" choice-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 1) choice-ty)
         env
         8)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "size-of" qualified-status-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 0) qualified-status-ty)
         env
         32)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-error-ok?
         (compiler-ctfe-call2
-          "offset-of"
+          (ctfe-builtin-ref 2)
           choice-ty
           (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-tag)))
         env
@@ -12851,7 +12854,7 @@
         (set! ok false))
       (if (compiler-ctfe-eval-error-ok?
         (compiler-ctfe-call2
-          "offset-of"
+          (ctfe-builtin-ref 2)
           packet-ty
           (ast-node-push (AstExpr.Var cbi.compiler-builtin-id-fix-missing)))
         env
@@ -12880,8 +12883,8 @@
           (ast-type-cons (AstType.String) (ast-type-list-new))))]
     [infos : CtfeReflectInfoList
       (ctfe-reflect-info-list-push-id
-        (ctfe-reflect-info-list-push
-          (ctfe-reflect-info-list-push
+        (ctfe-reflect-info-list-push-id
+          (ctfe-reflect-info-list-push-id
             (ctfe-reflect-info-list-with-capacity 3)
             (CtfeReflectInfo.Struct
               "Point"
@@ -12889,14 +12892,16 @@
               "Point"
               cbi.compiler-builtin-id-fix-Point
               (CtfeReflectCleanup.Fn "cleanup-point")
-              point-fields))
+              point-fields)
+            cbi.compiler-builtin-id-fix-Point)
           (CtfeReflectInfo.Enum
             "Maybe"
             ""
             "Maybe"
             cbi.compiler-builtin-id-fix-Maybe
             CtfeReflectCleanup.No
-            maybe-variants))
+            maybe-variants)
+          cbi.compiler-builtin-id-fix-Maybe)
         (CtfeReflectInfo.Enum
           "stdlib/Status"
           "stdlib"
@@ -12953,64 +12958,64 @@
     [ok : bool true]
     (begin
       (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 "type-kind" point-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 71) point-ty)
         env
         "struct")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
         (compiler-ctfe-call1
-          "type-key"
+          (ctfe-builtin-ref 72)
           (ast-node-push (AstExpr.TypeLiteral (AstType.I64))))
         env
         "i64")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-bool-ok?
-        (compiler-ctfe-call1 "type-cleanup-owning?" point-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 210) point-ty)
         env
         true)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 "type-cleanup-function" point-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 211) point-ty)
         env
         "cleanup-point")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 "type-key" str-ref-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 72) str-ref-ty)
         env
         "ref_r_str")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 "type-nominal-name" point-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 74) point-ty)
         env
         "Point")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 "type-nominal-module" qualified-status-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 73) qualified-status-ty)
         env
         "stdlib")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
-        (compiler-ctfe-call1 "type-nominal-name" qualified-status-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 74) qualified-status-ty)
         env
         "Status")
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "struct-field-count" point-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 75) point-ty)
         env
         2)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
         (compiler-ctfe-call2
-          "struct-field-name"
+          (ctfe-builtin-ref 76)
           point-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
         env
@@ -13019,7 +13024,7 @@
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call2
-          "struct-field-type"
+          (ctfe-builtin-ref 77)
           point-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
         env
@@ -13027,14 +13032,14 @@
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "enum-variant-count" maybe-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 78) maybe-ty)
         env
         2)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
         (compiler-ctfe-call2
-          "enum-variant-name"
+          (ctfe-builtin-ref 79)
           maybe-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
         env
@@ -13043,7 +13048,7 @@
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
         (compiler-ctfe-call2
-          "enum-variant-payload-count"
+          (ctfe-builtin-ref 80)
           maybe-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
         env
@@ -13052,7 +13057,7 @@
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call3
-          "enum-variant-payload-type"
+          (ctfe-builtin-ref 81)
           maybe-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1)))
           (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -13061,32 +13066,32 @@
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call1 "array-element-type" array-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 82) array-ty)
         env
         (AstType.I64))
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "array-length" array-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 83) array-ty)
         env
         4)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-bool-ok?
-        (compiler-ctfe-call1 "array-dynamic?" dyn-array-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 84) dyn-array-ty)
         env
         true)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "tuple-element-count" tuple-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 85) tuple-ty)
         env
         2)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call2
-          "tuple-element-type"
+          (ctfe-builtin-ref 86)
           tuple-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
         env
@@ -13094,14 +13099,14 @@
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "function-param-count" fn-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 87) fn-ty)
         env
         2)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call2
-          "function-param-type"
+          (ctfe-builtin-ref 88)
           fn-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
         env
@@ -13109,7 +13114,7 @@
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
-        (compiler-ctfe-call1 "function-return-type" fn-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 89) fn-ty)
         env
         (AstType.String))
         unit
@@ -13172,14 +13177,14 @@
     [ok : bool true]
     (begin
       (if (compiler-ctfe-eval-i64-ok?
-        (compiler-ctfe-call1 "struct-field-count" record-ty)
+        (compiler-ctfe-call1 (ctfe-builtin-ref 75) record-ty)
         env
         2)
         unit
         (set! ok false))
       (if (compiler-ctfe-eval-string-ok?
         (compiler-ctfe-call2
-          "struct-field-name"
+          (ctfe-builtin-ref 76)
           record-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1))))
         env
@@ -13188,7 +13193,7 @@
         (set! ok false))
       (if (compiler-ctfe-eval-type-ok?
         (compiler-ctfe-call3
-          "enum-variant-payload-type"
+          (ctfe-builtin-ref 81)
           status-ty
           (ast-node-push (AstExpr.Literal (ast-lit-int 1)))
           (ast-node-push (AstExpr.Literal (ast-lit-int 0))))
@@ -13316,7 +13321,10 @@
 (define (compiler-ctfe-type-info-source-match-ok? [env : CtfeEnv]) : bool
   (let
     [match-env : CtfeEnv
-      (ctfe-env-extend env "info" (CompilerCtfeValue.TypeInfo (AstType.I64)))]
+      (ctfe-env-extend-id
+        env
+        cbi.compiler-builtin-id-fix-info
+        (CompilerCtfeValue.TypeInfo (AstType.I64)))]
     [scrutinee : i64
       (ctfe-ast-push match-env (AstExpr.Var cbi.compiler-builtin-id-fix-info))]
     [true-lit : i64
@@ -13387,7 +13395,9 @@
     [ok : bool true]
     (begin
       (match (compiler-ctfe-eval
-        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" i64-ty))
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) i64-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13399,7 +13409,9 @@
             [_ (set! ok false)])]
         [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
-        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" array-ty))
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) array-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13429,7 +13441,7 @@
       (match (compiler-ctfe-eval
         (ctfe-ast-get
           env
-          (compiler-ctfe-call1-in-env env "type-info" dyn-array-ty))
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) dyn-array-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13453,7 +13465,9 @@
             [_ (set! ok false)])]
         [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
-        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" tuple-ty))
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) tuple-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13478,7 +13492,9 @@
             [_ (set! ok false)])]
         [(ResultCtfe.Err _) (set! ok false)])
       (match (compiler-ctfe-eval
-        (ctfe-ast-get env (compiler-ctfe-call1-in-env env "type-info" fn-ty))
+        (ctfe-ast-get
+          env
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) fn-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13512,7 +13528,7 @@
       (match (compiler-ctfe-eval
         (ctfe-ast-get
           env
-          (compiler-ctfe-call1-in-env env "type-info" record-ty))
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) record-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13547,7 +13563,7 @@
       (match (compiler-ctfe-eval
         (ctfe-ast-get
           env
-          (compiler-ctfe-call1-in-env env "type-info" status-ty))
+          (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 46) status-ty))
         env
         (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13663,11 +13679,14 @@
     [items : AstExprList
       (ctfe-expr-list-cons true-lit (ctfe-expr-list-singleton false-lit))]
     [list-env : CtfeEnv
-      (ctfe-env-extend env "items" (CompilerCtfeValue.ExprList items))]
+      (ctfe-env-extend-id
+        env
+        cbi.compiler-builtin-id-fix-items
+        (CompilerCtfeValue.ExprList items))]
     [items-var : i64
       (ctfe-ast-push list-env (AstExpr.Var cbi.compiler-builtin-id-fix-items))]
     [len-call : i64
-      (compiler-ctfe-call1-in-env list-env "expr-list-length" items-var)]
+      (compiler-ctfe-call1-in-env list-env (ctfe-builtin-ref 51) items-var)]
     (compiler-ctfe-eval-i64-ok? len-call list-env 2)))
 
 (define (compiler-ctfe-pattern-list-bindings-ok?) : bool
@@ -13677,19 +13696,19 @@
       (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "payload")))]
     [count : i64 (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 9 "")))]
     [call : i64
-      (compiler-ctfe-call2-in-env env "pattern-list-bindings" prefix count)]
+      (compiler-ctfe-call2-in-env env (ctfe-builtin-ref 90) prefix count)]
     [negative-count : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int -1 "")))]
     [negative-call : i64
       (compiler-ctfe-call2-in-env
         env
-        "pattern-list-bindings"
+        (ctfe-builtin-ref 90)
         prefix
         negative-count)]
     [huge-count : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 10000 "")))]
     [huge-call : i64
-      (compiler-ctfe-call2-in-env env "pattern-list-bindings" prefix huge-count)]
+      (compiler-ctfe-call2-in-env env (ctfe-builtin-ref 90) prefix huge-count)]
     (and
       (match (compiler-ctfe-eval (ctfe-ast-get env call) env (ctfe-fuel-limit))
         [(ResultCtfe.Ok value _)
@@ -13727,20 +13746,21 @@
     [env : CtfeEnv (ctfe-env-empty)]
     [x-id : i64 (ctfe-materialize-generated-name-id "x")]
     [point-id : i64 (ctfe-materialize-generated-name-id "point")]
-    [empty-id : i64 (ctfe-materialize-generated-name-id "expr-list-empty")]
     [helper-id : i64 (ctfe-materialize-generated-name-id "counter.push-ref")]
     [true-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool false)))]
-    [true-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" true-lit)]
-    [false-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" false-lit)]
+    [true-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 27) true-lit)]
+    [false-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 27) false-lit)]
     [spliced-false : i64
-      (compiler-ctfe-call1-in-env env "expr-splice" false-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 34) false-expr)]
     [if-expr : i64
       (compiler-ctfe-call3-in-env
         env
-        "expr-if"
+        (ctfe-builtin-ref 35)
         true-expr
         spliced-false
         true-expr)]
@@ -13752,18 +13772,19 @@
       (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "x")))]
     [name-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "Ada")))]
-    [name-expr : i64 (compiler-ctfe-call1-in-env env "expr-string" name-lit)]
+    [name-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 29) name-lit)]
     [expected-name : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
     [binary-expr : i64
       (compiler-ctfe-call1-in-env env "expr-binary-data" name-lit)]
     [expected-binary : i64 (ctfe-ast-push env (AstExpr.BinaryData "Ada"))]
     [point-expr : i64
-      (compiler-ctfe-call1-in-env env "expr-var" point-name-lit)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 30) point-name-lit)]
     [field-expr : i64
       (compiler-ctfe-call2-in-env
         env
-        "expr-struct-get"
+        (ctfe-builtin-ref 31)
         point-expr
         field-name-lit)]
     [tuple-index-lit : i64
@@ -13771,43 +13792,45 @@
     [tuple-ref-expr : i64
       (compiler-ctfe-call2-in-env
         env
-        "expr-tuple-ref"
+        (ctfe-builtin-ref 32)
         point-expr
         tuple-index-lit)]
     [field-set-expr : i64
       (compiler-ctfe-call3-in-env
         env
-        "expr-struct-set"
+        (ctfe-builtin-ref 33)
         point-expr
         field-name-lit
         true-expr)]
     [helper-name-lit : i64
-      (ctfe-ast-push
-        env
-        (AstExpr.Literal (ast-lit-generated-string "counter.push-ref")))]
+      (ctfe-ast-push env (AstExpr.Literal (ast-lit-string-id helper-id)))]
     [helper-expr : i64
-      (compiler-ctfe-call1-in-env env "expr-var" helper-name-lit)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 30) helper-name-lit)]
     [mut-borrow-expr : i64
-      (compiler-ctfe-call1-in-env env "expr-mut-borrow" point-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 94) point-expr)]
     [empty-call-args : i64
       (ast-expr-call-with-pools
         (ctfe-env-pools env)
-        (ctfe-ast-push env (AstExpr.Var empty-id))
+        (ctfe-ast-push env (AstExpr.Var (ctfe-builtin-ref 96)))
         (ast-expr-list-new))]
     [value-tail : i64
       (compiler-ctfe-call2-in-env
         env
-        "expr-list-cons"
+        (ctfe-builtin-ref 97)
         true-expr
         empty-call-args)]
     [call-args : i64
       (compiler-ctfe-call2-in-env
         env
-        "expr-list-cons"
+        (ctfe-builtin-ref 97)
         mut-borrow-expr
         value-tail)]
     [built-call : i64
-      (compiler-ctfe-call2-in-env env "expr-call" helper-expr call-args)]
+      (compiler-ctfe-call2-in-env
+        env
+        (ctfe-builtin-ref 95)
+        helper-expr
+        call-args)]
     [expected-field : i64
       (ast-expr-struct-get-id-with-pools
         (ctfe-env-pools env)
@@ -13946,35 +13969,49 @@
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true)))]
     [false-lit : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool false)))]
-    [true-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" true-lit)]
-    [false-expr : i64 (compiler-ctfe-call1-in-env env "expr-bool" false-lit)]
+    [true-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 27) true-lit)]
+    [false-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 27) false-lit)]
     [if-expr : i64
-      (compiler-ctfe-call3-in-env env "expr-if" true-expr false-expr true-expr)]
-    [if-predicate : i64 (compiler-ctfe-call1-in-env env "expr-if?" if-expr)]
+      (compiler-ctfe-call3-in-env
+        env
+        (ctfe-builtin-ref 35)
+        true-expr
+        false-expr
+        true-expr)]
+    [if-predicate : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 21) if-expr)]
     [not-if-predicate : i64
-      (compiler-ctfe-call1-in-env env "expr-if?" true-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 21) true-expr)]
     [bool-predicate : i64
-      (compiler-ctfe-call1-in-env env "expr-bool?" true-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 19) true-expr)]
     [not-bool-predicate : i64
-      (compiler-ctfe-call1-in-env env "expr-bool?" if-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 19) if-expr)]
     [bool-value : i64
-      (compiler-ctfe-call1-in-env env "expr-bool-value" false-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 20) false-expr)]
     [bool-value-fallback : i64
-      (compiler-ctfe-call1-in-env env "expr-bool-value" if-expr)]
-    [cond-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-cond" if-expr)]
-    [then-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-then" if-expr)]
-    [else-expr : i64 (compiler-ctfe-call1-in-env env "expr-if-else" if-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 20) if-expr)]
+    [cond-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 22) if-expr)]
+    [then-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 23) if-expr)]
+    [else-expr : i64
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 24) if-expr)]
     [fallback-cond-expr : i64
-      (compiler-ctfe-call1-in-env env "expr-if-cond" true-expr)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 22) true-expr)]
     [clause : AstExprClause (AstExprClause true-lit false-lit)]
     [clause-env : CtfeEnv
-      (ctfe-env-extend env "arm" (CompilerCtfeValue.ExprClause clause))]
+      (ctfe-env-extend-id
+        env
+        cbi.compiler-builtin-id-fix-arm
+        (CompilerCtfeValue.ExprClause clause))]
     [clause-var : i64
       (ctfe-ast-push clause-env (AstExpr.Var cbi.compiler-builtin-id-fix-arm))]
     [clause-first : i64
-      (compiler-ctfe-call1-in-env clause-env "expr-clause-first" clause-var)]
+      (compiler-ctfe-call1-in-env clause-env (ctfe-builtin-ref 25) clause-var)]
     [clause-second : i64
-      (compiler-ctfe-call1-in-env clause-env "expr-clause-second" clause-var)]
+      (compiler-ctfe-call1-in-env clause-env (ctfe-builtin-ref 26) clause-var)]
     (and
       (compiler-ctfe-eval-bool-ok? if-predicate env true)
       (compiler-ctfe-eval-bool-ok? not-if-predicate env false)
@@ -14057,19 +14094,25 @@
     [int-node : i64 (ctfe-ast-push base-env (AstExpr.Literal (ast-lit-int 1)))]
     [int-expr-value : CompilerCtfeValue
       (CompilerCtfeValue.Expr int-node (AstType.I64))]
-    [env : CtfeEnv (ctfe-env-extend base-env "n" int-expr-value)]
+    [env : CtfeEnv
+      (ctfe-env-extend-id base-env cbi.compiler-builtin-id-fix-n int-expr-value)]
     [spliced-int : i64
       (compiler-ctfe-call1-in-env
         env
-        "expr-splice"
+        (ctfe-builtin-ref 34)
         (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-n)))]
     [true-expr : i64
       (compiler-ctfe-call1-in-env
         env
-        "expr-bool"
+        (ctfe-builtin-ref 27)
         (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Bool true))))]
     [if-expr : i64
-      (compiler-ctfe-call3-in-env env "expr-if" spliced-int true-expr true-expr)]
+      (compiler-ctfe-call3-in-env
+        env
+        (ctfe-builtin-ref 35)
+        spliced-int
+        true-expr
+        true-expr)]
     (compiler-ctfe-eval-error-ok?
       if-expr
       env
@@ -14087,12 +14130,12 @@
     [spliced : AstExprList
       (ast-expr-cons true-lit (ast-expr-cons false-lit (ast-expr-list-new)))]
     [env : CtfeEnv
-      (ctfe-env-extend
-        (ctfe-env-extend
+      (ctfe-env-extend-id
+        (ctfe-env-extend-id
           base-env
-          "cond"
+          cbi.compiler-builtin-id-fix-cond
           (CompilerCtfeValue.Expr flag-var (AstType.Bool)))
-        "xs"
+        cbi.compiler-builtin-id-fix-xs
         (CompilerCtfeValue.ExprList spliced))]
     [quoted-bool : i64
       (ast-expr-quote-with-pools (ctfe-env-pools env) true-lit)]
@@ -14127,9 +14170,9 @@
     [set-target-var : i64
       (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-target))]
     [set-env : CtfeEnv
-      (ctfe-env-extend
+      (ctfe-env-extend-id
         env
-        "target"
+        cbi.compiler-builtin-id-fix-target
         (CompilerCtfeValue.Expr field-place (AstType.Expr)))]
     [qq-set : i64
       (ast-expr-quasiquote-with-pools
@@ -14235,13 +14278,16 @@
       (ctfe-ast-push base-env (AstExpr.Literal (ast-lit-int 7)))]
     [subject : CompilerCtfeValue
       (CompilerCtfeValue.Expr subject-node (AstType.I64))]
-    [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
+    [env : CtfeEnv
+      (ctfe-env-extend-id base-env cbi.compiler-builtin-id-fix-subject subject)]
     [scrutinee : i64
       (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
     [int-pattern : AstPattern
-      (ctfe-pat-variant
-        "ExprInt"
-        (ast-pattern-cons (ctfe-pat-binding "n") (ast-pattern-list-new)))]
+      (ast-pat-variant-id
+        cbi.compiler-builtin-id-fix-ExprInt
+        (ast-pattern-cons
+          (ast-pat-binding-id cbi.compiler-builtin-id-fix-n)
+          (ast-pattern-list-new)))]
     [int-arm : AstMatchArm
       (ast-match-arm
         int-pattern
@@ -14272,21 +14318,24 @@
       (ast-expr-if-with-pools (ctfe-env-pools base-env) flag true-lit false-lit)]
     [subject : CompilerCtfeValue
       (CompilerCtfeValue.Expr if-node (AstType.Bool))]
-    [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
+    [env : CtfeEnv
+      (ctfe-env-extend-id base-env cbi.compiler-builtin-id-fix-subject subject)]
     [scrutinee : i64
       (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
     [if-pattern : AstPattern
-      (ctfe-pat-variant
-        "ExprIf"
+      (ast-pat-variant-id
+        cbi.compiler-builtin-id-fix-ExprIf
         (ast-pattern-cons
-          (ctfe-pat-binding "c")
+          (ast-pat-binding-id cbi.compiler-builtin-id-fix-c)
           (ast-pattern-cons
-            (ctfe-pat-binding "t")
-            (ast-pattern-cons (ctfe-pat-binding "e") (ast-pattern-list-new)))))]
+            (ast-pat-binding-id cbi.compiler-builtin-id-fix-t)
+            (ast-pattern-cons
+              (ast-pat-binding-id cbi.compiler-builtin-id-fix-e)
+              (ast-pattern-list-new)))))]
     [swapped : i64
       (compiler-ctfe-call3-in-env
         env
-        "expr-if"
+        (ctfe-builtin-ref 35)
         (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-c))
         (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-e))
         (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-t)))]
@@ -14323,15 +14372,18 @@
       (ctfe-ast-push base-env (AstExpr.Literal (AstLiteral.Bool false)))]
     [clause : AstExprClause (AstExprClause true-lit false-lit)]
     [subject : CompilerCtfeValue (CompilerCtfeValue.ExprClause clause)]
-    [env : CtfeEnv (ctfe-env-extend base-env "subject" subject)]
+    [env : CtfeEnv
+      (ctfe-env-extend-id base-env cbi.compiler-builtin-id-fix-subject subject)]
     [scrutinee : i64
       (ctfe-ast-push env (AstExpr.Var cbi.compiler-builtin-id-fix-subject))]
     [clause-pattern : AstPattern
-      (ctfe-pat-variant
-        "ExprClause"
+      (ast-pat-variant-id
+        cbi.compiler-builtin-id-fix-ExprClause
         (ast-pattern-cons
-          (ctfe-pat-binding "first")
-          (ast-pattern-cons (ctfe-pat-binding "second") (ast-pattern-list-new))))]
+          (ast-pat-binding-id cbi.compiler-builtin-id-fix-first)
+          (ast-pattern-cons
+            (ast-pat-binding-id cbi.compiler-builtin-id-fix-second)
+            (ast-pattern-list-new))))]
     [clause-arm : AstMatchArm
       (ast-match-arm
         clause-pattern

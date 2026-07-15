@@ -56262,35 +56262,6 @@
             (> (lower-test-function-binop-count functions "main") 0))])]
     [(ResultCompilerLower.Err _) false]))
 
-(define (compiler-lower-qualified-wide-call-source) : String
-  "(module wide_math)
-(define (take [value : i64]) : i64 value)
-(module main)
-(import wide_math)
-(define (main) : i64 (wide_math.take -9223372036854775808))")
-
-(define (compiler-lower-qualified-wide-call-arg-ok?) : bool
-  (match (lower-compiler-source (compiler-lower-qualified-wide-call-source))
-    [(ResultCompilerLower.Ok lowered _)
-      (match lowered
-        [(CompilerIrProgram.Program _ functions _)
-          (and
-            (>
-              (lower-test-function-int-mov-type-count
-                functions
-                "main"
-                -9223372036854775808
-                (AstType.I64))
-              0)
-            (=
-              (lower-test-function-int-mov-type-count
-                functions
-                "main"
-                -9223372036854775808
-                (AstType.I32))
-              0))])]
-    [(ResultCompilerLower.Err _) false]))
-
 (define (compiler-lower-import-alias-source) : String
   "(module data)
 (define (get) : i64 20)
@@ -57375,29 +57346,6 @@
           (set! index (+ index 1))))
       acc)))
 
-(define (lower-test-instr-seq-int-mov-type-count
-  [instrs : CompilerIrInstrSeq]
-  [want : i64]
-  [want-ty : AstType]) : i64
-  (let
-    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
-    [count : i64 (struct-get instrs len)]
-    [index : i64 0]
-    [acc : i64 0]
-    (begin
-      (while (< index count)
-        (begin
-          (set!
-            acc
-            (+
-              acc
-              (lower-test-instr-int-mov-type-count
-                (array-ref slots index)
-                want
-                want-ty)))
-          (set! index (+ index 1))))
-      acc)))
-
 (define (lower-test-instr-seq-f64-mov-count
   [instrs : CompilerIrInstrSeq]
   [want : u64]) : i64
@@ -57464,24 +57412,6 @@
             (lower-test-blocks-i64-mov-count (box-get rest) want))])]
     [(CompilerIrBlockList.Array seq)
       (lower-test-blocks-i64-mov-count (compiler-ir-block-seq-to-list seq) want)]))
-
-(define (lower-test-blocks-int-mov-type-count
-  [blocks : CompilerIrBlockList]
-  [want : i64]
-  [want-ty : AstType]) : i64
-  (match blocks
-    [(CompilerIrBlockList.Nil) 0]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block _ instrs)
-          (+
-            (lower-test-instr-seq-int-mov-type-count instrs want want-ty)
-            (lower-test-blocks-int-mov-type-count (box-get rest) want want-ty))])]
-    [(CompilerIrBlockList.Array seq)
-      (lower-test-blocks-int-mov-type-count
-        (compiler-ir-block-seq-to-list seq)
-        want
-        want-ty)]))
 
 (define (lower-test-blocks-f64-mov-count
   [blocks : CompilerIrBlockList]

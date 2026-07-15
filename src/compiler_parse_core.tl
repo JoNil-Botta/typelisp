@@ -15,7 +15,7 @@
 (import stdlib.string)
 (import stdlib.option)
 (import stdlib.hashmap)
-(import stdlib.arena as arena)
+(import stdlib.arena)
 (import token)
 (import (hashmap i64 i64) as parse_i64_i64_map)
 (import (option i64) as option_i64)

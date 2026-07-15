@@ -1046,7 +1046,7 @@
 (define (clone-emit-enum-clone
   [pools : AstNodePoolContext]
   [type-name-id : i64]
-  [type-key-id : i64]
+  [_ : i64]
   [helper-name-id : i64]
   [variants : AstVariantDefList]
   [acc : AstDeclList]) : AstDeclList

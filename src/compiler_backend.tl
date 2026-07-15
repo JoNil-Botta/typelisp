@@ -21798,29 +21798,27 @@
     [(CompilerIrExternList.Cons ext rest)
       (match ext
         [(CompilerIrExtern.Extern name-id _ _ _ _ link-symbol-id _ provided)
-          (let
-            [link-symbol : String (compiler-ir-symbol-text link-symbol-id)]
-            (if (compiler-backend-emits-extern-symbol?
-              name-id
-              link-symbol-id
-              provided
-              plan)
-              (let
-                [symbol : String
-                  (compiler-backend-link-symbol-id link-symbol-id plan)]
-                (if (backend_string_i64_map.contains? (& seen) symbol)
-                  (compiler-backend-symbol-validation-error
-                    (string.append
-                      "backend: extern symbol collides with emitted symbol "
-                      symbol))
-                  (compiler-backend-validate-extern-symbols-into
-                    (box-get rest)
-                    plan
-                    seen)))
-              (compiler-backend-validate-extern-symbols-into
-                (box-get rest)
-                plan
-                seen)))])]
+          (if (compiler-backend-emits-extern-symbol?
+            name-id
+            link-symbol-id
+            provided
+            plan)
+            (let
+              [symbol : String
+                (compiler-backend-link-symbol-id link-symbol-id plan)]
+              (if (backend_string_i64_map.contains? (& seen) symbol)
+                (compiler-backend-symbol-validation-error
+                  (string.append
+                    "backend: extern symbol collides with emitted symbol "
+                    symbol))
+                (compiler-backend-validate-extern-symbols-into
+                  (box-get rest)
+                  plan
+                  seen)))
+            (compiler-backend-validate-extern-symbols-into
+              (box-get rest)
+              plan
+              seen))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-validate-extern-symbols-into
         (compiler-ir-extern-seq-to-list seq)
@@ -45041,7 +45039,6 @@
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]) : String
   (let
-    [name-text : String (compiler-ir-symbol-text name)]
     [symbol : String (compiler-backend-user-symbol-id name)]
     [init-symbol : String (compiler-backend-user-symbol-id init)]
     (str_cat.str-cat
@@ -46118,36 +46115,34 @@
     [(CompilerIrExternList.Cons item rest)
       (match item
         [(CompilerIrExtern.Extern name-id _ name _ _ link-symbol-id _ provided)
-          (let
-            [link-symbol : String (compiler-ir-symbol-text link-symbol-id)]
-            (if (and
-              (compiler-backend-emits-extern-symbol?
-                name-id
-                link-symbol-id
-                provided
-                plan)
-              (compiler-backend-extern-symbol-referenced?
-                runtime-index
-                referenced-functions
-                name-id
-                link-symbol-id))
-              (compiler-backend-emit-externs-into
-                (box-get rest)
-                plan
-                runtime-index
-                referenced-functions
-                (text_buf.append
-                  (text_buf.append buf ".extern ")
-                  (str_cat.str-cat
-                    (compiler-backend-link-symbol-id link-symbol-id plan)
-                    "\n"
-                    "")))
-              (compiler-backend-emit-externs-into
-                (box-get rest)
-                plan
-                runtime-index
-                referenced-functions
-                buf)))])]
+          (if (and
+            (compiler-backend-emits-extern-symbol?
+              name-id
+              link-symbol-id
+              provided
+              plan)
+            (compiler-backend-extern-symbol-referenced?
+              runtime-index
+              referenced-functions
+              name-id
+              link-symbol-id))
+            (compiler-backend-emit-externs-into
+              (box-get rest)
+              plan
+              runtime-index
+              referenced-functions
+              (text_buf.append
+                (text_buf.append buf ".extern ")
+                (str_cat.str-cat
+                  (compiler-backend-link-symbol-id link-symbol-id plan)
+                  "\n"
+                  "")))
+            (compiler-backend-emit-externs-into
+              (box-get rest)
+              plan
+              runtime-index
+              referenced-functions
+              buf))])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-emit-externs-into
         (compiler-ir-extern-seq-to-list seq)
@@ -51730,33 +51725,31 @@ tl_tlci_call_macro_entry:
     [(CompilerIrExternList.Cons item rest)
       (match item
         [(CompilerIrExtern.Extern name-id _ name _ _ link-symbol-id _ provided)
-          (let
-            [link-symbol : String (compiler-ir-symbol-text link-symbol-id)]
-            (compiler-backend-object-externs
-              (if (and
-                (not
-                  (compiler-backend-object-runtime-symbol-provided-id?
-                    plan
-                    link-symbol-id))
-                (compiler-backend-emits-extern-symbol?
-                  name-id
-                  link-symbol-id
-                  provided
-                  plan)
-                (compiler-backend-extern-symbol-referenced?
-                  runtime-index
-                  referenced-functions
-                  name-id
+          (compiler-backend-object-externs
+            (if (and
+              (not
+                (compiler-backend-object-runtime-symbol-provided-id?
+                  plan
                   link-symbol-id))
-                (compiler-backend-object-symbol-extern
-                  parts
-                  (compiler-backend-link-symbol-id link-symbol-id plan)
-                  (cobj.CompilerObjectSymbolKind.Function))
-                parts)
-              (box-get rest)
-              plan
-              runtime-index
-              referenced-functions))])]
+              (compiler-backend-emits-extern-symbol?
+                name-id
+                link-symbol-id
+                provided
+                plan)
+              (compiler-backend-extern-symbol-referenced?
+                runtime-index
+                referenced-functions
+                name-id
+                link-symbol-id))
+              (compiler-backend-object-symbol-extern
+                parts
+                (compiler-backend-link-symbol-id link-symbol-id plan)
+                (cobj.CompilerObjectSymbolKind.Function))
+              parts)
+            (box-get rest)
+            plan
+            runtime-index
+            referenced-functions)])]
     [(CompilerIrExternList.Array seq)
       (compiler-backend-object-externs
         parts

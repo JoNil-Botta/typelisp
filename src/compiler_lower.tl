@@ -2261,69 +2261,68 @@
   [type-env : TcTypeEnv]
   [name : String]
   [name-id : i64]) : ResultTcType
-  (if (tc-dotted-local-field-name-id? type-env name-id)
-    (match (tc-dotted-local-field-expr-id-from-source-name-id name-id)
-      [(ResultTcExprId.Ok virtual-id)
-        (tc-expr ctx type-env (lower-context-expr-get ctx virtual-id))]
-      [(ResultTcExprId.Err message) (ResultTcType.Err message)])
-    (if (tc-hygiene-global-name? name)
-      (lower-type-cache-lookup-hygiene-id type-cache name name-id)
-      (if (tc-source-slash-qualified-id? name name-id)
-        (let
-          [lookup-key-id : i64 (tc-env-name-key-id name-id)]
-          (match (lower-type-cache-lookup-id type-cache lookup-key-id name)
-            [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-            [(ResultTcType.Err message)
-              (match (tc-lookup-id type-env lookup-key-id)
-                [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-                [(ResultTcType.Err _) (ResultTcType.Err message)])]))
-        (match (tc-source-name-lookup-key-with-field-check-lookup
-          ctx
-          type-env
-          name
-          name-id
-          false)
-          [(TcNameLookup.Ok lookup-name lookup-id)
-            (if (sym_i64_env.sym-i64-contains-id env lookup-id)
-              (tc-lookup-id type-env lookup-id)
-              ;; `type-cache` is the complete global type environment plus the
-              ;; current module overlay. Preserve raw generated-name hits, then
-              ;; use the canonical module/base key only as the dotted-source
-              ;; fallback, matching typechecking without conflating the two ID
-              ;; domains.
-              (match (lower-type-cache-lookup-id
-                type-cache
-                lookup-id
-                lookup-name)
-                [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-                [(ResultTcType.Err message)
-                  (let
-                    [lookup-key-id : i64 (tc-env-name-key-id lookup-id)]
-                    (if (= lookup-key-id lookup-id)
-                      (tc-variant-constructor-type-for-lookup-or-id
+  (cond
+    [(tc-dotted-local-field-name-id? type-env name-id)
+      (match (tc-dotted-local-field-expr-id-from-source-name-id name-id)
+        [(ResultTcExprId.Ok virtual-id)
+          (tc-expr ctx type-env (lower-context-expr-get ctx virtual-id))]
+        [(ResultTcExprId.Err message) (ResultTcType.Err message)])]
+    [(tc-hygiene-global-name? name)
+      (lower-type-cache-lookup-hygiene-id type-cache name name-id)]
+    [(tc-source-slash-qualified-id? name name-id)
+      (let
+        [lookup-key-id : i64 (tc-env-name-key-id name-id)]
+        (match (lower-type-cache-lookup-id type-cache lookup-key-id name)
+          [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+          [(ResultTcType.Err message)
+            (match (tc-lookup-id type-env lookup-key-id)
+              [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+              [(ResultTcType.Err _) (ResultTcType.Err message)])]))]
+    [true
+      (match (tc-source-name-lookup-key-with-field-check-lookup
+        ctx
+        type-env
+        name
+        name-id
+        false)
+        [(TcNameLookup.Ok lookup-name lookup-id)
+          (if (sym_i64_env.sym-i64-contains-id env lookup-id)
+            (tc-lookup-id type-env lookup-id)
+            ;; `type-cache` is the complete global type environment plus the
+            ;; current module overlay. Preserve raw generated-name hits, then
+            ;; use the canonical module/base key only as the dotted-source
+            ;; fallback, matching typechecking without conflating the two ID
+            ;; domains.
+            (match (lower-type-cache-lookup-id type-cache lookup-id lookup-name)
+              [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+              [(ResultTcType.Err message)
+                (let
+                  [lookup-key-id : i64 (tc-env-name-key-id lookup-id)]
+                  (if (= lookup-key-id lookup-id)
+                    (tc-variant-constructor-type-for-lookup-or-id
+                      ctx
+                      lookup-name
+                      lookup-id
+                      (tc-source-unbound-display-message
                         ctx
+                        name
+                        name-id
                         lookup-name
-                        lookup-id
-                        (tc-source-unbound-display-message
+                        message))
+                    (match (tc-lookup-id type-env lookup-key-id)
+                      [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
+                      [(ResultTcType.Err _)
+                        (tc-variant-constructor-type-for-lookup-or-id
                           ctx
-                          name
-                          name-id
                           lookup-name
-                          message))
-                      (match (tc-lookup-id type-env lookup-key-id)
-                        [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
-                        [(ResultTcType.Err _)
-                          (tc-variant-constructor-type-for-lookup-or-id
+                          lookup-id
+                          (tc-source-unbound-display-message
                             ctx
+                            name
+                            name-id
                             lookup-name
-                            lookup-id
-                            (tc-source-unbound-display-message
-                              ctx
-                              name
-                              name-id
-                              lookup-name
-                              message))])))]))]
-          [(TcNameLookup.Err message) (ResultTcType.Err message)])))))
+                            message))])))]))]
+        [(TcNameLookup.Err message) (ResultTcType.Err message)])]))
 
 (define (lower-lookup-type-id
   [ctx : TcContext]
@@ -2331,24 +2330,20 @@
   [env : sym_i64_env.SymI64Env]
   [type-env : TcTypeEnv]
   [name-id : i64]) : ResultTcType
-  (if (sym_i64_env.sym-i64-contains-id env name-id)
-    (tc-lookup-id type-env name-id)
-    (if (macro-hygiene-global-id? name-id)
-      (lower-lookup-structural-hygiene-type-id ctx type-cache type-env name-id)
-      (if (tc-env-key-has-name-id? name-id)
-        (let
-          [name : String (tc-env-key-name-text name-id)]
-          (lower-lookup-type-existing-id
-            ctx
-            type-cache
-            env
-            type-env
-            name
-            name-id))
-        (lower-type-cache-lookup-id
-          type-cache
-          name-id
-          (tc-env-key-display name-id))))))
+  (cond
+    [(sym_i64_env.sym-i64-contains-id env name-id)
+      (tc-lookup-id type-env name-id)]
+    [(macro-hygiene-global-id? name-id)
+      (lower-lookup-structural-hygiene-type-id ctx type-cache type-env name-id)]
+    [(tc-env-key-has-name-id? name-id)
+      (let
+        [name : String (tc-env-key-name-text name-id)]
+        (lower-lookup-type-existing-id ctx type-cache env type-env name name-id))]
+    [true
+      (lower-type-cache-lookup-id
+        type-cache
+        name-id
+        (tc-env-key-display name-id))]))
 
 ;; Growable membership set of the interned source-ids already bound into the
 ;; import-alias overlay currently being built by
@@ -2408,7 +2403,7 @@
 
 (define (lower-name-env-add-alias-if-free-id
   [names : LowerNameEnv]
-  [source-name : String]
+  [_ : String]
   [source-id : i64]
   [logical-name : String]
   [logical-id : i64]) : LowerNameEnv
@@ -2420,9 +2415,9 @@
 (define (lower-name-env-add-import-alias-binding-symbol-id
   [names : LowerNameEnv]
   [alias : String]
-  [source-name : String]
+  [_ : String]
   [source-id : i64]
-  [logical-name : String]
+  [_ : String]
   [logical-id : i64]
   [symbol-id : i64]) : LowerNameEnv
   (begin
@@ -2513,13 +2508,12 @@
   [dedup-base : bool]
   [alias : String]
   [alias-id : i64]
-  [base-name : String]
+  [_ : String]
   [base-id : i64]
   [logical-id : i64]
-  [logical-name : String]
+  [_ : String]
   [symbol-id : i64]) : LowerNameEnv
   (let
-    [source-name : String (compiler-symbol-module-key alias base-name)]
     [source-id : i64 (compiler-symbol-module-key-id-by-id alias-id base-id)]
     (begin
       (when (< source-id 0) (set! lower-alias-overlay-valid false))
@@ -2593,7 +2587,7 @@
   [names : LowerNameEnv]
   [module : String]
   [module-id : i64]
-  [source-name : String]
+  [_ : String]
   [source-id : i64]
   [logical-name : String]) : LowerNameEnv
   (let
@@ -13706,30 +13700,21 @@
   [result-ty : AstType]) : ResultLowerExpr
   (match (ast-expr-unspan place)
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-env-key-name-text name)]
-        (if (tc-dotted-local-field-name-id? type-env name)
-          (match (tc-dotted-local-field-expr-id type-env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (lower-borrow-place-address
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx virtual-id)
-                origin
-                result-ty)]
-            [(ResultTcExprId.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr origin message)))])
-          (lower-borrow-var-address
-            ctx
-            state
-            env
-            type-env
-            name
-            origin
-            result-ty)))]
+      (if (tc-dotted-local-field-name-id? type-env name)
+        (match (tc-dotted-local-field-expr-id type-env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (lower-borrow-place-address
+              ctx
+              state
+              env
+              type-env
+              (lower-context-expr-get ctx virtual-id)
+              origin
+              result-ty)]
+          [(ResultTcExprId.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))])
+        (lower-borrow-var-address ctx state env type-env name origin result-ty))]
     [(AstExpr.StructGet receiver-box field)
       (let
         [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -14358,7 +14343,7 @@
   [mode : CompilerLowerMode]
   [enum-id : i64]
   [enum-name : String]
-  [variant-name : String]
+  [_ : String]
   [variant-name-id : i64]
   [index : i64]
   [cursor : i64]
@@ -19513,7 +19498,6 @@
       (tc-context-with-nominal-owner-handle-module
         ctx
         (compiler-registry-variant-owner-handle handle))]
-    [enum-name : String (lower-enum-type-name-or-empty resolved-scrut-ty)]
     (tc-resolve-type-list
       field-ctx
       (lower-enum-constructor-fields-for-result
@@ -21499,39 +21483,37 @@
         origin
         (ast-ty-dyn-array (AstType.U8)))]
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-env-key-name-text name)]
-        (if (tc-dotted-local-field-name-id? type-env name)
-          (match (tc-dotted-local-field-expr-id type-env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (lower-expr-origin
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx virtual-id)
-                origin)]
-            [(ResultTcExprId.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr origin message)))])
-          (match (lower-lookup-type-id
-            ctx
-            (lower-state-type-cache state)
-            env
-            type-env
-            name)
-            [(ResultTcType.Ok expr-ty)
-              (lower-expr-with-type
-                ctx
-                state
-                env
-                type-env
-                expr
-                origin
-                (tc-type-without-regions expr-ty))]
-            [(ResultTcType.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr origin message)))])))]
+      (if (tc-dotted-local-field-name-id? type-env name)
+        (match (tc-dotted-local-field-expr-id type-env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (lower-expr-origin
+              ctx
+              state
+              env
+              type-env
+              (lower-context-expr-get ctx virtual-id)
+              origin)]
+          [(ResultTcExprId.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))])
+        (match (lower-lookup-type-id
+          ctx
+          (lower-state-type-cache state)
+          env
+          type-env
+          name)
+          [(ResultTcType.Ok expr-ty)
+            (lower-expr-with-type
+              ctx
+              state
+              env
+              type-env
+              expr
+              origin
+              (tc-type-without-regions expr-ty))]
+          [(ResultTcType.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))]))]
     [(AstExpr.Ann _ ty)
       (lower-expr-with-type
         ctx
@@ -21681,23 +21663,21 @@
         [(AstMaybeType.No)
           (lower-init-expr ctx state env type-env expr-ty origin expr-ty)])]
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-env-key-name-text name)]
-        (if (tc-dotted-local-field-name-id? type-env name)
-          (match (tc-dotted-local-field-expr-id type-env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (lower-expr-with-type
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx virtual-id)
-                origin
-                expr-ty)]
-            [(ResultTcExprId.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr origin message)))])
-          (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty)))]
+      (if (tc-dotted-local-field-name-id? type-env name)
+        (match (tc-dotted-local-field-expr-id type-env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (lower-expr-with-type
+              ctx
+              state
+              env
+              type-env
+              (lower-context-expr-get ctx virtual-id)
+              origin
+              expr-ty)]
+          [(ResultTcExprId.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))])
+        (lower-var-or-nullary-variant-id ctx state env type-env name expr-ty))]
     [(AstExpr.Ann inner-box _)
       (let
         [inner : AstExpr (lower-context-expr-get ctx inner-box)]
@@ -26857,7 +26837,7 @@
 
 (define (lower-variant-constructor-handle-id-or
   [ctx : TcContext]
-  [source-name : String]
+  [_ : String]
   [raw-name-id : i64]
   [result-ty : AstType]
   [fallback : i64]) : i64
@@ -29334,7 +29314,7 @@
 
 (define (lower-init-default-share-safe-struct?
   [ctx : TcContext]
-  [struct-name : String]
+  [_ : String]
   [struct-ty : AstType]) : bool
   (match (tc-struct-decl-id ctx (lower-struct-type-name-id-or struct-ty -1))
     [(ResultTcStructDecl.Ok decl)
@@ -29357,7 +29337,7 @@
 
 (define (lower-init-default-share-safe-enum?
   [ctx : TcContext]
-  [enum-name : String]
+  [_ : String]
   [enum-ty : AstType]) : bool
   (match (tc-enum-decl-id ctx (lower-enum-type-name-id-or enum-ty -1))
     [(ResultTcEnumDecl.Ok decl)
@@ -30839,22 +30819,20 @@
   [origin : AstExpr]) : ResultLowerExpr
   (match (ast-expr-unspan place)
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-env-key-name-text name)]
-        (if (tc-dotted-local-field-name-id? type-env name)
-          (match (tc-dotted-local-field-expr-id type-env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (lower-mutable-place-address
-                ctx
-                state
-                env
-                type-env
-                (lower-context-expr-get ctx virtual-id)
-                origin)]
-            [(ResultTcExprId.Err message)
-              (ResultLowerExpr.Err
-                (box (lower-diagnostic-at-expr origin message)))])
-          (lower-mutable-var-address-id ctx state env type-env name origin)))]
+      (if (tc-dotted-local-field-name-id? type-env name)
+        (match (tc-dotted-local-field-expr-id type-env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (lower-mutable-place-address
+              ctx
+              state
+              env
+              type-env
+              (lower-context-expr-get ctx virtual-id)
+              origin)]
+          [(ResultTcExprId.Err message)
+            (ResultLowerExpr.Err
+              (box (lower-diagnostic-at-expr origin message)))])
+        (lower-mutable-var-address-id ctx state env type-env name origin))]
     [(AstExpr.StructGet receiver-box field)
       (let
         [receiver : AstExpr (lower-context-expr-get ctx receiver-box)]
@@ -45665,31 +45643,31 @@
   [type-env : TcTypeEnv]
   [name : i64]
   [ret-ty : AstType]) : bool
-  (if (and
-    ;; Direct aggregate tail calls also forward the current sret slot. A callee
-    ;; early-exit path may return a heap aggregate pointer instead of filling it.
-    (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty)
-    (lower-rvo-callee-has-early-return-id? state env name))
-    false
-    (if (lower-tail-call-self-target? state name)
-      true
-      (if (lower-symbol-function-define-id? ctx name)
-        (match (lower-lookup-type-id
-          ctx
-          (lower-state-type-cache state)
-          env
-          type-env
-          name)
-          [(ResultTcType.Ok fn-ty)
-            (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
-              [(AstType.Func param-types callee-ret)
-                (lower-tail-call-compatible-return?
-                  ctx
-                  (tc-context-type-get ctx callee-ret)
-                  ret-ty)]
-              [_ false])]
-          [(ResultTcType.Err _) false])
-        false))))
+  (cond
+    [(and
+        ;; Direct aggregate tail calls also forward the current sret slot. A callee
+        ;; early-exit path may return a heap aggregate pointer instead of filling it.
+        (lower-inline-aggregate-abi-copy-needed? ctx state ret-ty)
+        (lower-rvo-callee-has-early-return-id? state env name))
+      false]
+    [(lower-tail-call-self-target? state name) true]
+    [(lower-symbol-function-define-id? ctx name)
+      (match (lower-lookup-type-id
+        ctx
+        (lower-state-type-cache state)
+        env
+        type-env
+        name)
+        [(ResultTcType.Ok fn-ty)
+          (match (tc-type-strip-region (tc-resolve-type ctx fn-ty))
+            [(AstType.Func param-types callee-ret)
+              (lower-tail-call-compatible-return?
+                ctx
+                (tc-context-type-get ctx callee-ret)
+                ret-ty)]
+            [_ false])]
+        [(ResultTcType.Err _) false])]
+    [true false]))
 
 (define (lower-tail-call-args-for-target
   [ctx : TcContext]
@@ -49643,13 +49621,12 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [names : LowerNameEnv]
-  [module : String]
+  [_ : String]
   [module-id : i64]
   [out : lower_i64_i64_map.Map]) : lower_i64_i64_map.Map
   (let
     [count : i64 (ast-decl-list-len (& decls))]
     [index : i64 0]
-    [cur-module : String module]
     [cur-module-id : i64 module-id]
     [name-cache : LowerNameCache (lower-name-cache-from-env names)]
     [cur-out : lower_i64_i64_map.Map out]
@@ -49662,10 +49639,7 @@
               (+ (struct-get decls offset) index))]
           (begin
             (match (ast-decl-unwrapped decl)
-              [(AstDecl.Module next-module)
-                (begin
-                  (set! cur-module (intern-str next-module))
-                  (set! cur-module-id next-module))]
+              [(AstDecl.Module next-module) (set! cur-module-id next-module)]
               [(AstDecl.DefFn name _ _ body-box _)
                 (let
                   [has-early-return : bool

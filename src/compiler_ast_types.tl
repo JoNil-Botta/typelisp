@@ -8,7 +8,6 @@
 (import compiler_intern as ci)
 (import compiler_builtin_ids as cbi)
 (import stdlib.array)
-(import stdlib.io)
 
 ;; Arena access for the node-pool grow paths -- a regrown pool array must
 ;; be allocated in the persistent program arena, never a transient scratch arena

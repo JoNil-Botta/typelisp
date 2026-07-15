@@ -340,12 +340,7 @@
     (compiler-load-session-state-i64-cell 0)))
 
 (define compiler-load-default-session-state : (Array CompilerLoadSessionState)
-  (let
-    [cell : (Array CompilerLoadSessionState)
-      (make-array CompilerLoadSessionState 1)]
-    (begin
-      (array-set! cell 0 (compiler-load-session-state-new))
-      cell)))
+  (make-array (compiler-load-session-state-new)))
 (define compiler-load-active-session-state : CompilerLoadSessionState
   (array-ref compiler-load-default-session-state 0))
 
@@ -797,11 +792,10 @@
 (define (compiler-load-session-cache-set-enabled! [enabled : bool]) : unit
   (if enabled
     (compiler-load-session-cache-enable!)
-    (begin
-      (array-set!
-        (struct-get compiler-load-active-session-state cache-enabled)
-        0
-        false))))
+    (array-set!
+      (struct-get compiler-load-active-session-state cache-enabled)
+      0
+      false)))
 
 (define (compiler-load-session-program-cache-enable!) : unit
   (array-set!
@@ -2895,7 +2889,7 @@
 (define (compiler-load-seen-module-with-paths
   [path : String]
   [path-id : i64]
-  [module-id : String]
+  [_ : String]
   [module-name-id : i64]
   [decls : AstDeclList]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths

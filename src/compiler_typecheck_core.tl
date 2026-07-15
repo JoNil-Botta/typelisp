@@ -7213,7 +7213,7 @@
 (define (tc-stdlib-comptime-type-key [name : String]) : String
   (compiler-symbol-module-key (tc-stdlib-comptime-module-name) name))
 
-(define (tc-stdlib-comptime-type-key-id [name : String] [name-id : i64]) : i64
+(define (tc-stdlib-comptime-type-key-id [_ : String] [name-id : i64]) : i64
   (tc-qualified-name-key-id
     cbi.compiler-builtin-id-fix-stdlib_dot_comptime
     name-id))
@@ -9784,7 +9784,6 @@
 (define (tc-arena-phase-structural-first-id [value : i64]) : i64
   (let
     [stride : i64 (intern-capacity)]
-    [stride2 : i64 (* stride stride)]
     (% (/ (- value (tc-arena-phase-structural-base)) stride) stride)))
 
 (define (tc-arena-phase-region-id [owner-id : i64] [token-id : i64]) : i64
@@ -14663,10 +14662,6 @@
           (and
             (> (string.string-length module) 0)
             (not (tc-name-qualified-id? source-id)))]
-        [lookup-name : String
-          (if in-current-module
-            (compiler-symbol-module-key module source-name)
-            source-name)]
         [lookup-id : i64
           (if in-current-module
             (tc-qualified-name-key-id module-id source-id)
@@ -14822,10 +14817,6 @@
           (and
             (> (string.string-length module) 0)
             (not (tc-name-qualified-id? source-id)))]
-        [lookup-name : String
-          (if in-current-module
-            (compiler-symbol-module-key module source-name)
-            source-name)]
         [lookup-id : i64
           (if in-current-module
             (tc-qualified-name-key-id module-id source-id)
@@ -21141,7 +21132,7 @@
   [ctx : TcContext]
   [decls : AstDeclList]
   [env : TcTypeEnv]
-  [target-module : String]
+  [_ : String]
   [target-module-id : i64]
   [_module : String]) : ResultTcEnv
   (let
@@ -33216,7 +33207,7 @@
   [ctx : TcContext]
   [handle : i64]
   [struct-name-id : i64]
-  [struct-name : String]) : ResultTcStructDecl
+  [_ : String]) : ResultTcStructDecl
   (if (and
     (compiler-symbols-handle-found? handle)
     (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defstruct)))
@@ -35554,16 +35545,14 @@
 (define (tc-borrow-place [ctx : TcContext] [env : TcTypeEnv] [expr : AstExpr]) : ResultTcBorrowPlace
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-hygiene-name-text-id name)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-expr-id env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-borrow-place ctx env (ast-node-get virtual-id))]
-            [(ResultTcExprId.Err message) (ResultTcBorrowPlace.Err message)])
-          (match (tc-lookup-visible-id ctx env name)
-            [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
-            [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)])))]
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-expr-id env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-borrow-place ctx env (ast-node-get virtual-id))]
+          [(ResultTcExprId.Err message) (ResultTcBorrowPlace.Err message)])
+        (match (tc-lookup-visible-id ctx env name)
+          [(ResultTcType.Ok ty) (tc-borrow-place-var name ty)]
+          [(ResultTcType.Err message) (ResultTcBorrowPlace.Err message)]))]
     [(AstExpr.StructGet receiver-box field)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -35665,16 +35654,14 @@
   [expr : AstExpr]) : ResultTcNameId
   (match (ast-expr-unspan expr)
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-hygiene-name-text-id name)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-expr-id env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-store-place-lifetime ctx env (ast-node-get virtual-id))]
-            [(ResultTcExprId.Err message) (ResultTcNameId.Err message)])
-          (match (tc-lookup-visible-id ctx env name)
-            [(ResultTcType.Ok ty) (tc-store-place-lifetime-var name ty)]
-            [(ResultTcType.Err message) (ResultTcNameId.Err message)])))]
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-expr-id env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-store-place-lifetime ctx env (ast-node-get virtual-id))]
+          [(ResultTcExprId.Err message) (ResultTcNameId.Err message)])
+        (match (tc-lookup-visible-id ctx env name)
+          [(ResultTcType.Ok ty) (tc-store-place-lifetime-var name ty)]
+          [(ResultTcType.Err message) (ResultTcNameId.Err message)]))]
     [(AstExpr.StructGet receiver-box _)
       (let
         [receiver : AstExpr (ast-node-get receiver-box)]
@@ -40134,13 +40121,11 @@
             [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]
     [(AstExpr.Set name value-box)
-      (let
-        [name-text : String (tc-env-key-name-text name)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id-after-check name value-box)
-            [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
-            [(ResultTcExprId.Err message) (ResultTcType.Err message)])
-          (tc-set-expr-after-local-field-check ctx env name value-box)))]
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-set-expr-id-after-check name value-box)
+          [(ResultTcExprId.Ok virtual-id) (tc-expr-id ctx env virtual-id)]
+          [(ResultTcExprId.Err message) (ResultTcType.Err message)])
+        (tc-set-expr-after-local-field-check ctx env name value-box))]
     [(AstExpr.Cast inner-box ty)
       (match (tc-expr-id ctx env inner-box)
         [(ResultTcType.Ok inner-ty)
@@ -40898,7 +40883,7 @@
 
 (define (tc-comptime-purity-banned-qualified?
   [ctx : TcContext]
-  [name : String]
+  [_ : String]
   [name-id : i64]) : bool
   (let
     [source-id : i64 (macro-hygiene-global-source-name-id-or name-id name-id)]
@@ -44481,37 +44466,30 @@
       [owner-expr : AstExpr (ast-node-get owner-box)]
       [oid : i64 (tc-expr-var-name-id owner-expr)]
       (if (>= oid 0)
-        (let
-          [owner : String (tc-env-key-name-text oid)]
-          (if (or
-            (tc-ordinary-arena-owner-active-id? env oid)
-            (tc-atomic-arena-owner-active-id? env oid))
-            (match (if (tc-atomic-arena-owner-active-id? env oid)
-              (tc-move-check-atomic-arena-users-released
-                ctx
-                env
+        (if (or
+          (tc-ordinary-arena-owner-active-id? env oid)
+          (tc-atomic-arena-owner-active-id? env oid))
+          (match (if (tc-atomic-arena-owner-active-id? env oid)
+            (tc-move-check-atomic-arena-users-released ctx env locals moved oid)
+            (TcMoveResult.Ok moved))
+            [(TcMoveResult.Ok moved1)
+              (match (tc-move-consume-local
                 locals
-                moved
-                oid)
-              (TcMoveResult.Ok moved))
-              [(TcMoveResult.Ok moved1)
-                (match (tc-move-consume-local
-                  locals
-                  loop-carried
-                  moved1
-                  oid
-                  origin)
-                  [(TcMoveResult.Ok moved2)
-                    (tc-move-mark-owner-region-locals
-                      env
-                      locals
-                      loop-carried
-                      moved2
-                      oid
-                      origin)]
-                  [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
-              [(TcMoveResult.Err message) (TcMoveResult.Err message)])
-            (TcMoveResult.Ok moved)))
+                loop-carried
+                moved1
+                oid
+                origin)
+                [(TcMoveResult.Ok moved2)
+                  (tc-move-mark-owner-region-locals
+                    env
+                    locals
+                    loop-carried
+                    moved2
+                    oid
+                    origin)]
+                [(TcMoveResult.Err message) (TcMoveResult.Err message)])]
+            [(TcMoveResult.Err message) (TcMoveResult.Err message)])
+          (TcMoveResult.Ok moved))
         (TcMoveResult.Ok moved)))))
 
 (define (tc-move-check-safe-arena-call-effects
@@ -45861,7 +45839,6 @@
     [(AstExpr.Set name rhs-box)
       (let
         [_rhs : AstExpr (ast-node-get rhs-box)]
-        [name-text : String (tc-hygiene-name-text-id name)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
@@ -48815,21 +48792,19 @@
               lifetime)
             (tc-borrow-check-match-arms-store-lifetime? ctx env arms lifetime))])]
     [(AstExpr.Set name rhs-box)
-      (let
-        [name-text : String (tc-hygiene-name-text-id name)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-set-expr-id env name rhs-box)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-borrow-check-expr-stores-lifetime?
-                ctx
-                env
-                (ast-node-get virtual-id)
-                lifetime)]
-            [(ResultTcExprId.Err _) false])
-          (match (tc-lookup-id env name)
-            [(ResultTcType.Ok ty)
-              (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]
-            [(ResultTcType.Err _) false])))]
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-set-expr-id env name rhs-box)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-borrow-check-expr-stores-lifetime?
+              ctx
+              env
+              (ast-node-get virtual-id)
+              lifetime)]
+          [(ResultTcExprId.Err _) false])
+        (match (tc-lookup-id env name)
+          [(ResultTcType.Ok ty)
+            (tc-borrow-check-type-contains-lifetime? ctx ty lifetime)]
+          [(ResultTcType.Err _) false]))]
     [(AstExpr.ArraySet array-box _ _)
       (tc-borrow-check-expr-type-contains-lifetime?
         ctx
@@ -49728,14 +49703,12 @@
       (tc-borrow-check-expr-id ctx env locals borrowed inner-box)]
     [(AstExpr.Literal _) (TcBorrowCheckResult.Ok borrowed)]
     [(AstExpr.Var name)
-      (let
-        [name-text : String (tc-hygiene-name-text-id name)]
-        (if (tc-dotted-local-field-name-id? env name)
-          (match (tc-dotted-local-field-expr-id env name)
-            [(ResultTcExprId.Ok virtual-id)
-              (tc-borrow-check-expr-id ctx env locals borrowed virtual-id)]
-            [(ResultTcExprId.Err message) (TcBorrowCheckResult.Err message)])
-          (TcBorrowCheckResult.Ok borrowed)))]
+      (if (tc-dotted-local-field-name-id? env name)
+        (match (tc-dotted-local-field-expr-id env name)
+          [(ResultTcExprId.Ok virtual-id)
+            (tc-borrow-check-expr-id ctx env locals borrowed virtual-id)]
+          [(ResultTcExprId.Err message) (TcBorrowCheckResult.Err message)])
+        (TcBorrowCheckResult.Ok borrowed))]
     [(AstExpr.Binary _ left-box right-box)
       (match (tc-borrow-check-expr-id ctx env locals borrowed left-box)
         [(TcBorrowCheckResult.Ok borrowed1)
@@ -50121,7 +50094,6 @@
     [(AstExpr.Set name rhs-box)
       (let
         [rhs : AstExpr (ast-node-get rhs-box)]
-        [name-text : String (tc-hygiene-name-text-id name)]
         (if (tc-dotted-local-field-name-id? env name)
           (match (tc-dotted-local-field-set-expr-id env name rhs-box)
             [(ResultTcExprId.Ok virtual-id)
@@ -51462,28 +51434,28 @@
     name))
 
 (define (macro-output-syntax-id-at [name-id : i64] [site : String]) : i64
-  (if (ci.intern-template-source-id? name-id)
-    (ci.intern-template-source-name-id name-id)
-    (if (or
-      (macro-hygiene-global-id? name-id)
-      (macro-hygiene-local-id? name-id))
-      (macro-hygiene-structural-source-name-id name-id)
-      (if (or
+  (cond
+    [(ci.intern-template-source-id? name-id)
+      (ci.intern-template-source-name-id name-id)]
+    [(or (macro-hygiene-global-id? name-id) (macro-hygiene-local-id? name-id))
+      (macro-hygiene-structural-source-name-id name-id)]
+    [(or
         (compiler-composite-pair-key-id? name-id)
         (compiler-composite-triple-key-id? name-id))
-        name-id
-        (let
-          [name : String (macro-output-symbol-text-id name-id site)]
-          (if (tc-hygiene-template-name? name)
-            (let
-              [source-id : i64 (tc-hygiene-template-source-id-or name-id -1)]
-              (if (>= source-id 0)
-                source-id
-                (io.panic
-                  (string.append
-                    "macro template symbol missing source id at "
-                    site))))
-            name-id))))))
+      name-id]
+    [true
+      (let
+        [name : String (macro-output-symbol-text-id name-id site)]
+        (if (tc-hygiene-template-name? name)
+          (let
+            [source-id : i64 (tc-hygiene-template-source-id-or name-id -1)]
+            (if (>= source-id 0)
+              source-id
+              (io.panic
+                (string.append
+                  "macro template symbol missing source id at "
+                  site))))
+          name-id))]))
 
 (define (macro-output-symbol-text-id [name-id : i64] [site : String]) : String
   (cond
@@ -56022,18 +55994,17 @@
         [(AstExpr.Var name-id)
           (let
             [source-id : i64 (tc-hygiene-template-source-id-or name-id name-id)]
-            (if (and
-              (ci.intern-colon-keyword-id? source-id)
-              (string.eq (intern-str source-id) ":lifetimes"))
-              (match (ast-expr-unspan expr)
-                [(AstExpr.Call _ args)
-                  (macro-hygiene-output-bind-var-list-env (& args) 0 env)]
-                [_ env])
-              (if (ci.intern-colon-keyword-id? source-id)
-                env
-                (if pattern-name?
-                  (macro-hygiene-output-pattern-name-id env name-id)
-                  (macro-hygiene-output-bind-id env name-id)))))]
+            (cond
+              [(and
+                  (ci.intern-colon-keyword-id? source-id)
+                  (string.eq (intern-str source-id) ":lifetimes"))
+                (match (ast-expr-unspan expr)
+                  [(AstExpr.Call _ args)
+                    (macro-hygiene-output-bind-var-list-env (& args) 0 env)]
+                  [_ env])]
+              [(ci.intern-colon-keyword-id? source-id) env]
+              [pattern-name? (macro-hygiene-output-pattern-name-id env name-id)]
+              [true (macro-hygiene-output-bind-id env name-id)]))]
         [_ env])]
     [_ env]))
 
@@ -58694,7 +58665,7 @@
   [decls : AstDeclList]
   [module : String]
   [module-id : i64]
-  [lookup-name : String]
+  [_ : String]
   [lookup-name-id : i64]
   [call-expr : AstExpr]) : ResultMacroCallDecl
   (let
@@ -60223,7 +60194,7 @@
 (define (macro-rewrite-generated-import-direct-call
   [ctx : TcContext]
   [decls : AstDeclList]
-  [module : String]
+  [_ : String]
   [module-id : i64]
   [func : AstExpr]
   [call-expr : AstExpr]
@@ -60746,16 +60717,15 @@
                       decls
                       (+ depth 1)
                       (ast-node-get
-                        (begin
-                          (macro-hygiene-expr
-                            (ast-node-get expanded)
-                            MacroHygieneEnv.Nil
-                            (MacroHygieneContext
-                              macro-name-id
-                              definition-module-id
-                              declaration-id
-                              (tc-context-symbols ctx))
-                            (+ depth 1)))))
+                        (macro-hygiene-expr
+                          (ast-node-get expanded)
+                          MacroHygieneEnv.Nil
+                          (MacroHygieneContext
+                            macro-name-id
+                            definition-module-id
+                            declaration-id
+                            (tc-context-symbols ctx))
+                          (+ depth 1))))
                     (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr
@@ -60774,16 +60744,15 @@
                         decls
                         (+ depth 1)
                         (ast-node-get
-                          (begin
-                            (macro-hygiene-expr
-                              (ast-node-get expanded)
-                              MacroHygieneEnv.Nil
-                              (MacroHygieneContext
-                                macro-name-id
-                                definition-module-id
-                                declaration-id
-                                (tc-context-symbols ctx))
-                              (+ depth 1))))))
+                          (macro-hygiene-expr
+                            (ast-node-get expanded)
+                            MacroHygieneEnv.Nil
+                            (MacroHygieneContext
+                              macro-name-id
+                              definition-module-id
+                              declaration-id
+                              (tc-context-symbols ctx))
+                            (+ depth 1)))))
                     (ResultMacroExpr.Err
                       (box
                         (ctfe-diagnostic-at-expr

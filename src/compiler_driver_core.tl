@@ -1144,6 +1144,7 @@
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -1226,6 +1227,7 @@
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -1291,6 +1293,7 @@
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -1353,6 +1356,7 @@
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic input-path)))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
       (cfg compile-profile (compiler-driver-profile-start-phase))
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized optimized-spans)
@@ -1444,14 +1448,24 @@
     (>= opt-level 1)
     (not (= compiler-driver-pending-retired-source-arena 0))))
 
+(define (compiler-driver-retire-frontend-arena!) : unit
+  (if (= compiler-driver-pending-retired-frontend-arena 0)
+    unit
+    (let
+      [retained-arena : i64 (arena.tl_arena_current)]
+      [retire-arena : i64 compiler-driver-pending-retired-frontend-arena]
+      (unsafe
+        (begin
+          (set! compiler-driver-pending-retired-frontend-arena 0)
+          (arena.tl_arena_destroy retire-arena)
+          (arena.tl_arena_set retained-arena))))))
+
 (define (compiler-driver-retire-lowered-source-arena!) : unit
   (if (= compiler-driver-pending-retired-source-arena 0)
     unit
     (let
       [retained-arena : i64 (arena.tl_arena_current)]
       [retire-arena : i64 compiler-driver-pending-retired-source-arena]
-      [retire-frontend-arena : i64
-        compiler-driver-pending-retired-frontend-arena]
       (begin
         ;; Clear globals at the outer emit boundary, after the load/lower call
         ;; has returned and no active frame can still hold their arena values.
@@ -1460,11 +1474,7 @@
         (unsafe
           (begin
             (set! compiler-driver-pending-retired-source-arena 0)
-            (set! compiler-driver-pending-retired-frontend-arena 0)
             (arena.tl_arena_destroy retire-arena)
-            (if (= retire-frontend-arena 0)
-              unit
-              (arena.tl_arena_destroy retire-frontend-arena))
             (arena.tl_arena_set retained-arena)))))))
 
 (define (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
@@ -2334,15 +2344,16 @@
                           (begin
                             ;; Keep front-end storage alive until the outer
                             ;; result adapter has cloned program shells/spans
-                            ;; and persisted interned strings. Use the compact
-                            ;; checked pool as the escape arena so the old AST
-                            ;; pool and this front-end arena can both retire.
+                            ;; and persisted interned strings. Return allocation
+                            ;; to the caller-owned arena so the optimizer's
+                            ;; escaped output does not share either retiring
+                            ;; frontend or checked-pool storage.
                             (set!
                               compiler-driver-pending-retired-frontend-arena
                               (arena.tl_arena_current))
                             (unsafe
                               (arena.tl_arena_set
-                                (ast-node-pool-context-base-arena result-pools))))
+                                compiler-driver-pending-frontend-return-arena)))
                           unit)
                         (compiler-driver-state-retain-lowered-types!
                           state
@@ -3122,6 +3133,7 @@
       (box (compiler-driver-ty-node-pool-exhausted-diagnostic "")))
     (begin
       (compiler-driver-release-typecheck-caches-after-lower!)
+      (compiler-driver-retire-frontend-arena!)
       (match (optimize-program-with-spans-and-level program spans opt-level)
         [(CompilerOptimizedProgram.Program optimized _)
           (begin

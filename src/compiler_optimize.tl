@@ -28550,9 +28550,12 @@
   [label : String]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
-    (if (opt-inline-instr-phi-label?
-      (compiler-ir-instr-seq-ref instrs index)
-      label)
+    (if (match (& (array-ref (struct-get instrs slots) index))
+      [(CompilerIrInstr.Phi _ _ _)
+        (opt-inline-instr-phi-label?
+          (compiler-ir-instr-seq-ref instrs index)
+          label)]
+      [_ false])
       true
       (opt-inline-instr-seq-phi-label-from? instrs (+ index 1) label))))
 

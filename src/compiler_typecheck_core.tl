@@ -64884,7 +64884,7 @@
           [(ResultPkgResolve.Ok resolved)
             (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
               resolved
-              (compiler-load-source-path-id resolved)
+              (compiler-load-resolved-path-id-for-generated-import resolved expected)
               seen
               stdlib-roots
               kind

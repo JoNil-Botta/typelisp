@@ -1118,25 +1118,7 @@
     intern-state))
 
 (define (compiler-driver-enable-language-cfgs [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-enable
-        (compiler-cfg-enable
-          (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable
-                (compiler-cfg-enable
-                  (compiler-cfg-enable
-                    (compiler-cfg-enable cfgs "feature-ptr-addr-of")
-                    "feature-str-view")
-                  "feature-runtime-str-view-extern")
-                "feature-private-string-intrinsics")
-              "feature-compiler-private-string-intrinsics")
-            "array-helper-intrinsics")
-          "feature-tl-memchr")
-        "feature-plain-comptime-well-known")
-      "feature-comptime-public-fields")
-    "feature-cleanup-owner-reflection"))
+  (compiler-cfg-enable-compiler-language-features cfgs))
 
 (define (compiler-driver-enable-language-cfgs-with-intern-state
   [cfgs : sym_i64_env.SymI64Env]

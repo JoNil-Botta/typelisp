@@ -1570,7 +1570,9 @@
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
   [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
-  (let
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (let
     [private-cfgs : sym_i64_env.SymI64Env
       (if (compiler-cfg-private-dynamic-buffer-enabled? cfgs)
         cfgs
@@ -1584,14 +1586,18 @@
               (compiler-cfg-enable-private-dynamic-buffer cfgs)
               cfgs)]))]
     (match expected-module
-      [(AstMaybeModuleName.Some module)
-        (if (compiler-load-stdlib-comptime-module? (intern-str module))
-          (compiler-cfg-enable private-cfgs "feature-plain-comptime-well-known")
+        [(AstMaybeModuleName.Some module)
+          (if (compiler-load-stdlib-comptime-module? (intern-str module))
+          (compiler-cfg-enable-id
+            private-cfgs
+            cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
           private-cfgs)]
       [(AstMaybeModuleName.No)
         (if (compiler-load-stdlib-comptime-path? path stdlib-roots)
-          (compiler-cfg-enable private-cfgs "feature-plain-comptime-well-known")
-          private-cfgs)])))
+          (compiler-cfg-enable-id
+            private-cfgs
+            cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+          private-cfgs)]))))
 
 (define (compiler-load-resolve-stdlib-root-raw
   [suffix : String]
@@ -3095,6 +3101,62 @@
   (compiler-load-surface-summary-find-module-in
     compiler-load-active-surface-summaries
     module-id))
+
+(define (compiler-load-surface-summary-seen-expected-module?
+  [source-path-id : i64]
+  [expected-module : AstMaybeModuleName]
+  [seen : sym_i64_env.SymI64Env]) : bool
+  (match expected-module
+    [(AstMaybeModuleName.No) false]
+    [(AstMaybeModuleName.Some expected-id)
+      (and
+        (compiler-load-seen-module-contains?
+          seen
+          ""
+          expected-id)
+        (match (compiler-load-surface-summary-find-source source-path-id)
+          [(CompilerLoadNoSurfaceSummary) false]
+          [(CompilerLoadSomeSurfaceSummary summary)
+            (= (struct-get summary module-id) expected-id)]))]))
+
+(define (compiler-load-seen-expected-module-with-paths
+  [path : String]
+  [source-path-id : i64]
+  [expected-module : AstMaybeModuleName]
+  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
+  (match expected-module
+    [(AstMaybeModuleName.No)
+      (ResultCompilerLoadWithPaths.Ok
+        (ast-decl-list-new)
+        (ast-decl-path-list-new)
+        (ast-decl-module-list-new)
+        seen)]
+    [(AstMaybeModuleName.Some module-id)
+      (ResultCompilerLoadWithPaths.Ok
+        (ast-decl-cons (ast-decl-module-id module-id) (ast-decl-list-new))
+        (ast-decl-path-list-prepend-builder-with-owner-id
+          path
+          source-path-id
+          (ast-decl-path-list-new))
+        (ast-decl-module-cons-id module-id (ast-decl-module-list-new))
+        seen)]))
+
+(define (compiler-load-resolved-path-id-for-generated-import
+  [resolved : String]
+  [expected-module : AstMaybeModuleName]) : i64
+  (match expected-module
+    [(AstMaybeModuleName.No)
+      (ci.intern-generated-canonical-name resolved)]
+    [(AstMaybeModuleName.Some module-id)
+      (match (compiler-load-surface-summary-find-module module-id)
+        [(CompilerLoadNoSurfaceSummary)
+          (ci.intern-generated-canonical-name resolved)]
+        [(CompilerLoadSomeSurfaceSummary summary)
+          (if (string.eq
+            (struct-get summary source-path)
+            (compiler-load-normalize-path resolved))
+            (struct-get summary source-path-id)
+            (ci.intern-generated-canonical-name resolved))])]))
 
 (define (compiler-load-surface-summary-remove-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -6809,7 +6871,16 @@
         source-path-id
         cbi.compiler-builtin-id-fix-empty)]
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
-    (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
+    (if (compiler-load-surface-summary-seen-expected-module?
+      source-path-id
+      expected-module
+      seen)
+      (compiler-load-seen-expected-module-with-paths
+        path
+        source-path-id
+        expected-module
+        seen)
+      (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
       (ResultCompilerLoadWithPaths.Ok
         (ast-decl-list-new)
         (ast-decl-path-list-new)
@@ -6885,7 +6956,7 @@
                 (box
                   (compiler-diagnostic-at-start
                     path
-                    (string.append "compiler-load: cannot read import " path))))]))))))
+                    (string.append "compiler-load: cannot read import " path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-with-pools
   [path : String]
@@ -6931,7 +7002,16 @@
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
     [path-key-id : i64
       (compiler-load-seen-path-key-id source-path-id context-module-id)]
-    (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
+    (if (compiler-load-surface-summary-seen-expected-module?
+      source-path-id
+      expected-module
+      seen)
+      (compiler-load-seen-expected-module-with-paths
+        path
+        source-path-id
+        expected-module
+        seen)
+      (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
       (ResultCompilerLoadWithPaths.Ok
         (ast-decl-list-new)
         (ast-decl-path-list-new)
@@ -7031,7 +7111,7 @@
                 (box
                   (compiler-diagnostic-at-start
                     path
-                    (string.append "compiler-load: cannot read import " path))))]))))))
+                    (string.append "compiler-load: cannot read import " path))))])))))))
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-fallback
   [path : String]

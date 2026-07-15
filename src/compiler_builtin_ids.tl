@@ -556,6 +556,28 @@
   -1)
 (define compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct : i64
   -1)
+(define compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-ptr-addr-of : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-str-view : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-runtime-str-view-extern : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-private-string-intrinsics : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics : i64
+  -1)
+(define compiler-builtin-id-cfg-array-helper-intrinsics : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-tl-memchr : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-plain-comptime-well-known : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-comptime-public-fields : i64
+  -1)
+(define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
+  -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
   (make-array i64 212))
 
@@ -568,7 +590,7 @@
 (define (state-new) : CompilerBuiltinIdsState
   (let
     [metadata : (Array i64) (make-array i64 4)]
-    [ids : (Array i64) (make-array i64 273)]
+    [ids : (Array i64) (make-array i64 284)]
     [ctfe-ids : (Array i64) (make-array i64 212)]
     [i : i64 0]
     (begin
@@ -576,7 +598,7 @@
       (array-set! metadata 1 -1)
       (array-set! metadata 2 -1)
       (array-set! metadata 3 0)
-      (while (< i 273)
+      (while (< i 284)
         (begin
           (array-set! ids i -1)
           (set! i (+ i 1))))
@@ -987,6 +1009,23 @@
       state
       272
       compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct)
+    (state-set!
+      state
+      273
+      compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer)
+    (state-set! state 274 compiler-builtin-id-cfg-feature-ptr-addr-of)
+    (state-set! state 275 compiler-builtin-id-cfg-feature-str-view)
+    (state-set! state 276 compiler-builtin-id-cfg-feature-runtime-str-view-extern)
+    (state-set! state 277 compiler-builtin-id-cfg-feature-private-string-intrinsics)
+    (state-set!
+      state
+      278
+      compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics)
+    (state-set! state 279 compiler-builtin-id-cfg-array-helper-intrinsics)
+    (state-set! state 280 compiler-builtin-id-cfg-feature-tl-memchr)
+    (state-set! state 281 compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+    (state-set! state 282 compiler-builtin-id-cfg-feature-comptime-public-fields)
+    (state-set! state 283 compiler-builtin-id-cfg-feature-cleanup-owner-reflection)
     (state-capture-ctfe-ids! state)))
 
 (define (state-capture) : CompilerBuiltinIdsState
@@ -1333,6 +1372,31 @@
     (set!
       compiler-builtin-id-fix-stdlib_dot_clone_dot_synthesize_one_field_struct
       (state-ref state 272))
+    (set!
+      compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer
+      (state-ref state 273))
+    (set! compiler-builtin-id-cfg-feature-ptr-addr-of (state-ref state 274))
+    (set! compiler-builtin-id-cfg-feature-str-view (state-ref state 275))
+    (set!
+      compiler-builtin-id-cfg-feature-runtime-str-view-extern
+      (state-ref state 276))
+    (set!
+      compiler-builtin-id-cfg-feature-private-string-intrinsics
+      (state-ref state 277))
+    (set!
+      compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics
+      (state-ref state 278))
+    (set! compiler-builtin-id-cfg-array-helper-intrinsics (state-ref state 279))
+    (set! compiler-builtin-id-cfg-feature-tl-memchr (state-ref state 280))
+    (set!
+      compiler-builtin-id-cfg-feature-plain-comptime-well-known
+      (state-ref state 281))
+    (set!
+      compiler-builtin-id-cfg-feature-comptime-public-fields
+      (state-ref state 282))
+    (set!
+      compiler-builtin-id-cfg-feature-cleanup-owner-reflection
+      (state-ref state 283))
     (set! compiler-builtin-table-id (state-table-id state))
     (set! compiler-builtin-pool-len (state-pool-len state))
     (set! compiler-builtin-parse-initialized (state-parse-initialized? state))))
@@ -2490,6 +2554,53 @@
       (compiler-builtin-resolve-name
         insert-missing
         "stdlib.clone.synthesize-one-field-struct"))
+    (set!
+      compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-compiler-private-dynamic-buffer"))
+    (set!
+      compiler-builtin-id-cfg-feature-ptr-addr-of
+      (compiler-builtin-resolve-name insert-missing "feature-ptr-addr-of"))
+    (set!
+      compiler-builtin-id-cfg-feature-str-view
+      (compiler-builtin-resolve-name insert-missing "feature-str-view"))
+    (set!
+      compiler-builtin-id-cfg-feature-runtime-str-view-extern
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-runtime-str-view-extern"))
+    (set!
+      compiler-builtin-id-cfg-feature-private-string-intrinsics
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-private-string-intrinsics"))
+    (set!
+      compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-compiler-private-string-intrinsics"))
+    (set!
+      compiler-builtin-id-cfg-array-helper-intrinsics
+      (compiler-builtin-resolve-name insert-missing "array-helper-intrinsics"))
+    (set!
+      compiler-builtin-id-cfg-feature-tl-memchr
+      (compiler-builtin-resolve-name insert-missing "feature-tl-memchr"))
+    (set!
+      compiler-builtin-id-cfg-feature-plain-comptime-well-known
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-plain-comptime-well-known"))
+    (set!
+      compiler-builtin-id-cfg-feature-comptime-public-fields
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-comptime-public-fields"))
+    (set!
+      compiler-builtin-id-cfg-feature-cleanup-owner-reflection
+      (compiler-builtin-resolve-name
+        insert-missing
+        "feature-cleanup-owner-reflection"))
     (set! compiler-builtin-generation (ci.intern-generation))
     (set! compiler-builtin-table-id (ci.intern-active-table-id))
     (set! compiler-builtin-pool-len (ci.intern-pool-len))

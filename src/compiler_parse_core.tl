@@ -436,8 +436,10 @@
   (ci.intern-str (compiler-cfg-name-id key-id)))
 
 (define (compiler-cfg-private-dynamic-buffer-key-id) : i64
-  (compiler-cfg-key-id
-    (reader.read-stable-symbol-id "feature-compiler-private-dynamic-buffer")))
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (compiler-cfg-key-id
+      cbi.compiler-builtin-id-cfg-feature-compiler-private-dynamic-buffer)))
 
 (define (compiler-cfg-empty) : sym_i64_env.SymI64Env
   (sym_i64_env.sym-i64-empty))
@@ -477,6 +479,32 @@
     cfgs
     (compiler-cfg-private-dynamic-buffer-key-id)
     1))
+
+(define (compiler-cfg-enable-compiler-language-features
+  [cfgs : sym_i64_env.SymI64Env]) : sym_i64_env.SymI64Env
+  (begin
+    (cbi.compiler-builtin-initialize-for-parse!)
+    (compiler-cfg-enable-id
+      (compiler-cfg-enable-id
+        (compiler-cfg-enable-id
+          (compiler-cfg-enable-id
+            (compiler-cfg-enable-id
+              (compiler-cfg-enable-id
+                (compiler-cfg-enable-id
+                  (compiler-cfg-enable-id
+                    (compiler-cfg-enable-id
+                      (compiler-cfg-enable-id
+                        cfgs
+                        cbi.compiler-builtin-id-cfg-feature-ptr-addr-of)
+                      cbi.compiler-builtin-id-cfg-feature-str-view)
+                    cbi.compiler-builtin-id-cfg-feature-runtime-str-view-extern)
+                  cbi.compiler-builtin-id-cfg-feature-private-string-intrinsics)
+                cbi.compiler-builtin-id-cfg-feature-compiler-private-string-intrinsics)
+              cbi.compiler-builtin-id-cfg-array-helper-intrinsics)
+            cbi.compiler-builtin-id-cfg-feature-tl-memchr)
+          cbi.compiler-builtin-id-cfg-feature-plain-comptime-well-known)
+        cbi.compiler-builtin-id-cfg-feature-comptime-public-fields)
+      cbi.compiler-builtin-id-cfg-feature-cleanup-owner-reflection)))
 
 (define (compiler-cfg-merge
   [base : sym_i64_env.SymI64Env]

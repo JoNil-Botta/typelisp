@@ -43,27 +43,7 @@
               "|0|0|0\n")))))))
 
 (define (compiler-check-language-cfgs) : sym_i64_env.SymI64Env
-  (compiler-cfg-enable
-    (compiler-cfg-enable
-      (compiler-cfg-enable
-        (compiler-cfg-enable
-          (compiler-cfg-enable
-            (compiler-cfg-enable
-              (compiler-cfg-enable
-                (compiler-cfg-enable
-                  (compiler-cfg-enable
-                    (compiler-cfg-enable
-                      (compiler-cfg-empty)
-                      "feature-ptr-addr-of")
-                    "feature-str-view")
-                  "feature-runtime-str-view-extern")
-                "feature-private-string-intrinsics")
-              "feature-compiler-private-string-intrinsics")
-            "array-helper-intrinsics")
-          "feature-tl-memchr")
-        "feature-plain-comptime-well-known")
-      "feature-comptime-public-fields")
-    "feature-cleanup-owner-reflection"))
+  (compiler-cfg-enable-compiler-language-features (compiler-cfg-empty)))
 
 (define (compiler-check-diagnostic-with-fallback-path
   [diag : CompilerDiagnostic]

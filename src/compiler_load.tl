@@ -1167,15 +1167,22 @@
       "|cfg:"
       (compiler-load-cfg-cache-key cfgs))))
 
+(define (compiler-load-program-cache-key-id
+  [kind : CompilerLoadProgramSourceKind]
+  [path-id : i64]
+  [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadProgramCacheKey
+  (let
+    [_persist-path-id : unit (compiler-load-session-note-persistent-interns!)]
+    (CompilerLoadProgramCacheKey kind path-id cfgs)))
+
 (define (compiler-load-program-cache-key
   [kind : CompilerLoadProgramSourceKind]
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadProgramCacheKey
-  (let
-    [normalized : String (compiler-load-normalize-path path)]
-    [path-id : i64 (compiler-load-source-path-id normalized)]
-    [_persist-path-id : unit (compiler-load-session-note-persistent-interns!)]
-    (CompilerLoadProgramCacheKey kind path-id cfgs)))
+  (compiler-load-program-cache-key-id
+    kind
+    (compiler-load-source-path-id (compiler-load-normalize-path path))
+    cfgs))
 
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
@@ -2582,19 +2589,10 @@
     [(ResultCompilerLoadWithPaths.Err diag) (ResultCompilerLoad.Err diag)]))
 
 (define (compiler-load-parse-context-name-id [name : String]) : i64
-  (match (intern-lookup-content name)
-    [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing)
-      (match (intern-generated-canonical-lookup name)
-        [(InternLookupFound name-id) name-id]
-        [(InternLookupMissing)
-          (intern-source-slice name 0 (intern-private-string-length name))])]))
+  (intern-source-slice name 0 (intern-private-string-length name)))
 
 (define (compiler-load-source-path-id [path : String]) : i64
-  (match (intern-lookup-content path)
-    [(InternLookupFound path-id) path-id]
-    [(InternLookupMissing)
-      (intern-source-slice path 0 (intern-private-string-length path))]))
+  (intern-source-slice path 0 (intern-private-string-length path)))
 
 (define (compiler-load-seen-module-contains?
   [seen : sym_i64_env.SymI64Env]
@@ -3087,15 +3085,25 @@
           (box-get rest)
           source-path-id))]))
 
-(define (compiler-load-surface-summary-find-source [source-path : String]) : CompilerLoadMaybeSurfaceSummary
-  (let
-    [normalized : String (compiler-load-normalize-path source-path)]
-    (match (intern-lookup-content normalized)
-      [(InternLookupFound source-path-id)
-        (compiler-load-surface-summary-find-source-in
-          compiler-load-active-surface-summaries
-          source-path-id)]
-      [(InternLookupMissing) (CompilerLoadNoSurfaceSummary)])))
+(define (compiler-load-surface-summary-find-source [source-path-id : i64]) : CompilerLoadMaybeSurfaceSummary
+  (compiler-load-surface-summary-find-source-in
+    compiler-load-active-surface-summaries
+    source-path-id))
+
+(define (compiler-load-surface-summary-find-module-in
+  [summaries : CompilerLoadSurfaceSummaryList]
+  [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
+  (match summaries
+    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadNoSurfaceSummary)]
+    [(CompilerLoadSurfaceSummaryCons summary rest)
+      (if (= (struct-get summary module-id) module-id)
+        (CompilerLoadSomeSurfaceSummary summary)
+        (compiler-load-surface-summary-find-module-in (box-get rest) module-id))]))
+
+(define (compiler-load-surface-summary-find-module [module-id : i64]) : CompilerLoadMaybeSurfaceSummary
+  (compiler-load-surface-summary-find-module-in
+    compiler-load-active-surface-summaries
+    module-id))
 
 (define (compiler-load-surface-summary-remove-source-in
   [summaries : CompilerLoadSurfaceSummaryList]
@@ -3114,20 +3122,16 @@
               (box-get rest)
               source-path-id))))]))
 
-(define (compiler-load-surface-summary-remove-source! [source-path : String]) : unit
-  (let
-    [normalized : String (compiler-load-normalize-path source-path)]
-    (match (intern-lookup-content normalized)
-      [(InternLookupMissing) unit]
-      [(InternLookupFound source-path-id)
-        (set!
-          compiler-load-active-surface-summaries
-          (compiler-load-surface-summary-remove-source-in
-            compiler-load-active-surface-summaries
-            source-path-id))])))
+(define (compiler-load-surface-summary-remove-source! [source-path-id : i64]) : unit
+  (set!
+    compiler-load-active-surface-summaries
+    (compiler-load-surface-summary-remove-source-in
+      compiler-load-active-surface-summaries
+      source-path-id)))
 
 (define (compiler-load-surface-summary-load-with-pools
   [path : String]
+  [parse-identity : CompilerLoadParseIdentity]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
@@ -3136,22 +3140,21 @@
   (let
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
-    [fallback : String (compiler-load-canonical-module-id-from-path path)]
-    [parse-identity : CompilerLoadParseIdentity
-      (compiler-load-parse-identity path fallback expected-module)]
     [source-path-id : i64 (struct-get parse-identity source-path-id)]
     [fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     (match (if (io.file-exists? path)
-      (compiler-load-parse-file-diagnostic-session-with-pools
+      (compiler-load-parse-file-diagnostic-session-id-with-pools
         path
+        source-path-id
         stdlib-roots
         parse-cfgs
         pools)
       (match (compiler-load-embedded-stdlib-source-for-path path)
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
             source)
-          (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+          (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
             path
+            source-path-id
             source
             parse-cfgs
             pools)]
@@ -3174,38 +3177,56 @@
 
 (define (compiler-load-surface-summary-ensure-with-pools
   [path : String]
+  [source-path-id : i64]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : unit
-  (match (compiler-load-surface-summary-find-source path)
-    [(CompilerLoadSomeSurfaceSummary _) unit]
-    [(CompilerLoadNoSurfaceSummary)
+  (let
+    [fallback : String (compiler-load-canonical-module-id-from-path path)]
+    [parse-identity : CompilerLoadParseIdentity
+      (CompilerLoadParseIdentity
+        source-path-id
+        (compiler-load-module-fallback-id-for-parse fallback expected-module))]
+    (match (compiler-load-surface-summary-find-source
+      (struct-get parse-identity source-path-id))
+      [(CompilerLoadSomeSurfaceSummary _) unit]
+      [(CompilerLoadNoSurfaceSummary)
+        (compiler-load-surface-summary-load-with-pools
+          path
+          parse-identity
+          stdlib-roots
+          expected-module
+          import-root
+          cfgs
+          pools)])))
+
+(define (compiler-load-surface-summary-refresh-with-pools
+  [path : String]
+  [source-path-id : i64]
+  [stdlib-roots : svec.Vec]
+  [expected-module : AstMaybeModuleName]
+  [import-root : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : unit
+  (let
+    [fallback : String (compiler-load-canonical-module-id-from-path path)]
+    [parse-identity : CompilerLoadParseIdentity
+      (CompilerLoadParseIdentity
+        source-path-id
+        (compiler-load-module-fallback-id-for-parse fallback expected-module))]
+    (begin
+      (compiler-load-surface-summary-remove-source!
+        (struct-get parse-identity source-path-id))
       (compiler-load-surface-summary-load-with-pools
         path
+        parse-identity
         stdlib-roots
         expected-module
         import-root
         cfgs
-        pools)]))
-
-(define (compiler-load-surface-summary-refresh-with-pools
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
-  [import-root : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
-  (begin
-    (compiler-load-surface-summary-remove-source! path)
-    (compiler-load-surface-summary-load-with-pools
-      path
-      stdlib-roots
-      expected-module
-      import-root
-      cfgs
-      pools)))
+        pools))))
 
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -4438,6 +4459,7 @@
 
 (define (compiler-load-lazy-import-preload-summary-with-pools
   [resolved : String]
+  [resolved-id : i64]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
   [import-root : String]
@@ -4445,6 +4467,7 @@
   [pools : AstNodePoolContext]) : unit
   (compiler-load-surface-summary-ensure-with-pools
     resolved
+    resolved-id
     stdlib-roots
     expected-module
     import-root
@@ -4454,7 +4477,7 @@
 (define (compiler-load-lazy-import-skip?
   [importer-path : String]
   [kind : AstImportKind]
-  [resolved : String]
+  [resolved-id : i64]
   [expected-module : AstMaybeModuleName]
   [alias : AstMaybeImportAlias]
   [rest : AstDeclList]
@@ -4466,7 +4489,7 @@
       (not (compiler-load-lazy-imports-enabled?))
       (compiler-load-prelude-importer? importer-path))
       false
-      (match (compiler-load-surface-summary-find-source resolved)
+      (match (compiler-load-surface-summary-find-source resolved-id)
         [(CompilerLoadNoSurfaceSummary) false]
         [(CompilerLoadSomeSurfaceSummary summary)
           (let
@@ -5403,6 +5426,7 @@
                 stdlib-roots)
                 [(ResultPkgResolve.Ok resolved)
                   (let
+                    [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [preload-candidate : bool
                       (compiler-load-lazy-import-preload-candidate?
                         importer-path
@@ -5425,6 +5449,7 @@
                       (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-pools
                           resolved
+                          resolved-id
                           stdlib-roots
                           expected-module
                           import-root
@@ -5436,7 +5461,7 @@
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
-                          resolved
+                          resolved-id
                           expected-module
                           alias
                           rest
@@ -5451,6 +5476,7 @@
                         seen)
                       (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
                         resolved
+                        resolved-id
                         seen
                         stdlib-roots
                         kind
@@ -6436,8 +6462,9 @@
         [(ResultAstProgramDiagnostic.Err _) unit])
       parsed)))
 
-(define (compiler-load-parse-file-diagnostic-session
+(define (compiler-load-parse-file-diagnostic-session-id
   [path : String]
+  [source-path-id : i64]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (and
@@ -6446,7 +6473,10 @@
     (compiler-load-session-file-cacheable? path stdlib-roots))
     (let
       [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key CompilerLoadProgramFile path cfgs)]
+        (compiler-load-program-cache-key-id
+          CompilerLoadProgramFile
+          source-path-id
+          cfgs)]
       (match (compiler-load-program-cache-lookup key)
         [(CompilerLoadProgramCacheHit program)
           (begin
@@ -6469,8 +6499,19 @@
               (compiler-load-parse-file-diagnostic-admit-only key path cfgs)))]))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
-(define (compiler-load-parse-file-diagnostic-session-with-pools
+(define (compiler-load-parse-file-diagnostic-session
   [path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  (compiler-load-parse-file-diagnostic-session-id
+    path
+    (compiler-load-source-path-id (compiler-load-normalize-path path))
+    stdlib-roots
+    cfgs))
+
+(define (compiler-load-parse-file-diagnostic-session-id-with-pools
+  [path : String]
+  [source-path-id : i64]
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
@@ -6480,7 +6521,10 @@
     (compiler-load-session-file-cacheable? path stdlib-roots))
     (let
       [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key CompilerLoadProgramFile path cfgs)]
+        (compiler-load-program-cache-key-id
+          CompilerLoadProgramFile
+          source-path-id
+          cfgs)]
       (match (compiler-load-program-cache-lookup key)
         [(CompilerLoadProgramCacheHit program)
           (begin
@@ -6511,6 +6555,18 @@
                 cfgs
                 pools)))]))
     (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)))
+
+(define (compiler-load-parse-file-diagnostic-session-with-pools
+  [path : String]
+  [stdlib-roots : svec.Vec]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (compiler-load-parse-file-diagnostic-session-id-with-pools
+    path
+    (compiler-load-source-path-id (compiler-load-normalize-path path))
+    stdlib-roots
+    cfgs
+    pools))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
   [key : CompilerLoadProgramCacheKey]
@@ -6572,8 +6628,9 @@
       cfgs
       pools)))
 
-(define (compiler-load-parse-embedded-source-diagnostic-session
+(define (compiler-load-parse-embedded-source-diagnostic-session-id
   [path : String]
+  [source-path-id : i64]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
   (if (and
@@ -6581,7 +6638,10 @@
     (compiler-load-session-program-cache-enabled?))
     (let
       [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key CompilerLoadProgramEmbedded path cfgs)]
+        (compiler-load-program-cache-key-id
+          CompilerLoadProgramEmbedded
+          source-path-id
+          cfgs)]
       (match (compiler-load-program-cache-lookup key)
         [(CompilerLoadProgramCacheHit program)
           (begin
@@ -6597,8 +6657,19 @@
               cfgs))]))
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
-(define (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+(define (compiler-load-parse-embedded-source-diagnostic-session
   [path : String]
+  [source : String]
+  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
+  (compiler-load-parse-embedded-source-diagnostic-session-id
+    path
+    (compiler-load-source-path-id (compiler-load-normalize-path path))
+    source
+    cfgs))
+
+(define (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+  [path : String]
+  [source-path-id : i64]
   [source : String]
   [cfgs : sym_i64_env.SymI64Env]
   [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
@@ -6607,7 +6678,10 @@
     (compiler-load-session-program-cache-enabled?))
     (let
       [key : CompilerLoadProgramCacheKey
-        (compiler-load-program-cache-key CompilerLoadProgramEmbedded path cfgs)]
+        (compiler-load-program-cache-key-id
+          CompilerLoadProgramEmbedded
+          source-path-id
+          cfgs)]
       (match (compiler-load-program-cache-lookup key)
         [(CompilerLoadProgramCacheHit program)
           (begin
@@ -6627,6 +6701,18 @@
       source
       cfgs
       pools)))
+
+(define (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+  [path : String]
+  [source : String]
+  [cfgs : sym_i64_env.SymI64Env]
+  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
+  (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
+    path
+    (compiler-load-source-path-id (compiler-load-normalize-path path))
+    source
+    cfgs
+    pools))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]
@@ -6831,6 +6917,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
   [path : String]
+  [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [kind : AstImportKind]
@@ -6853,6 +6940,7 @@
         context-module)]
     (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
       path
+      source-path-id
       seen
       stdlib-roots
       expected-module
@@ -6904,8 +6992,9 @@
             cfgs)]
         (if (io.file-exists? path)
           (match (if cache-current
-            (compiler-load-parse-file-diagnostic-session
+            (compiler-load-parse-file-diagnostic-session-id
               path
+              source-path-id
               stdlib-roots
               parse-cfgs)
             (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
@@ -6928,8 +7017,9 @@
             [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                 source)
               (match (if cache-current
-                (compiler-load-parse-embedded-source-diagnostic-session
+                (compiler-load-parse-embedded-source-diagnostic-session-id
                   path
+                  source-path-id
                   source
                   parse-cfgs)
                 (compiler-load-parse-source-diagnostic-escaping
@@ -6971,6 +7061,7 @@
     [fallback : String (compiler-load-canonical-module-id-from-path path)]
     (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
       path
+      (compiler-load-source-path-id path)
       seen
       stdlib-roots
       expected-module
@@ -6985,6 +7076,7 @@
 
 (define (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
   [path : String]
+  [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
@@ -6998,7 +7090,6 @@
   [source-module-fallback-id-hint : i64]) : ResultCompilerLoadWithPaths
   (let
     [path-dedup : bool (compiler-load-no-expected-module? expected-module)]
-    [source-path-id : i64 (compiler-load-source-path-id path)]
     [path-key-id : i64
       (compiler-load-seen-path-key-id source-path-id context-module-id)]
     (if (and path-dedup (sym_i64_env.sym-i64-contains-id seen path-key-id))
@@ -7033,8 +7124,9 @@
             cfgs)]
         (if (io.file-exists? path)
           (match (if cache-current
-            (compiler-load-parse-file-diagnostic-session-with-pools
+            (compiler-load-parse-file-diagnostic-session-id-with-pools
               path
+              source-path-id
               stdlib-roots
               parse-cfgs
               pools)
@@ -7065,8 +7157,9 @@
             [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
                 source)
               (match (if cache-current
-                (compiler-load-parse-embedded-source-diagnostic-session-with-pools
+                (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
                   path
+                  source-path-id
                   source
                   parse-cfgs
                   pools)
@@ -7114,6 +7207,7 @@
     [result : ResultCompilerLoadWithPaths
       (compiler-load-file-with-paths-and-roots-expect-cfg-root-cache-current-fallback-with-pools
         path
+        (compiler-load-source-path-id path)
         seen
         stdlib-roots
         expected-module
@@ -7956,6 +8050,7 @@
                 deps)
                 [(ResultPkgResolve.Ok resolved)
                   (let
+                    [resolved-id : i64 (compiler-load-source-path-id resolved)]
                     [package-externs : bool
                       (compiler-load-package-import-externs?
                         kind
@@ -8000,6 +8095,7 @@
                       (if preload-summary-needed
                         (compiler-load-lazy-import-preload-summary-with-pools
                           resolved
+                          resolved-id
                           stdlib-roots
                           expected-module
                           manifest-dir
@@ -8011,7 +8107,7 @@
                         (compiler-load-lazy-import-skip?
                           importer-path
                           kind
-                          resolved
+                          resolved-id
                           expected-module
                           alias
                           rest
@@ -8035,6 +8131,7 @@
                           "")
                         (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
                           resolved
+                          resolved-id
                           seen
                           stdlib-roots
                           expected-module
@@ -8437,6 +8534,7 @@
 
 (define (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
   [path : String]
+  [source-path-id : i64]
   [seen : sym_i64_env.SymI64Env]
   [stdlib-roots : svec.Vec]
   [expected-module : AstMaybeModuleName]
@@ -8451,7 +8549,11 @@
     [parse-cfgs : sym_i64_env.SymI64Env
       (compiler-load-stdlib-private-cfgs path stdlib-roots expected-module cfgs)]
     [parse-identity : CompilerLoadParseIdentity
-      (compiler-load-parse-identity path module-id-fallback expected-module)]
+      (CompilerLoadParseIdentity
+        source-path-id
+        (compiler-load-module-fallback-id-for-parse
+          module-id-fallback
+          expected-module))]
     [module-id-fallback-id : i64 (struct-get parse-identity module-fallback-id)]
     [source-module-fallback-id : i64
       (cond
@@ -8463,8 +8565,9 @@
         [else (compiler-load-parse-context-name-id source-module-fallback)])]
     (if (io.file-exists? path)
       (match (if cache-current
-        (compiler-load-parse-file-diagnostic-session
+        (compiler-load-parse-file-diagnostic-session-id
           path
+          source-path-id
           stdlib-roots
           parse-cfgs)
         (compiler-load-parse-file-diagnostic-escaping path parse-cfgs))
@@ -8488,8 +8591,9 @@
         [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
             source)
           (match (if cache-current
-            (compiler-load-parse-embedded-source-diagnostic-session
+            (compiler-load-parse-embedded-source-diagnostic-session-id
               path
+              source-path-id
               source
               parse-cfgs)
             (compiler-load-parse-source-diagnostic-escaping
@@ -8530,6 +8634,7 @@
   [cache-current : bool]) : ResultCompilerLoadWithPaths
   (compiler-load-package-file-with-paths-and-roots-expect-cache-current-fallback
     path
+    (compiler-load-source-path-id path)
     seen
     stdlib-roots
     expected-module

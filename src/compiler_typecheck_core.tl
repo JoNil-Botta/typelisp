@@ -58086,19 +58086,23 @@
   (if (and
     (string.eq target-module "stdlib.result")
     (string.eq lookup-name "result"))
-    (begin
-      (compiler-load-surface-summary-refresh-with-pools
-        "stdlib/result.tl"
-        (svec.new)
-        (AstMaybeModuleName.Some target-module-id)
-        "stdlib"
-        (compiler-cfg-empty)
-        (tc-context-pools ctx))
-      ;; The surface parser pushes through the explicit context. The retry below
-      ;; reads the retained body through ast-node-get, so publish that updated
-      ;; context before materializing the macro declaration.
-      (tc-context-install-pools! ctx)
-      (macro-surface-call-decl-cache-reset!))
+    (match (compiler-load-surface-summary-find-module target-module-id)
+      [(CompilerLoadSomeSurfaceSummary summary)
+        (begin
+          (compiler-load-surface-summary-refresh-with-pools
+            (struct-get summary source-path)
+            (struct-get summary source-path-id)
+            (svec.new)
+            (AstMaybeModuleName.Some target-module-id)
+            "stdlib"
+            (compiler-cfg-empty)
+            (tc-context-pools ctx))
+          ;; The surface parser pushes through the explicit context. The retry below
+          ;; reads the retained body through ast-node-get, so publish that updated
+          ;; context before materializing the macro declaration.
+          (tc-context-install-pools! ctx)
+          (macro-surface-call-decl-cache-reset!))]
+      [(CompilerLoadNoSurfaceSummary) unit])
     unit))
 
 (define (macro-unqualified-imported-target-call-decl
@@ -64886,6 +64890,7 @@
           [(ResultPkgResolve.Ok resolved)
             (match (compiler-load-file-with-paths-and-roots-expect-cfg-root-import-with-pools
               resolved
+              (compiler-load-source-path-id resolved)
               seen
               stdlib-roots
               kind

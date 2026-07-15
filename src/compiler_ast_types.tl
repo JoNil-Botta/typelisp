@@ -5583,17 +5583,19 @@
     [(AstEnumCleanup.No) AstEnumCleanup.No]
     [(AstEnumCleanup.Fn name) (AstEnumCleanup.Fn name)]))
 
-(define (ast-compaction-remap-import-kind [kind : AstImportKind]) : AstImportKind
+(define (ast-compaction-remap-import-kind
+  [remap : AstProgramCompactionRemap]
+  [kind : AstImportKind]) : AstImportKind
   (match kind
     [(AstImportKind.Path) AstImportKind.Path]
     [(AstImportKind.Module) AstImportKind.Module]
-    [(AstImportKind.Macro name module-name)
+    [(AstImportKind.Macro call module-name)
       (AstImportKind.Macro
-        name
+        (ast-compaction-remap-expr-id remap call)
         (ast-compaction-remap-maybe-module-name module-name))]
-    [(AstImportKind.MacroDecls name module-name)
+    [(AstImportKind.MacroDecls call module-name)
       (AstImportKind.MacroDecls
-        name
+        (ast-compaction-remap-expr-id remap call)
         (ast-compaction-remap-maybe-module-name module-name))]))
 
 (define (ast-compaction-remap-maybe-module-name
@@ -5609,11 +5611,13 @@
     [(AstMaybeImportAlias.Some name)
       (AstMaybeImportAlias.Some (ast-compaction-copy-string name))]))
 
-(define (ast-compaction-remap-import-spec [spec : AstImportSpec]) : AstImportSpec
+(define (ast-compaction-remap-import-spec
+  [remap : AstProgramCompactionRemap]
+  [spec : AstImportSpec]) : AstImportSpec
   (match spec
     [(AstImportSpec.Spec kind path module-name alias span)
       (AstImportSpec.Spec
-        (ast-compaction-remap-import-kind kind)
+        (ast-compaction-remap-import-kind remap kind)
         (ast-compaction-copy-string path)
         (ast-compaction-remap-maybe-module-name module-name)
         (ast-compaction-remap-maybe-import-alias alias)
@@ -6239,7 +6243,7 @@
         (ast-compaction-remap-struct-cleanup cleanup)
         (ast-compaction-remap-field-def-list remap fields))]
     [(AstDecl.Import spec)
-      (AstDecl.Import (ast-compaction-remap-import-spec spec))]
+      (AstDecl.Import (ast-compaction-remap-import-spec remap spec))]
     [(AstDecl.IncludeStr name path)
       (AstDecl.IncludeStr
         (ast-compaction-copy-string name)

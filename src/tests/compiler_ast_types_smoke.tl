@@ -574,6 +574,34 @@
           [_ false]))]
     [_ false]))
 
+(define (compiler-ast-compaction-macro-call-ok?
+  [pools : ast.AstNodePoolContext]
+  [call : i64]) : bool
+  (match (ast.ast-node-pool-context-expr-get pools call)
+    [(ast.AstExpr.Call func args)
+      (and
+        (match (ast.ast-node-pool-context-expr-get pools func)
+          [(ast.AstExpr.Var _) true]
+          [_ false])
+        (= (ast.ast-expr-list-len (& args)) 1))]
+    [_ false]))
+
+(define (compiler-ast-compaction-macro-import-ok?
+  [pools : ast.AstNodePoolContext]
+  [decl : ast.AstDecl]
+  [decls-kind? : bool]) : bool
+  (match decl
+    [(ast.AstDecl.Import (ast.AstImportSpec.Spec kind _ _ _ _))
+      (match kind
+        [(ast.AstImportKind.Macro call _)
+          (and
+            (not decls-kind?)
+            (compiler-ast-compaction-macro-call-ok? pools call))]
+        [(ast.AstImportKind.MacroDecls call _)
+          (and decls-kind? (compiler-ast-compaction-macro-call-ok? pools call))]
+        [_ false])]
+    [_ false]))
+
 (define (compiler-ast-compaction-extern-ok? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Extern _ _ metadata _)
@@ -626,6 +654,10 @@
         (ast.ast-type-node-pool-state-create 8))]
     [source-i64-ty : i64
       (ast.ast-node-pool-context-type-push source-pools (ast.AstType.I64))]
+    [_source-decoy : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Literal (ast.ast-lit-int 999)))]
     [text-expr : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
@@ -634,6 +666,16 @@
       (ast.ast-node-pool-context-expr-push
         source-pools
         (ast.AstExpr.BinaryData "bytes"))]
+    [macro-func : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Var (ci.intern "emit")))]
+    [macro-call : i64
+      (ast.ast-node-pool-context-expr-push
+        source-pools
+        (ast.AstExpr.Call
+          macro-func
+          (ast.ast-expr-cons text-expr (ast.ast-expr-list-new))))]
     [links : ast.AstExternLinkInputList
       (let
         [items : ast.AstExternLinkInputList
@@ -685,17 +727,37 @@
                     true)
                   (ast.AstType.I64))
                 (ast.ast-decl-cons
-                  (ast.ast-decl-def-dispatch "dispatch" variants)
+                  (ast.AstDecl.Import
+                    (ast.AstImportSpec.Spec
+                      (ast.AstImportKind.Macro
+                        macro-call
+                        ast.AstMaybeModuleName.No)
+                      ""
+                      ast.AstMaybeModuleName.No
+                      ast.AstMaybeImportAlias.No
+                      (box (ast.ast-source-span 2 1 2 1))))
                   (ast.ast-decl-cons
-                    (ast.AstDecl.DefStructLifetimes
-                      0
-                      lifetimes
-                      (ast.AstStructRepr.Default)
-                      (ast.AstStructCleanup.No)
-                      (ast.ast-field-def-list-new))
+                    (ast.AstDecl.Import
+                      (ast.AstImportSpec.Spec
+                        (ast.AstImportKind.MacroDecls
+                          macro-call
+                          ast.AstMaybeModuleName.No)
+                        ""
+                        ast.AstMaybeModuleName.No
+                        ast.AstMaybeImportAlias.No
+                        (box (ast.ast-source-span 3 1 3 1))))
                     (ast.ast-decl-cons
-                      (ast.AstDecl.IncludeStr "inc" "data.txt")
-                      (ast.ast-decl-list-new)))))))))]
+                      (ast.ast-decl-def-dispatch "dispatch" variants)
+                      (ast.ast-decl-cons
+                        (ast.AstDecl.DefStructLifetimes
+                          0
+                          lifetimes
+                          (ast.AstStructRepr.Default)
+                          (ast.AstStructCleanup.No)
+                          (ast.ast-field-def-list-new))
+                        (ast.ast-decl-cons
+                          (ast.AstDecl.IncludeStr "inc" "data.txt")
+                          (ast.ast-decl-list-new)))))))))))]
     [compacted : ast.AstProgramCompaction
       (ast.ast-program-compact-with-pools source-pools dest-pools program)]
     (match compacted
@@ -715,12 +777,20 @@
                   (ast.ast-decl-list-get (& decls) 2 (ast.ast-decl-fallback)))
                 (compiler-ast-compaction-extern-ok?
                   (ast.ast-decl-list-get (& decls) 3 (ast.ast-decl-fallback)))
+                (compiler-ast-compaction-macro-import-ok?
+                  out-pools
+                  (ast.ast-decl-list-get (& decls) 4 (ast.ast-decl-fallback))
+                  false)
+                (compiler-ast-compaction-macro-import-ok?
+                  out-pools
+                  (ast.ast-decl-list-get (& decls) 5 (ast.ast-decl-fallback))
+                  true)
                 (compiler-ast-compaction-dispatch-ok?
-                  (ast.ast-decl-list-get (& decls) 4 (ast.ast-decl-fallback)))
+                  (ast.ast-decl-list-get (& decls) 6 (ast.ast-decl-fallback)))
                 (compiler-ast-compaction-lifetimes-ok?
-                  (ast.ast-decl-list-get (& decls) 5 (ast.ast-decl-fallback)))
+                  (ast.ast-decl-list-get (& decls) 7 (ast.ast-decl-fallback)))
                 (compiler-ast-compaction-include-ok?
-                  (ast.ast-decl-list-get (& decls) 6 (ast.ast-decl-fallback)))))])])))
+                  (ast.ast-decl-list-get (& decls) 8 (ast.ast-decl-fallback)))))])])))
 
 (define (compiler-ast-decl-list-module-name?
   [decls : ast.AstDeclList]

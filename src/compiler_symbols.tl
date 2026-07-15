@@ -3360,16 +3360,13 @@
   [variants : AstVariantDefList]
   [target : i64]
   [index : i64]) : ResultAstTypeList
-  (if (>= index (ast-variant-def-list-len (& variants)))
+  (if (or (< target index) (>= target (ast-variant-def-list-len (& variants))))
     (ResultAstTypeList.Err "symbols: variant index not found")
     (match (ast-variant-def-list-get
       (& variants)
-      index
+      target
       (ast-variant-def-fallback))
-      [(AstVariantDef.Def _ fields _)
-        (if (= target index)
-          (ResultAstTypeList.Ok fields)
-          (compiler-variant-types-at-index variants target (+ index 1)))])))
+      [(AstVariantDef.Def _ fields _) (ResultAstTypeList.Ok fields)])))
 
 (define (compiler-field-type-at-index
   [fields : AstFieldDefList]

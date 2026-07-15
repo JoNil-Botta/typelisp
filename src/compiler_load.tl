@@ -2453,7 +2453,7 @@
         [rest : AstDeclList rest]
         (match decl
           [(AstDecl.Extern _ _ metadata _)
-            (if (string.eq (ast-extern-metadata-symbol metadata) want)
+            (if (string.eq (ast-extern-metadata-symbol (box-get metadata)) want)
               true
               (compiler-load-decl-list-has-extern-symbol? rest want))]
           [_ (compiler-load-decl-list-has-extern-symbol? rest want)]))]))
@@ -4944,7 +4944,7 @@
           (compiler-load-surface-module-maybe module-name)
           (compiler-load-surface-alias-maybe alias)
           (compiler-load-surface-import-default-alias kind import-path)
-          span)
+          (box-get span))
         (compiler-load-surface-import-decl-emitting? kind))]
     [(AstDecl.Def name maybe-ty _)
       (compiler-load-surface-build-add-decl
@@ -4991,7 +4991,7 @@
           (CompilerLoadSurfaceExtern)
           (intern-str name)
           module-id
-          (CompilerLoadSurfaceExternSignature kind meta ty)
+          (CompilerLoadSurfaceExternSignature kind (box-get meta) ty)
           (CompilerLoadSurfaceMacroOther)
           false
           false
@@ -5348,7 +5348,7 @@
             import-path
             expected-module
             alias
-            (ast-source-span 0 0 0 0)))
+            (box (ast-source-span 0 0 0 0))))
         rest)]
     [(AstMaybeImportAlias.No) rest]))
 
@@ -7407,11 +7407,12 @@
     (AstDecl.Extern
       name
       (AstExternKind.Function)
-      (AstExternMetadata.Metadata
-        (AstExternAbi.C)
-        (compiler-load-package-user-symbol logical)
-        (ast-extern-link-input-list-new)
-        false)
+      (box
+        (AstExternMetadata.Metadata
+          (AstExternAbi.C)
+          (compiler-load-package-user-symbol logical)
+          (ast-extern-link-input-list-new)
+          false))
       (ast-ty-func (compiler-load-param-type-list params) ret))))
 
 (define (compiler-load-package-transform-decl
@@ -12274,7 +12275,7 @@
     (match decl
       [(AstDecl.Extern _ _ metadata _)
         (string.eq
-          (ast-extern-metadata-symbol metadata)
+          (ast-extern-metadata-symbol (box-get metadata))
           "_tl_dep_src_lib_helper")]
       [_ false])))
 

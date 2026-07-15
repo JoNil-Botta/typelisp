@@ -7476,7 +7476,7 @@
   [alias : AstMaybeImportAlias]
   [span : AstSourceSpan]) : ResultAstDecl
   (ResultAstDecl.Ok
-    (AstDecl.Import (AstImportSpec.Spec kind path module-name alias span))))
+    (AstDecl.Import (AstImportSpec.Spec kind path module-name alias (box span)))))
 
 (define (parse-ast-import-alias
   [kind : AstImportKind]
@@ -9509,11 +9509,12 @@
                   (and
                     (= name (intern "local-call"))
                     (string.eq
-                      (ast-extern-metadata-symbol metadata)
+                      (ast-extern-metadata-symbol (box-get metadata))
                       "foreign_exact")
-                    (ast-extern-abi-c? (ast-extern-metadata-abi metadata))
+                    (ast-extern-abi-c?
+                      (ast-extern-metadata-abi (box-get metadata)))
                     (compiler-parse-extern-link-inputs-ok?
-                      (ast-extern-metadata-link-inputs metadata))
+                      (ast-extern-metadata-link-inputs (box-get metadata)))
                     (match ty
                       [(AstType.Func args ret)
                         (let
@@ -9545,7 +9546,7 @@
     [(AstDecl.Extern name _ metadata ty)
       (and
         (= name (intern "snprintf"))
-        (match (ast-extern-metadata-abi metadata)
+        (match (ast-extern-metadata-abi (box-get metadata))
           [(AstExternAbi.CVarargsTyped tail-ty)
             (match tail-ty
               [(AstType.F64) true]
@@ -9578,7 +9579,7 @@
     [(AstDecl.Extern name _ metadata ty)
       (and
         (= name (intern "printf"))
-        (match (ast-extern-metadata-abi metadata)
+        (match (ast-extern-metadata-abi (box-get metadata))
           [(AstExternAbi.CVarargsOpen) true]
           [_ false])
         (match ty
@@ -9614,7 +9615,9 @@
     [(AstDecl.Extern name _ metadata ty)
       (and
         (= name (intern "local-add"))
-        (string.eq (ast-extern-metadata-symbol metadata) "foreign_add_exact")
+        (string.eq
+          (ast-extern-metadata-symbol (box-get metadata))
+          "foreign_add_exact")
         (match ty
           [(AstType.Func args ret)
             (and

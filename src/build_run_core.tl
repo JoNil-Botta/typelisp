@@ -529,7 +529,7 @@
           [(AstDecl.Extern _ _ metadata _)
             (let
               [metadata-items : AstExternLinkInputList
-                (ast-extern-metadata-link-inputs metadata)]
+                (ast-extern-metadata-link-inputs (box-get metadata))]
               (source-tool-link-inputs-from-decls
                 rest
                 (source-tool-link-inputs-add-ast-list

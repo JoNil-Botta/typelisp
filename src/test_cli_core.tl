@@ -2211,7 +2211,7 @@
           dep-path
           (AstMaybeModuleName.Some "stdlib.string")
           (AstMaybeImportAlias.Some "string")
-          span))]
+          (box span)))]
     [decls : AstDeclList
       (ast-decl-cons
         (ast-decl-module "stdlib.string")
@@ -2568,7 +2568,7 @@
           "stdlib/core_macros.tl"
           (AstMaybeModuleName.Some "stdlib.core_macros")
           (AstMaybeImportAlias.Some "core")
-          (ast-source-span 0 0 0 0)))]
+          (box (ast-source-span 0 0 0 0))))]
     [span : AstSourceSpan (ast-source-span 9 1 9 1)]
     [decls : AstDeclList
       (ast-decl-cons

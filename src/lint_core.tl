@@ -2836,7 +2836,7 @@
           true
           (lint-expr-uses-import? (ast-node-get body) alias module-name)))]
     [(AstDecl.Extern _ _ meta ty)
-      (if (lint-extern-metadata-uses-import? meta alias module-name)
+      (if (lint-extern-metadata-uses-import? (box-get meta) alias module-name)
         true
         (lint-type-uses-import? ty alias module-name))]
     [(AstDecl.DefEnum _ cleanup variants)
@@ -3007,9 +3007,9 @@
                 [(AstMaybeImportAlias.Some alias)
                   (if (and
                     (string.eq alias (lint-module-default-alias module-name))
-                    (lint-import-span-has-explicit-alias? source span))
+                    (lint-import-span-has-explicit-alias? source (box-get span)))
                     (lint-findings-add
-                      (lint-redundant-import-alias-finding span)
+                      (lint-redundant-import-alias-finding (box-get span))
                       acc)
                     acc)])])]
         [_ acc])]))
@@ -3040,7 +3040,10 @@
                       module-name)
                       acc
                       (lint-findings-add
-                        (lint-unused-import-finding module-name alias span)
+                        (lint-unused-import-finding
+                          module-name
+                          alias
+                          (box-get span))
                         acc)))])]))])))
 
 (define (lint-unused-imports-in-decl-list

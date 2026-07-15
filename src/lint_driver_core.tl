@@ -1947,7 +1947,9 @@
         (lint-no-span)
         (selfhost-lint-dead-type-refs
           ty
-          (selfhost-lint-dead-extern-metadata-refs meta (lint_svec.new)))
+          (selfhost-lint-dead-extern-metadata-refs
+            (box-get meta)
+            (lint_svec.new)))
         visible-root
         allow-report)]
     [(AstDecl.DefEnum name cleanup variants)

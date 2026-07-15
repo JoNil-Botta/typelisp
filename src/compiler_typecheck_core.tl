@@ -17738,14 +17738,6 @@
       (array-set! dst index (array-ref src index))
       (tc-spmd-env-copy-bindings dst src (+ index 1) count))))
 
-(define (tc-spmd-env-bind
-  [env : TcSpmdEnv]
-  [name : String]
-  [ty : AstType]
-  [class : TcSpmdClass]
-  [scope : TcSpmdScope]) : TcSpmdEnv
-  (tc-spmd-env-bind-role env name ty class scope TcSpmdRole.Value))
-
 (define (tc-spmd-env-bind-id
   [env : TcSpmdEnv]
   [name-id : i64]
@@ -17753,15 +17745,6 @@
   [class : TcSpmdClass]
   [scope : TcSpmdScope]) : TcSpmdEnv
   (tc-spmd-env-bind-role-id env name-id ty class scope TcSpmdRole.Value))
-
-(define (tc-spmd-env-bind-role
-  [env : TcSpmdEnv]
-  [name : String]
-  [ty : AstType]
-  [class : TcSpmdClass]
-  [scope : TcSpmdScope]
-  [role : TcSpmdRole]) : TcSpmdEnv
-  (tc-spmd-env-bind-role-id env (tc-existing-name-id name) ty class scope role))
 
 (define (tc-spmd-env-bind-role-id
   [env : TcSpmdEnv]
@@ -17800,9 +17783,6 @@
           (struct-get binding role))
         (tc-spmd-env-lookup-from bindings (- index 1) name-id)))))
 
-(define (tc-spmd-env-lookup [env : TcSpmdEnv] [name : String]) : TcSpmdLookup
-  (tc-spmd-env-lookup-id env (tc-existing-name-id name)))
-
 (define (tc-spmd-env-lookup-id [env : TcSpmdEnv] [name-id : i64]) : TcSpmdLookup
   (tc-spmd-env-lookup-from
     (tc-spmd-env-bindings env)
@@ -17823,9 +17803,6 @@
           [(TcSpmdScope.Outer)
             (tc-spmd-env-has-local-from? bindings (- index 1) name-id)])
         (tc-spmd-env-has-local-from? bindings (- index 1) name-id)))))
-
-(define (tc-spmd-env-has-local? [env : TcSpmdEnv] [name : String]) : bool
-  (tc-spmd-env-has-local-id? env (tc-existing-name-id name)))
 
 (define (tc-spmd-env-has-local-id? [env : TcSpmdEnv] [name-id : i64]) : bool
   (tc-spmd-env-has-local-from?
@@ -17848,9 +17825,6 @@
             (tc-spmd-env-has-outer-from? bindings (- index 1) name-id)])
         (tc-spmd-env-has-outer-from? bindings (- index 1) name-id)))))
 
-(define (tc-spmd-env-has-outer? [env : TcSpmdEnv] [name : String]) : bool
-  (tc-spmd-env-has-outer-id? env (tc-existing-name-id name)))
-
 (define (tc-spmd-env-has-outer-id? [env : TcSpmdEnv] [name-id : i64]) : bool
   (tc-spmd-env-has-outer-from?
     (tc-spmd-env-bindings env)
@@ -17871,12 +17845,6 @@
           [(TcSpmdScope.Outer)
             (tc-spmd-env-local-index bindings (- index 1) name-id)])
         (tc-spmd-env-local-index bindings (- index 1) name-id)))))
-
-(define (tc-spmd-env-set-local-class
-  [env : TcSpmdEnv]
-  [name : String]
-  [class : TcSpmdClass]) : TcSpmdEnv
-  (tc-spmd-env-set-local-class-id env (tc-existing-name-id name) class))
 
 (define (tc-spmd-env-set-local-class-id
   [env : TcSpmdEnv]
@@ -18111,7 +18079,10 @@
       (tc-type-env-bind-many shadowed (- (tc-local-cache-threshold) 1))]
     (and
       (tc-type-env-cache-head? cached)
-      (not (tc-default-builtin-unshadowed? cached "__tl_string_length")))))
+      (not
+        (tc-default-builtin-unshadowed-id?
+          cached
+          cbi.compiler-builtin-id-tl-private-string-length)))))
 
 (define (tc-type-env-local-cache-partial-layer-smoke?) : bool
   (let
@@ -18160,9 +18131,17 @@
       (tc-type-env-cache-partial-head? shadow-layer)
       (tc-type-env-cache-partial-head? miss-layer)
       (tc-type-env-cache-partial-head? clear-layer)
-      (not (tc-default-builtin-unshadowed? shadow-layer "__tl_string_length"))
-      (not (tc-default-builtin-unshadowed? miss-layer "__tl_string_length"))
-      (tc-default-builtin-unshadowed? clear-layer "__tl_string_length"))))
+      (not
+        (tc-default-builtin-unshadowed-id?
+          shadow-layer
+          cbi.compiler-builtin-id-tl-private-string-length))
+      (not
+        (tc-default-builtin-unshadowed-id?
+          miss-layer
+          cbi.compiler-builtin-id-tl-private-string-length))
+      (tc-default-builtin-unshadowed-id?
+        clear-layer
+        cbi.compiler-builtin-id-tl-private-string-length))))
 
 (define (tc-type-env-local-cache-depth-cap-smoke?) : bool
   (let
@@ -18372,8 +18351,13 @@
       (and
         (tc-env-cache-explicit-head? layer)
         (tc-type-env-cache-partial-head? layer)
-        (tc-default-builtin-unshadowed? base "__tl_string_length")
-        (not (tc-default-builtin-unshadowed? layer "__tl_string_length"))
+        (tc-default-builtin-unshadowed-id?
+          base
+          cbi.compiler-builtin-id-tl-private-string-length)
+        (not
+          (tc-default-builtin-unshadowed-id?
+            layer
+            cbi.compiler-builtin-id-tl-private-string-length))
         (match (tc-active-region layer)
           [(TcMaybeNameId.No) true]
           [_ false])
@@ -19226,45 +19210,47 @@
 
 (define (tc-spmd-env-box-smoke?) : bool
   (let
-    [_lane-id : i64 (intern "lane")]
-    [_idx-id : i64 (intern "idx")]
+    [lane-id : i64 (intern "lane")]
+    [idx-id : i64 (intern "idx")]
+    [x-id : i64 (intern "x")]
+    [flag-id : i64 (intern "flag")]
     [env : TcTypeEnv
       (tc-bind-id
-        (tc-bind-id (tc-empty-env) (intern "x") (AstType.I64))
-        (intern "flag")
+        (tc-bind-id (tc-empty-env) x-id (AstType.I64))
+        flag-id
         (AstType.Bool))]
     [shadow-env : TcTypeEnv
       (tc-bind-id
-        (tc-bind-id (tc-empty-env) (intern "x") (AstType.I64))
-        (intern "x")
+        (tc-bind-id (tc-empty-env) x-id (AstType.I64))
+        x-id
         (AstType.Bool))]
     [shadow-spmd : TcSpmdEnv (tc-spmd-env-from-type-env shadow-env)]
     [outer : TcSpmdEnv (tc-spmd-env-from-type-env env)]
     [local : TcSpmdEnv
-      (tc-spmd-env-bind
+      (tc-spmd-env-bind-id
         outer
-        "lane"
+        lane-id
         (AstType.I64)
         TcSpmdClass.Varying
         TcSpmdScope.Local)]
     [updated : TcSpmdEnv
-      (tc-spmd-env-set-local-class local "lane" TcSpmdClass.Uniform)]
+      (tc-spmd-env-set-local-class-id local lane-id TcSpmdClass.Uniform)]
     [indexed : TcSpmdEnv
-      (tc-spmd-env-bind-role
+      (tc-spmd-env-bind-role-id
         updated
-        "idx"
+        idx-id
         (AstType.I64)
         TcSpmdClass.Uniform
         TcSpmdScope.Local
         TcSpmdRole.ForeachIndex)]
     [marked-outer : TcSpmdEnv (tc-spmd-env-mark-outer indexed)]
     [branch-right : TcSpmdEnv
-      (tc-spmd-env-set-local-class indexed "lane" TcSpmdClass.Varying)]
+      (tc-spmd-env-set-local-class-id indexed lane-id TcSpmdClass.Varying)]
     [merged : TcSpmdEnv (tc-spmd-env-merge-classes indexed branch-right)]
     [restore-mark : TcSpmdEnvMark (tc-spmd-env-mark outer)]
     [restored : TcSpmdEnv (tc-spmd-env-restore updated restore-mark)]
     (and
-      (match (tc-spmd-env-lookup updated "lane")
+      (match (tc-spmd-env-lookup-id updated lane-id)
         [(TcSpmdLookup.Found
             (AstType.I64)
             (TcSpmdClass.Uniform)
@@ -19272,9 +19258,9 @@
             (TcSpmdRole.Value))
           true]
         [_ false])
-      (tc-spmd-env-has-local? updated "lane")
-      (tc-spmd-env-has-outer? updated "x")
-      (match (tc-spmd-env-lookup shadow-spmd "x")
+      (tc-spmd-env-has-local-id? updated lane-id)
+      (tc-spmd-env-has-outer-id? updated x-id)
+      (match (tc-spmd-env-lookup-id shadow-spmd x-id)
         [(TcSpmdLookup.Found
             (AstType.Bool)
             (TcSpmdClass.Uniform)
@@ -19282,7 +19268,7 @@
             (TcSpmdRole.Value))
           true]
         [_ false])
-      (match (tc-spmd-env-lookup marked-outer "idx")
+      (match (tc-spmd-env-lookup-id marked-outer idx-id)
         [(TcSpmdLookup.Found
             (AstType.I64)
             (TcSpmdClass.Uniform)
@@ -19290,9 +19276,9 @@
             (TcSpmdRole.ForeachIndex))
           true]
         [_ false])
-      (not (tc-spmd-env-has-local? marked-outer "lane"))
-      (tc-spmd-env-has-outer? marked-outer "lane")
-      (match (tc-spmd-env-lookup merged "lane")
+      (not (tc-spmd-env-has-local-id? marked-outer lane-id))
+      (tc-spmd-env-has-outer-id? marked-outer lane-id)
+      (match (tc-spmd-env-lookup-id merged lane-id)
         [(TcSpmdLookup.Found
             (AstType.I64)
             (TcSpmdClass.Varying)
@@ -19300,7 +19286,7 @@
             (TcSpmdRole.Value))
           true]
         [_ false])
-      (match (tc-spmd-env-lookup merged "idx")
+      (match (tc-spmd-env-lookup-id merged idx-id)
         [(TcSpmdLookup.Found
             (AstType.I64)
             (TcSpmdClass.Uniform)
@@ -19308,10 +19294,10 @@
             (TcSpmdRole.ForeachIndex))
           true]
         [_ false])
-      (match (tc-spmd-env-lookup (tc-spmd-env-pop updated 1) "lane")
+      (match (tc-spmd-env-lookup-id (tc-spmd-env-pop updated 1) lane-id)
         [(TcSpmdLookup.Missing) true]
         [_ false])
-      (match (tc-spmd-env-lookup restored "lane")
+      (match (tc-spmd-env-lookup-id restored lane-id)
         [(TcSpmdLookup.Missing) true]
         [_ false]))))
 
@@ -22581,9 +22567,6 @@
         true
         (tc-name-local-bound-before-module-scan-id? (box-get rest) name-id))]))
 
-(define (tc-name-local-bound-before-module? [env : TcTypeEnv] [name : String]) : bool
-  (tc-name-local-bound-before-module-scan-id? env (tc-existing-name-id name)))
-
 (define (tc-default-builtin-unshadowed-id? [env : TcTypeEnv] [name-id : i64]) : bool
   (if (cbi.compiler-builtin-typecheck-region-arg-id? name-id)
     (if tc-type-env-scoped-runtime-active
@@ -22616,9 +22599,6 @@
           scoped))
       (tc-default-builtin-unshadowed-scan-id? env name-id))
     false))
-
-(define (tc-default-builtin-unshadowed? [env : TcTypeEnv] [name : String]) : bool
-  (tc-default-builtin-unshadowed-id? env (tc-existing-name-id name)))
 
 ;; The type-handle flat lookup keys by the real intern id (so it misses non-root
 ;; names as intended -- the add path binds those under a
@@ -23727,7 +23707,7 @@
     (and
       (string.eq name base)
       (or
-        (not (tc-name-local-bound-before-module? env base))
+        (not (tc-name-local-bound-before-module-scan-id? env name-id))
         (string.eq (tc-context-module ctx) (tc-arena-module-name))))))
 
 ;; Allocation-free equivalent of

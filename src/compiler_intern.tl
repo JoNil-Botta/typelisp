@@ -206,30 +206,6 @@
   -1)
 (define intern-name-cache-ready : bool
   false)
-(define intern-slice-cache0-name : String
-  "")
-(define intern-slice-cache0-id : i64
-  -1)
-(define intern-slice-cache0-ready : bool
-  false)
-(define intern-slice-cache1-name : String
-  "")
-(define intern-slice-cache1-id : i64
-  -1)
-(define intern-slice-cache1-ready : bool
-  false)
-(define intern-slice-cache2-name : String
-  "")
-(define intern-slice-cache2-id : i64
-  -1)
-(define intern-slice-cache2-ready : bool
-  false)
-(define intern-slice-cache3-name : String
-  "")
-(define intern-slice-cache3-id : i64
-  -1)
-(define intern-slice-cache3-ready : bool
-  false)
 (define intern-persistent-arena : i64
   (tl_arena_make))
 (define intern-persistent-arena-floor-mark : i64
@@ -682,10 +658,6 @@
       intern-reset-generation
       (array-ref (struct-get state reset-generation) 0))
     (set! intern-name-cache-ready false)
-    (set! intern-slice-cache0-ready false)
-    (set! intern-slice-cache1-ready false)
-    (set! intern-slice-cache2-ready false)
-    (set! intern-slice-cache3-ready false)
     (set!
       intern-persistent-arena
       (array-ref (struct-get state persistent-arena) 0))
@@ -1068,14 +1040,6 @@
     (set! intern-name-cache-id id)
     (set! intern-name-cache-ready true)))
 
-(define (intern-reset-slice-cache!) : unit
-  (begin
-    (intern-reset-name-cache!)
-    (set! intern-slice-cache0-ready false)
-    (set! intern-slice-cache1-ready false)
-    (set! intern-slice-cache2-ready false)
-    (set! intern-slice-cache3-ready false)))
-
 (define (intern-map-insert-existing-from
   [name : String]
   [id : i64]
@@ -1124,7 +1088,7 @@
   (begin
     (set! intern-pool-count 0)
     (intern-fill-empty 0 (array-length intern-map-slots))
-    (intern-reset-slice-cache!)
+    (intern-reset-name-cache!)
     (set! intern-reset-generation (+ intern-reset-generation 1))
     (set! intern-map-ready true)))
 
@@ -1133,18 +1097,9 @@
     (set! intern-pool-count mark)
     (intern-fill-empty 0 (array-length intern-map-slots))
     (intern-map-rebuild-prefix 0 mark)
-    (intern-reset-slice-cache!)
+    (intern-reset-name-cache!)
     (set! intern-reset-generation (+ intern-reset-generation 1))
     (set! intern-map-ready true)))
-
-;; Disabled for correctness: macro-generated source slices can outlive their
-;; scratch-owned String wrappers within one compile. The dedup table immediately
-;; below remains authoritative; this cache was only a four-entry fast path.
-(define (intern-slice-cache-lookup [_text : String] [_start : i64] [_len : i64]) : i64
-  -1)
-
-(define (intern-slice-cache-record [_name : String] [_id : i64]) : unit
-  unit)
 
 ;: Intern `name`, returning its stable i64 id. Equal strings map to equal ids.
 ;: Lazily initializes the dedup table so callers need not order intern-reset!.
@@ -1210,51 +1165,42 @@
       (intern-reset!))
     (cfg compile-profile (intern-profile-note-slice))
     (let
-      [cached : i64 (intern-slice-cache-lookup text start len)]
-      (if (>= cached 0)
-        cached
-        (let
-          [capacity : i64 (array-length intern-map-slots)]
-          [hash : i64 (intern-hash-slice text start len)]
-          [cursor : i64 (intern-bucket hash capacity)]
-          [steps : i64 0]
-          [out : i64 -1]
-          [done : bool false]
-          (begin
-            (while (if done
-              false
-              (< steps capacity))
-              (match (array-ref intern-map-slots cursor)
-                [(InternEmpty)
-                  (let
-                    [name : String
-                      (if intern-persistent-storage-enabled
-                        (intern-persistent-substring text start len)
-                        (intern-substring text start len))]
-                    [id : i64 intern-pool-count]
-                    (begin
-                      (array-set! intern-pool-slots id name)
-                      (array-set!
-                        intern-map-slots
-                        cursor
-                        (InternUsed name id hash))
-                      (set! intern-pool-count (+ id 1))
-                      (intern-record-qualified-metadata id name)
-                      (intern-slice-cache-record name id)
-                      (set! out id)
-                      (set! done true)))]
-                [(InternUsed slot-key slot-id slot-hash)
-                  (if (if (= slot-hash hash)
-                    (intern-string-slice-eq? slot-key text start len)
-                    false)
-                    (begin
-                      (intern-slice-cache-record slot-key slot-id)
-                      (set! out slot-id)
-                      (set! done true))
-                    (begin
-                      (set! cursor (intern-bucket (+ cursor 1) capacity))
-                      (set! steps (+ steps 1))))]))
-            out))))))
+      [capacity : i64 (array-length intern-map-slots)]
+      [hash : i64 (intern-hash-slice text start len)]
+      [cursor : i64 (intern-bucket hash capacity)]
+      [steps : i64 0]
+      [out : i64 -1]
+      [done : bool false]
+      (begin
+        (while (if done
+          false
+          (< steps capacity))
+          (match (array-ref intern-map-slots cursor)
+            [(InternEmpty)
+              (let
+                [name : String
+                  (if intern-persistent-storage-enabled
+                    (intern-persistent-substring text start len)
+                    (intern-substring text start len))]
+                [id : i64 intern-pool-count]
+                (begin
+                  (array-set! intern-pool-slots id name)
+                  (array-set! intern-map-slots cursor (InternUsed name id hash))
+                  (set! intern-pool-count (+ id 1))
+                  (intern-record-qualified-metadata id name)
+                  (set! out id)
+                  (set! done true)))]
+            [(InternUsed slot-key slot-id slot-hash)
+              (if (if (= slot-hash hash)
+                (intern-string-slice-eq? slot-key text start len)
+                false)
+                (begin
+                  (set! out slot-id)
+                  (set! done true))
+                (begin
+                  (set! cursor (intern-bucket (+ cursor 1) capacity))
+                  (set! steps (+ steps 1))))]))
+        out))))
 
 ;: Look up an already-interned name without mutating the table. This lets later
 ;: compiler phases use id-keyed indexes without interning backend-generated

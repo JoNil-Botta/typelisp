@@ -2704,6 +2704,32 @@
           (io.write-file fallback source)
           fallback)])))
 
+(define (compiler-driver-state-smoke-repeated-macro-compile-survives-scratch?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    [input-path : String
+      (compiler-driver-state-smoke-emit-ir-core-macro-fixture-path)]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (let
+        [first-ok : bool
+          (with-scratch
+            (compiler-driver-state-smoke-compile-entry state input-path roots))]
+        [second-ok : bool
+          (with-scratch
+            (compiler-driver-state-smoke-compile-entry state input-path roots))]
+        (begin
+          (compiler-load-session-cache-disable-for-test!)
+          (and first-ok second-ok))))))
+
 (define (compiler-driver-state-smoke-emit-ir-core-macro-prelude?) : bool
   (let
     [state : CompilerDriverState (compiler-driver-state-new-for-compile)]
@@ -2930,6 +2956,9 @@
     (unless
       (compiler-driver-state-smoke-emit-ir-core-macro-prelude?)
       (return 17))
+    (unless
+      (compiler-driver-state-smoke-repeated-macro-compile-survives-scratch?)
+      (return 38))
     (let
       [double-lower-status : i64
         (compiler-driver-state-smoke-lower-loaded-twice-status)]

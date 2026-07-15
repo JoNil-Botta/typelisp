@@ -8319,16 +8319,17 @@
   (No)
   (Some OptVarDef))
 
-(defenum OptVarSetResult
-  (Ok opt_i64_i64_map.Map)
-  (Err))
-
-(define (opt-var-set-add-unique [set : opt_i64_i64_map.Map] [var : i64]) : OptVarSetResult
-  (let
-    [out : opt_i64_i64_map.Map set]
-    (if (opt_i64_i64_map.insert-if-absent-ref! (&mut out) var 1)
-      (OptVarSetResult.Ok out)
-      (OptVarSetResult.Err))))
+;; Function virtual-register ids are dense in [0, vars). Verification only
+;; needs duplicate membership, so a bitmap avoids hashing every definition and
+;; rejects malformed out-of-range ids at the same boundary.
+(define (opt-var-set-add-unique! [set : (Array bool)] [var : i64]) : bool
+  (if (or (< var 0) (>= var (array-length set)))
+    false
+    (if (array-ref set var)
+      false
+      (begin
+        (array-set! set var true)
+        true))))
 
 (define (opt-instr-def-var [instr : CompilerIrInstr]) : option_i64.Option
   (match instr
@@ -8397,57 +8398,58 @@
 
 (define (opt-verify-param-def-set
   [params : CompilerIrParamList]
-  [set : opt_i64_i64_map.Map]) : OptVarSetResult
+  [set : (Array bool)]) : bool
   (match (compiler-ir-param-list-force-cons params)
-    [(CompilerIrParamList.Nil) (OptVarSetResult.Ok set)]
+    [(CompilerIrParamList.Nil) true]
     [(CompilerIrParamList.Array seq)
       (opt-verify-param-def-set (compiler-ir-param-seq-to-list seq) set)]
     [(CompilerIrParamList.Cons param rest)
       (match param
         [(CompilerIrParam.Param _ _ var)
-          (match (opt-var-set-add-unique set var)
-            [(OptVarSetResult.Ok next)
-              (opt-verify-param-def-set (box-get rest) next)]
-            [(OptVarSetResult.Err) (OptVarSetResult.Err)])])]))
+          (and
+            (opt-var-set-add-unique! set var)
+            (opt-verify-param-def-set (box-get rest) set))])]))
 
 (define (opt-verify-instr-def-seq-from
   [instrs : CompilerIrInstrSeq]
   [index : i64]
-  [set : opt_i64_i64_map.Map]) : OptVarSetResult
+  [set : (Array bool)]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
-    (OptVarSetResult.Ok set)
+    true
     (match (opt-instr-def-var (compiler-ir-instr-seq-ref instrs index))
       [(option_i64.Some var)
-        (match (opt-var-set-add-unique set var)
-          [(OptVarSetResult.Ok next)
-            (opt-verify-instr-def-seq-from instrs (+ index 1) next)]
-          [(OptVarSetResult.Err) (OptVarSetResult.Err)])]
+        (and
+          (opt-var-set-add-unique! set var)
+          (opt-verify-instr-def-seq-from instrs (+ index 1) set))]
       [(option_i64.None) (opt-verify-instr-def-seq-from instrs (+ index 1) set)])))
 
 (define (opt-verify-block-def-set
   [blocks : CompilerIrBlockList]
-  [set : opt_i64_i64_map.Map]) : OptVarSetResult
+  [set : (Array bool)]) : bool
   (match blocks
-    [(CompilerIrBlockList.Nil) (OptVarSetResult.Ok set)]
+    [(CompilerIrBlockList.Nil) true]
     [(CompilerIrBlockList.Cons block rest)
       (match block
         [(CompilerIrBlock.Block _ instrs)
-          (match (opt-verify-instr-def-seq-from instrs 0 set)
-            [(OptVarSetResult.Ok next)
-              (opt-verify-block-def-set (box-get rest) next)]
-            [(OptVarSetResult.Err) (OptVarSetResult.Err)])])]
+          (and
+            (opt-verify-instr-def-seq-from instrs 0 set)
+            (opt-verify-block-def-set (box-get rest) set))])]
     [(CompilerIrBlockList.Array seq)
       (opt-verify-block-def-set (compiler-ir-block-seq-to-list seq) set)]))
 
 (define (opt-verify-single-defs?
   [params : CompilerIrParamList]
+  [vars : i64]
   [blocks : CompilerIrBlockList]) : bool
-  (match (opt-verify-param-def-set params (opt_i64_i64_map.with-capacity 64))
-    [(OptVarSetResult.Err) false]
-    [(OptVarSetResult.Ok param-set)
-      (match (opt-verify-block-def-set blocks param-set)
-        [(OptVarSetResult.Ok _) true]
-        [(OptVarSetResult.Err) false])]))
+  (if (< vars 0)
+    false
+    (let
+      [set : (Array bool) (array.make-array bool vars)]
+      (begin
+        (opt-cfg-fill-bool! set vars false)
+        (and
+          (opt-verify-param-def-set params set)
+          (opt-verify-block-def-set blocks set))))))
 
 (define (opt-var-defs-from-params
   [params : CompilerIrParamList]
@@ -9089,7 +9091,7 @@
   [func : CompilerIrFunction]
   [context : OptCfgContext]) : ResultCompilerOptimizeVerify
   (match func
-    [(CompilerIrFunction.Function _ params _ _ blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
       (cond
         [(not (opt-cfg-block-labels-unique? blocks))
           (ResultCompilerOptimizeVerify.Err
@@ -9097,7 +9099,7 @@
         [(not (opt-cfg-successor-targets-known? blocks))
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: unknown successor label")]
-        [(not (opt-verify-single-defs? params blocks))
+        [(not (opt-verify-single-defs? params vars blocks))
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: duplicate var definition")]
         [else
@@ -9114,7 +9116,7 @@
 
 (define (opt-verify-function [func : CompilerIrFunction]) : ResultCompilerOptimizeVerify
   (match func
-    [(CompilerIrFunction.Function _ params _ _ blocks)
+    [(CompilerIrFunction.Function _ params _ vars blocks)
       (cond
         [(not (opt-cfg-block-labels-unique? blocks))
           (ResultCompilerOptimizeVerify.Err
@@ -9122,7 +9124,7 @@
         [(not (opt-cfg-successor-targets-known? blocks))
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: unknown successor label")]
-        [(not (opt-verify-single-defs? params blocks))
+        [(not (opt-verify-single-defs? params vars blocks))
           (ResultCompilerOptimizeVerify.Err
             "optimizer verify: duplicate var definition")]
         [else
@@ -10911,7 +10913,7 @@
 (define (opt-ssa-construct-function [func : CompilerIrFunction]) : CompilerIrFunction
   (match func
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
-      (if (opt-verify-single-defs? params blocks)
+      (if (opt-verify-single-defs? params frame blocks)
         func
         (let
           [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
@@ -11015,7 +11017,7 @@
     [(CompilerIrFunction.Function name params ret-ty frame blocks)
       (let
         [context : OptCfgContext (opt-cfg-context-build blocks)]
-        (if (opt-verify-single-defs? params blocks)
+        (if (opt-verify-single-defs? params frame blocks)
           (OptFunctionCtxResult.Result func context)
           (let
             [facts : OptSsaFacts (opt-ssa-facts-from-function params blocks)]
@@ -47140,7 +47142,7 @@
     "licm_multi_exit"
     (opt-licm-multi-exit-test-params)
     (AstType.I64)
-    15
+    17
     blocks))
 
 (define (opt-licm-multi-exit-count-loads-seq
@@ -47760,7 +47762,7 @@
     "ssa_duplicate_def"
     (CompilerIrParamList.Nil)
     (AstType.I64)
-    0
+    2
     (compiler-ir-block-cons
       (compiler-ir-block
         "entry"
@@ -47772,6 +47774,23 @@
               (CompilerIrInstr.Return
                 (CompilerIrMaybeValue.Some (CompilerIrValue.Var 1)))
               (CompilerIrInstrList.Nil)))))
+      (CompilerIrBlockList.Nil))))
+
+(define (opt-ssa-out-of-range-def-function [var : i64] [vars : i64]) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "ssa_out_of_range_def"
+    (CompilerIrParamList.Nil)
+    (AstType.I64)
+    vars
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.Mov var (CompilerIrValue.I64 1) (AstType.I64))
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Return
+              (CompilerIrMaybeValue.Some (CompilerIrValue.I64 1)))
+            (CompilerIrInstrList.Nil))))
       (CompilerIrBlockList.Nil))))
 
 (define (opt-ssa-use-before-def-function) : CompilerIrFunction
@@ -48510,6 +48529,16 @@
             (opt-count-load-label-blocks pipeline-nested-blocks "inner_body")
             1))
         57]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-out-of-range-def-function -1 1))
+            "optimizer verify: duplicate var definition"))
+        58]
+      [(not
+          (opt-verify-error-ok?
+            (opt-verify-function (opt-ssa-out-of-range-def-function 1 1))
+            "optimizer verify: duplicate var definition"))
+        59]
       [else 42])))
 
 (define (compiler-optimize-cfg-self-test) : i64

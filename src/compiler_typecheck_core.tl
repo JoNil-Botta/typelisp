@@ -48847,6 +48847,24 @@
           (ast-decl-list-push (&mut out) (ast-decl-list-ref items index))))
       out)))
 
+(define (macro-decl-list-with-prefix-reserve
+  [items : AstDeclList]
+  [reserve : i64]) : AstDeclList
+  (if (>= (struct-get items offset) reserve)
+    items
+    (let
+      [count : i64 (ast-decl-list-len (& items))]
+      [slots : (Array AstDecl) (array.make-array AstDecl (+ reserve count))]
+      (begin
+        (ast-decl-list-copy-to
+          (&mut slots)
+          (& (struct-get items slots))
+          (struct-get items offset)
+          reserve
+          0
+          count)
+        (AstDeclList slots reserve count false)))))
+
 (define (macro-decl-list-append-from
   [out : (&mut out AstDeclList)]
   [items : (& items AstDeclList)]) : unit
@@ -48976,6 +48994,24 @@
             (ast-decl-path-list-get (& items) index ""))))
       out)))
 
+(define (macro-decl-path-list-with-prefix-reserve
+  [items : AstDeclPathList]
+  [reserve : i64]) : AstDeclPathList
+  (if (>= (struct-get items offset) reserve)
+    items
+    (let
+      [count : i64 (ast-decl-path-list-len (& items))]
+      [slots : (Array String) (array.make-array String (+ reserve count))]
+      (begin
+        (ast-decl-path-list-copy-to
+          (&mut slots)
+          (& (struct-get items slots))
+          (struct-get items offset)
+          reserve
+          0
+          count)
+        (AstDeclPathList slots reserve count false)))))
+
 (define (macro-decl-path-list-append-from
   [out : (&mut out AstDeclPathList)]
   [items : (& items AstDeclPathList)]) : unit
@@ -49066,6 +49102,15 @@
           (array-set! (struct-get right slots) 0 (ast-decl-module "alias"))
           (AstDeclList (struct-get right slots) 0 1 false))]
       [copied : AstDeclList (macro-decl-list-append alias-left right)]
+      [reserved : AstDeclList (macro-decl-list-with-prefix-reserve right 8)]
+      [reserved-address : i64 (macro-decl-list-slots-address reserved)]
+      [prefix-base : AstDeclList (ast-decl-list-new)]
+      [prefix-tail : AstDeclList
+        (ast-decl-list-prepend-builder (ast-decl-module "prefix-a") prefix-base)]
+      [prefix-rev : AstDeclList
+        (ast-decl-list-prepend-builder (ast-decl-module "prefix-b") prefix-tail)]
+      [prefixed : AstDeclList
+        (macro-decl-list-prefix-rev-current-suffix prefix-rev reserved)]
       (and
         (= (macro-decl-list-slots-address reused) right-address)
         (= (struct-get reused offset) 1)
@@ -49076,7 +49121,14 @@
         (not (= (macro-decl-list-slots-address copied) right-address))
         (macro-decl-module-eq? (ast-decl-list-ref copied 0) "alias")
         (macro-decl-module-eq? (ast-decl-list-ref copied 1) "right-a")
-        (macro-decl-module-eq? (ast-decl-list-ref copied 2) "right-b")))))
+        (macro-decl-module-eq? (ast-decl-list-ref copied 2) "right-b")
+        (= (struct-get reserved offset) 8)
+        (= (macro-decl-list-slots-address prefixed) reserved-address)
+        (= (struct-get prefixed offset) 6)
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 0) "prefix-a")
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 1) "prefix-b")
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 2) "right-a")
+        (macro-decl-module-eq? (ast-decl-list-ref prefixed 3) "right-b")))))
 
 (cfg
   test
@@ -49096,6 +49148,16 @@
           (array-set! (struct-get right slots) 0 "alias")
           (AstDeclPathList (struct-get right slots) 0 1 false))]
       [copied : AstDeclPathList (macro-decl-path-list-append alias-left right)]
+      [reserved : AstDeclPathList
+        (macro-decl-path-list-with-prefix-reserve right 8)]
+      [reserved-address : i64 (macro-decl-path-list-slots-address reserved)]
+      [prefix-base : AstDeclPathList (ast-decl-path-list-new)]
+      [prefix-tail : AstDeclPathList
+        (ast-decl-path-list-prepend-builder "prefix-a" prefix-base)]
+      [prefix-rev : AstDeclPathList
+        (ast-decl-path-list-prepend-builder "prefix-b" prefix-tail)]
+      [prefixed : AstDeclPathList
+        (macro-decl-path-list-prefix-rev-current-suffix prefix-rev reserved)]
       (and
         (= (macro-decl-path-list-slots-address reused) right-address)
         (= (struct-get reused offset) 1)
@@ -49106,7 +49168,14 @@
         (not (= (macro-decl-path-list-slots-address copied) right-address))
         (string.eq (ast-decl-path-list-get (& copied) 0 "") "alias")
         (string.eq (ast-decl-path-list-get (& copied) 1 "") "right-a")
-        (string.eq (ast-decl-path-list-get (& copied) 2 "") "right-b")))))
+        (string.eq (ast-decl-path-list-get (& copied) 2 "") "right-b")
+        (= (struct-get reserved offset) 8)
+        (= (macro-decl-path-list-slots-address prefixed) reserved-address)
+        (= (struct-get prefixed offset) 6)
+        (string.eq (ast-decl-path-list-get (& prefixed) 0 "") "prefix-a")
+        (string.eq (ast-decl-path-list-get (& prefixed) 1 "") "prefix-b")
+        (string.eq (ast-decl-path-list-get (& prefixed) 2 "") "right-a")
+        (string.eq (ast-decl-path-list-get (& prefixed) 3 "") "right-b")))))
 
 (cfg
   test
@@ -61277,13 +61346,12 @@
                                       expanded-paths
                                       rest-paths)]
                                   [next-decls : AstDeclList
-                                    (macro-scratch-decl-list-append
-                                      (macro-scratch-decl-list-reverse out-rev)
+                                    (macro-scratch-decl-list-prefix-rev-current-suffix
+                                      out-rev
                                       spliced-tail)]
                                   [next-paths : AstDeclPathList
-                                    (macro-scratch-decl-path-list-append
-                                      (macro-scratch-decl-path-list-reverse
-                                        out-paths-rev)
+                                    (macro-scratch-decl-path-list-prefix-rev-current-suffix
+                                      out-paths-rev
                                       spliced-path-tail)]
                                   [splice-index : i64
                                     (compiler-decl-list-index-count out-rev)]
@@ -61745,97 +61813,118 @@
                 (ctfe-program-has-type-literal? decls)
                 has-expr-type-macros))
             (if (or has-defmacro has-visible-macro-call program-needs-expansion)
-              (begin
-                (macro-expand-scratch-begin!)
-                (if (> (svec.len (& stdlib-roots)) 0)
-                  (begin
-                    (macro-generated-catalog-demand-index-build! decls paths)
-                    (set! macro-generated-catalog-demand-index-enabled true))
-                  (macro-generated-catalog-demand-index-invalidate!))
-                (cfg compile-profile (compiler-tc-profile-start))
-                (match (macro-live-symbols-build-or-reuse! program paths)
-                  [(ResultCompilerSymbols.Ok symbols)
-                    (let
-                      [registries : CompilerRegistries
-                        macro-live-registries-value]
-                      (begin
-                        (set! macro-expand-active-module "")
-                        (macro-expand-set-macro-names!
-                          macro-live-prescan-visible-names)
-                        (let
-                          [ctx : TcContext
-                            (TcContext program symbols registries "" pools)]
-                          (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
-                            [(ResultTcUnit.Ok)
-                              (match (tc-build-top-env ctx program)
-                                [(ResultTcEnv.Ok top-env)
-                                  (begin
-                                    (tc-hygiene-reset-active-top-env! top-env)
-                                    (tc-context-capture-active-pools! ctx)
-                                    (cfg
-                                      compile-profile
-                                      (compiler-tc-profile-finish "macro_setup"))
-                                    (macro-expand-ctfe-env-build-once! ctx)
-                                    (cfg
-                                      compile-profile
-                                      (compiler-tc-profile-start))
-                                    (cfg
-                                      compile-profile
-                                      (compiler-tc-macro-profile-note-walk-share-gate
-                                        true))
-                                    (match (macro-expand-decls
-                                      ctx
-                                      top-env
-                                      decls
-                                      decls
-                                      paths
-                                      ""
-                                      true
-                                      stdlib-roots
-                                      cfgs)
-                                      [(ResultMacroDeclsWithPaths.Ok
-                                          ndecls
-                                          npaths)
-                                        (begin
-                                          (tc-context-capture-active-pools! ctx)
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-profile-finish
-                                              "macro_walk"))
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-env-profile-emit-prefix
-                                              "macro_"))
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-macro-profile-emit))
-                                          (ResultMacroExpand.Ok
-                                            (ast-program ndecls)
-                                            npaths))]
-                                      [(ResultMacroDeclsWithPaths.Err diag)
-                                        (begin
-                                          (tc-context-capture-active-pools! ctx)
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-profile-finish
-                                              "macro_walk"))
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-env-profile-emit-prefix
-                                              "macro_"))
-                                          (cfg
-                                            compile-profile
-                                            (compiler-tc-macro-profile-emit))
-                                          (ResultMacroExpand.Err diag))]))]
-                                [(ResultTcEnv.Err message)
-                                  (ResultMacroExpand.Err
-                                    (box (tc-diag-at-start message)))])]
-                            [(ResultTcUnit.Err message)
-                              (ResultMacroExpand.Err
-                                (box (tc-diag-at-start message)))]))))]
-                  [(ResultCompilerSymbols.Err message)
-                    (ResultMacroExpand.Err
-                      (box (compiler-symbols-last-error-diagnostic message)))]))
+              (let
+                [prefix-reserve : i64 1024]
+                [active-decls : AstDeclList
+                  (macro-decl-list-with-prefix-reserve decls prefix-reserve)]
+                [active-paths : AstDeclPathList
+                  (macro-decl-path-list-with-prefix-reserve
+                    paths
+                    prefix-reserve)]
+                [active-program : AstProgram (ast-program active-decls)]
+                (begin
+                  (macro-expand-scratch-begin!)
+                  (if (> (svec.len (& stdlib-roots)) 0)
+                    (begin
+                      (macro-generated-catalog-demand-index-build!
+                        active-decls
+                        active-paths)
+                      (set! macro-generated-catalog-demand-index-enabled true))
+                    (macro-generated-catalog-demand-index-invalidate!))
+                  (cfg compile-profile (compiler-tc-profile-start))
+                  (match (macro-live-symbols-build-or-reuse!
+                    active-program
+                    active-paths)
+                    [(ResultCompilerSymbols.Ok symbols)
+                      (let
+                        [registries : CompilerRegistries
+                          macro-live-registries-value]
+                        (begin
+                          (set! macro-expand-active-module "")
+                          (macro-expand-set-macro-names!
+                            macro-live-prescan-visible-names)
+                          (let
+                            [ctx : TcContext
+                              (TcContext
+                                active-program
+                                symbols
+                                registries
+                                ""
+                                pools)]
+                            (match (tc-stdlib-comptime-surface-ok-for-macro ctx)
+                              [(ResultTcUnit.Ok)
+                                (match (tc-build-top-env ctx active-program)
+                                  [(ResultTcEnv.Ok top-env)
+                                    (begin
+                                      (tc-hygiene-reset-active-top-env! top-env)
+                                      (tc-context-capture-active-pools! ctx)
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-profile-finish
+                                          "macro_setup"))
+                                      (macro-expand-ctfe-env-build-once! ctx)
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-profile-start))
+                                      (cfg
+                                        compile-profile
+                                        (compiler-tc-macro-profile-note-walk-share-gate
+                                          true))
+                                      (match (macro-expand-decls
+                                        ctx
+                                        top-env
+                                        active-decls
+                                        active-decls
+                                        active-paths
+                                        ""
+                                        true
+                                        stdlib-roots
+                                        cfgs)
+                                        [(ResultMacroDeclsWithPaths.Ok
+                                            ndecls
+                                            npaths)
+                                          (begin
+                                            (tc-context-capture-active-pools!
+                                              ctx)
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-profile-finish
+                                                "macro_walk"))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-env-profile-emit-prefix
+                                                "macro_"))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-macro-profile-emit))
+                                            (ResultMacroExpand.Ok
+                                              (ast-program ndecls)
+                                              npaths))]
+                                        [(ResultMacroDeclsWithPaths.Err diag)
+                                          (begin
+                                            (tc-context-capture-active-pools!
+                                              ctx)
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-profile-finish
+                                                "macro_walk"))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-env-profile-emit-prefix
+                                                "macro_"))
+                                            (cfg
+                                              compile-profile
+                                              (compiler-tc-macro-profile-emit))
+                                            (ResultMacroExpand.Err diag))]))]
+                                  [(ResultTcEnv.Err message)
+                                    (ResultMacroExpand.Err
+                                      (box (tc-diag-at-start message)))])]
+                              [(ResultTcUnit.Err message)
+                                (ResultMacroExpand.Err
+                                  (box (tc-diag-at-start message)))]))))]
+                    [(ResultCompilerSymbols.Err message)
+                      (ResultMacroExpand.Err
+                        (box (compiler-symbols-last-error-diagnostic message)))])))
               (ResultMacroExpand.Ok program paths))))])))
 
 (defenum MacroMaybeGeneratedNormalImport

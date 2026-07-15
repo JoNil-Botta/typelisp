@@ -181,13 +181,14 @@ check_group_pair_phi_home() {
     _asm=$(compile_gate group_pair_phi_home tests/integration/group_pair_phi_home.tl)
     _body=$(function_body "$_asm" _tl_group_pair_phi_home_probe)
     assert_contains "$_body" 'call _tl_group_pair_phi_home_mk' group-pair-phi-home
-    # The call result uses a caller-saved pair, while the loop Phi itself is
-    # carried in a CSR pair across the next call. The old phi exclusion kept
-    # both words in frame slots and reloaded them into rax:rdx every iteration.
+    # The call result uses the ABI rax:rdx pair and is moved into a caller-saved
+    # pair. The loop Phi itself is carried in a CSR pair across the next call;
+    # internal copies stage both words sequentially through reserved rax rather
+    # than treating the copy as another ABI return through rax:rdx.
     assert_matches "$_body" '^[[:space:]]+movq %rax, %(r8|r9)$' group-pair-phi-home
     assert_matches "$_body" '^[[:space:]]+movq %rdx, %(r8|r9)$' group-pair-phi-home
-    assert_matches "$_body" '^[[:space:]]+movq %rax, %r(12|13|14|15|bx)$' group-pair-phi-home
-    assert_matches "$_body" '^[[:space:]]+movq %rdx, %r(12|13|14|15|bx)$' group-pair-phi-home
+    assert_regex_count_at_least "$_body" '^[[:space:]]+movq %rax, %r(12|13|14|15|bx)$' 2 group-pair-phi-home
+    assert_not_matches "$_body" '^[[:space:]]+movq %rdx, %r(12|13|14|15|bx)$' group-pair-phi-home
     assert_not_matches "$_body" '^[[:space:]]+movq [0-9]+\(%rsp\), %r(ax|dx)$' group-pair-phi-home
 }
 

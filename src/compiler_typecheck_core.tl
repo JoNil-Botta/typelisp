@@ -61153,6 +61153,16 @@
   [stdlib-roots : svec.Vec]
   [cfgs : sym_i64_env.SymI64Env]) : ResultMacroDeclsWithPaths
   (let
+    ;; Generated file imports need the loader's duplicate-path/module set.
+    ;; Seed it once, then extend it with each macro splice and loader result;
+    ;; rebuilding it from the whole expanded program per import retained tens
+    ;; of megabytes of obsolete persistent-env bindings.
+    [cur-materialize-seen : sym_i64_env.SymI64Env
+      (macro-materialize-seen-from
+        (& decls)
+        (& paths)
+        (sym_i64_env.sym-i64-empty)
+        "")]
     [cur-decls : AstDeclList decls]
     [cur-paths : AstDeclPathList paths]
     [cur-module : String module]
@@ -61229,6 +61239,14 @@
                                 (macro-decl-module-import-placeholder? decl)
                                 (macro-module-import-marker-only? expanded))
                                 (let
+                                  [_update-materialize-seen : unit
+                                    (set!
+                                      cur-materialize-seen
+                                      (macro-materialize-seen-from
+                                        (& expanded)
+                                        (& expanded-paths)
+                                        cur-materialize-seen
+                                        cur-module))]
                                   [marker-tail : AstDeclList
                                     (macro-scratch-decl-list-append
                                       expanded
@@ -61337,6 +61355,14 @@
                                 ;; walk over the spliced body itself (its nested
                                 ;; placeholders and generated file imports included).
                                 (let
+                                  [_update-materialize-seen : unit
+                                    (set!
+                                      cur-materialize-seen
+                                      (macro-materialize-seen-from
+                                        (& expanded)
+                                        (& expanded-paths)
+                                        cur-materialize-seen
+                                        cur-module))]
                                   [spliced-tail : AstDeclList
                                     (macro-scratch-decl-list-append
                                       expanded
@@ -61463,22 +61489,6 @@
                       ;; additive and can use the same refresh path as a macro
                       ;; splice instead of retaining another whole-program env.
                       (let
-                        [full-decls : AstDeclList
-                          (macro-scratch-decl-list-prefix-rev-current-suffix
-                            out-rev
-                            (macro-scratch-decl-list-current-suffix decl rest))]
-                        [full-paths : AstDeclPathList
-                          (macro-scratch-decl-path-list-prefix-rev-current-suffix
-                            out-paths-rev
-                            (macro-scratch-decl-path-list-current-suffix
-                              decl-path
-                              rest-paths))]
-                        [seen : sym_i64_env.SymI64Env
-                          (macro-materialize-seen-from
-                            full-decls
-                            full-paths
-                            (sym_i64_env.sym-i64-empty)
-                            "")]
                         ;; Keep the pools context's captured state current
                         ;; around the loader: it parses new content into the
                         ;; active pools, and a later install of a stale capture
@@ -61491,14 +61501,14 @@
                           decl
                           decl-path
                           cur-module
-                          seen
+                          cur-materialize-seen
                           stdlib-roots
                           cfgs
                           (tc-context-pools cur-ctx))
                           [(ResultMacroMaterializeImport.Ok
                               materialized-decls
                               materialized-paths
-                              _)
+                              next-materialize-seen)
                             (let
                               [_install-after-load : unit
                                 (tc-context-install-pools! cur-ctx)]
@@ -61519,6 +61529,9 @@
                                     materialized-paths
                                     rest-paths))]
                               (begin
+                                (set!
+                                  cur-materialize-seen
+                                  next-materialize-seen)
                                 ;; The loaded file may add defmacros or
                                 ;; expr-type macros: recompute the hoisted
                                 ;; prescan over the new whole-program view
@@ -61979,47 +61992,48 @@
     [_ (MacroMaybeGeneratedNormalImport.No)]))
 
 (define (macro-materialize-seen-from
-  [decls : AstDeclList]
-  [paths : AstDeclPathList]
+  [decls : (& decls AstDeclList)]
+  [paths : (& paths AstDeclPathList)]
   [seen : sym_i64_env.SymI64Env]
   [module : String]) : sym_i64_env.SymI64Env
-  (match (ast-decl-list-step decls)
-    [(AstDeclListStep.Nil) seen]
-    [(AstDeclListStep.Cons decl rest-box)
-      (let
-        [rest : AstDeclList rest-box]
-        [decl-path : String
-          (match (ast-decl-path-list-step paths)
-            [(AstDeclPathListStep.Cons path _) path]
-            [(AstDeclPathListStep.Nil) ""])]
-        [rest-paths : AstDeclPathList
-          (match (ast-decl-path-list-step paths)
-            [(AstDeclPathListStep.Cons _ path-rest)
-              (let
-                [path-rest : AstDeclPathList path-rest]
-                path-rest)]
-            [(AstDeclPathListStep.Nil) (ast-decl-path-list-new)])]
-        [next-module : String
-          (match decl
-            [(AstDecl.Module name) (intern-str name)]
-            [_ module])]
-        [seen-path : sym_i64_env.SymI64Env
-          (if (> (string.string-length decl-path) 0)
-            (sym_i64_env.sym-i64-bind
-              seen
-              (compiler-load-seen-path-key-in-module decl-path module)
-              1)
-            seen)]
-        [seen-decl : sym_i64_env.SymI64Env
-          (match decl
-            [(AstDecl.Module name)
-              (let
-                [module-name : String (intern-str name)]
-                (if (> (string.string-length module-name) 0)
-                  (sym_i64_env.sym-i64-bind seen-path module-name 1)
-                  seen-path))]
-            [_ seen-path])]
-        (macro-materialize-seen-from rest rest-paths seen-decl next-module))]))
+  (let
+    [count : i64 (ast-decl-list-len decls)]
+    [path-count : i64 (ast-decl-path-list-len paths)]
+    [index : i64 0]
+    [cur-module : String module]
+    [out : sym_i64_env.SymI64Env seen]
+    (begin
+      (while (< index count)
+        (let
+          [decl-path : String
+            (if (< index path-count)
+              (ast-decl-path-list-get paths index "")
+              "")]
+          (begin
+            (if (> (string.string-length decl-path) 0)
+              (set!
+                out
+                (sym_i64_env.sym-i64-bind
+                  out
+                  (compiler-load-seen-path-key-in-module decl-path cur-module)
+                  1))
+              unit)
+            (if (match (ast-decl-list-ref-borrowed decls index)
+              [(AstDecl.Module _) true]
+              [_ false])
+              (match (ast-decl-list-get decls index (ast-decl-module ""))
+                [(AstDecl.Module name)
+                  (let
+                    [module-name : String (intern-str name)]
+                    (begin
+                      (if (> (string.string-length module-name) 0)
+                        (set! out (sym_i64_env.sym-i64-bind out module-name 1))
+                        unit)
+                      (set! cur-module module-name)))]
+                [_ unit])
+              unit)
+            (set! index (+ index 1)))))
+      out)))
 
 (define (macro-materialize-import-diagnostic
   [path : String]

@@ -50948,6 +50948,20 @@
         (unsafe
           (arena.tl_arena_destroy retired))))))
 
+;; A splice rebuild keeps the previous symbol generation alive until its caller
+;; has replaced both the context and top environment that may reference it.
+;; Release it at that handoff instead of carrying it into the next rebuild,
+;; where current + retired + next would overlap by another arena commit.
+(define (macro-live-symbols-release-retired!) : unit
+  (let
+    [retired : i64 macro-live-symbols-retired-arena]
+    (begin
+      (set! macro-live-symbols-retired-arena 0)
+      (if (or (= retired 0) (= retired macro-live-symbols-arena))
+        unit
+        (unsafe
+          (arena.tl_arena_destroy retired))))))
+
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
 ;; may have introduced a name the reused symbols would resolve differently, so
@@ -64617,6 +64631,7 @@
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)
+                                          (macro-live-symbols-release-retired!)
                                           (set! cur-decls spliced-tail)
                                           (set! cur-paths spliced-path-tail))]
                                       [(ResultMacroSpliceRebuild.Err diag)
@@ -64734,6 +64749,7 @@
                                       (set! cur-ctx next-ctx)
                                       (set! cur-orig-decls next-decls)
                                       (set! cur-top-env next-top-env)
+                                      (macro-live-symbols-release-retired!)
                                       (set! cur-decls materialized-tail)
                                       (set!
                                         cur-paths

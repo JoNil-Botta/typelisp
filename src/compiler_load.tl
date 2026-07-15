@@ -2096,13 +2096,39 @@
   [left : AstDeclList]
   [right : AstDeclList]) : AstDeclList
   (let
-    [out : AstDeclList
-      (ast-decl-list-with-capacity
-        (+ (ast-decl-list-len (& left)) (ast-decl-list-len (& right))))]
-    (begin
-      (ast-decl-list-append-from (&mut out) (& left) 0)
-      (ast-decl-list-append-from (&mut out) (& right) 0)
-      out)))
+    [left-len : i64 (ast-decl-list-len (& left))]
+    [right-len : i64 (ast-decl-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (struct-get right prependable)
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            true)))
+      (let
+        [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
+        (begin
+          (ast-decl-list-append-from (&mut out) (& left) 0)
+          (ast-decl-list-append-from (&mut out) (& right) 0)
+          out)))))
 
 (define (compiler-load-decl-path-list-append
   [left : AstDeclPathList]
@@ -2120,13 +2146,40 @@
   [left : AstDeclPathList]
   [right : AstDeclPathList]) : AstDeclPathList
   (let
-    [out : AstDeclPathList
-      (ast-decl-path-list-with-capacity
-        (+ (ast-decl-path-list-len (& left)) (ast-decl-path-list-len (& right))))]
-    (begin
-      (ast-decl-path-list-append-from (&mut out) (& left) 0)
-      (ast-decl-path-list-append-from (&mut out) (& right) 0)
-      out)))
+    [left-len : i64 (ast-decl-path-list-len (& left))]
+    [right-len : i64 (ast-decl-path-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (struct-get right prependable)
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-path-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclPathList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            true)))
+      (let
+        [out : AstDeclPathList
+          (ast-decl-path-list-with-capacity (+ left-len right-len))]
+        (begin
+          (ast-decl-path-list-append-from (&mut out) (& left) 0)
+          (ast-decl-path-list-append-from (&mut out) (& right) 0)
+          out)))))
 
 (define (compiler-load-decl-module-list-append
   [left : AstDeclModuleList]
@@ -2146,15 +2199,40 @@
   [left : AstDeclModuleList]
   [right : AstDeclModuleList]) : AstDeclModuleList
   (let
-    [out : AstDeclModuleList
-      (ast-decl-module-list-with-capacity
-        (+
-          (ast-decl-module-list-len (& left))
-          (ast-decl-module-list-len (& right))))]
-    (begin
-      (ast-decl-module-list-append-from (&mut out) (& left) 0)
-      (ast-decl-module-list-append-from (&mut out) (& right) 0)
-      out)))
+    [left-len : i64 (ast-decl-module-list-len (& left))]
+    [right-len : i64 (ast-decl-module-list-len (& right))]
+    (if (and
+      (<= left-len (struct-get right offset))
+      (struct-get right prependable)
+      (not
+        (unsafe
+          (=
+            (ptr->int
+              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+            (ptr->int
+              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+      (let
+        [new-offset : i64 (- (struct-get right offset) left-len)]
+        (begin
+          (ast-decl-module-list-copy-to
+            (&mut (struct-get right slots))
+            (& (struct-get left slots))
+            (struct-get left offset)
+            new-offset
+            0
+            left-len)
+          (AstDeclModuleList
+            (struct-get right slots)
+            new-offset
+            (+ left-len right-len)
+            true)))
+      (let
+        [out : AstDeclModuleList
+          (ast-decl-module-list-with-capacity (+ left-len right-len))]
+        (begin
+          (ast-decl-module-list-append-from (&mut out) (& left) 0)
+          (ast-decl-module-list-append-from (&mut out) (& right) 0)
+          out)))))
 
 (define compiler-load-core-macro-prelude-path : String
   "stdlib/core_macros.tl")
@@ -12279,8 +12357,62 @@
           "_tl_dep_src_lib_helper")]
       [_ false])))
 
+(define (compiler-load-module-list-slots-address [items : AstDeclModuleList]) : i64
+  (unsafe
+    (cast
+      (ptr->int (ptr-cast (array-data (struct-get items slots)) : (Ptr u8)))
+      : i64)))
+
+(define (compiler-load-append-onto-reuse-ok?) : bool
+  (let
+    [left : AstDeclModuleList (ast-decl-module-list-with-capacity 2)]
+    [_left : unit
+      (begin
+        (ast-decl-module-list-push (&mut left) "left-a")
+        (ast-decl-module-list-push (&mut left) "left-b"))]
+    [right-base : AstDeclModuleList (ast-decl-module-list-new)]
+    [right-tail : AstDeclModuleList
+      (ast-decl-module-list-prepend-builder "right-b" right-base)]
+    [right : AstDeclModuleList
+      (ast-decl-module-list-prepend-builder "right-a" right-tail)]
+    [right-address : i64 (compiler-load-module-list-slots-address right)]
+    [reused : AstDeclModuleList
+      (compiler-load-decl-module-list-append-onto left right)]
+    [shared : (Array String) (array.make-array String 8)]
+    [_shared : unit
+      (begin
+        (array-set! shared 1 "alias-a")
+        (array-set! shared 2 "alias-b")
+        (array-set! shared 4 "tail-a")
+        (array-set! shared 5 "tail-b"))]
+    [alias-left : AstDeclModuleList (AstDeclModuleList shared 1 2 true)]
+    [alias-right : AstDeclModuleList (AstDeclModuleList shared 4 2 true)]
+    [alias-address : i64 (compiler-load-module-list-slots-address alias-right)]
+    [copied : AstDeclModuleList
+      (compiler-load-decl-module-list-append-onto alias-left alias-right)]
+    (and
+      (= (compiler-load-module-list-slots-address reused) right-address)
+      (= (ast-decl-module-list-len (& reused)) 4)
+      (string.eq (ast-decl-module-list-get (& reused) 0 "") "left-a")
+      (string.eq (ast-decl-module-list-get (& reused) 1 "") "left-b")
+      (string.eq (ast-decl-module-list-get (& reused) 2 "") "right-a")
+      (string.eq (ast-decl-module-list-get (& reused) 3 "") "right-b")
+      (not (= (compiler-load-module-list-slots-address copied) alias-address))
+      (= (ast-decl-module-list-len (& copied)) 4)
+      (string.eq (ast-decl-module-list-get (& copied) 0 "") "alias-a")
+      (string.eq (ast-decl-module-list-get (& copied) 1 "") "alias-b")
+      (string.eq (ast-decl-module-list-get (& copied) 2 "") "tail-a")
+      (string.eq (ast-decl-module-list-get (& copied) 3 "") "tail-b")
+      (string.eq (array-ref shared 1) "alias-a")
+      (string.eq (array-ref shared 2) "alias-b")
+      (string.eq (array-ref shared 4) "tail-a")
+      (string.eq (array-ref shared 5) "tail-b"))))
+
 (define (compiler-load-self-test) : i64
   (begin
+    (unless
+      (compiler-load-append-onto-reuse-ok?)
+      (return (io.panic "compiler-load: append-onto reuse smoke mismatch")))
     (unless
       (compiler-load-normalize-ok?)
       (return (io.panic "compiler-load: normalize smoke mismatch")))

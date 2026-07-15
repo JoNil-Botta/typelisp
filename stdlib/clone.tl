@@ -7,7 +7,7 @@
 (import stdlib.comptime)
 
 ;: Emit the `clone$Type` helper for a reachable one-field named struct.
-(defmacro (synthesize-one-field-struct [T : type]) : Decls
+(defmacro (synthesize-one-field-struct [T : type] [helper-name : Expr]) : Decls
   (match (type-kind T)
     ["struct"
       (if (!= (struct-field-count T) 1)
@@ -17,8 +17,6 @@
             (type-key T)))
         (let
           [type-name : String (type-nominal-name T)]
-          [helper-name : comptime.Expr
-            (comptime.expr-var (comptime.string-append "clone$" type-name))]
           [type-ctor : comptime.Expr (comptime.expr-var type-name)]
           [field-access : comptime.Expr
             (comptime.expr-struct-get

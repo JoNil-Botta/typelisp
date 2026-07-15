@@ -6576,7 +6576,8 @@
 
 (define (lower-clone-handoff-request-decl
   [pools : AstNodePoolContext]
-  [root-key-id : i64]) : AstDecl
+  [root-key-id : i64]
+  [helper-name-id : i64]) : AstDecl
   (let
     [callee : i64
       (ast-node-pool-context-expr-push
@@ -6588,11 +6589,13 @@
         pools
         (AstExpr.TypeLiteral
           (AstType.Struct (clone-name-key-base-id root-key-id))))]
+    [helper-arg : i64
+      (ast-node-pool-context-expr-push pools (AstExpr.Var helper-name-id))]
     [call-id : i64
       (ast-expr-call-with-pools
         pools
         callee
-        (ast-expr-cons type-arg (ast-expr-list-new)))]
+        (ast-expr-cons type-arg (ast-expr-cons helper-arg (ast-expr-list-new))))]
     (AstDecl.Import
       (AstImportSpec.Spec
         (AstImportKind.MacroDecls call-id AstMaybeModuleName.No)
@@ -6675,7 +6678,7 @@
   [entry-path : String]
   [pools : AstNodePoolContext]
   [root-key-id : i64]
-  [_helper-name-id : i64]) : ResultMacroDeclExpansion
+  [helper-name-id : i64]) : ResultMacroDeclExpansion
   (let
     [module-id : i64
       (if (clone-name-key-qualified? root-key-id)
@@ -6685,7 +6688,8 @@
       (if (= module-id cbi.compiler-builtin-id-fix-empty)
         ""
         (intern-str module-id))]
-    [request : AstDecl (lower-clone-handoff-request-decl pools root-key-id)]
+    [request : AstDecl
+      (lower-clone-handoff-request-decl pools root-key-id helper-name-id)]
     (match (macro-expand-decl-with-path
       (tc-context-with-module-id ctx module module-id)
       top-env

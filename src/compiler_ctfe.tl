@@ -54,11 +54,6 @@
       (intern-qualified-base-id name-id))
     name-id))
 
-;; String-only test and metadata adapters use the generated identity domain.
-;; Source identifiers are always carried from their AST nodes.
-(define (ctfe-string-identity-id [name : String]) : i64
-  (ctfe-materialize-generated-name-id name))
-
 ;; Macro construction can deliberately create a spelling that did not occur in
 ;; the parsed source. Generated ids live outside the source-name hash table; the
 ;; structural key and spelling check make hash collisions explicit.
@@ -761,12 +756,6 @@
   [pools : AstNodePoolContext]) : CtfeEnv
   (CtfeEnv.Nil pools (CtfeMaybeSyntaxPools.None) layouts reflections))
 
-(define (ctfe-env-extend
-  [env : CtfeEnv]
-  [name : String]
-  [value : CompilerCtfeValue]) : CtfeEnv
-  (ctfe-env-extend-id env (ctfe-string-identity-id name) value))
-
 (define (ctfe-env-extend-id
   [env : CtfeEnv]
   [name-id : i64]
@@ -777,13 +766,6 @@
     (ctfe-value-default-cast-type value)
     (ctfe-env-syntax-pools-for-value env value)
     (box env)))
-
-(define (ctfe-env-extend-typed
-  [env : CtfeEnv]
-  [name : String]
-  [value : CompilerCtfeValue]
-  [ty : AstType]) : CtfeEnv
-  (ctfe-env-extend-typed-id env (ctfe-string-identity-id name) value ty))
 
 (define (ctfe-env-extend-typed-id
   [env : CtfeEnv]
@@ -800,13 +782,6 @@
 ;; Only CTFE lexical `let` bindings receive mutable cells. This keeps compiler
 ;; metadata, macro parameters, and all runtime-only forms outside the mutation
 ;; surface while still allowing iterative compile-time syntax construction.
-(define (ctfe-env-extend-local-typed
-  [env : CtfeEnv]
-  [name : String]
-  [value : CompilerCtfeValue]
-  [ty : AstType]) : CtfeEnv
-  (ctfe-env-extend-local-typed-id env (ctfe-string-identity-id name) value ty))
-
 (define (ctfe-env-extend-local-typed-id
   [env : CtfeEnv]
   [name-id : i64]
@@ -844,16 +819,6 @@
       (array-set! key-ids n key-id)
       (CtfeLayoutFieldList slots key-ids (+ n 1)))))
 
-(define (ctfe-layout-field-list-push
-  [items : CtfeLayoutFieldList]
-  [value : CtfeLayoutField]) : CtfeLayoutFieldList
-  (match value
-    [(CtfeLayoutField.Field name _)
-      (ctfe-layout-field-list-push-id
-        items
-        value
-        (ctfe-string-identity-id name))]))
-
 (define (ctfe-layout-info-list-with-capacity [capacity : i64]) : CtfeLayoutInfoList
   (CtfeLayoutInfoList
     (array.make-array CtfeLayoutInfo capacity)
@@ -878,14 +843,6 @@
       (array-set! slots n value)
       (ctfe_key_map.insert-ref! (&mut index) name-id n)
       (CtfeLayoutInfoList slots index (+ n 1)))))
-
-(define (ctfe-layout-info-list-push
-  [items : CtfeLayoutInfoList]
-  [value : CtfeLayoutInfo]) : CtfeLayoutInfoList
-  (ctfe-layout-info-list-push-id
-    items
-    value
-    (ctfe-name-id-key (ctfe-layout-info-name-id value))))
 
 (define (ctfe-reflect-field-list-with-capacity [capacity : i64]) : CtfeReflectFieldList
   (CtfeReflectFieldList (array.make-array CtfeReflectField capacity) 0))
@@ -948,21 +905,6 @@
       (ctfe_key_map.insert-ref! (&mut index) key-id n)
       (CtfeReflectInfoList slots index (+ n 1)))))
 
-(define (ctfe-reflect-info-list-push
-  [items : CtfeReflectInfoList]
-  [value : CtfeReflectInfo]) : CtfeReflectInfoList
-  (ctfe-reflect-info-list-push-id
-    items
-    value
-    (ctfe-name-id-key (ctfe-reflect-info-key-id value))))
-
-(define (ctfe-layout-info-name [info : CtfeLayoutInfo]) : String
-  (match info
-    [(CtfeLayoutInfo.Info name _ _ _ _) name]))
-
-(define (ctfe-layout-info-name-id [info : CtfeLayoutInfo]) : i64
-  (ctfe-string-identity-id (ctfe-layout-info-name info)))
-
 ;; Retained as a compatibility hook for callers that delimit metadata builds.
 ;; Each metadata list now owns its id index, so no shared String-derived set is
 ;; reset here.
@@ -976,14 +918,6 @@
   (if (ctfe_key_map.contains? (& (struct-get layouts index)) name-id)
     layouts
     (ctfe-layout-info-list-push-id layouts info name-id)))
-
-(define (ctfe-layout-info-list-add-if-missing
-  [layouts : CtfeLayoutInfoList]
-  [info : CtfeLayoutInfo]) : CtfeLayoutInfoList
-  (ctfe-layout-info-list-add-if-missing-id
-    layouts
-    info
-    (ctfe-name-id-key (ctfe-layout-info-name-id info))))
 
 (define (ctfe-layout-info-lookup-id-from
   [layouts : CtfeLayoutInfoList]
@@ -999,12 +933,6 @@
   [name-id : i64]) : CtfeMaybeLayoutInfo
   (ctfe-layout-info-lookup-id-from layouts (ctfe-name-id-key name-id) 0))
 
-(define (ctfe-layout-info-lookup [layouts : CtfeLayoutInfoList] [name : String]) : CtfeMaybeLayoutInfo
-  (ctfe-layout-info-lookup-id-from
-    layouts
-    (ctfe-name-id-key (ctfe-string-identity-id name))
-    0))
-
 (define (ctfe-layout-field-offset-id-from
   [fields : CtfeLayoutFieldList]
   [name-id : i64]
@@ -1018,11 +946,6 @@
           (if (= (array.ref (struct-get fields key-ids) index) name-id)
             offset
             (ctfe-layout-field-offset-id-from fields name-id (+ index 1)))]))))
-
-(define (ctfe-layout-field-offset
-  [fields : CtfeLayoutFieldList]
-  [name : String]) : i64
-  (ctfe-layout-field-offset-id-from fields (ctfe-string-identity-id name) 0))
 
 (define (ctfe-layout-field-offset-id
   [fields : CtfeLayoutFieldList]
@@ -1118,9 +1041,6 @@
   (None)
   (Some CompilerCtfeValue))
 
-(define (ctfe-env-lookup [env : CtfeEnv] [name : String]) : CtfeMaybeValue
-  (ctfe-env-lookup-id env (ctfe-string-identity-id name)))
-
 (define (ctfe-env-lookup-id [env : CtfeEnv] [name-id : i64]) : CtfeMaybeValue
   (match env
     [(CtfeEnv.Nil _ _ _ _) (CtfeMaybeValue.None)]
@@ -1132,9 +1052,6 @@
       (if (= key name-id)
         (CtfeMaybeValue.Some (box-get value))
         (ctfe-env-lookup-id (box-get rest) name-id))]))
-
-(define (ctfe-env-lookup-type [env : CtfeEnv] [name : String]) : AstMaybeType
-  (ctfe-env-lookup-type-id env (ctfe-string-identity-id name)))
 
 (define (ctfe-env-lookup-type-id [env : CtfeEnv] [name-id : i64]) : AstMaybeType
   (match env
@@ -1150,12 +1067,6 @@
 
 ;; Set the nearest CTFE-local binding. Finding an immutable binding with the
 ;; same name stops the search, matching ordinary lexical shadowing rules.
-(define (ctfe-env-set-local!
-  [env : CtfeEnv]
-  [name : String]
-  [value : CompilerCtfeValue]) : bool
-  (ctfe-env-set-local-id! env (ctfe-string-identity-id name) value))
-
 (define (ctfe-env-set-local-id!
   [env : CtfeEnv]
   [name-id : i64]
@@ -1383,14 +1294,6 @@
     (& (box-get ctfe-module-macro-export-keys))
     (ctfe-module-macro-export-key-id module-id name-id)))
 
-(define (ctfe-reflect-info-key [info : CtfeReflectInfo]) : String
-  (match info
-    [(CtfeReflectInfo.Struct key _ _ _ _ _) key]
-    [(CtfeReflectInfo.Enum key _ _ _ _ _) key]))
-
-(define (ctfe-reflect-info-key-id [info : CtfeReflectInfo]) : i64
-  (ctfe-string-identity-id (ctfe-reflect-info-key info)))
-
 (define (ctfe-reflect-info-list-add-if-missing-id
   [infos : CtfeReflectInfoList]
   [info : CtfeReflectInfo]
@@ -1398,14 +1301,6 @@
   (if (ctfe_key_map.contains? (& (struct-get infos index)) key-id)
     infos
     (ctfe-reflect-info-list-push-id infos info key-id)))
-
-(define (ctfe-reflect-info-list-add-if-missing
-  [infos : CtfeReflectInfoList]
-  [info : CtfeReflectInfo]) : CtfeReflectInfoList
-  (ctfe-reflect-info-list-add-if-missing-id
-    infos
-    info
-    (ctfe-name-id-key (ctfe-reflect-info-key-id info))))
 
 (define (ctfe-reflect-info-lookup-id-from
   [infos : CtfeReflectInfoList]
@@ -1420,12 +1315,6 @@
   [infos : CtfeReflectInfoList]
   [name-id : i64]) : CtfeMaybeReflectInfo
   (ctfe-reflect-info-lookup-id-from infos (ctfe-name-id-key name-id) 0))
-
-(define (ctfe-reflect-info-lookup [infos : CtfeReflectInfoList] [key : String]) : CtfeMaybeReflectInfo
-  (ctfe-reflect-info-lookup-id-from
-    infos
-    (ctfe-name-id-key (ctfe-string-identity-id key))
-    0))
 
 (define (ctfe-reflect-field-def-count [fields : AstFieldDefList]) : i64
   (struct-get (& fields) len))
@@ -13205,9 +13094,9 @@
 
 (define (compiler-ctfe-env-string-eq?
   [env : CtfeEnv]
-  [name : String]
+  [name-id : i64]
   [want : String]) : bool
-  (match (ctfe-env-lookup env name)
+  (match (ctfe-env-lookup-id env name-id)
     [(CtfeMaybeValue.Some value)
       (match value
         [(CompilerCtfeValue.String actual _) (string.eq actual want)]
@@ -13215,8 +13104,8 @@
         [_ false])]
     [(CtfeMaybeValue.None) false]))
 
-(define (compiler-ctfe-env-i64-eq? [env : CtfeEnv] [name : String] [want : i64]) : bool
-  (match (ctfe-env-lookup env name)
+(define (compiler-ctfe-env-i64-eq? [env : CtfeEnv] [name-id : i64] [want : i64]) : bool
+  (match (ctfe-env-lookup-id env name-id)
     [(CtfeMaybeValue.Some value)
       (match value
         [(CompilerCtfeValue.I64 actual) (= actual want)]
@@ -13227,20 +13116,22 @@
   [env : CtfeEnv]
   [ty : AstType]
   [want : String]) : bool
-  (match (ctfe-match-type-info-variant
-    cbi.compiler-builtin-id-fix-TypeInfoBuiltin
-    (ast-pattern-cons (ctfe-pat-binding "kind") (ast-pattern-list-new))
-    ty
-    env)
-    [(CtfePatternMatch.Matched matched)
-      (compiler-ctfe-env-string-eq? matched "kind" want)]
-    [(CtfePatternMatch.No) false]))
+  (let
+    [kind-id : i64 (ctfe-materialize-generated-name-id "kind")]
+    (match (ctfe-match-type-info-variant
+      cbi.compiler-builtin-id-fix-TypeInfoBuiltin
+      (ast-pattern-cons (ast-pat-binding-id kind-id) (ast-pattern-list-new))
+      ty
+      env)
+      [(CtfePatternMatch.Matched matched)
+        (compiler-ctfe-env-string-eq? matched kind-id want)]
+      [(CtfePatternMatch.No) false])))
 
 (define (compiler-ctfe-env-type-info-box-builtin-kind?
   [env : CtfeEnv]
-  [name : String]
+  [name-id : i64]
   [want : String]) : bool
-  (match (ctfe-env-lookup env name)
+  (match (ctfe-env-lookup-id env name-id)
     [(CtfeMaybeValue.Some value)
       (match value
         [(CompilerCtfeValue.TypeInfoBox ty)
@@ -13270,10 +13161,10 @@
 
 (define (compiler-ctfe-env-type-info-list-ref-builtin-kind?
   [env : CtfeEnv]
-  [name : String]
+  [name-id : i64]
   [index : i64]
   [want : String]) : bool
-  (match (ctfe-env-lookup env name)
+  (match (ctfe-env-lookup-id env name-id)
     [(CtfeMaybeValue.Some value)
       (compiler-ctfe-type-info-list-ref-builtin-kind? env value index want)]
     [(CtfeMaybeValue.None) false]))
@@ -13333,9 +13224,9 @@
       (ctfe-ast-push match-env (AstExpr.Literal (AstLiteral.Bool false)))]
     [builtin-arm : AstMatchArm
       (ast-match-arm
-        (ctfe-pat-variant
-          "TypeInfoBuiltin"
-          (ast-pattern-cons (ctfe-pat-binding "kind") (ast-pattern-list-new)))
+        (ast-pat-variant-id
+          cbi.compiler-builtin-id-fix-TypeInfoBuiltin
+          (ast-pattern-cons AstPattern.Wildcard (ast-pattern-list-new)))
         true-lit)]
     [fallback-arm : AstMatchArm (ast-match-arm AstPattern.Wildcard false-lit)]
     [match-expr : i64
@@ -13360,6 +13251,12 @@
     [env : CtfeEnv
       (ctfe-env-with-reflections
         (ctfe-reflections-from-program (compiler-ctfe-reflection-program)))]
+    [elem-id : i64 (ctfe-materialize-generated-name-id "elem")]
+    [params-id : i64 (ctfe-materialize-generated-name-id "params")]
+    [ret-id : i64 (ctfe-materialize-generated-name-id "ret")]
+    [key-id : i64 (ctfe-materialize-generated-name-id "key")]
+    [fields-id : i64 (ctfe-materialize-generated-name-id "fields")]
+    [variants-id : i64 (ctfe-materialize-generated-name-id "variants")]
     [i64-ty : i64 (ctfe-ast-push env (AstExpr.TypeLiteral (AstType.I64)))]
     [array-ty : i64
       (ctfe-ast-push env (AstExpr.TypeLiteral (ast-ty-array (AstType.I64) 4)))]
@@ -13420,18 +13317,21 @@
               (match (ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-fix-TypeInfoArray
                 (ast-pattern-cons
-                  (ctfe-pat-binding "elem")
+                  (ast-pat-binding-id elem-id)
                   (ast-pattern-cons
-                    (ctfe-pat-binding "len")
+                    (ast-pat-binding-id cbi.compiler-builtin-id-fix-len)
                     (ast-pattern-list-new)))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
                   (if (and
-                    (compiler-ctfe-env-i64-eq? matched "len" 4)
+                    (compiler-ctfe-env-i64-eq?
+                      matched
+                      cbi.compiler-builtin-id-fix-len
+                      4)
                     (compiler-ctfe-env-type-info-box-builtin-kind?
                       matched
-                      "elem"
+                      elem-id
                       "i64"))
                     unit
                     (set! ok false))]
@@ -13450,14 +13350,14 @@
               (match (ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-fix-TypeInfoDynArray
                 (ast-pattern-cons
-                  (ctfe-pat-binding "elem")
+                  (ast-pat-binding-id elem-id)
                   (ast-pattern-list-new))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-box-builtin-kind?
                     matched
-                    "elem"
+                    elem-id
                     "bool")
                     unit
                     (set! ok false))]
@@ -13476,14 +13376,14 @@
               (match (ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-fix-TypeInfoTuple
                 (ast-pattern-cons
-                  (ctfe-pat-binding "items")
+                  (ast-pat-binding-id cbi.compiler-builtin-id-fix-items)
                   (ast-pattern-list-new))
                 ty
                 env)
                 [(CtfePatternMatch.Matched matched)
                   (if (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                     matched
-                    "items"
+                    cbi.compiler-builtin-id-fix-items
                     1
                     "bool")
                     unit
@@ -13503,9 +13403,9 @@
               (match (ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-fix-TypeInfoFunction
                 (ast-pattern-cons
-                  (ctfe-pat-binding "params")
+                  (ast-pat-binding-id params-id)
                   (ast-pattern-cons
-                    (ctfe-pat-binding "ret")
+                    (ast-pat-binding-id ret-id)
                     (ast-pattern-list-new)))
                 ty
                 env)
@@ -13513,12 +13413,12 @@
                   (if (and
                     (compiler-ctfe-env-type-info-list-ref-builtin-kind?
                       matched
-                      "params"
+                      params-id
                       1
                       "bool")
                     (compiler-ctfe-env-type-info-box-builtin-kind?
                       matched
-                      "ret"
+                      ret-id
                       "string"))
                     unit
                     (set! ok false))]
@@ -13537,9 +13437,9 @@
               (match (ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-fix-TypeInfoStruct
                 (ast-pattern-cons
-                  (ctfe-pat-binding "key")
+                  (ast-pat-binding-id key-id)
                   (ast-pattern-cons
-                    (ctfe-pat-binding "fields")
+                    (ast-pat-binding-id fields-id)
                     (ast-pattern-list-new)))
                 ty
                 env)
@@ -13547,9 +13447,9 @@
                   (if (and
                     (compiler-ctfe-env-string-eq?
                       matched
-                      "key"
+                      key-id
                       (ctfe-type-info-key-in-env env ty))
-                    (match (ctfe-env-lookup matched "fields")
+                    (match (ctfe-env-lookup-id matched fields-id)
                       [(CtfeMaybeValue.Some fields-value)
                         (compiler-ctfe-type-info-field-list-ok?
                           matched
@@ -13572,9 +13472,9 @@
               (match (ctfe-match-type-info-variant
                 cbi.compiler-builtin-id-fix-TypeInfoEnum
                 (ast-pattern-cons
-                  (ctfe-pat-binding "key")
+                  (ast-pat-binding-id key-id)
                   (ast-pattern-cons
-                    (ctfe-pat-binding "variants")
+                    (ast-pat-binding-id variants-id)
                     (ast-pattern-list-new)))
                 ty
                 env)
@@ -13582,9 +13482,9 @@
                   (if (and
                     (compiler-ctfe-env-string-eq?
                       matched
-                      "key"
+                      key-id
                       (ctfe-type-info-key-in-env env ty))
-                    (match (ctfe-env-lookup matched "variants")
+                    (match (ctfe-env-lookup-id matched variants-id)
                       [(CtfeMaybeValue.Some variants-value)
                         (compiler-ctfe-type-info-variant-list-ok?
                           matched

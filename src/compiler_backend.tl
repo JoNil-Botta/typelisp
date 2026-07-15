@@ -16336,6 +16336,7 @@
   [function : String]
   [assignments : CompilerRegAssignmentList]
   [planned-len : String]
+  [planned-index : String]
   [index : CompilerIrValue]
   [length : CompilerIrValue]
   [ok-label : String]
@@ -16372,10 +16373,12 @@
     ;; tripped the bounds check (false OOB abort).
     [index-operand : String
       (if (string.eq index-reg "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-with scav-len)
-          6
-          "%r10")
+        (if (string.eq planned-index "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-with scav-len)
+            6
+            "%r10")
+          planned-index)
         index-reg)]
     (if (string.eq index-reg "")
       (let
@@ -16574,7 +16577,8 @@
 (define (compiler-backend-emit-addr-of
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
-  [src : i64]) : ResultCompilerBackend
+  [src : i64]
+  [planned-address : String]) : ResultCompilerBackend
   (if (>= (compiler-backend-forwarded-addr-of-src dst) 0)
     (ResultCompilerBackend.Ok "")
     (let
@@ -16590,11 +16594,13 @@
               [(CompilerRegLocation.Spill offset)
                 (let
                   [addr-reg : String
-                    (compiler-backend-scavenge-reg
-                      dst
-                      (compiler-backend-addr-scavenge-exclude)
-                      0
-                      "%r8")]
+                    (if (string.eq planned-address "")
+                      (compiler-backend-scavenge-reg
+                        dst
+                        (compiler-backend-addr-scavenge-exclude)
+                        0
+                        "%r8")
+                      planned-address)]
                   (string.append
                     (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
                     (str_cat.str-cat
@@ -16611,11 +16617,13 @@
           [(CompilerRegMaybeLocation.No)
             (let
               [addr-reg : String
-                (compiler-backend-scavenge-reg
-                  dst
-                  (compiler-backend-addr-scavenge-exclude)
-                  0
-                  "%r8")]
+                (if (string.eq planned-address "")
+                  (compiler-backend-scavenge-reg
+                    dst
+                    (compiler-backend-addr-scavenge-exclude)
+                    0
+                    "%r8")
+                  planned-address)]
               (string.append
                 (str_cat.str-cat "    leaq " slot ", " addr-reg "\n")
                 (compiler-backend-emit-store-var-with-plan
@@ -16754,7 +16762,9 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-address : String]
+  [planned-index : String]) : ResultCompilerBackend
   ;; vreg-model: when the GEP result has a register home and the base is already
   ;; in a register, compute the address straight into that home with a single
   ;; leaq (constant offset). Variable-index GEPs and spilled/stack operands fall
@@ -16820,14 +16830,18 @@
                 base
                 offset
                 elem-ty
-                gep-disp)))])
+                gep-disp
+                planned-address
+                planned-index)))])
       (compiler-backend-emit-gep-staged
         assignments
         dst
         base
         offset
         elem-ty
-        gep-disp))))
+        gep-disp
+        planned-address
+        planned-index))))
 
 (define (compiler-backend-emit-gep-staged-avoid
   [assignments : CompilerRegAssignmentList]
@@ -16837,7 +16851,9 @@
   [elem-ty : AstType]
   [gep-disp : i64]
   [avoid1 : String]
-  [avoid2 : String]) : ResultCompilerBackend
+  [avoid2 : String]
+  [planned-address : String]
+  [planned-index : String]) : ResultCompilerBackend
   (let
     [scale : i64 (compiler-backend-type-size elem-ty)]
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
@@ -16852,11 +16868,13 @@
           [result-reg : String
             (if use-dst-home?
               dst-home
-              (compiler-backend-scavenge-reg
-                dst
-                (compiler-backend-two-exclude avoid1 avoid2)
-                2
-                "%r10"))]
+              (if (string.eq planned-address "")
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-two-exclude avoid1 avoid2)
+                  2
+                  "%r10")
+                planned-address))]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             base
@@ -16880,14 +16898,16 @@
                 [(CompilerBackendMaybeAsm.No)
                   (let
                     [scav-idx : String
-                      (compiler-backend-scavenge-reg
-                        dst
-                        (compiler-backend-three-exclude
-                          result-reg
-                          avoid1
-                          avoid2)
-                        3
-                        "%r8")]
+                      (if (string.eq planned-index "")
+                        (compiler-backend-scavenge-reg
+                          dst
+                          (compiler-backend-three-exclude
+                            result-reg
+                            avoid1
+                            avoid2)
+                          3
+                          "%r8")
+                        planned-index)]
                     (match (compiler-backend-emit-load-value-with-plan
                       assignments
                       offset
@@ -16927,17 +16947,21 @@
           [result-reg : String
             (if use-dst-home?
               dst-home
+              (if (string.eq planned-address "")
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-three-exclude offset-home avoid1 avoid2)
+                  3
+                  "%r10")
+                planned-address))]
+          [scav-idx : String
+            (if (string.eq planned-index "")
               (compiler-backend-scavenge-reg
                 dst
-                (compiler-backend-three-exclude offset-home avoid1 avoid2)
+                (compiler-backend-three-exclude result-reg avoid1 avoid2)
                 3
-                "%r10"))]
-          [scav-idx : String
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-three-exclude result-reg avoid1 avoid2)
-              3
-              "%r8")]
+                "%r8")
+              planned-index)]
           (match (compiler-backend-emit-load-value-with-plan
             assignments
             base
@@ -16976,7 +17000,9 @@
   [base : CompilerIrValue]
   [offset : CompilerIrValue]
   [elem-ty : AstType]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-address : String]
+  [planned-index : String]) : ResultCompilerBackend
   (compiler-backend-emit-gep-staged-avoid
     assignments
     dst
@@ -16985,13 +17011,17 @@
     elem-ty
     gep-disp
     ""
-    ""))
+    ""
+    planned-address
+    planned-index))
 
 (define (compiler-backend-emit-load-instr
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
   [src : CompilerIrValue]
-  [ty : AstType]) : ResultCompilerBackend
+  [ty : AstType]
+  [planned-address : String]
+  [planned-value : String]) : ResultCompilerBackend
   ;; vreg-model: when the source pointer (e.g. a register-homed GEP result) is
   ;; already in a register, dereference it straight from that home rather than
   ;; staging it through a scratch register (the old reload-into-%r10 per deref).
@@ -17001,10 +17031,12 @@
   (let
     [src-home : String (compiler-backend-value-register-home assignments src)]
     [scav-base : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-one-exclude src-home)
-        1
-        "%r10")]
+      (if (string.eq planned-address "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-one-exclude src-home)
+          1
+          "%r10")
+        planned-address)]
     (match (compiler-backend-emit-address-base assignments src scav-base)
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (let
@@ -17050,7 +17082,8 @@
                   base-mem
                   ty
                   (compiler-backend-one-exclude base)
-                  1)))))]
+                  1
+                  planned-value)))))]
       [(ResultCompilerBackendAddressBase.Err message)
         (ResultCompilerBackend.Err message)])))
 
@@ -17083,7 +17116,8 @@
   [addr : String]
   [ty : AstType]
   [exclude : (Array String)]
-  [exclude-n : i64]) : String
+  [exclude-n : i64]
+  [planned-value : String]) : String
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     (if (if (string.eq dst-home "")
@@ -17092,7 +17126,9 @@
       (compiler-backend-emit-load-memory-to-reg addr ty dst-home)
       (let
         [load-reg : String
-          (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")]
+          (if (string.eq planned-value "")
+            (compiler-backend-scavenge-reg dst exclude exclude-n "%r8")
+            planned-value)]
         (str_cat.str-cat
           (compiler-backend-emit-load-memory-to-reg addr ty load-reg)
           (compiler-backend-emit-store-var-with-plan assignments dst load-reg))))))
@@ -17445,7 +17481,10 @@
   [src : CompilerIrValue]
   [size : i64]
   [protect : (Array String)]
-  [protect-n : i64]) : ResultCompilerBackend
+  [protect-n : i64]
+  [planned-dst : String]
+  [planned-src : String]
+  [planned-value : String]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
     (let
@@ -17456,7 +17495,9 @@
           (compiler-backend-value-register-home assignments dst))]
       [dst-reg : String
         (if (string.eq dst-home "")
-          (compiler-backend-scavenge-reg-here protect protect-n "%r10")
+          (if (string.eq planned-dst "")
+            (compiler-backend-scavenge-reg-here protect protect-n "%r10")
+            planned-dst)
           dst-home)]
       (match (if (string.eq dst-home "")
         (compiler-backend-emit-load-value-with-plan assignments dst dst-reg)
@@ -17476,10 +17517,12 @@
                 protect-n)]
             [src-reg : String
               (if (string.eq src-home "")
-                (compiler-backend-scavenge-reg-here
-                  src-exclude
-                  (+ 1 protect-n)
-                  "%r9")
+                (if (string.eq planned-src "")
+                  (compiler-backend-scavenge-reg-here
+                    src-exclude
+                    (+ 1 protect-n)
+                    "%r9")
+                  planned-src)
                 src-home)]
             [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
             [copy-gp-exclude-base : (Array String)
@@ -17492,10 +17535,12 @@
                 protect-n)]
             [copy-gp : String
               (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-                (compiler-backend-scavenge-reg-here
-                  copy-gp-exclude
-                  (+ 2 protect-n)
-                  "%r8")
+                (if (string.eq planned-value "")
+                  (compiler-backend-scavenge-reg-here
+                    copy-gp-exclude
+                    (+ 2 protect-n)
+                    "%r8")
+                  planned-value)
                 "")]
             (match (if (string.eq src-home "")
               (compiler-backend-emit-load-value-with-plan
@@ -17526,7 +17571,10 @@
   [assignments : CompilerRegAssignmentList]
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
-  [size : i64]) : ResultCompilerBackend
+  [size : i64]
+  [planned-dst : String]
+  [planned-src : String]
+  [planned-value : String]) : ResultCompilerBackend
   (let
     [no-protect : (Array String) (make-array String 0)]
     (compiler-backend-emit-copy-bytes-avoid
@@ -17535,7 +17583,10 @@
       src
       size
       no-protect
-      0)))
+      0
+      planned-dst
+      planned-src
+      planned-value)))
 
 (define (compiler-backend-copy-run-protect-value-count
   [assignments : CompilerRegAssignmentList]
@@ -17670,7 +17721,11 @@
   [size : i64]
   [protect : (Array String)]
   [protect-n : i64]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-dst : String]
+  [planned-index : String]
+  [planned-src : String]
+  [planned-value : String]) : ResultCompilerBackend
   (if (<= size 0)
     (ResultCompilerBackend.Ok "")
     (match (compiler-backend-value-as-i64 offset)
@@ -17684,7 +17739,10 @@
           ;; folded displacement); merged for totality.
           (+ (* n (compiler-backend-type-size elem-ty)) gep-disp)
           protect
-          protect-n)]
+          protect-n
+          planned-dst
+          planned-src
+          planned-value)]
       [(option_i64.None)
         (compiler-backend-emit-copy-bytes-from-gep-dyn
           assignments
@@ -17695,7 +17753,11 @@
           size
           protect
           protect-n
-          gep-disp)])))
+          gep-disp
+          planned-dst
+          planned-index
+          planned-src
+          planned-value)])))
 
 ;; Constant-offset fused Gep+CopyBytes. When every chunk address (disp ..
 ;; disp+size) fits imm32 the gep displacement folds into the chunk DST
@@ -17710,7 +17772,10 @@
   [size : i64]
   [disp : i64]
   [protect : (Array String)]
-  [protect-n : i64]) : ResultCompilerBackend
+  [protect-n : i64]
+  [planned-dst : String]
+  [planned-src : String]
+  [planned-value : String]) : ResultCompilerBackend
   (let
     [near? : bool
       (and
@@ -17726,14 +17791,16 @@
         (compiler-backend-value-scalar-register assignments src))]
     [dst-reg : String
       (if (string.eq base-home "")
-        (compiler-backend-scavenge-reg-here
-          (compiler-backend-scavenge-exclude-merge
-            (compiler-backend-one-exclude src-home)
-            1
-            protect
-            protect-n)
-          (+ 1 protect-n)
-          "%r10")
+        (if (string.eq planned-dst "")
+          (compiler-backend-scavenge-reg-here
+            (compiler-backend-scavenge-exclude-merge
+              (compiler-backend-one-exclude src-home)
+              1
+              protect
+              protect-n)
+            (+ 1 protect-n)
+            "%r10")
+          planned-dst)
         base-home)]
     (match (if (string.eq base-home "")
       (match (compiler-backend-emit-load-value-with-plan
@@ -17759,26 +17826,30 @@
         (let
           [src-reg : String
             (if (string.eq src-home "")
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-scavenge-exclude-merge
-                  (compiler-backend-one-exclude dst-reg)
-                  1
-                  protect
-                  protect-n)
-                (+ 1 protect-n)
-                "%r9")
+              (if (string.eq planned-src "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-one-exclude dst-reg)
+                    1
+                    protect
+                    protect-n)
+                  (+ 1 protect-n)
+                  "%r9")
+                planned-src)
               src-home)]
           [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-scavenge-exclude-merge
-                  (compiler-backend-two-exclude dst-reg src-reg)
-                  2
-                  protect
-                  protect-n)
-                (+ 2 protect-n)
-                "%r8")
+              (if (string.eq planned-value "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-two-exclude dst-reg src-reg)
+                    2
+                    protect
+                    protect-n)
+                  (+ 2 protect-n)
+                  "%r8")
+                planned-value)
               "")]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-value-with-plan assignments src src-reg)
@@ -17819,7 +17890,11 @@
   [size : i64]
   [protect : (Array String)]
   [protect-n : i64]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-dst : String]
+  [planned-index : String]
+  [planned-src : String]
+  [planned-value : String]) : ResultCompilerBackend
   (let
     [scale : i64 (compiler-backend-type-size elem-ty)]
     [base-home : String
@@ -17831,14 +17906,16 @@
       (compiler-backend-address-base-filter
         (compiler-backend-value-scalar-register assignments src))]
     [scav-base : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-scavenge-exclude-merge
-          (compiler-backend-two-exclude src-home offset-home)
-          2
-          protect
-          protect-n)
-        (+ 2 protect-n)
-        "%r10")]
+      (if (string.eq planned-dst "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-merge
+            (compiler-backend-two-exclude src-home offset-home)
+            2
+            protect
+            protect-n)
+          (+ 2 protect-n)
+          "%r10")
+        planned-dst)]
     (match (compiler-backend-emit-copy-gep-dyn-address
       assignments
       base
@@ -17850,31 +17927,36 @@
       src-home
       protect
       protect-n
-      gep-disp)
+      gep-disp
+      planned-index)
       [(ResultCompilerBackend.Ok addr-asm)
         (let
           [src-reg : String
             (if (string.eq src-home "")
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-scavenge-exclude-merge
-                  (compiler-backend-one-exclude scav-base)
-                  1
-                  protect
-                  protect-n)
-                (+ 1 protect-n)
-                "%r9")
+              (if (string.eq planned-src "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-one-exclude scav-base)
+                    1
+                    protect
+                    protect-n)
+                  (+ 1 protect-n)
+                  "%r9")
+                planned-src)
               src-home)]
           [copy-xmm : String (compiler-backend-copy-xmm-scratch size)]
           [copy-gp : String
             (if (compiler-backend-copy-needs-gp-scratch? size copy-xmm)
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-scavenge-exclude-merge
-                  (compiler-backend-two-exclude scav-base src-reg)
-                  2
-                  protect
-                  protect-n)
-                (+ 2 protect-n)
-                "%r8")
+              (if (string.eq planned-value "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-two-exclude scav-base src-reg)
+                    2
+                    protect
+                    protect-n)
+                  (+ 2 protect-n)
+                  "%r8")
+                planned-value)
               "")]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-value-with-plan assignments src src-reg)
@@ -17912,7 +17994,8 @@
   [src-home : String]
   [protect : (Array String)]
   [protect-n : i64]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-index : String]) : ResultCompilerBackend
   (if (and
     (not (string.eq base-home ""))
     (not (string.eq offset-home ""))
@@ -17949,14 +18032,16 @@
           ;; triggers an emergency spill.
           (let
             [scav-idx : String
-              (compiler-backend-scavenge-reg-here
-                (compiler-backend-scavenge-exclude-merge
-                  (compiler-backend-two-exclude scav-base src-home)
-                  2
-                  protect
-                  protect-n)
-                (+ 2 protect-n)
-                "%r8")]
+              (if (string.eq planned-index "")
+                (compiler-backend-scavenge-reg-here
+                  (compiler-backend-scavenge-exclude-merge
+                    (compiler-backend-two-exclude scav-base src-home)
+                    2
+                    protect
+                    protect-n)
+                  (+ 2 protect-n)
+                  "%r8")
+                planned-index)]
             (match (compiler-backend-emit-load-value-with-plan
               assignments
               offset
@@ -18020,7 +18105,10 @@
   [elem-ty : AstType]
   [load-ty : AstType]
   [base-reg-in : String]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-address : String]
+  [planned-index : String]
+  [planned-value : String]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
@@ -18042,11 +18130,13 @@
         [base-reg : String
           (if (string.eq base-reg-in "")
             (if (string.eq base-home "")
-              (compiler-backend-scavenge-reg
-                dst
-                (compiler-backend-addr-scavenge-exclude)
-                0
-                "%r10")
+              (if (string.eq planned-address "")
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-addr-scavenge-exclude)
+                  0
+                  "%r10")
+                planned-address)
               base-home)
             base-reg-in)]
         [addr : String (compiler-backend-base-address disp base-reg)]
@@ -18072,7 +18162,8 @@
                     addr
                     load-ty
                     (compiler-backend-one-exclude base-reg)
-                    1))))]
+                    1
+                    planned-value))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]
     [(option_i64.None)
@@ -18102,11 +18193,13 @@
           (if (string.eq base-reg-in "")
             (if use-base-home?
               base-home
-              (compiler-backend-scavenge-reg
-                dst
-                (compiler-backend-one-exclude offset-home)
-                1
-                "%r10"))
+              (if (string.eq planned-address "")
+                (compiler-backend-scavenge-reg
+                  dst
+                  (compiler-backend-one-exclude offset-home)
+                  1
+                  "%r10")
+                planned-address))
             base-reg-in)]
         [use-offset-home? : bool
           (and
@@ -18116,11 +18209,13 @@
         [index-reg : String
           (if use-offset-home?
             offset-home
-            (compiler-backend-scavenge-reg
-              dst
-              (compiler-backend-scavenge-exclude-regs2 base-reg offset-home)
-              7
-              "%r8"))]
+            (if (string.eq planned-index "")
+              (compiler-backend-scavenge-reg
+                dst
+                (compiler-backend-scavenge-exclude-regs2 base-reg offset-home)
+                7
+                "%r8")
+              planned-index))]
         [addr : String
           (compiler-backend-gep-index-address-disp
             gep-disp
@@ -18175,7 +18270,8 @@
                             load-addr
                             load-ty
                             (compiler-backend-two-exclude base-reg index-reg)
-                            2))))))]
+                            2
+                            planned-value))))))]
               [(ResultCompilerBackend.Err message)
                 (ResultCompilerBackend.Err message)])]
           [(ResultCompilerBackend.Err message)
@@ -18224,7 +18320,8 @@
                       (compiler-backend-two-exclude base-reg sibling-home))
                     (if (string.eq sibling-home "")
                       1
-                      2)))))]
+                      2)
+                    ""))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))]
     [(option_i64.None)
@@ -18273,7 +18370,8 @@
                 (compiler-backend-two-exclude base-reg sibling-home))
               (if (string.eq sibling-home "")
                 1
-                2)))))]
+                2)
+              ""))))]
     [(option_i64.None)
       (ResultCompilerBackend.Err
         (box
@@ -18359,13 +18457,77 @@
             (ResultCompilerBackend.Err message)])]
       [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
 
+(define (compiler-backend-emit-load-from-gep-pair-planned
+  [assignments : CompilerRegAssignmentList]
+  [base : CompilerIrValue]
+  [offset0 : CompilerIrValue]
+  [elem-ty0 : AstType]
+  [load-dst0 : i64]
+  [load-ty0 : AstType]
+  [offset1 : CompilerIrValue]
+  [elem-ty1 : AstType]
+  [load-dst1 : i64]
+  [load-ty1 : AstType]
+  [address0 : String]
+  [index0 : String]
+  [value0 : String]
+  [address1 : String]
+  [index1 : String]
+  [value1 : String]) : ResultCompilerBackend
+  (if (and (string.eq address0 "") (string.eq address1 ""))
+    (compiler-backend-emit-load-from-gep-pair
+      assignments
+      base
+      offset0
+      elem-ty0
+      load-dst0
+      load-ty0
+      offset1
+      elem-ty1
+      load-dst1
+      load-ty1)
+    (match (compiler-backend-emit-load-from-gep
+      assignments
+      load-dst0
+      base
+      offset0
+      elem-ty0
+      load-ty0
+      ""
+      0
+      address0
+      index0
+      value0)
+      [(ResultCompilerBackend.Ok first-asm)
+        (match (compiler-backend-emit-load-from-gep
+          assignments
+          load-dst1
+          base
+          offset1
+          elem-ty1
+          load-ty1
+          ""
+          0
+          address1
+          index1
+          value1)
+          [(ResultCompilerBackend.Ok second-asm)
+            (ResultCompilerBackend.Ok (string.append first-asm second-asm))]
+          [(ResultCompilerBackend.Err message)
+            (ResultCompilerBackend.Err message)])]
+      [(ResultCompilerBackend.Err message) (ResultCompilerBackend.Err message)])))
+
 (define (compiler-backend-emit-load-load
   [assignments : CompilerRegAssignmentList]
   [first-dst : i64]
   [ptr : CompilerIrValue]
   [first-ty : AstType]
   [second-dst : i64]
-  [second-ty : AstType]) : ResultCompilerBackend
+  [second-ty : AstType]
+  [first-address : String]
+  [first-value : String]
+  [second-address : String]
+  [second-value : String]) : ResultCompilerBackend
   (let
     [_first-dst : i64 first-dst]
     (if (= (compiler-backend-type-size first-ty) 8)
@@ -18376,14 +18538,16 @@
         [second-home : String
           (compiler-backend-var-register-home assignments second-dst)]
         [base : String
-          (compiler-backend-scavenge-reg-here
-            (if (string.eq second-home "")
-              (compiler-backend-addr-scavenge-exclude)
-              (compiler-backend-one-exclude second-home))
-            (if (string.eq second-home "")
-              0
-              1)
-            "%r10")]
+          (if (string.eq second-address "")
+            (compiler-backend-scavenge-reg-here
+              (if (string.eq second-home "")
+                (compiler-backend-addr-scavenge-exclude)
+                (compiler-backend-one-exclude second-home))
+              (if (string.eq second-home "")
+                0
+                1)
+              "%r10")
+            second-address)]
         [base-mem : String (compiler-backend-base-deref base)]
         (match (compiler-backend-emit-load-value-with-plan assignments ptr base)
           [(ResultCompilerBackend.Ok ptr-asm)
@@ -18403,10 +18567,17 @@
                     base-mem
                     second-ty
                     (compiler-backend-one-exclude base)
-                    1))))]
+                    1
+                    second-value))))]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err message)]))
-      (compiler-backend-emit-load-instr assignments first-dst ptr first-ty))))
+      (compiler-backend-emit-load-instr
+        assignments
+        first-dst
+        ptr
+        first-ty
+        first-address
+        first-value))))
 
 (define (compiler-backend-emit-store-value-to-address
   [assignments : CompilerRegAssignmentList]
@@ -18415,7 +18586,8 @@
   [addr : String]
   [program-index : CompilerBackendProgramIndex]
   [exclude : (Array String)]
-  [exclude-n : i64]) : ResultCompilerBackend
+  [exclude-n : i64]
+  [planned-value : String]) : ResultCompilerBackend
   (match (compiler-backend-emit-store-immediate-to-memory src addr ty)
     [(CompilerBackendMaybeAsm.Some store-asm)
       (ResultCompilerBackend.Ok store-asm)]
@@ -18451,7 +18623,9 @@
             (compiler-backend-value-scalar-register assignments src)]
           [store-reg : String
             (if (string.eq src-home "")
-              (compiler-backend-scavenge-reg-here exclude exclude-n "%r8")
+              (if (string.eq planned-value "")
+                (compiler-backend-scavenge-reg-here exclude exclude-n "%r8")
+                planned-value)
               src-home)]
           (match (if (string.eq src-home "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
@@ -18474,15 +18648,19 @@
   [dst : CompilerIrValue]
   [src : CompilerIrValue]
   [ty : AstType]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [planned-address : String]
+  [planned-value : String]) : ResultCompilerBackend
   (let
     [dst-home : String (compiler-backend-value-register-home assignments dst)]
     [src-home : String (compiler-backend-value-register-home assignments src)]
     [scav-base : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-two-exclude dst-home src-home)
-        2
-        "%r10")]
+      (if (string.eq planned-address "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-two-exclude dst-home src-home)
+          2
+          "%r10")
+        planned-address)]
     (match (compiler-backend-emit-address-base assignments dst scav-base)
       [(ResultCompilerBackendAddressBase.Ok base)
         (let
@@ -18496,7 +18674,8 @@
             addr
             program-index
             (compiler-backend-one-exclude (struct-get base reg))
-            1)
+            1
+            planned-value)
             [(ResultCompilerBackend.Ok store-asm)
               (ResultCompilerBackend.Ok (string.append ptr-asm store-asm))]
             [(ResultCompilerBackend.Err message)
@@ -18512,7 +18691,10 @@
   [value : CompilerIrValue]
   [store-ty : AstType]
   [program-index : CompilerBackendProgramIndex]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-address : String]
+  [planned-index : String]
+  [planned-value : String]) : ResultCompilerBackend
   (match (compiler-backend-value-as-i64 offset)
     [(option_i64.Some n)
       (let
@@ -18524,10 +18706,12 @@
         [value-home : String
           (compiler-backend-value-register-home assignments value)]
         [scav-base : String
-          (compiler-backend-scavenge-reg-here
-            (compiler-backend-two-exclude base-home value-home)
-            2
-            "%r10")]
+          (if (string.eq planned-address "")
+            (compiler-backend-scavenge-reg-here
+              (compiler-backend-two-exclude base-home value-home)
+              2
+              "%r10")
+            planned-address)]
         (match (compiler-backend-emit-address-base assignments base scav-base)
           [(ResultCompilerBackendAddressBase.Ok base-plan)
             (let
@@ -18541,7 +18725,8 @@
                 addr
                 program-index
                 (compiler-backend-one-exclude (struct-get base-plan reg))
-                1)
+                1
+                planned-value)
                 [(ResultCompilerBackend.Ok store-asm)
                   (ResultCompilerBackend.Ok (string.append base-asm store-asm))]
                 [(ResultCompilerBackend.Err message)
@@ -18586,7 +18771,8 @@
             direct-addr
             program-index
             (compiler-backend-two-exclude base-home offset-home)
-            2)
+            2
+            planned-value)
           (compiler-backend-emit-store-to-gep-staged
             assignments
             base
@@ -18598,7 +18784,10 @@
             value-home
             base-home
             offset-home
-            gep-disp)))]))
+            gep-disp
+            planned-address
+            planned-index
+            planned-value)))]))
 
 ;; The pre-B2 staged dynamic-index store path: scavenge an index scratch (and a
 ;; fold-base scratch for non-SIB scales), load the offset into it, then store
@@ -18615,25 +18804,32 @@
   [value-home : String]
   [base-home : String]
   [offset-home : String]
-  [gep-disp : i64]) : ResultCompilerBackend
+  [gep-disp : i64]
+  [planned-address : String]
+  [planned-index : String]
+  [planned-value : String]) : ResultCompilerBackend
   (let
     [scav-idx : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-scavenge-exclude-ops2 assignments base value)
-        7
-        "%r8")]
+      (if (string.eq planned-index "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-ops2 assignments base value)
+          7
+          "%r8")
+        planned-index)]
     ;; Fold-base scratch. For non-SIB scales the scaled index is folded into a
     ;; register, which must not clobber the base/value homes; it also serves as
     ;; the load fallback when the base is spilled. If that fallback aliases the
     ;; offset home, the offset copy is emitted before the base reload below.
     [scav-fold : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-scavenge-exclude-append
-          (compiler-backend-scavenge-exclude-regs2 scav-idx base-home)
-          7
-          value-home)
-        8
-        "%r10")]
+      (if (string.eq planned-address "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-scavenge-exclude-append
+            (compiler-backend-scavenge-exclude-regs2 scav-idx base-home)
+            7
+            value-home)
+          8
+          "%r10")
+        planned-address)]
     (match (compiler-backend-emit-address-base-with-avoid
       assignments
       base
@@ -18695,7 +18891,8 @@
                 store-addr
                 program-index
                 store-exclude
-                store-exclude-n)
+                store-exclude-n
+                planned-value)
                 [(ResultCompilerBackend.Ok store-asm)
                   (ResultCompilerBackend.Ok
                     (string.append
@@ -18716,7 +18913,10 @@
   [disp : i64]
   [value1 : CompilerIrValue]
   [ty1 : AstType]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [planned-address : String]
+  [planned-value0 : String]
+  [planned-value1 : String]) : ResultCompilerBackend
   (let
     [ptr-home : String (compiler-backend-value-register-home assignments ptr)]
     [value0-home : String
@@ -18724,10 +18924,12 @@
     [value1-home : String
       (compiler-backend-value-register-home assignments value1)]
     [scav-base : String
-      (compiler-backend-scavenge-reg-here
-        (compiler-backend-three-exclude ptr-home value0-home value1-home)
-        3
-        "%r10")]
+      (if (string.eq planned-address "")
+        (compiler-backend-scavenge-reg-here
+          (compiler-backend-three-exclude ptr-home value0-home value1-home)
+          3
+          "%r10")
+        planned-address)]
     (match (compiler-backend-emit-address-base assignments ptr scav-base)
       [(ResultCompilerBackendAddressBase.Ok base-plan)
         (let
@@ -18742,7 +18944,8 @@
             addr0
             program-index
             (compiler-backend-two-exclude base-reg value1-home)
-            2)
+            2
+            planned-value0)
             [(ResultCompilerBackend.Ok store0)
               (match (compiler-backend-emit-store-value-to-address
                 assignments
@@ -18751,7 +18954,8 @@
                 addr1
                 program-index
                 (compiler-backend-one-exclude base-reg)
-                1)
+                1
+                planned-value1)
                 [(ResultCompilerBackend.Ok store1)
                   (ResultCompilerBackend.Ok
                     (string.append base-asm (string.append store0 store1)))]
@@ -28582,6 +28786,11 @@
         scratch-vreg
         (compiler-backend-scratch-plan-register-here _scratch-plan 1)
         "")]
+    [planned-scratch2 : String
+      (cfg
+        scratch-vreg
+        (compiler-backend-scratch-plan-register-here _scratch-plan 2)
+        "")]
     ;; Sound-scavenger: reserve this instruction's operand + result homes so the
     ;; scavenge can never hand one back as scratch (LLVM RegScavenger model).
     [_reserved-mask : i64
@@ -28608,7 +28817,11 @@
                   instr-diag)))])]
       [(CompilerIrInstr.Alloc _ _) (ResultCompilerBackend.Ok "")]
       [(CompilerIrInstr.AddrOf dst src)
-        (match (compiler-backend-emit-addr-of assignments dst src)
+        (match (compiler-backend-emit-addr-of
+          assignments
+          dst
+          src
+          planned-scratch0)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -28623,7 +28836,9 @@
           base
           offset
           elem-ty
-          (compiler-backend-gep-fold-next! offset elem-ty))
+          (compiler-backend-gep-fold-next! offset elem-ty)
+          planned-scratch0
+          planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -28632,7 +28847,13 @@
                   (box-get message)
                   instr-diag)))])]
       [(CompilerIrInstr.Load dst src ty)
-        (match (compiler-backend-emit-load-instr assignments dst src ty)
+        (match (compiler-backend-emit-load-instr
+          assignments
+          dst
+          src
+          ty
+          planned-scratch0
+          planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -28646,7 +28867,9 @@
           dst
           src
           ty
-          program-index)
+          program-index
+          planned-scratch0
+          planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -28655,7 +28878,14 @@
                   (box-get message)
                   instr-diag)))])]
       [(CompilerIrInstr.CopyBytes dst src size)
-        (match (compiler-backend-emit-copy-bytes assignments dst src size)
+        (match (compiler-backend-emit-copy-bytes
+          assignments
+          dst
+          src
+          size
+          planned-scratch0
+          planned-scratch1
+          planned-scratch2)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -28669,6 +28899,7 @@
           function
           assignments
           planned-scratch0
+          planned-scratch1
           index
           length
           ok-label
@@ -29140,7 +29371,8 @@
                 addr
                 program-index
                 no-exclude
-                0)
+                0
+                planned-scratch0)
                 [(ResultCompilerBackend.Ok store-asm)
                   (ResultCompilerBackend.Ok store-asm)]
                 [(ResultCompilerBackend.Err message)
@@ -31532,7 +31764,7 @@
                                     (compiler-backend-gep-fold-next!
                                       offset2
                                       elem-ty2)]
-                                  (compiler-backend-emit-load-from-gep-pair
+                                  (compiler-backend-emit-load-from-gep-pair-planned
                                     assignments
                                     base
                                     offset
@@ -31542,7 +31774,37 @@
                                     offset2
                                     elem-ty2
                                     load-dst2
-                                    load-ty2))
+                                    load-ty2
+                                    (compiler-backend-scratch-plan-register-ahead
+                                      (compiler-backend-runtime-plan-scratch
+                                        plan)
+                                      0
+                                      0)
+                                    (compiler-backend-scratch-plan-register-ahead
+                                      (compiler-backend-runtime-plan-scratch
+                                        plan)
+                                      0
+                                      1)
+                                    (compiler-backend-scratch-plan-register-ahead
+                                      (compiler-backend-runtime-plan-scratch
+                                        plan)
+                                      1
+                                      1)
+                                    (compiler-backend-scratch-plan-register-ahead
+                                      (compiler-backend-runtime-plan-scratch
+                                        plan)
+                                      2
+                                      0)
+                                    (compiler-backend-scratch-plan-register-ahead
+                                      (compiler-backend-runtime-plan-scratch
+                                        plan)
+                                      2
+                                      1)
+                                    (compiler-backend-scratch-plan-register-ahead
+                                      (compiler-backend-runtime-plan-scratch
+                                        plan)
+                                      3
+                                      1)))
                                 (box-get after-load2)
                                 assignments
                                 vars
@@ -31572,7 +31834,19 @@
                                   elem-ty
                                   load-ty
                                   ""
-                                  gep-fold-disp)
+                                  gep-fold-disp
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch plan)
+                                    0
+                                    0)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch plan)
+                                    0
+                                    1)
+                                  (compiler-backend-scratch-plan-register-ahead
+                                    (compiler-backend-runtime-plan-scratch plan)
+                                    1
+                                    1))
                                 rest
                                 assignments
                                 vars
@@ -31603,7 +31877,19 @@
                                 elem-ty
                                 load-ty
                                 ""
-                                gep-fold-disp)
+                                gep-fold-disp
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  0
+                                  0)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  0
+                                  1)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  1
+                                  1))
                               rest
                               assignments
                               vars
@@ -31634,7 +31920,19 @@
                             elem-ty
                             load-ty
                             ""
-                            gep-fold-disp)
+                            gep-fold-disp
+                            (compiler-backend-scratch-plan-register-ahead
+                              (compiler-backend-runtime-plan-scratch plan)
+                              0
+                              0)
+                            (compiler-backend-scratch-plan-register-ahead
+                              (compiler-backend-runtime-plan-scratch plan)
+                              0
+                              1)
+                            (compiler-backend-scratch-plan-register-ahead
+                              (compiler-backend-runtime-plan-scratch plan)
+                              1
+                              1))
                           rest
                           assignments
                           vars
@@ -31665,7 +31963,19 @@
                         elem-ty
                         load-ty
                         ""
-                        gep-fold-disp)
+                        gep-fold-disp
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch plan)
+                          0
+                          0)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch plan)
+                          0
+                          1)
+                        (compiler-backend-scratch-plan-register-ahead
+                          (compiler-backend-runtime-plan-scratch plan)
+                          1
+                          1))
                       rest
                       assignments
                       vars
@@ -31695,7 +32005,19 @@
                     elem-ty
                     load-ty
                     ""
-                    gep-fold-disp)
+                    gep-fold-disp
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch plan)
+                      0
+                      0)
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch plan)
+                      0
+                      1)
+                    (compiler-backend-scratch-plan-register-ahead
+                      (compiler-backend-runtime-plan-scratch plan)
+                      1
+                      1))
                   rest
                   assignments
                   vars
@@ -31726,7 +32048,19 @@
                   elem-ty
                   load-ty
                   ""
-                  gep-fold-disp)
+                  gep-fold-disp
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch plan)
+                    0
+                    0)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch plan)
+                    0
+                    1)
+                  (compiler-backend-scratch-plan-register-ahead
+                    (compiler-backend-runtime-plan-scratch plan)
+                    1
+                    1))
                 rest
                 assignments
                 vars
@@ -31757,7 +32091,19 @@
               elem-ty
               load-ty
               ""
-              gep-fold-disp)
+              gep-fold-disp
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch plan)
+                0
+                0)
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch plan)
+                0
+                1)
+              (compiler-backend-scratch-plan-register-ahead
+                (compiler-backend-runtime-plan-scratch plan)
+                1
+                1))
             rest
             assignments
             vars
@@ -31788,7 +32134,19 @@
           elem-ty
           load-ty
           ""
-          gep-fold-disp)
+          gep-fold-disp
+          (compiler-backend-scratch-plan-register-ahead
+            (compiler-backend-runtime-plan-scratch plan)
+            0
+            0)
+          (compiler-backend-scratch-plan-register-ahead
+            (compiler-backend-runtime-plan-scratch plan)
+            0
+            1)
+          (compiler-backend-scratch-plan-register-ahead
+            (compiler-backend-runtime-plan-scratch plan)
+            1
+            1))
         rest
         assignments
         vars
@@ -31840,7 +32198,19 @@
     value
     store-ty
     program-index
-    gep-fold-disp)
+    gep-fold-disp
+    (compiler-backend-scratch-plan-register-ahead
+      (compiler-backend-runtime-plan-scratch plan)
+      0
+      0)
+    (compiler-backend-scratch-plan-register-ahead
+      (compiler-backend-runtime-plan-scratch plan)
+      0
+      1)
+    (compiler-backend-scratch-plan-register-ahead
+      (compiler-backend-runtime-plan-scratch plan)
+      1
+      1))
     [(ResultCompilerBackend.Ok head)
       (compiler-backend-emit-instrs
         target
@@ -33512,7 +33882,22 @@
                                           disp
                                           value1
                                           ty1
-                                          program-index)
+                                          program-index
+                                          (compiler-backend-scratch-plan-register-ahead
+                                            (compiler-backend-runtime-plan-scratch
+                                              plan)
+                                            1
+                                            0)
+                                          (compiler-backend-scratch-plan-register-ahead
+                                            (compiler-backend-runtime-plan-scratch
+                                              plan)
+                                            0
+                                            1)
+                                          (compiler-backend-scratch-plan-register-ahead
+                                            (compiler-backend-runtime-plan-scratch
+                                              plan)
+                                            2
+                                            1))
                                         (box-get after-store)
                                         assignments
                                         vars
@@ -34110,7 +34495,23 @@
                                 copy-size
                                 protect
                                 protect-n
-                                (compiler-backend-gep-fold-next! offset elem-ty))
+                                (compiler-backend-gep-fold-next! offset elem-ty)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  0
+                                  0)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  0
+                                  1)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  1
+                                  1)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  1
+                                  2))
                               (box-get after-load)
                               assignments
                               vars
@@ -34217,7 +34618,15 @@
                               load-base)
                             (compiler-backend-value-scalar-register
                               assignments
-                              load-offset))
+                              load-offset)
+                            (compiler-backend-scratch-plan-register-ahead
+                              (compiler-backend-runtime-plan-scratch plan)
+                              0
+                              0)
+                            (compiler-backend-scratch-plan-register-ahead
+                              (compiler-backend-runtime-plan-scratch plan)
+                              0
+                              1))
                           (box-get rest)
                           assignments
                           vars
@@ -34494,7 +34903,23 @@
                                 copy-size
                                 protect
                                 protect-n
-                                (compiler-backend-gep-fold-next! offset elem-ty))
+                                (compiler-backend-gep-fold-next! offset elem-ty)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  0
+                                  0)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  0
+                                  1)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  1
+                                  1)
+                                (compiler-backend-scratch-plan-register-ahead
+                                  (compiler-backend-runtime-plan-scratch plan)
+                                  1
+                                  2))
                               (box-get after-gep)
                               assignments
                               vars
@@ -34622,7 +35047,19 @@
                 src
                 size
                 protect
-                protect-n)
+                protect-n
+                (compiler-backend-scratch-plan-register-ahead
+                  (compiler-backend-runtime-plan-scratch plan)
+                  0
+                  0)
+                (compiler-backend-scratch-plan-register-ahead
+                  (compiler-backend-runtime-plan-scratch plan)
+                  0
+                  1)
+                (compiler-backend-scratch-plan-register-ahead
+                  (compiler-backend-runtime-plan-scratch plan)
+                  0
+                  2))
               (box-get rest)
               assignments
               vars
@@ -34815,7 +35252,23 @@
                           ptr
                           load-ty
                           second-dst
-                          second-ty)
+                          second-ty
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch plan)
+                            0
+                            0)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch plan)
+                            0
+                            1)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch plan)
+                            1
+                            0)
+                          (compiler-backend-scratch-plan-register-ahead
+                            (compiler-backend-runtime-plan-scratch plan)
+                            1
+                            1))
                         (box-get after-cmp)
                         assignments
                         vars
@@ -36130,7 +36583,8 @@
                         addr
                         ty
                         (make-array String 0)
-                        0))))
+                        0
+                        ""))))
                 (match (if is-float
                   (compiler-backend-target-float-arg-reg-for-banks
                     target
@@ -36373,7 +36827,8 @@
                               addr
                               ty
                               exclude
-                              exclude-n))
+                              exclude-n
+                              ""))
                           tail)))]
                   [(ResultCompilerBackend.Err message)
                     (ResultCompilerBackend.Err message)])

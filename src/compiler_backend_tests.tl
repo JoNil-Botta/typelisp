@@ -12944,7 +12944,7 @@
           2
           (CompilerRegLocation.Register "%r12"))
         CompilerRegAssignmentList.Nil)]
-    (match (compiler-backend-emit-addr-of assignments 2 1)
+    (match (compiler-backend-emit-addr-of assignments 2 1 "")
       [(ResultCompilerBackend.Ok asm)
         (string.eq asm "    leaq -16(%rbp), %r12\n")]
       [(ResultCompilerBackend.Err _) false])))
@@ -13491,7 +13491,9 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 7)
         (AstType.I64)
-        index)
+        index
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $7, (%r12)\n")
@@ -13505,7 +13507,10 @@
         (CompilerIrValue.I64 9)
         (AstType.I64)
         index
-        0)
+        0
+        ""
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $9, 8(%r12)\n")
@@ -13516,7 +13521,9 @@
         (CompilerIrValue.Var 0)
         (CompilerIrValue.I64 11)
         (AstType.I64)
-        index)
+        index
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movq $11, (%r11)\n")
@@ -21039,6 +21046,25 @@
         CompilerIrInstrList.Nil))
     CompilerIrBlockList.Nil))
 
+(define (compiler-backend-scratch-vreg-memory-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.CopyBytes
+          (CompilerIrValue.Var 0)
+          (CompilerIrValue.Var 1)
+          7)
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-memory-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-scratch-vreg-aggregate-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -21462,6 +21488,103 @@
         [(ResultCompilerBackend.Err _) false]))
     true))
 
+(define (compiler-backend-scratch-vreg-memory-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -16))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
+            (compiler-reg-assignment-cons
+              (CompilerRegAssignment.Assignment
+                2
+                (CompilerRegLocation.Spill -24))
+              CompilerRegAssignmentList.Nil)))]
+      [index : CompilerBackendProgramIndex
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)]
+      (match (compiler-backend-emit-addr-of assignments 2 0 "%r14")
+        [(ResultCompilerBackend.Ok addr-of)
+          (match (compiler-backend-emit-gep
+            assignments
+            2
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            (AstType.U64)
+            0
+            "%r14"
+            "%r15")
+            [(ResultCompilerBackend.Ok gep)
+              (match (compiler-backend-emit-load-instr
+                assignments
+                1
+                (CompilerIrValue.Var 0)
+                (AstType.I64)
+                "%r14"
+                "%r15")
+                [(ResultCompilerBackend.Ok load)
+                  (match (compiler-backend-emit-store-ptr
+                    assignments
+                    (CompilerIrValue.Var 0)
+                    (CompilerIrValue.Var 1)
+                    (AstType.I64)
+                    index
+                    "%r14"
+                    "%r15")
+                    [(ResultCompilerBackend.Ok store)
+                      (match (compiler-backend-emit-copy-bytes
+                        assignments
+                        (CompilerIrValue.Var 0)
+                        (CompilerIrValue.Var 1)
+                        7
+                        "%r12"
+                        "%r13"
+                        "%r14")
+                        [(ResultCompilerBackend.Ok copy)
+                          (match (compiler-backend-emit-bounds-check
+                            (CompilerBackendTarget.Linux)
+                            "scratch_memory"
+                            assignments
+                            "%r14"
+                            "%r15"
+                            (CompilerIrValue.Var 0)
+                            (CompilerIrValue.Global "scratch_length")
+                            "ok"
+                            (compiler-backend-runtime-helper-full-plan)
+                            CompilerIrFunctionList.Nil
+                            CompilerIrExternList.Nil
+                            index)
+                            [(ResultCompilerBackend.Ok bounds)
+                              (and
+                                (compiler-backend-string-contains?
+                                  addr-of
+                                  "%r14")
+                                (compiler-backend-string-contains? gep "%r14")
+                                (compiler-backend-string-contains? gep "%r15")
+                                (compiler-backend-string-contains? load "%r14")
+                                (compiler-backend-string-contains? load "%r15")
+                                (compiler-backend-string-contains? store "%r14")
+                                (compiler-backend-string-contains? store "%r15")
+                                (compiler-backend-string-contains? copy "%r12")
+                                (compiler-backend-string-contains? copy "%r13")
+                                (compiler-backend-string-contains? copy "%r14")
+                                (compiler-backend-string-contains?
+                                  bounds
+                                  "%r15")
+                                (compiler-backend-string-contains?
+                                  bounds
+                                  "%r14"))]
+                            [(ResultCompilerBackend.Err _) false])]
+                        [(ResultCompilerBackend.Err _) false])]
+                    [(ResultCompilerBackend.Err _) false])]
+                [(ResultCompilerBackend.Err _) false])]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false]))
+    true))
+
 (define (compiler-backend-scratch-vreg-future-window-ok?) : bool
   (cfg
     scratch-vreg
@@ -21537,12 +21660,46 @@
           (compiler-backend-scratch-vreg-bounds-test-blocks)
           2
           assignments)]
-      [planned : String (compiler-backend-scratch-test-register result 0)]
+      [planned-len : String (compiler-backend-scratch-test-register result 0)]
+      [planned-index : String (compiler-backend-scratch-test-register result 1)]
       (and
-        (= (compiler-backend-scratch-test-plan-count result) 1)
-        (= (compiler-backend-scratch-test-success-count result) 1)
-        (not (string.eq planned ""))
-        (not (string.eq planned "%r10"))))
+        (= (compiler-backend-scratch-test-plan-count result) 2)
+        (= (compiler-backend-scratch-test-success-count result) 2)
+        (not (string.eq planned-len ""))
+        (not (string.eq planned-index ""))
+        (not (string.eq planned-len planned-index))
+        (not (string.eq planned-len "%r10"))
+        (not (string.eq planned-index "%r10"))))
+    true))
+
+(define (compiler-backend-scratch-vreg-memory-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [result : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_memory"
+          (compiler-backend-scratch-vreg-memory-test-blocks)
+          2
+          (compiler-backend-scratch-vreg-memory-test-assignments))]
+      [dst : String (compiler-backend-scratch-test-register result 0)]
+      [src : String (compiler-backend-scratch-test-register result 1)]
+      [value : String (compiler-backend-scratch-test-register result 2)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count result) 3)
+        (= (compiler-backend-scratch-test-success-count result) 3)
+        (not (string.eq dst ""))
+        (not (string.eq src ""))
+        (not (string.eq value ""))
+        (not (string.eq dst src))
+        (not (string.eq dst value))
+        (not (string.eq src value))
+        (not (string.eq dst "%r9"))
+        (not (string.eq dst "%r10"))
+        (not (string.eq src "%r9"))
+        (not (string.eq src "%r10"))
+        (not (string.eq value "%r9"))
+        (not (string.eq value "%r10"))))
     true))
 
 (define (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?) : bool
@@ -22055,9 +22212,11 @@
         (compiler-backend-scratch-vreg-aggregate-plan-ok?)
         (compiler-backend-scratch-vreg-phi-plan-ok?)
         (compiler-backend-scratch-vreg-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-memory-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-future-window-ok?)
         (compiler-backend-scratch-vreg-c-abi-return-plan-ok?)
         (compiler-backend-scratch-vreg-bounds-plan-ok?)
+        (compiler-backend-scratch-vreg-memory-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)

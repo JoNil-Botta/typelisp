@@ -19434,7 +19434,14 @@
   (PhiStage)
   (SwitchIndex)
   (SwitchTable)
-  (BoundsLength))
+  (BoundsLength)
+  (BoundsIndex)
+  (MemoryAddress)
+  (MemoryIndex)
+  (MemoryValue)
+  (CopyDst)
+  (CopySrc)
+  (CopyValue))
 
 (defstruct CompilerRegScratchConstraint
   (register-class CompilerRegScratchClass)
@@ -19506,7 +19513,39 @@
                 (struct-get item register)
                 ""))))))))
 
+(define (compiler-reg-scratch-var-register-homed?
+  [assignments : CompilerRegAssignmentList]
+  [var : i64]) : bool
+  (match (compiler-reg-assignment-lookup assignments var)
+    [(CompilerRegMaybeLocation.Some location)
+      (match location
+        [(CompilerRegLocation.Register _) true]
+        [(CompilerRegLocation.RegisterPair _ _) true]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-reg-scratch-value-direct?
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var var)
+      (compiler-reg-scratch-var-register-homed? assignments var)]
+    [(CompilerIrValue.I64 _) true]
+    [(CompilerIrValue.Bool _) true]
+    [(CompilerIrValue.Char _) true]
+    [(CompilerIrValue.Unit) true]
+    [_ false]))
+
+(define (compiler-reg-scratch-value-integer-immediate?
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.I64 _) true]
+    [(CompilerIrValue.Bool _) true]
+    [(CompilerIrValue.Char _) true]
+    [_ false]))
+
 (define (compiler-reg-scratch-vreg-slots
+  [assignments : CompilerRegAssignmentList]
   [_instr : CompilerIrInstr]
   [_phi-targets : CompilerRegStringList]) : i64
   (cfg
@@ -19533,11 +19572,74 @@
           2
           0)]
       [(CompilerIrInstr.Switch _ _ _ _) 2]
-      [(CompilerIrInstr.BoundsCheck _ _ _) 1]
+      [(CompilerIrInstr.BoundsCheck _ _ _) 2]
+      [(CompilerIrInstr.AddrOf dst _)
+        (if (compiler-reg-scratch-var-register-homed? assignments dst)
+          0
+          1)]
+      [(CompilerIrInstr.Gep dst base offset _)
+        (if (and
+          (compiler-reg-scratch-var-register-homed? assignments dst)
+          (compiler-reg-scratch-value-direct? assignments base)
+          (compiler-reg-scratch-value-integer-immediate? offset))
+          0
+          2)]
+      [(CompilerIrInstr.Load dst src ty)
+        (let
+          [address? : bool
+            (not (compiler-reg-scratch-value-direct? assignments src))]
+          [value? : bool
+            (and
+              (compiler-reg-scalar-type? ty)
+              (not (compiler-reg-float-type? ty))
+              (not (compiler-reg-scratch-var-register-homed? assignments dst)))]
+          (if value?
+            2
+            (if address?
+              1
+              0)))]
+      [(CompilerIrInstr.StorePtr dst src ty)
+        (let
+          [address? : bool
+            (not (compiler-reg-scratch-value-direct? assignments dst))]
+          [value? : bool
+            (and
+              (compiler-reg-scalar-type? ty)
+              (not (compiler-reg-float-type? ty))
+              (not (compiler-reg-scratch-value-direct? assignments src)))]
+          (if value?
+            2
+            (if address?
+              1
+              0)))]
+      [(CompilerIrInstr.CopyBytes dst src size)
+        (if (<= size 0)
+          0
+          (let
+            [dst? : bool
+              (not (compiler-reg-scratch-value-direct? assignments dst))]
+            [src? : bool
+              (not (compiler-reg-scratch-value-direct? assignments src))]
+            [value? : bool (not (= (% size 16) 0))]
+            (if value?
+              3
+              (if src?
+                2
+                (if dst?
+                  1
+                  0)))))]
+      [(CompilerIrInstr.Store _ value ty)
+        (if (and
+          (compiler-reg-scalar-type? ty)
+          (not (compiler-reg-float-type? ty))
+          (not (compiler-reg-scratch-value-direct? assignments value)))
+          1
+          0)]
       [_ 0])
     0))
 
 (define (compiler-reg-scratch-vreg-count-seq
+  [assignments : CompilerRegAssignmentList]
   [instrs : CompilerIrInstrSeq]
   [phi-targets : CompilerRegStringList]
   [count : i64]) : i64
@@ -19553,11 +19655,15 @@
             out
             (+
               out
-              (compiler-reg-scratch-vreg-slots (array-ref slots i) phi-targets)))
+              (compiler-reg-scratch-vreg-slots
+                assignments
+                (array-ref slots i)
+                phi-targets)))
           (set! i (+ i 1))))
       out)))
 
 (define (compiler-reg-scratch-vreg-count-blocks
+  [assignments : CompilerRegAssignmentList]
   [blocks : CompilerIrBlockList]
   [phi-targets : CompilerRegStringList]
   [count : i64]) : i64
@@ -19567,9 +19673,14 @@
       (match block
         [(CompilerIrBlock.Block _ instrs)
           (compiler-reg-scratch-vreg-count-blocks
+            assignments
             (box-get rest)
             phi-targets
-            (compiler-reg-scratch-vreg-count-seq instrs phi-targets count))])]
+            (compiler-reg-scratch-vreg-count-seq
+              assignments
+              instrs
+              phi-targets
+              count))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [i : i64 0]
@@ -19582,7 +19693,11 @@
                 [(CompilerIrBlock.Block _ instrs)
                   (set!
                     out
-                    (compiler-reg-scratch-vreg-count-seq instrs phi-targets out))])
+                    (compiler-reg-scratch-vreg-count-seq
+                      assignments
+                      instrs
+                      phi-targets
+                      out))])
               (set! i (+ i 1))))
           out))]))
 
@@ -19809,6 +19924,54 @@
             (compiler-reg-string-cons hi CompilerRegStringList.Nil))]
         [_ CompilerRegStringList.Nil])]
     [(CompilerRegMaybeLocation.No) CompilerRegStringList.Nil]))
+
+(define (compiler-reg-scratch-value-registers
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : CompilerRegStringList
+  (match value
+    [(CompilerIrValue.Var var)
+      (compiler-reg-scratch-location-registers assignments var)]
+    [_ CompilerRegStringList.Nil]))
+
+(define (compiler-reg-scratch-instr-registers
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]) : CompilerRegStringList
+  (match instr
+    [(CompilerIrInstr.AddrOf dst src)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-location-registers assignments src))]
+    [(CompilerIrInstr.Gep dst base offset _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-string-list-append
+          (compiler-reg-scratch-value-registers assignments base)
+          (compiler-reg-scratch-value-registers assignments offset)))]
+    [(CompilerIrInstr.Load dst src _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.StorePtr dst src _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-value-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.CopyBytes dst src _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-value-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.BoundsCheck index length _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-value-registers assignments index)
+        (compiler-reg-scratch-value-registers assignments length))]
+    [(CompilerIrInstr.Store _ value _)
+      (compiler-reg-scratch-value-registers assignments value)]
+    [_ CompilerRegStringList.Nil]))
+
+(define (compiler-reg-scratch-memory-constraint
+  [assignments : CompilerRegAssignmentList]
+  [instr : CompilerIrInstr]) : CompilerRegScratchConstraint
+  (compiler-reg-scratch-gp-constraint-excluding
+    (compiler-reg-scratch-instr-registers assignments instr)))
 
 (define (compiler-reg-scratch-aggregate-constraint
   [policy : CompilerRegScratchPolicy]
@@ -20080,8 +20243,75 @@
       (CompilerRegScratchRequirement
         point
         ordinal
-        (CompilerRegScratchRole.BoundsLength)
-        (compiler-reg-scratch-gp-constraint)
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.BoundsLength)
+          (CompilerRegScratchRole.BoundsIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.AddrOf _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.MemoryAddress)
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Gep _ _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.MemoryAddress)
+          (CompilerRegScratchRole.MemoryIndex))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        ;; A fused GEP+memory consumer reads these homes at the following
+        ;; instruction point. Keep both siblings live through that point.
+        (+ point 3)
+        var)]
+    [(CompilerIrInstr.Load _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.MemoryAddress)
+          (CompilerRegScratchRole.MemoryValue))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.StorePtr _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (if (= ordinal 0)
+          (CompilerRegScratchRole.MemoryAddress)
+          (CompilerRegScratchRole.MemoryValue))
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.CopyBytes _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (cond
+          [(= ordinal 0) (CompilerRegScratchRole.CopyDst)]
+          [(= ordinal 1) (CompilerRegScratchRole.CopySrc)]
+          [else (CompilerRegScratchRole.CopyValue)])
+        (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Store _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.MemoryValue)
+        (compiler-reg-scratch-memory-constraint assignments instr)
         point
         (+ point 1)
         var)]
@@ -20216,7 +20446,8 @@
       (while (< i len)
         (let
           [instr : CompilerIrInstr (array-ref instr-slots i)]
-          [n : i64 (compiler-reg-scratch-vreg-slots instr phi-targets)]
+          [n : i64
+            (compiler-reg-scratch-vreg-slots assignments instr phi-targets)]
           (begin
             (array-set! firsts instruction item)
             (array-set! slot-counts instruction n)
@@ -20501,7 +20732,11 @@
           [phi-targets : CompilerRegStringList
             (compiler-reg-scratch-phi-targets-blocks blocks)]
           [scratch-count : i64
-            (compiler-reg-scratch-vreg-count-blocks blocks phi-targets 0)]
+            (compiler-reg-scratch-vreg-count-blocks
+              (compiler-reg-plan-assignments plan)
+              blocks
+              phi-targets
+              0)]
           [instruction-count : i64
             (compiler-reg-scratch-vreg-instr-count-blocks blocks 0)]
           (if (= scratch-count 0)
@@ -21983,12 +22218,86 @@
           1)]
       [assignments : CompilerRegAssignmentList
         (compiler-reg-plan-assignments out)]
-      [scratch-reg : String
+      [length-reg : String
         (compiler-reg-assignment-primary-register assignments 1)]
+      [index-reg : String
+        (compiler-reg-assignment-primary-register assignments 2)]
       (and
-        (= (compiler-reg-plan-var-count out 1) 2)
-        (not (string.eq scratch-reg ""))
-        (not (string.eq scratch-reg "%r9"))))
+        (= (compiler-reg-plan-var-count out 1) 3)
+        (not (string.eq length-reg ""))
+        (not (string.eq index-reg ""))
+        (not (string.eq length-reg index-reg))
+        (not (string.eq length-reg "%r9"))
+        (not (string.eq index-reg "%r9"))))
+    true))
+
+(define (compiler-reg-memory-scratch-test-plan) : CompilerRegPlan
+  (CompilerRegPlan.Plan
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r9"))
+      (compiler-reg-assignment-cons
+        (CompilerRegAssignment.Assignment
+          1
+          (CompilerRegLocation.Register "%r10"))
+        CompilerRegAssignmentList.Nil))
+    (compiler-live-set-empty)
+    (compiler-reg-interval-cons
+      (CompilerRegInterval.Interval 0 0 1)
+      (compiler-reg-interval-cons
+        (CompilerRegInterval.Interval 1 0 1)
+        CompilerRegIntervalList.Nil))
+    (compiler-reg-var-type-cons
+      (CompilerRegVarType.Type 0 (AstType.U64))
+      (compiler-reg-var-type-cons
+        (CompilerRegVarType.Type 1 (AstType.U64))
+        CompilerRegVarTypeList.Nil))
+    (compiler-reg-call-split-empty)
+    (compiler-reg-split-plan-empty)))
+
+(define (compiler-reg-memory-scratch-test-function) : CompilerIrFunction
+  (CompilerIrFunction.Function
+    "memory_scratch_vregs"
+    CompilerIrParamList.Nil
+    (AstType.Unit)
+    2
+    (compiler-ir-block-cons
+      (compiler-ir-block
+        "entry"
+        (compiler-ir-instr-cons
+          (CompilerIrInstr.CopyBytes
+            (CompilerIrValue.Var 0)
+            (CompilerIrValue.Var 1)
+            7)
+          CompilerIrInstrList.Nil))
+      CompilerIrBlockList.Nil)))
+
+(define (compiler-reg-memory-scratch-vregs-ok?) : bool
+  (cfg
+    scratch-vreg
+    (match (compiler-reg-plan-with-scratch-vreg-result
+      (CompilerRegTargetAbi.Linux)
+      (compiler-reg-memory-scratch-test-function)
+      (compiler-reg-memory-scratch-test-plan)
+      2)
+      [(CompilerRegScratchPlanResult.Result _ scratch-plan)
+        (let
+          [dst : String (compiler-reg-scratch-plan-register scratch-plan 0 0)]
+          [src : String (compiler-reg-scratch-plan-register scratch-plan 0 1)]
+          [value : String (compiler-reg-scratch-plan-register scratch-plan 0 2)]
+          (and
+            (= (compiler-reg-scratch-plan-count scratch-plan) 3)
+            (not (string.eq dst ""))
+            (not (string.eq src ""))
+            (not (string.eq value ""))
+            (not (string.eq dst src))
+            (not (string.eq dst value))
+            (not (string.eq src value))
+            (not (string.eq dst "%r9"))
+            (not (string.eq dst "%r10"))
+            (not (string.eq src "%r9"))
+            (not (string.eq src "%r10"))
+            (not (string.eq value "%r9"))
+            (not (string.eq value "%r10"))))])
     true))
 
 (define (compiler-reg-i64-ty) : AstType
@@ -29032,6 +29341,7 @@
     (cfg test (compiler-reg-group-pair-widening-ok?) true)
     (compiler-reg-switch-scratch-vregs-ok?)
     (compiler-reg-bounds-scratch-vregs-ok?)
+    (compiler-reg-memory-scratch-vregs-ok?)
     (compiler-reg-indexed-lookups-ok?)
     (compiler-reg-color-stack-group-ok?)
     (compiler-reg-color-spill-slot-sharing-ok?)

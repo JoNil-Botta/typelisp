@@ -17274,6 +17274,10 @@
   "(define (f [a : i64] [b : i64]) : i64
   (if (not (= a b)) 1 2))")
 
+(define (compiler-backend-not-branch-source) : String
+  "(define (f [a : bool]) : i64
+  (if (not a) 1 2))")
+
 (define (compiler-backend-negated-compare-branch-ok?) : bool
   (match (compiler-backend-emit-source
     (compiler-backend-negated-compare-branch-source))
@@ -17290,6 +17294,22 @@
           (not (compiler-backend-string-contains? body "    setne "))
           (not (compiler-backend-string-contains? body "    xorq $1, "))
           (not (compiler-backend-string-contains? body "    testq "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-not-branch-ok?) : bool
+  (match (compiler-backend-emit-source (compiler-backend-not-branch-source))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_f")]
+        (and
+          (not (string.eq body ""))
+          (or
+            (compiler-backend-string-contains? body "    cmpq $0, ")
+            (compiler-backend-string-contains? body "    testq "))
+          (or
+            (compiler-backend-string-contains? body "    je ")
+            (compiler-backend-string-contains? body "    jne "))
+          (not (compiler-backend-string-contains? body "    xorq $1, "))))]
     [(ResultCompilerBackend.Err _) false]))
 
 (define (compiler-backend-direct-condition-branch-ok?) : bool
@@ -17428,7 +17448,8 @@
           (compiler-backend-todo-marker))
         (compiler-backend-direct-condition-branch-ok?)
         (compiler-backend-direct-compare-branch-ok?)
-        (compiler-backend-negated-compare-branch-ok?)))))
+        (compiler-backend-negated-compare-branch-ok?)
+        (compiler-backend-not-branch-ok?)))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms.

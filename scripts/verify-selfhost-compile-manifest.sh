@@ -487,6 +487,10 @@ run_compile_batch() {
         batch_label="batch compile manifest chunk $batch_chunk_index/$batch_chunk_count"
         batch_out="$batch_chunk.out"
         batch_err="$batch_chunk.err"
+        batch_profile_args=
+        if [ "$HOST_OS" = windows ] && [ "$batch_chunk_index" -eq 24 ]; then
+            batch_profile_args=--profile-allocations
+        fi
         echo "[selfhost-compile] $batch_label"
         set +e
         ci_timing_run "chunk-$batch_chunk_index" compile \
@@ -494,7 +498,7 @@ run_compile_batch() {
             "$batch_label" \
             "$batch_out" \
             "$batch_err" \
-            "$COMPILER" compile --batch "$batch_chunk" --target linux-x86_64 --cfg selfhost-compile-manifest --stdlib-root "$ROOT/stdlib"
+            "$COMPILER" compile --batch "$batch_chunk" --target linux-x86_64 --cfg selfhost-compile-manifest --stdlib-root "$ROOT/stdlib" $batch_profile_args
         code=$?
         set -e
         if [ "$code" -ne 0 ]; then

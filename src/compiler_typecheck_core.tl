@@ -14067,16 +14067,17 @@
         name-id
         check-local-field))))
 
-(define (tc-qualified-access-target-module
+(define (tc-qualified-access-target-module-id
   [ctx : TcContext]
-  [qualifier : String]) : String
+  [qualifier-id : i64]) : i64
   (match ctx
-    [(TcContext program _ _ current-module _ _)
+    [(TcContext program _ _ _ current-module-id _)
       (match program
         [(AstProgram.Program decls-box)
-          (let
-            [decls : AstDeclList (box-get decls-box)]
-            (macro-resolve-qualified-module decls current-module qualifier))])]))
+          (macro-resolve-qualified-module-id
+            (box-get decls-box)
+            current-module-id
+            qualifier-id)])]))
 
 (define (tc-resolved-nominal-type-id [name-id : i64] [handle : i64]) : AstType
   (if (= (compiler-symbol-handle-kind handle) (compiler-symbol-kind-defenum))
@@ -36080,15 +36081,11 @@
         "typecheck: box pattern expects exactly one inner pattern"))))
 
 (define (tc-struct-pattern-name-in-scrut-module
-  [ctx : TcContext]
   [struct-name : String]
-  [name : String]) : String
-  (if (tc-name-qualified? name)
-    (let
-      [qualifier : String (tc-qualified-name-module name)]
-      [base : String (tc-qualified-name-base name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      (compiler-symbol-module-key target-module base))
+  [name : String]
+  [name-id : i64]) : String
+  (if (tc-name-qualified-id? name-id)
+    (tc-nominal-name-id-display name-id)
     (let
       [module : String (tc-qualified-name-module struct-name)]
       (if (string.eq module "")
@@ -36100,17 +36097,24 @@
   [struct-name : String]
   [pattern-name : String]
   [pattern-name-id : i64]) : ResultTcString
-  (if (tc-name-qualified? pattern-name)
+  (if (tc-name-qualified-id? pattern-name-id)
     (let
-      [qualifier : String (tc-qualified-name-module pattern-name)]
-      [base : String (tc-qualified-name-base pattern-name)]
-      [target-module : String (tc-qualified-access-target-module ctx qualifier)]
-      (ResultTcString.Ok (compiler-symbol-module-key target-module base)))
-    (match (tc-source-type-name-lookup-key ctx pattern-name pattern-name-id)
-      [(ResultTcString.Ok lookup-name)
+      [qualifier-id : i64 (tc-qualified-name-module-id pattern-name-id)]
+      [base-id : i64 (tc-qualified-name-base-id pattern-name-id)]
+      [target-module-id : i64
+        (tc-qualified-access-target-module-id ctx qualifier-id)]
+      (ResultTcString.Ok
+        (compiler-symbol-module-key
+          (intern-str target-module-id)
+          (intern-str base-id))))
+    (match (tc-source-type-name-lookup-from-id ctx pattern-name pattern-name-id)
+      [(TcNameLookup.Ok lookup-name lookup-id)
         (ResultTcString.Ok
-          (tc-struct-pattern-name-in-scrut-module ctx struct-name lookup-name))]
-      [(ResultTcString.Err message) (ResultTcString.Err message)])))
+          (tc-struct-pattern-name-in-scrut-module
+            struct-name
+            lookup-name
+            lookup-id))]
+      [(TcNameLookup.Err message) (ResultTcString.Err message)])))
 
 (define (tc-struct-pattern-name-matches?
   [ctx : TcContext]
@@ -40988,15 +40992,23 @@
     [(string.eq module "stdlib/env") true]
     [else false]))
 
-(define (tc-comptime-purity-banned-qualified? [ctx : TcContext] [name : String]) : bool
-  (if (tc-name-qualified? name)
-    (let
-      [qualifier : String (tc-qualified-name-module name)]
-      [target : String (tc-qualified-access-target-module ctx qualifier)]
-      (or
-        (tc-comptime-purity-banned-module? qualifier)
-        (tc-comptime-purity-banned-module? target)))
-    false))
+(define (tc-comptime-purity-banned-qualified?
+  [ctx : TcContext]
+  [name : String]
+  [name-id : i64]) : bool
+  (let
+    [source-id : i64 (macro-hygiene-global-source-name-id-or name-id name-id)]
+    (if (tc-name-qualified-id? source-id)
+      (let
+        [qualifier-id : i64 (tc-qualified-name-module-id source-id)]
+        [target-id : i64
+          (tc-qualified-access-target-module-id ctx qualifier-id)]
+        [qualifier : String (intern-str qualifier-id)]
+        [target : String (intern-str target-id)]
+        (or
+          (tc-comptime-purity-banned-module? qualifier)
+          (tc-comptime-purity-banned-module? target)))
+      false)))
 
 (define (tc-comptime-purity-ctfe-builtin? [name : String] [name-id : i64]) : bool
   (let
@@ -42103,7 +42115,7 @@
     [name : String (tc-hygiene-name-text-id name-id)]
     (cond
       [(tc-string-list-contains bound name) ResultTcUnit.Ok]
-      [(tc-comptime-purity-banned-qualified? ctx name)
+      [(tc-comptime-purity-banned-qualified? ctx name name-id)
         (tc-comptime-purity-error
           expr
           chain
@@ -57980,30 +57992,6 @@
                     (macro-alias-cache-put! current-module-id qualifier-id -3)
                     (TcMaybeNameId.Some cached))])])]
         [else (TcMaybeNameId.Some cached)]))))
-
-(define (macro-import-alias-target-cached
-  [decls : AstDeclList]
-  [current-module-id : i64]
-  [qualifier : String]) : TcMaybeString
-  (match (macro-import-alias-target-cached-id
-    decls
-    current-module-id
-    (tc-existing-name-id qualifier))
-    [(TcMaybeNameId.Some target-id) (TcMaybeString.Some (intern-str target-id))]
-    [(TcMaybeNameId.No) (TcMaybeString.No)]))
-
-(define (macro-resolve-qualified-module
-  [decls : AstDeclList]
-  [current-module : String]
-  [qualifier : String]) : String
-  (match (macro-import-alias-target-cached
-    decls
-    (if (string.eq current-module "")
-      cbi.compiler-builtin-id-fix-empty
-      (tc-existing-name-id current-module))
-    qualifier)
-    [(TcMaybeString.Some target) target]
-    [(TcMaybeString.No) qualifier]))
 
 (define (macro-resolve-qualified-module-id
   [decls : AstDeclList]

@@ -225,6 +225,11 @@
       (allocation_profile.compiler-allocation-profile-control!
         2
         phase
+        "compiler-entry"
+        (allocation_profile.compiler-allocation-profile-entry-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        phase
         "source-pools"
         (compiler-driver-node-pool-base-arena))
       (allocation_profile.compiler-allocation-profile-control!

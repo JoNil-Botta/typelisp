@@ -88,6 +88,7 @@ $stderrWriter = [System.IO.StreamWriter]::new(
 )
 
 $samples = [System.Collections.Generic.List[object]]::new()
+$macroSnapshotId = 0L
 $workingPeak = 0L
 $privatePeak = 0L
 $lastWorking = 0L
@@ -123,9 +124,18 @@ while (-not $process.HasExited -or -not $stderrClosed) {
                 if ($fields.Count -ne 8) {
                     Fail "invalid allocation profile row: $line"
                 }
+                if ($fields[1] -eq "typecheck.macro.peak" -and
+                    $fields[2] -eq "macro-enclosing") {
+                    $macroSnapshotId++
+                }
                 $samples.Add([pscustomobject]@{
                     phase = $fields[1]
                     owner = $fields[2]
+                    snapshot_id = if ($fields[1] -eq "typecheck.macro.peak") {
+                        $macroSnapshotId
+                    } else {
+                        0
+                    }
                     arena_root = [int64]$fields[3]
                     bump_bytes = [int64]$fields[4]
                     committed_bytes = [int64]$fields[5]
@@ -178,35 +188,65 @@ foreach ($sample in $samples) {
 }
 foreach ($phase in $phaseOrder) {
     $group = $phaseGroups[$phase]
-    $uniqueRoots = @{}
+    $snapshotGroups = @{}
     foreach ($sample in $group) {
-        if ($sample.arena_root -ne 0) {
-            $key = "$($sample.arena_root)"
-            if (-not $uniqueRoots.ContainsKey($key) -or
-                $sample.committed_bytes -gt $uniqueRoots[$key].committed_bytes) {
-                $uniqueRoots[$key] = $sample
+        $snapshotKey = "$($sample.snapshot_id)"
+        if (-not $snapshotGroups.ContainsKey($snapshotKey)) {
+            $snapshotGroups[$snapshotKey] = [System.Collections.Generic.List[object]]::new()
+        }
+        $snapshotGroups[$snapshotKey].Add($sample)
+    }
+    $trackedSnapshotId = 0L
+    $trackedSnapshotPrivate = -1L
+    $trackedUsed = 0L
+    $trackedCommitted = -1L
+    $trackedReserved = 0L
+    foreach ($snapshotKey in $snapshotGroups.Keys) {
+        $uniqueRoots = @{}
+        foreach ($sample in $snapshotGroups[$snapshotKey]) {
+            if ($sample.arena_root -ne 0) {
+                $rootKey = "$($sample.arena_root)"
+                if (-not $uniqueRoots.ContainsKey($rootKey) -or
+                    $sample.committed_bytes -gt $uniqueRoots[$rootKey].committed_bytes) {
+                    $uniqueRoots[$rootKey] = $sample
+                }
             }
         }
+        $snapshotUsed = 0L
+        $snapshotCommitted = 0L
+        $snapshotReserved = 0L
+        $snapshotPrivate = 0L
+        foreach ($sample in $uniqueRoots.Values) {
+            $snapshotUsed += $sample.bump_bytes
+            $snapshotCommitted += $sample.committed_bytes
+            $snapshotReserved += $sample.reserved_bytes
+        }
+        foreach ($sample in $snapshotGroups[$snapshotKey]) {
+            $snapshotPrivate = [Math]::Max($snapshotPrivate, $sample.private_bytes)
+        }
+        if ($snapshotPrivate -gt $trackedSnapshotPrivate -or
+            ($snapshotPrivate -eq $trackedSnapshotPrivate -and
+                $snapshotCommitted -gt $trackedCommitted)) {
+            $trackedSnapshotId = [int64]$snapshotKey
+            $trackedSnapshotPrivate = $snapshotPrivate
+            $trackedUsed = $snapshotUsed
+            $trackedCommitted = $snapshotCommitted
+            $trackedReserved = $snapshotReserved
+        }
     }
-    $trackedUsed = 0L
-    $trackedCommitted = 0L
-    $trackedReserved = 0L
     $phaseWorking = 0L
     $phasePrivate = 0L
-    foreach ($sample in $uniqueRoots.Values) {
-        $trackedUsed += $sample.bump_bytes
-        $trackedCommitted += $sample.committed_bytes
-        $trackedReserved += $sample.reserved_bytes
-    }
     foreach ($sample in $group) {
         $phaseWorking = [Math]::Max($phaseWorking, $sample.working_set_bytes)
         $phasePrivate = [Math]::Max($phasePrivate, $sample.private_bytes)
     }
     $phaseRows.Add([pscustomobject]@{
         phase = $phase
+        tracked_snapshot_id = $trackedSnapshotId
         tracked_unique_bump_bytes = $trackedUsed
         tracked_unique_committed_bytes = $trackedCommitted
         tracked_unique_reserved_bytes = $trackedReserved
+        private_minus_tracked_committed_bytes = $phasePrivate - $trackedCommitted
         working_set_bytes = $phaseWorking
         private_bytes = $phasePrivate
         process_working_set_peak_bytes = $workingPeak

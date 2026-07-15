@@ -48512,21 +48512,12 @@
             [retired : i64 macro-live-symbols-retired-arena]
             (begin
               (macro-live-symbols-promote-owner-names! symbols)
-              (allocation_profile.compiler-allocation-profile-control!
-                2
-                "typecheck.macro"
-                "symbols-current"
-                next-head)
               (set! macro-live-symbols-arena next-head)
               (set! macro-live-symbols-retired-arena previous)
+              (macro-expand-allocation-profile-snapshot! retired)
               (if (= retired 0)
                 unit
                 (begin
-                  (allocation_profile.compiler-allocation-profile-control!
-                    2
-                    "typecheck.macro"
-                    "symbols-retired"
-                    retired)
                   (unsafe
                     (arena.tl_arena_destroy retired))))
               (ResultCompilerSymbols.Ok symbols)))]
@@ -48656,6 +48647,90 @@
         (set! macro-expand-scratch-arena scratch)
         scratch))
     macro-expand-scratch-arena))
+
+;; Emit the dominant macro-expansion owners at the last boundary where all of
+;; them are simultaneously live. The control query makes this a single cold
+;; branch when profiling is disabled; allocator hot paths remain untouched.
+(define (macro-expand-allocation-profile-snapshot! [reclaiming-symbols : i64]) : unit
+  (if (= (allocation_profile.compiler-allocation-profile-control! 0 "" "" 0) 0)
+    unit
+    (begin
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-enclosing"
+        (arena.tl_arena_current))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-scratch"
+        macro-expand-scratch-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-symbols-current"
+        macro-live-symbols-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-symbols-retired"
+        macro-live-symbols-retired-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-symbols-reclaiming"
+        reclaiming-symbols)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "macro-hygiene-cache"
+        tc-hygiene-module-env-cache-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "typecheck-function-scratch"
+        tc-fn-scratch-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "typecheck-body-facts"
+        tc-body-type-fact-storage-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "typecheck-prefix-cache"
+        tc-prefix-snapshot-cache-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "typecheck-marker-names"
+        tc-marker-name-id-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "typecheck-module-index"
+        tc-module-decl-index-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "typecheck-clone-roots"
+        tc-clone-root-collection-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "compiler-entry"
+        (allocation_profile.compiler-allocation-profile-entry-arena-handle))
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "source-pools"
+        node-pool-base-arena)
+      (allocation_profile.compiler-allocation-profile-control!
+        2
+        "typecheck.macro.peak"
+        "intern-persistent"
+        (intern-persistent-arena-handle))
+      unit)))
 
 (define (macro-expand-scratch-clear-owned-caches!) : unit
   (begin
@@ -61973,6 +62048,7 @@
       cfgs)
       [(ResultMacroExpand.Ok expanded expanded-paths)
         (let
+          [_profile-owners : unit (macro-expand-allocation-profile-snapshot! 0)]
           [_release-scratch : unit (macro-expand-scratch-release!)]
           (if (compiler-specialize-needed? expanded)
             (match (gen-normalize-program-with-paths-and-pools
@@ -61987,6 +62063,7 @@
             (ResultMacroExpand.Ok expanded expanded-paths)))]
       [(ResultMacroExpand.Err diag)
         (begin
+          (macro-expand-allocation-profile-snapshot! 0)
           (macro-expand-scratch-release!)
           (ResultMacroExpand.Err diag))])))
 

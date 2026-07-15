@@ -368,6 +368,13 @@ named-owner rows explicit so consumers can de-duplicate them. Without the flag,
 the compiler emits no rows and keeps the allocator fast path unchanged.
 `bump_bytes` includes the retained high-water position of rewound overflow
 segments; use `committed_bytes` when reconciling the rows with OS commitment.
+In the `typecheck.macro.peak` snapshot, `macro-enclosing`, `macro-scratch`,
+`macro-symbols-current`, `macro-symbols-retired`, `macro-symbols-reclaiming`,
+`macro-hygiene-cache`, the `typecheck-*` scratch/cache owners, `source-pools`,
+`intern-persistent`, and the process-lifetime `compiler-entry` arena identify
+the independently owned arenas that are simultaneously live. Repeated
+snapshots capture transient symbol-generation overlap without treating retired
+roots as concurrent indefinitely.
 
 On Windows, correlate those rows with the compiler process's working set and
 private bytes using:

@@ -8909,18 +8909,26 @@
   [index : i64]) : ResultCompilerOptimizeVerify
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (ResultCompilerOptimizeVerify.Ok)
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi _ inputs _)
-        (if (opt-phi-input-labels-match?
-          inputs
-          (opt-pred-map-lookup pred-map block-label))
-          (opt-verify-phi-predecessors-instr-seq-from
-            pred-map
-            block-label
-            instrs
-            (+ index 1))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: phi predecessor mismatch"))]
+    (match (& (array-ref (struct-get instrs slots) index))
+      [(CompilerIrInstr.Phi _ _ _)
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Phi _ inputs _)
+            (if (opt-phi-input-labels-match?
+              inputs
+              (opt-pred-map-lookup pred-map block-label))
+              (opt-verify-phi-predecessors-instr-seq-from
+                pred-map
+                block-label
+                instrs
+                (+ index 1))
+              (ResultCompilerOptimizeVerify.Err
+                "optimizer verify: phi predecessor mismatch"))]
+          [_
+            (opt-verify-phi-predecessors-instr-seq-from
+              pred-map
+              block-label
+              instrs
+              (+ index 1))])]
       [_
         (opt-verify-phi-predecessors-instr-seq-from
           pred-map

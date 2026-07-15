@@ -4222,11 +4222,24 @@
       (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
       index)))
 
-(define (tc-type-env-scoped-stack-map-lookup-id
-  [stack : (& stack TcTypeEnvScopedStack)]
+(define (tc-type-env-scoped-stack-map-cached-index
+  [lookup-cache : (& lookup-cache tc_i64_i64_map.Map)]
   [name-id : i64]) : i64
-  (match (tc_i64_i64_map.get (& (struct-get stack lookup-cache)) name-id)
-    [(tc_i64_i64_map.LookupFound index)
+  (match (tc_i64_i64_map.get lookup-cache name-id)
+    [(tc_i64_i64_map.LookupFound index) index]
+    [(tc_i64_i64_map.LookupMissing) -2]))
+
+(define (tc-type-env-scoped-stack-map-lookup-id
+  [stack : (&mut stack TcTypeEnvScopedStack)]
+  [name-id : i64]) : i64
+  (let
+    [lookup-cache : tc_i64_i64_map.Map (struct-get stack lookup-cache)]
+    [index : i64
+      (tc-type-env-scoped-stack-map-cached-index (& lookup-cache) name-id)]
+    (if (= index -2)
+      (begin
+        (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
+        -1)
       (if (and
         (>= index 0)
         (< index (struct-get stack slot-count))
@@ -4238,17 +4251,21 @@
           index)
         (begin
           (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
-          (tc-type-env-scoped-stack-find-id-index-from
-            stack
-            name-id
-            (- (struct-get stack slot-count) 1))))]
-    [(tc_i64_i64_map.LookupMissing)
-      (begin
-        (cfg compile-profile (compiler-tc-env-profile-note-scoped-cache-miss))
-        -1)]))
+          (let
+            [repaired-index : i64
+              (tc-type-env-scoped-stack-find-id-index-from
+                stack
+                name-id
+                (- (struct-get stack slot-count) 1))]
+            (begin
+              (tc_i64_i64_map.insert-ref!
+                (&mut lookup-cache)
+                name-id
+                repaired-index)
+              repaired-index)))))))
 
 (define (tc-type-env-scoped-stack-lookup-index
-  [stack : (& stack TcTypeEnvScopedStack)]
+  [stack : (&mut stack TcTypeEnvScopedStack)]
   [name-id : i64]) : i64
   (if (and (>= name-id 0) (< name-id tc-type-env-scoped-dense-lookup-capacity))
     (if (=
@@ -4278,7 +4295,7 @@
   [name-id : i64]) : TcTypeEnvScopedLookup
   (tc-type-env-scoped-stack-lookup-id-at
     stack
-    (tc-type-env-scoped-stack-lookup-index (& stack) name-id)))
+    (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)))
 
 (define (tc-type-env-scoped-stack-marker-lookup-from
   [stack : TcTypeEnvScopedStack]
@@ -4981,7 +4998,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
     (if (>= index 0)
       (ResultTcType.Ok
         (struct-get (array-ref (struct-get stack slots) index) ty))
@@ -5004,7 +5021,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    (if (>= (tc-type-env-scoped-stack-lookup-index (& stack) name-id) 0)
+    (if (>= (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id) 0)
       true
       (begin
         (cfg
@@ -5042,7 +5059,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
     (if (>= index 0)
       (let
         [slot : TcTypeEnvScopedSlot (array-ref (struct-get stack slots) index)]
@@ -5072,7 +5089,7 @@
   (let
     [sidecar : TcTypeEnvScopedSidecar (struct-get carrier sidecar)]
     [stack : TcTypeEnvScopedStack (struct-get sidecar stack)]
-    [index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
+    [index : i64 (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
     (if (>= index 0)
       (tc-type-env-scoped-slot-c-abi-fnptr?
         (array-ref (struct-get stack slots) index))
@@ -5090,9 +5107,12 @@
   (let
     [stack : TcTypeEnvScopedStack
       (struct-get (struct-get carrier sidecar) stack)]
-    [name-index : i64 (tc-type-env-scoped-stack-lookup-index (& stack) name-id)]
+    [name-index : i64
+      (tc-type-env-scoped-stack-lookup-index (&mut stack) name-id)]
     [boundary-index : i64
-      (tc-type-env-scoped-stack-lookup-index (& stack) (tc-default-boundary-id))]
+      (tc-type-env-scoped-stack-lookup-index
+        (&mut stack)
+        (tc-default-boundary-id))]
     (cond
       [(>= name-index 0)
         (and (>= boundary-index 0) (> boundary-index name-index))]
@@ -5430,7 +5450,7 @@
         (struct-get
           (struct-get tc-type-env-scoped-runtime-carrier sidecar)
           stack)]
-      (tc-type-env-scoped-stack-map-lookup-id (& stack) name-id))))
+      (tc-type-env-scoped-stack-map-lookup-id (&mut stack) name-id))))
 
 (define (tc-type-env-scoped-runtime-save) : TcTypeEnvScopedRuntimeSave
   (if tc-type-env-scoped-runtime-active
@@ -17217,6 +17237,44 @@
                           (= depth 0))]
                       [_ false])))))))))))
 
+(define (tc-type-env-scoped-stack-sparse-cache-repair-smoke?) : bool
+  (let
+    [stack : TcTypeEnvScopedStack (tc-type-env-scoped-stack-with-capacity 1 1)]
+    [name-id : i64 (+ tc-type-env-scoped-dense-lookup-capacity 17)]
+    (begin
+      (tc-type-env-scoped-stack-bind-id! (&mut stack) name-id (AstType.I64))
+      (let
+        [mark : TcTypeEnvScopedMark
+          (tc-type-env-scoped-stack-save! (&mut stack))]
+        (begin
+          (tc-type-env-scoped-stack-bind-id!
+            (&mut stack)
+            name-id
+            (AstType.Bool))
+          (let
+            [shadowed : bool
+              (match (tc-type-env-scoped-stack-lookup-id stack name-id)
+                [(TcTypeEnvScopedLookup.Found (AstType.Bool) _ _ _ _ _) true]
+                [_ false])]
+            (begin
+              (tc-type-env-scoped-stack-restore! (&mut stack) mark)
+              (let
+                [restored : bool
+                  (match (tc-type-env-scoped-stack-lookup-id stack name-id)
+                    [(TcTypeEnvScopedLookup.Found (AstType.I64) _ _ _ _ _) true]
+                    [_ false])]
+                [repaired-index : i64
+                  (match (tc_i64_i64_map.get
+                    (& (struct-get stack lookup-cache))
+                    name-id)
+                    [(tc_i64_i64_map.LookupFound index) index]
+                    [(tc_i64_i64_map.LookupMissing) -1])]
+                [restored-again : bool
+                  (match (tc-type-env-scoped-stack-lookup-id stack name-id)
+                    [(TcTypeEnvScopedLookup.Found (AstType.I64) _ _ _ _ _) true]
+                    [_ false])]
+                (and shadowed restored (= repaired-index 0) restored-again)))))))))
+
 (define (tc-type-env-scoped-sidecar-smoke?) : bool
   (let
     [sidecar : TcTypeEnvScopedSidecar (tc-type-env-scoped-sidecar-new)]
@@ -17763,6 +17821,7 @@
 (define (tc-type-env-scoped-stack-smoke?) : bool
   (and
     (tc-type-env-scoped-stack-grow-smoke?)
+    (tc-type-env-scoped-stack-sparse-cache-repair-smoke?)
     (tc-type-env-scoped-sidecar-smoke?)
     (tc-type-env-scoped-carrier-smoke?)
     (tc-type-env-scoped-primary-storage-smoke?)

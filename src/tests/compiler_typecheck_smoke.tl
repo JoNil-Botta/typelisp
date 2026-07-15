@@ -3594,12 +3594,41 @@
             shadowed
             restored))))))
 
+(define (compiler-typecheck-scoped-marker-replaced-cache-ok?) : bool
+  (let
+    [outer-env : TcTypeEnv
+      (tc-bind (tc-default-env) "cache-owner" (AstType.I64))]
+    [inactive-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter!
+        (tc-type-env-scoped-carrier-from-env outer-env))]
+    [outer-visible-before : bool (tc-lifetime-visible? outer-env "cache-owner")]
+    [outer-save : TcTypeEnvScopedRuntimeSave
+      (tc-type-env-scoped-runtime-enter!
+        (tc-type-env-scoped-carrier-from-env (tc-default-env)))]
+    [inner-hidden : bool
+      (not (tc-lifetime-visible? (tc-default-env) "cache-owner"))]
+    (begin
+      (tc-type-env-scoped-runtime-restore! outer-save)
+      (let
+        [outer-visible-after : bool
+          (tc-lifetime-visible? outer-env "cache-owner")]
+        (begin
+          (tc-type-env-scoped-runtime-restore! inactive-save)
+          (and
+            outer-visible-before
+            inner-hidden
+            outer-visible-after
+            (not (tc-type-env-scoped-runtime-active?))))))))
+
 (define (main) : i64
   (begin
     (compiler-typecheck-self-test)
     (unless
       (compiler-typecheck-scoped-marker-queries-ok?)
       (io.panic "typecheck: scoped marker query smoke failed"))
+    (unless
+      (compiler-typecheck-scoped-marker-replaced-cache-ok?)
+      (io.panic "typecheck: replaced scoped marker cache smoke failed"))
     ;; The macro-expansion self-test leaves multiple symbol generations behind.
     ;; A fresh stdlib Module macro compile must not observe a reclaimed handle.
     (unless

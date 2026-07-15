@@ -5502,6 +5502,7 @@
         (set! tc-type-env-scoped-runtime-active true))]
     [(TcTypeEnvScopedRuntimeSave.Replaced carrier)
       (begin
+        (tc-type-env-scoped-cache-clear!)
         (set! tc-type-env-scoped-runtime-carrier carrier)
         (set! tc-type-env-scoped-runtime-active true))]))
 

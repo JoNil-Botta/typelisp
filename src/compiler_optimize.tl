@@ -31450,6 +31450,34 @@
       [pred-map : OptPredMap (OptPredMap (opt-cfg-index-build blocks))]
       (opt-verify-ok? (opt-verify-phi-predecessors-blocks pred-map blocks)))))
 
+;; Inlining retains rewritten IR in the program arena, but its structural
+;; verifier builds only temporary CFG indexes and predecessor maps. Reuse one
+;; scratch arena across the program so those per-function tables do not remain
+;; live until backend emission.
+(define opt-inline-verify-scratch-arena : i64
+  0)
+
+(define (opt-inline-structure-ok-reclaiming? [blocks : CompilerIrBlockList]) : bool
+  (if (= opt-inline-verify-scratch-arena 0)
+    (opt-inline-structure-ok? blocks)
+    (let
+      [enclosing : i64 (arena.tl_arena_current)]
+      [scratch : i64 opt-inline-verify-scratch-arena]
+      [_switch : unit
+        (unsafe
+          (arena.tl_arena_set scratch))]
+      [mark : i64 (arena.tl_region_mark)]
+      [ok : bool (opt-inline-structure-ok? blocks)]
+      [scratch-head : i64 (arena.tl_arena_current)]
+      (begin
+        (unsafe
+          (arena.tl_arena_set scratch-head)
+          (arena.tl_region_reset mark))
+        (set! opt-inline-verify-scratch-arena (arena.tl_arena_current))
+        (unsafe
+          (arena.tl_arena_set enclosing))
+        ok))))
+
 (define (opt-inline-revert-or-keep
   [fallback : CompilerIrFunction]
   [next : CompilerIrFunction]) : CompilerIrFunction
@@ -31465,7 +31493,7 @@
   [repair? : bool]) : CompilerIrFunction
   (match next
     [(CompilerIrFunction.Function _ _ _ _ blocks)
-      (if (opt-inline-structure-ok? blocks)
+      (if (opt-inline-structure-ok-reclaiming? blocks)
         (if repair?
           (opt-ssa-construct-function next)
           next)
@@ -31530,7 +31558,7 @@
                   ret
                   new-vars
                   new-blocks)]
-              (if (opt-inline-structure-ok? new-blocks)
+              (if (opt-inline-structure-ok-reclaiming? new-blocks)
                 (OptInlineSpanProgram.Program
                   (compiler-ir-function-cons
                     (if (> added 0)
@@ -31671,9 +31699,18 @@
       [graph : OptCallGraph (opt-callgraph-build index)]
       [scc-result : OptSccResult (opt-scc-compute graph)]
       [census : OptInlineCensus (opt-inline-census-build index devirt)]
+      [verify-scratch : i64 (arena.tl_arena_make)]
       (begin
+        (set! opt-inline-verify-scratch-arena verify-scratch)
         (opt-inline-process-scc-order! index census scc-result)
-        (opt-function-index-to-list index)))))
+        (let
+          [out : CompilerIrFunctionList (opt-function-index-to-list index)]
+          [scratch-head : i64 opt-inline-verify-scratch-arena]
+          (begin
+            (set! opt-inline-verify-scratch-arena 0)
+            (unsafe
+              (arena.tl_arena_destroy scratch-head))
+            out))))))
 
 (define (opt-inline-program-functions-with-spans
   [functions : CompilerIrFunctionList]
@@ -31688,11 +31725,21 @@
       [graph : OptCallGraph (opt-callgraph-build index)]
       [scc-result : OptSccResult (opt-scc-compute graph)]
       [census : OptInlineCensus (opt-inline-census-build index devirt)]
+      [verify-scratch : i64 (arena.tl_arena_make)]
+      [_install-verify-scratch : unit
+        (set! opt-inline-verify-scratch-arena verify-scratch)]
       [next-spans : CompilerSourceSpans
         (opt-inline-process-scc-order-with-spans index census scc-result spans)]
-      (OptInlineSpanProgram.Program
-        (opt-function-index-to-list index)
-        next-spans))))
+      [out : OptInlineSpanProgram
+        (OptInlineSpanProgram.Program
+          (opt-function-index-to-list index)
+          next-spans)]
+      [scratch-head : i64 opt-inline-verify-scratch-arena]
+      (begin
+        (set! opt-inline-verify-scratch-arena 0)
+        (unsafe
+          (arena.tl_arena_destroy scratch-head))
+        out))))
 
 (define (opt-function-list-defines?
   [functions : CompilerIrFunctionList]

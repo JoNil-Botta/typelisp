@@ -577,7 +577,7 @@
 (define (compiler-ast-compaction-extern-ok? [decl : ast.AstDecl]) : bool
   (match decl
     [(ast.AstDecl.Extern _ _ metadata _)
-      (match metadata
+      (match (box-get metadata)
         [(ast.AstExternMetadata.Metadata (ast.AstExternAbi.C) symbol links true)
           (and
             (string.eq symbol "native_symbol")

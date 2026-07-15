@@ -2538,6 +2538,87 @@
           (compiler-load-session-cache-disable-for-test!)
           ok)))))
 
+(define (compiler-driver-state-smoke-checked-lower-retirement-arenas?) : bool
+  (let
+    [state : CompilerDriverState
+      (compiler-driver-state-session-program-cache-disable
+        (compiler-driver-state-new-for-compile))]
+    [roots : svec.Vec
+      (let
+        [items : svec.Vec (svec.new)]
+        (begin
+          (svec.push (&mut items) "stdlib")
+          items))]
+    (begin
+      (compiler-load-session-cache-disable-for-test!)
+      (compiler-driver-state-reset-file-state! state)
+      (let
+        [home-arena : i64 (arena.tl_arena_current)]
+        [caller-arena : i64 (arena.tl_arena_make)]
+        [_use-caller-arena : unit
+          (unsafe
+            (arena.tl_arena_set caller-arena))]
+        [lowered : ResultCompilerDriverLowered
+          (compiler-driver-load-and-lower-escaping-with-state-and-retirement
+            state
+            "tests/integration/calc.tl"
+            (CompilerBackendTarget.Linux)
+            roots
+            (CompilerBackendMode.Scalar)
+            (compiler-driver-state-target-cfgs
+              state
+              (CompilerBackendTarget.Linux)
+              (compiler-cfg-empty))
+            true)]
+        [ok : bool
+          (match lowered
+            [(ResultCompilerDriverLowered.Ok _ _ _)
+              (let
+                [return-ok? : bool
+                  (and
+                    (= (arena.tl_arena_current) caller-arena)
+                    (=
+                      compiler-driver-pending-frontend-return-arena
+                      caller-arena)
+                    (not (= compiler-driver-pending-retired-frontend-arena 0))
+                    (not (= compiler-driver-pending-retired-source-arena 0)))]
+                (begin
+                  (unless
+                    return-ok?
+                    (io.print-error
+                      "checked lower retirement: caller arena not restored"))
+                  return-ok?))]
+            [(ResultCompilerDriverLowered.Err _)
+              (begin
+                (io.print-error "checked lower retirement: lower failed")
+                false)])]
+        [intern-persistent-before : bool
+          (compiler-driver-prepare-lowered-source-retirement!)]
+        (begin
+          (compiler-driver-retire-lowered-source-arena!)
+          (compiler-driver-release-typecheck-caches-after-lower!)
+          (compiler-driver-retire-frontend-arena!)
+          (compiler-driver-restore-intern-persistence! intern-persistent-before)
+          (compiler-driver-restore-frontend-return-arena!)
+          (compiler-driver-state-capture-session-floors! state)
+          (compiler-load-session-cache-disable-for-test!)
+          (let
+            [restored? : bool
+              (and
+                ok
+                (= (arena.tl_arena_current) caller-arena)
+                (= compiler-driver-pending-retired-source-arena 0)
+                (= compiler-driver-pending-retired-frontend-arena 0)
+                (= compiler-driver-pending-frontend-return-arena 0))]
+            (begin
+              (unless
+                restored?
+                (io.print-error
+                  "checked lower retirement: cleanup did not restore state"))
+              (unsafe
+                (arena.tl_arena_set home-arena))
+              restored?)))))))
+
 (define (compiler-driver-state-smoke-batch-prelude-cache-floors?) : bool
   (let
     [state : CompilerDriverState
@@ -2934,4 +3015,9 @@
       [double-lower-status : i64
         (compiler-driver-state-smoke-lower-loaded-twice-status)]
       (unless (= double-lower-status 0) (return (+ 260 double-lower-status))))
+    ;; This check deliberately retires the complete uncached frontend state, so
+    ;; run it after the state-reuse tests above.
+    (unless
+      (compiler-driver-state-smoke-checked-lower-retirement-arenas?)
+      (return 38))
     42))

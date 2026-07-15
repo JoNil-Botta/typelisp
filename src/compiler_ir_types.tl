@@ -909,8 +909,10 @@
 ;; so the raw `(ptr-read (ptr-offset (ptr-cast (array-data ...) :
 ;; (Ptr CompilerIrInstr)) index))` form mis-scales the element stride and reads
 ;; garbage; the array macro lowers with the correct element size.
-(define (compiler-ir-instr-seq-ref [instrs : CompilerIrInstrSeq] [index : i64]) : CompilerIrInstr
-  (array-ref (struct-get instrs slots) index))
+(defmacro (compiler-ir-instr-seq-ref
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : CompilerIrInstr
+  `(array-ref (struct-get ,instrs slots) ,index))
 
 (define (compiler-ir-instr-loop-dst-or
   [instr : CompilerIrInstr]
@@ -958,15 +960,21 @@
 (define (compiler-ir-instr-seq-return?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
-  (compiler-ir-instr-return? (compiler-ir-instr-seq-ref instrs index)))
+  (match (& (array-ref (struct-get instrs slots) index))
+    [(CompilerIrInstr.Return _) true]
+    [_ false]))
 
 (define (compiler-ir-instr-seq-phi? [instrs : CompilerIrInstrSeq] [index : i64]) : bool
-  (compiler-ir-instr-phi? (compiler-ir-instr-seq-ref instrs index)))
+  (match (& (array-ref (struct-get instrs slots) index))
+    [(CompilerIrInstr.Phi _ _ _) true]
+    [_ false]))
 
 (define (compiler-ir-instr-seq-bounds-check?
   [instrs : CompilerIrInstrSeq]
   [index : i64]) : bool
-  (compiler-ir-instr-bounds-check? (compiler-ir-instr-seq-ref instrs index)))
+  (match (& (array-ref (struct-get instrs slots) index))
+    [(CompilerIrInstr.BoundsCheck _ _ _) true]
+    [_ false]))
 
 (define (compiler-ir-instr-binop-lhs-var-for-dst-or
   [instr : CompilerIrInstr]

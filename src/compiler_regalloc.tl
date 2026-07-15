@@ -1698,35 +1698,65 @@
         (+ offset 1)
         offset))))
 
-;; Live-set and greedy-occupancy words use only their low 32 bits.
-(define (compiler-reg-low-bit-index32 [bits : i64]) : i64
-  (let
-    [value : i64 bits]
-    [offset : i64 0]
-    (begin
-      (if (= (bit-and value 0xffff) 0)
-        (begin
-          (set! value (shr value 16))
-          (set! offset (+ offset 16)))
-        unit)
-      (if (= (bit-and value 0xff) 0)
-        (begin
-          (set! value (shr value 8))
-          (set! offset (+ offset 8)))
-        unit)
-      (if (= (bit-and value 0xf) 0)
-        (begin
-          (set! value (shr value 4))
-          (set! offset (+ offset 4)))
-        unit)
-      (if (= (bit-and value 0x3) 0)
-        (begin
-          (set! value (shr value 2))
-          (set! offset (+ offset 2)))
-        unit)
-      (if (= (bit-and value 0x1) 0)
-        (+ offset 1)
-        offset))))
+;; Live-set and greedy-occupancy words use only their low 32 bits. Isolate the
+;; lowest set bit and map its 32-bit De Bruijn product to the bit index. This
+;; replaces the five dependent branch-and-shift steps in the hot register-
+;; allocator scans with one multiply and one compact table lookup.
+(define compiler-reg-low-bit-index32-table : (Array i64 32)
+  (array
+    (cast 0 : i64)
+    1
+    28
+    2
+    29
+    14
+    24
+    3
+    30
+    22
+    20
+    15
+    25
+    17
+    4
+    8
+    31
+    27
+    13
+    23
+    21
+    19
+    16
+    7
+    26
+    12
+    18
+    6
+    11
+    5
+    10
+    9))
+
+(defmacro (compiler-reg-low-bit-index32 [bits : i64]) : i64
+  `(let
+    [value : i64 (bit-and ,bits 0xffffffff)]
+    (if (= value 0)
+      (cast 31 : i64)
+      (let
+        [isolated : i64 (bit-and value (- 0 value))]
+        [slot : i64 (shr (bit-and (* isolated 0x077cb531) 0xffffffff) 27)]
+        (cast (array-ref compiler-reg-low-bit-index32-table slot) : i64)))))
+
+(cfg
+  test
+  (define (compiler-reg-low-bit-index32-powers-ok? [bit : i64] [value : i64]) : bool
+    (if (= bit 32)
+      (and
+        (= (compiler-reg-low-bit-index32 0) 31)
+        (= (compiler-reg-low-bit-index32 0x100000000) 31))
+      (and
+        (= (compiler-reg-low-bit-index32 value) bit)
+        (compiler-reg-low-bit-index32-powers-ok? (+ bit 1) (* value 2))))))
 
 (define (compiler-reg-segment-flush-var!
   [segments : (Array CompilerRegIntervalList)]
@@ -9210,15 +9240,108 @@
           (set! index (+ index 1))))
       found)))
 
+(define (compiler-reg-loop-split-region-crosses-kind-seq?
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [kind : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (< p end) (not found))
+        (begin
+          (if (and
+            (>= p start)
+            (compiler-reg-clobber-instr-kind? (array-ref slots index) kind))
+            (set! found true)
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-loop-split-region-crosses-kind-blocks?
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [kind : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [next-point : i64
+              (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
+            (cond
+              [(>= point end) false]
+              [(<= next-point start)
+                (compiler-reg-loop-split-region-crosses-kind-blocks?
+                  (box-get rest)
+                  next-point
+                  kind
+                  start
+                  end)]
+              [(compiler-reg-loop-split-region-crosses-kind-seq?
+                  instrs
+                  point
+                  kind
+                  start
+                  end)
+                true]
+              [else
+                (compiler-reg-loop-split-region-crosses-kind-blocks?
+                  (box-get rest)
+                  next-point
+                  kind
+                  start
+                  end)]))])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [p : i64 point]
+        [found : bool false]
+        (begin
+          (while (and (< index count) (< p end) (not found))
+            (match (compiler-ir-block-seq-ref seq index)
+              [(CompilerIrBlock.Block _ instrs)
+                (let
+                  [next-point : i64
+                    (+ p (* 2 (compiler-ir-instr-seq-count instrs)))]
+                  (begin
+                    (if (and
+                      (> next-point start)
+                      (compiler-reg-loop-split-region-crosses-kind-seq?
+                        instrs
+                        p
+                        kind
+                        start
+                        end))
+                      (set! found true)
+                      unit)
+                    (set! p next-point)
+                    (set! index (+ index 1))))]))
+          found))]))
+
 (define (compiler-reg-loop-split-region-crosses-kind?
   [func : CompilerIrFunction]
   [kind : i64]
   [start : i64]
   [end : i64]) : bool
-  (compiler-reg-clobber-set-in-range-inclusive-start?
-    (compiler-reg-clobber-kind-points func kind)
-    start
-    end))
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-loop-split-region-crosses-kind-blocks?
+        blocks
+        0
+        kind
+        start
+        end)]))
 
 (define (compiler-reg-loop-split-region-rcx-safe?
   [func : CompilerIrFunction]
@@ -14340,29 +14463,51 @@
   [idx : i64]
   [best : i64]
   [best-w : i64]) : i64
-  (let
-    [index : i64 idx]
-    [out-best : i64 best]
-    [out-best-w : i64 best-w]
-    (begin
-      (while (< index n)
-        (begin
-          (if (and
-            (< index (array-length pending))
-            (= (array-ref pending index) 1))
-            (let
-              [w : i64
-                (if (< index (array-length ref-counts))
-                  (array-ref ref-counts index)
-                  0)]
-              (if (or (< out-best 0) (> w out-best-w))
-                (begin
-                  (set! out-best index)
-                  (set! out-best-w w))
-                unit))
-            unit)
-          (set! index (+ index 1))))
-      out-best)))
+  (if (< idx 0)
+    (if (< idx n)
+      (array-ref pending idx)
+      best)
+    (let
+      [pending-n : i64 (array-length pending)]
+      [ref-n : i64 (array-length ref-counts)]
+      [limit : i64
+        (if (< n pending-n)
+          n
+          pending-n)]
+      [weighted-limit : i64
+        (if (< limit ref-n)
+          limit
+          ref-n)]
+      [pending-data : (Ptr i64)
+        (unsafe
+          (ptr-cast (array-data pending) : (Ptr i64)))]
+      [ref-data : (Ptr i64)
+        (unsafe
+          (ptr-cast (array-data ref-counts) : (Ptr i64)))]
+      [index : i64 idx]
+      [out-best : i64 best]
+      [out-best-w : i64 best-w]
+      (begin
+        (while (< index limit)
+          (begin
+            (if (=
+              (unsafe
+                (ptr-read (ptr-offset pending-data index)))
+              1)
+              (let
+                [w : i64
+                  (if (< index weighted-limit)
+                    (unsafe
+                      (ptr-read (ptr-offset ref-data index)))
+                    0)]
+                (if (or (< out-best 0) (> w out-best-w))
+                  (begin
+                    (set! out-best index)
+                    (set! out-best-w w))
+                  unit))
+              unit)
+            (set! index (+ index 1))))
+        out-best))))
 
 ;; Re-entrant evict-and-requeue worklist loop (RAGreedy Component 1). Pop the
 ;; highest-weight pending root, dequeue it (pending=0), run selectOrSplit
@@ -29261,6 +29406,7 @@
 
 (define (compiler-regalloc-core-self-test?) : bool
   (and
+    (cfg test (compiler-reg-low-bit-index32-powers-ok? 0 1) true)
     (compiler-reg-reuse-ok?)
     (compiler-reg-f64-reuse-ok?)
     (compiler-reg-overlap-spill-ok?)

@@ -6668,16 +6668,34 @@
   (Some CompilerIrBlock))
 
 (define (opt-cfg-find-block [blocks : CompilerIrBlockList] [label : String]) : OptMaybeBlock
-  (match blocks
-    [(CompilerIrBlockList.Nil) (OptMaybeBlock.No)]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block block-label _)
-          (if (string.eq block-label label)
-            (OptMaybeBlock.Some block)
-            (opt-cfg-find-block (box-get rest) label))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-cfg-find-block (compiler-ir-block-seq-to-list seq) label)]))
+  (let
+    [cursor : CompilerIrBlockList blocks]
+    (begin
+      (while true
+        (match cursor
+          [(CompilerIrBlockList.Nil) (return (OptMaybeBlock.No))]
+          [(CompilerIrBlockList.Cons block rest)
+            (match block
+              [(CompilerIrBlock.Block block-label _)
+                (if (string.eq block-label label)
+                  (return (OptMaybeBlock.Some block))
+                  (set! cursor (box-get rest)))])]
+          [(CompilerIrBlockList.Array seq)
+            (let
+              [index : i64 0]
+              [count : i64 (compiler-ir-block-seq-count seq)]
+              (begin
+                (while (< index count)
+                  (let
+                    [block : CompilerIrBlock
+                      (compiler-ir-block-seq-ref seq index)]
+                    (match block
+                      [(CompilerIrBlock.Block block-label _)
+                        (if (string.eq block-label label)
+                          (return (OptMaybeBlock.Some block))
+                          (set! index (+ index 1)))])))
+                (return (OptMaybeBlock.No))))]))
+      (OptMaybeBlock.No))))
 
 (define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : String]) : bool
   (match (opt-cfg-find-block blocks label)
@@ -8909,18 +8927,26 @@
   [index : i64]) : ResultCompilerOptimizeVerify
   (if (>= index (compiler-ir-instr-seq-count instrs))
     (ResultCompilerOptimizeVerify.Ok)
-    (match (compiler-ir-instr-seq-ref instrs index)
-      [(CompilerIrInstr.Phi _ inputs _)
-        (if (opt-phi-input-labels-match?
-          inputs
-          (opt-pred-map-lookup pred-map block-label))
-          (opt-verify-phi-predecessors-instr-seq-from
-            pred-map
-            block-label
-            instrs
-            (+ index 1))
-          (ResultCompilerOptimizeVerify.Err
-            "optimizer verify: phi predecessor mismatch"))]
+    (match (& (array-ref (struct-get instrs slots) index))
+      [(CompilerIrInstr.Phi _ _ _)
+        (match (compiler-ir-instr-seq-ref instrs index)
+          [(CompilerIrInstr.Phi _ inputs _)
+            (if (opt-phi-input-labels-match?
+              inputs
+              (opt-pred-map-lookup pred-map block-label))
+              (opt-verify-phi-predecessors-instr-seq-from
+                pred-map
+                block-label
+                instrs
+                (+ index 1))
+              (ResultCompilerOptimizeVerify.Err
+                "optimizer verify: phi predecessor mismatch"))]
+          [_
+            (opt-verify-phi-predecessors-instr-seq-from
+              pred-map
+              block-label
+              instrs
+              (+ index 1))])]
       [_
         (opt-verify-phi-predecessors-instr-seq-from
           pred-map
@@ -15956,22 +15982,18 @@
           (opt-induction-find-fact-instr-seq body-blocks loop preheader instrs)])]
     [(OptMaybeBlock.No) (OptMaybeInductionFact.No)]))
 
-(define (opt-induction-blocker-instr? [instr : CompilerIrInstr]) : bool
-  (match instr
+(define (opt-induction-blocker-instr-seq-at?
+  [instrs : CompilerIrInstrSeq]
+  [index : i64]) : bool
+  (match (& (array-ref (struct-get instrs slots) index))
     [(CompilerIrInstr.Alloc _ _) true]
     [(CompilerIrInstr.CopyBytes _ _ _) true]
-    [(CompilerIrInstr.VectorStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrVectorStorePayload.Payload _ _ _ _ _) true])]
-    [(CompilerIrInstr.PredicatedStore payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrPredicatedStorePayload.Payload _ _ _ _ _ _) true])]
+    [(CompilerIrInstr.VectorStore _) true]
+    [(CompilerIrInstr.PredicatedStore _) true]
     [(CompilerIrInstr.CpuId _ _ _ _) true]
     [(CompilerIrInstr.Xgetbv _ _) true]
     [(CompilerIrInstr.Syscall _ _) true]
-    [(CompilerIrInstr.SpmdCall payload-box)
-      (match (box-get payload-box)
-        [(CompilerIrInstrSpmdCallPayload.Payload _ _ _ _ _ _) true])]
+    [(CompilerIrInstr.SpmdCall _) true]
     [(CompilerIrInstr.TailCall _ _ _) true]
     [(CompilerIrInstr.TailCallIndirect _ _ _) true]
     [_ false]))
@@ -15982,7 +16004,7 @@
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
     (or
-      (opt-induction-blocker-instr? (compiler-ir-instr-seq-ref instrs index))
+      (opt-induction-blocker-instr-seq-at? instrs index)
       (opt-induction-blocker-instr-seq-from? instrs (+ index 1)))))
 
 (define (opt-induction-blocker-instr-seq? [instrs : CompilerIrInstrSeq]) : bool
@@ -23744,10 +23766,13 @@
   [n : i64]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
-    (if (opt-tailrec-self-call?
-      (compiler-ir-instr-seq-ref instrs index)
-      fname
-      n)
+    (if (match (& (array-ref (struct-get instrs slots) index))
+      [(CompilerIrInstr.TailCall _ _ _)
+        (opt-tailrec-self-call?
+          (compiler-ir-instr-seq-ref instrs index)
+          fname
+          n)]
+      [_ false])
       true
       (opt-tailrec-instr-seq-has-convertible-from? instrs (+ index 1) fname n))))
 
@@ -28550,9 +28575,12 @@
   [label : String]) : bool
   (if (>= index (compiler-ir-instr-seq-count instrs))
     false
-    (if (opt-inline-instr-phi-label?
-      (compiler-ir-instr-seq-ref instrs index)
-      label)
+    (if (match (& (array-ref (struct-get instrs slots) index))
+      [(CompilerIrInstr.Phi _ _ _)
+        (opt-inline-instr-phi-label?
+          (compiler-ir-instr-seq-ref instrs index)
+          label)]
+      [_ false])
       true
       (opt-inline-instr-seq-phi-label-from? instrs (+ index 1) label))))
 

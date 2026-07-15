@@ -269,32 +269,79 @@
       (if (= left-count 0)
         right
         (let
-          [count : i64 (compiler-live-set-max left-count right-count)]
-          [out : (Array i64) (make-array i64 count)]
-          [index : i64 0]
-          [changed : bool false]
+          ;; Both inputs are trimmed, so a longer right operand necessarily
+          ;; contributes a set bit. Otherwise scan only until the first bit
+          ;; missing from left. Fixpoint iterations commonly find no change;
+          ;; avoid allocating and filling a throwaway immutable copy for them.
+          [probe : i64 0]
+          [changed : bool (> right-count left-count)]
           (begin
-            (while (< index count)
+            (while (and (not changed) (< probe right-count))
               (let
                 [left-bits : i64
-                  (if (< index left-count)
-                    (unsafe
-                      (ptr-read (ptr-offset (array-data left-words) index)))
-                    0)]
+                  (unsafe
+                    (ptr-read (ptr-offset (array-data left-words) probe)))]
                 [right-bits : i64
-                  (if (< index right-count)
-                    (unsafe
-                      (ptr-read (ptr-offset (array-data right-words) index)))
-                    0)]
-                [merged : i64 (bit-or left-bits right-bits)]
+                  (unsafe
+                    (ptr-read (ptr-offset (array-data right-words) probe)))]
                 (begin
-                  (array-set! out index merged)
-                  (if (not (= merged left-bits))
+                  (if (not (= (bit-and right-bits (bit-xor left-bits -1)) 0))
                     (set! changed true)
                     unit)
-                  (set! index (+ index 1)))))
+                  (set! probe (+ probe 1)))))
             (if changed
-              (compiler-live-set-from-words-trimmed out count)
+              (let
+                [count : i64
+                  (if (< left-count right-count)
+                    right-count
+                    left-count)]
+                [common-count : i64
+                  (if (< left-count right-count)
+                    left-count
+                    right-count)]
+                [out : (Array i64) (make-array i64 count)]
+                [left-data : (MutPtr i64)
+                  (unsafe
+                    (array-data left-words))]
+                [right-data : (MutPtr i64)
+                  (unsafe
+                    (array-data right-words))]
+                [out-data : (MutPtr i64)
+                  (unsafe
+                    (ptr-cast (array-data out) : (MutPtr i64)))]
+                [index : i64 0]
+                (begin
+                  ;; The loop bounds prove every raw access. Split the common
+                  ;; prefix from the longer operand's tail so the hot loop has
+                  ;; no per-word length branches or destination bounds checks.
+                  (while (< index common-count)
+                    (begin
+                      (unsafe
+                        (ptr-write!
+                          (ptr-offset out-data index)
+                          (bit-or
+                            (ptr-read (ptr-offset left-data index))
+                            (ptr-read (ptr-offset right-data index)))))
+                      (set! index (+ index 1))))
+                  (if (< left-count right-count)
+                    (while (< index count)
+                      (begin
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset out-data index)
+                            (ptr-read (ptr-offset right-data index))))
+                        (set! index (+ index 1))))
+                    (while (< index count)
+                      (begin
+                        (unsafe
+                          (ptr-write!
+                            (ptr-offset out-data index)
+                            (ptr-read (ptr-offset left-data index))))
+                        (set! index (+ index 1)))))
+                  ;; The longer input's final word is nonzero because every
+                  ;; CompilerLiveI64Set is canonical, so union cannot introduce
+                  ;; a trailing zero word.
+                  (CompilerLiveI64Set out)))
               left)))))))
 
 (define (compiler-live-set-union-into
@@ -310,29 +357,46 @@
     [right-words : (Array i64) (compiler-live-set-words right)]
     [count : i64 (array-length left-words)]
     [right-count : i64 (array-length right-words)]
-    [out : (Array i64) (make-array i64 count)]
-    [index : i64 0]
+    [probe-count : i64 (compiler-live-set-min count right-count)]
+    [probe : i64 0]
     [changed : bool false]
     (begin
-      (while (< index count)
+      ;; Prove the sets intersect before allocating the immutable result.
+      (while (and (not changed) (< probe probe-count))
         (let
           [left-bits : i64
             (unsafe
-              (ptr-read (ptr-offset (array-data left-words) index)))]
+              (ptr-read (ptr-offset (array-data left-words) probe)))]
           [right-bits : i64
-            (if (< index right-count)
-              (unsafe
-                (ptr-read (ptr-offset (array-data right-words) index)))
-              0)]
-          [next-bits : i64 (bit-and left-bits (bit-xor right-bits -1))]
+            (unsafe
+              (ptr-read (ptr-offset (array-data right-words) probe)))]
           (begin
-            (array-set! out index next-bits)
-            (if (not (= next-bits left-bits))
+            (if (not (= (bit-and left-bits right-bits) 0))
               (set! changed true)
               unit)
-            (set! index (+ index 1)))))
+            (set! probe (+ probe 1)))))
       (if changed
-        (compiler-live-set-from-words-trimmed out count)
+        (let
+          [out : (Array i64) (make-array i64 count)]
+          [index : i64 0]
+          (begin
+            (while (< index count)
+              (let
+                [left-bits : i64
+                  (unsafe
+                    (ptr-read (ptr-offset (array-data left-words) index)))]
+                [right-bits : i64
+                  (if (< index right-count)
+                    (unsafe
+                      (ptr-read (ptr-offset (array-data right-words) index)))
+                    0)]
+                (begin
+                  (array-set!
+                    out
+                    index
+                    (bit-and left-bits (bit-xor right-bits -1)))
+                  (set! index (+ index 1)))))
+            (compiler-live-set-from-words-trimmed out count)))
         left))))
 
 (define (compiler-live-set-eq?
@@ -413,40 +477,79 @@
           (set! index (- index 1))))
       score)))
 
+(define (compiler-live-set-builder-insert! [words : (Array i64)] [value : i64]) : unit
+  (if (< value 0)
+    unit
+    (let
+      [word-index : i64 (compiler-live-set-word-index value)]
+      [old-bits : i64 (array-ref words word-index)]
+      (array-set!
+        words
+        word-index
+        (bit-or old-bits (compiler-live-set-bit-mask value))))))
+
+(define (compiler-live-set-builder [max-value : i64]) : (Array i64)
+  (make-array
+    i64
+    (if (< max-value 0)
+      0
+      (+ (compiler-live-set-word-index max-value) 1))))
+
 (define (compiler-live-set1 [a : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert (compiler-live-set-empty) a))
+  (let
+    [words : (Array i64) (compiler-live-set-builder a)]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set2 [a : i64] [b : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert (compiler-live-set-empty) a)
-    b))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder (compiler-live-set-max a b))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set3 [a : i64] [b : i64] [c : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert (compiler-live-set-empty) a)
-      b)
-    c))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max (compiler-live-set-max a b) c))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set4 [a : i64] [b : i64] [c : i64] [d : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert (compiler-live-set-empty) a)
-        b)
-      c)
-    d))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max a b)
+          (compiler-live-set-max c d)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set5 [a : i64] [b : i64] [c : i64] [d : i64] [e : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert
-          (compiler-live-set-insert (compiler-live-set-empty) a)
-          b)
-        c)
-      d)
-    e))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max (compiler-live-set-max a b) c)
+          (compiler-live-set-max d e)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (compiler-live-set-builder-insert! words e)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set6
   [a : i64]
@@ -455,17 +558,20 @@
   [d : i64]
   [e : i64]
   [f : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert
-          (compiler-live-set-insert
-            (compiler-live-set-insert (compiler-live-set-empty) a)
-            b)
-          c)
-        d)
-      e)
-    f))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max (compiler-live-set-max a b) c)
+          (compiler-live-set-max (compiler-live-set-max d e) f)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (compiler-live-set-builder-insert! words e)
+      (compiler-live-set-builder-insert! words f)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set7
   [a : i64]
@@ -475,19 +581,23 @@
   [e : i64]
   [f : i64]
   [g : i64]) : CompilerLiveI64Set
-  (compiler-live-set-insert
-    (compiler-live-set-insert
-      (compiler-live-set-insert
-        (compiler-live-set-insert
-          (compiler-live-set-insert
-            (compiler-live-set-insert
-              (compiler-live-set-insert (compiler-live-set-empty) a)
-              b)
-            c)
-          d)
-        e)
-      f)
-    g))
+  (let
+    [words : (Array i64)
+      (compiler-live-set-builder
+        (compiler-live-set-max
+          (compiler-live-set-max
+            (compiler-live-set-max (compiler-live-set-max a b) c)
+            (compiler-live-set-max d e))
+          (compiler-live-set-max f g)))]
+    (begin
+      (compiler-live-set-builder-insert! words a)
+      (compiler-live-set-builder-insert! words b)
+      (compiler-live-set-builder-insert! words c)
+      (compiler-live-set-builder-insert! words d)
+      (compiler-live-set-builder-insert! words e)
+      (compiler-live-set-builder-insert! words f)
+      (compiler-live-set-builder-insert! words g)
+      (CompilerLiveI64Set words))))
 
 (define (compiler-live-set-ops-ok?) : bool
   (let
@@ -502,6 +612,7 @@
       (compiler-live-set-minus unioned (compiler-live-set2 0 65))]
     [trimmed : CompilerLiveI64Set
       (compiler-live-set-remove (compiler-live-set-remove a 66) 32)]
+    [deduplicated : CompilerLiveI64Set (compiler-live-set4 -1 31 31 66)]
     [ok : bool true]
     (begin
       (set! ok (and ok (compiler-live-set-eq? empty with-negative)))
@@ -524,6 +635,9 @@
         (and ok (compiler-live-set-eq? minus (compiler-live-set3 31 32 66))))
       (set! ok (and ok (= (compiler-live-set-count trimmed) 2)))
       (set! ok (and ok (= (compiler-live-set-word-count trimmed) 1)))
+      (set!
+        ok
+        (and ok (compiler-live-set-eq? deduplicated (compiler-live-set2 31 66))))
       ok)))
 
 (define (compiler-live-label-set-empty) : CompilerLiveLabelSet
@@ -1513,9 +1627,12 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (match (compiler-ir-instr-seq-ref instrs i)
-          [(CompilerIrInstr.Phi _ inputs _)
-            (compiler-live-phi-out-add-inputs! inputs ids phi-out)]
+        (match (& (array-ref (struct-get instrs slots) i))
+          [(CompilerIrInstr.Phi _ _ _)
+            (match (compiler-ir-instr-seq-ref instrs i)
+              [(CompilerIrInstr.Phi _ inputs _)
+                (compiler-live-phi-out-add-inputs! inputs ids phi-out)]
+              [_ unit])]
           [_ unit])
         (set! i (+ i 1))))))
 

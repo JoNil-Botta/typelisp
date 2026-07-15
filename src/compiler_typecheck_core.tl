@@ -13878,13 +13878,6 @@
           name))]
     [(option_i64.None) (ResultTcString.Err "")]))
 
-(define (tc-enum-qualified-variant-lookup-key [ctx : TcContext] [name : String]) : ResultTcString
-  (tc-enum-qualified-variant-lookup-key-from-id
-    ctx
-    name
-    (tc-existing-name-id name)
-    (tc-context-module-id ctx)))
-
 (define (tc-source-name-lookup-key-with-field-check
   [ctx : TcContext]
   [env : TcTypeEnv]
@@ -25638,7 +25631,11 @@
             [_ (ResultTcType.Err "typecheck: call target is not a function")])]
         [(ResultTcType.Err message) (ResultTcType.Err message)])]))
 
-(define (tc-phase-call [ctx : TcContext] [env : TcTypeEnv] [args : AstExprList]) : ResultTcType
+(define (tc-phase-call
+  [ctx : TcContext]
+  [env : TcTypeEnv]
+  [func : AstExpr]
+  [args : AstExprList]) : ResultTcType
   (if (= (struct-get (& args) len) 1)
     (let
       [owner-expr : AstExpr (ast-node-get (ast-expr-list-get (& args) 0 0))]
@@ -25651,11 +25648,13 @@
                 (if (or
                   (tc-ordinary-arena-owner-active-id? env oid)
                   (tc-atomic-arena-owner-active-id? env oid))
-                  (ResultTcType.Ok
-                    (AstType.Struct
-                      (tc-required-existing-nominal-name-id
-                        "typecheck: missing parsed ArenaPhase name: "
-                        (tc-arena-phase-type-name))))
+                  (match (tc-expr ctx env func)
+                    [(ResultTcType.Ok (AstType.Func _ ret))
+                      (ResultTcType.Ok (ty-node-get ret))]
+                    [(ResultTcType.Ok _)
+                      (ResultTcType.Err
+                        "typecheck: arena.phase target is not a function")]
+                    [(ResultTcType.Err message) (ResultTcType.Err message)])
                   (ResultTcType.Err
                     (tc-locate-error-at-expr
                       owner-expr
@@ -25891,7 +25890,7 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-atomic-pointer-call ctx env name args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-phase))
-                  (tc-phase-call ctx env args)]
+                  (tc-phase-call ctx env func args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
                   (tc-rewind-safe-call ctx env args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
@@ -26725,7 +26724,7 @@
                   (not (tc-name-bound-id? env name-id)))
                 (tc-atomic-pointer-call ctx env name args)]
               [(= arena-call-kind (tc-arena-safe-call-kind-phase))
-                (tc-phase-call ctx env args)]
+                (tc-phase-call ctx env func args)]
               [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
                 (tc-rewind-safe-call ctx env args)]
               [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
@@ -26815,7 +26814,7 @@
                     (not (tc-name-bound-id? env name-id)))
                   (tc-atomic-pointer-call ctx env name args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-phase))
-                  (tc-phase-call ctx env args)]
+                  (tc-phase-call ctx env func args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-rewind))
                   (tc-rewind-safe-call ctx env args)]
                 [(= arena-call-kind (tc-arena-safe-call-kind-destroy))
@@ -36953,18 +36952,6 @@
       (compiler-enum-qualified-variant-name enum-base variant-name)]
     (compiler-symbol-module-key module qualified-variant)))
 
-(define (tc-qualified-variant-key-id
-  [enum-name : String]
-  [variant-name : String]) : i64
-  (let
-    [enum-name-id : i64 (tc-existing-name-id enum-name)]
-    [module-id : i64 (tc-qualified-name-module-id enum-name-id)]
-    [enum-base-id : i64 (tc-qualified-name-base-id enum-name-id)]
-    [variant-name-id : i64 (tc-existing-name-id variant-name)]
-    [qualified-variant-id : i64
-      (compiler-enum-qualified-variant-name-id enum-base-id variant-name-id)]
-    (compiler-symbol-module-key-id-by-id module-id qualified-variant-id)))
-
 (define (tc-qualified-variant-key-id-by-id
   [enum-name-id : i64]
   [variant-name-id : i64]) : i64
@@ -37088,26 +37075,6 @@
             [(ResultTcString.Err _)
               (tc-qualified-variant-name enum-name variant-name)])
           (tc-qualified-variant-name enum-name variant-name)))]))
-
-(define (tc-source-variant-name-for-enum
-  [ctx : TcContext]
-  [enum-name : String]
-  [variant-name : String]) : String
-  (tc-source-variant-name-for-enum-id
-    ctx
-    enum-name
-    variant-name
-    (tc-existing-name-id variant-name)))
-
-(define (tc-qualified-variant-handle-for-enum-or
-  [ctx : TcContext]
-  [enum-name : String]
-  [variant-name : String]
-  [fallback : i64]) : i64
-  (compiler-registries-lookup-variant-key-id-or
-    (tc-context-registries ctx)
-    (tc-qualified-variant-key-id enum-name variant-name)
-    fallback))
 
 (define (tc-dotted-alias-flat-variant-key-id
   [ctx : TcContext]
@@ -37371,67 +37338,6 @@
             variants
             (+ index 1)))])))
 
-(define (tc-source-variant-handle-for-enum-or
-  [ctx : TcContext]
-  [enum-name : String]
-  [variant-name : String]
-  [fallback : i64]) : i64
-  (let
-    [registries : CompilerRegistries (tc-context-registries ctx)]
-    [variant-name-id : i64 (tc-existing-name-id variant-name)]
-    (if (tc-name-qualified-id? variant-name-id)
-      (compiler-registries-lookup-variant-id-or
-        registries
-        variant-name-id
-        fallback)
-      (if (>= (tc-name-first-dot-id variant-name-id) 0)
-        (match (tc-dotted-alias-variant-handle ctx variant-name variant-name-id)
-          [(option_i64.Some handle) handle]
-          [(option_i64.None)
-            (match (tc-enum-qualified-variant-lookup-handle
-              ctx
-              variant-name
-              variant-name-id)
-              [(option_i64.Some handle) handle]
-              [(option_i64.None)
-                (match (tc-dotted-type-name-lookup-key-from-id
-                  ctx
-                  variant-name
-                  variant-name-id)
-                  [(ResultTcString.Ok lookup-name)
-                    (compiler-registries-lookup-variant-or
-                      registries
-                      lookup-name
-                      fallback)]
-                  [(ResultTcString.Err _) fallback])])])
-        (let
-          [handle : i64
-            (compiler-registries-lookup-variant-id-or
-              registries
-              variant-name-id
-              (compiler-symbols-missing-handle))]
-          (if (compiler-symbols-handle-found? handle)
-            (match (tc-variant-owner-name ctx handle)
-              [(ResultTcString.Ok owner)
-                (if (string.eq owner enum-name)
-                  handle
-                  (tc-qualified-variant-handle-for-enum-or
-                    ctx
-                    enum-name
-                    variant-name
-                    fallback))]
-              [(ResultTcString.Err _)
-                (tc-qualified-variant-handle-for-enum-or
-                  ctx
-                  enum-name
-                  variant-name
-                  fallback)])
-            (tc-qualified-variant-handle-for-enum-or
-              ctx
-              enum-name
-              variant-name
-              fallback)))))))
-
 (define (tc-variant-name-matches-id?
   [ctx : TcContext]
   [enum-id : i64]
@@ -37458,19 +37364,6 @@
           (compiler-symbols-handle-found? pattern-handle)
           (compiler-symbols-handle-found? candidate-handle)
           (= pattern-handle candidate-handle))))))
-
-(define (tc-variant-name-matches?
-  [ctx : TcContext]
-  [enum-name : String]
-  [pattern-name : String]
-  [variant-name : String]) : bool
-  (if (string.eq pattern-name variant-name)
-    true
-    (tc-variant-name-matches-id?
-      ctx
-      (tc-existing-nominal-name-id enum-name)
-      (tc-existing-name-id pattern-name)
-      (tc-existing-name-id variant-name))))
 
 (define (tc-expr-pattern-enum-id) : i64
   (tc-stdlib-comptime-type-key-id "Expr" cbi.compiler-builtin-id-fix-Expr))
@@ -37611,21 +37504,6 @@
           (tc-type-list2 (AstType.Expr) (AstType.Expr)))
         false)]
     [_ false]))
-
-(define (tc-enum-has-single-variant?
-  [ctx : TcContext]
-  [variants : AstVariantDefList]
-  [enum-name : String]
-  [variant-name : String]) : bool
-  (if (= (struct-get (& variants) len) 1)
-    (match (ast-variant-def-list-get (& variants) 0 (ast-variant-def-fallback))
-      [(AstVariantDef.Def name _ _)
-        (tc-variant-name-matches?
-          ctx
-          enum-name
-          variant-name
-          (tc-env-key-name-text name))])
-    false))
 
 (define (tc-enum-single-matching-variant-id
   [ctx : TcContext]

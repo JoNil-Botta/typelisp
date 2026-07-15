@@ -202,9 +202,11 @@
   (match ftail
     [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(reader.Sexpr.Str val)
+        [(reader.Sexpr.Str val-id)
           (match (box-get vrest)
-            [(reader.Sexpr.Nil) (ResultPackageLockString.Ok val)]
+            [(reader.Sexpr.Nil)
+              (ResultPackageLockString.Ok
+                (reader.read-symbol-text-for-id val-id))]
             [_
               (ResultPackageLockString.Err
                 (string.concat3
@@ -250,17 +252,20 @@
               (match (box-get end)
                 [(reader.Sexpr.Nil)
                   (match (box-get value-node)
-                    [(reader.Sexpr.Str pin-value)
-                      (if (string.eq pin-value "")
-                        (ResultPackageLockPin.Err
-                          "package-lock: pin value must not be empty")
-                        (match (package-lock-parse-pin-kind
-                          (package-lock-symbol-text kind-name))
-                          [(ResultPackageLockPinKind.Err message)
-                            (ResultPackageLockPin.Err message)]
-                          [(ResultPackageLockPinKind.Ok pin-kind)
-                            (ResultPackageLockPin.Ok
-                              (PackageLockPin pin-kind pin-value))]))]
+                    [(reader.Sexpr.Str pin-value-id)
+                      (let
+                        [pin-value : String
+                          (reader.read-symbol-text-for-id pin-value-id)]
+                        (if (string.eq pin-value "")
+                          (ResultPackageLockPin.Err
+                            "package-lock: pin value must not be empty")
+                          (match (package-lock-parse-pin-kind
+                            (package-lock-symbol-text kind-name))
+                            [(ResultPackageLockPinKind.Err message)
+                              (ResultPackageLockPin.Err message)]
+                            [(ResultPackageLockPinKind.Ok pin-kind)
+                              (ResultPackageLockPin.Ok
+                                (PackageLockPin pin-kind pin-value))])))]
                     [_ (package-lock-pin-shape-error)])]
                 [_ (package-lock-pin-shape-error)])]
             [_ (package-lock-pin-shape-error)])]

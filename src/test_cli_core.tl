@@ -740,7 +740,7 @@
   (ast-expr-call
     (ast-node-push (AstExpr.Var (tltest-print-error-id)))
     (ast-expr-cons
-      (ast-node-push (AstExpr.Literal (AstLiteral.String text)))
+      (ast-node-push (AstExpr.Literal (ast-lit-generated-string text)))
       (ast-expr-cons
         (ast-expr-cast
           (ast-node-push

@@ -3740,8 +3740,8 @@
       (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Int n text)))]
     [(reader.Sexpr.Float text)
       (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Float text)))]
-    [(reader.Sexpr.Str text)
-      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.String text)))]
+    [(reader.Sexpr.Str string-id)
+      (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.String string-id)))]
     [(reader.Sexpr.Char c)
       (ResultAstPattern.Ok (AstPattern.Literal (AstLiteral.Char c)))]
     [(reader.Sexpr.Sym name)
@@ -6618,13 +6618,13 @@
                 pools
                 (AstExpr.Literal (AstLiteral.Float text)))
               s))]
-        [(reader.SpannedSexpr.Str text _)
+        [(reader.SpannedSexpr.Str string-id _)
           (ResultAstExpr.Ok
             (ast-expr-wrap-span
               pools
               (ast-node-pool-context-expr-push
                 pools
-                (AstExpr.Literal (AstLiteral.String text)))
+                (AstExpr.Literal (AstLiteral.String string-id)))
               s))]
         [(reader.SpannedSexpr.Char c _)
           (ResultAstExpr.Ok
@@ -6766,10 +6766,9 @@
       (match (box-get end)
         [(reader.Sexpr.Nil)
           (match (box-get value-node)
-            [(reader.Sexpr.Str value)
-              (if (> (string.string-length value) 0)
-                (ResultAstFnExport.Ok
-                  (ast-fn-export-id (reader.read-string-symbol-id value)))
+            [(reader.Sexpr.Str value-id)
+              (if (> (string.string-length (ci.intern-str value-id)) 0)
+                (ResultAstFnExport.Ok (ast-fn-export-id value-id))
                 (ResultAstFnExport.Err
                   "parse: define :export-symbol must not be empty"))]
             [_
@@ -7209,13 +7208,15 @@
       (match (box-get end)
         [(reader.Sexpr.Nil)
           (match (box-get value-node)
-            [(reader.Sexpr.Str value)
-              (if (> (string.string-length value) 0)
-                (ResultAstExternSymbol.Ok value)
-                (ResultAstExternSymbol.Err
-                  (string.append
-                    "parse: extern "
-                    (string.append key " must not be empty"))))]
+            [(reader.Sexpr.Str value-id)
+              (let
+                [value : String (ci.intern-str value-id)]
+                (if (> (string.string-length value) 0)
+                  (ResultAstExternSymbol.Ok value)
+                  (ResultAstExternSymbol.Err
+                    (string.append
+                      "parse: extern "
+                      (string.append key " must not be empty")))))]
             [_
               (ResultAstExternSymbol.Err
                 (string.append
@@ -8233,8 +8234,11 @@
   (match rest
     [(reader.SpannedSexpr.Cons path-node tail _)
       (match (reader.sp-node-get path-node)
-        [(reader.SpannedSexpr.Str path _)
-          (parse-ast-import-tail path (reader.sp-node-get tail) span)]
+        [(reader.SpannedSexpr.Str path-id _)
+          (parse-ast-import-tail
+            (ci.intern-str path-id)
+            (reader.sp-node-get tail)
+            span)]
         [(reader.SpannedSexpr.Sym module-name _)
           (parse-ast-dotted-import-tail
             module-name
@@ -8260,10 +8264,11 @@
           (match (reader.sp-node-get tail)
             [(reader.SpannedSexpr.Cons path-node after-path _)
               (match (reader.sp-node-get path-node)
-                [(reader.SpannedSexpr.Str path _)
+                [(reader.SpannedSexpr.Str path-id _)
                   (match (reader.sp-node-get after-path)
                     [(reader.SpannedSexpr.Nil _)
-                      (ResultAstDecl.Ok (AstDecl.IncludeStr name path))]
+                      (ResultAstDecl.Ok
+                        (AstDecl.IncludeStr name (ci.intern-str path-id)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-str expects exactly two operands")])]
@@ -8320,10 +8325,11 @@
           (match (reader.sp-node-get tail)
             [(reader.SpannedSexpr.Cons path-node after-path _)
               (match (reader.sp-node-get path-node)
-                [(reader.SpannedSexpr.Str path _)
+                [(reader.SpannedSexpr.Str path-id _)
                   (match (reader.sp-node-get after-path)
                     [(reader.SpannedSexpr.Nil _)
-                      (ResultAstDecl.Ok (AstDecl.IncludeBin name path))]
+                      (ResultAstDecl.Ok
+                        (AstDecl.IncludeBin name (ci.intern-str path-id)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-bin expects exactly two operands")])]

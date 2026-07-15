@@ -674,15 +674,18 @@
                 [start : i64 (+ i 1)]
                 (match (scan-str-end-result src start n)
                   [(result_lex_i64.Ok end)
-                    (begin
-                      (array-set! starts count i)
-                      (array-set!
-                        toks
-                        count
-                        (token.Token.Str
-                          (unescape-string-literal src start end)))
-                      (set! count (+ count 1))
-                      (set! i (+ end 1)))]
+                    (let
+                      [text : String (unescape-string-literal src start end)]
+                      [string-id : i64
+                        (ci.intern-source-slice
+                          text
+                          0
+                          (string.string-length text))]
+                      (begin
+                        (array-set! starts count i)
+                        (array-set! toks count (token.Token.Str string-id))
+                        (set! count (+ count 1))
+                        (set! i (+ end 1))))]
                   [(result_lex_i64.Err err)
                     (begin
                       (set! ok false)
@@ -922,22 +925,28 @@
                 [token-col : i64 col]
                 (match (scan-str-end-result src start n)
                   [(result_lex_i64.Ok end)
-                    (begin
-                      (array-set!
-                        stoks
-                        count
-                        (token.spanned-token-new
-                          (token.Token.Str
-                            (unescape-string-literal src start end))
-                          token-line
-                          token-col))
-                      (set! count (+ count 1))
-                      (match (lex-advance-position src i (+ end 1) line col)
-                        [(LexPosition.Position next-line next-col)
-                          (begin
-                            (set! line next-line)
-                            (set! col next-col))])
-                      (set! i (+ end 1)))]
+                    (let
+                      [text : String (unescape-string-literal src start end)]
+                      [string-id : i64
+                        (ci.intern-source-slice
+                          text
+                          0
+                          (string.string-length text))]
+                      (begin
+                        (array-set!
+                          stoks
+                          count
+                          (token.spanned-token-new
+                            (token.Token.Str string-id)
+                            token-line
+                            token-col))
+                        (set! count (+ count 1))
+                        (match (lex-advance-position src i (+ end 1) line col)
+                          [(LexPosition.Position next-line next-col)
+                            (begin
+                              (set! line next-line)
+                              (set! col next-col))])
+                        (set! i (+ end 1))))]
                   [(result_lex_i64.Err err)
                     (begin
                       (set! ok false)
@@ -1421,6 +1430,16 @@
       (string.eq (token.str (array-ref toks 0)) expected)
       (= (token.tag (array-ref toks 1)) (token.tag-end)))))
 
+(define (lex-string-token-retains-id?) : bool
+  (let
+    [toks : (Array token.Token) (lex (lex-string-source "literal-id"))]
+    [literal : token.Token (array-ref toks 0)]
+    [literal-id : i64 (token.str-id literal)]
+    (and
+      (>= literal-id 0)
+      (string.eq (ci.intern-str literal-id) "literal-id")
+      (= (token.str-id literal) literal-id))))
+
 (define (lex-escaped-quote-source-inner) : String
   (string.append
     "say "
@@ -1514,6 +1533,9 @@
             unit
             (set! ok false))
           (if (lex-string-escapes-ok?)
+            unit
+            (set! ok false))
+          (if (lex-string-token-retains-id?)
             unit
             (set! ok false))
           (if (lex-basic-token-sequence-ok?)

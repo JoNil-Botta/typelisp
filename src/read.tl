@@ -48,8 +48,8 @@
 ;; `Sexpr.Cons` carries two boxed `Sexpr` children, so the recursive layout is
 ;; finite and every constructed node that escapes via a return is heap-promoted.
 ;; The reader builds this tree; importers can walk it with `match`-based
-;; recursion. `Sexpr.Str` carries the inner text of a `"..."` string-literal
-;; datum: the reader consumes the lexer's `token.Token.Str` token into it, so a
+;; recursion. `Sexpr.Str` carries the parser-assigned ID of a string literal's
+;; unescaped inner text. The reader preserves the lexer's `token.Token.Str` ID, so a
 ;; quoted string reads as a distinct atom rather than being conflated with a
 ;; `Sexpr.Sym` of the same characters. `Sexpr.Char` carries a character-literal
 ;; datum (`'x'`), likewise keeping chars distinct from symbols, ints, and strings. `Sexpr.Str` and `Sexpr.Char`
@@ -60,7 +60,7 @@
   (Sym i64)
   (Nil)
   (Cons (Box Sexpr) (Box Sexpr))
-  (Str String)
+  (Str i64)
   (Char char)
   (Float String))
 
@@ -73,7 +73,7 @@
   (Sym i64 token.SourceSpan)
   (Nil token.SourceSpan)
   (Cons i64 i64 token.SourceSpan)
-  (Str String token.SourceSpan)
+  (Str i64 token.SourceSpan)
   (Char char token.SourceSpan)
   (Float String token.SourceSpan)
   (BracketList i64 token.SourceSpan))
@@ -408,10 +408,10 @@
             (ResultSpannedSexpr.Ok (SpannedSexpr.Sym name-id span))))]
       [(= t (token.tag-str))
         (let
-          [s : String (token.str tok)]
+          [string-id : i64 (token.str-id tok)]
           (begin
             (advance cur)
-            (ResultSpannedSexpr.Ok (SpannedSexpr.Str s span))))]
+            (ResultSpannedSexpr.Ok (SpannedSexpr.Str string-id span))))]
       [(= t (token.tag-char))
         (let
           [c : char (token.char tok)]
@@ -530,10 +530,10 @@
             (ResultSexpr.Ok (Sexpr.Sym name-id))))]
       [(= t (token.tag-str))
         (let
-          [s : String (token.str (peek-tok toks cur))]
+          [string-id : i64 (token.str-id (peek-tok toks cur))]
           (begin
             (advance cur)
-            (ResultSexpr.Ok (Sexpr.Str s))))]
+            (ResultSexpr.Ok (Sexpr.Str string-id))))]
       [(= t (token.tag-char))
         (let
           [c : char (token.char (peek-tok toks cur))]

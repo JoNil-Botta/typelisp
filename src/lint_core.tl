@@ -1680,7 +1680,8 @@
       (if value
         "true"
         "false")]
-    [(AstLiteral.String value) (string.append "\"" (string.append value "\""))]
+    [(AstLiteral.String string-id)
+      (string.append "\"" (string.append (intern-str string-id) "\""))]
     [(AstLiteral.Unit) "unit"]
     [_ "<expr>"]))
 

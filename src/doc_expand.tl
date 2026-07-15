@@ -498,8 +498,8 @@
         "true"
         "false")]
     [(AstLiteral.Char _) "'?'"]
-    [(AstLiteral.String text)
-      (doc-cat3 "\"" (doc-expand-escape-string text) "\"")]
+    [(AstLiteral.String string-id)
+      (doc-cat3 "\"" (doc-expand-escape-string (intern-str string-id)) "\"")]
     [(AstLiteral.Unit) "unit"]))
 
 (define (doc-ast-expr-list-source-from

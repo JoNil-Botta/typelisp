@@ -713,7 +713,7 @@
         "bool_0")]
     [(CompilerCtfeValue.Char c)
       (string.append "char_" (string.int->string (cast c : i64)))]
-    [(CompilerCtfeValue.String text) (spec-string-key text)]
+    [(CompilerCtfeValue.String text _) (spec-string-key text)]
     [(CompilerCtfeValue.Name text _) (spec-string-key text)]
     [(CompilerCtfeValue.Unit) "unit"]
     [(CompilerCtfeValue.Type ty) (string.append "type_" (spec-type-key ty))]
@@ -1344,7 +1344,7 @@
       (match (compiler-ctfe-eval head-expr env fuel)
         [(ResultCtfe.Ok value head-fuel)
           (match value
-            [(CompilerCtfeValue.String text)
+            [(CompilerCtfeValue.String text _)
               (match (gen-key-exprs-at exprs (+ index 1) env head-fuel)
                 [(ResultGenKey.Ok tail tail-fuel)
                   (ResultGenKey.Ok
@@ -1879,7 +1879,7 @@
       [(CompilerCtfeValue.F32 _) (ctfe-type-eq ty (AstType.F32))]
       [(CompilerCtfeValue.Bool _) (ctfe-type-eq ty (AstType.Bool))]
       [(CompilerCtfeValue.Char _) (ctfe-type-eq ty (AstType.Char))]
-      [(CompilerCtfeValue.String _) (ctfe-type-eq ty (AstType.String))]
+      [(CompilerCtfeValue.String _ _) (ctfe-type-eq ty (AstType.String))]
       [(CompilerCtfeValue.Name _ _) (ctfe-type-eq ty (AstType.String))]
       [(CompilerCtfeValue.Unit) (ctfe-type-eq ty (AstType.Unit))]
       [(CompilerCtfeValue.Type _) false]
@@ -1933,7 +1933,7 @@
     [(CompilerCtfeValue.F32 _) "f32"]
     [(CompilerCtfeValue.Bool _) "bool"]
     [(CompilerCtfeValue.Char _) "char"]
-    [(CompilerCtfeValue.String _) "String"]
+    [(CompilerCtfeValue.String _ _) "String"]
     [(CompilerCtfeValue.Name _ _) "String"]
     [(CompilerCtfeValue.Unit) "unit"]
     [(CompilerCtfeValue.Type _) "type"]
@@ -2274,7 +2274,7 @@
     [(CompilerCtfeValue.Char c)
       (ResultSpecSubExpr.Ok
         (ast-node-push (AstExpr.Literal (AstLiteral.Char c))))]
-    [(CompilerCtfeValue.String _)
+    [(CompilerCtfeValue.String _ _)
       (ResultSpecSubExpr.Err
         (box
           (spec-diagnostic-at-expr
@@ -5851,7 +5851,7 @@
         (CompilerCtfeValue.Type (AstType.I64))
         (spec-value-cons (CompilerCtfeValue.I64 5) (SpecValueList.Nil)))]
     [vals-string : SpecValueList
-      (spec-value-cons (CompilerCtfeValue.String "a b") (SpecValueList.Nil))]
+      (spec-value-cons (ctfe-generated-string-value "a b") (SpecValueList.Nil))]
     (and
       (string.eq
         (spec-specialized-name "alloc" vals-i64)

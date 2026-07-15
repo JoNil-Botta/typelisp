@@ -87,8 +87,17 @@
   (Float String)
   (Bool bool)
   (Char char)
-  (String String)
+  (String i64)
   (Unit))
+
+(define (ast-lit-string-id [string-id : i64]) : AstLiteral
+  (AstLiteral.String string-id))
+
+(define (ast-lit-generated-string [text : String]) : AstLiteral
+  (AstLiteral.String (ci.intern-generated-canonical-name text)))
+
+(define (ast-lit-string-text [string-id : i64]) : String
+  (ci.intern-str string-id))
 
 (define (ast-lit-int [value : i64]) : AstLiteral
   (AstLiteral.Int value ""))
@@ -5605,8 +5614,7 @@
       (AstLiteral.Float (ast-compaction-copy-string text))]
     [(AstLiteral.Bool value) (AstLiteral.Bool value)]
     [(AstLiteral.Char value) (AstLiteral.Char value)]
-    [(AstLiteral.String text)
-      (AstLiteral.String (ast-compaction-copy-string text))]
+    [(AstLiteral.String string-id) (AstLiteral.String string-id)]
     [(AstLiteral.Unit) AstLiteral.Unit]))
 
 (define (ast-compaction-remap-pattern

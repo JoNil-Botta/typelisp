@@ -33,16 +33,6 @@
 (define (ctfe-builtin-reset!) : unit
   unit)
 
-;; Lookup-only boundary for fixed/source spellings. Production AST paths should
-;; carry the parser-assigned id directly.
-(define (ctfe-existing-name-id [name : String]) : i64
-  (match (intern-lookup-content name)
-    [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing)
-      (match (intern-generated-canonical-lookup name)
-        [(InternLookupFound name-id) name-id]
-        [(InternLookupMissing) -1])]))
-
 ;; Stable opaque key for String-only private metadata. It cannot change if a
 ;; genuinely generated identifier is materialized later in the compilation.
 (define (ctfe-string-structural-key-id [name : String]) : i64
@@ -515,7 +505,10 @@
   (F32 f64)
   (Bool bool)
   (Char char)
-  (String String)
+  ;; String values keep the identity assigned when their text entered CTFE.
+  ;; Parsed literals retain their source ID; computed values receive a
+  ;; generated-domain ID at the operation that creates them.
+  (String String i64)
   ;; Identifier text produced by syntax inspection retains the parser or
   ;; generated identity of that syntax node. String operations intentionally
   ;; return String because their result is newly computed text.
@@ -556,10 +549,21 @@
     (intern-str (ci.intern-macro-global-source-name-id-or name-id name-id))
     name-id))
 
+(define (ctfe-generated-string-value [text : String]) : CompilerCtfeValue
+  (CompilerCtfeValue.String text (ctfe-materialize-generated-name-id text)))
+
+(define (ctfe-source-string-value [string-id : i64]) : CompilerCtfeValue
+  (CompilerCtfeValue.String (intern-str string-id) string-id))
+
+(define (ctfe-string-syntax-name-id [text : String] [string-id : i64]) : i64
+  (if (ci.intern-generated-id-active? string-id)
+    string-id
+    (ctfe-materialize-generated-name-from-source-id text string-id)))
+
 (define (ctfe-value-name-id [value : CompilerCtfeValue]) : i64
   (match value
     [(CompilerCtfeValue.Name _ name-id) name-id]
-    [(CompilerCtfeValue.String name) (ctfe-materialize-generated-name-id name)]
+    [(CompilerCtfeValue.String _ name-id) name-id]
     [_ -1]))
 
 (define (ctfe-untyped-expr-type-name) : String
@@ -1891,7 +1895,7 @@
     [(CompilerCtfeValue.F32 _) "f32"]
     [(CompilerCtfeValue.Bool _) "bool"]
     [(CompilerCtfeValue.Char _) "char"]
-    [(CompilerCtfeValue.String _) "String"]
+    [(CompilerCtfeValue.String _ _) "String"]
     [(CompilerCtfeValue.Name _ _) "String"]
     [(CompilerCtfeValue.Unit) "unit"]
     [(CompilerCtfeValue.Type _) "type"]
@@ -1951,8 +1955,8 @@
             (ResultCtfe.Err
               (box
                 (ctfe-diagnostic-at-expr expr "comptime: invalid f64 literal"))))])]
-    [(AstLiteral.String text)
-      (ResultCtfe.Ok (CompilerCtfeValue.String text) fuel)]))
+    [(AstLiteral.String string-id)
+      (ResultCtfe.Ok (ctfe-source-string-value string-id) fuel)]))
 
 ;; --- binary operators -------------------------------------------------------
 ;; i64 arithmetic/bitwise/shift and i64 comparisons.
@@ -2248,9 +2252,9 @@
               (ctfe-diagnostic-at-expr
                 expr
                 "binary operation in comptime requires matching operand types")))])]
-    [(CompilerCtfeValue.String a)
+    [(CompilerCtfeValue.String a _)
       (match rv
-        [(CompilerCtfeValue.String b) (ctfe-eval-bin-string op a b expr fuel)]
+        [(CompilerCtfeValue.String b _) (ctfe-eval-bin-string op a b expr fuel)]
         [(CompilerCtfeValue.Name b _) (ctfe-eval-bin-string op a b expr fuel)]
         [_
           (ResultCtfe.Err
@@ -2260,7 +2264,7 @@
                 "binary operation in comptime requires matching operand types")))])]
     [(CompilerCtfeValue.Name a _)
       (match rv
-        [(CompilerCtfeValue.String b) (ctfe-eval-bin-string op a b expr fuel)]
+        [(CompilerCtfeValue.String b _) (ctfe-eval-bin-string op a b expr fuel)]
         [(CompilerCtfeValue.Name b _) (ctfe-eval-bin-string op a b expr fuel)]
         [_
           (ResultCtfe.Err
@@ -2715,7 +2719,7 @@
 (import (result CtfeI64Arg (Box CompilerDiagnostic)) as result_ctfe_i64_arg)
 
 (defenum ResultCtfeStringArg
-  (Ok String i64)
+  (Ok String i64 i64)
   (Err (Box CompilerDiagnostic)))
 
 ;; Reflection aliases share the canonical nominal ID established from the
@@ -3186,8 +3190,10 @@
     [(ResultCtfe.Err d) (ResultCtfeStringArg.Err d)]
     [(ResultCtfe.Ok value arg-fuel)
       (match value
-        [(CompilerCtfeValue.String text) (ResultCtfeStringArg.Ok text arg-fuel)]
-        [(CompilerCtfeValue.Name text _) (ResultCtfeStringArg.Ok text arg-fuel)]
+        [(CompilerCtfeValue.String text string-id)
+          (ResultCtfeStringArg.Ok text string-id arg-fuel)]
+        [(CompilerCtfeValue.Name text name-id)
+          (ResultCtfeStringArg.Ok text name-id arg-fuel)]
         [_
           (ResultCtfeStringArg.Err
             (box
@@ -3305,7 +3311,7 @@
     (ctfe-match-pattern-list
       args
       (ctfe-value-list1
-        (CompilerCtfeValue.String (ctfe-type-info-key-in-env env ty)))
+        (ctfe-generated-string-value (ctfe-type-info-key-in-env env ty)))
       env)
     (CtfePatternMatch.No)))
 
@@ -3326,7 +3332,7 @@
                 (ctfe-match-pattern-list
                   args
                   (ctfe-value-list2
-                    (CompilerCtfeValue.String
+                    (ctfe-generated-string-value
                       (ctfe-type-info-key-in-env env ty))
                     (CompilerCtfeValue.TypeFieldList fields))
                   env)
@@ -3339,7 +3345,7 @@
                 (ctfe-match-pattern-list
                   args
                   (ctfe-value-list2
-                    (CompilerCtfeValue.String
+                    (ctfe-generated-string-value
                       (ctfe-type-info-key-in-env env ty))
                     (CompilerCtfeValue.TypeVariantList variants))
                   env)
@@ -3408,7 +3414,7 @@
           (if (ctfe-pattern-variant-name? variant "TypeInfoBuiltin")
             (ctfe-match-pattern-list
               args
-              (ctfe-value-list1 (CompilerCtfeValue.String kind))
+              (ctfe-value-list1 (ctfe-generated-string-value kind))
               env)
             (CtfePatternMatch.No))
           (ctfe-match-type-info-opaque variant args resolved env))])))
@@ -3888,7 +3894,7 @@
                   arg-fuel)]
               [(string.eq name "type-kind")
                 (ResultCtfe.Ok
-                  (CompilerCtfeValue.String
+                  (ctfe-generated-string-value
                     (ctfe-type-kind-with-reflections-and-pools
                       (ctfe-env-pools env)
                       infos
@@ -3896,7 +3902,7 @@
                   arg-fuel)]
               [(string.eq name "type-key")
                 (ResultCtfe.Ok
-                  (CompilerCtfeValue.String
+                  (ctfe-generated-string-value
                     (ctfe-type-key-with-reflections-and-pools
                       (ctfe-env-pools env)
                       infos
@@ -3945,7 +3951,7 @@
                       (match cleanup
                         [(CtfeReflectCleanup.Fn cleanup-name)
                           (ResultCtfe.Ok
-                            (CompilerCtfeValue.String cleanup-name)
+                            (ctfe-generated-string-value cleanup-name)
                             arg-fuel)]
                         [(CtfeReflectCleanup.No)
                           (ResultCtfe.Err
@@ -3968,11 +3974,11 @@
                     (match info
                       [(CtfeReflectInfo.Struct _ module _ _ _ _)
                         (ResultCtfe.Ok
-                          (CompilerCtfeValue.String module)
+                          (ctfe-generated-string-value module)
                           arg-fuel)]
                       [(CtfeReflectInfo.Enum _ module _ _ _ _)
                         (ResultCtfe.Ok
-                          (CompilerCtfeValue.String module)
+                          (ctfe-generated-string-value module)
                           arg-fuel)])]
                   [(CtfeMaybeReflectInfo.None)
                     (ResultCtfe.Err
@@ -3989,11 +3995,11 @@
                     (match info
                       [(CtfeReflectInfo.Struct _ _ nominal-name _ _ _)
                         (ResultCtfe.Ok
-                          (CompilerCtfeValue.String nominal-name)
+                          (ctfe-generated-string-value nominal-name)
                           arg-fuel)]
                       [(CtfeReflectInfo.Enum _ _ nominal-name _ _ _)
                         (ResultCtfe.Ok
-                          (CompilerCtfeValue.String nominal-name)
+                          (ctfe-generated-string-value nominal-name)
                           arg-fuel)])]
                   [(CtfeMaybeReflectInfo.None)
                     (ResultCtfe.Err
@@ -4572,10 +4578,10 @@
       [right : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg left expr env fuel name)
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok l left-fuel)
+        [(ResultCtfeStringArg.Ok l _ left-fuel)
           (match (ctfe-eval-string-arg right expr env left-fuel name)
             [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeStringArg.Ok r right-fuel)
+            [(ResultCtfeStringArg.Ok r _ right-fuel)
               (ResultCtfe.Ok
                 (CompilerCtfeValue.Bool (string.eq l r))
                 right-fuel)])]))
@@ -4594,12 +4600,12 @@
       [right : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg left expr env fuel name)
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok l left-fuel)
+        [(ResultCtfeStringArg.Ok l _ left-fuel)
           (match (ctfe-eval-string-arg right expr env left-fuel name)
             [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-            [(ResultCtfeStringArg.Ok r right-fuel)
+            [(ResultCtfeStringArg.Ok r _ right-fuel)
               (ResultCtfe.Ok
-                (CompilerCtfeValue.String (string.append l r))
+                (ctfe-generated-string-value (string.append l r))
                 right-fuel)])]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "string-append expects two strings")))))
@@ -4619,7 +4625,7 @@
       [len-arg : AstExpr (ctfe-expr-arg args 2 env)]
       (match (ctfe-eval-string-arg text-arg expr env fuel "string-slice")
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok text text-fuel)
+        [(ResultCtfeStringArg.Ok text _ text-fuel)
           (match (ctfe-eval-i64-arg start-arg expr env text-fuel "string-slice")
             [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
             [(result_ctfe_i64_arg.Ok start-value)
@@ -4642,7 +4648,7 @@
                             expr
                             "string-slice range out of bounds")))
                       (ResultCtfe.Ok
-                        (CompilerCtfeValue.String
+                        (ctfe-generated-string-value
                           (string.substring text start len))
                         (struct-get len-value fuel))))])])]))
     (ResultCtfe.Err
@@ -4662,7 +4668,7 @@
       [arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg arg expr env fuel name)
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok text arg-fuel)
+        [(ResultCtfeStringArg.Ok text _ arg-fuel)
           (ResultCtfe.Ok
             (CompilerCtfeValue.I64 (string.string-length text))
             arg-fuel)]))
@@ -4681,7 +4687,7 @@
       [index : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg text expr env fuel name)
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok s text-fuel)
+        [(ResultCtfeStringArg.Ok s _ text-fuel)
           (ctfe-eval-string-ref-index s index expr env text-fuel name)]))
     (ResultCtfe.Err
       (box
@@ -4719,7 +4725,7 @@
       [arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg arg expr env fuel name)
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]
-        [(ResultCtfeStringArg.Ok text arg-fuel)
+        [(ResultCtfeStringArg.Ok text _ arg-fuel)
           (ResultCtfe.Ok (CompilerCtfeValue.I64 (string.>int text)) arg-fuel)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "string->int expects one string")))))
@@ -4736,7 +4742,7 @@
         [(result_ctfe_i64_arg.Err d) (ResultCtfe.Err d)]
         [(result_ctfe_i64_arg.Ok arg-value)
           (ResultCtfe.Ok
-            (CompilerCtfeValue.String
+            (ctfe-generated-string-value
               (string.int->string (struct-get arg-value value)))
             (struct-get arg-value fuel))]))
     (ResultCtfe.Err
@@ -4862,7 +4868,7 @@
     (let
       [message-arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg message-arg expr env fuel "comptime-error")
-        [(ResultCtfeStringArg.Ok message _next-fuel)
+        [(ResultCtfeStringArg.Ok message _ _next-fuel)
           (ResultCtfe.Err (box (ctfe-diagnostic-at-expr expr message)))]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
@@ -4958,18 +4964,18 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(ResultCtfe.Ok value arg-fuel)
           (match value
-            [(CompilerCtfeValue.String text)
+            [(CompilerCtfeValue.String _ string-id)
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Literal (AstLiteral.String text))
+                  (AstExpr.Literal (AstLiteral.String string-id))
                   (AstType.String))
                 arg-fuel)]
-            [(CompilerCtfeValue.Name text _)
+            [(CompilerCtfeValue.Name _ name-id)
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Literal (AstLiteral.String text))
+                  (AstExpr.Literal (AstLiteral.String name-id))
                   (AstType.String))
                 arg-fuel)]
             [_
@@ -5029,19 +5035,23 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(ResultCtfe.Ok value arg-fuel)
           (match value
-            [(CompilerCtfeValue.String text)
+            [(CompilerCtfeValue.String text string-id)
               (if extract?
-                (ResultCtfe.Ok (CompilerCtfeValue.String text) arg-fuel)
+                (ResultCtfe.Ok
+                  (CompilerCtfeValue.String text string-id)
+                  arg-fuel)
                 (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel))]
-            [(CompilerCtfeValue.Name text _)
+            [(CompilerCtfeValue.Name text name-id)
               (if extract?
-                (ResultCtfe.Ok (CompilerCtfeValue.String text) arg-fuel)
+                (ResultCtfe.Ok (CompilerCtfeValue.String text name-id) arg-fuel)
                 (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel))]
             [(CompilerCtfeValue.Expr node _)
               (match (ctfe-expr-unspan env (ctfe-ast-get env node))
-                [(AstExpr.Literal (AstLiteral.String text))
+                [(AstExpr.Literal (AstLiteral.String string-id))
                   (if extract?
-                    (ResultCtfe.Ok (CompilerCtfeValue.String text) arg-fuel)
+                    (ResultCtfe.Ok
+                      (ctfe-source-string-value string-id)
+                      arg-fuel)
                     (ResultCtfe.Ok (CompilerCtfeValue.Bool true) arg-fuel))]
                 [_
                   (if extract?
@@ -5076,11 +5086,11 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(ResultCtfe.Ok value arg-fuel)
           (match value
-            [(CompilerCtfeValue.String name)
+            [(CompilerCtfeValue.String name string-id)
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
-                  (AstExpr.Var (ctfe-materialize-generated-name-id name))
+                  (AstExpr.Var (ctfe-string-syntax-name-id name string-id))
                   (ctfe-untyped-expr-type))
                 arg-fuel)]
             [(CompilerCtfeValue.Name _ name-id)
@@ -5106,8 +5116,8 @@
     (let
       [arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg arg expr env fuel "module-name")
-        [(ResultCtfeStringArg.Ok module next-fuel)
-          (ResultCtfe.Ok (CompilerCtfeValue.String module) next-fuel)]
+        [(ResultCtfeStringArg.Ok module module-id next-fuel)
+          (ResultCtfe.Ok (CompilerCtfeValue.String module module-id) next-fuel)]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "module-name expects exactly one arg")))))
@@ -5127,26 +5137,20 @@
         env
         fuel
         "module-export-macro?")
-        [(ResultCtfeStringArg.Ok module module-fuel)
+        [(ResultCtfeStringArg.Ok module module-id module-fuel)
           (match (ctfe-eval-string-arg
             name-arg
             expr
             env
             module-fuel
             "module-export-macro?")
-            [(ResultCtfeStringArg.Ok name name-fuel)
-              (let
-                [module-id : i64 (ctfe-existing-name-id module)]
-                [name-id : i64 (ctfe-existing-name-id name)]
-                (ResultCtfe.Ok
-                  (CompilerCtfeValue.Bool
-                    (or
-                      (string.eq module "")
-                      (and
-                        (>= module-id 0)
-                        (>= name-id 0)
-                        (ctfe-module-macro-export-id? module-id name-id))))
-                  name-fuel))]
+            [(ResultCtfeStringArg.Ok name name-id name-fuel)
+              (ResultCtfe.Ok
+                (CompilerCtfeValue.Bool
+                  (or
+                    (string.eq module "")
+                    (ctfe-module-macro-export-id? module-id name-id)))
+                name-fuel)]
             [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)])]
         [(ResultCtfeStringArg.Err d) (ResultCtfe.Err d)]))
     (ResultCtfe.Err
@@ -5165,23 +5169,20 @@
       [module-arg : AstExpr (ctfe-expr-arg args 0 env)]
       [name-arg : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg module-arg expr env fuel "module-hook")
-        [(ResultCtfeStringArg.Ok module module-fuel)
+        [(ResultCtfeStringArg.Ok module raw-module-id module-fuel)
           (match (ctfe-eval-string-arg
             name-arg
             expr
             env
             module-fuel
             "module-hook")
-            [(ResultCtfeStringArg.Ok name name-fuel)
+            [(ResultCtfeStringArg.Ok name name-id name-fuel)
               (let
                 [module-id : i64
                   (if (string.eq module "")
                     cbi.compiler-builtin-id-fix-empty
-                    (ctfe-existing-name-id module))]
-                [name-id : i64 (ctfe-existing-name-id name)]
+                    raw-module-id)]
                 (if (and
-                  (>= module-id 0)
-                  (>= name-id 0)
                   (or
                     (string.eq module "")
                     (ctfe-module-macro-export-id? module-id name-id)))
@@ -5228,13 +5229,13 @@
               (match (compiler-ctfe-eval field-arg env target-fuel)
                 [(ResultCtfe.Ok field-val field-fuel)
                   (match field-val
-                    [(CompilerCtfeValue.String field)
+                    [(CompilerCtfeValue.String field field-id)
                       (ResultCtfe.Ok
                         (CompilerCtfeValue.Expr
                           (ast-expr-struct-get-id-with-pools
                             (ctfe-env-pools env)
                             target-node
-                            (ctfe-materialize-generated-name-id field))
+                            (ctfe-string-syntax-name-id field field-id))
                           (ctfe-untyped-expr-type))
                         field-fuel)]
                     [(CompilerCtfeValue.Name _ field-id)
@@ -5331,7 +5332,7 @@
               (match (compiler-ctfe-eval field-arg env target-fuel)
                 [(ResultCtfe.Ok field-val field-fuel)
                   (match field-val
-                    [(CompilerCtfeValue.String field)
+                    [(CompilerCtfeValue.String field field-id)
                       (match (compiler-ctfe-eval value-arg env field-fuel)
                         [(ResultCtfe.Ok value-val value-fuel)
                           (match value-val
@@ -5341,7 +5342,7 @@
                                   (ast-expr-struct-set-id-with-pools
                                     (ctfe-env-pools env)
                                     target-node
-                                    (ctfe-materialize-generated-name-id field)
+                                    (ctfe-string-syntax-name-id field field-id)
                                     value-node)
                                   (AstType.Unit))
                                 value-fuel)]
@@ -6458,7 +6459,7 @@
     (let
       [name-arg : AstExpr (ctfe-expr-arg args 0 env)]
       (match (ctfe-eval-string-arg name-arg expr env fuel "pattern-binding")
-        [(ResultCtfeStringArg.Ok name next-fuel)
+        [(ResultCtfeStringArg.Ok name _ next-fuel)
           (ResultCtfe.Ok
             (CompilerCtfeValue.Pattern (ctfe-pat-binding name))
             next-fuel)]
@@ -6477,7 +6478,7 @@
       [name-arg : AstExpr (ctfe-expr-arg args 0 env)]
       [payloads-arg : AstExpr (ctfe-expr-arg args 1 env)]
       (match (ctfe-eval-string-arg name-arg expr env fuel "pattern-variant")
-        [(ResultCtfeStringArg.Ok name name-fuel)
+        [(ResultCtfeStringArg.Ok name _ name-fuel)
           (match (compiler-ctfe-eval payloads-arg env name-fuel)
             [(ResultCtfe.Ok payloads-val payloads-fuel)
               (match payloads-val
@@ -6580,7 +6581,7 @@
         env
         fuel
         "pattern-list-bindings")
-        [(ResultCtfeStringArg.Ok prefix prefix-fuel)
+        [(ResultCtfeStringArg.Ok prefix _ prefix-fuel)
           (match (ctfe-eval-i64-arg
             count-arg
             expr
@@ -6762,7 +6763,7 @@
   (ctfe-ast-push env (AstExpr.Literal (ast-lit-int value))))
 
 (define (ctfe-source-helper-string [env : CtfeEnv] [value : String]) : i64
-  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String value))))
+  (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string value))))
 
 (define (ctfe-source-helper-struct-get
   [env : CtfeEnv]
@@ -7591,7 +7592,7 @@
     [(CompilerCtfeValue.TypeField name ty)
       (cond
         [(ctfe-comptime-field-name? field "name")
-          (ResultCtfe.Ok (CompilerCtfeValue.String name) fuel)]
+          (ResultCtfe.Ok (ctfe-generated-string-value name) fuel)]
         [(ctfe-comptime-field-name? field "ty")
           (ResultCtfe.Ok (CompilerCtfeValue.TypeInfo ty) fuel)]
         [else (ctfe-comptime-field-error field expr)])]
@@ -7622,7 +7623,7 @@
     [(CompilerCtfeValue.TypeVariant name payloads)
       (cond
         [(ctfe-comptime-field-name? field "name")
-          (ResultCtfe.Ok (CompilerCtfeValue.String name) fuel)]
+          (ResultCtfe.Ok (ctfe-generated-string-value name) fuel)]
         [(ctfe-comptime-field-name? field "payloads")
           (ResultCtfe.Ok
             (CompilerCtfeValue.TypeVariantPayloadList payloads)
@@ -8001,11 +8002,13 @@
             [(CompilerCtfeValue.F32 actual) (= actual want)]
             [_ false])]
         [(CompilerFloatNoF64) false])]
-    [(AstLiteral.String text)
-      (match value
-        [(CompilerCtfeValue.String actual) (string.eq actual text)]
-        [(CompilerCtfeValue.Name actual _) (string.eq actual text)]
-        [_ false])]))
+    [(AstLiteral.String string-id)
+      (let
+        [text : String (intern-str string-id)]
+        (match value
+          [(CompilerCtfeValue.String actual _) (string.eq actual text)]
+          [(CompilerCtfeValue.Name actual _) (string.eq actual text)]
+          [_ false]))]))
 
 (define (ctfe-match-pattern-list
   [patterns : AstPatternList]
@@ -8430,7 +8433,7 @@
   (ctfe-ast-push env (AstExpr.Var name)))
 
 (define (ctfe-type-syntax-string [value : String] [env : CtfeEnv]) : i64
-  (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String value))))
+  (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string value))))
 
 (define (ctfe-type-syntax-call
   [name : String]
@@ -8789,12 +8792,8 @@
 (define (ctfe-lifetime-syntax-name [expr : AstExpr]) : CtfeMaybeLifetimeSyntaxName
   (match expr
     [(AstExpr.Var name) (CtfeMaybeLifetimeSyntaxName.Some name)]
-    [(AstExpr.Literal (AstLiteral.String name))
-      (let
-        [name-id : i64 (ctfe-existing-name-id name)]
-        (if (>= name-id 0)
-          (CtfeMaybeLifetimeSyntaxName.Some name-id)
-          (CtfeMaybeLifetimeSyntaxName.None)))]
+    [(AstExpr.Literal (AstLiteral.String name-id))
+      (CtfeMaybeLifetimeSyntaxName.Some name-id)]
     [_ (CtfeMaybeLifetimeSyntaxName.None)]))
 
 (define (ctfe-expr-reference-type
@@ -10589,9 +10588,10 @@
       (match b
         [(AstLiteral.Float b-text) (string.eq a-text b-text)]
         [_ false])]
-    [(AstLiteral.String a-text)
+    [(AstLiteral.String a-id)
       (match b
-        [(AstLiteral.String b-text) (string.eq a-text b-text)]
+        [(AstLiteral.String b-id)
+          (string.eq (intern-str a-id) (intern-str b-id))]
         [_ false])]
     [(AstLiteral.Unit)
       (match b
@@ -12133,8 +12133,8 @@
         (compiler-float-format-f64 (compiler-float-round-f32-as-f64 n)))]
     [(CompilerCtfeValue.Bool b) (AstLiteral.Bool b)]
     [(CompilerCtfeValue.Char c) (AstLiteral.Char c)]
-    [(CompilerCtfeValue.String text) (AstLiteral.String text)]
-    [(CompilerCtfeValue.Name text _) (AstLiteral.String text)]
+    [(CompilerCtfeValue.String _ string-id) (AstLiteral.String string-id)]
+    [(CompilerCtfeValue.Name _ name-id) (AstLiteral.String name-id)]
     [(CompilerCtfeValue.Unit) (AstLiteral.Unit)]
     [(CompilerCtfeValue.Type _) (AstLiteral.Unit)]
     [(CompilerCtfeValue.Expr _ _) (AstLiteral.Unit)]
@@ -12568,7 +12568,7 @@
   (match (compiler-ctfe-eval (ctfe-ast-get env expr) env (ctfe-fuel-limit))
     [(ResultCtfe.Ok value _)
       (match value
-        [(CompilerCtfeValue.String actual) (string.eq actual want)]
+        [(CompilerCtfeValue.String actual _) (string.eq actual want)]
         [(CompilerCtfeValue.Name actual _) (string.eq actual want)]
         [_ false])]
     [(ResultCtfe.Err _) false]))
@@ -13224,7 +13224,7 @@
   (match (ctfe-env-lookup env name)
     [(CtfeMaybeValue.Some value)
       (match value
-        [(CompilerCtfeValue.String actual) (string.eq actual want)]
+        [(CompilerCtfeValue.String actual _) (string.eq actual want)]
         [(CompilerCtfeValue.Name actual _) (string.eq actual want)]
         [_ false])]
     [(CtfeMaybeValue.None) false]))
@@ -13693,7 +13693,7 @@
   (let
     [env : CtfeEnv (ctfe-env-empty)]
     [prefix : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "payload")))]
+      (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "payload")))]
     [count : i64 (ctfe-ast-push env (AstExpr.Literal (AstLiteral.Int 9 "")))]
     [call : i64
       (compiler-ctfe-call2-in-env env "pattern-list-bindings" prefix count)]
@@ -13766,11 +13766,11 @@
     [expected : i64
       (ast-expr-if-with-pools (ctfe-env-pools env) true-lit false-lit true-lit)]
     [point-name-lit : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "point")))]
+      (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "point")))]
     [field-name-lit : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "x")))]
+      (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "x")))]
     [name-lit : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
+      (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "Ada")))]
     [name-expr : i64 (compiler-ctfe-call1-in-env env "expr-string" name-lit)]
     [expected-name : i64
       (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
@@ -13803,7 +13803,7 @@
     [helper-name-lit : i64
       (ctfe-ast-push
         env
-        (AstExpr.Literal (AstLiteral.String "counter.push-ref")))]
+        (AstExpr.Literal (ast-lit-generated-string "counter.push-ref")))]
     [helper-expr : i64
       (compiler-ctfe-call1-in-env env "expr-var" helper-name-lit)]
     [mut-borrow-expr : i64

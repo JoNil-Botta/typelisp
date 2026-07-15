@@ -10632,7 +10632,8 @@
     [(AstLiteral.Float n) (CompilerIrValue.F64 (lower-float-literal-bits n ty))]
     [(AstLiteral.Bool b) (CompilerIrValue.Bool b)]
     [(AstLiteral.Char c) (CompilerIrValue.Char c)]
-    [(AstLiteral.String s) (CompilerIrValue.String s)]
+    [(AstLiteral.String string-id)
+      (CompilerIrValue.String (intern-str string-id))]
     [(AstLiteral.Unit) CompilerIrValue.Unit]))
 
 (define (lower-binop [op : AstBinOp]) : CompilerIrBinOp
@@ -22156,7 +22157,7 @@
                         (string.append
                           (tc-type-render (tc-resolve-type ctx ty))
                           " is compile-time only")))))]
-              [(CompilerCtfeValue.String _)
+              [(CompilerCtfeValue.String _ _)
                 (ResultLowerExpr.Err
                   (box
                     (lower-diagnostic-at-expr

@@ -877,9 +877,9 @@
   (match ftail
     [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(reader.Sexpr.Str val)
+        [(reader.Sexpr.Str val-id)
           (match (box-get vrest)
-            [(reader.Sexpr.Nil) (ResultTlciString.Ok val)]
+            [(reader.Sexpr.Nil) (ResultTlciString.Ok (tlci-symbol-text val-id))]
             [_
               (ResultTlciString.Err
                 (str_cat.str-cat

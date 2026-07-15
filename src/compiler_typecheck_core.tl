@@ -19568,7 +19568,8 @@
             (cond
               [(tc-macro-type-param-kind? ty)
                 (CompilerCtfeValue.Type (AstType.Var name))]
-              [(tc-macro-module-param-kind? ty) (CompilerCtfeValue.String "")]
+              [(tc-macro-module-param-kind? ty)
+                (CompilerCtfeValue.String "" cbi.compiler-builtin-id-fix-empty)]
               [(and
                   variadic
                   (tc-macro-expr-clause-type?
@@ -21771,7 +21772,7 @@
     [(CompilerCtfeValue.F32 _) (ResultTcType.Ok (AstType.F32))]
     [(CompilerCtfeValue.Bool _) (ResultTcType.Ok (AstType.Bool))]
     [(CompilerCtfeValue.Char _) (ResultTcType.Ok (AstType.Char))]
-    [(CompilerCtfeValue.String _)
+    [(CompilerCtfeValue.String _ _)
       (ResultTcType.Err "String value is compile-time only")]
     [(CompilerCtfeValue.Name _ _)
       (ResultTcType.Err "String value is compile-time only")]
@@ -50502,7 +50503,7 @@
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroModuleArg
-  (Ok String)
+  (Ok String i64)
   (Err (Box CompilerDiagnostic)))
 
 (defenum ResultMacroClause
@@ -52022,7 +52023,7 @@
   (match (compiler-ctfe-eval expr env fuel)
     [(ResultCtfe.Ok value next-fuel)
       (match value
-        [(CompilerCtfeValue.String text)
+        [(CompilerCtfeValue.String text _)
           (ResultGenKey.Ok (spec-string-key text) next-fuel)]
         [(CompilerCtfeValue.Name text _)
           (ResultGenKey.Ok (spec-string-key text) next-fuel)]
@@ -52082,8 +52083,8 @@
         (spec-string-key (macro-identity-key-sexpr (reader.sp-node-get head)))
         ":"
         (spec-string-key (macro-identity-key-sexpr (reader.sp-node-get tail))))]
-    [(reader.SpannedSexpr.Str text _)
-      (str_cat.str-cat "str:" (spec-string-key text))]
+    [(reader.SpannedSexpr.Str string-id _)
+      (str_cat.str-cat "str:" (spec-string-key (intern-str string-id)))]
     [(reader.SpannedSexpr.Char c _)
       (str_cat.str-cat "char:" (string.int->string (cast c : i64)))]
     [(reader.SpannedSexpr.Float text _)
@@ -52270,7 +52271,7 @@
         fallback-module
         fallback-module-id
         head-expr)
-        [(ResultMacroModuleArg.Ok module)
+        [(ResultMacroModuleArg.Ok module _)
           (ResultGenKey.Ok
             (str_cat.str-cat "module_" (spec-string-key module))
             fuel)]
@@ -53994,7 +53995,7 @@
           (cbi.compiler-builtin-ctfe-ref 209))
         span)]
     [(AstLiteral.Char c) (reader.SpannedSexpr.Char c span)]
-    [(AstLiteral.String text) (reader.SpannedSexpr.Str text span)]
+    [(AstLiteral.String string-id) (reader.SpannedSexpr.Str string-id span)]
     [(AstLiteral.Unit)
       (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span)]))
 
@@ -54274,8 +54275,8 @@
               span))]
         [(AstLiteral.Char c)
           (ResultMacroSexpr.Ok (reader.SpannedSexpr.Char c span))]
-        [(AstLiteral.String text)
-          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Str text span))]
+        [(AstLiteral.String string-id)
+          (ResultMacroSexpr.Ok (reader.SpannedSexpr.Str string-id span))]
         [(AstLiteral.Unit)
           (ResultMacroSexpr.Ok
             (macro-spanned-symbol-id (cbi.compiler-builtin-ctfe-ref 173) span))])]
@@ -58912,12 +58913,12 @@
                     current-module-id
                     name-id)
                     [(TcMaybeNameId.Some target-id)
-                      (ResultMacroModuleArg.Ok (intern-str target-id))]
+                      (ResultMacroModuleArg.Ok (intern-str target-id) target-id)]
                     [(TcMaybeNameId.No)
                       (if (or
                         (string.eq name current-module)
                         (tc-imported-module-identity-id? ctx name-id))
-                        (ResultMacroModuleArg.Ok name)
+                        (ResultMacroModuleArg.Ok name source-id)
                         (ResultMacroModuleArg.Err
                           (box
                             (ctfe-diagnostic-at-expr
@@ -58936,14 +58937,16 @@
   [fallback-module-id : i64]
   [arg : AstExpr]) : ResultMacroModuleArg
   (match (macro-module-strategy-arg ctx arg)
-    [(ResultMacroModuleArg.Ok module) (ResultMacroModuleArg.Ok module)]
+    [(ResultMacroModuleArg.Ok module module-id)
+      (ResultMacroModuleArg.Ok module module-id)]
     [(ResultMacroModuleArg.Err primary-diag)
       (if (= fallback-module-id (tc-context-module-id ctx))
         (ResultMacroModuleArg.Err primary-diag)
         (match (macro-module-strategy-arg
           (tc-context-with-module-id ctx fallback-module fallback-module-id)
           arg)
-          [(ResultMacroModuleArg.Ok module) (ResultMacroModuleArg.Ok module)]
+          [(ResultMacroModuleArg.Ok module module-id)
+            (ResultMacroModuleArg.Ok module module-id)]
           [(ResultMacroModuleArg.Err _) (ResultMacroModuleArg.Err primary-diag)]))]))
 
 (define (macro-expr-clause-from-items [arg : AstExpr] [items : AstExprList]) : ResultMacroClause
@@ -59357,18 +59360,18 @@
   (match arg-expr
     [(AstExpr.Spanned inner span)
       (match (ast-node-get inner)
-        [(AstExpr.Literal (AstLiteral.String text))
+        [(AstExpr.Literal (AstLiteral.String string-id))
           (ast-expr-spanned-with-pools
             (tc-context-pools ctx)
             (ast-node-pool-context-expr-push
               (tc-context-pools ctx)
-              (AstExpr.Literal (AstLiteral.String text)))
+              (AstExpr.Literal (AstLiteral.String string-id)))
             span)]
         [_ arg-id])]
-    [(AstExpr.Literal (AstLiteral.String text))
+    [(AstExpr.Literal (AstLiteral.String string-id))
       (ast-node-pool-context-expr-push
         (tc-context-pools ctx)
-        (AstExpr.Literal (AstLiteral.String text)))]
+        (AstExpr.Literal (AstLiteral.String string-id)))]
     [_ arg-id]))
 
 (define (macro-bind-fixed-param
@@ -59413,12 +59416,12 @@
         fallback-module
         fallback-module-id
         arg-expr)
-        [(ResultMacroModuleArg.Ok module)
+        [(ResultMacroModuleArg.Ok module module-id)
           (ResultMacroEnv.Ok
             (ctfe-env-extend-typed-id
               env
               name
-              (CompilerCtfeValue.String module)
+              (CompilerCtfeValue.String module module-id)
               (AstType.String)))]
         [(ResultMacroModuleArg.Err diag) (ResultMacroEnv.Err diag)])]
     [(macro-param-expr-clause? ctx fallback-module fallback-module-id ty)

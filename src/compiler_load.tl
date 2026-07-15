@@ -2059,7 +2059,7 @@
     (AstMaybeType.Some (AstType.String))
     (ast-node-pool-context-expr-push
       pools
-      (AstExpr.Literal (AstLiteral.String contents)))))
+      (AstExpr.Literal (ast-lit-generated-string contents)))))
 
 ;; A comptime include becomes a zero-argument macro whose expansion is a string
 ;; literal. The file bytes therefore exist only while the transformer runs;
@@ -8740,8 +8740,10 @@
       (let
         [value : AstExpr (ast-node-get value-box)]
         (match value
-          [(AstExpr.Literal (AstLiteral.String text))
-            (and (string.eq (intern-str got) name) (string.eq text want))]
+          [(AstExpr.Literal (AstLiteral.String string-id))
+            (and
+              (string.eq (intern-str got) name)
+              (string.eq (intern-str string-id) want))]
           [_ false]))]
     [_ false]))
 
@@ -10809,9 +10811,9 @@
   (match ftail
     [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(reader.Sexpr.Str val)
+        [(reader.Sexpr.Str val-id)
           (match (box-get vrest)
-            [(reader.Sexpr.Nil) (ResultPkgString.Ok val)]
+            [(reader.Sexpr.Nil) (ResultPkgString.Ok (intern-str val-id))]
             [_
               (ResultPkgString.Err
                 (string.append
@@ -10843,19 +10845,21 @@
                 (match (box-get end)
                   [(reader.Sexpr.Nil)
                     (match (box-get pin-value-node)
-                      [(reader.Sexpr.Str pin-value)
-                        (if (string.eq pin-value "")
-                          (ResultPkgString.Err
-                            (string.append
-                              "manifest dependency `"
+                      [(reader.Sexpr.Str pin-value-id)
+                        (let
+                          [pin-value : String (intern-str pin-value-id)]
+                          (if (string.eq pin-value "")
+                            (ResultPkgString.Err
                               (string.append
-                                alias
-                                "` github pin must not be empty")))
-                          (compiler-load-normalize-github-address
-                            alias
-                            address
-                            (compiler-load-symbol-text pin-kind)
-                            pin-value))]
+                                "manifest dependency `"
+                                (string.append
+                                  alias
+                                  "` github pin must not be empty")))
+                            (compiler-load-normalize-github-address
+                              alias
+                              address
+                              (compiler-load-symbol-text pin-kind)
+                              pin-value)))]
                       [_
                         (ResultPkgString.Err
                           (string.append
@@ -10902,29 +10906,31 @@
   (match source-tail
     [(reader.Sexpr.Cons address-node after-address)
       (match (box-get address-node)
-        [(reader.Sexpr.Str address)
-          (match (box-get after-address)
-            [(reader.Sexpr.Cons pin-form end)
-              (match (box-get end)
-                [(reader.Sexpr.Nil)
-                  (compiler-load-manifest-github-pin
-                    alias
-                    address
-                    (box-get pin-form))]
-                [_
-                  (ResultPkgString.Err
-                    (string.append
-                      "manifest dependency `"
+        [(reader.Sexpr.Str address-id)
+          (let
+            [address : String (intern-str address-id)]
+            (match (box-get after-address)
+              [(reader.Sexpr.Cons pin-form end)
+                (match (box-get end)
+                  [(reader.Sexpr.Nil)
+                    (compiler-load-manifest-github-pin
+                      alias
+                      address
+                      (box-get pin-form))]
+                  [_
+                    (ResultPkgString.Err
                       (string.append
-                        alias
-                        "` github source requires exactly one rev, tag, or branch pin")))])]
-            [_
-              (ResultPkgString.Err
-                (string.append
-                  "manifest dependency `"
+                        "manifest dependency `"
+                        (string.append
+                          alias
+                          "` github source requires exactly one rev, tag, or branch pin")))])]
+              [_
+                (ResultPkgString.Err
                   (string.append
-                    alias
-                    "` github source requires exactly one rev, tag, or branch pin")))])]
+                    "manifest dependency `"
+                    (string.append
+                      alias
+                      "` github source requires exactly one rev, tag, or branch pin")))]))]
         [_
           (ResultPkgString.Err
             (string.append
@@ -10948,7 +10954,8 @@
       (match (box-get vrest)
         [(reader.Sexpr.Nil)
           (match (box-get vhead)
-            [(reader.Sexpr.Str path) (ResultPkgString.Ok path)]
+            [(reader.Sexpr.Str path-id)
+              (ResultPkgString.Ok (intern-str path-id))]
             [(reader.Sexpr.Cons source-kind-node source-tail)
               (match (box-get source-kind-node)
                 [(reader.Sexpr.Sym source-kind)
@@ -11005,7 +11012,8 @@
       (match (box-get vrest)
         [(reader.Sexpr.Nil)
           (match (box-get vhead)
-            [(reader.Sexpr.Str val) (compiler-load-manifest-kind-token val)]
+            [(reader.Sexpr.Str val-id)
+              (compiler-load-manifest-kind-token (intern-str val-id))]
             [(reader.Sexpr.Sym val)
               (compiler-load-manifest-kind-token
                 (compiler-load-symbol-text val))]
@@ -11195,17 +11203,19 @@
         (ResultPkgStrVec.Ok acc))]
     [(reader.Sexpr.Cons vhead vrest)
       (match (box-get vhead)
-        [(reader.Sexpr.Str val)
-          (if (string.eq val "")
-            (ResultPkgStrVec.Err
-              (string.append
-                "`link` field `"
-                (string.append fname "` values must not be empty")))
-            (let
-              [out : fs.FsStringVector acc]
-              (begin
-                (fs.string-vector-push! (&mut out) val)
-                (compiler-load-manifest-link-values (box-get vrest) fname out))))]
+        [(reader.Sexpr.Str val-id)
+          (let
+            [val : String (intern-str val-id)]
+            (if (string.eq val "")
+              (ResultPkgStrVec.Err
+                (string.append
+                  "`link` field `"
+                  (string.append fname "` values must not be empty")))
+              (let
+                [out : fs.FsStringVector acc]
+                (begin
+                  (fs.string-vector-push! (&mut out) val)
+                  (compiler-load-manifest-link-values (box-get vrest) fname out)))))]
         [_
           (ResultPkgStrVec.Err
             (string.append

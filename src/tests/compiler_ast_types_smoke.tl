@@ -607,8 +607,8 @@
               [_ false])]
           [_ false])
         (match (ast.ast-node-pool-context-expr-get pools value)
-          [(ast.AstExpr.Literal (ast.AstLiteral.String text))
-            (string.eq text "hello")]
+          [(ast.AstExpr.Literal (ast.AstLiteral.String string-id))
+            (string.eq (ast.ast-lit-string-text string-id) "hello")]
           [_ false]))]
     [_ false]))
 
@@ -733,7 +733,7 @@
     [text-expr : i64
       (ast.ast-node-pool-context-expr-push
         source-pools
-        (ast.AstExpr.Literal (ast.AstLiteral.String "hello")))]
+        (ast.AstExpr.Literal (ast.ast-lit-generated-string "hello")))]
     [binary-expr : i64
       (ast.ast-node-pool-context-expr-push
         source-pools

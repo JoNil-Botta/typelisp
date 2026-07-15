@@ -19545,7 +19545,7 @@
     [_ false]))
 
 (define (compiler-reg-scratch-vreg-slots
-  [assignments : CompilerRegAssignmentList]
+  [_assignments : CompilerRegAssignmentList]
   [_instr : CompilerIrInstr]
   [_phi-targets : CompilerRegStringList]) : i64
   (cfg
@@ -19574,25 +19574,25 @@
       [(CompilerIrInstr.Switch _ _ _ _) 2]
       [(CompilerIrInstr.BoundsCheck _ _ _) 2]
       [(CompilerIrInstr.AddrOf dst _)
-        (if (compiler-reg-scratch-var-register-homed? assignments dst)
+        (if (compiler-reg-scratch-var-register-homed? _assignments dst)
           0
           1)]
       [(CompilerIrInstr.Gep dst base offset _)
         (if (and
-          (compiler-reg-scratch-var-register-homed? assignments dst)
-          (compiler-reg-scratch-value-direct? assignments base)
+          (compiler-reg-scratch-var-register-homed? _assignments dst)
+          (compiler-reg-scratch-value-direct? _assignments base)
           (compiler-reg-scratch-value-integer-immediate? offset))
           0
           2)]
       [(CompilerIrInstr.Load dst src ty)
         (let
           [address? : bool
-            (not (compiler-reg-scratch-value-direct? assignments src))]
+            (not (compiler-reg-scratch-value-direct? _assignments src))]
           [value? : bool
             (and
               (compiler-reg-scalar-type? ty)
               (not (compiler-reg-float-type? ty))
-              (not (compiler-reg-scratch-var-register-homed? assignments dst)))]
+              (not (compiler-reg-scratch-var-register-homed? _assignments dst)))]
           (if value?
             2
             (if address?
@@ -19601,12 +19601,12 @@
       [(CompilerIrInstr.StorePtr dst src ty)
         (let
           [address? : bool
-            (not (compiler-reg-scratch-value-direct? assignments dst))]
+            (not (compiler-reg-scratch-value-direct? _assignments dst))]
           [value? : bool
             (and
               (compiler-reg-scalar-type? ty)
               (not (compiler-reg-float-type? ty))
-              (not (compiler-reg-scratch-value-direct? assignments src)))]
+              (not (compiler-reg-scratch-value-direct? _assignments src)))]
           (if value?
             2
             (if address?
@@ -19617,9 +19617,9 @@
           0
           (let
             [dst? : bool
-              (not (compiler-reg-scratch-value-direct? assignments dst))]
+              (not (compiler-reg-scratch-value-direct? _assignments dst))]
             [src? : bool
-              (not (compiler-reg-scratch-value-direct? assignments src))]
+              (not (compiler-reg-scratch-value-direct? _assignments src))]
             [value? : bool (not (= (% size 16) 0))]
             (if value?
               3
@@ -19632,7 +19632,7 @@
         (if (and
           (compiler-reg-scalar-type? ty)
           (not (compiler-reg-float-type? ty))
-          (not (compiler-reg-scratch-value-direct? assignments value)))
+          (not (compiler-reg-scratch-value-direct? _assignments value)))
           1
           0)]
       [_ 0])

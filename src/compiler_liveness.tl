@@ -1601,9 +1601,12 @@
     [i : i64 0]
     (while (< i count)
       (begin
-        (match (compiler-ir-instr-seq-ref instrs i)
-          [(CompilerIrInstr.Phi _ inputs _)
-            (compiler-live-phi-out-add-inputs! inputs ids phi-out)]
+        (match (& (array-ref (struct-get instrs slots) i))
+          [(CompilerIrInstr.Phi _ _ _)
+            (match (compiler-ir-instr-seq-ref instrs i)
+              [(CompilerIrInstr.Phi _ inputs _)
+                (compiler-live-phi-out-add-inputs! inputs ids phi-out)]
+              [_ unit])]
           [_ unit])
         (set! i (+ i 1))))))
 

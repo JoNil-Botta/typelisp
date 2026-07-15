@@ -30595,8 +30595,8 @@
         (array-ref compiler-backend-fuse-free-counts var))]))
 
 ;; The branch condition var at slot `j` when that branch is fed by the
-;; immediately preceding compare (a "free branch" that reads flags, not a
-;; materialized boolean); otherwise -1.
+;; immediately preceding compare or boolean negation (a "free branch" whose
+;; result need not be materialized); otherwise -1.
 (define (compiler-backend-fuse-free-branch-var
   [slots : (Array CompilerIrInstr)]
   [j : i64]) : i64
@@ -30609,6 +30609,10 @@
             (match (array-ref slots (- j 1))
               [(CompilerIrInstr.BinOp dst op _ _ _)
                 (if (and (compiler-backend-compare-op? op) (= dst v))
+                  v
+                  (- 0 1))]
+              [(CompilerIrInstr.UnOp dst (CompilerIrUnOp.Not) _ (AstType.Bool))
+                (if (= dst v)
                   v
                   (- 0 1))]
               [_ (- 0 1)])]
@@ -36683,7 +36687,9 @@
                 use-counts
                 buf)))]
         [(CompilerIrInstr.UnOp dst (CompilerIrUnOp.Not) src (AstType.Bool))
-          (if (compiler-backend-var-single-use? use-counts dst)
+          (if (or
+            (compiler-backend-var-single-use? use-counts dst)
+            (compiler-backend-var-fuse-safe? dst))
             (match (box-get rest)
               [(CompilerIrInstrList.Cons branch after-branch)
                 (match branch

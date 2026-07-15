@@ -17278,6 +17278,26 @@
   "(define (f [a : bool]) : i64
   (if (not a) 1 2))")
 
+(define (compiler-backend-multi-not-branch-source) : String
+  "(defenum Items
+  (Nil)
+  (Cons i64 (Box Items)))
+(define (contains [items : Items] [needle : i64]) : bool
+  (if (< needle 0)
+    (contains items (+ needle 1))
+    (let
+      [cursor : Items items]
+      [found : bool false]
+      (begin
+        (while (not found)
+          (match cursor
+            [(Items.Nil) (return false)]
+            [(Items.Cons head rest)
+              (if (= head needle)
+                (set! found true)
+                (set! cursor (box-get rest)))]))
+        true))))")
+
 (define (compiler-backend-negated-compare-branch-ok?) : bool
   (match (compiler-backend-emit-source
     (compiler-backend-negated-compare-branch-source))
@@ -17309,6 +17329,19 @@
           (or
             (compiler-backend-string-contains? body "    je ")
             (compiler-backend-string-contains? body "    jne "))
+          (not (compiler-backend-string-contains? body "    xorq $1, "))))]
+    [(ResultCompilerBackend.Err _) false]))
+
+(define (compiler-backend-multi-not-branch-ok?) : bool
+  (match (compiler-backend-emit-source-opt2-for-target
+    (compiler-backend-multi-not-branch-source)
+    (CompilerBackendTarget.Linux))
+    [(ResultCompilerBackend.Ok asm)
+      (let
+        [body : String (compiler-backend-asm-function-body asm "_tl_contains")]
+        (and
+          (not (string.eq body ""))
+          (compiler-backend-string-contains? body "    testq ")
           (not (compiler-backend-string-contains? body "    xorq $1, "))))]
     [(ResultCompilerBackend.Err _) false]))
 
@@ -17449,7 +17482,8 @@
         (compiler-backend-direct-condition-branch-ok?)
         (compiler-backend-direct-compare-branch-ok?)
         (compiler-backend-negated-compare-branch-ok?)
-        (compiler-backend-not-branch-ok?)))))
+        (compiler-backend-not-branch-ok?)
+        (compiler-backend-multi-not-branch-ok?)))))
 
 ;; Backend-owned scalar instruction emit-shape coverage for stable wide integer
 ;; forms.

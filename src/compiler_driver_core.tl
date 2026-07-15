@@ -100,14 +100,14 @@
     (ast-expr-node-pool-state-create 1)
     (ast-type-node-pool-state-create 1)))
 
-;; A selfhost CLI reaches roughly 3.434M nodes after macro-free expression
+;; A selfhost CLI reaches roughly 3.572M nodes after macro-free expression
 ;; subtrees are shared. Starting the load pool below that forces a grow; bump
 ;; arenas retain the superseded backing array until macro expansion is detached.
-;; Keep the reserve at 54 64K-node pages, one full page above the rounded-up
+;; Keep the reserve at 56 64K-node pages, one full page above the rounded-up
 ;; observed source, so embedded stdlib and lowerer growth do not turn that
 ;; transient double allocation into a Windows selfhost headroom failure.
 (define compiler-driver-compile-load-expr-pool-initial-capacity : i64
-  3538944)
+  3670016)
 
 ;; Reachability compaction retains about 1.412M nodes for the selfhost CLI,
 ;; including clone augmentation. A 1.625M initial pool leaves more than 290K

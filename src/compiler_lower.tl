@@ -12650,17 +12650,36 @@
     [(AstType.VarArgs struct-name _) (intern-str struct-name)]
     [_ ""]))
 
+(define (lower-canonical-enum-owner-name [ctx : TcContext] [enum-name : String]) : String
+  (let
+    [handle : i64
+      (compiler-symbols-lookup-type-or
+        (tc-context-symbols ctx)
+        enum-name
+        (compiler-symbols-missing-handle))]
+    (if (compiler-symbols-handle-found? handle)
+      (match (tc-nominal-owner-name ctx handle)
+        [(ResultTcString.Ok owner-name) owner-name]
+        [(ResultTcString.Err _) enum-name])
+      enum-name)))
+
 (define (lower-variant-lookup-name-for-scrut
   [ctx : TcContext]
   [scrut-ty : AstType]
   [variant-name : String]) : String
   (match (tc-type-strip-region scrut-ty)
     [(AstType.Enum enum-name)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
+      (tc-qualified-variant-name
+        (lower-canonical-enum-owner-name ctx (intern-str enum-name))
+        (lower-member-name-base variant-name))]
     [(AstType.EnumArgs enum-name _)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
+      (tc-qualified-variant-name
+        (lower-canonical-enum-owner-name ctx (intern-str enum-name))
+        (lower-member-name-base variant-name))]
     [(AstType.VarArgs enum-name _)
-      (tc-source-variant-name-for-enum ctx (intern-str enum-name) variant-name)]
+      (tc-qualified-variant-name
+        (lower-canonical-enum-owner-name ctx (intern-str enum-name))
+        (lower-member-name-base variant-name))]
     [_ variant-name]))
 
 (define (lower-type-debug-kind [ty : AstType]) : String
@@ -13298,7 +13317,11 @@
                                                       type-env
                                                       field-value
                                                       nested-args
-                                                      nested-fields
+                                                      (lower-variant-payload-fields-for-handle
+                                                        ctx
+                                                        handle
+                                                        resolved
+                                                        nested-fields)
                                                       mode
                                                       (lower-enum-type-name-or-empty
                                                         resolved)
@@ -13587,7 +13610,11 @@
                                                 borrow-lifetime
                                                 field-value
                                                 nested-args
-                                                nested-fields
+                                                (lower-variant-payload-fields-for-handle
+                                                  ctx
+                                                  handle
+                                                  resolved
+                                                  nested-fields)
                                                 mode
                                                 (lower-enum-type-name-or-empty
                                                   resolved)

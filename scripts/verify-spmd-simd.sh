@@ -148,9 +148,6 @@ spmd_mode_expected_compile_diagnostic() {
         tests/spmd/private_helper_i64.tl:avx2 | tests/spmd/private_helper_f64.tl:avx2 | tests/spmd/private_helper_bool.tl:avx2 | tests/spmd/private_helper_masked_load.tl:avx2 | tests/spmd/private_helper_store.tl:avx2 | tests/spmd/private_helper_effects.tl:avx2)
             printf '%s\n' "lower: out-of-line varying SPMD calls are not supported in AVX2 backend mode; use scalar or avx512"
             ;;
-        tests/integration/spmd_gather_read.tl:avx2 | tests/integration/spmd_gather_read.tl:avx512)
-            printf '%s\n' "lower: SPMD foreach does not match a SIMD lowering pattern for this backend mode; use scalar or a contiguous map/zip body with supported array and uniform operands"
-            ;;
         *) return 1 ;;
     esac
 }
@@ -220,6 +217,25 @@ compile_spmd_mode() {
     set -e
 }
 
+verify_gather_opcodes() {
+    _mode=$1
+    compile_spmd_mode tests/integration/spmd_gather_read.tl "$_mode"
+    _tag=tests_integration_spmd_gather_read_tl
+    _asm="$WORKDIR/$_tag.$_mode.compile.s"
+    if [ "$mode_code" != 0 ]; then
+        echo "[spmd-simd] gather opcode compile failed in $_mode:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "tests/integration/spmd_gather_read.tl $_mode (opcode compile)" >> "$FAILURES"
+        return
+    fi
+    for opcode in vpgatherqd vpgatherqq vgatherqps vgatherqpd; do
+        if ! grep -F -- "$opcode" "$_asm" > /dev/null; then
+            echo "[spmd-simd] gather $_mode assembly missing $opcode" >&2
+            echo "tests/integration/spmd_gather_read.tl $_mode (missing $opcode)" >> "$FAILURES"
+        fi
+    done
+}
+
 while IFS= read -r prog; do
     [ -n "$prog" ] || continue
     if [ ! -f "$prog" ]; then
@@ -274,6 +290,34 @@ while IFS= read -r prog; do
         fi
     done
 done < "$CORPUS"
+
+for mode in avx2 avx512; do
+    # Code-shape checks do not execute SIMD instructions, so run them on every
+    # host even when that ISA is unavailable for the execution corpus below.
+    verify_gather_opcodes "$mode"
+done
+
+# Gather safety is a runtime property, not a same-exit result. Exercise a full
+# gang with multiple invalid active lanes in every runnable mode. The lowering
+# emits logical-lane checks before the hardware gather, so every mode must take
+# the ordinary bounds abort path.
+gather_oob=tests/integration/spmd_gather_oob.tl
+for pair in "scalar scalar" "avx2 avx2" "avx512 avx512"; do
+    mode=${pair%% *}
+    isa=${pair##* }
+    if [ "$mode" != scalar ] && ! isa_available "$isa"; then
+        echo "[spmd-simd]   skip gather-oob $mode ($isa not runnable on this $HOST_OS host)"
+        continue
+    fi
+    run_spmd_mode "$gather_oob" "$mode"
+    if [ "$mode_code" != 134 ] || ! grep -F -- "tl: array index out of bounds" "$mode_err" > /dev/null; then
+        echo "[spmd-simd] gather-oob $mode did not take the bounds abort path:" >&2
+        sed 's/^/    /' "$mode_err" >&2
+        echo "$gather_oob $mode (expected bounds abort 134, got $mode_code)" >> "$FAILURES"
+    else
+        echo "[spmd-simd] gather-oob $mode -> bounds abort OK"
+    fi
+done
 
 if [ -s "$FAILURES" ]; then
     echo "spmd-simd verification FAILED:" >&2

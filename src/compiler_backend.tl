@@ -10251,6 +10251,123 @@
       "%rdx"
       "%rax")))
 
+;; Internal aggregate copies are not ABI returns. Their second GP staging
+;; register may be any register free at this instruction; prefer the historical
+;; %rdx staging register when it is free to keep common codegen unchanged.
+(define (compiler-backend-group-copy-reg1
+  [program-index : CompilerBackendProgramIndex]
+  [ty : AstType]
+  [reg0 : String]) : String
+  (let
+    [abi-reg1 : String (compiler-backend-group-return-reg program-index ty 1)]
+    (if (string.eq abi-reg1 "%rdx")
+      (compiler-backend-scavenge-reg-here
+        (compiler-backend-one-exclude reg0)
+        1
+        abi-reg1)
+      abi-reg1)))
+
+(define (compiler-backend-group-copy-word-scratch [sse? : bool]) : String
+  (if sse?
+    "%xmm0"
+    "%rax"))
+
+;; Copy an internal two-word aggregate without treating it as an ABI return.
+;; Preserve the historical split-register sequence when its second register is
+;; free. A true cross-word alias loads both words before either store; the
+;; sequential case remains correct when scavenging must choose another register.
+(define (compiler-backend-emit-group-copy
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [vars : i64]
+  [ty : AstType]
+  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  (match src
+    [(CompilerIrValue.Var src-var)
+      (match (compiler-backend-group-word-operand assignments src-var 0 vars)
+        [(ResultCompilerBackend.Ok src0)
+          (match (compiler-backend-group-word-operand
+            assignments
+            src-var
+            1
+            vars)
+            [(ResultCompilerBackend.Ok src1)
+              (match (compiler-backend-group-word-operand
+                assignments
+                dst
+                0
+                vars)
+                [(ResultCompilerBackend.Ok dst0)
+                  (match (compiler-backend-group-word-operand
+                    assignments
+                    dst
+                    1
+                    vars)
+                    [(ResultCompilerBackend.Ok dst1)
+                      (let
+                        [sse0? : bool
+                          (compiler-backend-group-word-sse? program-index ty 0)]
+                        [sse1? : bool
+                          (compiler-backend-group-word-sse? program-index ty 1)]
+                        [reg0 : String
+                          (compiler-backend-group-copy-word-scratch sse0?)]
+                        [reg1 : String
+                          (compiler-backend-group-copy-reg1
+                            program-index
+                            ty
+                            reg0)]
+                        (ResultCompilerBackend.Ok
+                          (if (string.eq dst0 src1)
+                            (str-cat
+                              (compiler-backend-emit-group-word-move
+                                src0
+                                reg0
+                                sse0?)
+                              (compiler-backend-emit-group-word-move
+                                src1
+                                reg1
+                                sse1?)
+                              (compiler-backend-emit-group-word-move
+                                reg0
+                                dst0
+                                sse0?)
+                              (compiler-backend-emit-group-word-move
+                                reg1
+                                dst1
+                                sse1?))
+                            (str-cat
+                              (compiler-backend-emit-group-word-move
+                                src0
+                                reg0
+                                sse0?)
+                              (compiler-backend-emit-group-word-move
+                                reg0
+                                dst0
+                                sse0?)
+                              (compiler-backend-emit-group-word-move
+                                src1
+                                reg1
+                                sse1?)
+                              (compiler-backend-emit-group-word-move
+                                reg1
+                                dst1
+                                sse1?)))))]
+                    [(ResultCompilerBackend.Err message)
+                      (ResultCompilerBackend.Err message)])]
+                [(ResultCompilerBackend.Err message)
+                  (ResultCompilerBackend.Err message)])]
+            [(ResultCompilerBackend.Err message)
+              (ResultCompilerBackend.Err message)])]
+        [(ResultCompilerBackend.Err message)
+          (ResultCompilerBackend.Err message)])]
+    [_
+      (ResultCompilerBackend.Err
+        (box
+          (compiler-diagnostic-at-start
+            ""
+            "backend: register-group load requires var operand")))]))
+
 (define (compiler-backend-group-stack-exclude [operand : String]) : (Array
     String)
   (let
@@ -24478,8 +24595,8 @@
     [(CompilerBackendPhiSource.Value value)
       (if (compiler-backend-phi-same-home? assignments dst value)
         (ResultCompilerBackend.Ok "")
-        ;; A register-group phi value carries two words -- copy both halves
-        ;; (rax:rdx) through the group ABI, not just word0 via the scalar path.
+        ;; A register-group phi value carries two words. Keep the direct-home
+        ;; fast path, then use the same non-ABI copy path as an ordinary Mov.
         (if (compiler-backend-copy-group? program-index ty dst value)
           (match value
             [(CompilerIrValue.Var src-id)
@@ -24490,54 +24607,21 @@
                 [(CompilerBackendMaybeAsm.Some asm)
                   (ResultCompilerBackend.Ok asm)]
                 [(CompilerBackendMaybeAsm.No)
-                  (match (compiler-backend-emit-group-load
-                    assignments
-                    value
-                    (compiler-backend-group-return-reg program-index ty 0)
-                    (compiler-backend-group-return-reg program-index ty 1)
-                    vars
-                    ty
-                    program-index)
-                    [(ResultCompilerBackend.Ok load)
-                      (match (compiler-backend-emit-group-store
-                        assignments
-                        dst
-                        (compiler-backend-group-return-reg program-index ty 0)
-                        (compiler-backend-group-return-reg program-index ty 1)
-                        vars
-                        ty
-                        program-index)
-                        [(ResultCompilerBackend.Ok store)
-                          (ResultCompilerBackend.Ok
-                            (str_cat.str-cat load store))]
-                        [(ResultCompilerBackend.Err message)
-                          (ResultCompilerBackend.Err message)])]
-                    [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err message)])])]
-            [_
-              (match (compiler-backend-emit-group-load
-                assignments
-                value
-                (compiler-backend-group-return-reg program-index ty 0)
-                (compiler-backend-group-return-reg program-index ty 1)
-                vars
-                ty
-                program-index)
-                [(ResultCompilerBackend.Ok load)
-                  (match (compiler-backend-emit-group-store
+                  (compiler-backend-emit-group-copy
                     assignments
                     dst
-                    (compiler-backend-group-return-reg program-index ty 0)
-                    (compiler-backend-group-return-reg program-index ty 1)
+                    value
                     vars
                     ty
-                    program-index)
-                    [(ResultCompilerBackend.Ok store)
-                      (ResultCompilerBackend.Ok (string.append load store))]
-                    [(ResultCompilerBackend.Err message)
-                      (ResultCompilerBackend.Err message)])]
-                [(ResultCompilerBackend.Err message)
-                  (ResultCompilerBackend.Err message)])])
+                    program-index)])]
+            [_
+              (compiler-backend-emit-group-copy
+                assignments
+                dst
+                value
+                vars
+                ty
+                program-index)])
           (compiler-backend-emit-phi-source-scalar-to-var
             assignments
             dst
@@ -26250,29 +26334,13 @@
         (compiler-backend-value-same-home? assignments dst src))
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-copy-group? program-index ty dst src)
-      (match (compiler-backend-emit-group-load
+      (compiler-backend-emit-group-copy
         assignments
+        dst
         src
-        (compiler-backend-group-return-reg program-index ty 0)
-        (compiler-backend-group-return-reg program-index ty 1)
         vars
         ty
-        program-index)
-        [(ResultCompilerBackend.Ok load)
-          (match (compiler-backend-emit-group-store
-            assignments
-            dst
-            (compiler-backend-group-return-reg program-index ty 0)
-            (compiler-backend-group-return-reg program-index ty 1)
-            vars
-            ty
-            program-index)
-            [(ResultCompilerBackend.Ok store)
-              (ResultCompilerBackend.Ok (string.append load store))]
-            [(ResultCompilerBackend.Err message)
-              (ResultCompilerBackend.Err message)])]
-        [(ResultCompilerBackend.Err message)
-          (ResultCompilerBackend.Err message)])]
+        program-index)]
     [(compiler-backend-value-same-home? assignments dst src)
       (ResultCompilerBackend.Ok "")]
     [(compiler-backend-float-type? ty)

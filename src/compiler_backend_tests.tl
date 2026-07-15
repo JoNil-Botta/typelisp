@@ -5251,8 +5251,8 @@
         [(ResultCompilerBackend.Ok asm)
           (and
             (compiler-backend-string-contains? asm "%r12, %rax")
-            (compiler-backend-string-contains? asm "%r13, %rdx")
             (compiler-backend-string-contains? asm "%rax, %r14")
+            (compiler-backend-string-contains? asm "%r13, %rdx")
             (compiler-backend-string-contains? asm "%rdx, %r15"))]
         [(ResultCompilerBackend.Err _) false]))))
 
@@ -7947,6 +7947,47 @@
         (set! compiler-backend-cycle-temp-used-count prev-count)
         (set! compiler-backend-cycle-temp-base-offset prev-base))]
     ok))
+
+(define (compiler-backend-phi-group-stack-copy-split-scratch-ok?) : bool
+  (let
+    [ty : AstType (compiler-backend-register-group-test-type)]
+    [blocks : CompilerIrBlockList
+      (compiler-ir-block-cons
+        (compiler-ir-block
+          "join"
+          (compiler-ir-instr-cons
+            (CompilerIrInstr.Phi
+              1
+              (compiler-ir-phi-input-cons
+                (CompilerIrValue.Var 0)
+                "entry"
+                CompilerIrPhiInputList.Nil)
+              ty)
+            CompilerIrInstrList.Nil))
+        CompilerIrBlockList.Nil)]
+    [_group-enable : unit
+      (begin
+        (compiler-backend-current-slot-vars-set! 2)
+        (compiler-backend-group-vars-enable!
+          (compiler-live-set-insert (compiler-live-set1 0) 1)
+          (compiler-live-set-empty)))]
+    [copied : ResultCompilerBackend
+      (compiler-backend-emit-phi-edge-copies
+        CompilerRegAssignmentList.Nil
+        blocks
+        "join"
+        "entry"
+        (compiler-backend-register-group-test-index)
+        2
+        ""
+        "")]
+    [_group-disable : unit (compiler-backend-group-vars-disable!)]
+    (match copied
+      [(ResultCompilerBackend.Ok asm)
+        (and
+          (= (compiler-backend-string-count asm "%rax") 2)
+          (= (compiler-backend-string-count asm "%rdx") 2))]
+      [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
   (let
@@ -22257,6 +22298,7 @@
         (pmove.compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
+        (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)
         (compiler-backend-arg-cycle-temp-slot-ok?)
         (compiler-backend-base1-arg-cycle-ok?)

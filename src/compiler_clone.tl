@@ -12,7 +12,6 @@
 ;; compile-time-only values are not clone-able. Clone-ability is a
 ;; least-fixed-point over the type graph.
 (import "compiler_ast_types.tl")
-(import stdlib.arena)
 (import stdlib.hashmap)
 (import (hashmap String i64) as clone_name_map)
 (import (hashmap String String) as clone_alias_map)

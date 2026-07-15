@@ -64,14 +64,10 @@
       (intern-qualified-base-id name-id))
     name-id))
 
-;; Compatibility wrappers prefer the parser-assigned source id so String-based
-;; environment access remains compatible with id-based AST access.
+;; String-only test and metadata adapters use the generated identity domain.
+;; Source identifiers are always carried from their AST nodes.
 (define (ctfe-string-identity-id [name : String]) : i64
-  (let
-    [id : i64 (ctfe-existing-name-id name)]
-    (if (>= id 0)
-      id
-      (ctfe-string-structural-key-id name))))
+  (ctfe-materialize-generated-name-id name))
 
 ;; Macro construction can deliberately create a spelling that did not occur in
 ;; the parsed source. Generated ids live outside the source-name hash table; the
@@ -131,12 +127,9 @@
       (intern-generated-canonical-name name))))
 
 (define (ctfe-materialize-generated-name-id [name : String]) : i64
-  (match (intern-lookup-content name)
+  (match (intern-generated-canonical-lookup name)
     [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing)
-      (match (intern-generated-canonical-lookup name)
-        [(InternLookupFound name-id) name-id]
-        [(InternLookupMissing) (ctfe-generated-name-store name)])]))
+    [(InternLookupMissing) (ctfe-generated-name-store name)]))
 
 (define (ctfe-materialize-generated-name-from-source-id
   [name : String]
@@ -3870,9 +3863,6 @@
           expr
           "offset-of expects exactly one type argument and one field name")))))
 
-(define (ctfe-reflection-query-name? [name : String]) : bool
-  (ctfe-builtin-reflection-id? (ctfe-existing-name-id name)))
-
 (define (ctfe-eval-one-type-reflection
   [name : String]
   [args : AstExprList]
@@ -4800,8 +4790,7 @@
 (define (ctfe-comptime-error-helper-name? [name : String]) : bool
   (and
     (ctfe-string-has-module-separator? name)
-    (ctfe-builtin-error-id?
-      (ctfe-existing-name-id (ctfe-comptime-helper-lookup-name name)))))
+    (string.eq (ctfe-comptime-helper-lookup-name name) "error")))
 
 (define (ctfe-string-eq-helper-name-id? [name : String] [name-id : i64]) : bool
   (or
@@ -4810,16 +4799,10 @@
     (ctfe-stdlib-string-helper-name? name "string-eq")
     (ctfe-stdlib-string-helper-name? name "string=?")))
 
-(define (ctfe-string-eq-helper-name? [name : String]) : bool
-  (ctfe-string-eq-helper-name-id? name (ctfe-existing-name-id name)))
-
 (define (ctfe-string-length-helper-name-id? [name : String] [name-id : i64]) : bool
   (or
     (ctfe-builtin-string-length-id? name-id)
     (ctfe-stdlib-string-helper-name? name "string-length")))
-
-(define (ctfe-string-length-helper-name? [name : String]) : bool
-  (ctfe-string-length-helper-name-id? name (ctfe-existing-name-id name)))
 
 (define (ctfe-string-ref-helper-name-id? [name : String] [name-id : i64]) : bool
   (or
@@ -4827,49 +4810,11 @@
     (ctfe-stdlib-string-helper-name? name "string-ref")
     (ctfe-stdlib-string-helper-name? name "char-at")))
 
-(define (ctfe-string-ref-helper-name? [name : String]) : bool
-  (ctfe-string-ref-helper-name-id? name (ctfe-existing-name-id name)))
-
 (define (ctfe-string-to-int-helper-name-id? [name : String] [name-id : i64]) : bool
   (or
     (ctfe-builtin-string-to-int-id? name-id)
     (ctfe-stdlib-string-helper-name? name ">int")
     (ctfe-stdlib-string-helper-name? name "string->int")))
-
-(define (ctfe-string-to-int-helper-name? [name : String]) : bool
-  (ctfe-string-to-int-helper-name-id? name (ctfe-existing-name-id name)))
-
-(define (ctfe-comptime-source-helper-call-name [name : String]) : String
-  (let
-    [_ctfe-builtin-refresh : unit (ctfe-builtin-refresh!)]
-    [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
-    [lookup-id : i64 (ctfe-existing-name-id lookup-name)]
-    (cond
-      [(= lookup-id (ctfe-builtin-ref 19)) "expr-bool?"]
-      [(= lookup-id (ctfe-builtin-ref 20)) "expr-bool-value"]
-      [(= lookup-id (ctfe-builtin-ref 21)) "expr-if?"]
-      [(= lookup-id (ctfe-builtin-ref 22)) "expr-if-cond"]
-      [(= lookup-id (ctfe-builtin-ref 23)) "expr-if-then"]
-      [(= lookup-id (ctfe-builtin-ref 24)) "expr-if-else"]
-      [(= lookup-id (ctfe-builtin-ref 25)) "expr-clause-first"]
-      [(= lookup-id (ctfe-builtin-ref 26)) "expr-clause-second"]
-      [(= lookup-id (ctfe-builtin-ref 50)) "expr-list-empty?"]
-      [(= lookup-id (ctfe-builtin-ref 51)) "expr-list-length"]
-      [(= lookup-id (ctfe-builtin-ref 52)) "expr-list-head"]
-      [(= lookup-id (ctfe-builtin-ref 54)) "expr-list-nth"]
-      [(= lookup-id (ctfe-builtin-ref 55)) "expr-clause-list-empty?"]
-      [(= lookup-id (ctfe-builtin-ref 56)) "expr-clause-list-length"]
-      [(= lookup-id (ctfe-builtin-ref 57)) "expr-clause-list-head"]
-      [(= lookup-id (ctfe-builtin-ref 59)) "expr-clause-list-nth"]
-      [(= lookup-id (ctfe-builtin-ref 61)) "expr-binding-clause-name"]
-      [(= lookup-id (ctfe-builtin-ref 62)) "expr-binding-clause-has-type?"]
-      [(= lookup-id (ctfe-builtin-ref 63)) "expr-binding-clause-type"]
-      [(= lookup-id (ctfe-builtin-ref 64)) "expr-binding-clause-init"]
-      [(= lookup-id (ctfe-builtin-ref 65)) "expr-binding-clause-list-empty?"]
-      [(= lookup-id (ctfe-builtin-ref 66)) "expr-binding-clause-list-length"]
-      [(= lookup-id (ctfe-builtin-ref 67)) "expr-binding-clause-list-head"]
-      [(= lookup-id (ctfe-builtin-ref 69)) "expr-binding-clause-list-nth"]
-      [else name])))
 
 ;; Names recognized as comptime helper/accessor calls. `expr-list-length` and
 ;; `expr-list-nth` (and their clause/binding-clause variants) are handled by the
@@ -4877,9 +4822,6 @@
 ;; source-helper fallback; they stay listed here so the typechecker still
 ;; recognizes them as comptime syntax operations. The list-like `empty?`/`head`/
 ;; `tail` operations were removed in favor of `length`/`nth` indexed access.
-(define (ctfe-comptime-source-helper-name? [name : String]) : bool
-  (ctfe-builtin-source-helper-id? (ctfe-existing-name-id name)))
-
 (define (ctfe-comptime-helper-leaf-id [name-id : i64]) : i64
   (if (or (< name-id 0) (>= name-id (intern-capacity)))
     name-id
@@ -4906,23 +4848,10 @@
         ;; uncommon ambiguity on the spelling path instead of slowing every
         ;; helper lookup.
         [(= leaf-id (ctfe-builtin-ref 18))
-          (ctfe-existing-name-id
-            (ctfe-comptime-helper-call-name (intern-str name-id)))]
+          (if (ctfe-comptime-error-helper-name? (intern-str name-id))
+            (ctfe-builtin-ref 17)
+            leaf-id)]
         [else leaf-id]))))
-
-(define (ctfe-comptime-helper-call-name [name : String]) : String
-  (let
-    [lookup-name : String (ctfe-comptime-helper-lookup-name name)]
-    (cond
-      [(ctfe-stdlib-string-helper-name? lookup-name "append") "string-append"]
-      [(ctfe-stdlib-string-helper-name? lookup-name "concat") "string-concat"]
-      [(ctfe-stdlib-string-helper-name? lookup-name "int->string")
-        "int->string"]
-      [(ctfe-stdlib-string-helper-name? lookup-name ">int") "string->int"]
-      [(ctfe-stdlib-string-helper-name? lookup-name "string->int")
-        "string->int"]
-      [(ctfe-comptime-error-helper-name? name) "comptime-error"]
-      [else lookup-name])))
 
 (define (ctfe-eval-comptime-error-call
   [args : AstExprList]
@@ -5735,13 +5664,6 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-type expects exactly one arg")))))
-
-(define (ctfe-expr-clause-list-inspector-name? [name : String]) : bool
-  (ctfe-builtin-expr-clause-list-inspector-id? (ctfe-existing-name-id name)))
-
-(define (ctfe-expr-binding-clause-list-inspector-name? [name : String]) : bool
-  (ctfe-builtin-expr-binding-clause-list-inspector-id?
-    (ctfe-existing-name-id name)))
 
 (define (ctfe-eval-expr-clause-list-inspector-call
   [name : String]
@@ -7273,10 +7195,7 @@
         [raw-id : i64 (ci.intern-macro-global-source-name-id-or name name)]
         [raw-name : String (intern-str raw-id)]
         [lookup-name : String (ctfe-hygiene-global-call-name raw-name)]
-        [lookup-id : i64
-          (if (string.eq lookup-name raw-name)
-            raw-id
-            (ctfe-existing-name-id lookup-name))]
+        [lookup-id : i64 raw-id]
         [call-id : i64 (ctfe-comptime-helper-call-name-id lookup-id)]
         [call-name : String
           (if (= call-id lookup-id)

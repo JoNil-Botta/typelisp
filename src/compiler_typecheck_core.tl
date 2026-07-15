@@ -13470,41 +13470,6 @@
     name
     "; import the module or use a visible dotted module alias"))
 
-(define (tc-comptime-syntax-helper-name? [name : String]) : bool
-  (or
-    (string.eq name "expr-bool")
-    (string.eq name "expr-int")
-    (string.eq name "expr-string")
-    (string.eq name "expr-var")
-    (string.eq name "expr-struct-get")
-    (string.eq name "expr-tuple-ref")
-    (string.eq name "expr-struct-set")
-    (string.eq name "expr-splice")
-    (string.eq name "expr-if")
-    (string.eq name "pattern-wildcard")
-    (string.eq name "pattern-binding")
-    (string.eq name "pattern-variant")
-    (string.eq name "pattern-list-empty")
-    (string.eq name "pattern-list-cons")
-    (string.eq name "pattern-list-bindings")
-    (string.eq name "match-arm")
-    (string.eq name "match-arm-list-empty")
-    (string.eq name "match-arm-list-cons")
-    (string.eq name "expr-match")
-    (string.eq name "expr-type")
-    (string.eq name "type-info")
-    (string.eq name "module-name")
-    (string.eq name "module-export-macro?")
-    (string.eq name "module-hook")
-    (string.eq name "string-append")
-    (string.eq name "string-concat")
-    (string.eq name "string->int")
-    (string.eq name "int->string")
-    (ctfe-comptime-source-helper-name? name)
-    (ctfe-expr-clause-list-inspector-name? name)
-    (ctfe-expr-binding-clause-list-inspector-name? name)
-    (string.eq name "comptime-error")))
-
 (define (tc-string-prefix-at? [text : String] [prefix : String] [start : i64]) : bool
   (string.is-string-prefix-at (& text) (& prefix) start))
 

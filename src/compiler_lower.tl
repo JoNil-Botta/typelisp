@@ -12953,26 +12953,27 @@
   [enum-name : String]
   [variant-name : String]) : String
   (let
-    [enum-base : String (lower-member-name-base enum-name)]
-    [variant-prefix : String (lower-member-name-prefix variant-name)]
-    [qualifier : String
-      (if (string.eq (lower-member-name-base variant-prefix) enum-base)
-        (lower-member-name-prefix variant-prefix)
-        variant-prefix)]
     [type-handle : i64
       (compiler-symbols-lookup-type-or
         (tc-context-symbols ctx)
         enum-name
         (compiler-symbols-missing-handle))]
-    (if (> (string.string-length qualifier) 0)
-      (compiler-symbol-module-key
-        (tc-qualified-access-target-module ctx qualifier)
-        enum-base)
-      (if (compiler-symbols-handle-found? type-handle)
-        (match (tc-nominal-owner-name ctx type-handle)
-          [(ResultTcString.Ok owner) owner]
-          [(ResultTcString.Err _) enum-name])
-        enum-name))))
+    (if (compiler-symbols-handle-found? type-handle)
+      (match (tc-nominal-owner-name ctx type-handle)
+        [(ResultTcString.Ok owner) owner]
+        [(ResultTcString.Err _) enum-name])
+      (let
+        [enum-base : String (lower-member-name-base enum-name)]
+        [variant-prefix : String (lower-member-name-prefix variant-name)]
+        [qualifier : String
+          (if (string.eq (lower-member-name-base variant-prefix) enum-base)
+            (lower-member-name-prefix variant-prefix)
+            variant-prefix)]
+        (if (> (string.string-length qualifier) 0)
+          (compiler-symbol-module-key
+            (tc-qualified-access-target-module ctx qualifier)
+            enum-base)
+          enum-name)))))
 
 (define (lower-variant-handle-for-enum-name-or
   [ctx : TcContext]
@@ -12980,15 +12981,23 @@
   [variant-name : String]
   [fallback : i64]) : i64
   (let
-    [owner-name : String
-      (lower-variant-owner-name-for-enum ctx enum-name variant-name)]
-    (compiler-registries-lookup-variant-or
-      (tc-context-registries ctx)
-      (tc-source-variant-name-for-enum
-        ctx
-        owner-name
-        (lower-member-name-base variant-name))
-      fallback)))
+    [legacy-handle : i64
+      (compiler-registries-lookup-variant-or
+        (tc-context-registries ctx)
+        (tc-source-variant-name-for-enum ctx enum-name variant-name)
+        fallback)]
+    (if (compiler-symbols-handle-found? legacy-handle)
+      legacy-handle
+      (let
+        [owner-name : String
+          (lower-variant-owner-name-for-enum ctx enum-name variant-name)]
+        (compiler-registries-lookup-variant-or
+          (tc-context-registries ctx)
+          (tc-source-variant-name-for-enum
+            ctx
+            owner-name
+            (lower-member-name-base variant-name))
+          fallback)))))
 
 (define (lower-variant-handle-for-scrut-or
   [ctx : TcContext]

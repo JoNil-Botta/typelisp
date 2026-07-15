@@ -6511,30 +6511,6 @@
         (compiler-backend-callee-needs-save? assignments "%rdi")
         (compiler-backend-plan-uses-win64-xmm-callee-regs? assignments)))))
 
-(define (compiler-backend-plan-uses-win64-xmm-callee-regs-at?
-  [assignments : CompilerRegAssignmentList]
-  [idx : i64]) : bool
-  (if (>=
-    idx
-    (compiler-abi-callee-saved-xmm-register-count
-      (CompilerRegTargetAbi.Windows)))
-    false
-    (or
-      (compiler-backend-callee-needs-save?
-        assignments
-        (compiler-abi-callee-saved-xmm-register
-          (CompilerRegTargetAbi.Windows)
-          idx))
-      (compiler-backend-plan-uses-win64-xmm-callee-regs-at?
-        assignments
-        (+ idx 1)))))
-
-(define (compiler-backend-plan-uses-win64-xmm-callee-regs?
-  [assignments : CompilerRegAssignmentList]) : bool
-  (and
-    (compiler-backend-current-fn-win64?)
-    (compiler-backend-plan-uses-win64-xmm-callee-regs-at? assignments 0)))
-
 (define (compiler-backend-win64-xmm-callee-highest-at
   [assignments : CompilerRegAssignmentList]
   [idx : i64]
@@ -6561,6 +6537,10 @@
     (compiler-backend-win64-xmm-callee-highest-at assignments 0 -1)
     -1))
 
+(define (compiler-backend-plan-uses-win64-xmm-callee-regs?
+  [assignments : CompilerRegAssignmentList]) : bool
+  (>= (compiler-backend-win64-xmm-callee-highest assignments) 0))
+
 (define (compiler-backend-round-up-even-slots [slots : i64]) : i64
   (if (= (% slots 2) 0)
     slots
@@ -6571,56 +6551,32 @@
 ;; occupies idx 4. Reserve the %rbx slot only when the plan actually homes a
 ;; value there, so functions that use only r12-r15 keep their previous frame
 ;; size (and byte-identical prologue) â€” %rbx, added last to the pool, is rare.
-(define (compiler-backend-frame-slots-gp
-  [vars : i64]
-  [assignments : CompilerRegAssignmentList]) : i64
-  (if (or
-    (compiler-backend-callee-needs-save? assignments "%rbx")
-    (compiler-backend-callee-needs-save? assignments "%r12")
-    (compiler-backend-callee-needs-save? assignments "%r13")
-    (compiler-backend-callee-needs-save? assignments "%r14")
-    (compiler-backend-callee-needs-save? assignments "%r15")
-    (compiler-backend-callee-needs-save? assignments "%rbp")
-    (and
-      (compiler-backend-current-fn-win64?)
-      (or
-        (compiler-backend-callee-needs-save? assignments "%rsi")
-        (compiler-backend-callee-needs-save? assignments "%rdi"))))
-    ;; Win64: %rsi/%rdi are callee-saved and home at slot idx 5/6, above %rbx's
-    ;; idx 4, so reserve up through the highest homed one (rdi -> +7, rsi -> +6).
-    (if (compiler-backend-current-fn-win64?)
-      (cond
-        [(compiler-backend-callee-needs-save? assignments "%rdi") (+ vars 7)]
-        [(compiler-backend-callee-needs-save? assignments "%rsi") (+ vars 6)]
-        [(compiler-backend-callee-needs-save? assignments "%rbx") (+ vars 5)]
-        [else (+ vars 4)])
-      ;; M-G3 stage 2: %rbp (idx 5, FPO functions only) sits below %rbx like %rbx
-      ;; sits below r12-r15 -- reserved only when the plan homes a value there.
-      (cond
-        [(compiler-backend-callee-needs-save? assignments "%rbp") (+ vars 6)]
-        [(compiler-backend-callee-needs-save? assignments "%rbx") (+ vars 5)]
-        [else (+ vars 4)]))
-    vars))
-
-;; Win64 preserves the low 128 bits of XMM6-XMM15. Their save area follows the
-;; GP save prefix, rounded to a 16-byte boundary; sparse plans reserve through
-;; the highest physical home so every register has a deterministic slot.
-(define (compiler-backend-win64-xmm-callee-base-slots
-  [vars : i64]
-  [assignments : CompilerRegAssignmentList]) : i64
-  (compiler-backend-round-up-even-slots
-    (compiler-backend-frame-slots-gp vars assignments)))
-
 (define (compiler-backend-frame-slots
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : i64
   (let
     [highest : i64 (compiler-backend-win64-xmm-callee-highest assignments)]
-    (if (< highest 0)
-      (compiler-backend-frame-slots-gp vars assignments)
-      (+
-        (compiler-backend-win64-xmm-callee-base-slots vars assignments)
-        (* 2 (+ highest 1))))))
+    (if (>= highest 0)
+      ;; Start after the maximum Win64 GP-save prefix so late scavenge saves
+      ;; cannot move or overlap the deterministic 16-byte XMM slots.
+      (+ (compiler-backend-round-up-even-slots (+ vars 7)) (* 2 (+ highest 1)))
+      (if (compiler-backend-plan-uses-callee-regs? assignments)
+        (if (compiler-backend-current-fn-win64?)
+          (cond
+            [(compiler-backend-callee-needs-save? assignments "%rdi")
+              (+ vars 7)]
+            [(compiler-backend-callee-needs-save? assignments "%rsi")
+              (+ vars 6)]
+            [(compiler-backend-callee-needs-save? assignments "%rbx")
+              (+ vars 5)]
+            [else (+ vars 4)])
+          (cond
+            [(compiler-backend-callee-needs-save? assignments "%rbp")
+              (+ vars 6)]
+            [(compiler-backend-callee-needs-save? assignments "%rbx")
+              (+ vars 5)]
+            [else (+ vars 4)]))
+        vars))))
 
 ;; Reserve a contiguous group region for stack-resident register-group vars.
 ;; Each var gets two adjacent words in the region so taking the address of a
@@ -6645,25 +6601,13 @@
 ;; the frame size when an emergency actually fires (so the slot is in-bounds).
 (define (compiler-backend-frame-slots-emergency-max
   [vars : i64]
-  [assignments : CompilerRegAssignmentList]
   [has-group-vars : bool]) : i64
   (let
-    ;; Linux FPO max is 6 (r12-r15,rbx,rbp). Win64 max is 7
-    ;; (r12-r15,rbx,rsi,rdi).
-    [gp-max : i64
-      (+
-        vars
-        (if (compiler-backend-current-fn-win64?)
-          7
-          6))]
+    [win64 : bool (compiler-backend-current-fn-win64?)]
     [base : i64
-      (if (compiler-backend-current-fn-win64?)
-        (let
-          [planned : i64 (compiler-backend-frame-slots vars assignments)]
-          (if (> planned gp-max)
-            planned
-            gp-max))
-        gp-max)]
+      (if win64
+        (+ (compiler-backend-round-up-even-slots (+ vars 7)) 20)
+        (+ vars 6))]
     (if has-group-vars
       (+ base (* 2 vars))
       base)))
@@ -6671,24 +6615,14 @@
 (define (compiler-backend-callee-save-slot [vars : i64] [idx : i64]) : String
   (compiler-backend-frame-offset (- 0 (* 8 (+ vars (+ idx 1))))))
 
-(define (compiler-backend-win64-xmm-callee-slot-offset
-  [vars : i64]
-  [assignments : CompilerRegAssignmentList]
-  [idx : i64]) : i64
+(define (compiler-backend-win64-xmm-callee-slot-offset [vars : i64] [idx : i64]) : i64
   (-
     0
-    (*
-      8
-      (+
-        (compiler-backend-win64-xmm-callee-base-slots vars assignments)
-        (* 2 (+ idx 1))))))
+    (* 8 (+ (compiler-backend-round-up-even-slots (+ vars 7)) (* 2 (+ idx 1))))))
 
-(define (compiler-backend-win64-xmm-callee-slot
-  [vars : i64]
-  [assignments : CompilerRegAssignmentList]
-  [idx : i64]) : String
+(define (compiler-backend-win64-xmm-callee-slot [vars : i64] [idx : i64]) : String
   (compiler-backend-frame-offset
-    (compiler-backend-win64-xmm-callee-slot-offset vars assignments idx)))
+    (compiler-backend-win64-xmm-callee-slot-offset vars idx)))
 
 (define (compiler-backend-asm-label [function : String] [label : String]) : String
   (str_cat.str-cat ".L" (compiler-backend-asm-safe-symbol function) "_" label))
@@ -6734,23 +6668,19 @@
     "    .seh_setframe %rbp, 0\n"
     ""))
 
-(define (compiler-backend-emit-windows-seh-stackalloc
-  [target : CompilerBackendTarget]
-  [frame : i64]) : String
-  (if (and (compiler-backend-target-windows? target) (> frame 0))
-    (str_cat.str-cat "    .seh_stackalloc " (string.int->string frame) "\n" "")
-    ""))
-
-(define (compiler-backend-emit-save-win64-xmm-callee-regs-at
-  [target : CompilerBackendTarget]
+(define (compiler-backend-emit-win64-xmm-callee-regs-at
   [assignments : CompilerRegAssignmentList]
   [vars : i64]
   [frame : i64]
-  [idx : i64]) : String
-  (if (>=
-    idx
-    (compiler-abi-callee-saved-xmm-register-count
-      (CompilerRegTargetAbi.Windows)))
+  [idx : i64]
+  [step : i64]
+  [saving : bool]) : String
+  (if (or
+    (< idx 0)
+    (>=
+      idx
+      (compiler-abi-callee-saved-xmm-register-count
+        (CompilerRegTargetAbi.Windows))))
     ""
     (let
       [reg : String
@@ -6758,30 +6688,40 @@
           (CompilerRegTargetAbi.Windows)
           idx)]
       [tail : String
-        (compiler-backend-emit-save-win64-xmm-callee-regs-at
-          target
+        (compiler-backend-emit-win64-xmm-callee-regs-at
           assignments
           vars
           frame
-          (+ idx 1))]
-      (if (and
-        (compiler-backend-target-windows? target)
-        (compiler-backend-callee-needs-save? assignments reg))
-        (let
-          [slot-offset : i64
-            (compiler-backend-win64-xmm-callee-slot-offset vars assignments idx)]
-          [unwind-offset : i64 (+ frame slot-offset)]
-          (str-cat
+          (+ idx step)
+          step
+          saving)]
+      (if (compiler-backend-callee-needs-save? assignments reg)
+        (if saving
+          (let
+            [slot-offset : i64
+              (compiler-backend-win64-xmm-callee-slot-offset vars idx)]
+            [unwind-offset : i64 (+ frame slot-offset)]
+            [save-line : String
+              (str_cat.str-cat
+                "    movdqu "
+                reg
+                ", "
+                (compiler-backend-frame-offset slot-offset)
+                "\n")]
+            [unwind-line : String
+              (str_cat.str-cat
+                "    .seh_savexmm "
+                reg
+                ", "
+                (int->string unwind-offset)
+                "\n")]
+            (str_cat.str-cat save-line unwind-line tail))
+          (str_cat.str-cat
             "    movdqu "
-            reg
+            (compiler-backend-win64-xmm-callee-slot vars idx)
             ", "
-            (compiler-backend-frame-offset slot-offset)
-            "\n    .seh_savexmm "
             reg
-            ", "
-            (int->string unwind-offset)
-            "\n"
-            tail))
+            (str_cat.str-cat "\n" tail)))
         tail))))
 
 (define (compiler-backend-emit-save-win64-xmm-callee-regs
@@ -6790,18 +6730,38 @@
   [vars : i64]
   [frame : i64]) : String
   (if (compiler-backend-target-windows? target)
-    (compiler-backend-emit-save-win64-xmm-callee-regs-at
-      target
+    (compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
       vars
       frame
-      0)
+      0
+      1
+      true)
     ""))
 
-(define (compiler-backend-emit-windows-seh-endprologue
-  [target : CompilerBackendTarget]) : String
+(define (compiler-backend-emit-windows-seh-prologue-tail
+  [target : CompilerBackendTarget]
+  [assignments : CompilerRegAssignmentList]
+  [vars : i64]
+  [frame : i64]) : String
   (if (compiler-backend-target-windows? target)
-    "    .seh_endprologue\n"
+    (str_cat.str-cat
+      (if (> frame 0)
+        (str_cat.str-cat
+          "    .seh_stackalloc "
+          (string.int->string frame)
+          "\n"
+          "")
+        "")
+      (compiler-backend-emit-win64-xmm-callee-regs-at
+        assignments
+        vars
+        frame
+        0
+        1
+        true)
+      "    .seh_endprologue\n"
+      "")
     ""))
 
 (define (compiler-backend-emit-windows-seh-endproc
@@ -6830,15 +6790,11 @@
               (compiler-backend-emit-windows-seh-set-rbp target)
               (string.append
                 (compiler-backend-emit-stack-sub target frame)
-                (string.append
-                  (compiler-backend-emit-windows-seh-stackalloc target frame)
-                  (string.append
-                    (compiler-backend-emit-save-win64-xmm-callee-regs
-                      target
-                      assignments
-                      vars
-                      frame)
-                    (compiler-backend-emit-windows-seh-endprologue target)))))))))))
+                (compiler-backend-emit-windows-seh-prologue-tail
+                  target
+                  assignments
+                  vars
+                  frame)))))))))
 
 ;; M-G3 stage 2: frame-pointer-omission prologue (Linux text path only; the
 ;; body was proven rsp-constant and fully rebased by compiler-backend-rsp-
@@ -7564,45 +7520,20 @@
       (compiler-backend-emit-restore-callee-reg assignments vars "%rsi" 5))
     ""))
 
-(define (compiler-backend-emit-restore-win64-xmm-callee-regs-at
-  [assignments : CompilerRegAssignmentList]
-  [vars : i64]
-  [idx : i64]) : String
-  (if (< idx 0)
-    ""
-    (let
-      [reg : String
-        (compiler-abi-callee-saved-xmm-register
-          (CompilerRegTargetAbi.Windows)
-          idx)]
-      [tail : String
-        (compiler-backend-emit-restore-win64-xmm-callee-regs-at
-          assignments
-          vars
-          (- idx 1))]
-      (if (and
-        (compiler-backend-current-fn-win64?)
-        (compiler-backend-callee-needs-save? assignments reg))
-        (str-cat
-          "    movdqu "
-          (compiler-backend-win64-xmm-callee-slot vars assignments idx)
-          ", "
-          reg
-          "\n"
-          tail)
-        tail))))
-
 (define (compiler-backend-emit-restore-win64-xmm-callee-regs
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
   (if (compiler-backend-current-fn-win64?)
-    (compiler-backend-emit-restore-win64-xmm-callee-regs-at
+    (compiler-backend-emit-win64-xmm-callee-regs-at
       assignments
       vars
+      0
       (-
         (compiler-abi-callee-saved-xmm-register-count
           (CompilerRegTargetAbi.Windows))
-        1))
+        1)
+      -1
+      false)
     ""))
 
 (define (compiler-backend-emit-save-callee-regs
@@ -7632,8 +7563,6 @@
   [assignments : CompilerRegAssignmentList]
   [vars : i64]) : String
   (let
-    [xmm : String
-      (compiler-backend-emit-restore-win64-xmm-callee-regs assignments vars)]
     [gp : String
       (if (compiler-backend-callee-save-pop-eligible? assignments)
         (compiler-backend-emit-restore-callee-regs-pop assignments vars)
@@ -7671,7 +7600,21 @@
                       vars
                       "%r12"
                       0))))))))]
-    (string.append (& xmm) (& gp))))
+    (if (compiler-backend-current-fn-win64?)
+      (let
+        [xmm : String
+          (compiler-backend-emit-win64-xmm-callee-regs-at
+            assignments
+            vars
+            0
+            (-
+              (compiler-abi-callee-saved-xmm-register-count
+                (CompilerRegTargetAbi.Windows))
+              1)
+            -1
+            false)]
+        (string.append (& xmm) (& gp)))
+      gp)))
 
 (define (compiler-backend-return-label [source-function : String]) : String
   (compiler-backend-asm-label
@@ -41469,7 +41412,6 @@
                       (compiler-backend-frame-size
                         (compiler-backend-frame-slots-emergency-max
                           slot-vars
-                          assignments
                           has-group-vars))
                       outgoing-frame-space)]
                   [_emergency-init : unit
@@ -41551,7 +41493,6 @@
                                     ;; slots never overlap on-demand CSR saves.
                                     (compiler-backend-frame-slots-emergency-max
                                       slot-vars
-                                      assignments
                                       has-group-vars)
                                     (compiler-backend-frame-slots-with-groups
                                       slot-vars

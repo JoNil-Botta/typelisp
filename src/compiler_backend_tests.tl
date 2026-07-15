@@ -4558,45 +4558,45 @@
     [ok : bool
       (and
         (compiler-backend-plan-uses-callee-regs? sparse)
-        (= frame 224)
-        (= (compiler-backend-frame-slots 3 sparse) 28)
-        (= (compiler-backend-frame-slots-with-groups 3 sparse true) 34)
-        (= (compiler-backend-frame-slots-emergency-max 3 sparse true) 34)
-        (= (compiler-backend-win64-xmm-callee-slot-offset 3 sparse 0) -80)
-        (= (compiler-backend-win64-xmm-callee-slot-offset 3 sparse 9) -224)
-        (= (compiler-backend-group-word0-slot 0 3 sparse) -240)
-        (= (compiler-backend-group-word1-slot 0 3 sparse) -232)
+        (= frame 240)
+        (= (compiler-backend-frame-slots 3 sparse) 30)
+        (= (compiler-backend-frame-slots-with-groups 3 sparse true) 36)
+        (= (compiler-backend-frame-slots-emergency-max 3 true) 36)
+        (= (compiler-backend-win64-xmm-callee-slot-offset 3 0) -96)
+        (= (compiler-backend-win64-xmm-callee-slot-offset 3 9) -240)
+        (= (compiler-backend-group-word0-slot 0 3 sparse) -256)
+        (= (compiler-backend-group-word1-slot 0 3 sparse) -248)
         (string.eq
           save
-          "    movdqu %xmm6, -80(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -224(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+          "    movdqu %xmm6, -96(%rbp)\n    .seh_savexmm %xmm6, 144\n    movdqu %xmm15, -240(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (string.eq
           restore
-          "    movdqu -224(%rbp), %xmm15\n    movdqu -80(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
-        (compiler-backend-string-contains? entry "    subq $224, %rsp\n")
+          "    movdqu -240(%rbp), %xmm15\n    movdqu -96(%rbp), %xmm6\n    movq -32(%rbp), %r12\n")
+        (compiler-backend-string-contains? entry "    subq $240, %rsp\n")
         (compiler-backend-string-contains? entry save)
         (compiler-backend-string-contains?
           entry
           "    .seh_savexmm %xmm15, 0\n    .seh_endprologue\n")
-        (= full-frame 176)
+        (= full-frame 224)
         (= (compiler-backend-string-count full-save "    movdqu %xmm") 10)
         (= (compiler-backend-string-count full-save "    .seh_savexmm %xmm") 10)
         (= (compiler-backend-string-count full-restore "    movdqu ") 10)
         (= (compiler-backend-frame-slots 3 CompilerRegAssignmentList.Nil) 3)
         (not (compiler-backend-string-contains? empty-entry "movdqu"))
         (not (compiler-backend-string-contains? empty-entry ".seh_savexmm"))
-        (= large-frame 4960)
+        (= large-frame 5024)
         (compiler-backend-string-contains? large-entry "    callq __chkstk\n")
         (compiler-backend-string-contains?
           large-entry
-          "    movdqu %xmm15, -4960(%rbp)\n    .seh_savexmm %xmm15, 0\n")
+          "    movdqu %xmm15, -5024(%rbp)\n    .seh_savexmm %xmm15, 0\n")
         (=
           (compiler-backend-string-count
             inline-tail
-            "movdqu -224(%rbp), %xmm15")
+            "movdqu -240(%rbp), %xmm15")
           1)
         (compiler-backend-string-contains? inline-tail "    leave\n    ret\n")
         (=
-          (compiler-backend-string-count jump-tail "movdqu -224(%rbp), %xmm15")
+          (compiler-backend-string-count jump-tail "movdqu -240(%rbp), %xmm15")
           1)
         (compiler-backend-string-contains?
           jump-tail
@@ -4604,7 +4604,7 @@
         (=
           (compiler-backend-string-count
             shared-tail
-            "movdqu -224(%rbp), %xmm15")
+            "movdqu -240(%rbp), %xmm15")
           1)
         (compiler-backend-string-contains?
           shared-tail

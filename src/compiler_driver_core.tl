@@ -38,6 +38,14 @@
 
 (define compiler-driver-pending-retired-source-arena : i64
   0)
+
+;; Uncached opt1/2 loads run parse/typecheck/list scratch in a separate arena.
+;; Its surviving program shells escape at the same outer boundary as the
+;; checked source arena, after every load/lower frame has returned.
+(define compiler-driver-pending-retired-frontend-arena : i64
+  0)
+(define compiler-driver-pending-frontend-return-arena : i64
+  0)
 (define compiler-driver-pending-intern-state : (Array ci.InternCompatState)
   (array.make-array ci.InternCompatState 0))
 
@@ -1421,6 +1429,16 @@
     unit
     (ci.intern-persistent-storage-disable!)))
 
+(define (compiler-driver-restore-frontend-return-arena!) : unit
+  (if (= compiler-driver-pending-frontend-return-arena 0)
+    unit
+    (let
+      [return-arena : i64 compiler-driver-pending-frontend-return-arena]
+      (begin
+        (set! compiler-driver-pending-frontend-return-arena 0)
+        (unsafe
+          (arena.tl_arena_set return-arena))))))
+
 (define (compiler-driver-retirement-clone-shells? [opt-level : i64]) : bool
   (and
     (>= opt-level 1)
@@ -1432,6 +1450,8 @@
     (let
       [retained-arena : i64 (arena.tl_arena_current)]
       [retire-arena : i64 compiler-driver-pending-retired-source-arena]
+      [retire-frontend-arena : i64
+        compiler-driver-pending-retired-frontend-arena]
       (begin
         ;; Clear globals at the outer emit boundary, after the load/lower call
         ;; has returned and no active frame can still hold their arena values.
@@ -1440,7 +1460,11 @@
         (unsafe
           (begin
             (set! compiler-driver-pending-retired-source-arena 0)
+            (set! compiler-driver-pending-retired-frontend-arena 0)
             (arena.tl_arena_destroy retire-arena)
+            (if (= retire-frontend-arena 0)
+              unit
+              (arena.tl_arena_destroy retire-frontend-arena))
             (arena.tl_arena_set retained-arena)))))))
 
 (define (compiler-driver-emit-lowered-result-with-level-mode-entry-and-crt
@@ -1512,8 +1536,12 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
+    [(ResultCompilerDriverLowered.Err diag)
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriver.Err diag))]))
 
 (define (compiler-driver-emit-lowered-result-buffer-with-level-mode-and-entry
   [input-path : String]
@@ -1582,9 +1610,12 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
-      (ResultCompilerDriverBuffer.Err diag)]))
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriverBuffer.Err diag))]))
 
 (define (compiler-driver-emit-lowered-result-object-image-with-level-mode-entry-and-crt
   [input-path : String]
@@ -1630,9 +1661,12 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
           out))]
     [(ResultCompilerDriverLowered.Err diag)
-      (ResultCompilerDriverObject.Err diag)]))
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriverObject.Err diag))]))
 
 (define (compiler-driver-emit-lowered-result-pic-with-level-mode-entry-and-crt
   [input-path : String]
@@ -1678,8 +1712,12 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriverPic.Err diag)]))
+    [(ResultCompilerDriverLowered.Err diag)
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriverPic.Err diag))]))
 
 ;; The implicit prelude prepended before every entry program. It is two
 ;; always-linked stdlib modules loaded as files:
@@ -2177,6 +2215,23 @@
   [retire-after-lower? : bool]) : ResultCompilerDriverLowered
   (let
     [pools : AstNodePoolContext (compiler-driver-state-pool-context state)]
+    [release-source-pools? : bool
+      (compiler-driver-state-can-release-checked-lower-source-pools? state)]
+    [route-source-allocations? : bool
+      (and release-source-pools? retire-after-lower?)]
+    [frontend-arena : i64
+      (if route-source-allocations?
+        (arena.tl_arena_make)
+        0)]
+    [_use-frontend-arena : unit
+      (if route-source-allocations?
+        (begin
+          (set!
+            compiler-driver-pending-frontend-return-arena
+            (arena.tl_arena_current))
+          (unsafe
+            (arena.tl_arena_set frontend-arena)))
+        unit)]
     [_install-interns : unit (compiler-driver-state-install-interns! state)]
     [_reset-type-literal-tracking : unit
       (compiler-parse-type-literal-tracking-reset!)]
@@ -2193,9 +2248,6 @@
           (compiler-driver-state-install-transients! state)
           (compiler-driver-state-install-pools! state)
           (let
-            [release-source-pools? : bool
-              (compiler-driver-state-can-release-checked-lower-source-pools?
-                state)]
             [defer-source-destroy? : bool
               (and
                 release-source-pools?
@@ -2277,11 +2329,26 @@
                         (compiler-driver-ty-node-pool-exhausted-diagnostic
                           input-path)))
                     (if (and dest-committed? retire-after-lower?)
-                      (compiler-driver-state-retain-lowered-types!
-                        state
-                        program
-                        spans
-                        result-pools)
+                      (begin
+                        (if route-source-allocations?
+                          (begin
+                            ;; Keep front-end storage alive until the outer
+                            ;; result adapter has cloned program shells/spans
+                            ;; and persisted interned strings. Use the compact
+                            ;; checked pool as the escape arena so the old AST
+                            ;; pool and this front-end arena can both retire.
+                            (set!
+                              compiler-driver-pending-retired-frontend-arena
+                              (arena.tl_arena_current))
+                            (unsafe
+                              (arena.tl_arena_set
+                                (ast-node-pool-context-base-arena result-pools))))
+                          unit)
+                        (compiler-driver-state-retain-lowered-types!
+                          state
+                          program
+                          spans
+                          result-pools))
                       (compiler-driver-lowered-from-pools
                         program
                         spans
@@ -3098,8 +3165,12 @@
             unit)
           (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (ast-node-pool-reader-clear!)
+          (compiler-driver-restore-frontend-return-arena!)
           out))]
-    [(ResultCompilerDriverLowered.Err diag) (ResultCompilerDriver.Err diag)]))
+    [(ResultCompilerDriverLowered.Err diag)
+      (begin
+        (compiler-driver-restore-frontend-return-arena!)
+        (ResultCompilerDriver.Err diag))]))
 
 (define (compiler-driver-emit-ir-summary-file-with-roots-and-level
   [input-path : String]

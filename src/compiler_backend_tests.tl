@@ -4688,7 +4688,8 @@
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
           CompilerIrExternList.Nil)
-        8)
+        8
+        "")
         [(ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
@@ -4701,7 +4702,10 @@
         (AstType.I64)
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
-          CompilerIrExternList.Nil))
+          CompilerIrExternList.Nil)
+        ""
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm) (string.eq asm "")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
@@ -4714,7 +4718,10 @@
         (AstType.U64)
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
-          CompilerIrExternList.Nil))
+          CompilerIrExternList.Nil)
+        ""
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm) (string.eq asm "    movq %r12, %r13\n")]
         [(ResultCompilerBackend.Err _) false])
       (match (compiler-backend-emit-cast
@@ -4727,7 +4734,10 @@
         (AstType.I64)
         (compiler-backend-program-index-build
           CompilerIrFunctionList.Nil
-          CompilerIrExternList.Nil))
+          CompilerIrExternList.Nil)
+        ""
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm)
           (and
             (string.eq asm "    movslq %r12d, %r13\n")
@@ -4753,7 +4763,8 @@
         (CompilerIrValue.I64 0)
         (AstType.I64)
         index
-        8)
+        8
+        "")
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    xorl %r12d, %r12d\n")]
         [(ResultCompilerBackend.Err _) false])
@@ -4763,7 +4774,8 @@
         (CompilerIrValue.I64 7)
         (AstType.I64)
         index
-        8)
+        8
+        "")
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    movq $7, -16(%rbp)\n")]
         [(ResultCompilerBackend.Err _) false]))))
@@ -4793,7 +4805,8 @@
         (CompilerIrValue.Var 0)
         (AstType.I64)
         index
-        2)
+        2
+        "")
         [(ResultCompilerBackend.Ok asm)
           (and
             (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
@@ -4806,7 +4819,8 @@
         (CompilerIrValue.Var 0)
         (AstType.F64)
         index
-        2)
+        2
+        "")
         [(ResultCompilerBackend.Ok asm)
           (and
             (compiler-backend-string-contains? asm "    movsd %xmm3, %xmm2\n")
@@ -4885,7 +4899,7 @@
     [ty : AstType (compiler-backend-register-group-test-type)]
     [index : CompilerBackendProgramIndex
       (compiler-backend-register-group-test-index)]
-    (match (compiler-backend-emit-mov assignments 1 src ty index 4)
+    (match (compiler-backend-emit-mov assignments 1 src ty index 4 "")
       [(ResultCompilerBackend.Err diag)
         (string.eq (compiler-diagnostic-message (box-get diag)) want)]
       [(ResultCompilerBackend.Ok _) false])))
@@ -5248,7 +5262,8 @@
         (CompilerIrValue.Var 0)
         ty
         index
-        4)]
+        4
+        "")]
     [_group-disable : unit (compiler-backend-group-vars-disable!)]
     (and
       (match packed
@@ -14269,7 +14284,10 @@
         (CompilerIrValue.Var 5)
         (AstType.I8)
         (AstType.I64)
-        index)
+        index
+        ""
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    movsbq %r12b, %rbx\n")]
         [(ResultCompilerBackend.Err _) false])
@@ -14281,7 +14299,10 @@
         (CompilerIrValue.Var 5)
         (AstType.U8)
         (AstType.U64)
-        index)
+        index
+        ""
+        ""
+        "")
         [(ResultCompilerBackend.Ok asm)
           (string.eq asm "    movzbq -48(%rbp), %rbx\n")]
         [(ResultCompilerBackend.Err _) false]))))
@@ -15157,7 +15178,10 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-direct-float-precision-cast-home-ok?) : bool
   (match (compiler-backend-direct-float-precision-cast-asm
@@ -15205,7 +15229,10 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-spill-float-precision-cast-home-ok?) : bool
   (match (compiler-backend-spill-float-precision-cast-asm
@@ -15257,7 +15284,10 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-direct-int-to-float-cast-home-ok?) : bool
   (match (compiler-backend-direct-int-to-float-cast-asm (AstType.F64))
@@ -15293,7 +15323,10 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-spill-int-to-float-cast-home-ok?) : bool
   (match (compiler-backend-spill-int-to-float-cast-asm (AstType.F64))
@@ -15335,7 +15368,10 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-spill-u64-to-float-cast-home-ok?) : bool
   (match (compiler-backend-spill-u64-to-float-cast-asm (AstType.F64))
@@ -15389,7 +15425,10 @@
     (AstType.I64)
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-direct-float-to-int-cast-home-ok?) : bool
   (match (compiler-backend-direct-float-to-int-cast-asm (AstType.F64))
@@ -15427,7 +15466,10 @@
     (AstType.I64)
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    ""))
 
 (define (compiler-backend-spill-float-to-int-cast-home-ok?) : bool
   (match (compiler-backend-spill-float-to-int-cast-asm (AstType.F64))
@@ -15469,7 +15511,10 @@
     (AstType.I64)
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil))
+      CompilerIrExternList.Nil)
+    ""
+    ""
+    "")
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movslq %r12d, %r8\n")
@@ -15538,7 +15583,9 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""))
 
 (define (compiler-backend-direct-bitcast-home-ok?) : bool
   (match (compiler-backend-direct-bitcast-asm
@@ -15607,7 +15654,9 @@
     (AstType.U64)
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""))
 
 (define (compiler-backend-spill-float-to-int-bitcast-home-ok?) : bool
   (match (compiler-backend-spill-float-to-int-bitcast-asm (AstType.F64))
@@ -15643,7 +15692,9 @@
     to-ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""))
 
 (define (compiler-backend-spill-int-to-float-bitcast-home-ok?) : bool
   (match (compiler-backend-spill-int-to-float-bitcast-asm (AstType.F64))
@@ -15683,7 +15734,9 @@
     ty
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil)))
+      CompilerIrExternList.Nil)
+    ""
+    ""))
 
 (define (compiler-backend-spill-float-to-float-bitcast-home-ok?) : bool
   (match (compiler-backend-spill-float-to-float-bitcast-asm (AstType.F64))
@@ -15721,7 +15774,9 @@
     (AstType.U64)
     (compiler-backend-program-index-build
       CompilerIrFunctionList.Nil
-      CompilerIrExternList.Nil))
+      CompilerIrExternList.Nil)
+    ""
+    "")
     [(ResultCompilerBackend.Ok asm)
       (and
         (compiler-backend-string-contains? asm "    movq %r12, %r8\n")
@@ -21267,6 +21322,84 @@
         (CompilerRegLocation.Register "%xmm2"))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-scratch-vreg-cast-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Cast
+          1
+          (CompilerIrValue.Var 0)
+          (AstType.U64)
+          (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-cast-gp-only-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Cast
+          1
+          (CompilerIrValue.Var 0)
+          (AstType.I64)
+          (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-bitcast-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Bitcast
+          1
+          (CompilerIrValue.Var 0)
+          (AstType.F64)
+          (AstType.U64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-float-mov-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-cast-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r12"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-cast-gp-only-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm6"))
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-bitcast-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-float-mov-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%xmm6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-scratch-vreg-aggregate-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -21352,13 +21485,14 @@
     (compiler-reg-call-split-empty)
     (compiler-reg-split-plan-empty)))
 
-(define (compiler-backend-scratch-test-result
+(define (compiler-backend-scratch-test-result-for-abi
+  [abi : CompilerRegTargetAbi]
   [name : String]
   [blocks : CompilerIrBlockList]
   [vars : i64]
   [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPlanResult
   (compiler-reg-plan-with-scratch-vreg-result
-    (CompilerRegTargetAbi.Linux)
+    abi
     (CompilerIrFunction.Function
       name
       CompilerIrParamList.Nil
@@ -21367,6 +21501,18 @@
       blocks)
     (compiler-backend-scratch-test-base-plan vars assignments)
     vars))
+
+(define (compiler-backend-scratch-test-result
+  [name : String]
+  [blocks : CompilerIrBlockList]
+  [vars : i64]
+  [assignments : CompilerRegAssignmentList]) : CompilerRegScratchPlanResult
+  (compiler-backend-scratch-test-result-for-abi
+    (CompilerRegTargetAbi.Linux)
+    name
+    blocks
+    vars
+    assignments))
 
 (define (compiler-backend-scratch-test-register
   [result : CompilerRegScratchPlanResult]
@@ -22102,6 +22248,262 @@
         [(ResultCompilerBackend.Err _) false]))
     true))
 
+(define (compiler-backend-scratch-vreg-conversion-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [cast-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-cast-test-blocks)]
+      [cast : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_cast"
+          cast-blocks
+          2
+          (compiler-backend-scratch-vreg-cast-test-assignments))]
+      [cast-dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_cast_dense"
+          (compiler-ir-block-list-compact cast-blocks)
+          2
+          (compiler-backend-scratch-vreg-cast-test-assignments))]
+      [cast-windows : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result-for-abi
+          (CompilerRegTargetAbi.Windows)
+          "scratch_vreg_float_cast_windows"
+          cast-blocks
+          2
+          (compiler-backend-scratch-vreg-cast-test-assignments))]
+      [gp-only : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_cast_gp_only"
+          (compiler-backend-scratch-vreg-cast-gp-only-test-blocks)
+          2
+          (compiler-backend-scratch-vreg-cast-gp-only-test-assignments))]
+      [bitcast-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-bitcast-test-blocks)]
+      [bitcast : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_bitcast"
+          bitcast-blocks
+          2
+          (compiler-backend-scratch-vreg-bitcast-test-assignments))]
+      [bitcast-dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_bitcast_dense"
+          (compiler-ir-block-list-compact bitcast-blocks)
+          2
+          (compiler-backend-scratch-vreg-bitcast-test-assignments))]
+      [mov : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_float_mov"
+          (compiler-backend-scratch-vreg-float-mov-test-blocks)
+          2
+          (compiler-backend-scratch-vreg-float-mov-test-assignments))]
+      [cast-xmm : String (compiler-backend-scratch-test-register cast 0)]
+      [cast-gp0 : String (compiler-backend-scratch-test-register cast 1)]
+      [cast-gp1 : String (compiler-backend-scratch-test-register cast 2)]
+      [cast-win-xmm : String
+        (compiler-backend-scratch-test-register cast-windows 0)]
+      [cast-win-gp0 : String
+        (compiler-backend-scratch-test-register cast-windows 1)]
+      [cast-win-gp1 : String
+        (compiler-backend-scratch-test-register cast-windows 2)]
+      [gp-only-reg : String (compiler-backend-scratch-test-register gp-only 0)]
+      [bitcast-xmm : String (compiler-backend-scratch-test-register bitcast 0)]
+      [bitcast-gp : String (compiler-backend-scratch-test-register bitcast 1)]
+      [mov-xmm : String (compiler-backend-scratch-test-register mov 0)]
+      [same-home : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Spill -8))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -8))
+            CompilerRegAssignmentList.Nil))]
+      (and
+        (= (compiler-backend-scratch-test-plan-count cast) 3)
+        (= (compiler-backend-scratch-test-success-count cast) 3)
+        (>= (compiler-reg-xmm-family-index cast-xmm) 0)
+        (not (string.eq cast-gp0 ""))
+        (not (string.eq cast-gp1 ""))
+        (not (string.eq cast-gp0 cast-gp1))
+        (not (string.eq cast-gp0 "%r12"))
+        (not (string.eq cast-gp1 "%r12"))
+        (string.eq
+          cast-xmm
+          (compiler-backend-scratch-test-register cast-dense 0))
+        (string.eq
+          cast-gp0
+          (compiler-backend-scratch-test-register cast-dense 1))
+        (string.eq
+          cast-gp1
+          (compiler-backend-scratch-test-register cast-dense 2))
+        (= (compiler-backend-scratch-test-plan-count cast-windows) 3)
+        (= (compiler-backend-scratch-test-success-count cast-windows) 3)
+        (>= (compiler-reg-xmm-family-index cast-win-xmm) 0)
+        (not (string.eq cast-win-gp0 ""))
+        (not (string.eq cast-win-gp1 ""))
+        (not (string.eq cast-win-gp0 cast-win-gp1))
+        (not (string.eq cast-win-gp0 "%r12"))
+        (not (string.eq cast-win-gp1 "%r12"))
+        (= (compiler-backend-scratch-test-plan-count gp-only) 1)
+        (= (compiler-backend-scratch-test-success-count gp-only) 1)
+        (not (string.eq gp-only-reg ""))
+        (< (compiler-reg-xmm-family-index gp-only-reg) 0)
+        (= (compiler-backend-scratch-test-plan-count bitcast) 2)
+        (= (compiler-backend-scratch-test-success-count bitcast) 2)
+        (>= (compiler-reg-xmm-family-index bitcast-xmm) 0)
+        (not (string.eq bitcast-gp ""))
+        (< (compiler-reg-xmm-family-index bitcast-gp) 0)
+        (string.eq
+          bitcast-xmm
+          (compiler-backend-scratch-test-register bitcast-dense 0))
+        (string.eq
+          bitcast-gp
+          (compiler-backend-scratch-test-register bitcast-dense 1))
+        (= (compiler-backend-scratch-test-plan-count mov) 1)
+        (= (compiler-backend-scratch-test-success-count mov) 1)
+        (>= (compiler-reg-xmm-family-index mov-xmm) 0)
+        (not (= (compiler-reg-xmm-family-index mov-xmm) 6))
+        (=
+          (compiler-reg-scratch-cast-slot-count
+            same-home
+            1
+            (CompilerIrValue.Var 0)
+            (AstType.F64)
+            (AstType.F64))
+          0)
+        (=
+          (compiler-reg-scratch-vreg-slots
+            same-home
+            (CompilerIrInstr.Mov 1 (CompilerIrValue.Var 0) (AstType.F64))
+            CompilerRegStringList.Nil)
+          0)
+        (match cast
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatCastValueXmm) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatCastValueGp) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 2) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatCastScratchGp) true]
+                [_ false]))])
+        (match gp-only
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 0) requirement)
+              role)
+              [(CompilerRegScratchRole.FloatCastValueGp) true]
+              [_ false])])
+        (match bitcast
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatBitcastValueXmm) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.FloatBitcastValueGp) true]
+                [_ false]))])
+        (match mov
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (match (struct-get
+              (struct-get (array-ref (struct-get plan items) 0) requirement)
+              role)
+              [(CompilerRegScratchRole.FloatMoveValueXmm) true]
+              [_ false])])))
+    true))
+
+(define (compiler-backend-scratch-vreg-conversion-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [index : CompilerBackendProgramIndex
+        (compiler-backend-program-index-build
+          CompilerIrFunctionList.Nil
+          CompilerIrExternList.Nil)]
+      [cast-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-cast-test-assignments)]
+      [gp-only-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-cast-gp-only-test-assignments)]
+      [bitcast-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-bitcast-test-assignments)]
+      [mov-assignments : CompilerRegAssignmentList
+        (compiler-backend-scratch-vreg-float-mov-test-assignments)]
+      (match (compiler-backend-emit-cast
+        "test_cast"
+        "entry"
+        cast-assignments
+        1
+        (CompilerIrValue.Var 0)
+        (AstType.U64)
+        (AstType.F64)
+        index
+        "%xmm14"
+        "%r14"
+        "%r15")
+        [(ResultCompilerBackend.Ok cast-asm)
+          (match (compiler-backend-emit-cast
+            "test_cast_gp"
+            "entry"
+            gp-only-assignments
+            1
+            (CompilerIrValue.Var 0)
+            (AstType.I64)
+            (AstType.F64)
+            index
+            "%r14"
+            ""
+            "")
+            [(ResultCompilerBackend.Ok gp-only-asm)
+              (match (compiler-backend-emit-bitcast
+                bitcast-assignments
+                1
+                (CompilerIrValue.Var 0)
+                (AstType.F64)
+                (AstType.U64)
+                index
+                "%xmm14"
+                "%r14")
+                [(ResultCompilerBackend.Ok bitcast-asm)
+                  (match (compiler-backend-emit-mov
+                    mov-assignments
+                    1
+                    (CompilerIrValue.Var 0)
+                    (AstType.F64)
+                    index
+                    2
+                    "%xmm14")
+                    [(ResultCompilerBackend.Ok mov-asm)
+                      (and
+                        (compiler-backend-string-contains? cast-asm "%xmm14")
+                        (compiler-backend-string-contains? cast-asm "%r14")
+                        (compiler-backend-string-contains? cast-asm "%r15")
+                        (compiler-backend-string-contains? gp-only-asm "%r14")
+                        (compiler-backend-string-contains? gp-only-asm "%xmm6")
+                        (not
+                          (compiler-backend-string-contains?
+                            gp-only-asm
+                            "%xmm14"))
+                        (compiler-backend-string-contains? bitcast-asm "%xmm14")
+                        (compiler-backend-string-contains? bitcast-asm "%r14")
+                        (compiler-backend-string-contains? mov-asm "%xmm14"))]
+                    [(ResultCompilerBackend.Err _) false])]
+                [(ResultCompilerBackend.Err _) false])]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false]))
+    true))
+
 (define (compiler-backend-scratch-vreg-constraint-shapes-ok?) : bool
   (cfg
     scratch-vreg
@@ -22603,6 +23005,8 @@
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
         (compiler-backend-scratch-vreg-simd-plan-ok?)
         (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
+        (compiler-backend-scratch-vreg-conversion-plan-ok?)
+        (compiler-backend-scratch-vreg-conversion-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)

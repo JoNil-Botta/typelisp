@@ -19669,7 +19669,8 @@
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
-  [to-ty : AstType]) : ResultCompilerBackend
+  [to-ty : AstType]
+  [planned-xmm : String]) : ResultCompilerBackend
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
@@ -19690,11 +19691,13 @@
           (ResultCompilerBackend.Err message)])
       (let
         [tmp-reg : String
-          (compiler-backend-scavenge-xmm-reg
-            dst
-            (array.make-array String 0)
-            0
-            "%xmm2")]
+          (if (> (string.string-length planned-xmm) 0)
+            planned-xmm
+            (compiler-backend-scavenge-xmm-reg
+              dst
+              (array.make-array String 0)
+              0
+              "%xmm2"))]
         (match (compiler-backend-emit-load-float-value-with-plan
           assignments
           src
@@ -19725,7 +19728,10 @@
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [planned-xmm : String]
+  [planned-value-gp : String]
+  [planned-scratch-gp : String]) : ResultCompilerBackend
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     [src-reg : String (compiler-backend-value-scalar-register assignments src)]
@@ -19739,18 +19745,26 @@
         (let
           [src-tmp : String
             (if (string.eq src-reg "")
-              (compiler-backend-scavenge-reg
-                dst
-                (array.make-array String 0)
-                0
-                "%r8")
+              (if (> (string.string-length planned-value-gp) 0)
+                planned-value-gp
+                (compiler-backend-scavenge-reg
+                  dst
+                  (array.make-array String 0)
+                  0
+                  "%r8"))
               src-reg)]
           [dst-tmp : String
-            (compiler-backend-scavenge-xmm-reg
-              dst
-              (array.make-array String 0)
-              0
-              "%xmm2")]
+            (if (and
+              (> (string.string-length planned-value-gp) 0)
+              (compiler-backend-string-prefix-at? dst-home "%xmm" 0))
+              dst-home
+              (if (> (string.string-length planned-xmm) 0)
+                planned-xmm
+                (compiler-backend-scavenge-xmm-reg
+                  dst
+                  (array.make-array String 0)
+                  0
+                  "%xmm2")))]
           (match (if (string.eq src-reg "")
             (compiler-backend-emit-load-typed-value-to-reg-with-plan
               assignments
@@ -19776,23 +19790,33 @@
               (ResultCompilerBackend.Err message)]))
         (let
           [value-reg : String
-            (compiler-backend-scavenge-reg
-              dst
-              (array.make-array String 0)
-              0
-              "%r8")]
+            (if (> (string.string-length planned-value-gp) 0)
+              planned-value-gp
+              (compiler-backend-scavenge-reg
+                dst
+                (if (> (string.string-length planned-scratch-gp) 0)
+                  (compiler-backend-one-exclude planned-scratch-gp)
+                  (array.make-array String 0))
+                (if (> (string.string-length planned-scratch-gp) 0)
+                  1
+                  0)
+                "%r8"))]
           [scratch-exclude : (Array String)
             (compiler-backend-one-exclude value-reg)]
           [scratch-reg : String
-            (compiler-backend-scavenge-reg dst scratch-exclude 1 "%r9")]
+            (if (> (string.string-length planned-scratch-gp) 0)
+              planned-scratch-gp
+              (compiler-backend-scavenge-reg dst scratch-exclude 1 "%r9"))]
           [result-reg : String
             (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
               dst-home
-              (compiler-backend-scavenge-xmm-reg
-                dst
-                (make-array String 0)
-                0
-                "%xmm2"))]
+              (if (> (string.string-length planned-xmm) 0)
+                planned-xmm
+                (compiler-backend-scavenge-xmm-reg
+                  dst
+                  (make-array String 0)
+                  0
+                  "%xmm2")))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
             assignments
             src
@@ -19824,7 +19848,9 @@
   [dst : i64]
   [src : CompilerIrValue]
   [from-ty : AstType]
-  [to-ty : AstType]) : ResultCompilerBackend
+  [to-ty : AstType]
+  [planned-xmm : String]
+  [planned-gp : String]) : ResultCompilerBackend
   (let
     [dst-home : String (compiler-backend-var-register-home assignments dst)]
     [src-reg : String (compiler-backend-float-value-register assignments src)]
@@ -19837,22 +19863,26 @@
       (let
         [src-tmp : String
           (if (string.eq src-reg "")
-            (compiler-backend-scavenge-xmm-reg
-              dst
-              (array.make-array String 0)
-              0
-              "%xmm2")
+            (if (> (string.string-length planned-xmm) 0)
+              planned-xmm
+              (compiler-backend-scavenge-xmm-reg
+                dst
+                (array.make-array String 0)
+                0
+                "%xmm2"))
             src-reg)]
         [dst-reg : String
           (if (and
             (not (string.eq dst-home ""))
             (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0)))
             dst-home
-            (compiler-backend-scavenge-reg
-              dst
-              (array.make-array String 0)
-              0
-              "%r8"))]
+            (if (> (string.string-length planned-gp) 0)
+              planned-gp
+              (compiler-backend-scavenge-reg
+                dst
+                (array.make-array String 0)
+                0
+                "%r8")))]
         (match (if (string.eq src-reg "")
           (compiler-backend-emit-load-float-value-with-plan
             assignments
@@ -19885,7 +19915,10 @@
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [planned-scratch0 : String]
+  [planned-scratch1 : String]
+  [planned-scratch2 : String]) : ResultCompilerBackend
   (if (and
     (opt-type-eq from-ty to-ty)
     (compiler-backend-value-same-home? assignments dst src))
@@ -19893,6 +19926,31 @@
     (let
       [from-is-float : bool (compiler-backend-float-type? from-ty)]
       [to-is-float : bool (compiler-backend-float-type? to-ty)]
+      [xmm-needed : bool
+        (compiler-reg-scratch-cast-xmm-needed?
+          assignments
+          dst
+          src
+          from-ty
+          to-ty)]
+      [gp-count : i64
+        (compiler-reg-scratch-cast-gp-count assignments dst src from-ty to-ty)]
+      [planned-xmm : String
+        (if xmm-needed
+          planned-scratch0
+          "")]
+      [planned-gp0 : String
+        (if (> gp-count 0)
+          (if xmm-needed
+            planned-scratch1
+            planned-scratch0)
+          "")]
+      [planned-gp1 : String
+        (if (> gp-count 1)
+          (if xmm-needed
+            planned-scratch2
+            planned-scratch1)
+          "")]
       (cond
         [(and from-is-float to-is-float)
           (compiler-backend-emit-float-to-float-cast
@@ -19900,7 +19958,8 @@
             dst
             src
             from-ty
-            to-ty)]
+            to-ty
+            planned-xmm)]
         [(and (not from-is-float) to-is-float)
           (compiler-backend-emit-int-to-float-cast
             function
@@ -19910,14 +19969,19 @@
             src
             from-ty
             to-ty
-            program-index)]
+            program-index
+            planned-xmm
+            planned-gp0
+            planned-gp1)]
         [(and from-is-float (not to-is-float))
           (compiler-backend-emit-float-to-int-cast
             assignments
             dst
             src
             from-ty
-            to-ty)]
+            to-ty
+            planned-xmm
+            planned-gp0)]
         [else
           (let
             [dst-home : String
@@ -20071,7 +20135,9 @@
   [src : CompilerIrValue]
   [from-ty : AstType]
   [to-ty : AstType]
-  [program-index : CompilerBackendProgramIndex]) : ResultCompilerBackend
+  [program-index : CompilerBackendProgramIndex]
+  [planned-scratch0 : String]
+  [planned-scratch1 : String]) : ResultCompilerBackend
   (let
     [from-width : i64 (compiler-backend-bitcast-width from-ty)]
     [to-width : i64 (compiler-backend-bitcast-width to-ty)]
@@ -20079,6 +20145,30 @@
     [to-float : bool (compiler-backend-float-type? to-ty)]
     [from-int : bool (compiler-backend-bitcast-int-type? from-ty)]
     [to-int : bool (compiler-backend-bitcast-int-type? to-ty)]
+    [xmm-needed : bool
+      (compiler-reg-scratch-bitcast-xmm-needed?
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [gp-needed : bool
+      (compiler-reg-scratch-bitcast-gp-needed?
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)]
+    [planned-xmm : String
+      (if xmm-needed
+        planned-scratch0
+        "")]
+    [planned-gp : String
+      (if gp-needed
+        (if xmm-needed
+          planned-scratch1
+          planned-scratch0)
+        "")]
     (cond
       [(or
           (= from-width 0)
@@ -20140,22 +20230,26 @@
             (let
               [src-tmp : String
                 (if (string.eq src-reg "")
-                  (compiler-backend-scavenge-xmm-reg
-                    dst
-                    (array.make-array String 0)
-                    0
-                    "%xmm2")
+                  (if (> (string.string-length planned-xmm) 0)
+                    planned-xmm
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (array.make-array String 0)
+                      0
+                      "%xmm2"))
                   src-reg)]
               [dst-reg : String
                 (if (and
                   (not (string.eq dst-home ""))
                   (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0)))
                   dst-home
-                  (compiler-backend-scavenge-reg
-                    dst
-                    (array.make-array String 0)
-                    0
-                    "%r8"))]
+                  (if (> (string.string-length planned-gp) 0)
+                    planned-gp
+                    (compiler-backend-scavenge-reg
+                      dst
+                      (array.make-array String 0)
+                      0
+                      "%r8")))]
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-float-value-with-plan
                   assignments
@@ -20196,20 +20290,24 @@
             (let
               [src-tmp : String
                 (if (string.eq src-reg "")
-                  (compiler-backend-scavenge-reg
-                    dst
-                    (array.make-array String 0)
-                    0
-                    "%r8")
+                  (if (> (string.string-length planned-gp) 0)
+                    planned-gp
+                    (compiler-backend-scavenge-reg
+                      dst
+                      (array.make-array String 0)
+                      0
+                      "%r8"))
                   src-reg)]
               [dst-tmp : String
                 (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
                   dst-home
-                  (compiler-backend-scavenge-xmm-reg
-                    dst
-                    (array.make-array String 0)
-                    0
-                    "%xmm2"))]
+                  (if (> (string.string-length planned-xmm) 0)
+                    planned-xmm
+                    (compiler-backend-scavenge-xmm-reg
+                      dst
+                      (array.make-array String 0)
+                      0
+                      "%xmm2")))]
               (match (if (string.eq src-reg "")
                 (compiler-backend-emit-load-typed-value-to-reg-with-plan
                   assignments
@@ -20243,11 +20341,13 @@
               (not (string.eq dst-home ""))
               (not (compiler-backend-string-prefix-at? dst-home "%xmm" 0)))
               dst-home
-              (compiler-backend-scavenge-reg
-                dst
-                (array.make-array String 0)
-                0
-                "%r8"))]
+              (if (> (string.string-length planned-gp) 0)
+                planned-gp
+                (compiler-backend-scavenge-reg
+                  dst
+                  (array.make-array String 0)
+                  0
+                  "%r8")))]
           (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
             assignments
             src
@@ -20272,11 +20372,13 @@
           [tmp-reg : String
             (if (compiler-backend-string-prefix-at? dst-home "%xmm" 0)
               dst-home
-              (compiler-backend-scavenge-xmm-reg
-                dst
-                (array.make-array String 0)
-                0
-                "%xmm2"))]
+              (if (> (string.string-length planned-xmm) 0)
+                planned-xmm
+                (compiler-backend-scavenge-xmm-reg
+                  dst
+                  (array.make-array String 0)
+                  0
+                  "%xmm2")))]
           (match (compiler-backend-emit-load-float-value-with-plan
             assignments
             src
@@ -26788,7 +26890,8 @@
   [src : CompilerIrValue]
   [ty : AstType]
   [program-index : CompilerBackendProgramIndex]
-  [vars : i64]) : ResultCompilerBackend
+  [vars : i64]
+  [planned-xmm : String]) : ResultCompilerBackend
   (cond
     ;; M-B: a group mov whose src and dst share a home (the coloring's
     ;; group-mov slot aliasing merges their ids, so both formula word slots
@@ -26824,7 +26927,9 @@
             1)]
         [reg : String
           (if (string.eq dst-home "")
-            (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2")
+            (if (> (string.string-length planned-xmm) 0)
+              planned-xmm
+              (compiler-backend-scavenge-xmm-reg dst exclude exclude-n "%xmm2"))
             dst-home)]
         (match (compiler-backend-emit-load-typed-value-to-reg-with-plan
           assignments
@@ -29341,7 +29446,8 @@
           src
           ty
           program-index
-          vars)
+          vars
+          planned-scratch0)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -29457,7 +29563,10 @@
           src
           from-ty
           to-ty
-          program-index)
+          program-index
+          planned-scratch0
+          planned-scratch1
+          planned-scratch2)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -29472,7 +29581,9 @@
           src
           from-ty
           to-ty
-          program-index)
+          program-index
+          planned-scratch0
+          planned-scratch1)
           [(ResultCompilerBackend.Ok asm) (ResultCompilerBackend.Ok asm)]
           [(ResultCompilerBackend.Err message)
             (ResultCompilerBackend.Err
@@ -34025,7 +34136,8 @@
                         src
                         ty
                         program-index
-                        vars))
+                        vars
+                        ""))
                       [(ResultCompilerBackend.Ok prefix)
                         (match (compiler-backend-emit-binop
                           types

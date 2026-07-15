@@ -19731,7 +19731,13 @@
   (SplatValueGp)
   (SplatValueXmm)
   (VectorReduceAccumulator)
-  (VectorReduceScratch))
+  (VectorReduceScratch)
+  (FloatCastValueXmm)
+  (FloatCastValueGp)
+  (FloatCastScratchGp)
+  (FloatBitcastValueXmm)
+  (FloatBitcastValueGp)
+  (FloatMoveValueXmm))
 
 (defstruct CompilerRegScratchConstraint
   (register-class CompilerRegScratchClass)
@@ -19834,6 +19840,153 @@
     [(CompilerIrValue.Char _) true]
     [_ false]))
 
+(define (compiler-reg-scratch-value-register-homed?
+  [assignments : CompilerRegAssignmentList]
+  [value : CompilerIrValue]) : bool
+  (match value
+    [(CompilerIrValue.Var var)
+      (compiler-reg-scratch-var-register-homed? assignments var)]
+    [_ false]))
+
+(define (compiler-reg-scratch-value-same-home?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]) : bool
+  (match src
+    [(CompilerIrValue.Var src-var)
+      (if (= dst src-var)
+        true
+        (match (compiler-reg-assignment-lookup assignments dst)
+          [(CompilerRegMaybeLocation.Some dst-location)
+            (match (compiler-reg-assignment-lookup assignments src-var)
+              [(CompilerRegMaybeLocation.Some src-location)
+                (compiler-reg-location-eq? dst-location src-location)]
+              [(CompilerRegMaybeLocation.No) false])]
+          [(CompilerRegMaybeLocation.No) false]))]
+    [_ false]))
+
+(define (compiler-reg-scratch-cast-xmm-needed?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : bool
+  (let
+    [from-float : bool (compiler-reg-float-type? from-ty)]
+    [to-float : bool (compiler-reg-float-type? to-ty)]
+    (cond
+      [(and from-float to-float)
+        (not (compiler-reg-scratch-var-register-homed? assignments dst))]
+      [(and (not from-float) to-float)
+        (not (compiler-reg-scratch-var-register-homed? assignments dst))]
+      [(and from-float (not to-float))
+        (not (compiler-reg-scratch-value-register-homed? assignments src))]
+      [else false])))
+
+(define (compiler-reg-scratch-cast-gp-count
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : i64
+  (let
+    [from-float : bool (compiler-reg-float-type? from-ty)]
+    [to-float : bool (compiler-reg-float-type? to-ty)]
+    (cond
+      [(and (not from-float) to-float)
+        ;; Unsigned 64-bit conversion destructively shifts a copy and needs a
+        ;; second GP sibling for the low bit, even when the input is homed.
+        (match from-ty
+          [(AstType.U64) 2]
+          [_
+            (if (compiler-reg-scratch-value-register-homed? assignments src)
+              0
+              1)])]
+      [(and from-float (not to-float))
+        (if (compiler-reg-scratch-var-register-homed? assignments dst)
+          0
+          1)]
+      [else 0])))
+
+(define (compiler-reg-scratch-cast-slot-count
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : i64
+  (if (and
+    (ast-type-eq? from-ty to-ty)
+    (compiler-reg-scratch-value-same-home? assignments dst src))
+    0
+    (+
+      (if (compiler-reg-scratch-cast-xmm-needed?
+        assignments
+        dst
+        src
+        from-ty
+        to-ty)
+        1
+        0)
+      (compiler-reg-scratch-cast-gp-count assignments dst src from-ty to-ty))))
+
+(define (compiler-reg-scratch-bitcast-xmm-needed?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : bool
+  (let
+    [from-float : bool (compiler-reg-float-type? from-ty)]
+    [to-float : bool (compiler-reg-float-type? to-ty)]
+    (cond
+      [(and from-float (not to-float))
+        (not (compiler-reg-scratch-value-register-homed? assignments src))]
+      [(and (not from-float) to-float)
+        (not (compiler-reg-scratch-var-register-homed? assignments dst))]
+      [(and from-float to-float)
+        (not (compiler-reg-scratch-var-register-homed? assignments dst))]
+      [else false])))
+
+(define (compiler-reg-scratch-bitcast-gp-needed?
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : bool
+  (let
+    [from-float : bool (compiler-reg-float-type? from-ty)]
+    [to-float : bool (compiler-reg-float-type? to-ty)]
+    (cond
+      [(and from-float (not to-float))
+        (not (compiler-reg-scratch-var-register-homed? assignments dst))]
+      [(and (not from-float) to-float)
+        (not (compiler-reg-scratch-value-register-homed? assignments src))]
+      [else false])))
+
+(define (compiler-reg-scratch-bitcast-slot-count
+  [assignments : CompilerRegAssignmentList]
+  [dst : i64]
+  [src : CompilerIrValue]
+  [from-ty : AstType]
+  [to-ty : AstType]) : i64
+  (+
+    (if (compiler-reg-scratch-bitcast-xmm-needed?
+      assignments
+      dst
+      src
+      from-ty
+      to-ty)
+      1
+      0)
+    (if (compiler-reg-scratch-bitcast-gp-needed?
+      assignments
+      dst
+      src
+      from-ty
+      to-ty)
+      1
+      0)))
+
 (define (compiler-reg-scratch-vreg-slots
   [_assignments : CompilerRegAssignmentList]
   [_instr : CompilerIrInstr]
@@ -19923,6 +20076,27 @@
           (compiler-reg-scalar-type? ty)
           (not (compiler-reg-float-type? ty))
           (not (compiler-reg-scratch-value-direct? _assignments value)))
+          1
+          0)]
+      [(CompilerIrInstr.Cast dst src from-ty to-ty)
+        (compiler-reg-scratch-cast-slot-count
+          _assignments
+          dst
+          src
+          from-ty
+          to-ty)]
+      [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+        (compiler-reg-scratch-bitcast-slot-count
+          _assignments
+          dst
+          src
+          from-ty
+          to-ty)]
+      [(CompilerIrInstr.Mov dst src ty)
+        (if (and
+          (compiler-reg-float-type? ty)
+          (not (compiler-reg-scratch-value-same-home? _assignments dst src))
+          (not (compiler-reg-scratch-var-register-homed? _assignments dst)))
           1
           0)]
       ;; A non-memory splat stages integer lanes through GP+XMM and float lanes
@@ -20264,6 +20438,18 @@
       (compiler-reg-scratch-value-registers assignments index)]
     [(CompilerIrInstr.Store _ value _)
       (compiler-reg-scratch-value-registers assignments value)]
+    [(CompilerIrInstr.Cast dst src _ _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.Bitcast dst src _ _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
+    [(CompilerIrInstr.Mov dst src _)
+      (compiler-reg-string-list-append
+        (compiler-reg-scratch-location-registers assignments dst)
+        (compiler-reg-scratch-value-registers assignments src))]
     [(CompilerIrInstr.Splat dst value _ _)
       (compiler-reg-string-list-append
         (compiler-reg-scratch-location-registers assignments dst)
@@ -20636,6 +20822,65 @@
         ordinal
         (CompilerRegScratchRole.MemoryValue)
         (compiler-reg-scratch-memory-constraint assignments instr)
+        point
+        (+ point 1)
+        var)]
+    [(CompilerIrInstr.Cast dst src from-ty to-ty)
+      (let
+        [xmm? : bool
+          (compiler-reg-scratch-cast-xmm-needed?
+            assignments
+            dst
+            src
+            from-ty
+            to-ty)]
+        [gp-ordinal : i64
+          (-
+            ordinal
+            (if xmm?
+              1
+              0))]
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (if (and xmm? (= ordinal 0))
+            (CompilerRegScratchRole.FloatCastValueXmm)
+            (if (= gp-ordinal 0)
+              (CompilerRegScratchRole.FloatCastValueGp)
+              (CompilerRegScratchRole.FloatCastScratchGp)))
+          (if (and xmm? (= ordinal 0))
+            (compiler-reg-scratch-xmm-constraint assignments instr)
+            (compiler-reg-scratch-memory-constraint assignments instr))
+          point
+          (+ point 1)
+          var))]
+    [(CompilerIrInstr.Bitcast dst src from-ty to-ty)
+      (let
+        [xmm? : bool
+          (compiler-reg-scratch-bitcast-xmm-needed?
+            assignments
+            dst
+            src
+            from-ty
+            to-ty)]
+        (CompilerRegScratchRequirement
+          point
+          ordinal
+          (if (and xmm? (= ordinal 0))
+            (CompilerRegScratchRole.FloatBitcastValueXmm)
+            (CompilerRegScratchRole.FloatBitcastValueGp))
+          (if (and xmm? (= ordinal 0))
+            (compiler-reg-scratch-xmm-constraint assignments instr)
+            (compiler-reg-scratch-memory-constraint assignments instr))
+          point
+          (+ point 1)
+          var))]
+    [(CompilerIrInstr.Mov _ _ _)
+      (CompilerRegScratchRequirement
+        point
+        ordinal
+        (CompilerRegScratchRole.FloatMoveValueXmm)
+        (compiler-reg-scratch-xmm-constraint assignments instr)
         point
         (+ point 1)
         var)]

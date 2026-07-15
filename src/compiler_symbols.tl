@@ -409,53 +409,10 @@
       (option_i64.Some handle)
       option_i64.None)))
 
-(define (compiler-symbol-existing-name-id [name : String]) : option_i64.Option
-  (match (intern-lookup-content name)
-    [(InternLookupFound name-id) (option_i64.Some name-id)]
-    [(InternLookupMissing) option_i64.None]))
-
-(define (compiler-symbol-require-existing-name-id [name : String]) : i64
-  (match (compiler-symbol-existing-name-id name)
-    [(option_i64.Some name-id) name-id]
-    [(option_i64.None)
-      (io.panic
-        (string.append "symbols: name was not interned while parsing: " name))]))
-
-(define (compiler-symbol-existing-name-id-or [name : String] [fallback : i64]) : i64
-  (match (compiler-symbol-existing-name-id name)
-    [(option_i64.Some name-id) name-id]
-    [(option_i64.None) fallback]))
-
-(define (compiler-symbol-existing-module-id [module : String]) : i64
-  (if (= (string.string-length module) 0)
-    (compiler-symbol-root-module-id)
-    (compiler-symbol-require-existing-name-id module)))
-
-(define (compiler-symbol-existing-module-id-or
-  [module : String]
-  [fallback : i64]) : i64
-  (if (= (string.string-length module) 0)
-    (compiler-symbol-root-module-id)
-    (compiler-symbol-existing-name-id-or module fallback)))
-
-(define (compiler-symbol-map-lookup
-  [map : (& map CompilerSymbolMap)]
-  [name : String]) : option_i64.Option
-  (match (compiler-symbol-key-from-string name)
-    [(option_i64.Some key-id) (compiler-symbol-map-lookup-id map key-id)]
-    [(option_i64.None) option_i64.None]))
-
 (define (compiler-symbol-map-contains-id?
   [map : (& map CompilerSymbolMap)]
   [name-id : i64]) : bool
   (match (compiler-symbol-map-lookup-id map name-id)
-    [(option_i64.Some _) true]
-    [(option_i64.None) false]))
-
-(define (compiler-symbol-map-contains?
-  [map : (& map CompilerSymbolMap)]
-  [name : String]) : bool
-  (match (compiler-symbol-map-lookup map name)
     [(option_i64.Some _) true]
     [(option_i64.None) false]))
 
@@ -464,16 +421,6 @@
   [name-id : i64]
   [handle : i64]) : unit
   (compiler-symbol-map-put! map name-id handle))
-
-(define (compiler-symbol-map-bind!
-  [map : (&mut map CompilerSymbolMap)]
-  [name : String]
-  [handle : i64]) : unit
-  (compiler-symbol-map-bind-id!
-    map
-    (compiler-symbol-name-id-key
-      (compiler-symbol-require-existing-name-id name))
-    handle))
 
 (define (compiler-decl-list-index-count [decls : AstDeclList]) : i64
   (let
@@ -513,20 +460,6 @@
 (define (compiler-registries-empty) : CompilerRegistries
   (CompilerRegistries (compiler-symbol-map-empty) (compiler-symbol-map-empty)))
 
-(define (compiler-symbols-lookup-value
-  [symbols : CompilerSymbols]
-  [name : String]) : option_i64.Option
-  (match symbols
-    [(CompilerSymbols values _ _ _ _)
-      (match (compiler-symbol-key-from-string name)
-        [(option_i64.Some key-id)
-          (match (compiler-symbol-map-lookup-id (& values) key-id)
-            [(option_i64.Some handle) (option_i64.Some handle)]
-            [(option_i64.None)
-              (compiler-symbols-lookup-dotted-value-from-string (& values) name)])]
-        [(option_i64.None)
-          (compiler-symbols-lookup-dotted-value-from-string (& values) name)])]))
-
 (define (compiler-symbols-lookup-value-id
   [symbols : CompilerSymbols]
   [name-id : i64]) : option_i64.Option
@@ -542,16 +475,6 @@
               (compiler-symbol-map-lookup-id (& values) key-id)]
             [(option_i64.None) option_i64.None])])]))
 
-(define (compiler-symbols-lookup-type
-  [symbols : CompilerSymbols]
-  [name : String]) : option_i64.Option
-  (match symbols
-    [(CompilerSymbols _ types _ _ _)
-      (match (compiler-symbol-key-from-string name)
-        [(option_i64.Some key-id)
-          (compiler-symbol-map-lookup-id (& types) key-id)]
-        [(option_i64.None) option_i64.None])]))
-
 (define (compiler-symbols-lookup-type-id
   [symbols : CompilerSymbols]
   [name-id : i64]) : option_i64.Option
@@ -560,16 +483,6 @@
       (compiler-symbol-map-lookup-id
         (& types)
         (compiler-symbol-name-id-key name-id))]))
-
-(define (compiler-symbols-lookup-macro
-  [symbols : CompilerSymbols]
-  [name : String]) : option_i64.Option
-  (match symbols
-    [(CompilerSymbols _ _ macros _ _)
-      (match (compiler-symbol-key-from-string name)
-        [(option_i64.Some key-id)
-          (compiler-symbol-map-lookup-id (& macros) key-id)]
-        [(option_i64.None) option_i64.None])]))
 
 (define (compiler-symbols-lookup-macro-id
   [symbols : CompilerSymbols]
@@ -593,28 +506,12 @@
     [(option_i64.Some handle) handle]
     [option_i64.None fallback]))
 
-(define (compiler-symbols-lookup-value-or
-  [symbols : CompilerSymbols]
-  [name : String]
-  [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-value symbols name)
-    fallback))
-
 (define (compiler-symbols-lookup-value-id-or
   [symbols : CompilerSymbols]
   [name-id : i64]
   [fallback : i64]) : i64
   (compiler-symbols-option-or
     (compiler-symbols-lookup-value-id symbols name-id)
-    fallback))
-
-(define (compiler-symbols-lookup-type-or
-  [symbols : CompilerSymbols]
-  [name : String]
-  [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-symbols-lookup-type symbols name)
     fallback))
 
 (define (compiler-symbols-lookup-type-id-or
@@ -702,13 +599,6 @@
         field-name-id)]
     [else (compiler-composite-pair-key-id struct-name-id field-name-id)]))
 
-(define (compiler-struct-field-key-id
-  [struct-name : String]
-  [field-name : String]) : i64
-  (compiler-struct-field-key-id-by-id
-    (compiler-symbol-require-existing-name-id struct-name)
-    (compiler-symbol-require-existing-name-id field-name)))
-
 (define (compiler-struct-field-key-id-in-module-by-id
   [module-id : i64]
   [struct-name-id : i64]
@@ -794,18 +684,6 @@
         (compiler-composite-pair-right-id name-id))]
     [else (compiler-composite-pair-key-id module-id name-id)]))
 
-(define (compiler-symbol-module-key-id [module : String] [name : String]) : i64
-  (compiler-symbol-module-key-id-by-id
-    (compiler-symbol-require-existing-name-id module)
-    (compiler-symbol-require-existing-name-id name)))
-
-(define (compiler-symbol-module-key-id-by-name-id
-  [module : String]
-  [name-id : i64]) : i64
-  (compiler-symbol-module-key-id-by-id
-    (compiler-symbol-require-existing-name-id module)
-    name-id))
-
 (define (compiler-symbol-name-id-key [name-id : i64]) : i64
   (if (or (< name-id 0) (>= name-id (intern-capacity)))
     name-id
@@ -817,47 +695,6 @@
           base-id
           (compiler-composite-pair-key-id module-id base-id)))
       name-id)))
-
-(define (compiler-symbol-name-key-id [name : String]) : i64
-  (compiler-symbol-name-id-key (compiler-symbol-require-existing-name-id name)))
-
-(define (compiler-symbol-existing-name-slice-id
-  [name : String]
-  [start : i64]
-  [len : i64]) : option_i64.Option
-  (match (intern-lookup-content (string.substring name start len))
-    [(InternLookupFound name-id) (option_i64.Some name-id)]
-    [(InternLookupMissing) option_i64.None]))
-
-(define (compiler-symbol-key-from-string [name : String]) : option_i64.Option
-  (match (compiler-symbol-existing-name-id name)
-    [(option_i64.Some name-id)
-      (option_i64.Some (compiler-symbol-name-id-key name-id))]
-    [(option_i64.None)
-      (let
-        [n : i64 (string.string-length name)]
-        [slash : i64 -1]
-        [i : i64 0]
-        (begin
-          (while (< i n)
-            (begin
-              (if (string.char-eq (string.string-ref name i) '/')
-                (set! slash i)
-                unit)
-              (set! i (+ i 1))))
-          (if (or (<= slash 0) (>= (+ slash 1) n))
-            option_i64.None
-            (match (compiler-symbol-existing-name-slice-id name 0 slash)
-              [(option_i64.None) option_i64.None]
-              [(option_i64.Some module-id)
-                (match (compiler-symbol-existing-name-slice-id
-                  name
-                  (+ slash 1)
-                  (- n (+ slash 1)))
-                  [(option_i64.None) option_i64.None]
-                  [(option_i64.Some base-id)
-                    (option_i64.Some
-                      (compiler-symbol-module-key-id-by-id module-id base-id))])]))))]))
 
 (define (compiler-symbol-dotted-variant-key-id-in-module
   [name-id : i64]
@@ -896,98 +733,6 @@
     name-id
     (compiler-symbol-root-module-id)))
 
-(define (compiler-symbol-dotted-variant-key-from-string-parts
-  [name : String]
-  [module-len : i64]
-  [enum-start : i64]
-  [enum-len : i64]
-  [variant-start : i64]
-  [variant-len : i64]) : option_i64.Option
-  (match (compiler-symbol-existing-name-slice-id name enum-start enum-len)
-    [(option_i64.None) option_i64.None]
-    [(option_i64.Some enum-id)
-      (match (compiler-symbol-existing-name-slice-id
-        name
-        variant-start
-        variant-len)
-        [(option_i64.None) option_i64.None]
-        [(option_i64.Some variant-id)
-          (if (= module-len 0)
-            (option_i64.Some
-              (compiler-enum-qualified-variant-name-id enum-id variant-id))
-            (match (compiler-symbol-existing-name-slice-id name 0 module-len)
-              [(option_i64.None) option_i64.None]
-              [(option_i64.Some module-id)
-                (option_i64.Some
-                  (compiler-symbol-module-key-id-by-id
-                    module-id
-                    (compiler-enum-qualified-variant-name-id enum-id variant-id)))]))])]))
-
-(define (compiler-symbol-dotted-variant-key-from-string [name : String]) : option_i64.Option
-  (let
-    [n : i64 (string.string-length name)]
-    [slash : i64 -1]
-    [first-dot : i64 -1]
-    [second-dot : i64 -1]
-    [third-dot : i64 -1]
-    [i : i64 0]
-    (begin
-      (while (< i n)
-        (begin
-          (if (string.char-eq (string.string-ref name i) '/')
-            (begin
-              (set! slash i)
-              (set! first-dot -1)
-              (set! second-dot -1)
-              (set! third-dot -1))
-            (if (string.char-eq (string.string-ref name i) '.')
-              (if (< first-dot 0)
-                (set! first-dot i)
-                (if (< second-dot 0)
-                  (set! second-dot i)
-                  (set! third-dot i)))
-              unit))
-          (set! i (+ i 1))))
-      (if (or
-        (< first-dot 0)
-        (>= third-dot 0)
-        (and (>= slash 0) (>= second-dot 0)))
-        option_i64.None
-        (let
-          [module-len : i64
-            (if (>= slash 0)
-              slash
-              (if (>= second-dot 0)
-                first-dot
-                0))]
-          [enum-start : i64
-            (if (>= slash 0)
-              (+ slash 1)
-              (if (>= second-dot 0)
-                (+ first-dot 1)
-                0))]
-          [enum-dot : i64
-            (if (and (< slash 0) (>= second-dot 0))
-              second-dot
-              first-dot)]
-          [variant-start : i64 (+ enum-dot 1)]
-          (if (or (<= enum-dot enum-start) (>= variant-start n))
-            option_i64.None
-            (compiler-symbol-dotted-variant-key-from-string-parts
-              name
-              module-len
-              enum-start
-              (- enum-dot enum-start)
-              variant-start
-              (- n variant-start))))))))
-
-(define (compiler-symbols-lookup-dotted-value-from-string
-  [values : (& map CompilerSymbolMap)]
-  [name : String]) : option_i64.Option
-  (match (compiler-symbol-dotted-variant-key-from-string name)
-    [(option_i64.Some key-id) (compiler-symbol-map-lookup-id values key-id)]
-    [(option_i64.None) option_i64.None]))
-
 (define (compiler-symbol-dotted-variant-key-id-in-module-or
   [name-id : i64]
   [default-module-id : i64]
@@ -997,18 +742,6 @@
     default-module-id)
     [(option_i64.Some key-id) key-id]
     [(option_i64.None) fallback]))
-
-(define (compiler-symbols-add-value-alias
-  [symbols : CompilerSymbols]
-  [name : String]
-  [handle : i64]) : CompilerSymbols
-  (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? (& values) name)
-        symbols
-        (begin
-          (compiler-symbol-map-bind! (&mut values) name handle)
-          (CompilerSymbols values types macros decls owner-names)))]))
 
 (define (compiler-symbols-add-value-alias-key-id
   [symbols : CompilerSymbols]
@@ -1022,18 +755,6 @@
           (compiler-symbol-map-bind-id! (&mut values) key-id handle)
           (CompilerSymbols values types macros decls owner-names)))]))
 
-(define (compiler-symbols-add-type-alias
-  [symbols : CompilerSymbols]
-  [name : String]
-  [handle : i64]) : CompilerSymbols
-  (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? (& types) name)
-        symbols
-        (begin
-          (compiler-symbol-map-bind! (&mut types) name handle)
-          (CompilerSymbols values types macros decls owner-names)))]))
-
 (define (compiler-symbols-add-type-alias-key-id
   [symbols : CompilerSymbols]
   [key-id : i64]
@@ -1044,18 +765,6 @@
         symbols
         (begin
           (compiler-symbol-map-bind-id! (&mut types) key-id handle)
-          (CompilerSymbols values types macros decls owner-names)))]))
-
-(define (compiler-symbols-add-macro-alias
-  [symbols : CompilerSymbols]
-  [name : String]
-  [handle : i64]) : CompilerSymbols
-  (match symbols
-    [(CompilerSymbols values types macros decls owner-names)
-      (if (compiler-symbol-map-contains? (& macros) name)
-        symbols
-        (begin
-          (compiler-symbol-map-bind! (&mut macros) name handle)
           (CompilerSymbols values types macros decls owner-names)))]))
 
 (define (compiler-symbols-add-macro-alias-key-id
@@ -1089,18 +798,6 @@
             symbols)]
         [(option_i64.None) symbols])]))
 
-(define (compiler-registries-add-variant-alias
-  [registries : CompilerRegistries]
-  [name : String]
-  [handle : i64]) : CompilerRegistries
-  (match registries
-    [(CompilerRegistries variants fields)
-      (if (compiler-symbol-map-contains? (& variants) name)
-        registries
-        (begin
-          (compiler-symbol-map-bind! (&mut variants) name handle)
-          (CompilerRegistries variants fields)))]))
-
 (define (compiler-registries-add-variant-alias-key-id
   [registries : CompilerRegistries]
   [key-id : i64]
@@ -1112,16 +809,6 @@
         (begin
           (compiler-symbol-map-bind-id! (&mut variants) key-id handle)
           (CompilerRegistries variants fields)))]))
-
-(define (compiler-symbols-add-value
-  [symbols : CompilerSymbols]
-  [name : String]
-  [handle : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-value-id
-    symbols
-    (compiler-symbol-name-key-id name)
-    name
-    handle))
 
 (define (compiler-symbols-add-value-id
   [symbols : CompilerSymbols]
@@ -1240,17 +927,6 @@
               (ResultCompilerSymbols.Ok
                 (CompilerSymbols values types macros decls owner-names))))])]))
 
-(define (compiler-symbols-add-value-in-module
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]
-  [handle : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-value-in-module-id
-    symbols
-    (compiler-symbol-existing-module-id module)
-    (compiler-symbol-require-existing-name-id name)
-    handle))
-
 (define (compiler-symbols-add-value-in-module-id
   [symbols : CompilerSymbols]
   [module-id : i64]
@@ -1280,17 +956,6 @@
     (not (compiler-symbol-root-module-id? module-id))
     (< module-id (intern-capacity))
     (compiler-symbols-comptime-module? (intern-str module-id))))
-
-(define (compiler-symbols-add-type-in-module
-  [symbols : CompilerSymbols]
-  [module : String]
-  [name : String]
-  [handle : i64]) : ResultCompilerSymbols
-  (compiler-symbols-add-type-in-module-id
-    symbols
-    (compiler-symbol-existing-module-id module)
-    (compiler-symbol-require-existing-name-id name)
-    handle))
 
 (define (compiler-symbols-add-type-in-module-id
   [symbols : CompilerSymbols]
@@ -2848,26 +2513,6 @@
     [(ResultAstProgram.Ok program) (build-compiler-symbols program)]
     [(ResultAstProgram.Err message) (ResultCompilerSymbols.Err message)]))
 
-(define (compiler-registries-lookup-variant
-  [registries : CompilerRegistries]
-  [name : String]) : option_i64.Option
-  (match (compiler-symbol-key-from-string name)
-    [(option_i64.Some key-id)
-      (match (compiler-registries-lookup-variant-key-id registries key-id)
-        [(option_i64.Some handle) (option_i64.Some handle)]
-        [(option_i64.None)
-          (match (compiler-symbol-dotted-variant-key-from-string name)
-            [(option_i64.Some dotted-key-id)
-              (compiler-registries-lookup-variant-key-id
-                registries
-                dotted-key-id)]
-            [(option_i64.None) option_i64.None])])]
-    [(option_i64.None)
-      (match (compiler-symbol-dotted-variant-key-from-string name)
-        [(option_i64.Some key-id)
-          (compiler-registries-lookup-variant-key-id registries key-id)]
-        [(option_i64.None) option_i64.None])]))
-
 (define (compiler-registries-lookup-variant-id
   [registries : CompilerRegistries]
   [name-id : i64]) : option_i64.Option
@@ -2890,21 +2535,6 @@
     [(CompilerRegistries variants _)
       (compiler-symbol-map-lookup-id (& variants) key-id)]))
 
-(define (compiler-registries-lookup-struct-field
-  [registries : CompilerRegistries]
-  [struct-name : String]
-  [field-name : String]) : option_i64.Option
-  (match (compiler-symbol-key-from-string struct-name)
-    [(option_i64.None) option_i64.None]
-    [(option_i64.Some struct-key-id)
-      (match (compiler-symbol-existing-name-id field-name)
-        [(option_i64.None) option_i64.None]
-        [(option_i64.Some field-name-id)
-          (compiler-registries-lookup-struct-field-id
-            registries
-            struct-key-id
-            field-name-id)])]))
-
 (define (compiler-registries-lookup-struct-field-id
   [registries : CompilerRegistries]
   [struct-name-id : i64]
@@ -2914,14 +2544,6 @@
       (compiler-symbol-map-lookup-id
         (& fields)
         (compiler-struct-field-key-id-by-id struct-name-id field-name-id))]))
-
-(define (compiler-registries-lookup-variant-or
-  [registries : CompilerRegistries]
-  [name : String]
-  [fallback : i64]) : i64
-  (compiler-symbols-option-or
-    (compiler-registries-lookup-variant registries name)
-    fallback))
 
 (define (compiler-registries-lookup-variant-id-or
   [registries : CompilerRegistries]
@@ -2950,21 +2572,6 @@
       struct-name-id
       field-name-id)
     fallback))
-
-(define (compiler-registries-add-variant-in-module
-  [registries : CompilerRegistries]
-  [module : String]
-  [enum-name : String]
-  [name : String]
-  [enum-index : i64]
-  [variant-index : i64]) : ResultCompilerRegistries
-  (compiler-registries-add-variant-in-module-id
-    registries
-    (compiler-symbol-existing-module-id module)
-    (compiler-symbol-require-existing-name-id enum-name)
-    (compiler-symbol-require-existing-name-id name)
-    enum-index
-    variant-index))
 
 (define (compiler-registries-add-variant-in-module-id
   [registries : CompilerRegistries]
@@ -3017,21 +2624,6 @@
                     name-key-id
                     handle))]
               (ResultCompilerRegistries.Ok aliases2))))])))
-
-(define (compiler-registries-add-field
-  [registries : CompilerRegistries]
-  [struct-name : String]
-  [field-name : String]
-  [struct-index : i64]
-  [field-index : i64]) : ResultCompilerRegistries
-  (compiler-registries-add-field-id
-    registries
-    (compiler-symbol-require-existing-name-id struct-name)
-    (compiler-symbol-require-existing-name-id field-name)
-    struct-name
-    field-name
-    struct-index
-    field-index))
 
 (define (compiler-registries-add-field-id
   [registries : CompilerRegistries]
@@ -3978,6 +3570,89 @@
         [_ (ResultAstType.Err "symbols: field owner is not struct")])]
     [(ResultAstDecl.Err message) (ResultAstType.Err message)]))
 
+(define (compiler-symbols-decl-name-id-at-index
+  [symbols : CompilerSymbols]
+  [target : i64]) : i64
+  (match (compiler-symbols-decl-at-index symbols target)
+    [(ResultAstDecl.Ok decl)
+      (match decl
+        [(AstDecl.Def name _ _) name]
+        [(AstDecl.DefFn name _ _ _ _) name]
+        [(AstDecl.DefMacro name _ _ _) name]
+        [(AstDecl.Extern name _ _ _) name]
+        [(AstDecl.DefDispatch name _) name]
+        [(AstDecl.DefEnum name _ _) name]
+        [(AstDecl.DefEnumLifetimes name _ _ _) name]
+        [(AstDecl.DefStruct name _ _ _) name]
+        [(AstDecl.DefStructLifetimes name _ _ _ _) name]
+        [_ -1])]
+    [(ResultAstDecl.Err _) -1]))
+
+(define (compiler-symbols-owner-module-id-at-index
+  [symbols : CompilerSymbols]
+  [target : i64]) : i64
+  (let
+    [owners : (Array i64) (compiler-symbols-owner-module-ids symbols)]
+    (if (or (< target 0) (>= target (array-length owners)))
+      -1
+      (array-ref owners target))))
+
+(define (compiler-symbols-variant-name-id-at-index
+  [symbols : CompilerSymbols]
+  [owner-index : i64]
+  [variant-index : i64]) : i64
+  (match (compiler-symbols-decl-at-index symbols owner-index)
+    [(ResultAstDecl.Ok decl)
+      (match decl
+        [(AstDecl.DefEnum _ _ variants)
+          (compiler-symbols-option-or
+            (compiler-variant-name-id-at-index variants variant-index 0)
+            -1)]
+        [(AstDecl.DefEnumLifetimes _ _ _ variants)
+          (compiler-symbols-option-or
+            (compiler-variant-name-id-at-index variants variant-index 0)
+            -1)]
+        [_ -1])]
+    [(ResultAstDecl.Err _) -1]))
+
+(define (compiler-field-name-id-at-index
+  [fields : AstFieldDefList]
+  [target : i64]) : i64
+  (if (or (< target 0) (>= target (ast-field-def-list-len (& fields))))
+    -1
+    (match (ast-field-def-list-get (& fields) target (ast-field-def-fallback))
+      [(AstFieldDef.Def name-id _ _) name-id])))
+
+(define (compiler-symbols-field-name-id-at-index
+  [symbols : CompilerSymbols]
+  [owner-index : i64]
+  [field-index : i64]) : i64
+  (match (compiler-symbols-decl-at-index symbols owner-index)
+    [(ResultAstDecl.Ok decl)
+      (match decl
+        [(AstDecl.DefStruct _ _ _ fields)
+          (compiler-field-name-id-at-index fields field-index)]
+        [(AstDecl.DefStructLifetimes _ _ _ _ fields)
+          (compiler-field-name-id-at-index fields field-index)]
+        [_ -1])]
+    [(ResultAstDecl.Err _) -1]))
+
+(define (compiler-symbols-expr-source-id [expr : AstExpr]) : i64
+  (match expr
+    [(AstExpr.Spanned inner _)
+      (compiler-symbols-expr-source-id (ast-node-get inner))]
+    [(AstExpr.Var name-id) name-id]
+    [_ -1]))
+
+(define (compiler-symbols-decl-value-source-id-at-index
+  [symbols : CompilerSymbols]
+  [target : i64]) : i64
+  (match (compiler-symbols-decl-at-index symbols target)
+    [(ResultAstDecl.Ok (AstDecl.Def _ _ value))
+      (compiler-symbols-expr-source-id (ast-node-get value))]
+    [(ResultAstDecl.Ok _) -1]
+    [(ResultAstDecl.Err _) -1]))
+
 (define (compiler-symbol-lookup-score
   [found : option_i64.Option]
   [want-kind : i64]
@@ -4058,66 +3733,80 @@
           0))))")
 
 (define (compiler-symbols-smoke-score [symbols : CompilerSymbols]) : i64
-  (+
-    (compiler-symbol-lookup-score
-      (compiler-symbols-lookup-type symbols "Point")
-      (compiler-symbol-kind-defstruct)
-      0)
+  (let
+    [point-id : i64 (compiler-symbols-decl-name-id-at-index symbols 0)]
+    [maybe-id : i64 (compiler-symbols-decl-name-id-at-index symbols 1)]
+    [none-id : i64 (compiler-symbols-variant-name-id-at-index symbols 1 0)]
+    [some-id : i64 (compiler-symbols-variant-name-id-at-index symbols 1 1)]
+    [extern-id : i64 (compiler-symbols-decl-name-id-at-index symbols 2)]
+    [answer-id : i64 (compiler-symbols-decl-name-id-at-index symbols 3)]
+    [main-id : i64 (compiler-symbols-decl-name-id-at-index symbols 4)]
     (+
       (compiler-symbol-lookup-score
-        (compiler-symbols-lookup-value symbols "Point")
+        (compiler-symbols-lookup-type-id symbols point-id)
         (compiler-symbol-kind-defstruct)
         0)
       (+
         (compiler-symbol-lookup-score
-          (compiler-symbols-lookup-type symbols "Maybe")
-          (compiler-symbol-kind-defenum)
-          1)
+          (compiler-symbols-lookup-value-id symbols point-id)
+          (compiler-symbol-kind-defstruct)
+          0)
         (+
-          (compiler-registry-lookup-score
-            (compiler-symbols-lookup-value symbols "None")
-            (compiler-symbol-kind-enum-variant)
-            1
-            0)
+          (compiler-symbol-lookup-score
+            (compiler-symbols-lookup-type-id symbols maybe-id)
+            (compiler-symbol-kind-defenum)
+            1)
           (+
             (compiler-registry-lookup-score
-              (compiler-symbols-lookup-value symbols "Some")
+              (compiler-symbols-lookup-value-id symbols none-id)
               (compiler-symbol-kind-enum-variant)
               1
-              1)
+              0)
             (+
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value symbols "io.print-string")
-                (compiler-symbol-kind-extern)
-                2)
+              (compiler-registry-lookup-score
+                (compiler-symbols-lookup-value-id symbols some-id)
+                (compiler-symbol-kind-enum-variant)
+                1
+                1)
               (+
                 (compiler-symbol-lookup-score
-                  (compiler-symbols-lookup-value symbols "answer")
-                  (compiler-symbol-kind-value-define)
-                  3)
+                  (compiler-symbols-lookup-value-id symbols extern-id)
+                  (compiler-symbol-kind-extern)
+                  2)
                 (+
                   (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-value symbols "main")
-                    (compiler-symbol-kind-function-define)
-                    4)
+                    (compiler-symbols-lookup-value-id symbols answer-id)
+                    (compiler-symbol-kind-value-define)
+                    3)
                   (+
-                    (compiler-symbols-miss-score
-                      (compiler-symbols-lookup-value symbols "stdlib/test.tl"))
-                    (compiler-symbols-miss-score
-                      (compiler-symbols-lookup-type symbols "missing"))))))))))))
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-value-id symbols main-id)
+                      (compiler-symbol-kind-function-define)
+                      4)
+                    (+
+                      (compiler-symbols-miss-score
+                        (compiler-symbols-lookup-value-id symbols -1))
+                      (compiler-symbols-miss-score
+                        (compiler-symbols-lookup-type-id symbols -1)))))))))))))
 
 (define (compiler-registries-smoke-score
   [program : AstProgram]
+  [symbols : CompilerSymbols]
   [registries : CompilerRegistries]) : i64
   (let
+    [point-id : i64 (compiler-symbols-decl-name-id-at-index symbols 0)]
+    [some-id : i64 (compiler-symbols-variant-name-id-at-index symbols 1 1)]
+    [none-id : i64 (compiler-symbols-variant-name-id-at-index symbols 1 0)]
+    [x-id : i64 (compiler-symbols-field-name-id-at-index symbols 0 0)]
+    [y-id : i64 (compiler-symbols-field-name-id-at-index symbols 0 1)]
     [some : option_i64.Option
-      (compiler-registries-lookup-variant registries "Some")]
+      (compiler-registries-lookup-variant-id registries some-id)]
     [none : option_i64.Option
-      (compiler-registries-lookup-variant registries "None")]
+      (compiler-registries-lookup-variant-id registries none-id)]
     [x-field : option_i64.Option
-      (compiler-registries-lookup-struct-field registries "Point" "x")]
+      (compiler-registries-lookup-struct-field-id registries point-id x-id)]
     [y-field : option_i64.Option
-      (compiler-registries-lookup-struct-field registries "Point" "y")]
+      (compiler-registries-lookup-struct-field-id registries point-id y-id)]
     (+
       (compiler-registry-lookup-score
         some
@@ -4158,12 +3847,12 @@
                   [(option_i64.None) 0])
                 (+
                   (compiler-symbols-miss-score
-                    (compiler-registries-lookup-variant registries "Missing"))
+                    (compiler-registries-lookup-variant-id registries -1))
                   (compiler-symbols-miss-score
-                    (compiler-registries-lookup-struct-field
+                    (compiler-registries-lookup-struct-field-id
                       registries
-                      "Point"
-                      "z")))))))))))
+                      point-id
+                      -1)))))))))))
 
 (define (compiler-symbols-duplicate-value-source) : String
   "(define answer : i64 1)
@@ -4341,25 +4030,47 @@
     [(ResultCompilerRegistries.Ok _) false]))
 
 (define (compiler-registries-cross-enum-variant-ok?) : bool
-  (match (build-compiler-registries-from-source
-    (compiler-registries-cross-enum-variant-source))
-    [(ResultCompilerRegistries.Ok registries)
-      (and
-        (=
-          (compiler-registry-lookup-score
-            (compiler-registries-lookup-variant registries "Left.Same")
-            (compiler-symbol-kind-enum-variant)
-            0
-            0)
-          1)
-        (=
-          (compiler-registry-lookup-score
-            (compiler-registries-lookup-variant registries "Right.Same")
-            (compiler-symbol-kind-enum-variant)
-            1
-            0)
-          1))]
-    [(ResultCompilerRegistries.Err _) false]))
+  (match (parse-ast-source (compiler-registries-cross-enum-variant-source))
+    [(ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (match (build-compiler-registries program)
+            [(ResultCompilerRegistries.Ok registries)
+              (let
+                [left-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 0)]
+                [left-same-id : i64
+                  (compiler-symbols-variant-name-id-at-index symbols 0 0)]
+                [right-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 1)]
+                [right-same-id : i64
+                  (compiler-symbols-variant-name-id-at-index symbols 1 0)]
+                (and
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-variant-id
+                        registries
+                        (compiler-enum-qualified-variant-name-id
+                          left-id
+                          left-same-id))
+                      (compiler-symbol-kind-enum-variant)
+                      0
+                      0)
+                    1)
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-variant-id
+                        registries
+                        (compiler-enum-qualified-variant-name-id
+                          right-id
+                          right-same-id))
+                      (compiler-symbol-kind-enum-variant)
+                      1
+                      0)
+                    1)))]
+            [(ResultCompilerRegistries.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-registries-duplicate-field-ok?) : bool
   (match (build-compiler-registries-from-source
@@ -4371,26 +4082,32 @@
     [(ResultCompilerRegistries.Ok _) false]))
 
 (define (compiler-symbols-macro-namespace-ok?) : bool
-  (match (build-compiler-symbols-from-source (compiler-symbols-macro-source))
-    [(ResultCompilerSymbols.Ok symbols)
-      (and
-        (=
-          (compiler-symbol-lookup-score
-            (compiler-symbols-lookup-macro symbols "all")
-            (compiler-symbol-kind-defmacro)
-            0)
-          1)
-        (=
-          (compiler-symbols-miss-score
-            (compiler-symbols-lookup-value symbols "all"))
-          1)
-        (=
-          (compiler-symbol-lookup-score
-            (compiler-symbols-lookup-value symbols "main")
-            (compiler-symbol-kind-function-define)
-            1)
-          1))]
-    [(ResultCompilerSymbols.Err _) false]))
+  (match (parse-ast-source (compiler-symbols-macro-source))
+    [(ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [all-id : i64 (compiler-symbols-decl-name-id-at-index symbols 0)]
+            [main-id : i64 (compiler-symbols-decl-name-id-at-index symbols 1)]
+            (and
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-macro-id symbols all-id)
+                  (compiler-symbol-kind-defmacro)
+                  0)
+                1)
+              (=
+                (compiler-symbols-miss-score
+                  (compiler-symbols-lookup-value-id symbols all-id))
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-id symbols main-id)
+                  (compiler-symbol-kind-function-define)
+                  1)
+                1)))]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-duplicate-macro-value-ok?) : bool
   (match (build-compiler-symbols-from-source
@@ -4464,34 +4181,43 @@
 (define (compiler-registries-incremental-later-variant-ok?
   [symbols : CompilerSymbols]
   [registries : CompilerRegistries]) : bool
-  (match (compiler-registries-lookup-variant registries "nested/Later.Value")
-    [(option_i64.Some handle)
-      (and
-        (=
-          (compiler-registry-lookup-score
-            (option_i64.Some handle)
-            (compiler-symbol-kind-enum-variant)
-            1
+  (let
+    [module-id : i64 (compiler-symbols-owner-module-id-at-index symbols 1)]
+    [enum-id : i64 (compiler-symbols-decl-name-id-at-index symbols 1)]
+    [variant-id : i64 (compiler-symbols-variant-name-id-at-index symbols 1 1)]
+    (match (compiler-registries-lookup-variant-key-id
+      registries
+      (compiler-symbol-module-key-id-by-id
+        module-id
+        (compiler-enum-qualified-variant-name-id enum-id variant-id)))
+      [(option_i64.Some handle)
+        (and
+          (=
+            (compiler-registry-lookup-score
+              (option_i64.Some handle)
+              (compiler-symbol-kind-enum-variant)
+              1
+              1)
             1)
-          1)
-        (match (compiler-registries-variant-fields-indexed symbols handle)
-          [(ResultAstTypeList.Ok types)
-            (if (= (ast-type-list-len (& types)) 1)
-              (match (ty-node-get
-                (ast-type-list-get (& types) 0 (ast-type-id-fallback)))
-                [(AstType.I64) true]
-                [_ false])
-              false)]
-          [(ResultAstTypeList.Err _) false]))]
-    [(option_i64.None) false]))
+          (match (compiler-registries-variant-fields-indexed symbols handle)
+            [(ResultAstTypeList.Ok types)
+              (if (= (ast-type-list-len (& types)) 1)
+                (match (ty-node-get
+                  (ast-type-list-get (& types) 0 (ast-type-id-fallback)))
+                  [(AstType.I64) true]
+                  [_ false])
+                false)]
+            [(ResultAstTypeList.Err _) false]))]
+      [(option_i64.None) false])))
 
 (define (compiler-registries-incremental-later-field-ok?
   [symbols : CompilerSymbols]
   [registries : CompilerRegistries]) : bool
-  (match (compiler-registries-lookup-struct-field
+  (match (compiler-registries-lookup-field-in-module-id
     registries
-    "nested/Record"
-    "value")
+    (compiler-symbols-owner-module-id-at-index symbols 2)
+    (compiler-symbols-decl-name-id-at-index symbols 2)
+    (compiler-symbols-field-name-id-at-index symbols 2 0))
     [(option_i64.Some handle)
       (and
         (=
@@ -4512,44 +4238,49 @@
 (define (compiler-registries-incremental-splice-ok?) : bool
   (match (parse-ast-source (compiler-registries-incremental-base-source))
     [(ResultAstProgram.Ok base-program)
-      (match (build-compiler-registries base-program)
-        [(ResultCompilerRegistries.Ok base-registries)
-          (match (parse-ast-source
-            (compiler-registries-incremental-splice-source))
-            [(ResultAstProgram.Ok splice-program)
-              (match splice-program
-                [(AstProgram.Program splice-box)
-                  (let
-                    [splice-decls : AstDeclList (box-get splice-box)]
-                    [splice-paths : AstDeclPathList
-                      (compiler-symbol-path-list-repeat
-                        splice-decls
-                        ""
-                        cbi.compiler-builtin-id-fix-empty)]
-                    (match (compiler-registries-insert-decls
-                      base-registries
-                      splice-decls
-                      splice-paths
-                      0
-                      (compiler-symbol-existing-name-id-or "nested" -1))
-                      [(ResultCompilerRegistries.Ok rebased-registries)
-                        (match (parse-ast-source
-                          (compiler-registries-incremental-combined-source))
-                          [(ResultAstProgram.Ok combined-program)
-                            (match (build-compiler-symbols combined-program)
-                              [(ResultCompilerSymbols.Ok combined-symbols)
-                                (and
-                                  (compiler-registries-incremental-later-variant-ok?
-                                    combined-symbols
-                                    rebased-registries)
-                                  (compiler-registries-incremental-later-field-ok?
-                                    combined-symbols
-                                    rebased-registries))]
-                              [(ResultCompilerSymbols.Err _) false])]
-                          [(ResultAstProgram.Err _) false])]
-                      [(ResultCompilerRegistries.Err _) false]))])]
-            [(ResultAstProgram.Err _) false])]
-        [(ResultCompilerRegistries.Err _) false])]
+      (match (build-compiler-symbols base-program)
+        [(ResultCompilerSymbols.Ok base-symbols)
+          (match (build-compiler-registries base-program)
+            [(ResultCompilerRegistries.Ok base-registries)
+              (match (parse-ast-source
+                (compiler-registries-incremental-splice-source))
+                [(ResultAstProgram.Ok splice-program)
+                  (match splice-program
+                    [(AstProgram.Program splice-box)
+                      (let
+                        [splice-decls : AstDeclList (box-get splice-box)]
+                        [splice-paths : AstDeclPathList
+                          (compiler-symbol-path-list-repeat
+                            splice-decls
+                            ""
+                            cbi.compiler-builtin-id-fix-empty)]
+                        (match (compiler-registries-insert-decls
+                          base-registries
+                          splice-decls
+                          splice-paths
+                          0
+                          (compiler-symbols-owner-module-id-at-index
+                            base-symbols
+                            0))
+                          [(ResultCompilerRegistries.Ok rebased-registries)
+                            (match (parse-ast-source
+                              (compiler-registries-incremental-combined-source))
+                              [(ResultAstProgram.Ok combined-program)
+                                (match (build-compiler-symbols combined-program)
+                                  [(ResultCompilerSymbols.Ok combined-symbols)
+                                    (and
+                                      (compiler-registries-incremental-later-variant-ok?
+                                        combined-symbols
+                                        rebased-registries)
+                                      (compiler-registries-incremental-later-field-ok?
+                                        combined-symbols
+                                        rebased-registries))]
+                                  [(ResultCompilerSymbols.Err _) false])]
+                              [(ResultAstProgram.Err _) false])]
+                          [(ResultCompilerRegistries.Err _) false]))])]
+                [(ResultAstProgram.Err _) false])]
+            [(ResultCompilerRegistries.Err _) false])]
+        [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-comptime-decl-source) : String
@@ -4567,17 +4298,23 @@
               (and
                 (=
                   (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "Point")
+                    (compiler-symbols-lookup-type-id
+                      symbols
+                      (compiler-symbols-decl-name-id-at-index symbols 0))
                     (compiler-symbol-kind-defstruct)
                     0)
                   1)
                 (=
                   (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "Maybe")
+                    (compiler-symbols-lookup-type-id
+                      symbols
+                      (compiler-symbols-decl-name-id-at-index symbols 1))
                     (compiler-symbol-kind-defenum)
                     1)
                   1)
-                (= (compiler-registries-smoke-score program registries) 8))]
+                (=
+                  (compiler-registries-smoke-score program symbols registries)
+                  8))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
@@ -4599,65 +4336,110 @@
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
             [(ResultCompilerRegistries.Ok registries)
-              (and
-                (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-value symbols "left/same")
-                    (compiler-symbol-kind-value-define)
-                    0)
-                  1)
-                (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-value symbols "right/same")
-                    (compiler-symbol-kind-value-define)
-                    3)
-                  1)
-                (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "left/Maybe")
-                    (compiler-symbol-kind-defenum)
+              (let
+                [left-module-id : i64
+                  (compiler-symbols-owner-module-id-at-index symbols 0)]
+                [right-module-id : i64
+                  (compiler-symbols-owner-module-id-at-index symbols 3)]
+                [left-same-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 0)]
+                [right-same-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 3)]
+                [left-maybe-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 1)]
+                [left-none-id : i64
+                  (compiler-symbols-variant-name-id-at-index symbols 1 0)]
+                [right-some-id : i64
+                  (compiler-symbols-variant-name-id-at-index symbols 4 1)]
+                [left-point-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 2)]
+                [right-point-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 5)]
+                [left-x-id : i64
+                  (compiler-symbols-field-name-id-at-index symbols 2 0)]
+                [right-x-id : i64
+                  (compiler-symbols-field-name-id-at-index symbols 5 0)]
+                (and
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-value-in-module-id
+                        symbols
+                        left-module-id
+                        left-same-id)
+                      (compiler-symbol-kind-value-define)
+                      0)
                     1)
-                  1)
-                (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "right/Point")
-                    (compiler-symbol-kind-defstruct)
-                    5)
-                  1)
-                (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-variant registries "left/None")
-                    (compiler-symbol-kind-enum-variant)
-                    1
-                    0)
-                  1)
-                (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-variant registries "right/Some")
-                    (compiler-symbol-kind-enum-variant)
-                    4
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-value-in-module-id
+                        symbols
+                        right-module-id
+                        right-same-id)
+                      (compiler-symbol-kind-value-define)
+                      3)
                     1)
-                  1)
-                (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-struct-field
-                      registries
-                      "left/Point"
-                      "x")
-                    (compiler-symbol-kind-struct-field)
-                    2
-                    0)
-                  1)
-                (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-struct-field
-                      registries
-                      "right/Point"
-                      "x")
-                    (compiler-symbol-kind-struct-field)
-                    5
-                    0)
-                  1))]
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-type-in-module-id
+                        symbols
+                        left-module-id
+                        left-maybe-id)
+                      (compiler-symbol-kind-defenum)
+                      1)
+                    1)
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-type-in-module-id
+                        symbols
+                        right-module-id
+                        right-point-id)
+                      (compiler-symbol-kind-defstruct)
+                      5)
+                    1)
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-variant-key-id
+                        registries
+                        (compiler-symbol-module-key-id-by-id
+                          left-module-id
+                          left-none-id))
+                      (compiler-symbol-kind-enum-variant)
+                      1
+                      0)
+                    1)
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-variant-key-id
+                        registries
+                        (compiler-symbol-module-key-id-by-id
+                          right-module-id
+                          right-some-id))
+                      (compiler-symbol-kind-enum-variant)
+                      4
+                      1)
+                    1)
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-field-in-module-id
+                        registries
+                        left-module-id
+                        left-point-id
+                        left-x-id)
+                      (compiler-symbol-kind-struct-field)
+                      2
+                      0)
+                    1)
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-field-in-module-id
+                        registries
+                        right-module-id
+                        right-point-id
+                        right-x-id)
+                      (compiler-symbol-kind-struct-field)
+                      5
+                      0)
+                    1)))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
@@ -4756,15 +4538,20 @@
   (let
     [handle : i64
       (compiler-symbol-make-handle (compiler-symbol-kind-value-define) 17)]
-    (match (compiler-symbols-add-value
+    [key-id : i64
+      (compiler-symbol-module-key-id-by-id
+        cbi.compiler-builtin-id-fix-left
+        cbi.compiler-builtin-id-fix-same)]
+    (match (compiler-symbols-add-value-id
       (compiler-symbols-empty)
+      key-id
       "left/same"
       handle)
       [(ResultCompilerSymbols.Ok symbols)
         (and
           (=
             (compiler-symbol-lookup-score
-              (compiler-symbols-lookup-value symbols "left/same")
+              (compiler-symbols-lookup-value-id symbols key-id)
               (compiler-symbol-kind-value-define)
               17)
             1)
@@ -4803,6 +4590,27 @@
 (import \"data.tl\" module data :as d)
 (define (main) : i64 (d.get))")
 
+(define (compiler-program-first-import-alias-id [program : AstProgram]) : i64
+  (match program
+    [(AstProgram.Program decls-box)
+      (let
+        [decls : AstDeclList (box-get decls-box)]
+        [index : i64 0]
+        [count : i64 (ast-decl-list-len (& decls))]
+        (begin
+          (while (< index count)
+            (match (ast-decl-list-get (& decls) index (ast-decl-fallback))
+              [(AstDecl.Import
+                  (AstImportSpec.Spec
+                    _
+                    _
+                    _
+                    (AstMaybeImportAlias.Some alias-id)
+                    _))
+                (return alias-id)]
+              [_ (set! index (+ index 1))]))
+          -1))]))
+
 (define (compiler-symbols-import-alias-ok?) : bool
   (match (parse-ast-source (compiler-symbols-import-alias-source))
     [(ResultAstProgram.Ok program)
@@ -4810,53 +4618,75 @@
         [(ResultCompilerSymbols.Ok symbols)
           (match (build-compiler-registries program)
             [(ResultCompilerRegistries.Ok registries)
-              (and
-                (=
-                  (compiler-symbols-miss-score
-                    (compiler-symbols-lookup-value symbols "d/get"))
-                  1)
-                (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-value symbols "get")
-                    (compiler-symbol-kind-function-define)
+              (let
+                [alias-id : i64
+                  (compiler-program-first-import-alias-id program)]
+                [get-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 1)]
+                [all-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 2)]
+                [point-id : i64
+                  (compiler-symbols-decl-name-id-at-index symbols 5)]
+                [some-id : i64
+                  (compiler-symbols-variant-name-id-at-index symbols 4 1)]
+                [x-id : i64
+                  (compiler-symbols-field-name-id-at-index symbols 5 0)]
+                (and
+                  (=
+                    (compiler-symbols-miss-score
+                      (compiler-symbols-lookup-value-id
+                        symbols
+                        (compiler-symbol-module-key-id-by-id alias-id get-id)))
                     1)
-                  1)
-                (=
-                  (compiler-symbols-miss-score
-                    (compiler-symbols-lookup-macro symbols "d/all"))
-                  1)
-                (=
-                  (compiler-symbols-miss-score
-                    (compiler-symbols-lookup-macro symbols "all"))
-                  1)
-                (=
-                  (compiler-symbols-miss-score
-                    (compiler-symbols-lookup-type symbols "d/Point"))
-                  1)
-                (=
-                  (compiler-symbol-lookup-score
-                    (compiler-symbols-lookup-type symbols "Point")
-                    (compiler-symbol-kind-defstruct)
-                    5)
-                  1)
-                (=
-                  (compiler-registry-miss-score
-                    (compiler-registries-lookup-variant registries "d/Some"))
-                  1)
-                (=
-                  (compiler-registry-lookup-score
-                    (compiler-registries-lookup-variant registries "Some")
-                    (compiler-symbol-kind-enum-variant)
-                    4
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-value-id symbols get-id)
+                      (compiler-symbol-kind-function-define)
+                      1)
                     1)
-                  1)
-                (=
-                  (compiler-registry-miss-score
-                    (compiler-registries-lookup-struct-field
-                      registries
-                      "d/Point"
-                      "x"))
-                  1))]
+                  (=
+                    (compiler-symbols-miss-score
+                      (compiler-symbols-lookup-macro-id
+                        symbols
+                        (compiler-symbol-module-key-id-by-id alias-id all-id)))
+                    1)
+                  (=
+                    (compiler-symbols-miss-score
+                      (compiler-symbols-lookup-macro-id symbols all-id))
+                    1)
+                  (=
+                    (compiler-symbols-miss-score
+                      (compiler-symbols-lookup-type-id
+                        symbols
+                        (compiler-symbol-module-key-id-by-id alias-id point-id)))
+                    1)
+                  (=
+                    (compiler-symbol-lookup-score
+                      (compiler-symbols-lookup-type-id symbols point-id)
+                      (compiler-symbol-kind-defstruct)
+                      5)
+                    1)
+                  (=
+                    (compiler-registry-miss-score
+                      (compiler-registries-lookup-variant-key-id
+                        registries
+                        (compiler-symbol-module-key-id-by-id alias-id some-id)))
+                    1)
+                  (=
+                    (compiler-registry-lookup-score
+                      (compiler-registries-lookup-variant-id registries some-id)
+                      (compiler-symbol-kind-enum-variant)
+                      4
+                      1)
+                    1)
+                  (=
+                    (compiler-registry-miss-score
+                      (compiler-registries-lookup-field-in-module-id
+                        registries
+                        alias-id
+                        point-id
+                        x-id))
+                    1)))]
             [(ResultCompilerRegistries.Err _) false])]
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
@@ -4877,76 +4707,108 @@
     [(ResultAstProgram.Ok program)
       (match (build-compiler-symbols program)
         [(ResultCompilerSymbols.Ok symbols)
-          (and
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value
-                  symbols
-                  "stdlib.comptime/string.int->string")
-                (compiler-symbol-kind-function-define)
+          (let
+            [comptime-module-id : i64
+              (compiler-symbols-owner-module-id-at-index symbols 0)]
+            [comptime-expr-id : i64
+              (compiler-symbols-decl-name-id-at-index symbols 0)]
+            [int-to-string-id : i64
+              (compiler-symbols-decl-name-id-at-index symbols 1)]
+            [append-id : i64 (compiler-symbols-decl-name-id-at-index symbols 2)]
+            [concat-id : i64 (compiler-symbols-decl-name-id-at-index symbols 3)]
+            [comptime-expr-bool-id : i64
+              (compiler-symbols-decl-name-id-at-index symbols 4)]
+            [main-expr-id : i64
+              (compiler-symbols-decl-name-id-at-index symbols 5)]
+            [main-expr-bool-id : i64
+              (compiler-symbols-decl-name-id-at-index symbols 6)]
+            [main-expr-bool-variant-id : i64
+              (compiler-symbols-variant-name-id-at-index symbols 5 0)]
+            (and
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-in-module-id
+                    symbols
+                    comptime-module-id
+                    int-to-string-id)
+                  (compiler-symbol-kind-function-define)
+                  1)
                 1)
-              1)
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value
-                  symbols
-                  "stdlib.comptime/string.append")
-                (compiler-symbol-kind-function-define)
-                2)
-              1)
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value
-                  symbols
-                  "stdlib.comptime/string.concat")
-                (compiler-symbol-kind-function-define)
-                3)
-              1)
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value
-                  symbols
-                  "stdlib.comptime/expr-bool")
-                (compiler-symbol-kind-function-define)
-                4)
-              1)
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-type symbols "stdlib.comptime/Expr")
-                (compiler-symbol-kind-defenum)
-                0)
-              1)
-            (=
-              (compiler-symbols-miss-score
-                (compiler-symbols-lookup-value symbols "int->string"))
-              1)
-            (=
-              (compiler-symbols-miss-score
-                (compiler-symbols-lookup-value symbols "string-append"))
-              1)
-            (=
-              (compiler-symbols-miss-score
-                (compiler-symbols-lookup-value symbols "string-concat"))
-              1)
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-value symbols "expr-bool")
-                (compiler-symbol-kind-function-define)
-                6)
-              1)
-            (=
-              (compiler-symbol-lookup-score
-                (compiler-symbols-lookup-type symbols "Expr")
-                (compiler-symbol-kind-defenum)
-                5)
-              1)
-            (=
-              (compiler-registry-lookup-score
-                (compiler-symbols-lookup-value symbols "ExprBool")
-                (compiler-symbol-kind-enum-variant)
-                5
-                0)
-              1))]
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-in-module-id
+                    symbols
+                    comptime-module-id
+                    append-id)
+                  (compiler-symbol-kind-function-define)
+                  2)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-in-module-id
+                    symbols
+                    comptime-module-id
+                    concat-id)
+                  (compiler-symbol-kind-function-define)
+                  3)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-in-module-id
+                    symbols
+                    comptime-module-id
+                    comptime-expr-bool-id)
+                  (compiler-symbol-kind-function-define)
+                  4)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-type-in-module-id
+                    symbols
+                    comptime-module-id
+                    comptime-expr-id)
+                  (compiler-symbol-kind-defenum)
+                  0)
+                1)
+              (=
+                (compiler-symbols-miss-score
+                  (compiler-symbols-lookup-value-id
+                    symbols
+                    (cbi.compiler-builtin-ctfe-ref 16)))
+                1)
+              (=
+                (compiler-symbols-miss-score
+                  (compiler-symbols-lookup-value-id
+                    symbols
+                    (cbi.compiler-builtin-ctfe-ref 14)))
+                1)
+              (=
+                (compiler-symbols-miss-score
+                  (compiler-symbols-lookup-value-id
+                    symbols
+                    (cbi.compiler-builtin-ctfe-ref 15)))
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-value-id symbols main-expr-bool-id)
+                  (compiler-symbol-kind-function-define)
+                  6)
+                1)
+              (=
+                (compiler-symbol-lookup-score
+                  (compiler-symbols-lookup-type-id symbols main-expr-id)
+                  (compiler-symbol-kind-defenum)
+                  5)
+                1)
+              (=
+                (compiler-registry-lookup-score
+                  (compiler-symbols-lookup-value-id
+                    symbols
+                    main-expr-bool-variant-id)
+                  (compiler-symbol-kind-enum-variant)
+                  5
+                  0)
+                1)))]
         [(ResultCompilerSymbols.Err _) false])]
     [(ResultAstProgram.Err _) false]))
 
@@ -4976,26 +4838,46 @@
         (= (compiler-symbol-map-lookup-handle-id (& map) 16) 50)
         (not (compiler-symbol-map-remove-id! (&mut map) 24))))))
 
+(define (compiler-symbols-dotted-variant-id-source) : String
+  "(define deep : i64 a.b.Enum.Variant)
+(define qualified : i64 q/a.b.Enum.Variant)")
+
 (define (compiler-symbols-dotted-variant-id-paths-ok?) : bool
-  (let
-    [deep-id : i64 (intern "a.b.Enum.Variant")]
-    [qualified-id : i64 (intern "q/a.b.Enum.Variant")]
-    [variant-id : i64 (intern "Variant")]
-    [deep-expected : i64
-      (compiler-symbol-module-key-id-by-id
-        (intern "a.b")
-        (compiler-enum-qualified-variant-name-id (intern "Enum") variant-id))]
-    [qualified-expected : i64
-      (compiler-symbol-module-key-id-by-id
-        (intern "q")
-        (compiler-enum-qualified-variant-name-id (intern "a.b.Enum") variant-id))]
-    (and
-      (match (compiler-symbol-dotted-variant-key-id deep-id)
-        [(option_i64.Some key-id) (= key-id deep-expected)]
-        [(option_i64.None) false])
-      (match (compiler-symbol-dotted-variant-key-id qualified-id)
-        [(option_i64.Some key-id) (= key-id qualified-expected)]
-        [(option_i64.None) false]))))
+  (match (parse-ast-source (compiler-symbols-dotted-variant-id-source))
+    [(ResultAstProgram.Ok program)
+      (match (build-compiler-symbols program)
+        [(ResultCompilerSymbols.Ok symbols)
+          (let
+            [deep-id : i64
+              (compiler-symbols-decl-value-source-id-at-index symbols 0)]
+            [qualified-id : i64
+              (compiler-symbols-decl-value-source-id-at-index symbols 1)]
+            [deep-enum-path-id : i64 (intern-dotted-prefix-id deep-id)]
+            [deep-variant-id : i64 (intern-dotted-final-id deep-id)]
+            [deep-expected : i64
+              (compiler-symbol-module-key-id-by-id
+                (intern-dotted-prefix-id deep-enum-path-id)
+                (compiler-enum-qualified-variant-name-id
+                  (intern-dotted-final-id deep-enum-path-id)
+                  deep-variant-id))]
+            [qualified-base-id : i64 (intern-qualified-base-id qualified-id)]
+            [qualified-variant-id : i64
+              (intern-dotted-final-id qualified-base-id)]
+            [qualified-expected : i64
+              (compiler-symbol-module-key-id-by-id
+                (intern-qualified-module-id qualified-id)
+                (compiler-enum-qualified-variant-name-id
+                  (intern-dotted-prefix-id qualified-base-id)
+                  qualified-variant-id))]
+            (and
+              (match (compiler-symbol-dotted-variant-key-id deep-id)
+                [(option_i64.Some key-id) (= key-id deep-expected)]
+                [(option_i64.None) false])
+              (match (compiler-symbol-dotted-variant-key-id qualified-id)
+                [(option_i64.Some key-id) (= key-id qualified-expected)]
+                [(option_i64.None) false])))]
+        [(ResultCompilerSymbols.Err _) false])]
+    [(ResultAstProgram.Err _) false]))
 
 (define (compiler-symbols-self-test) : i64
   (begin
@@ -5013,7 +4895,10 @@
                       unit
                       (set! ok false))
                     (if (=
-                      (compiler-registries-smoke-score program registries)
+                      (compiler-registries-smoke-score
+                        program
+                        symbols
+                        registries)
                       8)
                       unit
                       (set! ok false))

@@ -1175,15 +1175,6 @@
     [_persist-path-id : unit (compiler-load-session-note-persistent-interns!)]
     (CompilerLoadProgramCacheKey kind path-id cfgs)))
 
-(define (compiler-load-program-cache-key
-  [kind : CompilerLoadProgramSourceKind]
-  [path : String]
-  [cfgs : sym_i64_env.SymI64Env]) : CompilerLoadProgramCacheKey
-  (compiler-load-program-cache-key-id
-    kind
-    (compiler-load-source-path-id (compiler-load-normalize-path path))
-    cfgs))
-
 (define (compiler-load-char-code-at [text : String] [idx : i64]) : i64
   (cast (string.string-ref text idx) : i64))
 
@@ -5105,18 +5096,6 @@
           [(ResultCompilerLoadModuleId.Err diag)
             (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
 
-(define (compiler-load-decls-with-paths
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [fallback-id : i64]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-paths-and-roots
-    decls
-    importer-path
-    seen
-    (svec.new)
-    fallback-id))
-
 (define (compiler-load-alias-decl-list
   [kind : AstImportKind]
   [import-path : String]
@@ -5769,102 +5748,6 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (compiler-load-decls-with-paths-and-roots
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [fallback-id : i64]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-paths-and-roots-cfg
-    decls
-    importer-path
-    seen
-    stdlib-roots
-    (compiler-cfg-empty)
-    fallback-id))
-
-(define (compiler-load-decls-with-paths-and-roots-cfg
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [fallback-id : i64]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-decls-module-id importer-path decls fallback-id)
-    [(ResultCompilerLoadModuleId.Ok module-id module-name-id)
-      (if (compiler-load-seen-module-contains? seen module-id module-name-id)
-        (ResultCompilerLoadWithPaths.Ok
-          (ast-decl-list-new)
-          (ast-decl-path-list-new)
-          (ast-decl-module-list-new)
-          seen)
-        (compiler-load-decls-with-module-and-roots-cfg
-          decls
-          importer-path
-          (compiler-load-source-path-id importer-path)
-          module-id
-          module-name-id
-          (compiler-load-decls-source-module decls)
-          (compiler-load-decls-source-module-id decls)
-          (compiler-load-seen-module-bind seen module-id module-name-id)
-          stdlib-roots
-          cfgs))]
-    [(ResultCompilerLoadModuleId.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
-
-(define (compiler-load-decls-with-paths-and-roots-cfg-with-pools
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]
-  [fallback-id : i64]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-decls-module-id importer-path decls fallback-id)
-    [(ResultCompilerLoadModuleId.Ok module-id module-name-id)
-      (if (compiler-load-seen-module-contains? seen module-id module-name-id)
-        (ResultCompilerLoadWithPaths.Ok
-          (ast-decl-list-new)
-          (ast-decl-path-list-new)
-          (ast-decl-module-list-new)
-          seen)
-        (compiler-load-decls-with-module-and-roots-cfg-with-pools
-          decls
-          importer-path
-          (compiler-load-source-path-id importer-path)
-          module-id
-          module-name-id
-          (compiler-load-decls-source-module decls)
-          (compiler-load-decls-source-module-id decls)
-          (compiler-load-seen-module-bind seen module-id module-name-id)
-          stdlib-roots
-          cfgs
-          pools))]
-    [(ResultCompilerLoadModuleId.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
-
-(define (compiler-load-decls
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [fallback-id : i64]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-decls-with-paths decls importer-path seen fallback-id)))
-
-(define (compiler-load-decls-with-roots
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [fallback-id : i64]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-decls-with-paths-and-roots
-      decls
-      importer-path
-      seen
-      stdlib-roots
-      fallback-id)))
-
 (define (compiler-load-program-with-paths
   [path : String]
   [program : AstProgram]
@@ -6499,16 +6382,6 @@
               (compiler-load-parse-file-diagnostic-admit-only key path cfgs)))]))
     (compiler-load-parse-file-diagnostic-escaping path cfgs)))
 
-(define (compiler-load-parse-file-diagnostic-session
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
-  (compiler-load-parse-file-diagnostic-session-id
-    path
-    (compiler-load-source-path-id (compiler-load-normalize-path path))
-    stdlib-roots
-    cfgs))
-
 (define (compiler-load-parse-file-diagnostic-session-id-with-pools
   [path : String]
   [source-path-id : i64]
@@ -6555,18 +6428,6 @@
                 cfgs
                 pools)))]))
     (compiler-load-parse-file-diagnostic-detached-with-pools path cfgs pools)))
-
-(define (compiler-load-parse-file-diagnostic-session-with-pools
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (compiler-load-parse-file-diagnostic-session-id-with-pools
-    path
-    (compiler-load-source-path-id (compiler-load-normalize-path path))
-    stdlib-roots
-    cfgs
-    pools))
 
 (define (compiler-load-parse-embedded-source-diagnostic-cache-miss
   [key : CompilerLoadProgramCacheKey]
@@ -6657,16 +6518,6 @@
               cfgs))]))
     (compiler-load-parse-source-diagnostic-escaping path source cfgs)))
 
-(define (compiler-load-parse-embedded-source-diagnostic-session
-  [path : String]
-  [source : String]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultAstProgramDiagnostic
-  (compiler-load-parse-embedded-source-diagnostic-session-id
-    path
-    (compiler-load-source-path-id (compiler-load-normalize-path path))
-    source
-    cfgs))
-
 (define (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
   [path : String]
   [source-path-id : i64]
@@ -6701,18 +6552,6 @@
       source
       cfgs
       pools)))
-
-(define (compiler-load-parse-embedded-source-diagnostic-session-with-pools
-  [path : String]
-  [source : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultAstProgramDiagnostic
-  (compiler-load-parse-embedded-source-diagnostic-session-id-with-pools
-    path
-    (compiler-load-source-path-id (compiler-load-normalize-path path))
-    source
-    cfgs
-    pools))
 
 (define (compiler-load-source-with-paths-and-roots-expect-cfg
   [path : String]

@@ -813,50 +813,86 @@
   (Ok TcInlineAggregateLayout)
   (Err String))
 
+;; Aggregate layouts outlive transient typecheck/lowering scratch regions.
+;; Keep their owned list tails in a cache-owned arena and retain its newest
+;; segment after every allocation. A fixed node-pool arena handle becomes stale
+;; as soon as that segment fills, causing every later box to reserve a sibling
+;; segment that no owner can advance to.
+(define tc-agg-layout-cache-storage-arena : i64
+  0)
+
+(define (tc-agg-layout-cache-storage-handle) : i64
+  (begin
+    (if (= tc-agg-layout-cache-storage-arena 0)
+      (set! tc-agg-layout-cache-storage-arena (arena.tl_arena_make))
+      unit)
+    tc-agg-layout-cache-storage-arena))
+
+(define (tc-agg-layout-cache-storage-reset!) : unit
+  (let
+    [storage : i64 tc-agg-layout-cache-storage-arena]
+    (begin
+      (set! tc-agg-layout-cache-storage-arena 0)
+      (if (= storage 0)
+        unit
+        (unsafe
+          (arena.tl_arena_destroy storage))))))
+
+(define (tc-agg-layout-cache-storage-restore! [previous : i64] [storage : i64]) : unit
+  (let
+    [head : i64 (arena.tl_arena_current)]
+    (begin
+      (set! tc-agg-layout-cache-storage-arena head)
+      (unsafe
+        (arena.tl_arena_set
+          (if (= previous storage)
+            head
+            previous))))))
+
 ;; Layout list tails escape the current lowering/optimizer scratch arena through
-;; the aggregate-layout cache. Allocate each tail directly in the program arena
+;; the aggregate-layout cache. Allocate each tail directly in its retained arena
 ;; so storing a completed layout is a shallow value copy rather than a second
 ;; recursive clone of the entire layout.
 (define (tc-inline-field-layout-list-persistent-box
   [value : TcInlineFieldLayoutList]) : (Box TcInlineFieldLayoutList)
   (let
-    [prev : i64 (arena.tl_arena_current)]
+    [previous : i64 (arena.tl_arena_current)]
+    [storage : i64 (tc-agg-layout-cache-storage-handle)]
     (begin
       (unsafe
-        (arena.tl_arena_set node-pool-base-arena))
+        (arena.tl_arena_set storage))
       (let
         [out : (Box TcInlineFieldLayoutList) (box value)]
         (begin
-          (unsafe
-            (arena.tl_arena_set prev))
+          (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))
 
 (define (tc-inline-payload-layout-list-persistent-box
   [value : TcInlinePayloadLayoutList]) : (Box TcInlinePayloadLayoutList)
   (let
-    [prev : i64 (arena.tl_arena_current)]
+    [previous : i64 (arena.tl_arena_current)]
+    [storage : i64 (tc-agg-layout-cache-storage-handle)]
     (begin
       (unsafe
-        (arena.tl_arena_set node-pool-base-arena))
+        (arena.tl_arena_set storage))
       (let
         [out : (Box TcInlinePayloadLayoutList) (box value)]
         (begin
-          (unsafe
-            (arena.tl_arena_set prev))
+          (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))
 
 (define (tc-inline-variant-layout-list-persistent-box
   [value : TcInlineVariantLayoutList]) : (Box TcInlineVariantLayoutList)
   (let
-    [prev : i64 (arena.tl_arena_current)]
+    [previous : i64 (arena.tl_arena_current)]
+    [storage : i64 (tc-agg-layout-cache-storage-handle)]
     (begin
       (unsafe
-        (arena.tl_arena_set node-pool-base-arena))
+        (arena.tl_arena_set storage))
       (let
         [out : (Box TcInlineVariantLayoutList) (box value)]
         (begin
-          (unsafe
-            (arena.tl_arena_set prev))
+          (tc-agg-layout-cache-storage-restore! previous storage)
           out)))))
 
 (defenum CompilerTypecheckSummary
@@ -33797,6 +33833,7 @@
     (let
       [i : i64 0]
       (begin
+        (tc-agg-layout-cache-storage-reset!)
         (while (< i tc-agg-layout-cache-capacity)
           (begin
             (array-set! tc-agg-layout-cache i (TcAggLayoutCacheSlot.Empty))
@@ -50948,20 +50985,6 @@
         (unsafe
           (arena.tl_arena_destroy retired))))))
 
-;; A splice rebuild keeps the previous symbol generation alive until its caller
-;; has replaced both the context and top environment that may reference it.
-;; Release it at that handoff instead of carrying it into the next rebuild,
-;; where current + retired + next would overlap by another arena commit.
-(define (macro-live-symbols-release-retired!) : unit
-  (let
-    [retired : i64 macro-live-symbols-retired-arena]
-    (begin
-      (set! macro-live-symbols-retired-arena 0)
-      (if (or (= retired 0) (= retired macro-live-symbols-arena))
-        unit
-        (unsafe
-          (arena.tl_arena_destroy retired))))))
-
 ;; Force the next pass to rebuild the live symbols/registries. Called from the
 ;; decl walk's non-inert splice arm: an arbitrary (potentially shadowing) splice
 ;; may have introduced a name the reused symbols would resolve differently, so
@@ -64631,7 +64654,6 @@
                                           (set! cur-ctx next-ctx)
                                           (set! cur-orig-decls next-decls)
                                           (set! cur-top-env next-top-env)
-                                          (macro-live-symbols-release-retired!)
                                           (set! cur-decls spliced-tail)
                                           (set! cur-paths spliced-path-tail))]
                                       [(ResultMacroSpliceRebuild.Err diag)
@@ -64749,7 +64771,6 @@
                                       (set! cur-ctx next-ctx)
                                       (set! cur-orig-decls next-decls)
                                       (set! cur-top-env next-top-env)
-                                      (macro-live-symbols-release-retired!)
                                       (set! cur-decls materialized-tail)
                                       (set!
                                         cur-paths

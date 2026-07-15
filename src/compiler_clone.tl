@@ -16,11 +16,13 @@
 (import stdlib.arena)
 (import stdlib.hashmap)
 (import (hashmap String i64) as clone_name_map)
+(import (hashmap String String) as clone_alias_map)
 (import stdlib.string)
 (cfg test (import stdlib.test))
 
 (defstruct CloneNameSet
-  (map clone_name_map.Map))
+  (map clone_name_map.Map)
+  (aliases clone_alias_map.Map))
 
 (defenum CloneNameList
   (Nil)
@@ -52,6 +54,17 @@
           (set! i (+ i 1))))
       found)))
 
+(define (clone-type-name-first-dot [name : String]) : i64
+  (let
+    [i : i64 0]
+    [n : i64 (string.string-length name)]
+    (begin
+      (while (< i n)
+        (if (= (cast (string.string-ref name i) : i64) (cast '.' : i64))
+          (return i)
+          (set! i (+ i 1))))
+      -1)))
+
 (define (clone-type-name-module [name : String]) : String
   (let
     [last : i64 (clone-type-name-last-slash name)]
@@ -74,6 +87,34 @@
     (clone-type-name-has-dot? name))
     name
     (string.append (string.append module "/") name)))
+
+(define (clone-import-alias-key [module : String] [alias : String]) : String
+  (string.append (string.append module "/") alias))
+
+(define (clone-type-name-resolve
+  [names : CloneNameSet]
+  [module : String]
+  [name : String]) : String
+  (if (>= (clone-type-name-last-slash name) 0)
+    name
+    (let
+      [dot : i64 (clone-type-name-first-dot name)]
+      (if (<= dot 0)
+        (clone-type-name-canonical module name)
+        (let
+          [aliases : clone_alias_map.Map (struct-get names aliases)]
+          [key : String
+            (clone-import-alias-key module (string.substring name 0 dot))]
+          (match (clone_alias_map.get-borrowed (& aliases) (& key))
+            [(clone_alias_map.LookupFound target)
+              (clone-type-name-canonical
+                target
+                (string.substring
+                  name
+                  (+ dot 1)
+                  (- (string.string-length name) (+ dot 1))))]
+            [(clone_alias_map.LookupMissing)
+              (clone-type-name-canonical module name)]))))))
 
 (define (clone-local-helper-name [type-name : String]) : String
   (string.append "clone$" (clone-type-name-base type-name)))
@@ -101,24 +142,59 @@
     variant-name))
 
 (define (clone-name-set-empty) : CloneNameSet
-  (CloneNameSet (clone_name_map.with-capacity 8)))
+  (CloneNameSet
+    (clone_name_map.with-capacity 8)
+    (clone_alias_map.with-capacity 8)))
+
+(define (clone-name-set-for-decls [decls : AstDeclList]) : CloneNameSet
+  (let
+    [aliases : clone_alias_map.Map (clone_alias_map.with-capacity 64)]
+    [current-module : String ""]
+    [index : i64 0]
+    [count : i64 (ast-decl-list-len (& decls))]
+    (begin
+      (while (< index count)
+        (begin
+          (match (ast-decl-unwrapped
+            (ast-decl-list-get (& decls) index (ast-decl-fallback)))
+            [(AstDecl.Module next-module)
+              (set! current-module (intern-str next-module))]
+            [(AstDecl.Import
+                (AstImportSpec.Spec
+                  _
+                  _
+                  (AstMaybeModuleName.Some target)
+                  (AstMaybeImportAlias.Some alias)
+                  _))
+              (clone_alias_map.insert-ref!
+                (&mut aliases)
+                (clone-import-alias-key current-module alias)
+                target)]
+            [_ unit])
+          (set! index (+ index 1))))
+      (CloneNameSet (clone_name_map.with-capacity 8) aliases))))
 
 ;; The fixpoint rebuilds its accepted set on each step over the whole-program
 ;; type universe; seeding that accumulator at the input set's capacity (it can
 ;; only shrink relative to the input) avoids the rehash+fill-empty grow chain a
 ;; capacity-8 seed would walk on every step.
-(define (clone-name-set-with-capacity [capacity : i64]) : CloneNameSet
-  (CloneNameSet (clone_name_map.with-capacity capacity)))
+(define (clone-name-set-with-capacity
+  [capacity : i64]
+  [aliases : clone_alias_map.Map]) : CloneNameSet
+  (CloneNameSet (clone_name_map.with-capacity capacity) aliases))
 
 (define (clone-name-set-map [names : CloneNameSet]) : clone_name_map.Map
   (struct-get names map))
+
+(define (clone-name-set-aliases [names : CloneNameSet]) : clone_alias_map.Map
+  (struct-get names aliases))
 
 (define (clone-name-set-insert [names : CloneNameSet] [name : String]) : CloneNameSet
   (let
     [map (clone-name-set-map names)]
     (begin
       (clone_name_map.insert-ref! (&mut map) name 1)
-      (CloneNameSet map))))
+      (CloneNameSet map (clone-name-set-aliases names)))))
 
 (define (clone-name-set-contains? [names : CloneNameSet] [name : String]) : bool
   (let
@@ -242,7 +318,9 @@
     [(AstType.Region _ inner)
       (clone-field-type-able? pools (clone-type-get pools inner) names module)]
     [(AstType.Var name)
-      (clone-name-set-contains-canonical? names module (intern-str name))]
+      (clone-name-set-contains?
+        names
+        (clone-type-name-resolve names module (intern-str name)))]
     [(AstType.Enum name)
       (clone-name-set-contains-resolved-nominal? names module (intern-str name))]
     [(AstType.Struct name)
@@ -428,7 +506,9 @@
         pools
         decls
         names
-        (clone-name-set-with-capacity (clone-name-set-capacity names)))]
+        (clone-name-set-with-capacity
+          (clone-name-set-capacity names)
+          (clone-name-set-aliases names)))]
     (if (= (clone-name-set-len next) (clone-name-set-len names))
       next
       (clone-fixpoint pools decls next))))
@@ -1380,21 +1460,21 @@
         decls
         able
         roots
-        (clone-type-name-canonical module (intern-str name)))]
+        (clone-type-name-resolve able module (intern-str name)))]
     [(AstType.Enum name)
       (clone-root-add-name
         pools
         decls
         able
         roots
-        (clone-type-name-canonical module (intern-str name)))]
+        (clone-type-name-resolve able module (intern-str name)))]
     [(AstType.Struct name)
       (clone-root-add-name
         pools
         decls
         able
         roots
-        (clone-type-name-canonical module (intern-str name)))]
+        (clone-type-name-resolve able module (intern-str name)))]
     [_ roots]))
 
 (define (clone-root-expand
@@ -1570,7 +1650,7 @@
       (clone-fixpoint
         pools
         decls
-        (clone-all-type-names decls (clone-name-set-empty)))]
+        (clone-all-type-names decls (clone-name-set-for-decls decls)))]
     (clone-decl-list-append
       decls
       (clone-generate-decls pools decls able (ast-decl-list-new)))))
@@ -1584,7 +1664,7 @@
       (clone-fixpoint
         pools
         decls
-        (clone-all-type-names decls (clone-name-set-empty)))]
+        (clone-all-type-names decls (clone-name-set-for-decls decls)))]
     (clone-augment-decls-with-roots-and-able-and-pools pools decls able roots)))
 
 ;; Typechecking already computes the whole-program cloneability fixpoint for
@@ -1674,7 +1754,9 @@
           (clone-fixpoint
             source-pools
             source-decls
-            (clone-all-type-names source-decls (clone-name-set-empty)))]
+            (clone-all-type-names
+              source-decls
+              (clone-name-set-for-decls source-decls)))]
         [expanded : CloneNameList
           (clone-root-expand source-pools source-decls able roots roots)]
         [compacted : AstProgramCompaction

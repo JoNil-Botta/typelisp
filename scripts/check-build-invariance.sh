@@ -189,7 +189,6 @@ compile_source_for_case() {
             mkdir -p "$input_dir"
             cp "$source" "$input_dir/sym_i64_env.tl"
             cp src/sym_i64_env.tl "$input_dir/sym_i64_env_core.tl"
-            cp src/compiler_intern.tl "$input_dir/compiler_intern.tl"
             printf '%s\n' "$input_dir/sym_i64_env.tl"
             ;;
         *)

@@ -1,11 +1,9 @@
 (import stdlib.io)
-(import stdlib.string)
 
 ; sym_i64_env.tl - Integration driver for the main-less selfhost sym_i64_env module.
 ; The integration manifest copies these src modules into local dependency names;
 ; import them by implicit module identity so copied source modules deduplicate.
 (import sym_i64_env_core as env)
-(import compiler_intern as ci)
 (import stdlib.option)
 (import (option i64) as option_i64)
 
@@ -40,99 +38,104 @@
     ; Empty env miss
     (let
       [e : env.SymI64Env (env.sym-i64-empty)]
-      (check-false (env.sym-i64-contains e "x") "empty-miss"))
+      (check-false (env.sym-i64-contains-id e 1) "empty-miss"))
     ; Single bind hit
     (let
-      [e : env.SymI64Env (env.sym-i64-bind (env.sym-i64-empty) "a" 10)]
+      [e : env.SymI64Env (env.sym-i64-bind-id (env.sym-i64-empty) 1 10)]
       (begin
-        (check-true (env.sym-i64-contains e "a") "single-hit-contains")
+        (check-true (env.sym-i64-contains-id e 1) "single-hit-contains")
         (check-equal
-          (match (env.sym-i64-lookup e "a")
+          (match (env.sym-i64-lookup-id e 1)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           10
           "single-hit-value")))
     ; Miss after single bind
     (let
-      [e : env.SymI64Env (env.sym-i64-bind (env.sym-i64-empty) "a" 10)]
-      (check-false (env.sym-i64-contains e "b") "single-miss"))
+      [e : env.SymI64Env (env.sym-i64-bind-id (env.sym-i64-empty) 1 10)]
+      (check-false (env.sym-i64-contains-id e 2) "single-miss"))
     ; Shadowing returns newest binding
     (let
       [e : env.SymI64Env
-        (env.sym-i64-bind (env.sym-i64-bind (env.sym-i64-empty) "a" 10) "a" 20)]
+        (env.sym-i64-bind-id
+          (env.sym-i64-bind-id (env.sym-i64-empty) 1 10)
+          1
+          20)]
       (check-equal
-        (match (env.sym-i64-lookup e "a")
+        (match (env.sym-i64-lookup-id e 1)
           [(option_i64.Some v) v]
           [(option_i64.None) 0])
         20
         "shadow-newest"))
     ; Saved outer env preserved after inner bind
     (let
-      [outer : env.SymI64Env (env.sym-i64-bind (env.sym-i64-empty) "a" 10)]
-      [inner : env.SymI64Env (env.sym-i64-bind outer "b" 20)]
+      [outer : env.SymI64Env (env.sym-i64-bind-id (env.sym-i64-empty) 1 10)]
+      [inner : env.SymI64Env (env.sym-i64-bind-id outer 2 20)]
       (begin
         (check-equal
-          (match (env.sym-i64-lookup outer "a")
+          (match (env.sym-i64-lookup-id outer 1)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           10
           "outer-preserved-a")
-        (check-false (env.sym-i64-contains outer "b") "outer-no-b")
+        (check-false (env.sym-i64-contains-id outer 2) "outer-no-b")
         (check-equal
-          (match (env.sym-i64-lookup inner "a")
+          (match (env.sym-i64-lookup-id inner 1)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           10
           "inner-sees-a")
         (check-equal
-          (match (env.sym-i64-lookup inner "b")
+          (match (env.sym-i64-lookup-id inner 2)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           20
           "inner-sees-b")))
-    ; Substring-built key lookup
+    ; Computed key lookup
     (let
-      [e : env.SymI64Env (env.sym-i64-bind (env.sym-i64-empty) "hello" 99)]
-      [key : String (string.substring "hello world" 0 5)]
-      (check-true (env.sym-i64-contains e key) "substring-key-hit"))
-    ; String-append-built key lookup
+      [e : env.SymI64Env (env.sym-i64-bind-id (env.sym-i64-empty) 42 99)]
+      [key : i64 (+ 40 2)]
+      (check-true (env.sym-i64-contains-id e key) "computed-key-hit"))
+    ; Distinct computed key lookup
     (let
-      [e : env.SymI64Env (env.sym-i64-bind (env.sym-i64-empty) "foobar" 77)]
-      [key : String (string.append "foo" "bar")]
-      (check-true (env.sym-i64-contains e key) "append-key-hit"))
+      [e : env.SymI64Env (env.sym-i64-bind-id (env.sym-i64-empty) 77 77)]
+      [key : i64 (- 100 23)]
+      (check-true (env.sym-i64-contains-id e key) "second-computed-key-hit"))
     ; Multi-bind chain
     (let
       [e : env.SymI64Env
-        (env.sym-i64-bind
-          (env.sym-i64-bind (env.sym-i64-bind (env.sym-i64-empty) "x" 1) "y" 2)
-          "z"
+        (env.sym-i64-bind-id
+          (env.sym-i64-bind-id
+            (env.sym-i64-bind-id (env.sym-i64-empty) 1 1)
+            2
+            2)
+          3
           3)]
       (begin
         (check-equal
-          (match (env.sym-i64-lookup e "x")
+          (match (env.sym-i64-lookup-id e 1)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           1
           "chain-x")
         (check-equal
-          (match (env.sym-i64-lookup e "y")
+          (match (env.sym-i64-lookup-id e 2)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           2
           "chain-y")
         (check-equal
-          (match (env.sym-i64-lookup e "z")
+          (match (env.sym-i64-lookup-id e 3)
             [(option_i64.Some v) v]
             [(option_i64.None) 0])
           3
           "chain-z")))
-    ; Intern-id API
+    ; ID API
     (let
-      [id : i64 (ci.intern "id-key")]
+      [id : i64 88]
       [e : env.SymI64Env (env.sym-i64-bind-id (env.sym-i64-empty) id 88)]
       (begin
         (check-true (env.sym-i64-contains-id e id) "id-key-contains")
-        (check-true (env.sym-i64-contains e "id-key") "id-key-string-contains")
         (check-equal
           (match (env.sym-i64-lookup-id e id)
             [(option_i64.Some v) v]

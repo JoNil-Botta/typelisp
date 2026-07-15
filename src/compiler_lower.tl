@@ -12953,27 +12953,21 @@
   [enum-name : String]
   [variant-name : String]) : String
   (let
-    [first-dot : i64 (tc-name-first-dot variant-name)]
-    [after-first-dot : String
-      (if (>= first-dot 0)
-        (string.substring
-          variant-name
-          (+ first-dot 1)
-          (- (string.string-length variant-name) (+ first-dot 1)))
-        "")]
-    [module-qualified? : bool
-      (and (>= first-dot 0) (>= (tc-name-first-dot after-first-dot) 0))]
+    [enum-base : String (lower-member-name-base enum-name)]
+    [variant-prefix : String (lower-member-name-prefix variant-name)]
+    [qualifier : String
+      (if (string.eq (lower-member-name-base variant-prefix) enum-base)
+        (lower-member-name-prefix variant-prefix)
+        variant-prefix)]
     [type-handle : i64
       (compiler-symbols-lookup-type-or
         (tc-context-symbols ctx)
         enum-name
         (compiler-symbols-missing-handle))]
-    (if module-qualified?
+    (if (> (string.string-length qualifier) 0)
       (compiler-symbol-module-key
-        (tc-qualified-access-target-module
-          ctx
-          (string.substring variant-name 0 first-dot))
-        (lower-member-name-base enum-name))
+        (tc-qualified-access-target-module ctx qualifier)
+        enum-base)
       (if (compiler-symbols-handle-found? type-handle)
         (match (tc-nominal-owner-name ctx type-handle)
           [(ResultTcString.Ok owner) owner]
@@ -13083,6 +13077,34 @@
       (if (and (>= last-dot 0) (< last-dot (- n 1)))
         (string.substring source (+ last-dot 1) (- n (+ last-dot 1)))
         source))))
+
+(define (lower-member-name-prefix [name : String]) : String
+  (let
+    [qualified-module : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-module name)
+        "")]
+    [source : String
+      (if (tc-name-qualified? name)
+        (tc-qualified-name-base name)
+        name)]
+    [i : i64 0]
+    [last-dot : i64 -1]
+    [n : i64 (string.string-length source)]
+    (begin
+      (while (< i n)
+        (begin
+          (if (string.char-eq (string.string-ref source i) '.')
+            (set! last-dot i)
+            unit)
+          (set! i (+ i 1))))
+      (if (>= last-dot 0)
+        (let
+          [local-prefix : String (string.substring source 0 last-dot)]
+          (if (> (string.string-length qualified-module) 0)
+            (compiler-symbol-module-key qualified-module local-prefix)
+            local-prefix))
+        qualified-module))))
 
 (define (lower-variant-payload-offset
   [ctx : TcContext]

@@ -758,10 +758,31 @@
 (define (doc-ast-param-list-source [params : AstParamList]) : String
   (doc-ast-param-list-source-from params 0 (ast-param-list-len (& params))))
 
+(define (doc-ast-macro-type-kind-items-source [kinds : AstMacroTypeKindList]) : String
+  (match kinds
+    [(AstMacroTypeKindList.Nil) ""]
+    [(AstMacroTypeKindList.Cons kind rest)
+      (doc-cat3
+        " "
+        (intern-str kind)
+        (doc-ast-macro-type-kind-items-source (box-get rest)))]))
+
+(define (doc-ast-macro-type-kind-constraint-source
+  [kinds : AstMacroTypeKindList]) : String
+  (match kinds
+    [(AstMacroTypeKindList.Nil) ""]
+    [_ (doc-cat3 " (:kind" (doc-ast-macro-type-kind-items-source kinds) ")")]))
+
 (define (doc-ast-macro-param-source [param : AstMacroParam]) : String
   (match param
-    [(AstMacroParam.Param name ty _)
-      (doc-cat5 "[" (intern-str name) " : " (doc-ast-type-source ty) "]")]))
+    [(AstMacroParam.Param name ty _ type-kinds)
+      (doc-cat6
+        "["
+        (intern-str name)
+        " : "
+        (doc-ast-type-source ty)
+        (doc-ast-macro-type-kind-constraint-source type-kinds)
+        "]")]))
 
 (define (doc-ast-macro-param-list-source-from
   [params : AstMacroParamList]
@@ -772,10 +793,7 @@
     (doc-cat3
       " "
       (doc-ast-macro-param-source
-        (ast-macro-param-list-get
-          (& params)
-          index
-          (AstMacroParam.Param 0 (AstType.Unit) false)))
+        (ast-macro-param-list-get (& params) index (ast-macro-param-fallback)))
       (doc-ast-macro-param-list-source-from params (+ index 1) count))))
 
 (define (doc-ast-macro-param-list-source [params : AstMacroParamList]) : String
@@ -1272,6 +1290,26 @@
         (struct-get b value)))))
 
 (import (boxmod i64) as ibox)")
+
+(define (doc-expand-macro-type-kind-constraint-source-smoke?) : bool
+  (string.eq
+    (doc-ast-macro-param-source
+      (ast-macro-param-with-type-kinds
+        "T"
+        (AstType.Var (intern "type"))
+        false
+        (ast-macro-type-kind-list-cons
+          "i64"
+          (ast-macro-type-kind-list-cons
+            "struct"
+            (ast-macro-type-kind-list-empty)))))
+    "[T : type (:kind i64 struct)]"))
+
+(test
+  doc-macro-type-kind-constraint-source
+  (unless
+    (doc-expand-macro-type-kind-constraint-source-smoke?)
+    (io.panic "doc-expand: macro type-kind constraint signature mismatch")))
 
 (define (doc-expand-smoke) : i64
   (let

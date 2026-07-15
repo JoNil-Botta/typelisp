@@ -3415,7 +3415,7 @@
   (if (>= index (ast-macro-param-list-len params))
     (compiler-load-lazy-alias-demand-none)
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty _ _)
         (compiler-load-lazy-alias-demand-merge
           (compiler-load-lazy-type-demand ty alias summary locals)
           (compiler-load-lazy-macro-param-list-demand-at?
@@ -3444,7 +3444,7 @@
   (if (>= index (ast-macro-param-list-len params))
     locals
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param name _ _)
+      [(AstMacroParam.Param name _ _ _)
         (compiler-load-lazy-macro-param-list-locals-at
           params
           (if compiler-load-lazy-qualified-observer-exhaustive

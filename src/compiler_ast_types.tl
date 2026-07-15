@@ -289,8 +289,12 @@
   (slots (Array AstParam))
   (len i64))
 
+(defenum AstMacroTypeKindList
+  (Nil)
+  (Cons i64 (Box AstMacroTypeKindList)))
+
 (defenum AstMacroParam
-  (Param i64 AstType bool))
+  (Param i64 AstType bool AstMacroTypeKindList))
 
 (defstruct AstMacroParamList
   (slots (Array AstMacroParam))
@@ -2556,11 +2560,61 @@
       (ast-param-list-append-from (&mut out) (& rest) 0)
       out)))
 
+(define (ast-macro-type-kind-list-empty) : AstMacroTypeKindList
+  AstMacroTypeKindList.Nil)
+
+(define (ast-macro-type-kind-list-cons-id
+  [kind : i64]
+  [rest : AstMacroTypeKindList]) : AstMacroTypeKindList
+  (AstMacroTypeKindList.Cons kind (box rest)))
+
+(define (ast-macro-type-kind-list-cons
+  [kind : String]
+  [rest : AstMacroTypeKindList]) : AstMacroTypeKindList
+  (ast-macro-type-kind-list-cons-id (ci.intern kind) rest))
+
+(define (ast-macro-type-kind-list-contains-id?
+  [kinds : AstMacroTypeKindList]
+  [kind : i64]) : bool
+  (match kinds
+    [(AstMacroTypeKindList.Nil) false]
+    [(AstMacroTypeKindList.Cons head rest)
+      (or
+        (= head kind)
+        (ast-macro-type-kind-list-contains-id? (box-get rest) kind))]))
+
+(define (ast-macro-type-kind-list-eq?
+  [a : AstMacroTypeKindList]
+  [b : AstMacroTypeKindList]) : bool
+  (match a
+    [(AstMacroTypeKindList.Nil)
+      (match b
+        [(AstMacroTypeKindList.Nil) true]
+        [_ false])]
+    [(AstMacroTypeKindList.Cons a-head a-rest)
+      (match b
+        [(AstMacroTypeKindList.Cons b-head b-rest)
+          (and
+            (= a-head b-head)
+            (ast-macro-type-kind-list-eq? (box-get a-rest) (box-get b-rest)))]
+        [_ false])]))
+
+(define (ast-macro-param-with-type-kinds
+  [name : String]
+  [ty : AstType]
+  [variadic : bool]
+  [type-kinds : AstMacroTypeKindList]) : AstMacroParam
+  (AstMacroParam.Param (ci.intern name) ty variadic type-kinds))
+
 (define (ast-macro-param [name : String] [ty : AstType] [variadic : bool]) : AstMacroParam
-  (AstMacroParam.Param (ci.intern name) ty variadic))
+  (ast-macro-param-with-type-kinds
+    name
+    ty
+    variadic
+    (ast-macro-type-kind-list-empty)))
 
 (define (ast-macro-param-fallback) : AstMacroParam
-  (AstMacroParam.Param 0 (AstType.Unit) false))
+  (AstMacroParam.Param 0 (AstType.Unit) false (ast-macro-type-kind-list-empty)))
 
 (define (ast-macro-param-list-with-capacity [capacity : i64]) : AstMacroParamList
   (let
@@ -5308,8 +5362,12 @@
   [remap : AstProgramCompactionRemap]
   [param : AstMacroParam]) : AstMacroParam
   (match param
-    [(AstMacroParam.Param name ty variadic)
-      (AstMacroParam.Param name (ast-compaction-remap-type remap ty) variadic)]))
+    [(AstMacroParam.Param name ty variadic type-kinds)
+      (AstMacroParam.Param
+        name
+        (ast-compaction-remap-type remap ty)
+        variadic
+        type-kinds)]))
 
 (define (ast-compaction-remap-macro-param-list
   [remap : AstProgramCompactionRemap]

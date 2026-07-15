@@ -1193,7 +1193,7 @@
   (if (>= index (ast-macro-param-list-len params))
     refs
     (match (ast-macro-param-list-get params index (ast-macro-param-fallback))
-      [(AstMacroParam.Param _ ty _)
+      [(AstMacroParam.Param _ ty _ _)
         (selfhost-lint-dead-macro-param-list-refs-at
           params
           (selfhost-lint-dead-type-refs ty refs)

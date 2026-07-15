@@ -51443,7 +51443,7 @@
         (compiler-composite-pair-key-id? name-id)
         (compiler-composite-triple-key-id? name-id))
       name-id]
-    [true
+    [else
       (let
         [name : String (macro-output-symbol-text-id name-id site)]
         (if (tc-hygiene-template-name? name)
@@ -56004,7 +56004,7 @@
                   [_ env])]
               [(ci.intern-colon-keyword-id? source-id) env]
               [pattern-name? (macro-hygiene-output-pattern-name-id env name-id)]
-              [true (macro-hygiene-output-bind-id env name-id)]))]
+              [else (macro-hygiene-output-bind-id env name-id)]))]
         [_ env])]
     [_ env]))
 

@@ -2278,7 +2278,7 @@
             (match (tc-lookup-id type-env lookup-key-id)
               [(ResultTcType.Ok ty) (ResultTcType.Ok ty)]
               [(ResultTcType.Err _) (ResultTcType.Err message)])]))]
-    [true
+    [else
       (match (tc-source-name-lookup-key-with-field-check-lookup
         ctx
         type-env
@@ -2339,7 +2339,7 @@
       (let
         [name : String (tc-env-key-name-text name-id)]
         (lower-lookup-type-existing-id ctx type-cache env type-env name name-id))]
-    [true
+    [else
       (lower-type-cache-lookup-id
         type-cache
         name-id
@@ -45667,7 +45667,7 @@
                 ret-ty)]
             [_ false])]
         [(ResultTcType.Err _) false])]
-    [true false]))
+    [else false]))
 
 (define (lower-tail-call-args-for-target
   [ctx : TcContext]
@@ -61788,24 +61788,6 @@
         (lower-cleanup-stack-push (lower-cleanup-stack-empty) 201 301)
         202
         302)]
-    [origin : AstExpr (AstExpr.Literal (ast-lit-int 0))]
-    [tail-writebacks : LowerArgWritebackList
-      (lower-arg-writeback-list-add
-        (lower-arg-writeback-list-empty)
-        (LowerArgWriteback.Writeback
-          12
-          (CompilerIrValue.Var 22)
-          (AstType.Bool)
-          origin))]
-    [writebacks : LowerArgWritebackList
-      (lower-call-arg-writebacks-add-maybe
-        tail-writebacks
-        (LowerMaybeArgWriteback.Some
-          (LowerArgWriteback.Writeback
-            11
-            (CompilerIrValue.Var 21)
-            (AstType.I64)
-            origin)))]
     [slots : LowerCAbiSlotList
       (lower-c-abi-slot-list-pair
         (LowerCAbiSlot.Slot (AstType.I64) 0)
@@ -61822,23 +61804,6 @@
       (= (lower-cleanup-stack-count cleanups) 2)
       (lower-cleanup-stack-entry? cleanups 0 201 301)
       (lower-cleanup-stack-entry? cleanups 1 202 302)
-      (= (lower-arg-writeback-list-count writebacks) 2)
-      (match (lower-arg-writeback-list-ref writebacks 0)
-        [(LowerArgWriteback.Writeback local-id storage ty _)
-          (and
-            (= local-id 11)
-            (match storage
-              [(CompilerIrValue.Var storage-id) (= storage-id 21)]
-              [_ false])
-            (tc-type-eq ty (AstType.I64)))])
-      (match (lower-arg-writeback-list-ref writebacks 1)
-        [(LowerArgWriteback.Writeback local-id storage ty _)
-          (and
-            (= local-id 12)
-            (match storage
-              [(CompilerIrValue.Var storage-id) (= storage-id 22)]
-              [_ false])
-            (tc-type-eq ty (AstType.Bool)))])
       (= (lower-c-abi-slot-list-count slots) 2)
       (match (lower-c-abi-slot-list-ref slots 0)
         [(LowerCAbiSlot.Slot ty offset)

@@ -7,6 +7,94 @@
 (import "../compiler_driver_core.tl")
 (import sym_i64_env)
 
+(define (compiler-lower-smoke-foreach-multi-output-source) : String
+  "(define (fill [a : (Array i64)] [b : (Array i64)] [out-x : (Array i64)] [out-y : (Array i64)] [n : i64] [scale : i64] [offset : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (begin
+      (array-set! out-x i (+ (* (array-ref a i) scale) (array-ref b i)))
+      (array-set! out-y i (+ (* (array-ref a i) scale) offset)))))")
+
+(define (compiler-lower-smoke-foreach-multi-output-same-destination-source) : String
+  "(define (fill [a : (Array i64)] [out : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (begin
+      (array-set! out i (+ (array-ref a i) 1))
+      (array-set! out i (+ (array-ref a i) 2)))))")
+
+(define (compiler-lower-smoke-foreach-multi-output-alias-source) : String
+  "(define (fill [out-x : (Array i64)] [out-y : (Array i64)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (begin
+      (array-set! out-x i (+ (array-ref out-x i) 1))
+      (array-set! out-y i (+ (array-ref out-x i) 2)))))")
+
+(define (compiler-lower-smoke-foreach-multi-output-mixed-source) : String
+  "(define (fill [a : (Array i64)] [b : (Array i32)] [out-x : (Array i64)] [out-y : (Array i32)] [n : i64]) : unit
+  (foreach
+    ([i : i64 0 n])
+    (begin
+      (array-set! out-x i (+ (array-ref a i) 1))
+      (array-set! out-y i (+ (array-ref b i) 2)))))")
+
+(define (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
+  [mode : CompilerLowerMode]
+  [predicated? : bool]) : bool
+  (match (lower-compiler-source-with-mode
+    (compiler-lower-smoke-foreach-multi-output-source)
+    mode)
+    [(ResultCompilerLower.Ok program _)
+      (match program
+        [(CompilerIrProgram.Program _ functions _)
+          (and
+            (= (lower-test-function-vector-load-count functions "fill") 2)
+            (=
+              (lower-test-function-vector-binop-count functions "fill")
+              (if predicated?
+                6
+                3))
+            (= (lower-test-function-vector-store-count functions "fill") 2)
+            (=
+              (lower-test-function-predicated-load-count functions "fill")
+              (if predicated?
+                2
+                0))
+            (=
+              (lower-test-function-predicated-store-count functions "fill")
+              (if predicated?
+                2
+                0))
+            (=
+              (lower-test-function-tail-mask-count functions "fill")
+              (if predicated?
+                1
+                0))
+            (> (lower-test-function-store-ptr-count functions "fill") 0))])]
+    [(ResultCompilerLower.Err _) false]))
+
+(define (compiler-lower-smoke-foreach-multi-output-shape-ok?) : bool
+  (and
+    (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
+      (CompilerLowerMode.Avx2)
+      false)
+    (compiler-lower-smoke-foreach-multi-output-mode-shape-ok?
+      (CompilerLowerMode.Avx512)
+      true)
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-smoke-foreach-multi-output-same-destination-source)
+      (CompilerLowerMode.Avx2)
+      (lower-simd-foreach-fallback-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-smoke-foreach-multi-output-alias-source)
+      (CompilerLowerMode.Avx2)
+      (lower-simd-foreach-fallback-diagnostic))
+    (compiler-lower-mode-error-ok?
+      (compiler-lower-smoke-foreach-multi-output-mixed-source)
+      (CompilerLowerMode.Avx2)
+      (lower-simd-foreach-fallback-diagnostic))))
+
 (define (compiler-lower-smoke-imported-local-vector-source) : String
   "(module stdlib.vector)
 (define (local-vector-string) : String \"a\")
@@ -710,6 +798,9 @@
     (unless
       (compiler-lower-raw-pointer-call-value-shape-ok?)
       (panic "lower: raw pointer call value smoke mismatch"))
+    (unless
+      (compiler-lower-smoke-foreach-multi-output-shape-ok?)
+      (panic "lower: multi-output foreach smoke mismatch"))
     (unless
       (compiler-lower-back-half-tests-ok?)
       (panic "lower: back-half smoke mismatch"))

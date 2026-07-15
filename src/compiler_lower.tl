@@ -9869,16 +9869,16 @@
     (lower-gep-byte state base offset)))
 
 ;; Inline the hottest by-value aggregate copies. The flip to
-;; inline-by-value aggregates made the 17-64 B band, especially
-;; AstTypeList/AstType and ResultTcType/ResultTcType.Ok copies, dynamically dominant,
-;; but the 16 B ceiling pushed every one of them onto a `tl_memcpy` CALL (~88
-;; dynamic instructions each). Inline they cost only `size/8` load+store pairs.
-;; Raising the ceiling to 64 B turns that band into straight movs (a few
+;; inline-by-value aggregates made the 17-96 B band, especially
+;; AstTypeList/AstType, ResultTcType/ResultTcType.Ok, and CompilerIrInstr copies,
+;; dynamically dominant, but the 16 B ceiling pushed every one of them onto a
+;; `tl_memcpy` CALL (~88 dynamic instructions each). Inline they cost only
+;; `size/8` load+store pairs. Raising the ceiling to 96 B turns that band into straight movs (a few
 ;; instructions) while still routing genuinely large copies through tl_memcpy so
 ;; the emitted code does not blow up. Must stay a multiple of 8 so the inline
 ;; chunk loop (lower-copy-chunk-size: 8/4/2/1) terminates cleanly for any size.
 (define lower-inline-copy-threshold : i64
-  64)
+  96)
 
 ;; Copy `size` bytes dst<-src via a single tl_memcpy runtime call instead
 ;; of `size/8` separate gep+load+gep+store chunks. The flip from heap-handle

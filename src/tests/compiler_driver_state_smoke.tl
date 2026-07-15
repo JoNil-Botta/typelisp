@@ -1901,7 +1901,7 @@
           (let
             [region-size : i64
               (opt-load-loc-type-size
-                (AstType.Region "retained" retained-inner))]
+                (AstType.Region (intern "retained") retained-inner))]
             [consume-size : i64
               (opt-load-loc-type-size (AstType.Consume retained-inner))]
             [backend-gp? : bool

@@ -1491,23 +1491,6 @@
         -1
         -1))))
 
-;: Canonicalize an opaque generated spelling while retaining the parsed source
-;: identity it was derived from. Opaque generated names do not otherwise use
-;: the base-id slot, so this adds origin metadata without another pool lane.
-(define (intern-generated-canonical-name-from-source
-  [name : String]
-  [source-id : i64]) : i64
-  (if (or (< source-id 0) (>= source-id (intern-capacity)))
-    (tl_oob_abort)
-    (let
-      [id : i64 (intern-generated-canonical-name name)]
-      (begin
-        (array-set!
-          intern-pool-base-id-slots
-          id
-          (intern-id-slot-encode source-id))
-        id))))
-
 ;: Canonicalize a generated qualified symbol by both its display spelling and
 ;: structural module/base identities. The kind bit keeps an opaque generated
 ;: name with the same display text in a distinct canonical domain.
@@ -2048,18 +2031,6 @@
 (define (intern-qualified-base-id [id : i64]) : i64
   (intern-id-slot-decode (array-ref intern-pool-base-id-slots id)))
 
-(define (intern-generated-source-id-or [id : i64] [fallback : i64]) : i64
-  (if (and
-    (intern-generated-id-active? id)
-    (not (intern-qualified? id))
-    (< (intern-first-dot id) 0))
-    (let
-      [source-id : i64 (intern-qualified-base-id id)]
-      (if (= source-id id)
-        fallback
-        source-id))
-    fallback))
-
 (define (intern-qualified-module [id : i64]) : String
   (let
     [module-id : i64 (intern-qualified-module-id id)]
@@ -2221,19 +2192,8 @@
               "computed-name"
               module-id
               base-id)]
-          [canonical-source-id : i64
-            (intern-generated-canonical-name-from-source
-              "computed-name"
-              source-id)]
           (begin
             (unless (= canonical-id canonical-again-id) (set! ok false))
-            (unless (= canonical-id canonical-source-id) (set! ok false))
-            (unless
-              (= (intern-generated-source-id-or canonical-id -1) source-id)
-              (set! ok false))
-            (unless
-              (= (intern-generated-source-id-or opaque-id -1) -1)
-              (set! ok false))
             (unless
               (= canonical-dotted-id canonical-dotted-again-id)
               (set! ok false))

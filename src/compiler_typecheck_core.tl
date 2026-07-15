@@ -6448,7 +6448,7 @@
 (define (tc-hygiene-template-source-id-or [name-id : i64] [fallback : i64]) : i64
   (if (ci.intern-template-source-id? name-id)
     (ci.intern-template-source-name-id name-id)
-    (ci.intern-generated-source-id-or name-id fallback)))
+    fallback))
 
 (define (tc-hygiene-template-base [name : String]) : String
   (tc-hygiene-name-base name (tc-hygiene-template-prefix)))
@@ -51293,12 +51293,7 @@
         (compiler-composite-triple-key-id? name-id))
       name-id]
     [else
-      (let
-        [source-id : i64
-          (ci.intern-generated-source-id-or
-            (macro-output-syntax-id-at name-id site)
-            (macro-output-syntax-id-at name-id site))]
-        (compiler-symbol-name-id-key source-id))]))
+      (compiler-symbol-name-id-key (macro-output-syntax-id-at name-id site))]))
 
 (define (macro-decl-list-reverse-into [items : AstDeclList] [out : AstDeclList]) : AstDeclList
   (let
@@ -55640,7 +55635,7 @@
         (ci.intern-qualified? name-id)
         (tc-hygiene-global-name? (intern-str name-id)))
       (ci.intern-qualified-base-id name-id)]
-    [else (ci.intern-generated-source-id-or name-id fallback)]))
+    [else fallback]))
 
 (define (macro-hygiene-env-lookup [env : MacroHygieneEnv] [name-id : i64]) : MacroMaybeHygieneName
   (match env
@@ -57981,8 +57976,7 @@
   (let
     [hygiene-source-id : i64
       (macro-hygiene-global-source-name-id-or source-name-id source-name-id)]
-    [source-id : i64
-      (ci.intern-generated-source-id-or hygiene-source-id hygiene-source-id)]
+    [source-id : i64 hygiene-source-id]
     [lookup-qualifier-id : i64 (tc-qualified-name-module-id lookup-name-id)]
     [source-qualifier-id : i64 (tc-qualified-name-module-id source-id)]
     [qualifier-id : i64

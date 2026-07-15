@@ -10273,9 +10273,9 @@
     "%rax"))
 
 ;; Copy an internal two-word aggregate without treating it as an ABI return.
-;; The normal case is sequential and needs only the globally reserved scalar or
-;; SSE return register. A true cross-word alias loads both words before either
-;; store and scavenges only the second staging register.
+;; Preserve the historical split-register sequence when its second register is
+;; free. A true cross-word alias loads both words before either store; the
+;; sequential case remains correct when scavenging must choose another register.
 (define (compiler-backend-emit-group-copy
   [assignments : CompilerRegAssignmentList]
   [dst : i64]
@@ -10313,12 +10313,10 @@
                         [reg0 : String
                           (compiler-backend-group-copy-word-scratch sse0?)]
                         [reg1 : String
-                          (if (string.eq dst0 src1)
-                            (compiler-backend-group-copy-reg1
-                              program-index
-                              ty
-                              reg0)
-                            (compiler-backend-group-copy-word-scratch sse1?))]
+                          (compiler-backend-group-copy-reg1
+                            program-index
+                            ty
+                            reg0)]
                         (ResultCompilerBackend.Ok
                           (if (string.eq dst0 src1)
                             (str-cat

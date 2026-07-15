@@ -5252,9 +5252,8 @@
           (and
             (compiler-backend-string-contains? asm "%r12, %rax")
             (compiler-backend-string-contains? asm "%rax, %r14")
-            (compiler-backend-string-contains? asm "%r13, %rax")
-            (compiler-backend-string-contains? asm "%rax, %r15")
-            (not (compiler-backend-string-contains? asm "%rdx")))]
+            (compiler-backend-string-contains? asm "%r13, %rdx")
+            (compiler-backend-string-contains? asm "%rdx, %r15"))]
         [(ResultCompilerBackend.Err _) false]))))
 
 (define (compiler-backend-descriptor-pair-object-main) : CompilerIrFunction
@@ -7949,7 +7948,7 @@
         (set! compiler-backend-cycle-temp-base-offset prev-base))]
     ok))
 
-(define (compiler-backend-phi-group-stack-copy-no-rdx-ok?) : bool
+(define (compiler-backend-phi-group-stack-copy-split-scratch-ok?) : bool
   (let
     [ty : AstType (compiler-backend-register-group-test-type)]
     [blocks : CompilerIrBlockList
@@ -7986,8 +7985,8 @@
     (match copied
       [(ResultCompilerBackend.Ok asm)
         (and
-          (= (compiler-backend-string-count asm "%rax") 4)
-          (not (compiler-backend-string-contains? asm "%rdx")))]
+          (= (compiler-backend-string-count asm "%rax") 2)
+          (= (compiler-backend-string-count asm "%rdx") 2))]
       [(ResultCompilerBackend.Err _) false])))
 
 (define (compiler-backend-phi-float-cycle-copy-ok?) : bool
@@ -22299,7 +22298,7 @@
         (pmove.compiler-parallel-move-self-test?)
         (compiler-backend-phi-parallel-copy-ok?)
         (compiler-backend-phi-group-cycle-copy-ok?)
-        (compiler-backend-phi-group-stack-copy-no-rdx-ok?)
+        (compiler-backend-phi-group-stack-copy-split-scratch-ok?)
         (compiler-backend-phi-float-cycle-copy-ok?)
         (compiler-backend-arg-cycle-temp-slot-ok?)
         (compiler-backend-base1-arg-cycle-ok?)

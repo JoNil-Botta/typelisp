@@ -3958,6 +3958,11 @@ SPMD helper calls:
   calls, recursion through SPMD helpers, and cross-package/tlci SPMD calls
   are deferred by design; they are rejected with diagnostics naming the
   specific boundary rather than silently scalarizing.
+- Metadata schema v2 in section 5.17.1 can describe compiler-private
+  specializations stored in a package runtime archive. Advertising a record
+  does not itself make cross-package calls valid: a consumer must explicitly
+  support its `abi`, backend, lane count, and argument/result classes before
+  selecting it, and otherwise diagnoses the unsupported capability.
 
 Masked varying control flow:
 
@@ -4621,7 +4626,8 @@ A TypeLisp comptime image (`tlci`) is the package compile-time interface. Every
 package emits one: a metadata-only image carries signature/layout metadata, and
 a package that defines macros additionally carries compiled comptime code. The
 runtime archive (`lib<name>.a` / `<name>.lib`) is separate. This section
-specifies the v1 container and metadata schema.
+specifies the v1 container, metadata schema v1, and the backward-compatible
+metadata schema v2 extension.
 
 The container is a custom little-endian binary format shared by Linux and
 Windows. It is not ELF or COFF. The first 160 bytes are a fixed header:
@@ -4934,6 +4940,47 @@ The metadata section is UTF-8/ASCII S-expression text with stable field order:
 in `typelisp.pkg`. Unknown fields, unsupported versions, malformed
 S-expressions, empty required sections, bad magic/version/arch/ABI/hash, and
 truncated section ranges are diagnostics.
+
+Metadata schema v2 keeps the container format version and callback ABI version
+at `1`. It retains the v1 fields and may append `spmd-callables` after
+`package`:
+
+```lisp test=ignore name=tlci-metadata-schema-v2 reason="tlci metadata S-expression, not TypeLisp source"
+(typelisp-tlci-metadata
+  (version "v2")
+  (package (name "pkg-name") (version "0.1.0"))
+  (spmd-callables
+    (helper
+      (name "module.helper")
+      (signature "(-> i64 i64)")
+      (specialization
+        (abi "spmd-call-v1")
+        (backend "avx512")
+        (lanes 8)
+        (args "v")
+        (result "v")
+        (index-param -1)
+        (symbol "__tl_spmd_pkg_module_helper_v8")))))
+```
+
+Each helper `name` is its canonical module-qualified source name and
+`signature` is its canonical resolved ordinary source signature. A helper has
+one or more specialization records. Records are ordered by helper name,
+signature, backend, lanes, args, result, index-param, and symbol; duplicate or
+out-of-order records are invalid. `abi` independently versions the private
+active-mask call convention. Unknown nonempty ABI strings are preserved so
+ordinary importers can still read the helper signature; selecting such a
+specialization is an unsupported-capability diagnostic.
+
+For `spmd-call-v1`, `backend` is `scalar` or `avx512` (AVX2 has no v1 record),
+`lanes` is positive and is `1` for scalar, and `args` is a comma-free positional
+string of `u`/`v` classes whose length equals the ordinary parameter count.
+`result` is `unit`, `u`, or `v`. `index-param` is `-1` or a zero-based varying
+source parameter that supplies the logical `foreach` index and accounts for the
+hidden uniform index-base ABI operand. `symbol` is the exact nonempty,
+target-independent TypeLisp linker symbol in the package runtime archive.
+Helper names and signatures are nonempty. Metadata v1 images continue to parse
+and emit without this field and remain byte-layout compatible.
 
 Metadata-only tlci files are valid: rodata, code, fixups, entries, and symbols
 are all empty. Emission is deterministic: an image's layout and content hash

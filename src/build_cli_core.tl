@@ -3044,7 +3044,7 @@
     (build-package-tlci-owner-stdlib-path? owner path)))
 
 (define (build-package-tlci-metadata [manifest : CompilerPkgManifest]) : TlciMetadata
-  (TlciMetadata
+  (tlci-make-metadata
     tlci-metadata-version
     (struct-get manifest name)
     (struct-get manifest version)))

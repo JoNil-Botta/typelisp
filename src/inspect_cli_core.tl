@@ -43,6 +43,48 @@ Summary:
     (string.int->string (* count record-size))
     "\n"))
 
+(define (tlci-inspect-spmd-specializations [items : TlciSpmdSpecializationList]) : String
+  (match items
+    [(TlciSpmdSpecializationList.Nil) ""]
+    [(TlciSpmdSpecializationList.Cons item rest)
+      (str_cat.str-cat
+        "    specialization: abi="
+        (struct-get item abi)
+        " backend="
+        (struct-get item backend)
+        " lanes="
+        (string.int->string (struct-get item lanes))
+        " args="
+        (struct-get item args)
+        " result="
+        (struct-get item result)
+        " index-param="
+        (string.int->string (struct-get item index-param))
+        " symbol="
+        (struct-get item symbol)
+        "\n"
+        (tlci-inspect-spmd-specializations (box-get rest)))]))
+
+(define (tlci-inspect-spmd-callables [items : TlciSpmdCallableList]) : String
+  (match items
+    [(TlciSpmdCallableList.Nil) ""]
+    [(TlciSpmdCallableList.Cons item rest)
+      (str_cat.str-cat
+        "  helper: name="
+        (struct-get item name)
+        " signature="
+        (struct-get item signature)
+        "\n"
+        (tlci-inspect-spmd-specializations (struct-get item specializations))
+        (tlci-inspect-spmd-callables (box-get rest)))]))
+
+(define (tlci-inspect-spmd-section [metadata : TlciMetadata]) : String
+  (if (string.eq (struct-get metadata version) tlci-metadata-version-v2)
+    (str_cat.str-cat
+      "spmd-callables:\n"
+      (tlci-inspect-spmd-callables (struct-get metadata spmd-callables)))
+    ""))
+
 (define (tlci-inspect-render [bytes : (Array u8)] [image : TlciImage]) : String
   (let
     [metadata : TlciMetadata (struct-get image metadata)]
@@ -78,6 +120,7 @@ Summary:
       "package-version: "
       (struct-get metadata package-version)
       "\n"
+      (tlci-inspect-spmd-section metadata)
       "sections:\n"
       (tlci-inspect-section-line
         "compiler-build-hash"
@@ -123,6 +166,42 @@ Summary:
         (tlci-inspect-error "pkg/dep.tlci" "tlci: content hash mismatch")
         "inspect: pkg/dep.tlci: tlci: content hash mismatch\n")
       (io.panic "inspect error formatting failed"))))
+
+(cfg
+  test
+  (test
+    tlci-inspect-v2-spmd-callables
+    (let
+      [image : TlciImage
+        (tlci-make-image
+          tlci-host-arch-x86-64
+          tlci-callback-abi-version
+          "inspect-v2-test"
+          (tlci-test-v2-metadata)
+          (tlci-empty-bytes)
+          (tlci-empty-bytes)
+          (tlci-empty-bytes)
+          (tlci-empty-bytes)
+          (tlci-empty-bytes))]
+      [ok : bool
+        (match (tlci-emit-image image)
+          [(ResultTlciBytes.Err _) false]
+          [(ResultTlciBytes.Ok bytes)
+            (match (tlci-parse-image bytes)
+              [(ResultTlciImage.Err _) false]
+              [(ResultTlciImage.Ok parsed)
+                (let
+                  [rendered : String (tlci-inspect-render bytes parsed)]
+                  [expected : String
+                    (str_cat.str-cat
+                      "spmd-callables:\n"
+                      "  helper: name=demo.alpha signature=(-> i64 i64)\n"
+                      "    specialization: abi=spmd-call-v1 backend=avx512 lanes=8 args=v result=v index-param=0 symbol=__tl_spmd_demo_alpha_v8\n"
+                      "    specialization: abi=spmd-call-v1 backend=scalar lanes=1 args=v result=v index-param=0 symbol=__tl_spmd_demo_alpha_scalar\n"
+                      "  helper: name=demo.beta signature=(-> i64 i64)\n"
+                      "    specialization: abi=spmd-call-future backend=future lanes=4 args=u result=u index-param=-1 symbol=__tl_spmd_demo_beta_future\n")]
+                  (string.contains (& rendered) (& expected)))])])]
+      (unless ok (io.panic "inspect v2 SPMD callable rendering failed")))))
 
 (define (tlci-inspect-run-from [idx : i64] [count : i64]) : i64
   (if (not (= count (+ idx 1)))

@@ -9379,6 +9379,8 @@
     (CompilerIrValue.Var 1)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -9394,6 +9396,8 @@
     (CompilerIrValue.Var 1)
     4
     (AstType.F64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -9408,6 +9412,8 @@
     (CompilerIrValue.Var 1)
     8
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -9423,6 +9429,8 @@
     (CompilerIrValue.Var 1)
     8
     (AstType.F64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -9438,6 +9446,8 @@
       (CompilerIrValue.Var 1)
       4
       (AstType.I64)
+      ""
+      ""
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok asm)
         (and
@@ -9453,6 +9463,8 @@
       (CompilerIrValue.Var 1)
       4
       (AstType.F64)
+      ""
+      ""
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok asm)
         (and
@@ -9467,6 +9479,8 @@
       (CompilerIrValue.Var 1)
       8
       (AstType.I64)
+      ""
+      ""
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok asm)
         (and
@@ -9479,6 +9493,8 @@
       (CompilerIrValue.Var 1)
       8
       (AstType.F64)
+      ""
+      ""
       (compiler-diagnostic-at-start "" ""))
       [(ResultCompilerBackend.Ok asm)
         (and
@@ -9585,6 +9601,8 @@
     (CompilerIrValue.Var 3)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -9603,6 +9621,8 @@
     (CompilerIrValue.Var 3)
     8
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -10527,6 +10547,8 @@
     (CompilerIrValue.Var 0)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -10550,6 +10572,8 @@
     (CompilerIrValue.Var 0)
     4
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -10572,6 +10596,8 @@
     (CompilerIrValue.Var 0)
     8
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -10596,6 +10622,8 @@
     (CompilerIrValue.Var 0)
     8
     (AstType.I64)
+    ""
+    ""
     (compiler-diagnostic-at-start "" ""))
     [(ResultCompilerBackend.Ok asm)
       (and
@@ -21198,6 +21226,47 @@
       (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Register "%r10"))
       CompilerRegAssignmentList.Nil)))
 
+(define (compiler-backend-scratch-vreg-splat-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.Splat 1 (CompilerIrValue.Var 0) 4 (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-reduce-test-blocks) : CompilerIrBlockList
+  (compiler-ir-block-cons
+    (compiler-ir-block
+      "entry"
+      (compiler-ir-instr-cons
+        (CompilerIrInstr.VectorReduce
+          1
+          (CompilerIrVectorReduceOp.Sum)
+          (CompilerIrValue.Var 0)
+          4
+          (AstType.I64))
+        CompilerIrInstrList.Nil))
+    CompilerIrBlockList.Nil))
+
+(define (compiler-backend-scratch-vreg-splat-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%r8"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%vec6"))
+      CompilerRegAssignmentList.Nil)))
+
+(define (compiler-backend-scratch-vreg-reduce-test-assignments) : CompilerRegAssignmentList
+  (compiler-reg-assignment-cons
+    (CompilerRegAssignment.Assignment 0 (CompilerRegLocation.Register "%vec6"))
+    (compiler-reg-assignment-cons
+      (CompilerRegAssignment.Assignment
+        1
+        (CompilerRegLocation.Register "%xmm2"))
+      CompilerRegAssignmentList.Nil)))
+
 (define (compiler-backend-scratch-vreg-aggregate-test-blocks) : CompilerIrBlockList
   (compiler-ir-block-cons
     (compiler-ir-block
@@ -21853,6 +21922,165 @@
         (string.eq (compiler-backend-scratch-test-register result 0) "")))
     true))
 
+(define (compiler-backend-scratch-vreg-simd-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [splat-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-splat-test-blocks)]
+      [splat : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_splat"
+          splat-blocks
+          2
+          (compiler-backend-scratch-vreg-splat-test-assignments))]
+      [splat-dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_splat_dense"
+          (compiler-ir-block-list-compact splat-blocks)
+          2
+          (compiler-backend-scratch-vreg-splat-test-assignments))]
+      [reduce-blocks : CompilerIrBlockList
+        (compiler-backend-scratch-vreg-reduce-test-blocks)]
+      [reduce : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_reduce"
+          reduce-blocks
+          2
+          (compiler-backend-scratch-vreg-reduce-test-assignments))]
+      [reduce-dense : CompilerRegScratchPlanResult
+        (compiler-backend-scratch-test-result
+          "scratch_vreg_reduce_dense"
+          (compiler-ir-block-list-compact reduce-blocks)
+          2
+          (compiler-backend-scratch-vreg-reduce-test-assignments))]
+      [splat-gp : String (compiler-backend-scratch-test-register splat 0)]
+      [splat-xmm : String (compiler-backend-scratch-test-register splat 1)]
+      [reduce-acc : String (compiler-backend-scratch-test-register reduce 0)]
+      [reduce-temp : String (compiler-backend-scratch-test-register reduce 1)]
+      (and
+        (= (compiler-backend-scratch-test-plan-count splat) 2)
+        (= (compiler-backend-scratch-test-success-count splat) 2)
+        (not (string.eq splat-gp ""))
+        (not (string.eq splat-xmm ""))
+        (not (string.eq splat-gp "%r8"))
+        (not (= (compiler-reg-xmm-family-index splat-xmm) 6))
+        (string.eq
+          splat-gp
+          (compiler-backend-scratch-test-register splat-dense 0))
+        (string.eq
+          splat-xmm
+          (compiler-backend-scratch-test-register splat-dense 1))
+        (= (compiler-backend-scratch-test-plan-count reduce) 2)
+        (= (compiler-backend-scratch-test-success-count reduce) 2)
+        (not (string.eq reduce-acc ""))
+        (not (string.eq reduce-temp ""))
+        (not (string.eq reduce-acc reduce-temp))
+        (not (= (compiler-reg-xmm-family-index reduce-acc) 2))
+        (not (= (compiler-reg-xmm-family-index reduce-acc) 6))
+        (not (= (compiler-reg-xmm-family-index reduce-temp) 2))
+        (not (= (compiler-reg-xmm-family-index reduce-temp) 6))
+        (string.eq
+          reduce-acc
+          (compiler-backend-scratch-test-register reduce-dense 0))
+        (string.eq
+          reduce-temp
+          (compiler-backend-scratch-test-register reduce-dense 1))
+        (match splat
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.SplatValueGp) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.SplatValueXmm) true]
+                [_ false]))])
+        (match reduce
+          [(CompilerRegScratchPlanResult.Result _ plan)
+            (and
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 0) requirement)
+                role)
+                [(CompilerRegScratchRole.VectorReduceAccumulator) true]
+                [_ false])
+              (match (struct-get
+                (struct-get (array-ref (struct-get plan items) 1) requirement)
+                role)
+                [(CompilerRegScratchRole.VectorReduceScratch) true]
+                [_ false]))])))
+    true))
+
+(define (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?) : bool
+  (cfg
+    scratch-vreg
+    (let
+      [splat-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            0
+            (CompilerRegLocation.Register "%r12"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment
+              1
+              (CompilerRegLocation.Register "%vec6"))
+            CompilerRegAssignmentList.Nil))]
+      [reduce-assignments : CompilerRegAssignmentList
+        (compiler-reg-assignment-cons
+          (CompilerRegAssignment.Assignment
+            0
+            (CompilerRegLocation.Register "%vec6"))
+          (compiler-reg-assignment-cons
+            (CompilerRegAssignment.Assignment 1 (CompilerRegLocation.Spill -16))
+            CompilerRegAssignmentList.Nil))]
+      [diag : CompilerDiagnostic (compiler-diagnostic-at-start "" "")]
+      (match (compiler-backend-emit-vector-splat
+        splat-assignments
+        1
+        (CompilerIrValue.Var 0)
+        4
+        (AstType.I64)
+        "%r14"
+        "%xmm14"
+        diag)
+        [(ResultCompilerBackend.Ok splat)
+          (match (compiler-backend-emit-vector-reduce
+            reduce-assignments
+            1
+            (CompilerIrVectorReduceOp.Sum)
+            (CompilerIrValue.Var 0)
+            4
+            (AstType.I64)
+            "%xmm14"
+            "%xmm15"
+            diag)
+            [(ResultCompilerBackend.Ok avx2)
+              (match (compiler-backend-emit-vector-reduce
+                reduce-assignments
+                1
+                (CompilerIrVectorReduceOp.Sum)
+                (CompilerIrValue.Var 0)
+                8
+                (AstType.I64)
+                "%xmm14"
+                "%xmm15"
+                diag)
+                [(ResultCompilerBackend.Ok avx512)
+                  (and
+                    (compiler-backend-string-contains? splat "%r14")
+                    (compiler-backend-string-contains? splat "%xmm14")
+                    (compiler-backend-string-contains? avx2 "%xmm14")
+                    (compiler-backend-string-contains? avx2 "%xmm15")
+                    (compiler-backend-string-contains? avx512 "%xmm14")
+                    (compiler-backend-string-contains? avx512 "%xmm15"))]
+                [(ResultCompilerBackend.Err _) false])]
+            [(ResultCompilerBackend.Err _) false])]
+        [(ResultCompilerBackend.Err _) false]))
+    true))
+
 (define (compiler-backend-scratch-vreg-constraint-shapes-ok?) : bool
   (cfg
     scratch-vreg
@@ -22352,6 +22580,8 @@
         (compiler-backend-scratch-vreg-bounds-plan-ok?)
         (compiler-backend-scratch-vreg-memory-plan-ok?)
         (compiler-backend-scratch-vreg-tail-target-avoids-callee-saved-ok?)
+        (compiler-backend-scratch-vreg-simd-plan-ok?)
+        (compiler-backend-scratch-vreg-simd-emission-uses-plan-ok?)
         (compiler-backend-scratch-vreg-constraint-shapes-ok?)
         (compiler-backend-scavenge-emergency-respects-exclude-ok?)
         (compiler-backend-scavenge-occupancy-cache-ok?)

@@ -303,11 +303,10 @@
       (ast-node-pool-context-clone-types-only pools)]
     (begin
       (compiler-driver-state-adopt-pools! state retained)
-      ;; Adoption is state-local, but optimizer/backend type reads still cross
-      ;; the documented compatibility boundary through `ty-node-get`. Install
-      ;; the retained pool explicitly before the checked source arena is
-      ;; retired; otherwise those readers keep the soon-to-dangle source pool.
-      (compiler-driver-state-install-pools! state)
+      ;; Optimizer/backend type reads use the explicit retained reader below.
+      ;; Detach only when the active compatibility pool is the retiring source;
+      ;; if another driver state owns it, leave that state's writer pool intact.
+      (compiler-driver-state-detach-active-pools-if-owned! pools)
       ;; Standalone entry points can leave the retiring checked pool active;
       ;; move those to retained storage. Batch entry points instead have a
       ;; distinct caller-owned scratch arena that must remain active through

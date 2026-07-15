@@ -23048,7 +23048,8 @@
     true
     (let
       [ty : AstType
-        (ty-node-get (ast-type-list-get types index (ast-type-id-fallback)))]
+        (ast-node-pool-reader-type-get
+          (ast-type-list-get types index (ast-type-id-fallback)))]
       (if (or
         (compiler-backend-float-type? ty)
         (compiler-backend-group-type? program-index ty)

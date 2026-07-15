@@ -1656,6 +1656,71 @@
               [(ResultCompilerSymbols.Err _) false])]
           [_ false])))))
 
+(define (compiler-driver-state-smoke-retained-type-reads-use-context?) : bool
+  (let
+    [retained : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        2
+        2
+        (arena.tl_arena_make))]
+    [active : AstNodePoolContext
+      (ast-node-pool-context-new-with-capacities-in-arena
+        2
+        2
+        (arena.tl_arena_make))]
+    [retained-inner : i64
+      (ast-node-pool-context-type-push retained (AstType.I8))]
+    [active-inner : i64 (ast-node-pool-context-type-push active (AstType.F64))]
+    [types : AstTypeList
+      (let
+        [items : AstTypeList (ast-type-list-new)]
+        (begin
+          (ast-type-list-push (&mut items) retained-inner)
+          items))]
+    [program-index : CompilerBackendProgramIndex
+      (compiler-backend-program-index-build
+        CompilerIrFunctionList.Nil
+        CompilerIrExternList.Nil)]
+    (begin
+      (ast-node-pool-context-install! active)
+      (let
+        [active-len : i64 (ty-node-pool-len)]
+        (begin
+          (ast-node-pool-reader-use! retained)
+          (let
+            [region-size : i64
+              (opt-load-loc-type-size
+                (AstType.Region "retained" retained-inner))]
+            [consume-size : i64
+              (opt-load-loc-type-size (AstType.Consume retained-inner))]
+            [backend-gp? : bool
+              (compiler-backend-types-all-gp-int?
+                (CompilerBackendTarget.Linux)
+                types
+                false
+                program-index)]
+            (begin
+              (ast-node-pool-reader-clear!)
+              (let
+                [reader-ok? : bool
+                  (and
+                    (= retained-inner active-inner)
+                    (= region-size 1)
+                    (= consume-size 1)
+                    backend-gp?
+                    (= active-len (ty-node-pool-len))
+                    (match (ty-node-get active-inner)
+                      [(AstType.F64) true]
+                      [_ false]))]
+                (begin
+                  (compiler-driver-state-detach-active-pools-if-owned! retained)
+                  (and
+                    reader-ok?
+                    (= active-len (ty-node-pool-len))
+                    (=
+                      (ast-node-pool-base-arena-handle)
+                      (ast-node-pool-context-base-arena active))))))))))))
+
 (define (compiler-driver-state-smoke-lower-expr-reads-use-context?) : bool
   (let
     [state-a : CompilerDriverState (compiler-driver-state-new)]
@@ -2998,6 +3063,9 @@
     (unless
       (compiler-driver-state-smoke-lower-type-reads-use-context?)
       (return 18))
+    (unless
+      (compiler-driver-state-smoke-retained-type-reads-use-context?)
+      (return 39))
     (unless
       (compiler-driver-state-smoke-lower-expr-reads-use-context?)
       (return 22))

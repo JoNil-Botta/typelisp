@@ -24612,7 +24612,7 @@
 ;; across it must therefore keep an ordinary volatile vector home on SysV.
 (define (compiler-reg-vector-gp-clobber-home-function) : CompilerIrFunction
   (CompilerIrFunction.Function
-    "vector_gp_clobber_home"
+    (compiler-ir-test-symbol "vector_gp_clobber_home")
     CompilerIrParamList.Nil
     (AstType.Unit)
     2

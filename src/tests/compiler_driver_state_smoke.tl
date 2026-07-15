@@ -2918,7 +2918,6 @@
                       compiler-driver-pending-frontend-return-arena
                       caller-arena)
                     (= compiler-driver-pending-retired-frontend-arena 0)
-                    (compiler-lower-checked-frontend-interns-prepared?)
                     (not (= compiler-driver-pending-retired-source-arena 0)))]
                 (begin
                   (unless
@@ -2930,13 +2929,10 @@
               (begin
                 (io.print-error "checked lower retirement: lower failed")
                 false)])]
-        [intern-persistent-before : bool
-          (compiler-driver-prepare-lowered-source-retirement!)]
         (begin
           (compiler-driver-retire-lowered-source-arena!)
           (compiler-driver-release-typecheck-caches-after-lower!)
           (compiler-driver-retire-frontend-arena!)
-          (compiler-driver-restore-intern-persistence! intern-persistent-before)
           (compiler-driver-restore-frontend-return-arena!)
           (compiler-driver-state-capture-session-floors! state)
           (compiler-load-session-cache-disable-for-test!)
@@ -2947,8 +2943,7 @@
                 (= (arena.tl_arena_current) caller-arena)
                 (= compiler-driver-pending-retired-source-arena 0)
                 (= compiler-driver-pending-retired-frontend-arena 0)
-                (= compiler-driver-pending-frontend-return-arena 0)
-                (not (compiler-lower-checked-frontend-interns-prepared?)))]
+                (= compiler-driver-pending-frontend-return-arena 0))]
             (begin
               (unless
                 restored?

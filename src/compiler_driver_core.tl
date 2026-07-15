@@ -1737,7 +1737,6 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 
@@ -1802,7 +1801,6 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverBuffer.Err diag))]))
 
@@ -1851,7 +1849,6 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverObject.Err diag))]))
 
@@ -1900,7 +1897,6 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriverPic.Err diag))]))
 
@@ -3390,7 +3386,6 @@
           out))]
     [(ResultCompilerDriverLowered.Err diag)
       (begin
-        (compiler-driver-abort-early-intern-preparation!)
         (compiler-driver-restore-frontend-return-arena!)
         (ResultCompilerDriver.Err diag))]))
 

@@ -4623,7 +4623,7 @@
       (compiler-backend-tail-jump-tail sparse 3 "_tl_xmm_target")]
     [shared-tail : String
       (compiler-backend-return-epilogue
-        "xmm_shared"
+        (ci.intern "xmm_shared")
         sparse
         3
         (compiler-backend-callee-save-double-return-blocks))]
@@ -12144,15 +12144,50 @@
     true
     (CompilerBackendRuntimeTailPlan true true true -1 -1)))
 
+;; Test fixtures start from readable spellings, then exercise only the backend's
+;; ID-native runtime inventory. Production never performs this conversion.
+(define (compiler-backend-test-runtime-name-id [name : String]) : i64
+  (ci.intern name))
+
+(define (compiler-backend-test-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
+  (cond
+    [(string.eq name "tl_memcpy") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_memchr") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_tlci_call_image_entry")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_tlci_call_macro_entry")
+      (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "__chkstk") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "tl_setup_argv") (CompilerBackendRuntimeHelperOwner.Core)]
+    [(string.eq name "_tl_start") (CompilerBackendRuntimeHelperOwner.Core)]
+    [else
+      (compiler-backend-runtime-helper-owner-id
+        (compiler-backend-test-runtime-name-id name))]))
+
+(define (compiler-backend-test-runtime-helper-known? [name : String]) : bool
+  (match (compiler-backend-test-runtime-helper-owner name)
+    [(CompilerBackendRuntimeHelperOwner.Unknown) false]
+    [_ true]))
+
+(define (compiler-backend-test-plan-provides?
+  [plan : CompilerBackendRuntimePlan]
+  [name : String]) : bool
+  (if (string.eq name "tl_tlci_call_macro_entry")
+    (compiler-backend-runtime-tail-tlci-macro-entry?
+      (compiler-backend-runtime-plan-tail plan))
+    (compiler-backend-plan-provides-id?
+      plan
+      (compiler-backend-test-runtime-name-id name))))
+
 (define (compiler-backend-runtime-helper-inventory-symbol-ok?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
-    (compiler-backend-runtime-helper-known? name)
-    (compiler-backend-plan-provides? plan name)))
+    (compiler-backend-test-runtime-helper-known? name)
+    (compiler-backend-test-plan-provides? plan name)))
 
 (define (compiler-backend-runtime-helper-owner-core-ok? [name : String]) : bool
-  (match (compiler-backend-runtime-helper-owner name)
+  (match (compiler-backend-test-runtime-helper-owner name)
     [(CompilerBackendRuntimeHelperOwner.Core) true]
     [_ false]))
 
@@ -12168,7 +12203,7 @@
   [name : String]) : bool
   (and
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
-    (match (compiler-backend-runtime-helper-owner name)
+    (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.StdlibFfi) true]
       [_ false])))
 
@@ -12177,7 +12212,7 @@
   [name : String]) : bool
   (and
     (compiler-backend-runtime-helper-inventory-symbol-ok? plan name)
-    (match (compiler-backend-runtime-helper-owner name)
+    (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.StdlibTypeLisp) true]
       [_ false])))
 
@@ -12185,8 +12220,8 @@
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
-    (compiler-backend-plan-provides? plan name)
-    (match (compiler-backend-runtime-helper-owner name)
+    (compiler-backend-test-plan-provides? plan name)
+    (match (compiler-backend-test-runtime-helper-owner name)
       [(CompilerBackendRuntimeHelperOwner.CompatibilityAlias) true]
       [_ false])))
 
@@ -12197,9 +12232,9 @@
       (compiler-backend-runtime-helper-inventory-core-symbol-ok?
         plan
         "tl_alloc")
-      (not (compiler-backend-runtime-helper-known? "tl_oob_abort"))
-      (not (compiler-backend-runtime-helper-known? "tl_div_abort"))
-      (not (compiler-backend-runtime-helper-known? "tl_shift_abort"))
+      (not (compiler-backend-test-runtime-helper-known? "tl_oob_abort"))
+      (not (compiler-backend-test-runtime-helper-known? "tl_div_abort"))
+      (not (compiler-backend-test-runtime-helper-known? "tl_shift_abort"))
       (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
         plan
         ".L_tl_abort")
@@ -12338,15 +12373,15 @@
     (compiler-backend-runtime-helper-inventory-compat-alias-ok?
       plan
       "tl_env_var_value")
-    (compiler-backend-plan-provides? plan "path-separator")
+    (compiler-backend-test-plan-provides? plan "path-separator")
     true))
 
 (define (compiler-backend-runtime-helper-inventory-retired-symbol-ok?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? name))
-    (not (compiler-backend-plan-provides? plan name))))
+    (not (compiler-backend-test-runtime-helper-known? name))
+    (not (compiler-backend-test-plan-provides? plan name))))
 
 (define (compiler-backend-runtime-helper-inventory-retired-file-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
@@ -12483,27 +12518,28 @@
 (define (compiler-backend-runtime-helper-inventory-negative-ok?
   [plan : CompilerBackendRuntimePlan]) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? "tl_profile_now_ms"))
-    (not (compiler-backend-plan-provides? plan "tl_profile_now_ms"))
-    (not (compiler-backend-runtime-helper-known? "tl_random_system_seed"))
-    (not (compiler-backend-plan-provides? plan "tl_random_system_seed"))
-    (not (compiler-backend-runtime-helper-known? "tl_cpuid_eax"))
-    (not (compiler-backend-plan-provides? plan "tl_cpuid_eax"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_mkdir_status"))
-    (not (compiler-backend-plan-provides? plan ".L_tl_fs_mkdir_status"))))
+    (not (compiler-backend-test-runtime-helper-known? "tl_profile_now_ms"))
+    (not (compiler-backend-test-plan-provides? plan "tl_profile_now_ms"))
+    (not (compiler-backend-test-runtime-helper-known? "tl_random_system_seed"))
+    (not (compiler-backend-test-plan-provides? plan "tl_random_system_seed"))
+    (not (compiler-backend-test-runtime-helper-known? "tl_cpuid_eax"))
+    (not (compiler-backend-test-plan-provides? plan "tl_cpuid_eax"))
+    (not (compiler-backend-test-runtime-helper-known? ".L_tl_fs_mkdir_status"))
+    (not (compiler-backend-test-plan-provides? plan ".L_tl_fs_mkdir_status"))))
 
 (define (compiler-backend-runtime-helper-owner-id-ok?) : bool
   (begin
     (cbi.compiler-builtin-refresh!)
     (let
-      [core-id : i64 (compiler-backend-runtime-name-id "tl_alloc")]
+      [core-id : i64 (compiler-backend-test-runtime-name-id "tl_alloc")]
       [profile-id : i64
-        (compiler-backend-runtime-name-id "tl_profile_alloc_total")]
-      [stdlib-id : i64 (compiler-backend-runtime-name-id "tl_string_concat")]
+        (compiler-backend-test-runtime-name-id "tl_profile_alloc_total")]
+      [stdlib-id : i64
+        (compiler-backend-test-runtime-name-id "tl_string_concat")]
       [atomic-id : i64
-        (compiler-backend-runtime-name-id "tl_atomic_i64_cas_ptr")]
-      [compat-id : i64 (compiler-backend-runtime-name-id "path-separator")]
-      [retired-id : i64 (compiler-backend-runtime-name-id "tl_oob_abort")]
+        (compiler-backend-test-runtime-name-id "tl_atomic_i64_cas_ptr")]
+      [compat-id : i64 (compiler-backend-test-runtime-name-id "path-separator")]
+      [retired-id : i64 (compiler-backend-test-runtime-name-id "tl_oob_abort")]
       (and
         (backend-and4
           (compiler-backend-runtime-helper-core-id? core-id)
@@ -12515,11 +12551,6 @@
         (cbi.compiler-builtin-backend-runtime-concat-id? stdlib-id)
         (cbi.compiler-builtin-backend-runtime-profile-id? profile-id)))))
 
-(define (compiler-backend-intern-missing? [name : String]) : bool
-  (match (ci.intern-lookup name)
-    [(InternLookupMissing) true]
-    [(InternLookupFound _) false]))
-
 (define (compiler-backend-runtime-plan-id-lookup-only-ok?) : bool
   (let
     [plan : CompilerBackendRuntimePlan
@@ -12528,19 +12559,24 @@
       (cbi.compiler-builtin-refresh!)
       (let
         [generation : i64 (ci.intern-generation)]
-        [unknown : String "tl_issue_2464_unknown_runtime_probe"]
+        [unknown-id : i64
+          (ci.intern-generated-name "tl_issue_2464_unknown_runtime_probe")]
         (and
-          (compiler-backend-intern-missing? unknown)
-          (compiler-backend-plan-provides? plan "tl_alloc")
-          (compiler-backend-plan-provides? plan "tl_profile_alloc_total")
-          (compiler-backend-plan-provides? plan "path-separator")
-          (not (compiler-backend-runtime-helper-known? unknown))
-          (match (compiler-backend-runtime-helper-owner unknown)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-tl-alloc)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-tl-profile-alloc-total)
+          (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-env-path-separator)
+          (not (compiler-backend-runtime-helper-known-id? unknown-id))
+          (match (compiler-backend-runtime-helper-owner-id unknown-id)
             [(CompilerBackendRuntimeHelperOwner.Unknown) true]
             [_ false])
-          (not (compiler-backend-plan-provides? plan unknown))
-          (= (ci.intern-generation) generation)
-          (compiler-backend-intern-missing? unknown))))))
+          (not (compiler-backend-plan-provides-id? plan unknown-id))
+          (= (ci.intern-generation) generation))))))
 
 (define (compiler-backend-region-extern-runtime-plan-ok?) : bool
   (let
@@ -12561,8 +12597,8 @@
       externs)
       [(ResultBackendRuntimePlan.Ok plan)
         (and
-          (compiler-backend-plan-provides? plan "tl_region_mark")
-          (compiler-backend-plan-provides? plan "tl_region_reset"))]
+          (compiler-backend-test-plan-provides? plan "tl_region_mark")
+          (compiler-backend-test-plan-provides? plan "tl_region_reset"))]
       [(ResultBackendRuntimePlan.Err _) false])))
 
 (define (compiler-backend-runtime-helper-inventory-ok?) : bool
@@ -16464,14 +16500,17 @@
 
 (define (compiler-backend-fs-read-dir-runtime-removed-ok?) : bool
   (and
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir_status"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_read_dir"))))
+    (not
+      (compiler-backend-test-runtime-helper-known? ".L_tl_fs_read_dir_status"))
+    (not (compiler-backend-test-runtime-helper-known? ".L_tl_fs_read_dir"))))
 
 (define (compiler-backend-fs-metadata-runtime-removed-ok?) : bool
   (backend-and4
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_kind_status"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_size_status"))
-    (not (compiler-backend-runtime-helper-known? ".L_tl_fs_file_size"))
+    (not
+      (compiler-backend-test-runtime-helper-known? ".L_tl_fs_file_kind_status"))
+    (not
+      (compiler-backend-test-runtime-helper-known? ".L_tl_fs_file_size_status"))
+    (not (compiler-backend-test-runtime-helper-known? ".L_tl_fs_file_size"))
     true))
 
 (define (compiler-backend-windows-private-fs-no-crt? [asm : String]) : bool

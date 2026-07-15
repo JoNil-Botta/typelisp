@@ -8546,31 +8546,8 @@
 (define (compiler-backend-closure-entry-label [name : String]) : String
   (string.append ".L_tl_fn_entry_" (compiler-backend-asm-safe-symbol name)))
 
-(define (compiler-backend-runtime-user-symbol? [name : String]) : bool
-  (let
-    [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-    (and
-      (>= name-id 0)
-      (cbi.compiler-builtin-backend-env-path-separator-id? name-id))))
-
 (define (compiler-backend-runtime-user-symbol-id? [name-id : i64]) : bool
   (cbi.compiler-builtin-backend-env-path-separator-id? name-id))
-
-(define (compiler-backend-fixed-fault-symbol? [name : String]) : bool
-  (or
-    (let
-      [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-      (and
-        (>= name-id 0)
-        (cbi.compiler-builtin-backend-fixed-fault-id? name-id)))
-    ;; Primitive copy/search helpers and the tlci raw-entry bridge are emitted
-    ;; unconditionally; calls to them use raw symbols, not user-mangled _tl_
-    ;; names. Main's intern-id fault set does not include them, so keep explicit
-    ;; checks.
-    (string.eq name "tl_memcpy")
-    (string.eq name "tl_memchr")
-    (string.eq name "tl_tlci_call_image_entry")
-    (string.eq name "tl_tlci_call_macro_entry")))
 
 (define (compiler-backend-fixed-fault-symbol-id? [name-id : i64]) : bool
   (or
@@ -8582,13 +8559,6 @@
         (string.eq name "tl_memchr")
         (string.eq name "tl_tlci_call_image_entry")
         (string.eq name "tl_tlci_call_macro_entry")))))
-
-(define (compiler-backend-call-raw-symbol?
-  [plan : CompilerBackendRuntimePlan]
-  [name : String]) : bool
-  (or
-    (compiler-backend-plan-provides? plan name)
-    (compiler-backend-fixed-fault-symbol? name)))
 
 (define (compiler-backend-call-raw-symbol-id?
   [plan : CompilerBackendRuntimePlan]
@@ -45503,28 +45473,6 @@
       externs)
     functions))
 
-;; Runtime helper ownership inventory. This is the backend's checked-in
-;; boundary table for helper names accepted by `compiler-backend-plan-provides?`.
-;; New runtime-plan symbols must be classified here before the plan can provide
-;; them.
-;; Every runtime-helper name below begins with 't' (tl_...), '.' (.L_tl_...), or
-;; 'e' (env-...). The overwhelming majority of queried names are ordinary
-;; compiler/user symbols that match none, so a single first-byte test lets them
-;; bail before the dozen+ non-short-circuiting string.eq comparisons run.
-(define (compiler-backend-runtime-helper-name-plausible? [name : String]) : bool
-  (if (= (string.string-length name) 0)
-    false
-    (let
-      [c : char (string.string-ref name 0)]
-      (or (string.char-eq c 't') (string.char-eq c '.') (string.char-eq c 'e')))))
-
-(define (compiler-backend-runtime-helper-name-id [name : String]) : i64
-  (if (not (compiler-backend-runtime-helper-name-plausible? name))
-    -1
-    (begin
-      (cbi.compiler-builtin-refresh!)
-      (compiler-backend-runtime-name-id name))))
-
 (define (compiler-backend-runtime-helper-core-id? [name-id : i64]) : bool
   ;; The allocator/arena/TLS substrate is irreducible backend core runtime.
   ;; It bootstraps ordinary TypeLisp allocation, owns the
@@ -45560,19 +45508,6 @@
 (define (compiler-backend-runtime-helper-deprecated-id? [_name-id : i64]) : bool
   false)
 
-(define (compiler-backend-runtime-helper-static-owner [name : String]) : CompilerBackendRuntimeHelperOwner
-  (cond
-    [(string.eq name "tl_memcpy") (CompilerBackendRuntimeHelperOwner.Core)]
-    [(string.eq name "tl_memchr") (CompilerBackendRuntimeHelperOwner.Core)]
-    [(string.eq name "tl_tlci_call_image_entry")
-      (CompilerBackendRuntimeHelperOwner.Core)]
-    [(string.eq name "tl_tlci_call_macro_entry")
-      (CompilerBackendRuntimeHelperOwner.Core)]
-    [(string.eq name "__chkstk") (CompilerBackendRuntimeHelperOwner.Core)]
-    [(string.eq name "tl_setup_argv") (CompilerBackendRuntimeHelperOwner.Core)]
-    [(string.eq name "_tl_start") (CompilerBackendRuntimeHelperOwner.Core)]
-    [else (CompilerBackendRuntimeHelperOwner.Unknown)]))
-
 (define (compiler-backend-runtime-helper-owner-id [name-id : i64]) : CompilerBackendRuntimeHelperOwner
   (cond
     [(compiler-backend-runtime-helper-core-id? name-id)
@@ -45587,26 +45522,8 @@
       (CompilerBackendRuntimeHelperOwner.Deprecated)]
     [else (CompilerBackendRuntimeHelperOwner.Unknown)]))
 
-(define (compiler-backend-runtime-helper-owner [name : String]) : CompilerBackendRuntimeHelperOwner
-  (let
-    [owner : CompilerBackendRuntimeHelperOwner
-      (compiler-backend-runtime-helper-static-owner name)]
-    (match owner
-      [(CompilerBackendRuntimeHelperOwner.Unknown)
-        (let
-          [name-id : i64 (compiler-backend-runtime-helper-name-id name)]
-          (if (>= name-id 0)
-            (compiler-backend-runtime-helper-owner-id name-id)
-            (CompilerBackendRuntimeHelperOwner.Unknown)))]
-      [_ owner])))
-
 (define (compiler-backend-runtime-helper-known-id? [name-id : i64]) : bool
   (match (compiler-backend-runtime-helper-owner-id name-id)
-    [(CompilerBackendRuntimeHelperOwner.Unknown) false]
-    [_ true]))
-
-(define (compiler-backend-runtime-helper-known? [name : String]) : bool
-  (match (compiler-backend-runtime-helper-owner name)
     [(CompilerBackendRuntimeHelperOwner.Unknown) false]
     [_ true]))
 
@@ -45664,11 +45581,6 @@
         cbi.compiler-builtin-id-tl-string-concat5))
     false))
 
-(define (compiler-backend-runtime-name-id [name : String]) : i64
-  (match (ci.intern-lookup name)
-    [(InternLookupFound name-id) name-id]
-    [(InternLookupMissing) -1]))
-
 (define (compiler-backend-plan-provides-tail-id?
   [name-id : i64]
   [read-bytes : bool]
@@ -45695,20 +45607,6 @@
 ;; First-class arena runtime helpers and the arena poison debug toggle
 ;; are always emitted, so they are provided runtime symbols (resolve to
 ;; their raw names, not the mangled `_tl_tl_arena_*`).
-(define (compiler-backend-plan-provides?
-  [plan : CompilerBackendRuntimePlan]
-  [name : String]) : bool
-  (if (string.eq name "tl_tlci_call_macro_entry")
-    (compiler-backend-runtime-tail-tlci-macro-entry?
-      (compiler-backend-runtime-plan-tail plan))
-    (begin
-      (cbi.compiler-builtin-refresh!)
-      (let
-        [name-id : i64 (compiler-backend-runtime-name-id name)]
-        (if (>= name-id 0)
-          (compiler-backend-plan-provides-id? plan name-id)
-          false)))))
-
 (define (compiler-backend-plan-provides-id?
   [plan : CompilerBackendRuntimePlan]
   [name-id : i64]) : bool
@@ -49092,36 +48990,52 @@ tl_tlci_call_macro_entry:
 (define (compiler-backend-runtime-externs-for-target
   [target : CompilerBackendTarget]
   [plan : CompilerBackendRuntimePlan]) : String
-  (if (compiler-backend-target-windows? target)
-    (let
-      [needs-write-exit : bool
-        (or
-          (compiler-backend-plan-provides? plan "tl_alloc")
-          (compiler-backend-plan-provides? plan "tl_oob_abort")
-          (compiler-backend-plan-provides? plan ".L_tl_abort")
-          (compiler-backend-plan-provides? plan "tl_div_abort")
-          (compiler-backend-plan-provides? plan "tl_shift_abort")
-          (compiler-backend-plan-provides? plan "tl_region_reset"))]
-      [needs-get-std-handle : bool needs-write-exit]
-      (str_cat.str-cat
-        "    .extern VirtualAlloc
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (if (compiler-backend-target-windows? target)
+      (let
+        [needs-write-exit : bool
+          (or
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-alloc)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-oob-abort)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-abort-label)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-div-abort)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-shift-abort)
+            (compiler-backend-plan-provides-id?
+              plan
+              cbi.compiler-builtin-id-tl-region-reset))]
+        [needs-get-std-handle : bool needs-write-exit]
+        (str_cat.str-cat
+          "    .extern VirtualAlloc
     .extern VirtualFree
     .extern GetLastError
     .extern ExitProcess
 "
-        (if needs-write-exit
-          "    .extern WriteFile
+          (if needs-write-exit
+            "    .extern WriteFile
 "
-          "")
-        (if needs-get-std-handle
-          "    .extern GetStdHandle
+            "")
+          (if needs-get-std-handle
+            "    .extern GetStdHandle
 "
-          "")
-        (if (compiler-backend-plan-provides? plan "tl_print_f64")
-          "    .extern _snprintf
+            "")
+          (if (compiler-backend-plan-provides-id?
+            plan
+            cbi.compiler-builtin-id-tl-print-f64)
+            "    .extern _snprintf
 "
-          "")))
-    ""))
+            "")))
+      "")))
 
 ;; Emit a full program for `target`. Windows x64 has ABI-correct user function
 ;; entry/calls and target-specific runtime helpers.
@@ -51897,12 +51811,45 @@ tl_tlci_call_macro_entry:
 (define (compiler-backend-object-runtime-symbol-provided?
   [plan : CompilerBackendRuntimePlan]
   [name : String]) : bool
-  (or
-    (compiler-backend-plan-provides? plan name)
-    (string.eq name "tl_alloc")
-    (string.eq name "tl_memcpy")
-    (string.eq name "tl_memchr")
-    (string.eq name "tl_tlci_call_image_entry")))
+  (begin
+    (cbi.compiler-builtin-refresh!)
+    (cond
+      [(string.eq name "tl_alloc") true]
+      [(string.eq name "tl_memcpy") true]
+      [(string.eq name "tl_memchr") true]
+      [(string.eq name "tl_tlci_call_image_entry") true]
+      [(string.eq name "tl_tlci_call_macro_entry")
+        (compiler-backend-runtime-tail-tlci-macro-entry?
+          (compiler-backend-runtime-plan-tail plan))]
+      [(string.eq name "tl_shift_abort")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-shift-abort)]
+      [(string.eq name "tl_div_abort")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-div-abort)]
+      [(string.eq name "tl_region_reset")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-region-reset)]
+      [(string.eq name "tl_region_mark")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-region-mark)]
+      [(string.eq name "tl_arena_make_atomic")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-make-atomic)]
+      [(string.eq name "tl_arena_set")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-set)]
+      [(string.eq name "tl_arena_current")
+        (compiler-backend-plan-provides-id?
+          plan
+          cbi.compiler-builtin-id-tl-arena-current)]
+      [else false])))
 
 (define (compiler-backend-object-runtime-symbol-provided-id?
   [plan : CompilerBackendRuntimePlan]

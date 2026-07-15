@@ -27,7 +27,6 @@ awk -F '\t' '
 BEGIN {
     header = "schema\tcase\tmode\ttypelisp_status\ttypelisp_diagnostic\tispc_status\tispc_diagnostic\tispc_target\tgang_width\tlane_type\ttypelisp_source\ttypelisp_symbol\tispc_source\tispc_symbol\tdriver\targuments\trepetitions\texpected_exit\tupstream_tag\tupstream_commit\tupstream_path\tupstream_function\tlicense"
     scalar_diag = "ISPC v1.31.0 has no width-1 CPU target; smallest generic target is generic-i32x4"
-    avx2_diag = "lower: SPMD varying while is not supported in AVX2 backend mode; use scalar or avx512"
     args = "x0:f32;y0:f32;x1:f32;y1:f32;width:i32;height:i32;maxIterations:i32;output:i32[]"
     commit = "c6adb4f86f5678ce6c41951b1e2b59f727455697"
 }
@@ -42,7 +41,7 @@ NR == 1 { if ($0 != header) exit 1; next }
         $22 != "mandelbrot_ispc" || $23 != "BSD-3-Clause") exit 1
     if ($3 == "scalar" && ($4 != "supported" || $5 != "" ||
         $6 != "unsupported" || $7 != scalar_diag || $8 != "none" || $9 != "1")) exit 1
-    if ($3 == "avx2" && ($4 != "unsupported" || $5 != avx2_diag ||
+    if ($3 == "avx2" && ($4 != "supported" || $5 != "" ||
         $6 != "supported" || $7 != "" || $8 != "avx2-i32x8" || $9 != "8")) exit 1
     if ($3 == "avx512" && ($4 != "supported" || $5 != "" ||
         $6 != "supported" || $7 != "" || $8 != "avx512skx-x16" || $9 != "16")) exit 1
@@ -151,6 +150,15 @@ compile_typelisp() {
             exit 1
         }
     fi
+    if [ "$_mode" = avx2 ]; then
+        grep -q 'vmulps' "$_asm" && grep -q 'vsubps' "$_asm" &&
+            grep -q 'vcmpps' "$_asm" && grep -q 'vpmovmskb' "$_asm" &&
+            grep -q 'vpand' "$_asm" &&
+            ! grep -Eq '%k[0-7]|%zmm[0-9]+' "$_asm" || {
+            echo "mandelbrot: AVX2 assembly lacks recurrence/mask shape or uses AVX-512 registers" >&2
+            exit 1
+        }
+    fi
     if [ "$_mode" = avx512 ] && ! has_isa avx512; then
         echo "mandelbrot TypeLisp avx512 execution skipped (host lacks F+BW+DQ; compile shape passed)"
         return
@@ -171,21 +179,7 @@ compile_typelisp() {
 }
 
 compile_typelisp scalar
-
-set +e
-"$COMPILER" compile "$CASE_DIR/bench.tl" --backend-mode avx2 --opt-level 2 \
-    --stdlib-root "$ROOT/stdlib" -o "$WORKDIR/typelisp-avx2.s" \
-    > "$WORKDIR/typelisp-avx2.stdout" 2> "$WORKDIR/typelisp-avx2.stderr"
-avx2_status=$?
-set -e
-avx2_diag='lower: SPMD varying while is not supported in AVX2 backend mode; use scalar or avx512'
-if [ "$avx2_status" -eq 0 ] || ! grep -F "$avx2_diag" "$WORKDIR/typelisp-avx2.stderr" >/dev/null; then
-    echo "mandelbrot: TypeLisp AVX2 diagnostic mismatch" >&2
-    sed 's/^/  /' "$WORKDIR/typelisp-avx2.stderr" >&2 || true
-    exit 1
-fi
-echo "mandelbrot TypeLisp avx2 expected diagnostic passed"
-
+compile_typelisp avx2
 compile_typelisp avx512
 
 ISPC=${ISPC_BIN:-}

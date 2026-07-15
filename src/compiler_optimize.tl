@@ -6668,16 +6668,34 @@
   (Some CompilerIrBlock))
 
 (define (opt-cfg-find-block [blocks : CompilerIrBlockList] [label : String]) : OptMaybeBlock
-  (match blocks
-    [(CompilerIrBlockList.Nil) (OptMaybeBlock.No)]
-    [(CompilerIrBlockList.Cons block rest)
-      (match block
-        [(CompilerIrBlock.Block block-label _)
-          (if (string.eq block-label label)
-            (OptMaybeBlock.Some block)
-            (opt-cfg-find-block (box-get rest) label))])]
-    [(CompilerIrBlockList.Array seq)
-      (opt-cfg-find-block (compiler-ir-block-seq-to-list seq) label)]))
+  (let
+    [cursor : CompilerIrBlockList blocks]
+    (begin
+      (while true
+        (match cursor
+          [(CompilerIrBlockList.Nil) (return (OptMaybeBlock.No))]
+          [(CompilerIrBlockList.Cons block rest)
+            (match block
+              [(CompilerIrBlock.Block block-label _)
+                (if (string.eq block-label label)
+                  (return (OptMaybeBlock.Some block))
+                  (set! cursor (box-get rest)))])]
+          [(CompilerIrBlockList.Array seq)
+            (let
+              [index : i64 0]
+              [count : i64 (compiler-ir-block-seq-count seq)]
+              (begin
+                (while (< index count)
+                  (let
+                    [block : CompilerIrBlock
+                      (compiler-ir-block-seq-ref seq index)]
+                    (match block
+                      [(CompilerIrBlock.Block block-label _)
+                        (if (string.eq block-label label)
+                          (return (OptMaybeBlock.Some block))
+                          (set! index (+ index 1)))])))
+                (return (OptMaybeBlock.No))))]))
+      (OptMaybeBlock.No))))
 
 (define (opt-cfg-block-exists? [blocks : CompilerIrBlockList] [label : String]) : bool
   (match (opt-cfg-find-block blocks label)

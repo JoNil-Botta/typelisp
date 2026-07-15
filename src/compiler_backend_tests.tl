@@ -12369,8 +12369,8 @@
           (compiler-backend-string-count
             asm
             "    movq $11, %rax\n    syscall\n")
-          4)
-        (= (compiler-backend-string-count asm "    syscall\n") 13)
+          5)
+        (= (compiler-backend-string-count asm "    syscall\n") 14)
         (=
           (compiler-backend-string-count
             asm
@@ -12404,7 +12404,7 @@
           (= (compiler-backend-string-count asm "    call VirtualAlloc\n") 9)
           (= (compiler-backend-string-count asm "    call GetLastError\n") 9))
         (and
-          (= (compiler-backend-string-count asm "    call VirtualFree\n") 8)
+          (= (compiler-backend-string-count asm "    call VirtualFree\n") 10)
           (=
             (compiler-backend-string-count
               asm
@@ -12417,6 +12417,10 @@
       (compiler-backend-string-contains? asm ".L_tl_alloc_win_commit_to:\n")
       (compiler-backend-string-contains? asm "    movq $0x2000, %r8\n")
       (compiler-backend-string-contains? asm "    movq $0x1000, %r8\n")
+      (compiler-backend-string-contains? asm "    movq $0x4000, %r8\n")
+      (compiler-backend-string-contains?
+        asm
+        "tl_arena_poison_enable:\n    movq $1, .L_tl_arena_poison_enabled(%rip)\n")
       (compiler-backend-string-contains? asm "    cmpq 64(%r8), %r10\n")
       (compiler-backend-string-contains? asm "    movq %gs:0x28, %r8\n")
       (not (compiler-backend-string-contains? asm "    call _write\n"))

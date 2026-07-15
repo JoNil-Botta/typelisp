@@ -4264,9 +4264,9 @@ Rules:
 - The first item in each variant pair is an ISA name: `scalar`, `avx2`, or
   `avx512`. `scalar` is required and is the fallback on every target; `avx2`
   and `avx512` are optional; unknown ISA names are rejected. The `avx512`
-  dispatch path requires AVX-512 Foundation, AVX-512BW, and the OS
+  dispatch path requires AVX-512 Foundation, AVX-512BW, AVX-512DQ, and the OS
   ZMM/opmask state needed to execute it, because `avx512` variants may emit
-  byte-lane BW instructions.
+  byte-lane BW instructions and DQ `vpmullq` for `i64`/`u64` multiplication.
 - Variant item order is not semantic. The resolver always prefers the best
   runnable listed variant in this order: `avx512`, then `avx2`, then
   `scalar`.
@@ -4288,7 +4288,7 @@ Rules:
   implementation may instead resolve at program startup if that has the same
   observable behavior.
 - Selection may use the same CPUID/XGETBV capability checks exposed by
-  `stdlib/cpu.tl` (`runs-avx2?`, `runs-avx512bw?`), but user code does not
+  `stdlib/cpu.tl` (`runs-avx2?`, `runs-avx512?`), but user code does not
   need to import `stdlib/cpu.tl` to use a dispatched function. Variant
   selection runs no user variant body and performs no user-visible I/O; it
   may read CPU/OS capability state and update hidden dispatch-cache storage.

@@ -473,9 +473,7 @@ COUNTER="$WORKDIR/bin/counter"
     --target linux-x86_64 --opt-level 2 --stdlib-root stdlib --stdlib-root src >/dev/null
 
 ISAS=$(sh scripts/detect-simd-isa.sh)
-if ! printf '%s\n' "$ISAS" | grep -qx avx512f ||
-   ! printf '%s\n' "$ISAS" | grep -qx avx512bw ||
-   ! grep -qw avx512dq /proc/cpuinfo; then
+if ! printf '%s\n' "$ISAS" | grep -qx avx512; then
     echo "[spmd-avx512-ir] skip: runnable AVX-512F+BW+DQ is required"
     exit 0
 fi
@@ -507,7 +505,7 @@ else
     GIT_HEAD=unknown
 fi
 KERNEL=$(uname -r); OS=$(uname -s)
-ISA_TOKENS=$(printf '%s\navx512dq\n' "$ISAS" | awk 'NF && !seen[$0]++' | tr '\n' ',' | sed 's/,$//')
+ISA_TOKENS=$(printf '%s\n' "$ISAS" | awk 'NF && !seen[$0]++' | tr '\n' ',' | sed 's/,$//')
 PARANOID=$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo unknown)
 
 METADATA="$WORKDIR/metadata.tsv"; FINGERPRINT_INPUT="$WORKDIR/fingerprint-input.tsv"

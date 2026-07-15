@@ -569,13 +569,16 @@
 ;; The pool is process-global and reset per compile (see ast-node-pool-reset!),
 ;; reusing one backing array; AstNodeId values stay valid because the pool only
 ;; grows within a compile (callers truncate via ast-node-pool-mark/reset on parse
-;; error). The initial capacity is sized large
-;; enough for selfhost-sized programs to avoid persistent growth arrays.
+;; error). The process-global pool is only the compatibility fallback: compiler
+;; and lint drivers install state-owned pools sized for their workloads before
+;; parsing. Keep enough room for direct parser/typechecker smoke users without
+;; permanently paying for a second selfhost-sized backing array. The fallback
+;; retains the proven grow path for larger legacy callers.
 ;; Two flat globals (array + count) rather than a reassigned struct: the hot
 ;; push/get paths are inlined everywhere, and a global-struct reassign in that
 ;; hot path tripped an opt2 miscompile. Plain mutable globals keep codegen simple.
 (define ast-node-pool-slots : (Array AstExpr)
-  (array.make-array AstExpr 3145728))
+  (array.make-array AstExpr 65536))
 
 ;; The program (base) arena, captured at global-init while it is the
 ;; active arena (the pool make-array above proves an allocation has happened, so
@@ -824,14 +827,13 @@
 ;; AstType's recursive children are stored as i64 ids into this pool instead of
 ;; (Box AstType), mirroring the AstExpr pool above. The pool is PERSISTENT for a
 ;; compile (types live for the whole compile, never per-form like the spanned
-;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). The pool is
-;; pre-sized for real inputs and fails closed when exhausted because global array
-;; reassignment in this hot path has triggered opt2 miscompiles.
-;; With hash-consed pushes (below) the unique-node count for a cli.tl
-;; sized program is a tiny fraction of the duplicated-node count, so the
-;; pool starts small; the proven grow path remains as backstop.
+;; pool); ty-node-pool-reset! clears it between compiles (REPL/LSP). The
+;; process-global compatibility fallback is deliberately modest: normal compile
+;; and lint entry points install state-owned pools before parsing. With
+;; hash-consed pushes (below), 32K slots also cover direct smoke callers while
+;; the proven grow path remains as a backstop.
 (define ty-node-pool-slots : (Array AstType)
-  (array.make-array AstType 262144))
+  (array.make-array AstType 32768))
 (define ty-node-pool-count : i64
   0)
 (define ty-node-pool-exhausted : bool
@@ -1272,9 +1274,9 @@
 ;; compare would dedup nondeterministically and break the stage2 == stage3
 ;; fixpoint. String payloads (lifetime names) compare by content.
 (define ty-node-dedup-capacity : i64
-  1048576)
+  65536)
 (define ty-node-dedup-slots : (Array i64)
-  (array.make-array i64 1048576))
+  (array.make-array i64 65536))
 (define ty-node-dedup-count : i64
   0)
 
@@ -6234,6 +6236,11 @@
   (begin
     (ast-node-pool-context-reset-to! dest-pools 0 0)
     (let
+      [prev-arena : i64 (arena.tl_arena_current)]
+      [map-arena : i64 (arena.tl_arena_make)]
+      [_set-map-arena : unit
+        (unsafe
+          (arena.tl_arena_set map-arena))]
       [expr-map : (Array i64)
         (ast-compaction-id-map-create
           (ast-node-pool-context-expr-len source-pools))]
@@ -6242,7 +6249,6 @@
           (ast-node-pool-context-type-len source-pools))]
       [remap : AstProgramCompactionRemap
         (AstProgramCompactionRemap source-pools dest-pools expr-map type-map)]
-      [prev-arena : i64 (arena.tl_arena_current)]
       [dest-arena : i64 (ast-node-pool-context-base-arena dest-pools)]
       [out-program : AstProgram
         (begin
@@ -6257,9 +6263,12 @@
               (unsafe
                 (arena.tl_arena_set prev-arena))
               out)))]
-      (AstProgramCompaction
-        out-program
-        (ast-node-pool-context-snapshot dest-pools)))))
+      (begin
+        (unsafe
+          (arena.tl_arena_destroy map-arena))
+        (AstProgramCompaction
+          out-program
+          (ast-node-pool-context-snapshot dest-pools))))))
 
 (define (ast-type-tag [ty : AstType]) : i64
   (match ty

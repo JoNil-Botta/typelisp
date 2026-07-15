@@ -205,8 +205,9 @@ SIMD modes are gated by `scripts/detect-simd-isa.sh` (real CPUID capability, not
 host OS), so explicit SIMD modes are skipped cleanly when their ISA is absent.
 The runtime-dispatch harness never skips the dispatch path; it expects scalar,
 AVX2, or AVX-512 based on the same capability probe. AVX-512 execution is gated
-on the `avx512bw` detector token because byte-lane lowering uses BW
-instructions. **AVX-512 only runs on the fleet's AVX-512 Windows box** (the only
+on the aggregate `avx512` detector token, which requires F+BW+DQ and OS
+ZMM/opmask state because the backend may emit byte-lane BW instructions and DQ
+`vpmullq`. **AVX-512 only runs on the fleet's AVX-512 Windows box** (the only
 AVX-512 machine): from Git Bash / MSYS with `clang` on `PATH`, both scripts
 exercise AVX-512 there. Linux and
 `windows-latest` CI run the best variant available on those hosts.

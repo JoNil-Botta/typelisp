@@ -518,6 +518,12 @@
   false)
 (define lower-checked-dest-pools-rolled-over : bool
   false)
+(define lower-checked-dest-pools-deferred : bool
+  false)
+(define lower-checked-dest-pools-deferred-expr-capacity : i64
+  1)
+(define lower-checked-dest-pools-deferred-type-capacity : i64
+  1)
 
 (define (compiler-lower-checked-dest-pools-use!
   [dest-pools : AstNodePoolContext]
@@ -534,6 +540,7 @@
     (set! lower-checked-macro-intern-persistence-forced false)
     (set! lower-checked-macro-intern-persistence-before false)
     (set! lower-checked-dest-pools-rolled-over false)
+    (set! lower-checked-dest-pools-deferred false)
     (set! lower-checked-dest-pools-committed false)
     (set! lower-checked-dest-pools-active true)))
 
@@ -545,13 +552,33 @@
     (set! lower-checked-frontend-release-arena 0)
     (set! lower-checked-frontend-released false)
     (set! lower-checked-macro-intern-persistence-forced false)
-    (set! lower-checked-dest-pools-rolled-over false)))
+    (set! lower-checked-dest-pools-rolled-over false)
+    (set! lower-checked-dest-pools-deferred false)))
 
 (define (compiler-lower-checked-dest-pools-committed?) : bool
   lower-checked-dest-pools-committed)
 
+(define (lower-checked-dest-pools-materialize-deferred!) : unit
+  (if lower-checked-dest-pools-deferred
+    (let
+      [dest-arena : i64 (arena.tl_arena_make)]
+      [dest-pools : AstNodePoolContext
+        (ast-node-pool-context-new-with-capacities-in-arena
+          lower-checked-dest-pools-deferred-expr-capacity
+          lower-checked-dest-pools-deferred-type-capacity
+          dest-arena)]
+      (begin
+        (set! lower-checked-dest-pools-context dest-pools)
+        (set! lower-checked-dest-pools-deferred false)))
+    unit))
+
 (define (compiler-lower-checked-dest-pools-current) : AstNodePoolContext
-  lower-checked-dest-pools-context)
+  (begin
+    ;; The post-macro destination is intentionally absent during the macro
+    ;; walk. Materialize it only when the caller is ready to compact, after
+    ;; macro-owned scratch generations have already been released.
+    (lower-checked-dest-pools-materialize-deferred!)
+    lower-checked-dest-pools-context))
 
 (define (compiler-lower-checked-frontend-released?) : bool
   lower-checked-frontend-released)
@@ -575,11 +602,14 @@
   (if lower-checked-dest-pools-rolled-over
     (begin
       ;; The driver's original destination is the compact macro source after a
-      ;; rollover. Release the second, still-empty/uncommitted destination here;
-      ;; the driver then releases that original source through its stable owner.
-      (unsafe
-        (arena.tl_arena_destroy
-          (ast-node-pool-context-base-arena lower-checked-dest-pools-context)))
+      ;; rollover. Release a materialized second destination here; if expansion
+      ;; failed before demand, it never existed. The driver then releases the
+      ;; original source through its stable owner.
+      (if lower-checked-dest-pools-deferred
+        unit
+        (unsafe
+          (arena.tl_arena_destroy
+            (ast-node-pool-context-base-arena lower-checked-dest-pools-context))))
       (if (and
         lower-checked-macro-intern-persistence-forced
         (not lower-checked-macro-intern-persistence-before))
@@ -587,6 +617,7 @@
         unit)
       (set! lower-checked-macro-intern-persistence-forced false)
       (set! lower-checked-dest-pools-rolled-over false)
+      (set! lower-checked-dest-pools-deferred false)
       (set! lower-checked-dest-pools-active false))
     unit))
 
@@ -603,17 +634,14 @@
       [expr-capacity : i64 (ast-node-pool-context-expr-capacity source-pools)]
       [type-capacity : i64 (ast-node-pool-context-type-capacity source-pools)]
       [macro-frontend-arena : i64 (arena.tl_arena_make)]
-      [dest-arena : i64 (arena.tl_arena_make)]
-      [dest-pools : AstNodePoolContext
-        (ast-node-pool-context-new-with-capacities-in-arena
-          expr-capacity
-          type-capacity
-          dest-arena)]
       (begin
         ;; The first compact generation is now the macro walk's read/write
-        ;; source. Keep macro-owned lists in a fresh frontend arena, and arm a
-        ;; second compact generation so both can be retired before typecheck.
-        (set! lower-checked-dest-pools-context dest-pools)
+        ;; source. Keep macro-owned lists in a fresh frontend arena. Defer the
+        ;; second compact generation until expansion returns so its empty
+        ;; backing arrays do not overlap the whole macro walk.
+        (set! lower-checked-dest-pools-deferred-expr-capacity expr-capacity)
+        (set! lower-checked-dest-pools-deferred-type-capacity type-capacity)
+        (set! lower-checked-dest-pools-deferred true)
         (set! lower-checked-source-release-arena source-arena)
         (set! lower-checked-frontend-release-arena macro-frontend-arena)
         ;; The driver's original frontend has already been retired. Preserve

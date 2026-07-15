@@ -9240,15 +9240,107 @@
           (set! index (+ index 1))))
       found)))
 
+(define (compiler-reg-loop-split-region-crosses-kind-seq?
+  [instrs : CompilerIrInstrSeq]
+  [point : i64]
+  [kind : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (let
+    [slots : (Array CompilerIrInstr) (struct-get instrs slots)]
+    [count : i64 (struct-get instrs len)]
+    [index : i64 0]
+    [p : i64 point]
+    [found : bool false]
+    (begin
+      (while (and (< index count) (< p end) (not found))
+        (begin
+          (if (and
+            (>= p start)
+            (compiler-reg-clobber-instr-kind? (array-ref slots index) kind))
+            (set! found true)
+            unit)
+          (set! p (+ p 2))
+          (set! index (+ index 1))))
+      found)))
+
+(define (compiler-reg-loop-split-region-crosses-kind-blocks?
+  [blocks : CompilerIrBlockList]
+  [point : i64]
+  [kind : i64]
+  [start : i64]
+  [end : i64]) : bool
+  (match blocks
+    [(CompilerIrBlockList.Nil) false]
+    [(CompilerIrBlockList.Cons block rest)
+      (match block
+        [(CompilerIrBlock.Block _ instrs)
+          (let
+            [next-point : i64
+              (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
+            (if (>= point end)
+              false
+              (if (<= next-point start)
+                (compiler-reg-loop-split-region-crosses-kind-blocks?
+                  (box-get rest)
+                  next-point
+                  kind
+                  start
+                  end)
+                (if (compiler-reg-loop-split-region-crosses-kind-seq?
+                  instrs
+                  point
+                  kind
+                  start
+                  end)
+                  true
+                  (compiler-reg-loop-split-region-crosses-kind-blocks?
+                    (box-get rest)
+                    next-point
+                    kind
+                    start
+                    end)))))])]
+    [(CompilerIrBlockList.Array seq)
+      (let
+        [index : i64 0]
+        [count : i64 (compiler-ir-block-seq-count seq)]
+        [p : i64 point]
+        [found : bool false]
+        (begin
+          (while (and (< index count) (< p end) (not found))
+            (match (compiler-ir-block-seq-ref seq index)
+              [(CompilerIrBlock.Block _ instrs)
+                (let
+                  [next-point : i64
+                    (+ p (* 2 (compiler-ir-instr-seq-count instrs)))]
+                  (begin
+                    (if (and
+                      (> next-point start)
+                      (compiler-reg-loop-split-region-crosses-kind-seq?
+                        instrs
+                        p
+                        kind
+                        start
+                        end))
+                      (set! found true)
+                      unit)
+                    (set! p next-point)
+                    (set! index (+ index 1))))]))
+          found))]))
+
 (define (compiler-reg-loop-split-region-crosses-kind?
   [func : CompilerIrFunction]
   [kind : i64]
   [start : i64]
   [end : i64]) : bool
-  (compiler-reg-clobber-set-in-range-inclusive-start?
-    (compiler-reg-clobber-kind-points func kind)
-    start
-    end))
+  (match func
+    [(CompilerIrFunction.Function _ _ _ _ blocks)
+      (compiler-reg-loop-split-region-crosses-kind-blocks?
+        blocks
+        0
+        kind
+        start
+        end)]))
 
 (define (compiler-reg-loop-split-region-rcx-safe?
   [func : CompilerIrFunction]

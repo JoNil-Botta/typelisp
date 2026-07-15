@@ -62,11 +62,9 @@
   (Err (Box CompilerDiagnostic)))
 
 ;; `build-compiler-symbols-with-paths` is single-threaded and reports its
-;; failure immediately to a caller. Retain the current declaration only for
-;; that short handoff so the public diagnostic adapter can keep its source
-;; path and expression-derived span without widening every internal helper.
-(define compiler-symbols-last-error-decl : AstDecl
-  (ast-decl-module ""))
+;; failure immediately to a caller. Retain only the source coordinates for
+;; that short handoff: a generated declaration can belong to a reclaimed macro
+;; arena before a later diagnostic adapter runs.
 (define compiler-symbols-last-error-path : String
   "")
 (define compiler-symbols-last-error-span : AstSourceSpan
@@ -76,15 +74,7 @@
 
 (define (compiler-symbols-clear-last-error!) : unit
   (begin
-    (set! compiler-symbols-last-error-decl (ast-decl-module ""))
     (set! compiler-symbols-last-error-path "")
-    (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
-    (set! compiler-symbols-last-error-has-span false)))
-
-(define (compiler-symbols-note-last-error! [decl : AstDecl] [path : String]) : unit
-  (begin
-    (set! compiler-symbols-last-error-decl decl)
-    (set! compiler-symbols-last-error-path path)
     (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
     (set! compiler-symbols-last-error-has-span false)))
 
@@ -123,20 +113,26 @@
       (compiler-symbols-decl-maybe-span (box-get template-box))]
     [_ CompilerSymbolsMaybeSpan.No]))
 
+(define (compiler-symbols-note-last-error! [decl : AstDecl] [path : String]) : unit
+  (begin
+    (set! compiler-symbols-last-error-path path)
+    (match (compiler-symbols-decl-maybe-span decl)
+      [(CompilerSymbolsMaybeSpan.Some span)
+        (begin
+          (set! compiler-symbols-last-error-span span)
+          (set! compiler-symbols-last-error-has-span true))]
+      [(CompilerSymbolsMaybeSpan.No)
+        (begin
+          (set! compiler-symbols-last-error-span (ast-decl-span-fallback))
+          (set! compiler-symbols-last-error-has-span false))])))
+
 (define (compiler-symbols-last-error-diagnostic [message : String]) : CompilerDiagnostic
   (if compiler-symbols-last-error-has-span
     (compiler-diagnostic-from-ast-span
       compiler-symbols-last-error-path
       compiler-symbols-last-error-span
       message)
-    (match (compiler-symbols-decl-maybe-span compiler-symbols-last-error-decl)
-      [(CompilerSymbolsMaybeSpan.Some span)
-        (compiler-diagnostic-from-ast-span
-          compiler-symbols-last-error-path
-          span
-          message)]
-      [(CompilerSymbolsMaybeSpan.No)
-        (compiler-diagnostic-at-start compiler-symbols-last-error-path message)])))
+    (compiler-diagnostic-at-start compiler-symbols-last-error-path message)))
 
 (define (compiler-symbol-kind-value-define) : i64
   1)

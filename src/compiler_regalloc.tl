@@ -9278,28 +9278,29 @@
           (let
             [next-point : i64
               (+ point (* 2 (compiler-ir-instr-seq-count instrs)))]
-            (if (>= point end)
-              false
-              (if (<= next-point start)
+            (cond
+              [(>= point end) false]
+              [(<= next-point start)
                 (compiler-reg-loop-split-region-crosses-kind-blocks?
                   (box-get rest)
                   next-point
                   kind
                   start
-                  end)
-                (if (compiler-reg-loop-split-region-crosses-kind-seq?
+                  end)]
+              [(compiler-reg-loop-split-region-crosses-kind-seq?
                   instrs
                   point
                   kind
                   start
                   end)
-                  true
-                  (compiler-reg-loop-split-region-crosses-kind-blocks?
-                    (box-get rest)
-                    next-point
-                    kind
-                    start
-                    end)))))])]
+                true]
+              [else
+                (compiler-reg-loop-split-region-crosses-kind-blocks?
+                  (box-get rest)
+                  next-point
+                  kind
+                  start
+                  end)]))])]
     [(CompilerIrBlockList.Array seq)
       (let
         [index : i64 0]

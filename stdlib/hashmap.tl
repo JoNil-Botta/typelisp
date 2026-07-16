@@ -14,6 +14,8 @@
 ;# compares the cheap `i64` hash before the full key comparison. The probe visits
 ;# at most `capacity` slots, so a full table terminates instead of looping
 ;# forever.
+;# `make-array` default-initializes every slot to the `Empty` tag, so fresh slot
+;# arrays need no explicit fill pass.
 ;#
 ;# Usage: `(import stdlib.hashmap)`
 ;#
@@ -1704,20 +1706,6 @@
 (define (string-i64-map-deleted [map : StringI64Map]) : i64
   (struct-get map deleted))
 
-;: Set slots `[index, count)` of `slots` to `StringI64MapEmpty`.
-(define (string-i64-map-fill-empty
-  [slots : (Array StringI64MapSlot)]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set! slots i (StringI64MapEmpty))
-          (set! i (+ i 1))))
-      unit)))
-
 ;: Create an empty map with `capacity` rounded up to a positive power of two.
 (define (string-i64-map-with-capacity [capacity : i64]) : StringI64Map
   (let
@@ -1725,9 +1713,7 @@
       (stdlib.hashmap.string-i64-map-round-capacity capacity)]
     [slots : (Array StringI64MapSlot)
       (array.make-array StringI64MapSlot rounded-capacity)]
-    (begin
-      (stdlib.hashmap.string-i64-map-fill-empty slots 0 rounded-capacity)
-      (StringI64Map slots 0 0))))
+    (StringI64Map slots 0 0)))
 
 ;: Construct a missing borrowed-value lookup result tied to `map`.
 (define (string-i64-map-borrowed-value-missing [_map : (& map StringI64Map)]) : (StringI64MapBorrowedValueLookup
@@ -2335,7 +2321,6 @@
     [dst : (Array StringI64MapSlot)
       (array.make-array StringI64MapSlot rounded-capacity)]
     (begin
-      (stdlib.hashmap.string-i64-map-fill-empty dst 0 rounded-capacity)
       (stdlib.hashmap.string-i64-map-rehash-from
         src
         dst
@@ -2421,7 +2406,6 @@
     [dst : (Array StringI64MapSlot)
       (array.make-array StringI64MapSlot rounded-capacity)]
     (begin
-      (stdlib.hashmap.string-i64-map-fill-empty dst 0 rounded-capacity)
       (stdlib.hashmap.string-i64-map-rehash-from-ref
         (& (struct-get map slots))
         dst
@@ -3143,25 +3127,12 @@
   (struct-get map deleted))
 
 ;: Generated concrete hashmap family helper.
-(define (string-string-map-fill-empty
-  [slots : (Array StringStringMapSlot)]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! slots index (StringStringMapEmpty))
-      (string-string-map-fill-empty slots (+ index 1) count))))
-
-;: Generated concrete hashmap family helper.
 (define (string-string-map-with-capacity [capacity : i64]) : StringStringMap
   (let
     [rounded-capacity : i64 (string-string-map-round-capacity capacity)]
     [slots : (Array StringStringMapSlot)
       (make-array StringStringMapSlot rounded-capacity)]
-    (begin
-      (string-string-map-fill-empty slots 0 rounded-capacity)
-      (StringStringMap slots 0 0))))
+    (StringStringMap slots 0 0)))
 
 ;: Generated concrete hashmap family helper.
 (define (string-string-map-borrowed-value-missing
@@ -3416,7 +3387,6 @@
     [dst : (Array StringStringMapSlot)
       (make-array StringStringMapSlot rounded-capacity)]
     (begin
-      (string-string-map-fill-empty dst 0 rounded-capacity)
       (string-string-map-rehash-from src dst rounded-capacity 0 old-capacity)
       (set! (struct-get map slots) dst)
       (set! (struct-get map deleted) 0)
@@ -3834,27 +3804,11 @@
   (struct-get map deleted))
 
 ;: Generated concrete hashmap family helper.
-(define (i64-i64-map-fill-empty
-  [slots : (Array I64I64MapSlot)]
-  [index : i64]
-  [count : i64]) : unit
-  (let
-    [i : i64 index]
-    (begin
-      (while (< i count)
-        (begin
-          (array-set! slots i (I64I64MapEmpty))
-          (set! i (+ i 1))))
-      unit)))
-
-;: Generated concrete hashmap family helper.
 (define (i64-i64-map-with-capacity [capacity : i64]) : I64I64Map
   (let
     [rounded-capacity : i64 (i64-i64-map-round-capacity capacity)]
     [slots : (Array I64I64MapSlot) (make-array I64I64MapSlot rounded-capacity)]
-    (begin
-      (i64-i64-map-fill-empty slots 0 rounded-capacity)
-      (I64I64Map slots 0 0))))
+    (I64I64Map slots 0 0)))
 
 ;: Generated concrete hashmap family helper.
 (define (i64-i64-map-borrowed-value-missing [map : (& map I64I64Map)]) : (I64I64MapBorrowedValueLookup
@@ -4068,7 +4022,6 @@
     [rounded-capacity : i64 (i64-i64-map-round-capacity requested-capacity)]
     [dst : (Array I64I64MapSlot) (make-array I64I64MapSlot rounded-capacity)]
     (begin
-      (i64-i64-map-fill-empty dst 0 rounded-capacity)
       (i64-i64-map-rehash-from src dst rounded-capacity 0 old-capacity)
       (set! (struct-get map slots) dst)
       (set! (struct-get map deleted) 0)
@@ -4479,25 +4432,12 @@
   (struct-get map deleted))
 
 ;: Generated concrete hashmap family helper.
-(define (i64-string-map-fill-empty
-  [slots : (Array I64StringMapSlot)]
-  [index : i64]
-  [count : i64]) : unit
-  (if (>= index count)
-    unit
-    (begin
-      (array-set! slots index (I64StringMapEmpty))
-      (i64-string-map-fill-empty slots (+ index 1) count))))
-
-;: Generated concrete hashmap family helper.
 (define (i64-string-map-with-capacity [capacity : i64]) : I64StringMap
   (let
     [rounded-capacity : i64 (i64-string-map-round-capacity capacity)]
     [slots : (Array I64StringMapSlot)
       (make-array I64StringMapSlot rounded-capacity)]
-    (begin
-      (i64-string-map-fill-empty slots 0 rounded-capacity)
-      (I64StringMap slots 0 0))))
+    (I64StringMap slots 0 0)))
 
 ;: Generated concrete hashmap family helper.
 (define (i64-string-map-borrowed-value-missing [map : (& map I64StringMap)]) : (I64StringMapBorrowedValueLookup
@@ -4713,7 +4653,6 @@
     [dst : (Array I64StringMapSlot)
       (make-array I64StringMapSlot rounded-capacity)]
     (begin
-      (i64-string-map-fill-empty dst 0 rounded-capacity)
       (i64-string-map-rehash-from src dst rounded-capacity 0 old-capacity)
       (set! (struct-get map slots) dst)
       (set! (struct-get map deleted) 0)
@@ -5031,7 +4970,6 @@
     [dst : (Array StringStringMapSlot)
       (array.make-array StringStringMapSlot rounded-capacity)]
     (begin
-      (string-string-map-fill-empty dst 0 rounded-capacity)
       (string-string-map-rehash-from-ref
         (& (struct-get map slots))
         dst
@@ -5364,7 +5302,6 @@
     [dst : (Array I64I64MapSlot)
       (array.make-array I64I64MapSlot rounded-capacity)]
     (begin
-      (i64-i64-map-fill-empty dst 0 rounded-capacity)
       (i64-i64-map-rehash-from-ref
         (& (struct-get map slots))
         dst
@@ -5768,7 +5705,6 @@
     [dst : (Array I64StringMapSlot)
       (array.make-array I64StringMapSlot rounded-capacity)]
     (begin
-      (i64-string-map-fill-empty dst 0 rounded-capacity)
       (i64-string-map-rehash-from-ref
         (& (struct-get map slots))
         dst
@@ -6340,26 +6276,12 @@
 
 (cfg
   test
-  (define (string-hash-payload-map-fill-empty
-    [slots : (Array StringHashPayloadMapSlot)]
-    [index : i64]
-    [count : i64]) : unit
-    (if (>= index count)
-      unit
-      (begin
-        (array-set! slots index (StringHashPayloadMapEmpty))
-        (string-hash-payload-map-fill-empty slots (+ index 1) count)))))
-
-(cfg
-  test
   (define (string-hash-payload-map-with-capacity [capacity : i64]) : StringHashPayloadMap
     (let
       [rounded-capacity : i64 (string-hash-payload-map-round-capacity capacity)]
       [slots : (Array StringHashPayloadMapSlot)
         (make-array StringHashPayloadMapSlot rounded-capacity)]
-      (begin
-        (string-hash-payload-map-fill-empty slots 0 rounded-capacity)
-        (StringHashPayloadMap slots 0 0)))))
+      (StringHashPayloadMap slots 0 0))))
 
 (cfg
   test
@@ -6753,7 +6675,6 @@
       [dst : (Array StringHashPayloadMapSlot)
         (make-array StringHashPayloadMapSlot rounded-capacity)]
       (begin
-        (string-hash-payload-map-fill-empty dst 0 rounded-capacity)
         (string-hash-payload-map-rehash-from
           src
           dst
@@ -6808,7 +6729,6 @@
       [dst : (Array StringHashPayloadMapSlot)
         (make-array StringHashPayloadMapSlot rounded-capacity)]
       (begin
-        (string-hash-payload-map-fill-empty dst 0 rounded-capacity)
         (string-hash-payload-map-rehash-from-ref
           (& (struct-get map slots))
           dst
@@ -7434,26 +7354,12 @@
 
 (cfg
   test
-  (define (i64-hash-state-map-fill-empty
-    [slots : (Array I64HashStateMapSlot)]
-    [index : i64]
-    [count : i64]) : unit
-    (if (>= index count)
-      unit
-      (begin
-        (array-set! slots index (I64HashStateMapEmpty))
-        (i64-hash-state-map-fill-empty slots (+ index 1) count)))))
-
-(cfg
-  test
   (define (i64-hash-state-map-with-capacity [capacity : i64]) : I64HashStateMap
     (let
       [rounded-capacity : i64 (i64-hash-state-map-round-capacity capacity)]
       [slots : (Array I64HashStateMapSlot)
         (make-array I64HashStateMapSlot rounded-capacity)]
-      (begin
-        (i64-hash-state-map-fill-empty slots 0 rounded-capacity)
-        (I64HashStateMap slots 0 0)))))
+      (I64HashStateMap slots 0 0))))
 
 (cfg
   test
@@ -7778,7 +7684,6 @@
       [dst : (Array I64HashStateMapSlot)
         (make-array I64HashStateMapSlot rounded-capacity)]
       (begin
-        (i64-hash-state-map-fill-empty dst 0 rounded-capacity)
         (i64-hash-state-map-rehash-from src dst rounded-capacity 0 old-capacity)
         (set! (struct-get map slots) dst)
         (set! (struct-get map deleted) 0)
@@ -7825,7 +7730,6 @@
       [dst : (Array I64HashStateMapSlot)
         (make-array I64HashStateMapSlot rounded-capacity)]
       (begin
-        (i64-hash-state-map-fill-empty dst 0 rounded-capacity)
         (i64-hash-state-map-rehash-from-ref
           (& (struct-get map slots))
           dst
@@ -8578,26 +8482,12 @@
 
 (cfg
   test
-  (define (hash-nested-key-i64-map-fill-empty
-    [slots : (Array HashNestedKeyI64MapSlot)]
-    [index : i64]
-    [count : i64]) : unit
-    (if (>= index count)
-      unit
-      (begin
-        (array-set! slots index (HashNestedKeyI64MapEmpty))
-        (hash-nested-key-i64-map-fill-empty slots (+ index 1) count)))))
-
-(cfg
-  test
   (define (hash-nested-key-i64-map-with-capacity [capacity : i64]) : HashNestedKeyI64Map
     (let
       [rounded-capacity : i64 (hash-nested-key-i64-map-round-capacity capacity)]
       [slots : (Array HashNestedKeyI64MapSlot)
         (make-array HashNestedKeyI64MapSlot rounded-capacity)]
-      (begin
-        (hash-nested-key-i64-map-fill-empty slots 0 rounded-capacity)
-        (HashNestedKeyI64Map slots 0 0)))))
+      (HashNestedKeyI64Map slots 0 0))))
 
 (cfg
   test
@@ -8958,7 +8848,6 @@
       [dst : (Array HashNestedKeyI64MapSlot)
         (make-array HashNestedKeyI64MapSlot rounded-capacity)]
       (begin
-        (hash-nested-key-i64-map-fill-empty dst 0 rounded-capacity)
         (hash-nested-key-i64-map-rehash-from
           src
           dst
@@ -9013,7 +8902,6 @@
       [dst : (Array HashNestedKeyI64MapSlot)
         (make-array HashNestedKeyI64MapSlot rounded-capacity)]
       (begin
-        (hash-nested-key-i64-map-fill-empty dst 0 rounded-capacity)
         (hash-nested-key-i64-map-rehash-from-ref
           (& (struct-get map slots))
           dst

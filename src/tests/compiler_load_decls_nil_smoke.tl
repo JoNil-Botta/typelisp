@@ -11,6 +11,7 @@
     (ast-decl-list-new)
     "src/tests/compiler_load_decls_nil_smoke.tl"
     cbi.compiler-builtin-id-fix-empty
+    cbi.compiler-builtin-id-fix-empty
     ""
     cbi.compiler-builtin-id-fix-empty
     ""

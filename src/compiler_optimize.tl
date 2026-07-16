@@ -26724,7 +26724,10 @@
                       [bounds-dom : CompilerIrBlockList
                         (if (and
                           run-heavy?
-                          (opt-verify-ok? (opt-verify-function ssa)))
+                          (opt-verify-ok?
+                            (opt-verify-function-with-context
+                              ssa
+                              ssa-context)))
                           (opt-bounds-dom-blocks-with-context
                             ssa-context
                             params

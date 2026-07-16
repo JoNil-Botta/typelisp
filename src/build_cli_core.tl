@@ -3205,6 +3205,8 @@
       [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
       [specializations : AstSpmdSpecializationList
         (ast-spmd-specialization-list-new)]
+      [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
+      [x-id : i64 (ci.intern-generated-canonical-name "x")]
       [scale-id : i64 (ci.intern-generated-canonical-name "scale")]
       (begin
         (ast-spmd-param-class-list-push
@@ -3238,9 +3240,9 @@
             (build-package-tlci-callable
               "pkg"
               "pkg"
-              cbi.compiler-builtin-id-fix-helper
+              helper-id
               (ast-param-cons
-                (ast-param-id cbi.compiler-builtin-id-fix-x (AstType.I64) false)
+                (ast-param-id x-id (AstType.I64) false)
                 (ast-param-cons
                   (ast-param-id scale-id (AstType.I64) false)
                   (ast-param-list-new)))
@@ -3300,6 +3302,8 @@
       [second-classes : AstSpmdParamClassList (ast-spmd-param-class-list-new)]
       [specializations : AstSpmdSpecializationList
         (ast-spmd-specialization-list-new)]
+      [helper-id : i64 (ci.intern-generated-canonical-name "helper")]
+      [x-id : i64 (ci.intern-generated-canonical-name "x")]
       (begin
         (ast-spmd-param-class-list-push
           (&mut first-classes)
@@ -3325,9 +3329,9 @@
           (build-package-tlci-callable
             "pkg"
             "pkg"
-            cbi.compiler-builtin-id-fix-helper
+            helper-id
             (ast-param-cons
-              (ast-param-id cbi.compiler-builtin-id-fix-x (AstType.I64) false)
+              (ast-param-id x-id (AstType.I64) false)
               (ast-param-list-new))
             (AstType.I64)
             specializations

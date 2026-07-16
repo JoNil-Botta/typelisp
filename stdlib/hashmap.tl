@@ -3699,10 +3699,18 @@
                     next))
                 (set! walked (+ walked 1))))]
           [(I64I64MapOccupied slot-key _ slot-hash)
-            (if (if (= slot-hash hash)
-              (= slot-key key)
-              false)
-              (return (I64I64MapProbeFound cursor))
+            (if (= slot-hash hash)
+              (if (= slot-key key)
+                (return (I64I64MapProbeFound cursor))
+                (let
+                  [next : i64 (+ cursor 1)]
+                  (begin
+                    (set!
+                      cursor
+                      (if (>= next capacity)
+                        0
+                        next))
+                    (set! walked (+ walked 1)))))
               (let
                 [next : i64 (+ cursor 1)]
                 (begin

@@ -44306,19 +44306,16 @@
   [collections : CompilerBackendProgramCollections]
   [lanes : i64]
   [elem-ty : AstType]) : CompilerBackendProgramCollections
-  (if (compiler-backend-gather-dword-element? elem-ty)
-    (if (= lanes 8)
-      (compiler-backend-program-collections-mark-avx2-i64-lane-id collections)
-      (if (= lanes 16)
-        (compiler-backend-program-collections-mark-avx512-i64-lane-id
-          collections)
-        collections))
-    (if (= lanes 4)
-      (compiler-backend-program-collections-mark-avx2-i64-lane-id collections)
-      (if (= lanes 8)
-        (compiler-backend-program-collections-mark-avx512-i64-lane-id
-          collections)
-        collections))))
+  (cond
+    [(and (compiler-backend-gather-dword-element? elem-ty) (= lanes 8))
+      (compiler-backend-program-collections-mark-avx2-i64-lane-id collections)]
+    [(and (compiler-backend-gather-dword-element? elem-ty) (= lanes 16))
+      (compiler-backend-program-collections-mark-avx512-i64-lane-id collections)]
+    [(and (not (compiler-backend-gather-dword-element? elem-ty)) (= lanes 4))
+      (compiler-backend-program-collections-mark-avx2-i64-lane-id collections)]
+    [(and (not (compiler-backend-gather-dword-element? elem-ty)) (= lanes 8))
+      (compiler-backend-program-collections-mark-avx512-i64-lane-id collections)]
+    [else collections]))
 
 (define (compiler-backend-collect-value-collections
   [collections : CompilerBackendProgramCollections]

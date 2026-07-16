@@ -1844,6 +1844,24 @@
               include-path
               resolved)))])))
 
+(define (compiler-load-include-str-comptime-lzss-from-resolved
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : String]) : ResultCompilerLoadInclude
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultCompilerLoadInclude
+      (compiler-load-include-str-comptime-lzss-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
+
 (define (compiler-load-include-bin-read-error
   [importer-path : String]
   [include-path : String]
@@ -7670,12 +7688,11 @@
       include-path
       stdlib-roots))
     [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-comptime-lzss-from-resolved-with-pools
+      (compiler-load-include-str-comptime-lzss-from-resolved
         importer-path
         include-path
         resolved
-        name
-        (ast-node-pool-context-capture-active))]
+        name)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))

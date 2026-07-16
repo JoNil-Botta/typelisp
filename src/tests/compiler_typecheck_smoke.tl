@@ -2855,6 +2855,8 @@
     (tc-source-dotted-full-path-key-cache-reset!)
     (tc-source-qualified-variant-key-cache-reset!)
     (let
+      [registry-id : i64
+        (compiler-registries-identity (compiler-registries-empty))]
       [old-module-id : i64 (intern "generation.entry")]
       [old-alias-name-id : i64 (intern "alias.value")]
       [old-full-name-id : i64 (intern "full.path.value")]
@@ -2872,9 +2874,11 @@
           old-full-name-id
           old-full-value-id)
         (tc-source-qualified-variant-key-cache-put!
+          registry-id
           old-module-id
           old-variant-name-id
-          old-variant-value-id)
+          old-variant-value-id
+          0)
         (intern-reset!)
         (cbi.compiler-builtin-initialize-for-parse!)
         (compiler-typecheck-reset-intern-owned-state!)
@@ -2889,6 +2893,7 @@
             (tc-source-dotted-full-path-key-cache-get module-id full-name-id)]
           [variant-miss : i64
             (tc-source-qualified-variant-key-cache-get
+              registry-id
               module-id
               variant-name-id)]
           (begin

@@ -521,10 +521,11 @@ fi
 
 # A source selfhost compile exercises the compiler's embedded canonical stdlib
 # payloads. On Windows it is the allocation boundary that small new modules
-# (such as the clone declaration-macro handoff) previously crossed. Keep the
-# expanding source pool and compact checked/lowered pool independently sized;
-# a grow here retains the old backing array in a bump arena and consumes the
-# headroom this probe protects.
+# (such as the clone declaration-macro handoff) previously crossed. The macro
+# walk now starts in the compact destination and grows its 1.5M-node pool once;
+# typecheck starts in a fresh 1.5M-node destination. Keep those phase-specific
+# capacities exact so an extra grow still consumes the headroom this probe
+# protects.
 if [ "$NL_HOST_OS" = windows ]; then
     echo "[compile-profile] selfhost embedded-stdlib allocation probe"
     if ! "$PROFILE_BIN" compile src/main.tl \
@@ -545,13 +546,13 @@ if [ "$NL_HOST_OS" = windows ]; then
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.macro_expand.capacity" \
-        3670016 \
+        3145728 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \
         "$SELFHOST_STDERR" \
         "lower.ast_expr_pool.typecheck.capacity" \
-        1703936 \
+        1572864 \
         "$SELFHOST_STDOUT" \
         "$SELFHOST_STDERR"
     assert_profile_live_counter_eq_in \

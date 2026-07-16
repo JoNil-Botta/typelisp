@@ -76,6 +76,9 @@ falling back to scalar code.
   Exit 42.
 - `masked_if_value_i64.tl` - AVX2/AVX-512 value-producing masked `if` over
   `n = 13` i64 lanes feeding a predicated store. Exit 42.
+- `masked_if_bitand_value_i64.tl` - AVX2/AVX-512 value-producing masked `if`
+  over `n = 13` i64 lanes with a bit-and parity condition and add/sub branch
+  values. Exit 42.
 - `masked_if_value_types.tl` - AVX2/AVX-512 value-producing masked `if` over
   u32, u64, f32, f64, and bool lane results, each with a non-full tail. Exit
   42.
@@ -162,8 +165,8 @@ Coverage map:
   composition, and i16/u16 coverage lives in `masked_if_i64.tl`,
   `masked_if_offset_i64.tl`, `masked_if_index_value_i64.tl`,
   `masked_if_index_mod_i64.tl`, `masked_if_value_i64.tl`,
-  `masked_if_value_types.tl`, `masked_if_nested_i64.tl`, and
-  `masked_if_i16_u16.tl`.
+  `masked_if_bitand_value_i64.tl`, `masked_if_value_types.tl`,
+  `masked_if_nested_i64.tl`, and `masked_if_i16_u16.tl`.
 - AVX-512 scalar-lane varying `match` coverage lives in
   `varying_match_i64.tl` and `masked_if_match_i64.tl`; enum tag/payload
   varying-match coverage lives in `varying_match_enum_payload.tl` through the

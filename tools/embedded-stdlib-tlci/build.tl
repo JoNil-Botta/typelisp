@@ -6,7 +6,6 @@
 (import "../../src/tlci_core.tl")
 (import stdlib.io)
 (import stdlib.string)
-(import stdlib.str_cat)
 (import stdlib.vector)
 (import (vector String) as svec)
 

@@ -288,14 +288,6 @@
   [value : bool]) : unit
   (array-set! cell 0 value))
 
-(define (compiler-load-session-state-i64-cell-get [cell : (Array i64)]) : i64
-  (array-ref cell 0))
-
-(define (compiler-load-session-state-i64-cell-set!
-  [cell : (Array i64)]
-  [value : i64]) : unit
-  (array-set! cell 0 value))
-
 (define (compiler-load-session-state-new) : CompilerLoadSessionState
   (CompilerLoadSessionState
     (compiler-load-session-state-bool-cell false)
@@ -334,11 +326,6 @@
 (define (compiler-load-session-state-cache-enable!
   [state : CompilerLoadSessionState]) : unit
   (compiler-load-session-state-cache-set-enabled! state true))
-
-(define (compiler-load-session-state-program-cache-enabled?
-  [state : CompilerLoadSessionState]) : bool
-  (compiler-load-session-state-bool-cell-get
-    (struct-get state program-cache-enabled)))
 
 (define (compiler-load-session-state-program-cache-set-enabled-cell!
   [state : CompilerLoadSessionState]
@@ -681,16 +668,6 @@
       true)
     (intern-persistent-storage-disable!)))
 
-(define (compiler-load-session-cache-set-enabled! [enabled : bool]) : unit
-  (if enabled
-    (compiler-load-session-cache-enable!)
-    (begin
-      (array-set!
-        (struct-get compiler-load-active-session-state cache-enabled)
-        0
-        false)
-      (intern-persistent-storage-disable!))))
-
 (define (compiler-load-session-program-cache-enable!) : unit
   (array-set!
     (struct-get compiler-load-active-session-state program-cache-enabled)
@@ -715,18 +692,6 @@
       false)
     (compiler-load-program-cache-clear!)
     (intern-persistent-storage-disable!)))
-
-(define (compiler-load-session-state-program-cache-set-enabled!
-  [state : CompilerLoadSessionState]
-  [enabled : bool]) : unit
-  (if enabled
-    (compiler-load-session-state-program-cache-set-enabled-cell! state true)
-    (compiler-load-session-state-program-cache-disable! state)))
-
-(define (compiler-load-session-program-cache-set-enabled! [enabled : bool]) : unit
-  (if enabled
-    (compiler-load-session-program-cache-enable!)
-    (compiler-load-session-program-cache-disable!)))
 
 (define (compiler-load-session-program-cache-enabled?) : bool
   (array-ref
@@ -1067,11 +1032,6 @@
                 (set! ok false)))
             (= i prefix-len)))))))
 
-(define (compiler-load-string-eq? [left : String] [right : String]) : bool
-  (and
-    (= (string.string-length left) (string.string-length right))
-    (compiler-load-string-prefix-at? left right 0)))
-
 (define (compiler-load-string-contains-from?
   [text : String]
   [needle : String]
@@ -1090,149 +1050,6 @@
 
 (define (compiler-load-string-contains? [text : String] [needle : String]) : bool
   (compiler-load-string-contains-from? text needle 0))
-
-(define (compiler-load-symbol-char? [c : char]) : bool
-  (let
-    [code : i64 (cast c : i64)]
-    (cond
-      [(and (>= code 97) (<= code 122)) true]
-      [(and (>= code 65) (<= code 90)) true]
-      [(and (>= code 48) (<= code 57)) true]
-      [(= code 45) true]
-      [(= code 95) true]
-      [(= code 33) true]
-      [(and (>= code 37) (<= code 38)) true]
-      [(= code 42) true]
-      [(= code 43) true]
-      [(= code 46) true]
-      [(= code 47) true]
-      [(= code 58) true]
-      [(and (>= code 60) (<= code 63)) true]
-      [else false])))
-
-(define (compiler-load-source-index-at-line-col
-  [source : String]
-  [line : i64]
-  [col : i64]) : i64
-  (let
-    [n : i64 (string.string-length source)]
-    [idx : i64 0]
-    [cur-line : i64 1]
-    [cur-col : i64 1]
-    (begin
-      (while (and
-        (< idx n)
-        (or (< cur-line line) (and (= cur-line line) (< cur-col col))))
-        (let
-          [c : char (string.string-ref source idx)]
-          (begin
-            (if (= c '\n')
-              (begin
-                (set! cur-line (+ cur-line 1))
-                (set! cur-col 1))
-              (set! cur-col (+ cur-col 1)))
-            (set! idx (+ idx 1)))))
-      idx)))
-
-(define (compiler-load-source-scan-start
-  [span : AstSourceSpan]
-  [source : String]) : i64
-  (compiler-load-source-index-at-line-col
-    source
-    (ast-source-span-end-line span)
-    (ast-source-span-end-col span)))
-
-(define (compiler-load-source-name-before-ok? [source : String] [idx : i64]) : bool
-  (or
-    (<= idx 0)
-    (not (compiler-load-symbol-char? (string.string-ref source (- idx 1))))))
-
-(define (compiler-load-source-qualified-alias-token-at?
-  [source : String]
-  [alias : String]
-  [idx : i64]) : bool
-  (let
-    [end : i64 (+ idx (string.string-length alias))]
-    (and
-      (compiler-load-source-name-before-ok? source idx)
-      (compiler-load-string-prefix-at? source alias idx)
-      (< end (string.string-length source))
-      (let
-        [c : char (string.string-ref source end)]
-        (or (= c '.') (= c '/'))))))
-
-(define (compiler-load-source-has-qualified-alias-token-linear-from?
-  [source : String]
-  [alias : String]
-  [start : i64]) : bool
-  (let
-    [n : i64 (string.string-length source)]
-    [alias-len : i64 (string.string-length alias)]
-    (if (= alias-len 0)
-      false
-      (let
-        [alias-first : char (string.string-ref alias 0)]
-        [idx : i64 start]
-        [found : bool false]
-        (begin
-          (while (and (not found) (<= (+ idx alias-len) n))
-            (if (and
-              (= (string.string-ref source idx) alias-first)
-              (compiler-load-source-qualified-alias-token-at? source alias idx))
-              (set! found true)
-              (set! idx (+ idx 1))))
-          found)))))
-
-(define (compiler-load-source-has-qualified-alias-token-index-from?
-  [source : String]
-  [alias : String]
-  [start : i64]) : bool
-  (if (= (string.string-length alias) 0)
-    false
-    (let
-      [alias-first : char (string.string-ref alias 0)]
-      [idx : i64 start]
-      [found : bool false]
-      [done : bool false]
-      (begin
-        (while (and (not found) (not done))
-          (begin
-            (set!
-              idx
-              (string.index-of-byte (& source) idx (cast alias-first : u8)))
-            (if (< idx 0)
-              (set! done true)
-              (if (compiler-load-source-qualified-alias-token-at?
-                source
-                alias
-                idx)
-                (set! found true)
-                (set! idx (+ idx 1))))))
-        found))))
-
-(define (compiler-load-source-has-qualified-alias-token-from?
-  [source : String]
-  [alias : String]
-  [start : i64]) : bool
-  (if (< (string.string-length source) 131072)
-    (compiler-load-source-has-qualified-alias-token-linear-from?
-      source
-      alias
-      start)
-    (compiler-load-source-has-qualified-alias-token-index-from?
-      source
-      alias
-      start)))
-
-(define (compiler-load-source-for-lazy-scan [path : String]) : CompilerLoadMaybeString
-  (if (io.file-exists? path)
-    (CompilerLoadSomeString (io.read-file path))
-    (match (compiler-load-embedded-stdlib-source-for-path path)
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
-          source)
-        (CompilerLoadSomeString source)]
-      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
-        (CompilerLoadNoString)])))
 
 (define (compiler-load-lazy-env-disabled? [name : String]) : bool
   (match (env.get (& name))
@@ -1467,11 +1284,6 @@
   (if (compiler-load-stdlib-import? path)
     (compiler-load-embedded-stdlib-source (compiler-load-stdlib-suffix path))
     (ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)))
-
-(define (compiler-load-resolve-import
-  [importer-path : String]
-  [import-path : String]) : String
-  (compiler-load-resolve-import-with-roots importer-path import-path (svec.new)))
 
 (define (compiler-load-resolve-import-with-roots
   [importer-path : String]
@@ -2053,25 +1865,6 @@
               include-path
               resolved)))])))
 
-(define (compiler-load-expand-include-str
-  [importer-path : String]
-  [include-path : String]
-  [name : String]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoadInclude
-  (match (compiler-load-resolve-import-result-with-roots
-    importer-path
-    include-path
-    stdlib-roots)
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-str-from-resolved
-        importer-path
-        include-path
-        resolved
-        name)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
-
 (define (compiler-load-expand-include-str-with-pools
   [importer-path : String]
   [include-path : String]
@@ -2110,25 +1903,6 @@
         resolved
         name
         pools)]
-    [(ResultPkgResolve.Err message)
-      (ResultCompilerLoadInclude.Err
-        (box (compiler-diagnostic-at-start importer-path message)))]))
-
-(define (compiler-load-expand-include-bin
-  [importer-path : String]
-  [include-path : String]
-  [name : String]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoadInclude
-  (match (compiler-load-resolve-import-result-with-roots
-    importer-path
-    include-path
-    stdlib-roots)
-    [(ResultPkgResolve.Ok resolved)
-      (compiler-load-include-bin-from-resolved
-        importer-path
-        include-path
-        resolved
-        name)]
     [(ResultPkgResolve.Err message)
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
@@ -2357,14 +2131,6 @@
       stdlib-roots
       cfgs
       pools)))
-
-(define (compiler-load-core-macro-prelude-with-roots
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoadWithPaths
-  (compiler-load-core-macro-prelude-with-roots-cfg
-    seen
-    stdlib-roots
-    (compiler-cfg-empty)))
 
 (define (compiler-load-drop-paths [result : ResultCompilerLoadWithPaths]) : ResultCompilerLoad
   (match result
@@ -2814,30 +2580,6 @@
     compiler-load-active-surface-summaries
     (compiler-load-normalize-path source-path)))
 
-(define (compiler-load-surface-summary-remove-source-in
-  [summaries : CompilerLoadSurfaceSummaryList]
-  [source-path : String]) : CompilerLoadSurfaceSummaryList
-  (match summaries
-    [(CompilerLoadSurfaceSummaryNil) (CompilerLoadSurfaceSummaryNil)]
-    [(CompilerLoadSurfaceSummaryCons summary rest)
-      (if (string.eq (struct-get summary source-path) source-path)
-        (compiler-load-surface-summary-remove-source-in
-          (box-get rest)
-          source-path)
-        (CompilerLoadSurfaceSummaryCons
-          summary
-          (box
-            (compiler-load-surface-summary-remove-source-in
-              (box-get rest)
-              source-path))))]))
-
-(define (compiler-load-surface-summary-remove-source! [source-path : String]) : unit
-  (set!
-    compiler-load-active-surface-summaries
-    (compiler-load-surface-summary-remove-source-in
-      compiler-load-active-surface-summaries
-      (compiler-load-normalize-path source-path))))
-
 (define (compiler-load-surface-summary-load-with-pools
   [path : String]
   [stdlib-roots : svec.Vec]
@@ -2895,23 +2637,6 @@
         import-root
         cfgs
         pools)]))
-
-(define (compiler-load-surface-summary-refresh-with-pools
-  [path : String]
-  [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]
-  [import-root : String]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : unit
-  (begin
-    (compiler-load-surface-summary-remove-source! path)
-    (compiler-load-surface-summary-load-with-pools
-      path
-      stdlib-roots
-      expected-module
-      import-root
-      cfgs
-      pools)))
 
 (define (compiler-load-surface-summary-decl-requires-eager?
   [decl : CompilerLoadSurfaceDecl]) : bool
@@ -3128,9 +2853,6 @@
     (set! compiler-load-lazy-qualified-observer-secondary-qualified false)
     (set! compiler-load-lazy-qualified-observer-secondary-direct false)))
 
-(define (compiler-load-lazy-qualified-observer-begin! [root : String]) : unit
-  (compiler-load-lazy-qualified-observer-begin-pair! root ""))
-
 (define (compiler-load-lazy-qualified-observer-member-end
   [text : String]
   [index : i64]
@@ -3257,9 +2979,6 @@
               secondary-direct)
             (set! compiler-load-lazy-qualified-observer-stack (box-get rest)))])
       out)))
-
-(define (compiler-load-lazy-qualified-observer-end!) : sym_i64_env.SymI64Env
-  (struct-get (compiler-load-lazy-qualified-observer-end-pair!) primary-members))
 
 (define (compiler-load-lazy-name-qualified-by? [name : String] [alias : String]) : bool
   (let
@@ -4796,22 +4515,6 @@
       (sym_i64_env.sym-i64-contains members member)]
     [_ false]))
 
-(define (compiler-load-structural-member-demand-union
-  [left : CompilerLoadStructuralMemberDemand]
-  [right : CompilerLoadStructuralMemberDemand]) : CompilerLoadStructuralMemberDemand
-  (match left
-    [(CompilerLoadStructuralFullDemand) (CompilerLoadStructuralFullDemand)]
-    [(CompilerLoadStructuralNoDemand) right]
-    [(CompilerLoadStructuralExactMembers left-members)
-      (match right
-        [(CompilerLoadStructuralFullDemand) (CompilerLoadStructuralFullDemand)]
-        [(CompilerLoadStructuralNoDemand) left]
-        [(CompilerLoadStructuralExactMembers right-members)
-          (CompilerLoadStructuralExactMembers
-            (compiler-load-structural-member-set-union
-              left-members
-              right-members))])]))
-
 (define (compiler-load-structural-member-set-count
   [members : sym_i64_env.SymI64Env]) : i64
   (match members
@@ -5498,12 +5201,6 @@
           [(ResultCompilerLoadModuleId.Err diag)
             (ResultCompilerLoadSurfaceSummary.Err diag)]))]))
 
-(define (compiler-load-decls-with-paths
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-paths-and-roots decls importer-path seen (svec.new)))
-
 (define (compiler-load-alias-decl-list
   [kind : AstImportKind]
   [import-path : String]
@@ -5588,60 +5285,6 @@
     (if (compiler-load-decl-list-has-module? imported-decls)
       (ast-decl-module-list-prepend-builder importer-module after-alias)
       after-alias)))
-
-(define (compiler-load-decls-with-module-and-roots
-  [decls : AstDeclList]
-  [importer-path : String]
-  [importer-module : String]
-  [importer-source-module : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-module-and-roots-cfg
-    decls
-    importer-path
-    importer-module
-    importer-source-module
-    seen
-    stdlib-roots
-    (compiler-cfg-empty)))
-
-(define (compiler-load-decls-with-module-and-roots-cfg
-  [decls : AstDeclList]
-  [importer-path : String]
-  [importer-module : String]
-  [importer-source-module : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-module-and-roots-cfg-root
-    decls
-    importer-path
-    importer-module
-    importer-source-module
-    seen
-    stdlib-roots
-    (compiler-load-dirname importer-path)
-    cfgs))
-
-(define (compiler-load-decls-with-module-and-roots-cfg-with-pools
-  [decls : AstDeclList]
-  [importer-path : String]
-  [importer-module : String]
-  [importer-source-module : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
-    decls
-    importer-path
-    importer-module
-    importer-source-module
-    seen
-    stdlib-roots
-    (compiler-load-dirname importer-path)
-    cfgs
-    pools))
 
 (define (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
   [decls : AstDeclList]
@@ -6082,121 +5725,6 @@
       (ast-node-pool-context-install! pools)
       result)))
 
-(define (compiler-load-decls-with-paths-and-roots
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoadWithPaths
-  (compiler-load-decls-with-paths-and-roots-cfg
-    decls
-    importer-path
-    seen
-    stdlib-roots
-    (compiler-cfg-empty)))
-
-(define (compiler-load-decls-with-paths-and-roots-cfg
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-decls-module-id importer-path decls)
-    [(ResultCompilerLoadModuleId.Ok module-id)
-      (if (sym_i64_env.sym-i64-contains seen module-id)
-        (ResultCompilerLoadWithPaths.Ok
-          (ast-decl-list-new)
-          (ast-decl-path-list-new)
-          (ast-decl-module-list-new)
-          seen)
-        (compiler-load-decls-with-module-and-roots-cfg
-          decls
-          importer-path
-          module-id
-          (compiler-load-decls-source-module decls)
-          (sym_i64_env.sym-i64-bind seen module-id 1)
-          stdlib-roots
-          cfgs))]
-    [(ResultCompilerLoadModuleId.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
-
-(define (compiler-load-decls-with-paths-and-roots-cfg-with-pools
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [cfgs : sym_i64_env.SymI64Env]
-  [pools : AstNodePoolContext]) : ResultCompilerLoadWithPaths
-  (match (compiler-load-decls-module-id importer-path decls)
-    [(ResultCompilerLoadModuleId.Ok module-id)
-      (if (sym_i64_env.sym-i64-contains seen module-id)
-        (ResultCompilerLoadWithPaths.Ok
-          (ast-decl-list-new)
-          (ast-decl-path-list-new)
-          (ast-decl-module-list-new)
-          seen)
-        (compiler-load-decls-with-module-and-roots-cfg-with-pools
-          decls
-          importer-path
-          module-id
-          (compiler-load-decls-source-module decls)
-          (sym_i64_env.sym-i64-bind seen module-id 1)
-          stdlib-roots
-          cfgs
-          pools))]
-    [(ResultCompilerLoadModuleId.Err diag)
-      (ResultCompilerLoadWithPaths.Err diag)]))
-
-(define (compiler-load-decls
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-decls-with-paths decls importer-path seen)))
-
-(define (compiler-load-decls-with-roots
-  [decls : AstDeclList]
-  [importer-path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-decls-with-paths-and-roots
-      decls
-      importer-path
-      seen
-      stdlib-roots)))
-
-(define (compiler-load-program-with-paths
-  [path : String]
-  [program : AstProgram]
-  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
-  (compiler-load-program-with-paths-and-roots path program seen (svec.new)))
-
-(define (compiler-load-program-with-paths-and-roots
-  [path : String]
-  [program : AstProgram]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoadWithPaths
-  (compiler-load-program-with-paths-and-roots-expect
-    path
-    program
-    seen
-    stdlib-roots
-    AstMaybeModuleName.No))
-
-(define (compiler-load-program-with-paths-and-roots-expect
-  [path : String]
-  [program : AstProgram]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]
-  [expected-module : AstMaybeModuleName]) : ResultCompilerLoadWithPaths
-  (compiler-load-program-with-paths-and-roots-expect-cfg
-    path
-    program
-    seen
-    stdlib-roots
-    expected-module
-    (compiler-cfg-empty)))
-
 (define (compiler-load-program-with-paths-and-roots-expect-cfg
   [path : String]
   [program : AstProgram]
@@ -6355,21 +5883,6 @@
     (begin
       (ast-node-pool-context-install! pools)
       result)))
-
-(define (compiler-load-program
-  [path : String]
-  [program : AstProgram]
-  [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-program-with-paths path program seen)))
-
-(define (compiler-load-program-with-roots
-  [path : String]
-  [program : AstProgram]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-program-with-paths-and-roots path program seen stdlib-roots)))
 
 (define (compiler-load-source-with-paths
   [path : String]
@@ -6939,14 +6452,6 @@
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
   (compiler-load-drop-paths (compiler-load-source-with-paths path source seen)))
 
-(define (compiler-load-source-with-roots
-  [path : String]
-  [source : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-source-with-paths-and-roots path source seen stdlib-roots)))
-
 (define (compiler-load-file-with-paths
   [path : String]
   [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoadWithPaths
@@ -7363,16 +6868,6 @@
     cfgs
     false
     pools))
-
-(define (compiler-load-file [path : String] [seen : sym_i64_env.SymI64Env]) : ResultCompilerLoad
-  (compiler-load-drop-paths (compiler-load-file-with-paths path seen)))
-
-(define (compiler-load-file-with-roots
-  [path : String]
-  [seen : sym_i64_env.SymI64Env]
-  [stdlib-roots : svec.Vec]) : ResultCompilerLoad
-  (compiler-load-drop-paths
-    (compiler-load-file-with-paths-and-roots path seen stdlib-roots)))
 
 (define (compiler-load-package-hex-digit [n : i64]) : String
   (cond

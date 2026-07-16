@@ -2133,9 +2133,9 @@
     AstStructCleanup
     AstFieldDefList)
   (Import AstImportSpec)
-  (IncludeStr String String)
-  (IncludeStrComptime String String)
-  (IncludeBin String String)
+  (IncludeStr i64 String)
+  (IncludeStrComptime i64 String)
+  (IncludeBin i64 String)
   (DefDispatch i64 AstDispatchVariantList)
   (Test i64 i64 AstSourceSpan)
   (Unsafe (Box AstDecl))
@@ -6184,13 +6184,9 @@
     [(AstDecl.Import spec)
       (AstDecl.Import (ast-compaction-remap-import-spec remap spec))]
     [(AstDecl.IncludeStr name path)
-      (AstDecl.IncludeStr
-        (ast-compaction-copy-string name)
-        (ast-compaction-copy-string path))]
+      (AstDecl.IncludeStr name (ast-compaction-copy-string path))]
     [(AstDecl.IncludeStrComptime name path)
-      (AstDecl.IncludeStrComptime
-        (ast-compaction-copy-string name)
-        (ast-compaction-copy-string path))]
+      (AstDecl.IncludeStrComptime name (ast-compaction-copy-string path))]
     [(AstDecl.IncludeBin name path)
       (AstDecl.IncludeBin name (ast-compaction-copy-string path))]
     [(AstDecl.DefDispatch name variants)

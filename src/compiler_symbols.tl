@@ -2251,7 +2251,6 @@
               rest
               symbols
               index
-              module
               module-id)]
           [(AstDecl.IncludeBin _ _)
             (build-compiler-symbol-list-in-module

@@ -2064,17 +2064,17 @@
 ;; unlike `include-str`, no runtime definition or static string is emitted.
 (define (compiler-load-include-str-comptime-def-with-pools
   [pools : AstNodePoolContext]
-  [name : String]
+  [name : i64]
   [contents : String]) : AstDecl
   (let
     [args : AstExprList (ast-expr-list-with-capacity 1)]
     [literal : i64
       (ast-node-pool-context-expr-push
         pools
-        (AstExpr.Literal (AstLiteral.String contents)))]
+        (AstExpr.Literal (ast-lit-generated-string contents)))]
     (begin
       (ast-expr-list-push (&mut args) literal)
-      (ast-decl-def-macro
+      (ast-decl-def-macro-id
         name
         (ast-macro-param-list-new)
         (AstType.String)
@@ -2083,10 +2083,10 @@
           (AstExpr.Call
             (ast-node-pool-context-expr-push
               pools
-              (AstExpr.Var (intern "expr-string")))
+              (AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
             args))))))
 
-(define (compiler-load-include-bin-def [name : String] [contents : String]) : AstDecl
+(define (compiler-load-include-bin-def [name : i64] [contents : String]) : AstDecl
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
     [decl : AstDecl
@@ -2170,7 +2170,7 @@
   [importer-path : String]
   [include-path : String]
   [resolved : String]
-  [name : String]
+  [name : i64]
   [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
   (if (io.file-exists? resolved)
     (ResultCompilerLoadInclude.Ok
@@ -2295,7 +2295,7 @@
 (define (compiler-load-expand-include-str-comptime-with-pools
   [importer-path : String]
   [include-path : String]
-  [name : String]
+  [name : i64]
   [stdlib-roots : svec.Vec]
   [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
   (match (compiler-load-resolve-import-result-with-roots
@@ -4355,12 +4355,7 @@
       (compiler-load-lazy-expr-demand (ast-node-get body) alias summary locals)]
     [(AstDecl.Unsafe inner)
       (compiler-load-lazy-decl-demand (box-get inner) alias summary locals)]
-    [(AstDecl.ComptimeDecl meta inner)
-      (if compiler-load-lazy-qualified-observer-exhaustive
-        (compiler-load-lazy-alias-demand-merge
-          (compiler-load-lazy-generated-meta-demand meta alias summary locals)
-          (compiler-load-lazy-decl-demand (box-get inner) alias summary locals))
-        (compiler-load-lazy-alias-demand-unknown))]
+    [(AstDecl.ComptimeDecl _ _) (compiler-load-lazy-alias-demand-unknown)]
     [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
@@ -5677,8 +5672,11 @@
                 (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
                   rest
                   importer-path
+                  importer-path-id
                   importer-module
+                  importer-module-id
                   importer-source-module
+                  importer-source-module-id
                   seen
                   stdlib-roots
                   import-root
@@ -5691,11 +5689,12 @@
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
                       (ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast-decl-path-list-prepend-builder
+                      (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
+                        importer-path-id
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder
-                        importer-module
+                      (ast-decl-module-list-prepend-builder-id
+                        importer-module-id
                         rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
@@ -7846,7 +7845,7 @@
 (define (compiler-load-package-expand-include-str-comptime
   [importer-path : String]
   [include-path : String]
-  [name : String]
+  [name : i64]
   [stdlib-roots : svec.Vec]
   [manifest-dir : String]
   [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
@@ -8206,8 +8205,11 @@
                 (match (compiler-load-package-decls-with-module-and-roots
                   rest
                   importer-path
+                  importer-path-id
                   importer-module
+                  importer-module-id
                   importer-source-module
+                  importer-source-module-id
                   seen
                   stdlib-roots
                   manifest-dir
@@ -8220,11 +8222,12 @@
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
                       (ast-decl-list-prepend-builder expanded rest-decls)
-                      (ast-decl-path-list-prepend-builder
+                      (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
+                        importer-path-id
                         rest-paths)
-                      (ast-decl-module-list-prepend-builder
-                        importer-module
+                      (ast-decl-module-list-prepend-builder-id
+                        importer-module-id
                         rest-modules)
                       rest-seen)]
                   [(ResultCompilerLoadWithPaths.Err diag)
@@ -8778,7 +8781,8 @@
               [_ false])
             (= (ast-expr-list-len (& args)) 1)
             (match (ast-node-get (ast-expr-list-get (& args) 0 0))
-              [(AstExpr.Literal (AstLiteral.String text)) (string.eq text want)]
+              [(AstExpr.Literal (AstLiteral.String text))
+                (string.eq (intern-str text) want)]
               [_ false]))]
         [_ false])]
     [_ false]))

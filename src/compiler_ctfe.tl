@@ -20,16 +20,6 @@
 (import stdlib.string)
 (import stdlib.result)
 
-;; Reset-aware intern ids for fixed CTFE dispatch names. Dispatch compares
-;; intern ids; reset hooks force the fixed names back through the current
-;; compile's intern table instead of relying on process lifetime alone.
-(define ctfe-builtin-generation : i64
-  -1)
-(define ctfe-builtin-ready : bool
-  false)
-(define ctfe-builtin-ids : (Array i64)
-  (array.make-array i64 106))
-
 (define (ctfe-builtin-reset!) : unit
   unit)
 
@@ -127,117 +117,7 @@
   (ast-pat-variant-id (ctfe-materialize-generated-name-id name) items))
 
 (define (ctfe-builtin-refresh!) : unit
-  (if (and ctfe-builtin-ready (= ctfe-builtin-generation (intern-generation)))
-    unit
-    (begin
-      (ctfe-builtin-set! 0 "size-of")
-      (ctfe-builtin-set! 1 "align-of")
-      (ctfe-builtin-set! 2 "offset-of")
-      (ctfe-builtin-set! 3 "__tl_string_eq")
-      (ctfe-builtin-set! 4 "string-eq")
-      (ctfe-builtin-set! 5 "string=?")
-      (ctfe-builtin-set! 6 "__tl_string_length")
-      (ctfe-builtin-set! 7 "string-length")
-      (ctfe-builtin-set! 8 "length")
-      (ctfe-builtin-set! 9 "__tl_string_ref")
-      (ctfe-builtin-set! 10 "string-ref")
-      (ctfe-builtin-set! 11 "char-at")
-      (ctfe-builtin-set! 12 "__tl_string_to_int")
-      (ctfe-builtin-set! 13 "string->int")
-      (ctfe-builtin-set! 14 "string-append")
-      (ctfe-builtin-set! 15 "string-concat")
-      (ctfe-builtin-set! 16 "int->string")
-      (ctfe-builtin-set! 17 "comptime-error")
-      (ctfe-builtin-set! 18 "error")
-      (ctfe-builtin-set! 19 "expr-bool?")
-      (ctfe-builtin-set! 20 "expr-bool-value")
-      (ctfe-builtin-set! 21 "expr-if?")
-      (ctfe-builtin-set! 22 "expr-if-cond")
-      (ctfe-builtin-set! 23 "expr-if-then")
-      (ctfe-builtin-set! 24 "expr-if-else")
-      (ctfe-builtin-set! 25 "expr-clause-first")
-      (ctfe-builtin-set! 26 "expr-clause-second")
-      (ctfe-builtin-set! 27 "expr-bool")
-      (ctfe-builtin-set! 28 "expr-int")
-      (ctfe-builtin-set! 29 "expr-string")
-      (ctfe-builtin-set! 30 "expr-var")
-      (ctfe-builtin-set! 31 "expr-struct-get")
-      (ctfe-builtin-set! 32 "expr-tuple-ref")
-      (ctfe-builtin-set! 33 "expr-struct-set")
-      (ctfe-builtin-set! 34 "expr-splice")
-      (ctfe-builtin-set! 35 "expr-if")
-      (ctfe-builtin-set! 36 "pattern-wildcard")
-      (ctfe-builtin-set! 37 "pattern-binding")
-      (ctfe-builtin-set! 38 "pattern-variant")
-      (ctfe-builtin-set! 39 "pattern-list-empty")
-      (ctfe-builtin-set! 40 "pattern-list-cons")
-      (ctfe-builtin-set! 41 "match-arm")
-      (ctfe-builtin-set! 42 "match-arm-list-empty")
-      (ctfe-builtin-set! 43 "match-arm-list-cons")
-      (ctfe-builtin-set! 44 "expr-match")
-      (ctfe-builtin-set! 45 "expr-type")
-      (ctfe-builtin-set! 46 "type-info")
-      (ctfe-builtin-set! 47 "module-name")
-      (ctfe-builtin-set! 48 "module-export-macro?")
-      (ctfe-builtin-set! 49 "module-hook")
-      (ctfe-builtin-set! 50 "expr-list-empty?")
-      (ctfe-builtin-set! 51 "expr-list-length")
-      (ctfe-builtin-set! 52 "expr-list-head")
-      (ctfe-builtin-set! 53 "expr-list-tail")
-      (ctfe-builtin-set! 54 "expr-list-nth")
-      (ctfe-builtin-set! 55 "expr-clause-list-empty?")
-      (ctfe-builtin-set! 56 "expr-clause-list-length")
-      (ctfe-builtin-set! 57 "expr-clause-list-head")
-      (ctfe-builtin-set! 58 "expr-clause-list-tail")
-      (ctfe-builtin-set! 59 "expr-clause-list-nth")
-      (ctfe-builtin-set! 60 "expr-clause-list->expr-list")
-      (ctfe-builtin-set! 61 "expr-binding-clause-name")
-      (ctfe-builtin-set! 62 "expr-binding-clause-has-type?")
-      (ctfe-builtin-set! 63 "expr-binding-clause-type")
-      (ctfe-builtin-set! 64 "expr-binding-clause-init")
-      (ctfe-builtin-set! 65 "expr-binding-clause-list-empty?")
-      (ctfe-builtin-set! 66 "expr-binding-clause-list-length")
-      (ctfe-builtin-set! 67 "expr-binding-clause-list-head")
-      (ctfe-builtin-set! 68 "expr-binding-clause-list-tail")
-      (ctfe-builtin-set! 69 "expr-binding-clause-list-nth")
-      (ctfe-builtin-set! 70 "expr-binding-clause-list->expr-list")
-      (ctfe-builtin-set! 71 "type-kind")
-      (ctfe-builtin-set! 72 "type-key")
-      (ctfe-builtin-set! 73 "type-nominal-module")
-      (ctfe-builtin-set! 74 "type-nominal-name")
-      (ctfe-builtin-set! 75 "struct-field-count")
-      (ctfe-builtin-set! 76 "struct-field-name")
-      (ctfe-builtin-set! 77 "struct-field-type")
-      (ctfe-builtin-set! 78 "enum-variant-count")
-      (ctfe-builtin-set! 79 "enum-variant-name")
-      (ctfe-builtin-set! 80 "enum-variant-payload-count")
-      (ctfe-builtin-set! 81 "enum-variant-payload-type")
-      (ctfe-builtin-set! 82 "array-element-type")
-      (ctfe-builtin-set! 83 "array-length")
-      (ctfe-builtin-set! 84 "array-dynamic?")
-      (ctfe-builtin-set! 85 "tuple-element-count")
-      (ctfe-builtin-set! 86 "tuple-element-type")
-      (ctfe-builtin-set! 87 "function-param-count")
-      (ctfe-builtin-set! 88 "function-param-type")
-      (ctfe-builtin-set! 89 "function-return-type")
-      (ctfe-builtin-set! 90 "pattern-list-bindings")
-      (ctfe-builtin-set! 91 "expr-string?")
-      (ctfe-builtin-set! 92 "expr-string-value")
-      (ctfe-builtin-set! 93 "string-slice")
-      (ctfe-builtin-set! 94 "expr-mut-borrow")
-      (ctfe-builtin-set! 95 "expr-call")
-      (ctfe-builtin-set! 96 "expr-list-empty")
-      (ctfe-builtin-set! 97 "expr-list-cons")
-      (ctfe-builtin-set! 98 "expr-mut-call0")
-      (ctfe-builtin-set! 99 "expr-mut-call1")
-      (ctfe-builtin-set! 100 "expr-mut-call2")
-      (ctfe-builtin-set! 101 "expr-list-fold-if")
-      (ctfe-builtin-set! 102 "expr-clause-list-fold-if")
-      (ctfe-builtin-set! 103 "type-cleanup-owning?")
-      (ctfe-builtin-set! 104 "type-cleanup-function")
-      (ctfe-builtin-set! 105 "expr-binary-data")
-      (set! ctfe-builtin-generation (intern-generation))
-      (set! ctfe-builtin-ready true))))
+  (cbi.compiler-builtin-refresh!))
 
 (defmacro (ctfe-builtin-ref [index : i64]) : i64
   `(cbi.compiler-builtin-ctfe-ref ,index))
@@ -4985,7 +4865,7 @@
       (match (compiler-ctfe-eval arg env fuel)
         [(ResultCtfe.Ok value arg-fuel)
           (match value
-            [(CompilerCtfeValue.String bytes)
+            [(CompilerCtfeValue.String bytes _)
               (ResultCtfe.Ok
                 (ctfe-syntax-expr-push
                   env
@@ -7229,7 +7109,7 @@
             (ctfe-eval-expr-int-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 29))
             (ctfe-eval-expr-string-call args expr env fuel)]
-          [(= call-id (ctfe-builtin-ref 105))
+          [(= call-id (ctfe-builtin-ref 212))
             (ctfe-eval-expr-binary-data-call args expr env fuel)]
           [(= call-id (ctfe-builtin-ref 91))
             (ctfe-eval-expr-string-inspector-call false args expr env fuel)]
@@ -13790,9 +13670,9 @@
     [name-expr : i64
       (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 29) name-lit)]
     [expected-name : i64
-      (ctfe-ast-push env (AstExpr.Literal (AstLiteral.String "Ada")))]
+      (ctfe-ast-push env (AstExpr.Literal (ast-lit-generated-string "Ada")))]
     [binary-expr : i64
-      (compiler-ctfe-call1-in-env env "expr-binary-data" name-lit)]
+      (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 212) name-lit)]
     [expected-binary : i64 (ctfe-ast-push env (AstExpr.BinaryData "Ada"))]
     [point-expr : i64
       (compiler-ctfe-call1-in-env env (ctfe-builtin-ref 30) point-name-lit)]

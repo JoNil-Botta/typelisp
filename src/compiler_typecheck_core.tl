@@ -53879,9 +53879,6 @@
 (define (macro-internal-resolved-enum-type-marker) : String
   "__typelisp internal resolved enum type")
 
-(define (macro-internal-binary-data-marker) : String
-  "__typelisp internal binary data")
-
 (define (macro-resolved-nominal-type-sexpr
   [marker-id : i64]
   [name-id : i64]
@@ -55026,12 +55023,18 @@
         span
         origin)]
     [(AstExpr.ArrayData value-id)
-      (macro-child-form1 "array-data" value-id span origin)]
+      (macro-child-form1-id
+        (cbi.compiler-builtin-ctfe-ref 199)
+        value-id
+        span
+        origin)]
     [(AstExpr.BinaryData bytes)
       (ResultMacroSexpr.Ok
-        (macro-form1
-          (macro-internal-binary-data-marker)
-          (reader.SpannedSexpr.Str bytes span)
+        (macro-form1-id
+          (cbi.compiler-builtin-ctfe-ref 213)
+          (reader.SpannedSexpr.Str
+            (ci.intern-generated-canonical-name bytes)
+            span)
           span))]
     [(AstExpr.ProgramArgc)
       (ResultMacroSexpr.Ok
@@ -66425,10 +66428,12 @@
     [(AstDecl.DefStructLifetimes name _ _ _ _)
       (str_cat.str-cat "struct-lifetimes:" (tc-env-key-name-text name))]
     [(AstDecl.Import _) "import"]
-    [(AstDecl.IncludeStr name _) (str_cat.str-cat "include-str:" name)]
+    [(AstDecl.IncludeStr name _)
+      (str_cat.str-cat "include-str:" (tc-env-key-name-text name))]
     [(AstDecl.IncludeStrComptime name _)
-      (str_cat.str-cat "include-str-comptime:" name)]
-    [(AstDecl.IncludeBin name _) (str_cat.str-cat "include-bin:" name)]
+      (str_cat.str-cat "include-str-comptime:" (tc-env-key-name-text name))]
+    [(AstDecl.IncludeBin name _)
+      (str_cat.str-cat "include-bin:" (tc-env-key-name-text name))]
     [(AstDecl.DefDispatch name _)
       (str_cat.str-cat "dispatch:" (tc-env-key-name-text name))]
     [(AstDecl.Test name _ _)

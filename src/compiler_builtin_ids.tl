@@ -601,7 +601,7 @@
 (define compiler-builtin-id-cfg-feature-cleanup-owner-reflection : i64
   -1)
 (define compiler-builtin-ctfe-ids : (Array i64)
-  (make-array i64 212))
+  (make-array i64 214))
 
 (defstruct CompilerBuiltinIdsState
   ;; generation, table id, pool length, parse-initialized flag
@@ -613,7 +613,7 @@
   (let
     [metadata : (Array i64) (make-array i64 4)]
     [ids : (Array i64) (make-array i64 295)]
-    [ctfe-ids : (Array i64) (make-array i64 212)]
+    [ctfe-ids : (Array i64) (make-array i64 214)]
     [i : i64 0]
     (begin
       (array-set! metadata 0 -1)
@@ -625,7 +625,7 @@
           (array-set! ids i -1)
           (set! i (+ i 1))))
       (set! i 0)
-      (while (< i 212)
+      (while (< i 214)
         (begin
           (array-set! ctfe-ids i -1)
           (set! i (+ i 1))))
@@ -687,7 +687,7 @@
 (define (state-capture-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 212)
+    (while (< i 214)
       (begin
         (array-set! (struct-get state ctfe-ids) i (compiler-builtin-ctfe-ref i))
         (set! i (+ i 1))))))
@@ -695,7 +695,7 @@
 (define (state-install-ctfe-ids! [state : CompilerBuiltinIdsState]) : unit
   (let
     [i : i64 0]
-    (while (< i 212)
+    (while (< i 214)
       (begin
         (compiler-builtin-ctfe-set! i (array-ref (struct-get state ctfe-ids) i))
         (set! i (+ i 1))))))
@@ -1741,7 +1741,12 @@
     (compiler-builtin-load-ctfe-id! insert-missing 208 "true")
     (compiler-builtin-load-ctfe-id! insert-missing 209 "false")
     (compiler-builtin-load-ctfe-id! insert-missing 210 "type-cleanup-owning?")
-    (compiler-builtin-load-ctfe-id! insert-missing 211 "type-cleanup-function")))
+    (compiler-builtin-load-ctfe-id! insert-missing 211 "type-cleanup-function")
+    (compiler-builtin-load-ctfe-id! insert-missing 212 "expr-binary-data")
+    (compiler-builtin-load-ctfe-id!
+      insert-missing
+      213
+      "__typelisp internal binary data")))
 
 (define (compiler-builtin-load! [insert-missing : bool]) : unit
   (begin

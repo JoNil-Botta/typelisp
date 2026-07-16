@@ -1861,11 +1861,11 @@
         "include-str-comptime"
         (compiler-parse-tag-decl-include-str-comptime))]
     [e14 : sym_i64_env.SymI64Env
-      (sym_i64_env.sym-i64-bind
+      (compiler-parse-dispatch-bind
         e13
         "include-bin"
         (compiler-parse-tag-decl-include-bin))]
-    (sym_i64_env.sym-i64-bind
+    (compiler-parse-dispatch-bind
       e14
       "defdispatch"
       (compiler-parse-tag-decl-defdispatch))))
@@ -2149,11 +2149,6 @@
 (define (parse-internal-resolved-enum-type-marker) : String
   "__typelisp internal resolved enum type")
 
-;; Declaration-macro output uses this non-lexer-spellable form to carry opaque
-;; bytes through the in-memory syntax round trip without array-literal parsing.
-(define (parse-internal-binary-data-marker) : String
-  "__typelisp internal binary data")
-
 (define (parse-ast-internal-binary-data
   [pools : AstNodePoolContext]
   [rest : reader.SpannedSexpr]) : ResultAstExpr
@@ -2166,7 +2161,7 @@
               (ResultAstExpr.Ok
                 (ast-node-pool-context-expr-push
                   pools
-                  (AstExpr.BinaryData bytes)))]
+                  (AstExpr.BinaryData (ci.intern-str bytes))))]
             [_ (ResultAstExpr.Err "parse: malformed internal binary data")])]
         [_ (ResultAstExpr.Err "parse: malformed internal binary data")])]
     [_ (ResultAstExpr.Err "parse: malformed internal binary data")]))
@@ -6575,9 +6570,9 @@
   [rest : reader.SpannedSexpr]) : ResultAstExpr
   (match head
     [(reader.SpannedSexpr.Sym op _)
-      (if (string.eq op (parse-internal-binary-data-marker))
+      (if (= op (cbi.compiler-builtin-ctfe-ref 213))
         (parse-ast-internal-binary-data pools rest)
-        (if (string.eq op "init")
+        (if (compiler-parse-name-eq? op "init")
           (match rest
             [(reader.SpannedSexpr.Cons first _ _)
               (if (sexpr-colon?
@@ -8317,10 +8312,13 @@
           (match (reader.sp-node-get tail)
             [(reader.SpannedSexpr.Cons path-node after-path _)
               (match (reader.sp-node-get path-node)
-                [(reader.SpannedSexpr.Str path _)
+                [(reader.SpannedSexpr.Str path-id _)
                   (match (reader.sp-node-get after-path)
                     [(reader.SpannedSexpr.Nil _)
-                      (ResultAstDecl.Ok (AstDecl.IncludeStrComptime name path))]
+                      (ResultAstDecl.Ok
+                        (AstDecl.IncludeStrComptime
+                          name
+                          (ci.intern-str path-id)))]
                     [_
                       (ResultAstDecl.Err
                         "parse: include-str-comptime expects exactly two operands")])]
@@ -9298,7 +9296,7 @@
 (define (ast-first-include-str-comptime-ok? [decls : AstDeclList]) : bool
   (match (ast-decl-list-step decls)
     [(AstDeclListStep.Cons (AstDecl.IncludeStrComptime name path) _)
-      (and (string.eq name "payload") (string.eq path "data.txt"))]
+      (and (string.eq (intern-str name) "payload") (string.eq path "data.txt"))]
     [_ false]))
 
 (define (ast-first-include-bin-ok? [decls : AstDeclList]) : bool

@@ -1413,6 +1413,11 @@
         [(AstDecl.IncludeStrComptime b-name b-path)
           (and (= a-name b-name) (string.eq a-path b-path))]
         [_ false])]
+    [(AstDecl.IncludeStrComptimeLzss a-name a-path)
+      (match b
+        [(AstDecl.IncludeStrComptimeLzss b-name b-path)
+          (and (= a-name b-name) (string.eq a-path b-path))]
+        [_ false])]
     [(AstDecl.IncludeBin a-name a-path)
       (match b
         [(AstDecl.IncludeBin b-name b-path)

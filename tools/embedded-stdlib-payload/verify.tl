@@ -1,4 +1,4 @@
-;; verify.tl - Prove every generated payload decodes to its exact source bytes.
+;; verify.tl - Prove every build-time payload decodes to its exact source bytes.
 (import compiler_embedded_stdlib as embedded)
 (import stdlib.io)
 (import stdlib.str_cat)
@@ -52,8 +52,10 @@
           false)))))
 
 (define (main) : i64
-  (if (embedded-stdlib-verify-lines
-    (io.read-file "tools/embedded-stdlib-payload/modules.txt")
-    0)
-    42
-    1))
+  (if (= (io.arg-count) 2)
+    (if (embedded-stdlib-verify-lines (io.read-file (io.arg 1)) 0)
+      42
+      1)
+    (begin
+      (io.print-error "usage: verify <module-manifest>")
+      2)))

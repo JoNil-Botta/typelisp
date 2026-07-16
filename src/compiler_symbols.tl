@@ -1399,6 +1399,7 @@
           (ResultCompilerSymbols.Err message)])]
     [(AstDecl.IncludeStr _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.IncludeStrComptime _ _) (ResultCompilerSymbols.Ok symbols)]
+    [(AstDecl.IncludeStrComptimeLzss _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.IncludeBin _ _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Import _) (ResultCompilerSymbols.Ok symbols)]
     [(AstDecl.Module _) (ResultCompilerSymbols.Ok symbols)]
@@ -1655,6 +1656,7 @@
               [(AstDecl.Import _) unit]
               [(AstDecl.IncludeStr _ _) unit]
               [(AstDecl.IncludeStrComptime _ _) unit]
+              [(AstDecl.IncludeStrComptimeLzss _ _) unit]
               [(AstDecl.IncludeBin _ _) unit]
               [(AstDecl.Test _ _ _) unit]
               [_
@@ -1744,6 +1746,7 @@
             [(AstDecl.Import _) unit]
             [(AstDecl.IncludeStr _ _) unit]
             [(AstDecl.IncludeStrComptime _ _) unit]
+            [(AstDecl.IncludeStrComptimeLzss _ _) unit]
             [(AstDecl.IncludeBin _ _) unit]
             [(AstDecl.Module next-module) (set! cur-module next-module)]
             [(AstDecl.Test _ _ _) unit]
@@ -1937,6 +1940,7 @@
     [(AstDecl.Import _) false]
     [(AstDecl.IncludeStr _ _) false]
     [(AstDecl.IncludeStrComptime _ _) false]
+    [(AstDecl.IncludeStrComptimeLzss _ _) false]
     [(AstDecl.IncludeBin _ _) false]
     [(AstDecl.Module _) false]
     [(AstDecl.ModuleBody _ _) false]
@@ -2269,6 +2273,13 @@
               symbols
               index
               module-id)]
+          [(AstDecl.IncludeStrComptimeLzss _ _)
+            (build-compiler-symbol-list-in-module
+              all-decls
+              rest
+              symbols
+              index
+              module-id)]
           [(AstDecl.IncludeBin _ _)
             (build-compiler-symbol-list-in-module
               all-decls
@@ -2375,6 +2386,10 @@
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]
                 [(AstDecl.IncludeStrComptime _ _)
+                  (begin
+                    (set! cur-decls rest)
+                    (set! cur-paths rest-paths))]
+                [(AstDecl.IncludeStrComptimeLzss _ _)
                   (begin
                     (set! cur-decls rest)
                     (set! cur-paths rest-paths))]
@@ -3047,6 +3062,8 @@
               [(AstDecl.Import _) (set! position (+ position 1))]
               [(AstDecl.IncludeStr _ _) (set! position (+ position 1))]
               [(AstDecl.IncludeStrComptime _ _) (set! position (+ position 1))]
+              [(AstDecl.IncludeStrComptimeLzss _ _)
+                (set! position (+ position 1))]
               [(AstDecl.IncludeBin _ _) (set! position (+ position 1))]
               [(AstDecl.Module next-module)
                 (begin
@@ -3408,6 +3425,7 @@
               [(AstDecl.Import _) unit]
               [(AstDecl.IncludeStr _ _) unit]
               [(AstDecl.IncludeStrComptime _ _) unit]
+              [(AstDecl.IncludeStrComptimeLzss _ _) unit]
               [(AstDecl.IncludeBin _ _) unit]
               [(AstDecl.Module _) unit]
               [(AstDecl.Test _ _ _) unit]

@@ -704,10 +704,11 @@ contracts, and intentional panic/exit-status checks.
 3. Include a short header comment with its purpose and required primitives.
 4. Add the new top-level `.tl` file to `scripts/verify-stdlib.sh`'s module
    manifest.
-5. Add new top-level modules needed by installed compilers to
-   `tools/embedded-stdlib-payload/modules.txt`, then run
-   `scripts/generate-embedded-stdlib-payload.sh`. The checked-in generated
-   payload preserves exact source bytes; never add `stdlib/tests/*.tl` fixtures.
+5. Add new top-level modules needed by installed compilers to one of the
+   bounded `src/compiler_embedded_stdlib_payload_[a-f].tl` build-input shards
+   and add its lookup arm to `src/compiler_embedded_stdlib_payload.tl`. The
+   compiler build compresses the exact source bytes directly; never add
+   `stdlib/tests/*.tl` fixtures.
 6. Add inline `(test ...)` items next to declarations for source-local runnable
    API behavior; `scripts/verify-inline-tests.sh` discovers them automatically.
 7. Add focused fixtures under `stdlib/tests/` only for rejection, multi-file,
@@ -727,9 +728,10 @@ contracts, and intentional panic/exit-status checks.
 12. Run `scripts/verify-inline-tests.sh` if the module adds inline tests.
 13. Link user-facing docs or tests to the new module when appropriate.
 
-Run `scripts/verify-embedded-stdlib-payload.sh` to regenerate into `target/`,
-diff the checked-in payload, and decode every embedded module against its
-exact source bytes. `scripts/verify-stdlib.sh` includes this gate in CI.
+Run `scripts/verify-embedded-stdlib-payload.sh` to validate all 42 explicit
+build inputs, prove deterministic one-byte mutation propagation, and decode
+every embedded module against its exact source bytes.
+`scripts/verify-stdlib.sh` includes this gate in CI.
 
 The verifier intentionally fails when a new top-level `stdlib/*.tl` module or a
 new `stdlib/tests/*.tl` fixture is not listed in its corresponding manifest.

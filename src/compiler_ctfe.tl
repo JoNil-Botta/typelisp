@@ -11,6 +11,7 @@
 (cfg (any test selfhost-compile-manifest) (import stdlib.hashmap))
 (import (hashmap i64 i64) as ctfe_key_map)
 (import stdlib.array)
+(import stdlib.byte_buf_core)
 (import "compiler_ast_types.tl")
 (import compiler_comptime_diagnostics_core as comptime_diagnostics)
 (import compiler_builtin_ids as cbi)
@@ -4876,6 +4877,183 @@
         [(ResultCtfe.Err diag) (ResultCtfe.Err diag)]))
     (ResultCtfe.Err
       (box (ctfe-diagnostic-at-expr expr "expr-string expects exactly one arg")))))
+
+;; Compiler-build-only LZSS compression for explicit embedded stdlib inputs.
+;; The loader performs this transform at the declaration boundary so macro
+;; expansion never constructs source-sized syntax trees.
+(defstruct CtfeEmbeddedStdlibLzssMatch
+  (offset i64)
+  (len i64))
+
+(define (ctfe-embedded-stdlib-source-byte
+  [source : (& source str)]
+  [index : i64]) : u8
+  (cast (string.string-ref source index) : u8))
+
+(define (ctfe-embedded-stdlib-source-byte-i64
+  [source : (& source str)]
+  [index : i64]) : i64
+  (cast (ctfe-embedded-stdlib-source-byte source index) : i64))
+
+(define (ctfe-embedded-stdlib-lzss-hash [source : (& source str)] [index : i64]) : i64
+  (%
+    (+
+      (* (ctfe-embedded-stdlib-source-byte-i64 source index) 251)
+      (* (ctfe-embedded-stdlib-source-byte-i64 source (+ index 1)) 31)
+      (ctfe-embedded-stdlib-source-byte-i64 source (+ index 2)))
+    65536))
+
+(define (ctfe-embedded-stdlib-array-fill!
+  [items : (&mut items (Array i64))]
+  [value : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index (array-length items))
+      (begin
+        (array-set! items index value)
+        (set! index (+ index 1))))))
+
+(define (ctfe-embedded-stdlib-lzss-insert!
+  [source : (& source str)]
+  [head : (&mut head (Array i64))]
+  [previous : (&mut previous (Array i64))]
+  [index : i64]) : unit
+  (if (> (+ index 2) (- (string.string-length source) 1))
+    unit
+    (let
+      [hash : i64 (ctfe-embedded-stdlib-lzss-hash source index)]
+      (begin
+        (array-set! previous index (array-ref head hash))
+        (array-set! head hash index)))))
+
+(define (ctfe-embedded-stdlib-lzss-insert-range!
+  [source : (& source str)]
+  [head : (&mut head (Array i64))]
+  [previous : (&mut previous (Array i64))]
+  [start : i64]
+  [count : i64]) : unit
+  (let
+    [index : i64 0]
+    (while (< index count)
+      (begin
+        (ctfe-embedded-stdlib-lzss-insert! source head previous (+ start index))
+        (set! index (+ index 1))))))
+
+(define (ctfe-embedded-stdlib-lzss-match-len
+  [source : (& source str)]
+  [candidate : i64]
+  [index : i64]) : i64
+  (let
+    [length : i64 0]
+    [source-len : i64 (string.string-length source)]
+    (begin
+      (while (and
+        (< length 18)
+        (< (+ index length) source-len)
+        (=
+          (ctfe-embedded-stdlib-source-byte source (+ candidate length))
+          (ctfe-embedded-stdlib-source-byte source (+ index length))))
+        (set! length (+ length 1)))
+      length)))
+
+(define (ctfe-embedded-stdlib-lzss-find-match
+  [source : (& source str)]
+  [head : (& head (Array i64))]
+  [previous : (& previous (Array i64))]
+  [index : i64]) : CtfeEmbeddedStdlibLzssMatch
+  (if (> (+ index 2) (- (string.string-length source) 1))
+    (CtfeEmbeddedStdlibLzssMatch 0 0)
+    (let
+      [hash : i64 (ctfe-embedded-stdlib-lzss-hash source index)]
+      [candidate : i64 (array-ref head hash)]
+      [best-offset : i64 0]
+      [best-len : i64 0]
+      (begin
+        (while (and
+          (>= candidate 0)
+          (<= (- index candidate) 4096)
+          (< best-len 18))
+          (let
+            [length : i64
+              (ctfe-embedded-stdlib-lzss-match-len source candidate index)]
+            (begin
+              (when
+                (> length best-len)
+                (begin
+                  (set! best-len length)
+                  (set! best-offset (- index candidate))))
+              (set! candidate (array-ref previous candidate)))))
+        (CtfeEmbeddedStdlibLzssMatch best-offset best-len)))))
+
+(define (ctfe-embedded-stdlib-lzss-compress [source : String]) : String
+  (let
+    [source-len : i64 (string.string-length source)]
+    [head : (Array i64) (array.make-array i64 65536)]
+    [previous : (Array i64) (array.make-array i64 source-len)]
+    [out : byte_buf_core.ByteBufBuilder
+      (byte_buf_core.byte-buf-builder-with-capacity
+        (+ source-len (+ (/ source-len 8) 1)))]
+    [index : i64 0]
+    (begin
+      (ctfe-embedded-stdlib-array-fill! (&mut head) -1)
+      (ctfe-embedded-stdlib-array-fill! (&mut previous) -1)
+      (while (< index source-len)
+        (let
+          [flag-index : i64 (byte_buf_core.byte-buf-builder-len (& out))]
+          [flags : i64 0]
+          [bit : i64 0]
+          (begin
+            (byte_buf_core.byte-buf-builder-push (&mut out) (cast 0 : u8))
+            (while (and (< bit 8) (< index source-len))
+              (match (ctfe-embedded-stdlib-lzss-find-match
+                (& source)
+                (& head)
+                (& previous)
+                index)
+                [(CtfeEmbeddedStdlibLzssMatch offset length)
+                  (if (>= length 3)
+                    (let
+                      [packed : i64 (+ (shl (- offset 1) 4) (- length 3))]
+                      (begin
+                        (byte_buf_core.byte-buf-builder-push
+                          (&mut out)
+                          (cast (shr packed 8) : u8))
+                        (byte_buf_core.byte-buf-builder-push
+                          (&mut out)
+                          (cast (bit-and packed 255) : u8))
+                        (ctfe-embedded-stdlib-lzss-insert-range!
+                          (& source)
+                          (&mut head)
+                          (&mut previous)
+                          index
+                          length)
+                        (set! index (+ index length))))
+                    (begin
+                      (set! flags (bit-or flags (shl 1 bit)))
+                      (byte_buf_core.byte-buf-builder-push
+                        (&mut out)
+                        (ctfe-embedded-stdlib-source-byte (& source) index))
+                      (ctfe-embedded-stdlib-lzss-insert!
+                        (& source)
+                        (&mut head)
+                        (&mut previous)
+                        index)
+                      (set! index (+ index 1))))])
+              (set! bit (+ bit 1)))
+            (array-set! (struct-get out slots) flag-index (cast flags : u8)))))
+      (byte_buf_core.byte-buf-builder-to-string (& out)))))
+
+(define (ctfe-embedded-stdlib-compressed-prefix) : String
+  "__typelisp_embedded_stdlib_lzss_v1__")
+
+(define (ctfe-embedded-stdlib-binary-data-bytes [source : String]) : String
+  (string.append
+    (string.append
+      (string.append
+        (ctfe-embedded-stdlib-compressed-prefix)
+        (string.int->string (string.string-length source)))
+      "\n")
+    (ctfe-embedded-stdlib-lzss-compress source)))
 
 ;; `(expr-binary-data bytes)` builds an opaque static `(Array u8)` payload.
 (define (ctfe-eval-expr-binary-data-call

@@ -162,8 +162,9 @@ required_gate_unavailable() {
 # production annotations, counts, duplicates, and delegated fixture counts.
 run_gate "CLI gate inventory and ownership" scripts/check-cli-gate-coverage.sh --self-test
 
-# Generated payload freshness must fail before the expensive bootstrap. The
-# exact-source verifier uses only stage0-supported language/runtime surfaces.
+# Harness-only checks run before the expensive bootstrap. Source-owned payload
+# verification uses the branch-built compiler because compression is part of
+# the new loader surface.
 run_gate "CI timing helper self-tests" scripts/verify-ci-timing.sh
 run_gate \
     "SPMD AVX-512 instruction harness self-tests" \
@@ -178,10 +179,6 @@ run_gate \
     scripts/measure-instruction-counts.sh \
     --self-test \
     --output target/instruction-count-c-region-self-test
-run_with_compiler \
-    "$SEED_TYPELISP_BIN" \
-    "embedded stdlib generated payload" \
-    scripts/verify-embedded-stdlib-payload.sh
 
 stage2_safety_corpus_supported() {
     compiler=$1
@@ -343,6 +340,7 @@ fi
 # The current cli.tl emits stage1-qualified symbols, so the manifest uses the
 # stage1 expectation mode on both hosts.
 run_with_compiler "$STAGE2_BIN" "stage2 selfhost compile manifest" env TYPELISP_COMPILE_MANIFEST_EXPECTATION_MODE=stage1 scripts/verify-selfhost-compile-manifest.sh
+run_with_compiler "$STAGE2_BIN" "embedded stdlib build payload" scripts/verify-embedded-stdlib-payload.sh
 # The deterministic assembly gate reuses the manifest's emitted .s as its first
 # compile for overlapping sources, so it must run after the manifest gate.
 run_with_compiler "$STAGE2_BIN" "stage2 deterministic assembly" env TYPELISP_DETERMINISTIC_ASM_MANIFEST_DIR="$ROOT/target/selfhost-compile-manifest" scripts/check-deterministic-asm.sh

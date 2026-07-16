@@ -15,6 +15,7 @@
 (import stdlib.vector)
 (import (vector String) as svec)
 (import compiler_embedded_stdlib as ces)
+(import "compiler_ctfe.tl")
 (import stdlib.string)
 (import stdlib.str_cat_runtime as str_cat)
 (import token)
@@ -1900,6 +1901,17 @@
               (AstExpr.Var (cbi.compiler-builtin-ctfe-ref 29)))
             args))))))
 
+(define (compiler-load-include-str-comptime-lzss-def-with-pools
+  [pools : AstNodePoolContext]
+  [name : i64]
+  [contents : String]) : AstDecl
+  (let
+    [compressed : String (ctfe-embedded-stdlib-binary-data-bytes contents)]
+    (ast-decl-def-id
+      name
+      (AstMaybeType.Some (ast-ty-dyn-array-with-pools pools (AstType.U8)))
+      (ast-node-pool-context-expr-push pools (AstExpr.BinaryData compressed)))))
+
 (define (compiler-load-include-bin-def [name : i64] [contents : String]) : AstDecl
   (let
     [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
@@ -2005,6 +2017,52 @@
               include-path
               resolved)))])))
 
+(define (compiler-load-include-str-comptime-lzss-from-resolved-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : i64]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (if (io.file-exists? resolved)
+    (ResultCompilerLoadInclude.Ok
+      (compiler-load-include-str-comptime-lzss-def-with-pools
+        pools
+        name
+        (io.read-file resolved)))
+    (match (compiler-load-embedded-stdlib-source-for-path resolved)
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibSomeSource
+          source)
+        (ResultCompilerLoadInclude.Ok
+          (compiler-load-include-str-comptime-lzss-def-with-pools
+            pools
+            name
+            source))]
+      [(ces.CompilerEmbeddedStdlibSource.CompilerEmbeddedStdlibNoSource)
+        (ResultCompilerLoadInclude.Err
+          (box
+            (compiler-load-include-str-read-error
+              importer-path
+              include-path
+              resolved)))])))
+
+(define (compiler-load-include-str-comptime-lzss-from-resolved
+  [importer-path : String]
+  [include-path : String]
+  [resolved : String]
+  [name : i64]) : ResultCompilerLoadInclude
+  (let
+    [pools : AstNodePoolContext (ast-node-pool-context-capture-active)]
+    [result : ResultCompilerLoadInclude
+      (compiler-load-include-str-comptime-lzss-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
+    (begin
+      (ast-node-pool-context-install! pools)
+      result)))
+
 (define (compiler-load-include-bin-read-error
   [importer-path : String]
   [include-path : String]
@@ -2099,6 +2157,27 @@
     stdlib-roots)
     [(ResultPkgResolve.Ok resolved)
       (compiler-load-include-str-comptime-from-resolved-with-pools
+        importer-path
+        include-path
+        resolved
+        name
+        pools)]
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
+        (box (compiler-diagnostic-at-start importer-path message)))]))
+
+(define (compiler-load-expand-include-str-comptime-lzss-with-pools
+  [importer-path : String]
+  [include-path : String]
+  [name : i64]
+  [stdlib-roots : svec.Vec]
+  [pools : AstNodePoolContext]) : ResultCompilerLoadInclude
+  (match (compiler-load-resolve-import-result-with-roots
+    importer-path
+    include-path
+    stdlib-roots)
+    [(ResultPkgResolve.Ok resolved)
+      (compiler-load-include-str-comptime-lzss-from-resolved-with-pools
         importer-path
         include-path
         resolved
@@ -4127,6 +4206,8 @@
     [(AstDecl.DefDispatch _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStr _ _) (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeStrComptime _ _) (compiler-load-lazy-alias-demand-none)]
+    [(AstDecl.IncludeStrComptimeLzss _ _)
+      (compiler-load-lazy-alias-demand-none)]
     [(AstDecl.IncludeBin _ _) (compiler-load-lazy-alias-demand-none)]
     ;; A future declaration shape might hide references. Keep it conservative.
     [_ (compiler-load-lazy-alias-demand-unknown)]))
@@ -4752,6 +4833,24 @@
         false
         generated
         false)]
+    [(AstDecl.IncludeStrComptimeLzss name _)
+      (compiler-load-surface-build-add-decl
+        build
+        (CompilerLoadSurfaceDecl
+          (CompilerLoadSurfaceIncludeBin)
+          name
+          module-id
+          (CompilerLoadSurfaceNoSignature)
+          (CompilerLoadSurfaceMacroOther)
+          false
+          false
+          generated
+          was-unsafe
+          (compiler-load-surface-zero-span))
+        false
+        false
+        generated
+        false)]
     [(AstDecl.IncludeBin name _)
       (compiler-load-surface-build-add-decl
         build
@@ -5344,6 +5443,46 @@
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(AstDecl.IncludeStrComptime name include-path)
             (match (compiler-load-expand-include-str-comptime-with-pools
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              pools)
+              [(ResultCompilerLoadInclude.Ok expanded)
+                (match (compiler-load-decls-with-module-and-roots-cfg-root-with-pools
+                  rest
+                  importer-path
+                  importer-path-id
+                  importer-module
+                  importer-module-id
+                  importer-source-module
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  import-root
+                  cfgs
+                  pools)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (ResultCompilerLoadWithPaths.Ok
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder-with-owner-id
+                        importer-path
+                        importer-path-id
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder-id
+                        importer-module-id
+                        rest-modules)
+                      rest-seen)]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(AstDecl.IncludeStrComptimeLzss name include-path)
+            (match (compiler-load-expand-include-str-comptime-lzss-with-pools
               importer-path
               include-path
               name
@@ -7465,6 +7604,29 @@
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
+(define (compiler-load-package-expand-include-str-comptime-lzss
+  [importer-path : String]
+  [include-path : String]
+  [name : i64]
+  [stdlib-roots : svec.Vec]
+  [manifest-dir : String]
+  [deps : CompilerPkgDeps]) : ResultCompilerLoadInclude
+  (match (if (compiler-load-pkg-import? include-path)
+    (compiler-load-resolve-pkg-import include-path manifest-dir deps)
+    (compiler-load-resolve-import-result-with-roots
+      importer-path
+      include-path
+      stdlib-roots))
+    [(ResultPkgResolve.Ok resolved)
+      (compiler-load-include-str-comptime-lzss-from-resolved
+        importer-path
+        include-path
+        resolved
+        name)]
+    [(ResultPkgResolve.Err message)
+      (ResultCompilerLoadInclude.Err
+        (box (compiler-diagnostic-at-start importer-path message)))]))
+
 (define (compiler-load-package-expand-include-bin
   [importer-path : String]
   [include-path : String]
@@ -7794,6 +7956,47 @@
                 (ResultCompilerLoadWithPaths.Err diag)])]
           [(AstDecl.IncludeStrComptime name include-path)
             (match (compiler-load-package-expand-include-str-comptime
+              importer-path
+              include-path
+              name
+              stdlib-roots
+              manifest-dir
+              deps)
+              [(ResultCompilerLoadInclude.Ok expanded)
+                (match (compiler-load-package-decls-with-module-and-roots
+                  rest
+                  importer-path
+                  importer-path-id
+                  importer-module
+                  importer-module-id
+                  importer-source-module
+                  importer-source-module-id
+                  seen
+                  stdlib-roots
+                  manifest-dir
+                  deps
+                  cfgs)
+                  [(ResultCompilerLoadWithPaths.Ok
+                      rest-decls
+                      rest-paths
+                      rest-modules
+                      rest-seen)
+                    (ResultCompilerLoadWithPaths.Ok
+                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (ast-decl-path-list-prepend-builder-with-owner-id
+                        importer-path
+                        importer-path-id
+                        rest-paths)
+                      (ast-decl-module-list-prepend-builder-id
+                        importer-module-id
+                        rest-modules)
+                      rest-seen)]
+                  [(ResultCompilerLoadWithPaths.Err diag)
+                    (ResultCompilerLoadWithPaths.Err diag)])]
+              [(ResultCompilerLoadInclude.Err diag)
+                (ResultCompilerLoadWithPaths.Err diag)])]
+          [(AstDecl.IncludeStrComptimeLzss name include-path)
+            (match (compiler-load-package-expand-include-str-comptime-lzss
               importer-path
               include-path
               name
@@ -8383,6 +8586,30 @@
               [(AstExpr.Literal (AstLiteral.String text))
                 (string.eq (intern-str text) want)]
               [_ false]))]
+        [_ false])]
+    [_ false]))
+
+(define (compiler-load-first-lzss-def?
+  [decls : AstDeclList]
+  [name : String]
+  [want-source : String]) : bool
+  (match (ast-decl-list-step decls)
+    [(AstDeclListStep.Cons
+        (AstDecl.Def
+          got
+          (AstMaybeType.Some (AstType.DynArray elem-id))
+          value-box)
+        _)
+      (match (ast-node-get value-box)
+        [(AstExpr.BinaryData bytes)
+          (and
+            (string.eq (intern-str got) name)
+            (match (ty-node-get elem-id)
+              [(AstType.U8) true]
+              [_ false])
+            (string.eq
+              bytes
+              (ctfe-embedded-stdlib-binary-data-bytes want-source)))]
         [_ false])]
     [_ false]))
 
@@ -9953,6 +10180,22 @@
         (and
           (= (compiler-load-decl-list-count decls) 2)
           (compiler-load-first-string-macro? decls "payload" "only at comptime"))]
+      [(ResultCompilerLoadWithPaths.Err _) false])))
+
+(define (compiler-load-include-str-comptime-lzss-relative-ok?) : bool
+  (begin
+    (io.write-file "target/cl_include_comptime_lzss_payload.txt" "compress me")
+    (io.write-file
+      "target/cl_include_comptime_lzss_entry.tl"
+      "(include-str-comptime-lzss payload \"cl_include_comptime_lzss_payload.txt\")
+(define (main) : i64 0)")
+    (match (compiler-load-file-with-paths
+      "target/cl_include_comptime_lzss_entry.tl"
+      (sym_i64_env.sym-i64-empty))
+      [(ResultCompilerLoadWithPaths.Ok decls _ _ _)
+        (and
+          (= (compiler-load-decl-list-count decls) 2)
+          (compiler-load-first-lzss-def? decls "payload" "compress me"))]
       [(ResultCompilerLoadWithPaths.Err _) false])))
 
 (define (compiler-load-missing-include-str-ok?) : bool
@@ -12518,6 +12761,11 @@
       (compiler-load-include-str-comptime-relative-ok?)
       (return
         (io.panic "compiler-load: include-str-comptime relative smoke mismatch")))
+    (unless
+      (compiler-load-include-str-comptime-lzss-relative-ok?)
+      (return
+        (io.panic
+          "compiler-load: include-str-comptime-lzss relative smoke mismatch")))
     (unless
       (compiler-load-missing-include-str-ok?)
       (return (io.panic "compiler-load: missing include-str smoke mismatch")))

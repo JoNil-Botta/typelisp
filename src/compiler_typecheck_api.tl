@@ -398,8 +398,11 @@
                     ""
                     cbi.compiler-builtin-id-fix-empty
                     (ast-node-pool-context-capture-active))]
-                (match (tc-program-source-types-policy-ok ctx program)
-                  [(ResultTcUnit.Ok)
+                (match (tc-program-source-types-policy-ok
+                  ctx
+                  program
+                  (ast-decl-path-list-new))
+                  [(ResultTcSourcePolicyDiagnostic.Ok)
                     (match (tc-source-expr-policy-ok ctx expr)
                       [(ResultTcUnit.Ok)
                         (match (tc-build-top-env ctx program)
@@ -416,7 +419,9 @@
                                   (compiler-diagnostic-message (box-get diag)))])]
                           [(ResultTcEnv.Err message) (ResultTcType.Err message)])]
                       [(ResultTcUnit.Err message) (ResultTcType.Err message)])]
-                  [(ResultTcUnit.Err message) (ResultTcType.Err message)]))]
+                  [(ResultTcSourcePolicyDiagnostic.Err diag)
+                    (ResultTcType.Err
+                      (compiler-diagnostic-message (box-get diag)))]))]
             [(ResultCompilerRegistries.Err message) (ResultTcType.Err message)])]
         [(ResultCompilerSymbols.Err message) (ResultTcType.Err message)]))))
 

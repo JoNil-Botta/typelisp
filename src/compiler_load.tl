@@ -922,6 +922,7 @@
 
 (define (compiler-load-session-reset-pools!) : unit
   (begin
+    (compiler-parse-decl-origin-cache-reset!)
     ;; Global resets do not own the previously installed context cells. Detach
     ;; before truncating so stale scratch-owned cells are not updated.
     (ast-node-pool-active-context-clear!)
@@ -943,6 +944,7 @@
   [state : CompilerLoadSessionState]
   [pools : AstNodePoolContext]) : unit
   (begin
+    (compiler-parse-decl-origin-cache-reset!)
     (compiler-load-session-state-surface-summaries-reset! state)
     (compiler-load-session-state-lazy-qualified-observer-reset! state)
     (array-set! (struct-get state surface-summary-load-depth) 0 0)
@@ -2330,6 +2332,55 @@
       (ResultCompilerLoadInclude.Err
         (box (compiler-diagnostic-at-start importer-path message)))]))
 
+(define (compiler-load-decl-list-prepend-with-origin
+  [head : AstDecl]
+  [origin : CompilerParseMaybeDeclSpan]
+  [rest : AstDeclList]) : AstDeclList
+  (let
+    [rest-key : i64 (compiler-parse-decl-list-storage-key (& rest))]
+    [out : AstDeclList (ast-decl-list-prepend-builder head rest)]
+    [same-storage : bool
+      (= rest-key (compiler-parse-decl-list-storage-key (& out)))]
+    (if same-storage
+      (begin
+        (compiler-parse-decl-origin-register-maybe! (& out) 0 origin)
+        out)
+      (begin
+        (compiler-parse-decl-origin-register-maybe! (& out) 0 origin)
+        (compiler-parse-decl-origin-register-list-aliases! (& out) 1 rest)
+        out))))
+
+(define (compiler-load-decl-list-prepend-from-source
+  [head : AstDecl]
+  [source : AstDeclList]
+  [rest : AstDeclList]) : AstDeclList
+  (let
+    [rest-key : i64 (compiler-parse-decl-list-storage-key (& rest))]
+    [out : AstDeclList (ast-decl-list-prepend-builder head rest)]
+    [same-storage : bool
+      (= rest-key (compiler-parse-decl-list-storage-key (& out)))]
+    (begin
+      (if (compiler-parse-decl-origin-needs-record?
+        (ast-decl-list-get (& source) 0 (ast-decl-fallback)))
+        (compiler-parse-decl-origin-register-alias-record!
+          (& out)
+          0
+          1
+          (compiler-parse-decl-list-storage-key (& source))
+          (struct-get source offset)
+          false)
+        unit)
+      (if same-storage
+        unit
+        (compiler-parse-decl-origin-register-list-aliases! (& out) 1 rest))
+      out)))
+
+(define (compiler-load-decl-list-prepend [head : AstDecl] [rest : AstDeclList]) : AstDeclList
+  (compiler-load-decl-list-prepend-with-origin
+    head
+    (CompilerParseMaybeDeclSpan.None)
+    rest))
+
 (define (compiler-load-decl-list-append
   [left : AstDeclList]
   [right : AstDeclList]) : AstDeclList
@@ -2340,6 +2391,11 @@
     (begin
       (ast-decl-list-append-from (&mut out) (& left) 0)
       (ast-decl-list-append-from (&mut out) (& right) 0)
+      (compiler-parse-decl-origin-register-list-aliases! (& out) 0 left)
+      (compiler-parse-decl-origin-register-list-aliases!
+        (& out)
+        (ast-decl-list-len (& left))
+        right)
       out)))
 
 (define (compiler-load-decl-list-append-onto
@@ -2348,37 +2404,51 @@
   (let
     [left-len : i64 (ast-decl-list-len (& left))]
     [right-len : i64 (ast-decl-list-len (& right))]
-    (if (and
-      (<= left-len (struct-get right offset))
-      (struct-get right prependable)
-      (not
-        (unsafe
-          (=
-            (ptr->int
-              (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
-            (ptr->int
-              (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
-      (let
-        [new-offset : i64 (- (struct-get right offset) left-len)]
-        (begin
-          (ast-decl-list-copy-to
-            (&mut (struct-get right slots))
-            (& (struct-get left slots))
-            (struct-get left offset)
-            new-offset
-            0
-            left-len)
-          (AstDeclList
-            (struct-get right slots)
-            new-offset
-            (+ left-len right-len)
-            true)))
-      (let
-        [out : AstDeclList (ast-decl-list-with-capacity (+ left-len right-len))]
-        (begin
-          (ast-decl-list-append-from (&mut out) (& left) 0)
-          (ast-decl-list-append-from (&mut out) (& right) 0)
-          out)))))
+    [right-key : i64 (compiler-parse-decl-list-storage-key (& right))]
+    [out : AstDeclList
+      (if (and
+        (<= left-len (struct-get right offset))
+        (struct-get right prependable)
+        (not
+          (unsafe
+            (=
+              (ptr->int
+                (ptr-cast (array-data (struct-get left slots)) : (Ptr u8)))
+              (ptr->int
+                (ptr-cast (array-data (struct-get right slots)) : (Ptr u8)))))))
+        (let
+          [new-offset : i64 (- (struct-get right offset) left-len)]
+          (begin
+            (ast-decl-list-copy-to
+              (&mut (struct-get right slots))
+              (& (struct-get left slots))
+              (struct-get left offset)
+              new-offset
+              0
+              left-len)
+            (AstDeclList
+              (struct-get right slots)
+              new-offset
+              (+ left-len right-len)
+              true)))
+        (let
+          [out : AstDeclList
+            (ast-decl-list-with-capacity (+ left-len right-len))]
+          (begin
+            (ast-decl-list-append-from (&mut out) (& left) 0)
+            (ast-decl-list-append-from (&mut out) (& right) 0)
+            out)))]
+    [same-storage : bool
+      (= right-key (compiler-parse-decl-list-storage-key (& out)))]
+    (begin
+      (compiler-parse-decl-origin-register-list-aliases! (& out) 0 left)
+      (if same-storage
+        unit
+        (compiler-parse-decl-origin-register-list-aliases!
+          (& out)
+          left-len
+          right))
+      out)))
 
 (define (compiler-load-decl-path-list-append
   [left : AstDeclPathList]
@@ -5843,7 +5913,7 @@
   [rest : AstDeclList]) : AstDeclList
   (match alias
     [(AstMaybeImportAlias.Some _)
-      (ast-decl-list-prepend-builder
+      (compiler-load-decl-list-prepend
         (AstDecl.Import
           (AstImportSpec.Spec
             kind
@@ -5896,7 +5966,7 @@
         alias
         rest)]
     (if (compiler-load-decl-list-has-module? imported-decls)
-      (ast-decl-list-prepend-builder
+      (compiler-load-decl-list-prepend
         (ast-decl-module-id importer-source-module-id)
         after-alias)
       after-alias)))
@@ -6002,11 +6072,11 @@
                           rest-modules
                           rest-seen)
                         (ResultCompilerLoadWithPaths.Ok
-                          (ast-decl-list-prepend-builder
+                          (compiler-load-decl-list-prepend
                             (ast-decl-module-id target-module-id)
                             (compiler-load-decl-list-append-onto
                               body-decls
-                              (ast-decl-list-prepend-builder
+                              (compiler-load-decl-list-prepend
                                 (ast-decl-module-id importer-source-module-id)
                                 rest-decls)))
                           (ast-decl-path-list-prepend-builder-with-owner-id
@@ -6052,7 +6122,10 @@
                     rest-modules
                     rest-seen)
                   (ResultCompilerLoadWithPaths.Ok
-                    (ast-decl-list-prepend-builder decl rest-decls)
+                    (compiler-load-decl-list-prepend-from-source
+                      decl
+                      decls
+                      rest-decls)
                     (ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
                       importer-path-id
@@ -6262,7 +6335,10 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (compiler-load-decl-list-prepend-from-source
+                        expanded
+                        decls
+                        rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
@@ -6302,7 +6378,10 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (compiler-load-decl-list-prepend-from-source
+                        expanded
+                        decls
+                        rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
@@ -6382,7 +6461,10 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (compiler-load-decl-list-prepend-from-source
+                        expanded
+                        decls
+                        rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
@@ -6415,7 +6497,10 @@
                   rest-modules
                   rest-seen)
                 (ResultCompilerLoadWithPaths.Ok
-                  (ast-decl-list-prepend-builder decl rest-decls)
+                  (compiler-load-decl-list-prepend-from-source
+                    decl
+                    decls
+                    rest-decls)
                   (ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
                     importer-path-id
@@ -6751,6 +6836,59 @@
 ;; AST into the caller's program-lifetime pools. Lexer tokens, reader forms,
 ;; source text, parser scratch, and superseded temporary pool arrays are all
 ;; released before import traversal continues to the next file.
+(define (compiler-load-propagate-compacted-decl-origins!
+  [source : AstDeclList]
+  [dest : AstDeclList]
+  [records-start : i64]
+  [records-end : i64]) : unit
+  (begin
+    (compiler-parse-decl-origin-copy-direct-records!
+      source
+      (& dest)
+      0
+      records-start
+      records-end)
+    (let
+      [source-cursor : AstDeclList source]
+      [dest-cursor : AstDeclList dest]
+      [done : bool false]
+      (while (not done)
+        (match (ast-decl-list-step source-cursor)
+          [(AstDeclListStep.Nil) (set! done true)]
+          [(AstDeclListStep.Cons source-decl source-rest)
+            (match (ast-decl-list-step dest-cursor)
+              [(AstDeclListStep.Nil) (set! done true)]
+              [(AstDeclListStep.Cons dest-decl dest-rest)
+                (begin
+                  (match source-decl
+                    [(AstDecl.ModuleBody _ source-body-box)
+                      (match dest-decl
+                        [(AstDecl.ModuleBody _ dest-body-box)
+                          (compiler-load-propagate-compacted-decl-origins!
+                            (box-get source-body-box)
+                            (box-get dest-body-box)
+                            records-start
+                            records-end)]
+                        [_ unit])]
+                    [_ unit])
+                  (set! source-cursor source-rest)
+                  (set! dest-cursor dest-rest))])])))))
+
+(define (compiler-load-propagate-compacted-program-origins!
+  [source : AstProgram]
+  [dest : AstProgram]
+  [records-start : i64]
+  [records-end : i64]) : unit
+  (match source
+    [(AstProgram.Program source-decls-box)
+      (match dest
+        [(AstProgram.Program dest-decls-box)
+          (compiler-load-propagate-compacted-decl-origins!
+            (box-get source-decls-box)
+            (box-get dest-decls-box)
+            records-start
+            records-end)])]))
+
 (define (compiler-load-parse-file-diagnostic-detached-with-pools
   [path : String]
   [cfgs : sym_i64_env.SymI64Env]
@@ -6784,6 +6922,7 @@
         expr-capacity
         type-capacity
         scratch-base)]
+    [records-start : i64 (reader.sp-node-pool-len)]
     [parsed : ResultAstProgramDiagnostic
       (compiler-load-parse-source-diagnostic-escaping-with-pools
         path
@@ -6795,6 +6934,17 @@
         (match (ast-program-copy-append-with-pools scratch-pools pools program)
           [(AstProgramCompaction out-program _)
             (let
+              [records-end : i64 (reader.sp-node-pool-len)]
+              [_origins : unit
+                (compiler-load-propagate-compacted-program-origins!
+                  program
+                  out-program
+                  records-start
+                  records-end)]
+              [_compact-origin-records : unit
+                (compiler-parse-member-records-compact!
+                  records-start
+                  records-end)]
               [scratch-head : i64 (arena.tl_arena_current)]
               [_restore-caller : unit
                 (unsafe
@@ -6816,6 +6966,7 @@
           [out : ResultAstProgramDiagnostic
             (ResultAstProgramDiagnostic.Err stable-diag)]
           (begin
+            (reader.sp-node-pool-truncate! records-start)
             (unsafe
               (arena.tl_arena_destroy scratch-head))
             out))])))
@@ -8303,7 +8454,10 @@
               decl)
               [(CompilerLoadSomeDecl transformed)
                 (ResultCompilerLoadWithPaths.Ok
-                  (ast-decl-list-prepend-builder transformed rest-decls)
+                  (compiler-load-decl-list-prepend-from-source
+                    transformed
+                    decls
+                    rest-decls)
                   (ast-decl-path-list-prepend-builder-with-owner-id
                     owned-decl-path
                     decl-path-id
@@ -8530,7 +8684,10 @@
                     rest-modules
                     rest-seen)
                   (ResultCompilerLoadWithPaths.Ok
-                    (ast-decl-list-prepend-builder decl rest-decls)
+                    (compiler-load-decl-list-prepend-from-source
+                      decl
+                      decls
+                      rest-decls)
                     (ast-decl-path-list-prepend-builder-with-owner-id
                       importer-path
                       importer-path-id
@@ -8775,7 +8932,10 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (compiler-load-decl-list-prepend-from-source
+                        expanded
+                        decls
+                        rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
@@ -8816,7 +8976,10 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (compiler-load-decl-list-prepend-from-source
+                        expanded
+                        decls
+                        rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
@@ -8898,7 +9061,10 @@
                       rest-modules
                       rest-seen)
                     (ResultCompilerLoadWithPaths.Ok
-                      (ast-decl-list-prepend-builder expanded rest-decls)
+                      (compiler-load-decl-list-prepend-from-source
+                        expanded
+                        decls
+                        rest-decls)
                       (ast-decl-path-list-prepend-builder-with-owner-id
                         importer-path
                         importer-path-id
@@ -8931,7 +9097,10 @@
                   rest-modules
                   rest-seen)
                 (ResultCompilerLoadWithPaths.Ok
-                  (ast-decl-list-prepend-builder decl rest-decls)
+                  (compiler-load-decl-list-prepend-from-source
+                    decl
+                    decls
+                    rest-decls)
                   (ast-decl-path-list-prepend-builder-with-owner-id
                     importer-path
                     importer-path-id

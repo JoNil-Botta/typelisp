@@ -2231,10 +2231,6 @@
     0))
 (cfg
   compile-profile
-  (define compiler-tc-macro-generated-module-catalog-validations : i64
-    0))
-(cfg
-  compile-profile
   (define compiler-tc-macro-live-rebuilds : i64
     0))
 (cfg
@@ -2377,7 +2373,6 @@
       (set! compiler-tc-macro-generated-module-memo-hits 0)
       (set! compiler-tc-macro-generated-module-catalog-builds 0)
       (set! compiler-tc-macro-generated-module-catalog-hits 0)
-      (set! compiler-tc-macro-generated-module-catalog-validations 0)
       (set! compiler-tc-macro-live-rebuilds 0)
       (set! compiler-tc-macro-live-reuses 0)
       (set! compiler-tc-macro-live-registry-rebuilds 0)
@@ -2436,13 +2431,6 @@
     (set!
       compiler-tc-macro-generated-module-catalog-hits
       (+ compiler-tc-macro-generated-module-catalog-hits 1))))
-
-(cfg
-  compile-profile
-  (define (compiler-tc-macro-profile-note-generated-module-catalog-validation) : unit
-    (set!
-      compiler-tc-macro-generated-module-catalog-validations
-      (+ compiler-tc-macro-generated-module-catalog-validations 1))))
 
 (cfg
   compile-profile
@@ -3016,6 +3004,10 @@
       (compiler-tc-macro-counter-profile-line
         "generated_module_catalog_hits"
         compiler-tc-macro-generated-module-catalog-hits)
+      ;; Full catalogs are validated by their one ordinary typecheck walk.
+      (compiler-tc-macro-counter-profile-line
+        "generated_module_catalog_validations"
+        0)
       (compiler-tc-macro-counter-profile-line
         "live_rebuilds"
         compiler-tc-macro-live-rebuilds)
@@ -53078,14 +53070,6 @@
 (define macro-generated-module-memo-keys : (Array i64)
   (array.make-array i64 4096))
 
-;; Per-identity catalog state owns both the immutable generated body and the
-;; current materialized export summary. env-extend-with-module folds the latter
-;; into the live top-env incrementally so a pass never has to rebuild the
-;; whole-program env just to see an already-materialized module.
-(defenum MacroGeneratedCatalogValidation
-  (Pending)
-  (Validated))
-
 (defenum MacroGeneratedCatalogClosure
   (Full))
 
@@ -53099,7 +53083,6 @@
     AstDeclList
     String
     String
-    MacroGeneratedCatalogValidation
     AstDeclList
     MacroGeneratedCatalogClosure))
 
@@ -53185,7 +53168,6 @@
                         catalog
                         generator
                         import-path
-                        (MacroGeneratedCatalogValidation.Pending)
                         summary
                         (MacroGeneratedCatalogClosure.Full)))
                     (set!
@@ -53205,7 +53187,6 @@
                             entry-catalog
                             entry-generator
                             entry-path
-                            validation
                             _
                             closure)
                           (array-set!
@@ -53216,7 +53197,6 @@
                               entry-catalog
                               entry-generator
                               entry-path
-                              validation
                               summary
                               closure))]
                         [(MacroGeneratedModuleCatalogEntry.Empty) unit])
@@ -53259,7 +53239,6 @@
                       macro-generated-module-memo-catalog-entries
                       cursor)
                       [(MacroGeneratedModuleCatalogEntry.Catalog
-                          _
                           _
                           _
                           _
@@ -53317,49 +53296,6 @@
                         (- macro-generated-module-memo-capacity 1)))
                     (set! steps (+ steps 1)))))))
           out)))))
-
-;; Called only after the complete expanded declaration walk succeeds. Failed
-;; catalogs remain Pending and retain their generator/import provenance.
-(define (macro-generated-module-memo-mark-validated!) : unit
-  (let
-    [i : i64 0]
-    (begin
-      (while (< i macro-generated-module-memo-capacity)
-        (begin
-          (match (array-ref macro-generated-module-memo-catalog-entries i)
-            [(MacroGeneratedModuleCatalogEntry.Catalog
-                target
-                catalog
-                generator
-                import-path
-                validation
-                summary
-                closure)
-              (match validation
-                [(MacroGeneratedCatalogValidation.Pending)
-                  (begin
-                    (array-set!
-                      macro-generated-module-memo-catalog-entries
-                      i
-                      (MacroGeneratedModuleCatalogEntry.Catalog
-                        target
-                        catalog
-                        generator
-                        import-path
-                        (MacroGeneratedCatalogValidation.Validated)
-                        summary
-                        closure))
-                    (cfg
-                      compile-profile
-                      (compiler-tc-macro-profile-note-generated-module-catalog-validation)))]
-                [(MacroGeneratedCatalogValidation.Validated) unit])]
-            [(MacroGeneratedModuleCatalogEntry.Empty) unit])
-          (set! i (+ i 1))))
-      (cfg
-        compile-profile
-        (compiler-tc-macro-counter-profile-line
-          "generated_module_catalog_validations"
-          compiler-tc-macro-generated-module-catalog-validations)))))
 
 (defenum MacroMaybeSpliceDecls
   (No)
@@ -62704,7 +62640,6 @@
                                       _
                                       _
                                       _
-                                      _
                                       _)
                                     (begin
                                       (cfg
@@ -67069,7 +67004,6 @@
                                     cache-scope)
                                     [(ResultCompilerTypecheck.Ok summary)
                                       (begin
-                                        (macro-generated-module-memo-mark-validated!)
                                         (tc-context-capture-active-pools! ctx)
                                         (ResultCompilerTypecheckChecked.Ok
                                           summary
